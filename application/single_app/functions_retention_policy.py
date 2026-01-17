@@ -18,6 +18,7 @@ from functions_documents import delete_document, delete_document_chunks
 from functions_activity_logging import log_conversation_deletion, log_conversation_archival
 from functions_notifications import create_notification, create_group_notification, create_public_workspace_notification
 from functions_debug import debug_print
+from functions_appinsights import log_event
 from datetime import datetime, timezone, timedelta
 
 
@@ -36,6 +37,7 @@ def get_all_user_settings():
         ))
         return users
     except Exception as e:
+        log_event("get_all_user_settings_error", {"error": str(e)})
         debug_print(f"Error fetching all user settings: {e}")
         return []
 
@@ -55,6 +57,7 @@ def get_all_groups():
         ))
         return groups
     except Exception as e:
+        log_event("get_all_groups_error", {"error": str(e)})
         debug_print(f"Error fetching all groups: {e}")
         return []
 
@@ -74,6 +77,7 @@ def get_all_public_workspaces():
         ))
         return workspaces
     except Exception as e:
+        log_event("get_all_public_workspaces_error", {"error": str(e)})
         debug_print(f"Error fetching all public workspaces: {e}")
         return []
 
@@ -156,6 +160,7 @@ def execute_retention_policy(workspace_scopes=None, manual_execution=False):
         return results
         
     except Exception as e:
+        log_event("execute_retention_policy_error", {"error": str(e), "workspace_scopes": workspace_scopes, "manual_execution": manual_execution})
         debug_print(f"Error executing retention policy: {e}")
         results['success'] = False
         results['errors'].append(str(e))
@@ -218,6 +223,7 @@ def process_personal_retention():
                     user_deletion_summary['conversation_details'] = conv_results['details']
                     results['conversations'] += conv_results['count']
                 except Exception as e:
+                    log_event("process_personal_retention_conversations_error", {"error": str(e), "user_id": user_id})
                     debug_print(f"Error processing conversations for user {user_id}: {e}")
             
             # Process documents
@@ -232,6 +238,7 @@ def process_personal_retention():
                     user_deletion_summary['document_details'] = doc_results['details']
                     results['documents'] += doc_results['count']
                 except Exception as e:
+                    log_event("process_personal_retention_documents_error", {"error": str(e), "user_id": user_id})
                     debug_print(f"Error processing documents for user {user_id}: {e}")
             
             # Send notification if anything was deleted
@@ -243,6 +250,7 @@ def process_personal_retention():
         return results
         
     except Exception as e:
+        log_event("process_personal_retention_error", {"error": str(e)})
         debug_print(f"Error in process_personal_retention: {e}")
         return results
 
@@ -301,6 +309,7 @@ def process_group_retention():
                     group_deletion_summary['conversation_details'] = conv_results['details']
                     results['conversations'] += conv_results['count']
                 except Exception as e:
+                    log_event("process_group_retention_conversations_error", {"error": str(e), "group_id": group_id})
                     debug_print(f"Error processing conversations for group {group_id}: {e}")
             
             # Process documents
@@ -315,6 +324,7 @@ def process_group_retention():
                     group_deletion_summary['document_details'] = doc_results['details']
                     results['documents'] += doc_results['count']
                 except Exception as e:
+                    log_event("process_group_retention_documents_error", {"error": str(e), "group_id": group_id})
                     debug_print(f"Error processing documents for group {group_id}: {e}")
             
             # Send notification if anything was deleted
@@ -326,6 +336,7 @@ def process_group_retention():
         return results
         
     except Exception as e:
+        log_event("process_group_retention_error", {"error": str(e)})
         debug_print(f"Error in process_group_retention: {e}")
         return results
 
@@ -384,6 +395,7 @@ def process_public_retention():
                     workspace_deletion_summary['conversation_details'] = conv_results['details']
                     results['conversations'] += conv_results['count']
                 except Exception as e:
+                    log_event("process_public_retention_conversations_error", {"error": str(e), "public_workspace_id": workspace_id})
                     debug_print(f"Error processing conversations for public workspace {workspace_id}: {e}")
             
             # Process documents
@@ -398,6 +410,7 @@ def process_public_retention():
                     workspace_deletion_summary['document_details'] = doc_results['details']
                     results['documents'] += doc_results['count']
                 except Exception as e:
+                    log_event("process_public_retention_documents_error", {"error": str(e), "public_workspace_id": workspace_id})
                     debug_print(f"Error processing documents for public workspace {workspace_id}: {e}")
             
             # Send notification if anything was deleted
@@ -409,6 +422,7 @@ def process_public_retention():
         return results
         
     except Exception as e:
+        log_event("process_public_retention_error", {"error": str(e)})
         debug_print(f"Error in process_public_retention: {e}")
         return results
 
@@ -474,16 +488,17 @@ def delete_aged_conversations(retention_days, workspace_type='personal', user_id
         ))
         debug_print(f"Found {len(aged_conversations)} aged conversations for {workspace_type} workspace")
     except Exception as query_error:
+        log_event("delete_aged_conversations_query_error", {"error": str(query_error), "workspace_type": workspace_type, "partition_value": partition_value})
         debug_print(f"Error querying aged conversations for {workspace_type} (partition_value={partition_value}): {query_error}")
         return {'count': 0, 'details': []}
     
     deleted_details = []
     
     for conv in aged_conversations:
-        conversation_id = conv.get('id')
-        conversation_title = conv.get('title', 'Untitled')
-        
         try:
+            conversation_id = conv.get('id')
+            conversation_title = conv.get('title', 'Untitled')
+            
             # Read full conversation for archiving/logging
             conversation_item = container.read_item(
                 item=conversation_id,
@@ -565,7 +580,9 @@ def delete_aged_conversations(retention_days, workspace_type='personal', user_id
             debug_print(f"Deleted conversation {conversation_id} ({conversation_title}) due to retention policy")
             
         except Exception as e:
-            debug_print(f"Error deleting conversation {conversation_id}: {e}")
+            conv_id = conv.get('id', 'unknown') if conv else 'unknown'
+            log_event("delete_aged_conversations_deletion_error", {"error": str(e), "conversation_id": conv_id, "workspace_type": workspace_type})
+            debug_print(f"Error deleting conversation {conv_id}: {e}")
     
     return {
         'count': len(deleted_details),
@@ -634,18 +651,19 @@ def delete_aged_documents(retention_days, workspace_type='personal', user_id=Non
         ))
         debug_print(f"Found {len(aged_documents)} aged documents for {workspace_type} workspace")
     except Exception as query_error:
+        log_event("delete_aged_documents_query_error", {"error": str(query_error), "workspace_type": workspace_type, "partition_value": partition_value})
         debug_print(f"Error querying aged documents for {workspace_type} (partition_value={partition_value}): {query_error}")
         return {'count': 0, 'details': []}
     
     deleted_details = []
     
     for doc in aged_documents:
-        document_id = doc.get('id')
-        file_name = doc.get('file_name', 'Unknown')
-        title = doc.get('title', file_name)
-        doc_user_id = doc.get('user_id') or deletion_user_id
-        
         try:
+            document_id = doc.get('id')
+            file_name = doc.get('file_name', 'Unknown')
+            title = doc.get('title', file_name)
+            doc_user_id = doc.get('user_id') or deletion_user_id
+            
             # Delete document chunks from search index
             delete_document_chunks(document_id, group_id, public_workspace_id)
             
@@ -662,7 +680,9 @@ def delete_aged_documents(retention_days, workspace_type='personal', user_id=Non
             debug_print(f"Deleted document {document_id} ({file_name}) due to retention policy")
             
         except Exception as e:
-            debug_print(f"Error deleting document {document_id}: {e}")
+            doc_id = doc.get('id', 'unknown') if doc else 'unknown'
+            log_event("delete_aged_documents_deletion_error", {"error": str(e), "document_id": doc_id, "workspace_type": workspace_type})
+            debug_print(f"Error deleting document {doc_id}: {e}")
     
     return {
         'count': len(deleted_details),
