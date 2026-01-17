@@ -1,6 +1,28 @@
 <!-- BEGIN release_notes.md BLOCK -->
 # Feature Release
 
+### **(v0.235.025)**
+
+#### Bug Fixes
+
+*   **Retention Policy Document Deletion Fix**
+    *   Fixed critical bug where retention policy execution failed when attempting to delete aged documents, while conversation deletion worked correctly.
+    *   **Root Cause 1**: Documents use `last_updated` field, but query was looking for `last_activity_at` (used by conversations).
+    *   **Root Cause 2**: Date format mismatch - documents store `YYYY-MM-DDTHH:MM:SSZ` but query used Python's `.isoformat()` with `+00:00` suffix.
+    *   **Root Cause 3**: Duplicate column in SELECT clause when `partition_field='user_id'` caused query errors.
+    *   **Root Cause 4**: Activity logging called with incorrect `deletion_reason` parameter instead of `additional_context`.
+    *   **Files Modified**: `functions_retention_policy.py` (query field names, date format, SELECT clause, activity logging).
+    *   (Ref: `delete_aged_documents()`, retention policy execution, Cosmos DB queries)
+
+*   **Retention Policy Scheduler Fix**
+    *   Fixed automated retention policy scheduler not executing at the scheduled time.
+    *   **Root Cause 1**: Hour-matching approach was unreliable - only ran if check happened exactly during the execution hour (e.g., 2 AM), but 1-hour sleep intervals could miss the entire window.
+    *   **Root Cause 2**: Check interval too long (1 hour) meant poor responsiveness and high probability of missing scheduled time.
+    *   **Root Cause 3**: Code ignored the stored `retention_policy_next_run` timestamp, instead relying solely on hour matching.
+    *   **Solution**: Now uses `retention_policy_next_run` timestamp for comparison, reduced check interval from 1 hour to 5 minutes, added fallback logic for missed executions.
+    *   **Files Modified**: `app.py` (`check_retention_policy()` background task).
+    *   (Ref: retention policy scheduler, background task, scheduled execution)
+
 ### **(v0.235.012)**
 
 #### Bug Fixes

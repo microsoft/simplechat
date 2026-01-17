@@ -309,14 +309,34 @@ def before_first_request():
                 
                 if personal_enabled or group_enabled or public_enabled:
                     current_time = datetime.now(timezone.utc)
-                    execution_hour = settings.get('retention_policy_execution_hour', 2)
                     
-                    # Check if we're in the execution hour
-                    if current_time.hour == execution_hour:
-                        # Check if we haven't run today yet
+                    # Check if next scheduled run time has passed
+                    next_run = settings.get('retention_policy_next_run')
+                    should_run = False
+                    
+                    if next_run:
+                        try:
+                            next_run_dt = datetime.fromisoformat(next_run)
+                            # Run if we've passed the scheduled time
+                            if current_time >= next_run_dt:
+                                should_run = True
+                        except Exception as parse_error:
+                            print(f"Error parsing next_run timestamp: {parse_error}")
+                            # If we can't parse, fall back to checking last_run
+                            last_run = settings.get('retention_policy_last_run')
+                            if last_run:
+                                try:
+                                    last_run_dt = datetime.fromisoformat(last_run)
+                                    # Run if last run was more than 23 hours ago
+                                    if (current_time - last_run_dt).total_seconds() > (23 * 3600):
+                                        should_run = True
+                                except:
+                                    should_run = True
+                            else:
+                                should_run = True
+                    else:
+                        # No next_run set, check last_run instead
                         last_run = settings.get('retention_policy_last_run')
-                        should_run = False
-                        
                         if last_run:
                             try:
                                 last_run_dt = datetime.fromisoformat(last_run)
@@ -326,29 +346,30 @@ def before_first_request():
                             except:
                                 should_run = True
                         else:
+                            # Never run before, execute now
                             should_run = True
+                    
+                    if should_run:
+                        print(f"Executing scheduled retention policy at {current_time.isoformat()}")
+                        from functions_retention_policy import execute_retention_policy
+                        results = execute_retention_policy(manual_execution=False)
                         
-                        if should_run:
-                            print(f"Executing scheduled retention policy at {current_time.isoformat()}")
-                            from functions_retention_policy import execute_retention_policy
-                            results = execute_retention_policy(manual_execution=False)
-                            
-                            if results.get('success'):
-                                print(f"Retention policy execution completed: "
-                                     f"{results['personal']['conversations']} personal conversations, "
-                                     f"{results['personal']['documents']} personal documents, "
-                                     f"{results['group']['conversations']} group conversations, "
-                                     f"{results['group']['documents']} group documents, "
-                                     f"{results['public']['conversations']} public conversations, "
-                                     f"{results['public']['documents']} public documents deleted.")
-                            else:
-                                print(f"Retention policy execution failed: {results.get('errors')}")
+                        if results.get('success'):
+                            print(f"Retention policy execution completed: "
+                                 f"{results['personal']['conversations']} personal conversations, "
+                                 f"{results['personal']['documents']} personal documents, "
+                                 f"{results['group']['conversations']} group conversations, "
+                                 f"{results['group']['documents']} group documents, "
+                                 f"{results['public']['conversations']} public conversations, "
+                                 f"{results['public']['documents']} public documents deleted.")
+                        else:
+                            print(f"Retention policy execution failed: {results.get('errors')}")
                 
             except Exception as e:
                 print(f"Error in retention policy check: {e}")
             
-            # Check every hour
-            time.sleep(3600)
+            # Check every 5 minutes for more responsive scheduling
+            time.sleep(300)
 
     # Start the retention policy check thread
     retention_thread = threading.Thread(target=check_retention_policy, daemon=True)
