@@ -161,6 +161,8 @@ def register_route_frontend_admin_settings(app):
             settings['classification_banner_text'] = ''
         if 'classification_banner_color' not in settings:
             settings['classification_banner_color'] = '#ffc107'  # Bootstrap warning color
+        if 'classification_banner_text_color' not in settings:
+            settings['classification_banner_text_color'] = '#ffffff'  # White text by default
         
         # --- Add defaults for key vault
         if 'enable_key_vault_secret_storage' not in settings:
@@ -241,11 +243,16 @@ def register_route_frontend_admin_settings(app):
             # Get the persisted values for template rendering
             update_available = settings.get('update_available', False)
             latest_version = settings.get('latest_version_available')
+            
+            # Get user settings for profile and navigation
+            user_id = get_current_user_id()
+            user_settings = get_user_settings(user_id)
 
             return render_template(
                 'admin_settings.html',
+                app_settings=settings,  # Admin needs unsanitized settings to view/edit all configuration
                 settings=settings,
-                app_settings=settings,
+                user_settings=user_settings,
                 update_available=update_available,
                 latest_version=latest_version,
                 download_url=download_url
@@ -275,6 +282,7 @@ def register_route_frontend_admin_settings(app):
             require_member_of_create_public_workspace = form_data.get('require_member_of_create_public_workspace') == 'on'
             require_member_of_safety_violation_admin = form_data.get('require_member_of_safety_violation_admin') == 'on'
             require_member_of_control_center_admin = form_data.get('require_member_of_control_center_admin') == 'on'
+            require_member_of_control_center_dashboard_reader = form_data.get('require_member_of_control_center_dashboard_reader') == 'on'
             require_member_of_feedback_admin = form_data.get('require_member_of_feedback_admin') == 'on'
 
             # --- Handle Document Classification Toggle ---
@@ -384,6 +392,7 @@ def register_route_frontend_admin_settings(app):
             classification_banner_enabled = form_data.get('classification_banner_enabled') == 'on'
             classification_banner_text = form_data.get('classification_banner_text', '').strip()
             classification_banner_color = form_data.get('classification_banner_color', '#ffc107').strip()
+            classification_banner_text_color = form_data.get('classification_banner_text_color', '#ffffff').strip()
 
             # --- Application Insights Logging Toggle ---
             enable_appinsights_global_logging = form_data.get('enable_appinsights_global_logging') == 'on'
@@ -410,24 +419,47 @@ def register_route_frontend_admin_settings(app):
                 if debug_timer_value < min_val or debug_timer_value > max_val:
                     debug_timer_value = min(max(debug_timer_value, min_val), max_val)
             
+            # Get existing timer settings to check if they've changed
+            existing_debug_timer_enabled = settings.get('debug_logging_timer_enabled', False)
+            existing_debug_timer_value = settings.get('debug_timer_value', 1)
+            existing_debug_timer_unit = settings.get('debug_timer_unit', 'hours')
+            existing_debug_logging_enabled = settings.get('enable_debug_logging', False)
+            existing_debug_turnoff_time = settings.get('debug_logging_turnoff_time')
+            
+            # Determine if timer settings have changed
+            timer_settings_changed = (
+                debug_logging_timer_enabled != existing_debug_timer_enabled or
+                debug_timer_value != existing_debug_timer_value or
+                debug_timer_unit != existing_debug_timer_unit
+            )
+            debug_logging_newly_enabled = enable_debug_logging and not existing_debug_logging_enabled
+            
             # Calculate debug logging turnoff time if timer is enabled and debug logging is on
             if enable_debug_logging and debug_logging_timer_enabled:
-                now = datetime.now()
-                
-                if debug_timer_unit == 'minutes':
-                    delta = timedelta(minutes=debug_timer_value)
-                elif debug_timer_unit == 'hours':
-                    delta = timedelta(hours=debug_timer_value)
-                elif debug_timer_unit == 'days':
-                    delta = timedelta(days=debug_timer_value)
-                elif debug_timer_unit == 'weeks':
-                    delta = timedelta(weeks=debug_timer_value)
+                # Only recalculate turnoff time if:
+                # 1. Timer settings have changed (value, unit, or enabled state), OR
+                # 2. Debug logging was just enabled, OR
+                # 3. No existing turnoff time exists
+                if timer_settings_changed or debug_logging_newly_enabled or not existing_debug_turnoff_time:
+                    now = datetime.now()
+                    
+                    if debug_timer_unit == 'minutes':
+                        delta = timedelta(minutes=debug_timer_value)
+                    elif debug_timer_unit == 'hours':
+                        delta = timedelta(hours=debug_timer_value)
+                    elif debug_timer_unit == 'days':
+                        delta = timedelta(days=debug_timer_value)
+                    elif debug_timer_unit == 'weeks':
+                        delta = timedelta(weeks=debug_timer_value)
+                    else:
+                        delta = timedelta(hours=1)  # default fallback
+                    
+                    debug_logging_turnoff_time = now + delta
+                    # Convert to ISO string for JSON serialization
+                    debug_logging_turnoff_time_str = debug_logging_turnoff_time.isoformat()
                 else:
-                    delta = timedelta(hours=1)  # default fallback
-                
-                debug_logging_turnoff_time = now + delta
-                # Convert to ISO string for JSON serialization
-                debug_logging_turnoff_time_str = debug_logging_turnoff_time.isoformat()
+                    # Preserve existing turnoff time
+                    debug_logging_turnoff_time_str = existing_debug_turnoff_time
             else:
                 debug_logging_turnoff_time_str = None
 
@@ -436,6 +468,7 @@ def register_route_frontend_admin_settings(app):
             file_timer_value = int(form_data.get('file_timer_value', 1))
             file_timer_unit = form_data.get('file_timer_unit', 'hours')
             file_processing_logs_turnoff_time = None
+            enable_file_processing_logs = form_data.get('enable_file_processing_logs') == 'on'
             
             # Validate file timer values
             if file_timer_unit in timer_limits:
@@ -443,27 +476,72 @@ def register_route_frontend_admin_settings(app):
                 if file_timer_value < min_val or file_timer_value > max_val:
                     file_timer_value = min(max(file_timer_value, min_val), max_val)
             
+            # Get existing file timer settings to check if they've changed
+            existing_file_timer_enabled = settings.get('file_processing_logs_timer_enabled', False)
+            existing_file_timer_value = settings.get('file_timer_value', 1)
+            existing_file_timer_unit = settings.get('file_timer_unit', 'hours')
+            existing_file_processing_logs_enabled = settings.get('enable_file_processing_logs', False)
+            existing_file_turnoff_time = settings.get('file_processing_logs_turnoff_time')
+            
+            # Determine if timer settings have changed
+            file_timer_settings_changed = (
+                file_processing_logs_timer_enabled != existing_file_timer_enabled or
+                file_timer_value != existing_file_timer_value or
+                file_timer_unit != existing_file_timer_unit
+            )
+            file_processing_logs_newly_enabled = enable_file_processing_logs and not existing_file_processing_logs_enabled
+            
             # Calculate file processing logs turnoff time if timer is enabled and file processing logs are on
-            enable_file_processing_logs = form_data.get('enable_file_processing_logs') == 'on'
             if enable_file_processing_logs and file_processing_logs_timer_enabled:
-                now = datetime.now()
-                
-                if file_timer_unit == 'minutes':
-                    delta = timedelta(minutes=file_timer_value)
-                elif file_timer_unit == 'hours':
-                    delta = timedelta(hours=file_timer_value)
-                elif file_timer_unit == 'days':
-                    delta = timedelta(days=file_timer_value)
-                elif file_timer_unit == 'weeks':
-                    delta = timedelta(weeks=file_timer_value)
+                # Only recalculate turnoff time if:
+                # 1. Timer settings have changed (value, unit, or enabled state), OR
+                # 2. File processing logs was just enabled, OR
+                # 3. No existing turnoff time exists
+                if file_timer_settings_changed or file_processing_logs_newly_enabled or not existing_file_turnoff_time:
+                    now = datetime.now()
+                    
+                    if file_timer_unit == 'minutes':
+                        delta = timedelta(minutes=file_timer_value)
+                    elif file_timer_unit == 'hours':
+                        delta = timedelta(hours=file_timer_value)
+                    elif file_timer_unit == 'days':
+                        delta = timedelta(days=file_timer_value)
+                    elif file_timer_unit == 'weeks':
+                        delta = timedelta(weeks=file_timer_value)
+                    else:
+                        delta = timedelta(hours=1)  # default fallback
+                    
+                    file_processing_logs_turnoff_time = now + delta
+                    # Convert to ISO string for JSON serialization
+                    file_processing_logs_turnoff_time_str = file_processing_logs_turnoff_time.isoformat()
                 else:
-                    delta = timedelta(hours=1)  # default fallback
-                
-                file_processing_logs_turnoff_time = now + delta
-                # Convert to ISO string for JSON serialization
-                file_processing_logs_turnoff_time_str = file_processing_logs_turnoff_time.isoformat()
+                    # Preserve existing turnoff time
+                    file_processing_logs_turnoff_time_str = existing_file_turnoff_time
             else:
                 file_processing_logs_turnoff_time_str = None
+
+            # --- Retention Policy Settings ---
+            enable_retention_policy_personal = form_data.get('enable_retention_policy_personal') == 'on'
+            enable_retention_policy_group = form_data.get('enable_retention_policy_group') == 'on'
+            enable_retention_policy_public = form_data.get('enable_retention_policy_public') == 'on'
+            retention_policy_execution_hour = int(form_data.get('retention_policy_execution_hour', 2))
+            
+            # Validate execution hour (0-23)
+            if retention_policy_execution_hour < 0 or retention_policy_execution_hour > 23:
+                retention_policy_execution_hour = 2  # Default to 2 AM
+            
+            # Calculate next scheduled execution time if any retention policy is enabled
+            retention_policy_next_run = None
+            if enable_retention_policy_personal or enable_retention_policy_group or enable_retention_policy_public:
+                now = datetime.now(timezone.utc)
+                # Create next run datetime with the specified hour
+                next_run = now.replace(hour=retention_policy_execution_hour, minute=0, second=0, microsecond=0)
+                
+                # If the scheduled time has already passed today, schedule for tomorrow
+                if next_run <= now:
+                    next_run = next_run + timedelta(days=1)
+                
+                retention_policy_next_run = next_run.isoformat()
 
             # --- Authentication & Redirect Settings ---
             enable_front_door = form_data.get('enable_front_door') == 'on'
@@ -570,7 +648,8 @@ def register_route_frontend_admin_settings(app):
                 # Workspaces
                 'enable_user_workspace': form_data.get('enable_user_workspace') == 'on',
                 'enable_group_workspaces': form_data.get('enable_group_workspaces') == 'on',
-                'enable_group_creation': form_data.get('enable_group_creation') == 'on',
+                # disable_group_creation is inverted: when checked (on), enable_group_creation = False
+                'enable_group_creation': form_data.get('disable_group_creation') != 'on',
                 'enable_public_workspaces': form_data.get('enable_public_workspaces') == 'on',
                 'enable_file_sharing': form_data.get('enable_file_sharing') == 'on',
                 'enable_file_processing_logs': enable_file_processing_logs,
@@ -580,6 +659,13 @@ def register_route_frontend_admin_settings(app):
                 'file_processing_logs_turnoff_time': file_processing_logs_turnoff_time_str,
                 'require_member_of_create_group': require_member_of_create_group,
                 'require_member_of_create_public_workspace': require_member_of_create_public_workspace,
+                
+                # Retention Policy
+                'enable_retention_policy_personal': enable_retention_policy_personal,
+                'enable_retention_policy_group': enable_retention_policy_group,
+                'enable_retention_policy_public': enable_retention_policy_public,
+                'retention_policy_execution_hour': retention_policy_execution_hour,
+                'retention_policy_next_run': retention_policy_next_run,
 
                 # Multimedia & Metadata
                 'enable_video_file_support': enable_video_file_support,
@@ -689,6 +775,12 @@ def register_route_frontend_admin_settings(app):
                 'speech_service_locale': form_data.get('speech_service_locale', '').strip(),
                 'speech_service_authentication_type': form_data.get('speech_service_authentication_type', 'key'),
                 'speech_service_key': form_data.get('speech_service_key', '').strip(),
+                
+                # Speech-to-text chat input
+                'enable_speech_to_text_input': form_data.get('enable_speech_to_text_input') == 'on',
+                
+                # Text-to-speech chat output
+                'enable_text_to_speech': form_data.get('enable_text_to_speech') == 'on',
 
                 'metadata_extraction_model': form_data.get('metadata_extraction_model', '').strip(),
 
@@ -700,8 +792,10 @@ def register_route_frontend_admin_settings(app):
                 'classification_banner_enabled': classification_banner_enabled,
                 'classification_banner_text': classification_banner_text,
                 'classification_banner_color': classification_banner_color,
+                'classification_banner_text_color': classification_banner_text_color,
 
-                'require_member_of_control_center_admin': require_member_of_control_center_admin
+                'require_member_of_control_center_admin': require_member_of_control_center_admin,
+                'require_member_of_control_center_dashboard_reader': require_member_of_control_center_dashboard_reader
             }
             
             # --- Prevent Legacy Fields from Being Created/Updated ---

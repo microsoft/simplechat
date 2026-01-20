@@ -203,6 +203,8 @@ function scrollToSection(sectionId) {
         'user-feedback-section': 'user-feedback-section',
         'permissions-section': 'permissions-section',
         'conversation-archiving-section': 'conversation-archiving-section',
+        // Security tab sections
+        'keyvault-section': 'keyvault-section',
         // Search & Extract tab sections
         'web-search-section': 'web-search-foundry-section',
         'azure-ai-search-section': 'azure-ai-search-section',

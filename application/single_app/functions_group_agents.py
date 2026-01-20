@@ -6,7 +6,7 @@ import re
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-
+from functions_debug import debug_print
 from azure.cosmos import exceptions
 from flask import current_app
 
@@ -40,7 +40,7 @@ def get_group_agents(group_id: str) -> List[Dict[str, Any]]:
     except exceptions.CosmosResourceNotFoundError:
         return []
     except Exception as exc:
-        current_app.logger.error(
+        debug_print(
             "Error fetching group agents for %s: %s", group_id, exc
         )
         return []
@@ -57,7 +57,7 @@ def get_group_agent(group_id: str, agent_id: str) -> Optional[Dict[str, Any]]:
     except exceptions.CosmosResourceNotFoundError:
         return None
     except Exception as exc:
-        current_app.logger.error(
+        debug_print(
             "Error fetching group agent %s for %s: %s", agent_id, group_id, exc
         )
         return None
@@ -112,7 +112,7 @@ def save_group_agent(group_id: str, agent_data: Dict[str, Any]) -> Dict[str, Any
         stored = cosmos_group_agents_container.upsert_item(body=payload)
         return _clean_agent(stored)
     except Exception as exc:
-        current_app.logger.error(
+        debug_print(
             "Error saving group agent %s for %s: %s", agent_id, group_id, exc
         )
         raise
@@ -136,7 +136,7 @@ def delete_group_agent(group_id: str, agent_id: str) -> bool:
         )
         return True
     except Exception as exc:
-        current_app.logger.error(
+        debug_print(
             "Error deleting group agent %s for %s: %s", agent_id, group_id, exc
         )
         raise

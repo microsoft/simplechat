@@ -1565,6 +1565,15 @@ function setupToggles() {
         });
     }
 
+    const enableKeyVaultCheckbox = document.getElementById('enable_key_vault_secret_storage');
+    if (enableKeyVaultCheckbox) {
+        enableKeyVaultCheckbox.addEventListener('change', function() {
+            const keyVaultSettings = document.getElementById('key_vault_settings');
+            keyVaultSettings.style.display = this.checked ? 'block' : 'none';
+            markFormAsModified();
+        });
+    }
+
     const enableWebSearch = document.getElementById('enable_web_search');
     const webSearchFoundrySettings = document.getElementById('web_search_foundry_settings');
     if (enableWebSearch && webSearchFoundrySettings) {

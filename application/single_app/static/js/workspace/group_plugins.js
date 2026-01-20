@@ -33,6 +33,12 @@ function canManagePlugins() {
   return role === "Owner" || role === "Admin";
 }
 
+function groupAllowsModifications() {
+  // Check if group status allows modifications (only active groups)
+  const groupStatus = window.currentGroupStatus || 'active';
+  return groupStatus === 'active';
+}
+
 function ensureTemplate() {
   if (!root) return null;
   if (!templateReady) {
@@ -136,7 +142,7 @@ function renderPluginsTable(list) {
     return;
   }
 
-  const canManage = canManagePlugins();
+  const canManage = canManagePlugins() && groupAllowsModifications();
   list.forEach((plugin) => {
     const tr = document.createElement("tr");
     const displayName = plugin.displayName || plugin.display_name || plugin.name || "";

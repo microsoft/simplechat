@@ -1,7 +1,7 @@
 // chat-documents.js
 
-import { showToast } from "./chat-toast.js"; // Assuming you have this
-import { toBoolean } from "./chat-utils.js"; // Import the toBoolean helper
+import { showToast } from "./chat-toast.js";
+import { toBoolean } from "./chat-utils.js";
 
 export const docScopeSelect = document.getElementById("doc-scope-select");
 const searchDocumentsBtn = document.getElementById("search-documents-btn");

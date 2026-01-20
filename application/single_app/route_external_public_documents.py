@@ -282,6 +282,9 @@ def register_route_external_public_documents(app):
             return jsonify({'error': 'Active public workspace not found'}), 404
 
         data = request.get_json()
+        
+        # Track which fields were updated
+        updated_fields = {}
 
         try:
             if 'title' in data:
@@ -291,6 +294,7 @@ def register_route_external_public_documents(app):
                     user_id=user_id,
                     title=data['title']
                 )
+                updated_fields['title'] = data['title']
             if 'abstract' in data:
                 update_document(
                     document_id=document_id,
@@ -298,6 +302,7 @@ def register_route_external_public_documents(app):
                     user_id=user_id,
                     abstract=data['abstract']
                 )
+                updated_fields['abstract'] = data['abstract']
             if 'keywords' in data:
                 if isinstance(data['keywords'], list):
                     update_document(
@@ -306,13 +311,16 @@ def register_route_external_public_documents(app):
                         user_id=user_id,
                         keywords=data['keywords']
                     )
+                    updated_fields['keywords'] = data['keywords']
                 else:
+                    keywords_list = [kw.strip() for kw in data['keywords'].split(',')]
                     update_document(
                         document_id=document_id,
                         public_workspace_id=active_workspace_id,
                         user_id=user_id,
-                        keywords=[kw.strip() for kw in data['keywords'].split(',')]
+                        keywords=keywords_list
                     )
+                    updated_fields['keywords'] = keywords_list
             if 'publication_date' in data:
                 update_document(
                     document_id=document_id,
@@ -320,6 +328,7 @@ def register_route_external_public_documents(app):
                     user_id=user_id,
                     publication_date=data['publication_date']
                 )
+                updated_fields['publication_date'] = data['publication_date']
             if 'document_classification' in data:
                 update_document(
                     document_id=document_id,
@@ -327,6 +336,7 @@ def register_route_external_public_documents(app):
                     user_id=user_id,
                     document_classification=data['document_classification']
                 )
+                updated_fields['document_classification'] = data['document_classification']
             if 'authors' in data:
                 if isinstance(data['authors'], list):
                     update_document(
@@ -335,12 +345,31 @@ def register_route_external_public_documents(app):
                         user_id=user_id,
                         authors=data['authors']
                     )
+                    updated_fields['authors'] = data['authors']
                 else:
+                    authors_list = [data['authors']]
                     update_document(
                         document_id=document_id,
                         public_workspace_id=active_workspace_id,
                         user_id=user_id,
-                        authors=[data['authors']]
+                        authors=authors_list
+                    )
+                    updated_fields['authors'] = authors_list
+
+            # Log the metadata update transaction if any fields were updated
+            if updated_fields:
+                from functions_documents import get_document
+                from functions_activity_logging import log_document_metadata_update_transaction
+                doc = get_document(user_id, document_id, public_workspace_id=active_workspace_id)
+                if doc:
+                    log_document_metadata_update_transaction(
+                        user_id=user_id,
+                        document_id=document_id,
+                        workspace_type='public',
+                        file_name=doc.get('file_name', 'Unknown'),
+                        updated_fields=updated_fields,
+                        file_type=doc.get('file_type'),
+                        public_workspace_id=active_workspace_id
                     )
 
             return jsonify({'message': 'Public document metadata updated successfully'}), 200
