@@ -3,7 +3,7 @@
 # Azure Billing Action Instructions
 
 ## Overview
-The Azure Billing action is an experimental Semantic Kernel plugin that helps agents explore Azure Cost Management data, generate CSV outputs, and render server-side charts for conversational reporting. It stitches together Azure REST APIs, matplotlib rendering, and Cosmos DB persistence so prototype agents can investigate subscriptions, budgets, alerts, and forecasts without touching the production portal. It leverages message injection (direct cosmos_messages_container access) to store chart images as conversation artifacts in lieu of embedding binary data in chat responses.
+The Azure Billing action is an experimental Semantic Kernel plugin that helps agents explore Azure Cost Management data, generate CSV outputs, and render server-side charts for conversational reporting. It stitches together Azure REST APIs, matplotlib rendering, and Cosmos DB persistence so prototype agents can investigate subscriptions, budgets, alerts, and forecasts without touching the production portal. It leverages message injection (direct cosmos_messages_container access) to store chart images as conversation artifacts in lieu of embedding binary data in chat responses. You will need to move the ```azure_billing_plugin.py``` to the [semantic-kernel-plugins](../../../single_app/semantic_kernel_plugins/) folder, and move the ```schema.json``` and ```definition.json``` to the [schemas](../../../single_app/static/json/schemas) folder.
 
 ## Core capabilities
 - Enumerate subscriptions and resource groups via `list_subscriptions*` helpers for quick scope discovery.
@@ -48,6 +48,5 @@ The Azure Billing action is an experimental Semantic Kernel plugin that helps ag
 
 ## Additional resources
 - Review `instructions.md` in the same directory for the autonomous agent persona tailored to this action.
-- Inspect `abd_proto.py` for prompt experimentation tied to Azure Billing dialogues.
 - Leverage the sample CSV files to validate plotting offline before wiring the plugin into a notebook or agent loop.
 
