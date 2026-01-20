@@ -212,7 +212,7 @@ hooks:
             echo "Configuring private networking..."
             
             echo ""
-            echo "[1/3] Disabling public network access for CosmosDB..."
+            echo "[1/4] Disabling public network access for CosmosDB..."
             if az cosmosdb update --name ${var_cosmosDb_accountName} \
                 --resource-group ${var_rgName} \
                 --public-network-access Disabled > /dev/null; then
@@ -223,7 +223,7 @@ hooks:
             fi
             
             echo ""
-            echo "[2/3] Disabling public network access for Key Vault..."
+            echo "[2/4] Disabling public network access for Key Vault..."
             if az keyvault update --name ${var_keyVaultName} \
                 --resource-group ${var_rgName} \
                 --public-network-access Disabled > /dev/null; then
@@ -234,7 +234,7 @@ hooks:
             fi
 
             echo ""
-            echo "[3/3] Disabling public network access for Azure Container Registry..."
+            echo "[3/4] Disabling public network access for Azure Container Registry..."
             if az acr update --name ${var_acrName} \
                 --resource-group ${var_rgName} \
                 --public-network-enabled false > /dev/null; then
@@ -244,17 +244,17 @@ hooks:
                 exit 1
             fi
 
-            # Uncomment when ready to disable web app public access
-            # echo ""
-            # echo "[4/4] Disabling public network access for Web Application..."
-            # if az webapp update --name ${var_webService} \
-            #     --resource-group ${var_rgName} \
-            #     --public-network-access Disabled; then
-            #     echo "✓ Web Application public access disabled"
-            # else
-            #     echo "✗ ERROR: Failed to disable Web Application public access" >&2
-            #     exit 1
-            # fi
+            echo ""
+            echo "[4/4] Disabling public network access for Web Application..."
+            if az resource update --name ${var_webService} \
+                --resource-group ${var_rgName} \
+                --resource-type "Microsoft.Web/sites" \
+                --set properties.publicNetworkAccess=Disabled; then
+                echo "✓ Web Application public access disabled"
+            else
+                echo "✗ ERROR: Failed to disable Web Application public access" >&2
+                exit 1
+            fi
             
             echo ""
             echo "✓ Private networking configured successfully"
