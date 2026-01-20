@@ -90,6 +90,7 @@ if SESSION_TYPE == 'filesystem':
         os.makedirs(app.config['SESSION_FILE_DIR'], exist_ok=True)
     except Exception as e:
         print(f"WARNING: Unable to create session directory {app.config.get('SESSION_FILE_DIR')}: {e}")
+        log_event(f"Unable to create session directory {app.config.get('SESSION_FILE_DIR')}: {e}", level=logging.ERROR)
 
 Session(app)
 
@@ -186,6 +187,7 @@ def configure_sessions(settings):
             app.config['SESSION_TYPE'] = 'filesystem'
     except Exception as e:
         print(f"⚠️  WARNING: Session configuration error; falling back to filesystem: {e}")
+        log_event(f"Session configuration error; falling back to filesystem: {e}", level=logging.ERROR)
         app.config['SESSION_TYPE'] = 'filesystem'
 
     # Initialize session interface
@@ -266,6 +268,7 @@ def before_first_request():
                 
             except Exception as e:
                 print(f"Error in logging timer check: {e}")
+                log_event(f"Error in logging timer check: {e}", level=logging.ERROR)
             
             # Check every 60 seconds
             time.sleep(60)
@@ -286,6 +289,7 @@ def before_first_request():
                     print(f"Auto-denied {denied_count} expired approval request(s).")
             except Exception as e:
                 print(f"Error in approval expiration check: {e}")
+                log_event(f"Error in approval expiration check: {e}", level=logging.ERROR)
             
             # Check every 6 hours (21600 seconds)
             time.sleep(21600)
@@ -367,6 +371,7 @@ def before_first_request():
                 
             except Exception as e:
                 print(f"Error in retention policy check: {e}")
+                log_event(f"Error in retention policy check: {e}", level=logging.ERROR)
             
             # Check every 5 minutes for more responsive scheduling
             time.sleep(300)
@@ -398,6 +403,8 @@ def inject_settings():
             from functions_settings import get_user_settings
             user_settings = get_user_settings(user_id) or {}
     except Exception as e:
+        print(f"Error injecting user settings: {e}")
+        log_event(f"Error injecting user settings: {e}", level=logging.ERROR)
         user_settings = {}
     return dict(app_settings=public_settings, user_settings=user_settings)
 
