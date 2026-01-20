@@ -113,17 +113,18 @@ param embeddingModels array = [
 ]
 
 //----------------
-// cosmos db firewall
-// this is needed to allow access during deployment.  Should be the ipAddress of the machine running the deployment
-// may be a single ip address or a full range in cidr format.  EG. 123.45.67.125/32 or 123.45.67.125 or 10.10.1.0/24
-// strongly encourage makking sure 0.0.0.0 is included to allow Azure services to access cosmos db
-param allowedIpAddresses array = [
-      {
-        ipAddressOrRange: '0.0.0.0'  //--- required to allow Azure services to access cosmos db 
-      }
-      //--- Add your IP address here during development
-]
+// allowed IP addresses for resources
+@description('''Comma separated list of IP addresses or ranges to allow access to resources when private networking is enabled.
+Leave blank if not using private networking.
+- Format for single IP: 'x.x.x.x'
+- Format for range: 'x.x.x.x/y'
+- Example:  1.2.3.4, 2.3.4.5/32
+''')
+param allowedIpAddresses string
+var allowedIpAddressesSplit = empty(allowedIpAddresses) ? [] : split(allowedIpAddresses!, ',')
+var allowedIpAddressesArray = [for ip in allowedIpAddressesSplit: trim(ip)]
 //----------------
+
 // optional services
 
 @description('''Enable deployment of Content Safety service and related resources.
@@ -153,6 +154,14 @@ var acrName = toLower('${appName}${environment}acr')
 var containerRegistry = '${acrName}${acrCloudSuffix}'
 var containerImageName = '${containerRegistry}/${imageName}'
 var vNetName = '${appName}-${environment}-vnet'
+var allowedIpsForCosmos = union(['0.0.0.0'], allowedIpAddressesArray)
+var cosmosDbIpRules = [for ip in allowedIpsForCosmos: {
+  ipAddressOrRange: ip
+}]
+var acrIpRules = [for ip in allowedIpAddressesArray: {
+  action: 'Allow'
+  value: ip
+}]
 
 //=========================================================
 // Resource group deployment
@@ -267,7 +276,7 @@ module cosmosDB 'modules/cosmosDb.bicep' = {
     authenticationType: authenticationType
     configureApplicationPermissions: configureApplicationPermissions
     enablePrivateNetworking: enablePrivateNetworking
-    allowedIpAddresses: allowedIpAddresses
+    allowedIpAddresses: cosmosDbIpRules
   }
 }
 
@@ -288,6 +297,7 @@ module acr 'modules/azureContainerRegistry.bicep' = {
     authenticationType: authenticationType
     configureApplicationPermissions: configureApplicationPermissions
     enablePrivateNetworking: enablePrivateNetworking
+    allowedIpAddresses: acrIpRules
   }
 }
 

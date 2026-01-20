@@ -4,6 +4,7 @@
 
 ## Table of Contents</br>
 - [Deployment Variables](#Deployment-Variables)
+- [Prerequisites](#Prerequisites)
 - [Deployment Process](#Deployment-Process)
     - [Pre-Configuration](#Pre-Configuration)
         - [Create the application registration](#Create-the-application-registration)
@@ -13,6 +14,10 @@
     - [Post Deployment Tasks](#Post-Deployment-Tasks)
 - [Cleanup / Deprovision](#Cleanup-/-Deprovisioning)
 - [Helpful Info](#Helpful-Info)
+    - [Private Networking](#Private-Networking)
+- [Azure Government (USGov) Considerations](#Azure-Government-USGov-Considerations)
+- [Frequently Asked Questions](#Frequently-Asked-Questions)
+- [Troubleshooting](#Troubleshooting)
 
 ---
 
@@ -23,6 +28,31 @@ The following variables will be used within this document:
 - *\<environment\>* - This will be used as part of the object names as well as with the AZD environments.  **Example:** *dev/qa/prod*.
 - *\<cloudEnvironment\>* - Options will be *AzureCloud | AzureUSGovernment*
 - *\<imageName\>* - Should be presented in the form *imageName:label* **Example:** *simple-chat:latest*
+
+---
+
+## Prerequisites
+
+Before deploying, ensure you have:
+
+1. **Azure Subscription** with Owner or Contributor permissions
+2. **Azure CLI** (version 2.50.0 or later)
+3. **Azure Developer CLI (azd)** (version 1.5.0 or later)
+4. **Docker** installed and running (for container builds)
+5. **PowerShell** (for the Entra app registration script)
+6. **Permissions to create an Entra ID Application Registration** (or coordinate with your Entra admin)
+
+### Required Azure Resource Providers
+Ensure the following resource providers are registered in your subscription:
+- `Microsoft.Web`
+- `Microsoft.DocumentDB`
+- `Microsoft.CognitiveServices`
+- `Microsoft.Search`
+- `Microsoft.Storage`
+- `Microsoft.KeyVault`
+- `Microsoft.ContainerRegistry`
+- `Microsoft.Insights`
+- `Microsoft.OperationalInsights`
 
 
 ## Deployment Process
@@ -103,20 +133,53 @@ Using the bash terminal in Visual Studio Code
 
 #### Service Limitations of USGovCloud
 
-- Services not presently available in US Gov Region
-    - Azure Video Indexer
+> ⚠️ **Important:** Review this section carefully before deploying to Azure Government.
 
-- Notes:
-    - Verify the gptModels and embeddingModels skuName and versions to ensure selected region availablity.  Deployment may override the default models.
-    - Limited region availablity for the following services:
-        - ContentSafety
-        - SpeechService
-        - DocumentIntelligence
+- **Services NOT available in Azure Government:**
+    - Azure Video Indexer - Set `deployVideoIndexerService` to `false`
+
+- **SKU Restrictions:**
+    - **GlobalStandard SKU is NOT available** - Azure OpenAI models must use `Standard` SKU instead
+    - Default deployment uses `GlobalStandard` - override `gptModels` and `embeddingModels` parameters
+
+- **Model Availability:**
+    - Verify the `gptModels` and `embeddingModels` model names and versions are available in your target USGov region
+    - Model availability may differ from Azure Commercial - check [Azure OpenAI Service models](https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/models)
+
+- **Limited Regional Availability:**
+    - ContentSafety - typically only USGov Virginia, USGov Arizona
+    - SpeechService - verify feature availability (Neural voices may be limited)
+    - DocumentIntelligence - prebuilt models may differ
+
+**Example USGov Model Configuration Override:**
+```json
+{
+  "gptModels": [
+    {
+      "modelName": "gpt-4o",
+      "modelVersion": "2024-05-13",
+      "skuName": "Standard",
+      "skuCapacity": 100
+    }
+  ],
+  "embeddingModels": [
+    {
+      "modelName": "text-embedding-ada-002",
+      "modelVersion": "2",
+      "skuName": "Standard",
+      "skuCapacity": 100
+    }
+  ]
+}
+```
 
 #### Deployment Prompts
 > For each of the following parameters ensure the value noted in *\<parameter\>* matches settings as noted above.
 
+> If you are unsure what a parameter is used for, see specific help for each parameter by entering "?" at that prompt.
+
 - Select an Azure Subscription to use: *\<select from available list\>*
+- Enter a value for the 'allowedIpAddresses' infrastructure parameter: *\<ipAddressList\>*
 - Enter a value for the 'appName' infrastructure parameter: *\<appName\>*
 - Enter a value for the 'authenticationType' infrastructure parameter: *\<key | managed_identity>*
 - Enter a vaule for the 'cloudEnvironment' infrastructure parameter: *\<AzureCloud | AzureUSGovernment\>*
@@ -134,7 +197,7 @@ Using the bash terminal in Visual Studio Code
 - Enter a value for the 'imageName' infrastructure parameter: *\<imageName\>*
 - Enter a value for the 'location' infrastructure parameter: *\<select from the list provided\>*
 
-Provisioning may take between 10-40 minutes depending on the options selected.
+Provisioning may take between 5-40 minutes depending on the options selected.
 
 On the completion of the deployment, a URL will be presented, the user may use to access the site.
 
@@ -181,8 +244,171 @@ User should now be able to fully use Simple Chat application.
 
 - If a deployment failure is encountered, often times, rerunning the deployment will clear the temporary error.
 
-- For CosmosDB, when private networking is selected, by default during deployment, the users local IP address and 0.0.0.0 (representing the internal Azure Services) is added to the firewall.  This becomes not-applicable on completion of the deployment when CosmosDB is configured for private networking only.
+- When private networking is selected, 0.0.0.0 (representing the internal Azure Services) is added to the CosmosDB firewall in addition to any IP's added to the 'allowedIpAddresses' parameter.  Users are encouraged to include the IP address of the deployment server in the 'allowedIpAddresses.  This becomes not-applicable on completion of the deployment when CosmosDB, Key Vault, Azure Container Registry and the Web Application is configured for private networking only.  If the 'allowedIpAddresses parameter is not used, the administrator can manually add in the deployment server IP address to the Settings > Networking section of the coresponding service(s) and rerun the deployment.
 
 - To evaluate any infrastructure changes between versions, with AZD the user can run:
 `azd provision --preview` 
+
+### Private Networking
+
+When private networking is configured, access from the developers workstation to push updates and new Azure configurations will be blocked.  In addition, testing the web application when not on a VPN attached to the private network subnet is expected to be blocked.
+
+During initial deployment, if post an error is raised "failed running post hooks: 'postprovision'" the deployment is being blocked from executing scripts against the CosmosDB service.  Ensure the deployment workstation IP address is added to the "allowedIPAddresses" parameter.  Similar messages may be seen from the Azure Container Registry Service.
+
+When private networking is enabled, to test the web applicaiton, users may configure a VPN into the deployed vNet (space is provided for this) or the administration may adjust the networking limitations to the deployed website.  This may be accomplished with the following script:
+
+`az webapp update --name <appName>-<environment>-app --resource-group <appName>-<environment>-rg --public-network-access Enabled;`
+
+To permit redeployment of Azure infrastructure services, the following script may be used to enable access when private networking is enabled.
+
+```
+az cosmosdb update --name <appName>-<environment>-cosmos --resource-group <appName>-<environment>-rg --public-network-access enabled
+az keyvault update --name <appName>-<environment>-kv --resource-group <appName>-<environment>-rg --public-network-access enabled 
+az acr update --name <appName><environment>acr --resource-group <appName>-<environment>-rg --public-network-enabled true
+az resource update --name <appName>-<environment>-app --resource-group <appName>-<environment>-rg --resource-type "Microsoft.Web/sites" --set properties.publicNetworkAccess=Enabled
+```
+
+---
+
+## Azure Government (USGov) Considerations
+
+### Services Deployed
+
+| Service | Azure Commercial | Azure Government | Notes |
+|---------|------------------|------------------|-------|
+| App Service | ✅ | ✅ | Premium V3 tier |
+| Cosmos DB | ✅ | ✅ | Serverless mode |
+| Azure OpenAI | ✅ | ✅ | Standard SKU only in USGov |
+| Azure AI Search | ✅ | ✅ | Basic tier |
+| Document Intelligence | ✅ | ✅ | Limited regions |
+| Storage Account | ✅ | ✅ | Standard LRS |
+| Key Vault | ✅ | ✅ | Standard tier |
+| Container Registry | ✅ | ✅ | Basic tier |
+| Application Insights | ✅ | ✅ | |
+| Log Analytics | ✅ | ✅ | |
+| Content Safety | ✅ | ⚠️ Limited | Not all regions |
+| Speech Service | ✅ | ⚠️ Limited | Feature restrictions |
+| Video Indexer | ✅ | ❌ Not Available | |
+| Redis Cache | ✅ | ✅ | Standard tier |
+
+### Endpoint Differences
+
+The deployment automatically handles the following endpoint differences:
+- ACR Domain: `.azurecr.io` → `.azurecr.us`
+- Entra Login: `login.microsoftonline.com` → `login.microsoftonline.us`
+- OpenID Issuer: `sts.windows.net` → `login.microsoftonline.us`
+- Private DNS Zones: Automatically configured for USGov
+
+---
+
+## Frequently Asked Questions
+
+### General Questions
+
+**Q: How long does deployment take?**
+A: Initial deployment typically takes 15-40 minutes depending on options selected. Subsequent deployments are faster.
+
+**Q: What Azure permissions do I need?**
+A: You need Owner or Contributor role on the target subscription, plus ability to create Entra ID app registrations (or work with your Entra admin).
+
+**Q: Can I deploy to an existing resource group?**
+A: No, the deployment creates a new resource group named `<appName>-<environment>-rg`.
+
+**Q: What is the default authentication type?**
+A: You can choose between `key` (API keys stored in Key Vault) or `managed_identity` (recommended for production).
+
+### Model Configuration
+
+**Q: How do I customize which GPT models are deployed?**
+A: Override the `gptModels` parameter with your desired configuration:
+```json
+[
+  {
+    "modelName": "gpt-4o",
+    "modelVersion": "2024-11-20",
+    "skuName": "GlobalStandard",
+    "skuCapacity": 100
+  }
+]
+```
+
+**Q: What's the difference between GlobalStandard and Standard SKU?**
+A: `GlobalStandard` provides access to Azure's global AI infrastructure with higher availability but is not available in Azure Government. `Standard` is region-specific and is required for USGov deployments.
+
+### Networking
+
+**Q: Can I deploy without private networking initially and add it later?**
+A: Yes, set `enablePrivateNetworking` to `false` initially. You can enable it later but this requires re-running the deployment.
+
+**Q: Why do I need to add my IP address to allowedIpAddresses?**
+A: During deployment, scripts need to access Cosmos DB and other services. Your IP must be allowed through the firewall temporarily.
+
+### Costs
+
+**Q: What's the estimated monthly cost?**
+A: Base infrastructure (without optional services) costs approximately:
+- App Service Plan (P1v3): ~$150/month
+- Cosmos DB (Serverless): Pay-per-request
+- Azure OpenAI: Pay-per-token
+- Azure AI Search (Basic): ~$70/month
+- Other services: Variable based on usage
+
+### Upgrading
+
+**Q: How do I upgrade to a new version?**
+A: Run `azd up` again from the updated codebase. Use `azd provision --preview` to review changes first.
+
+---
+
+## Troubleshooting
+
+### Common Deployment Errors
+
+**Error: "failed running post hooks: 'postprovision'"**
+- **Cause:** Deployment scripts cannot access Cosmos DB or other services
+- **Solution:** Add your IP address to the `allowedIpAddresses` parameter and redeploy
+
+**Error: "The subscription is not registered to use namespace 'Microsoft.CognitiveServices'"**
+- **Cause:** Required resource provider not registered
+- **Solution:** Run `az provider register --namespace Microsoft.CognitiveServices`
+
+**Error: "Quota exceeded for deployment"**
+- **Cause:** Azure OpenAI quota limits reached
+- **Solution:** Request quota increase or reduce `skuCapacity` in model configuration
+
+**Error: "InvalidTemplateDeployment - GlobalStandard SKU not available"**
+- **Cause:** Attempting USGov deployment with GlobalStandard SKU
+- **Solution:** Use `Standard` SKU for all models in Azure Government
+
+**Error: "Resource 'Microsoft.VideoIndexer/accounts' not found"**
+- **Cause:** Video Indexer not available in region (especially USGov)
+- **Solution:** Set `deployVideoIndexerService` to `false`
+
+### Post-Deployment Issues
+
+**Issue: Cannot access the web application**
+- Verify the Entra app registration is configured correctly
+- Check that admin consent was granted for API permissions
+- Ensure users are assigned to the enterprise application
+
+**Issue: "Test Connection" fails in Admin Settings**
+- For Managed Identity: Wait 5-10 minutes for role assignments to propagate
+- For Key Authentication: Verify secrets exist in Key Vault
+- Check Application Insights for detailed error logs
+
+**Issue: AI Search shows "Index Schema Mismatch"**
+- This is expected on first deployment
+- Click "Create user Index", "Create group Index", "Create public Index" in Admin Settings
+
+### Logs and Diagnostics
+
+Enable diagnostic logging by setting `enableDiagLogging` to `true`. Logs are sent to:
+- Log Analytics Workspace: `<appName>-<environment>-logs`
+- Application Insights: `<appName>-<environment>-ai`
+
+View application logs:
+```bash
+az webapp log tail --name <appName>-<environment>-app --resource-group <appName>-<environment>-rg
+```
+
 
