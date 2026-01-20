@@ -1,6 +1,6 @@
 // chat-onload.js
 
-import { loadConversations } from "./chat-conversations.js";
+import { loadConversations, selectConversation, ensureConversationPresent } from "./chat-conversations.js";
 // Import handleDocumentSelectChange
 import { loadAllDocs, populateDocumentSelectScope, handleDocumentSelectChange } from "./chat-documents.js";
 import { getUrlParameter } from "./chat-utils.js"; // Assuming getUrlParameter is in chat-utils.js now
@@ -11,10 +11,11 @@ import { initConversationInfoButton } from "./chat-conversation-info-button.js";
 import { initializeStreamingToggle } from "./chat-streaming.js";
 import { initializeReasoningToggle } from "./chat-reasoning.js";
 
-window.addEventListener('DOMContentLoaded', () => {
+window.addEventListener('DOMContentLoaded', async () => {
   console.log("DOM Content Loaded. Starting initializations."); // Log start
 
-  loadConversations(); // Load conversations immediately
+    // Load conversations immediately (awaitable so deep-link can run after)
+    await loadConversations();
 
   // Initialize the conversation info button
   initConversationInfoButton();
@@ -70,13 +71,13 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 
   // Load documents, prompts, and user settings
-  Promise.all([
-      loadAllDocs(),
-      loadUserPrompts(),
-      loadGroupPrompts(),
-      loadUserSettings()
-  ])
-  .then(([docsResult, userPromptsResult, groupPromptsResult, userSettings]) => {
+  try {
+      const [docsResult, userPromptsResult, groupPromptsResult, userSettings] = await Promise.all([
+          loadAllDocs(),
+          loadUserPrompts(),
+          loadGroupPrompts(),
+          loadUserSettings()
+      ]);
       console.log("Initial data (Docs, Prompts, Settings) loaded successfully."); // Log success
       
       // Set the preferred model if available
@@ -191,13 +192,24 @@ window.addEventListener('DOMContentLoaded', () => {
       initializePromptInteractions();
 
 
+      // Deep-link: conversationId query param
+      const conversationId = getUrlParameter("conversationId") || getUrlParameter("conversation_id");
+      if (conversationId) {
+          try {
+              await ensureConversationPresent(conversationId);
+              await selectConversation(conversationId);
+          } catch (err) {
+              console.error('Failed to load conversation from URL param:', err);
+              showToast('Could not open that conversation.', 'danger');
+          }
+      }
+
       console.log("All initializations complete."); // Log end
 
-  })
-  .catch((err) => {
+  } catch (err) {
       console.error("Error during initial data loading or setup:", err);
       // Maybe try to initialize prompts even if doc loading fails? Depends on requirements.
       // console.log("Attempting to initialize prompts despite data load error...");
       // initializePromptInteractions();
-  });
+  }
 });

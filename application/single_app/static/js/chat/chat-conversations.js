@@ -242,7 +242,7 @@ export function loadConversations() {
   isLoadingConversations = true;
   conversationsList.innerHTML = '<div class="text-center p-3 text-muted">Loading conversations...</div>'; // Loading state
 
-  fetch("/api/get_conversations")
+  return fetch("/api/get_conversations")
     .then(response => response.ok ? response.json() : response.json().then(err => Promise.reject(err)))
     .then(data => {
       conversationsList.innerHTML = ""; // Clear loading state
@@ -308,6 +308,48 @@ export function loadConversations() {
       conversationsList.innerHTML = `<div class="text-center p-3 text-danger">Error loading conversations: ${error.error || 'Unknown error'}</div>`;
       isLoadingConversations = false; // Reset flag on error too
     });
+}
+
+// Ensure a conversation exists in the list; fetch metadata if missing
+export async function ensureConversationPresent(conversationId) {
+  if (!conversationId) throw new Error('No conversationId provided');
+
+  // Already in list
+  const existing = document.querySelector(`.conversation-item[data-conversation-id="${conversationId}"]`);
+  if (existing) return existing;
+
+  // Fetch metadata to validate ownership and get details
+  const res = await fetch(`/api/conversations/${conversationId}/metadata`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Failed to load conversation ${conversationId}`);
+  }
+  const metadata = await res.json();
+
+  // Build a conversation object compatible with createConversationItem
+  const convo = {
+    id: conversationId,
+    title: metadata.title || 'Conversation',
+    last_updated: metadata.last_updated || new Date().toISOString(),
+    classification: metadata.classification || [],
+    context: metadata.context || [],
+    chat_type: metadata.chat_type || null,
+    is_pinned: metadata.is_pinned || false,
+    is_hidden: metadata.is_hidden || false,
+  };
+
+  // Keep allConversations in sync
+  allConversations = [convo, ...allConversations.filter(c => c.id !== conversationId)];
+
+  const convoItem = createConversationItem(convo);
+  conversationsList.prepend(convoItem);
+
+  // Refresh sidebar so it appears there too
+  if (window.chatSidebarConversations && window.chatSidebarConversations.loadSidebarConversations) {
+    window.chatSidebarConversations.loadSidebarConversations();
+  }
+
+  return convoItem;
 }
 
 export function createConversationItem(convo) {
@@ -921,6 +963,8 @@ export async function selectConversation(conversationId) {
   if (setSidebarActiveConversation) {
     setSidebarActiveConversation(conversationId);
   }
+
+  updateConversationUrl(conversationId);
 
   // Clear any "edit mode" state if switching conversations
   if (currentlyEditingId && currentlyEditingId !== conversationId) {
@@ -1548,5 +1592,17 @@ function addChatTypeBadges(convoItem, classificationsEl) {
   } else {
     // If chatType is unknown/null or model-only, don't add any workspace badges
     console.log(`addChatTypeBadges: No badges added for chatType="${chatType}" (likely model-only conversation)`);
+  }
+}
+
+function updateConversationUrl(conversationId) {
+  if (!conversationId) return;
+
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.set('conversationId', conversationId);
+    window.history.replaceState({}, '', url.toString());
+  } catch (error) {
+    console.warn('Failed to update conversation URL:', error);
   }
 }
