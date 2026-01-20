@@ -59,6 +59,39 @@ $(document).ready(function () {
     }
   });
 
+  // Add event delegation for select user button in search results
+  $(document).on("click", ".select-user-btn", function () {
+    const id = $(this).data("user-id");
+    const name = $(this).data("user-name");
+    const email = $(this).data("user-email");
+    selectUserForAdd(id, name, email);
+  });
+
+  // Add event delegation for remove member button
+  $(document).on("click", ".remove-member-btn", function () {
+    const userId = $(this).data("user-id");
+    removeMember(userId);
+  });
+
+  // Add event delegation for change role button
+  $(document).on("click", ".change-role-btn", function () {
+    const userId = $(this).data("user-id");
+    const currentRole = $(this).data("user-role");
+    openChangeRoleModal(userId, currentRole);
+    $("#changeRoleModal").modal("show");
+  });
+
+  // Add event delegation for approve/reject request buttons
+  $(document).on("click", ".approve-request-btn", function () {
+    const requestId = $(this).data("request-id");
+    approveRequest(requestId);
+  });
+
+  $(document).on("click", ".reject-request-btn", function () {
+    const requestId = $(this).data("request-id");
+    rejectRequest(requestId);
+  });
+
   // CSV Bulk Upload Events
   $("#addBulkMemberBtn").on("click", function () {
     $("#csvBulkUploadModal").modal("show");
@@ -407,17 +440,15 @@ function renderMemberActions(member) {
     } else {
       return `
         <button
-          class="btn btn-sm btn-danger me-1"
-          onclick="removeMember('${member.userId}')">
+          class="btn btn-sm btn-danger me-1 remove-member-btn"
+          data-user-id="${member.userId}">
           Remove
         </button>
         <button
           type="button"
-          class="btn btn-sm btn-outline-secondary"
-          data-bs-toggle="modal"
-          data-bs-target="#changeRoleModal"
-          onclick="openChangeRoleModal('${member.userId}', '${member.role}')"
-        >
+          class="btn btn-sm btn-outline-secondary change-role-btn"
+          data-user-id="${member.userId}"
+          data-user-role="${member.role}">
           Change Role
         </button>
       `;
@@ -473,8 +504,10 @@ function loadPendingRequests() {
           <td>${u.displayName}</td>
           <td>${u.email}</td>
           <td>
-            <button class="btn btn-sm btn-success" onclick="approveRequest('${u.userId}')">Approve</button>
-            <button class="btn btn-sm btn-danger" onclick="rejectRequest('${u.userId}')">Reject</button>
+            <button class="btn btn-sm btn-success approve-request-btn" 
+                    data-request-id="${u.userId}">Approve</button>
+            <button class="btn btn-sm btn-danger reject-request-btn" 
+                    data-request-id="${u.userId}">Reject</button>
           </td>
         </tr>
       `;
@@ -522,66 +555,44 @@ function rejectRequest(requestId) {
   });
 }
 
+// Search users for manual add
 function searchUsers() {
   const term = $("#userSearchTerm").val().trim();
   if (!term) {
-    alert("Please enter a search term.");
+    alert("Enter a name or email to search.");
     return;
   }
-
-  // UI state
   $("#searchStatus").text("Searching...");
   $("#searchUsersBtn").prop("disabled", true);
 
-  $.ajax({
-    url: "/api/userSearch",
-    method: "GET",
-    data: { query: term },
-    dataType: "json",
-  })
-    .done(function (results) {
-      renderUserSearchResults(results);
-    })
-    .fail(function (jqXHR, textStatus, errorThrown) {
-      console.error("User search error:", textStatus, errorThrown);
-
-      if (jqXHR.status === 401) {
-        // Session expired or no token → force re-login
-        window.location.href = "/login";
-      } else {
-        const msg = jqXHR.responseJSON?.error
-          ? jqXHR.responseJSON.error
-          : "User search failed.";
-        alert(msg);
-      }
+  $.get("/api/userSearch", { query: term })
+    .done(renderUserSearchResults)
+    .fail(function (jq) {
+      const err = jq.responseJSON?.error || jq.statusText;
+      alert("User search failed: " + err);
     })
     .always(function () {
-      // Restore UI state
       $("#searchStatus").text("");
       $("#searchUsersBtn").prop("disabled", false);
     });
 }
 
+// Render user-search results in add-member modal
 function renderUserSearchResults(users) {
   let html = "";
-  if (!users || users.length === 0) {
-    html = `
-      <tr>
-        <td colspan="3" class="text-muted text-center">No results found</td>
-      </tr>
-    `;
+  if (!users || !users.length) {
+    html = `<tr><td colspan="3" class="text-center text-muted">No results.</td></tr>`;
   } else {
-    users.forEach((u) => {
+    users.forEach(u => {
       html += `
         <tr>
           <td>${u.displayName || "(no name)"}</td>
           <td>${u.email || ""}</td>
           <td>
-            <button class="btn btn-sm btn-primary"
-              onclick="selectUserForAdd('${u.id}', '${u.displayName}', '${
-        u.email
-      }')"
-            >
+            <button class="btn btn-sm btn-primary select-user-btn"
+                    data-user-id="${u.id}"
+                    data-user-name="${u.displayName}"
+                    data-user-email="${u.email}">
               Select
             </button>
           </td>
@@ -592,9 +603,10 @@ function renderUserSearchResults(users) {
   $("#userSearchResultsTable tbody").html(html);
 }
 
-function selectUserForAdd(uid, displayName, email) {
-  $("#newUserId").val(uid);
-  $("#newUserDisplayName").val(displayName);
+// Populate manual-add fields from search result
+function selectUserForAdd(id, name, email) {
+  $("#newUserId").val(id);
+  $("#newUserDisplayName").val(name);
   $("#newUserEmail").val(email);
 }
 

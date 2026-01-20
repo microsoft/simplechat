@@ -413,24 +413,47 @@ def register_route_frontend_admin_settings(app):
                 if debug_timer_value < min_val or debug_timer_value > max_val:
                     debug_timer_value = min(max(debug_timer_value, min_val), max_val)
             
+            # Get existing timer settings to check if they've changed
+            existing_debug_timer_enabled = settings.get('debug_logging_timer_enabled', False)
+            existing_debug_timer_value = settings.get('debug_timer_value', 1)
+            existing_debug_timer_unit = settings.get('debug_timer_unit', 'hours')
+            existing_debug_logging_enabled = settings.get('enable_debug_logging', False)
+            existing_debug_turnoff_time = settings.get('debug_logging_turnoff_time')
+            
+            # Determine if timer settings have changed
+            timer_settings_changed = (
+                debug_logging_timer_enabled != existing_debug_timer_enabled or
+                debug_timer_value != existing_debug_timer_value or
+                debug_timer_unit != existing_debug_timer_unit
+            )
+            debug_logging_newly_enabled = enable_debug_logging and not existing_debug_logging_enabled
+            
             # Calculate debug logging turnoff time if timer is enabled and debug logging is on
             if enable_debug_logging and debug_logging_timer_enabled:
-                now = datetime.now()
-                
-                if debug_timer_unit == 'minutes':
-                    delta = timedelta(minutes=debug_timer_value)
-                elif debug_timer_unit == 'hours':
-                    delta = timedelta(hours=debug_timer_value)
-                elif debug_timer_unit == 'days':
-                    delta = timedelta(days=debug_timer_value)
-                elif debug_timer_unit == 'weeks':
-                    delta = timedelta(weeks=debug_timer_value)
+                # Only recalculate turnoff time if:
+                # 1. Timer settings have changed (value, unit, or enabled state), OR
+                # 2. Debug logging was just enabled, OR
+                # 3. No existing turnoff time exists
+                if timer_settings_changed or debug_logging_newly_enabled or not existing_debug_turnoff_time:
+                    now = datetime.now()
+                    
+                    if debug_timer_unit == 'minutes':
+                        delta = timedelta(minutes=debug_timer_value)
+                    elif debug_timer_unit == 'hours':
+                        delta = timedelta(hours=debug_timer_value)
+                    elif debug_timer_unit == 'days':
+                        delta = timedelta(days=debug_timer_value)
+                    elif debug_timer_unit == 'weeks':
+                        delta = timedelta(weeks=debug_timer_value)
+                    else:
+                        delta = timedelta(hours=1)  # default fallback
+                    
+                    debug_logging_turnoff_time = now + delta
+                    # Convert to ISO string for JSON serialization
+                    debug_logging_turnoff_time_str = debug_logging_turnoff_time.isoformat()
                 else:
-                    delta = timedelta(hours=1)  # default fallback
-                
-                debug_logging_turnoff_time = now + delta
-                # Convert to ISO string for JSON serialization
-                debug_logging_turnoff_time_str = debug_logging_turnoff_time.isoformat()
+                    # Preserve existing turnoff time
+                    debug_logging_turnoff_time_str = existing_debug_turnoff_time
             else:
                 debug_logging_turnoff_time_str = None
 
@@ -439,6 +462,7 @@ def register_route_frontend_admin_settings(app):
             file_timer_value = int(form_data.get('file_timer_value', 1))
             file_timer_unit = form_data.get('file_timer_unit', 'hours')
             file_processing_logs_turnoff_time = None
+            enable_file_processing_logs = form_data.get('enable_file_processing_logs') == 'on'
             
             # Validate file timer values
             if file_timer_unit in timer_limits:
@@ -446,25 +470,47 @@ def register_route_frontend_admin_settings(app):
                 if file_timer_value < min_val or file_timer_value > max_val:
                     file_timer_value = min(max(file_timer_value, min_val), max_val)
             
+            # Get existing file timer settings to check if they've changed
+            existing_file_timer_enabled = settings.get('file_processing_logs_timer_enabled', False)
+            existing_file_timer_value = settings.get('file_timer_value', 1)
+            existing_file_timer_unit = settings.get('file_timer_unit', 'hours')
+            existing_file_processing_logs_enabled = settings.get('enable_file_processing_logs', False)
+            existing_file_turnoff_time = settings.get('file_processing_logs_turnoff_time')
+            
+            # Determine if timer settings have changed
+            file_timer_settings_changed = (
+                file_processing_logs_timer_enabled != existing_file_timer_enabled or
+                file_timer_value != existing_file_timer_value or
+                file_timer_unit != existing_file_timer_unit
+            )
+            file_processing_logs_newly_enabled = enable_file_processing_logs and not existing_file_processing_logs_enabled
+            
             # Calculate file processing logs turnoff time if timer is enabled and file processing logs are on
-            enable_file_processing_logs = form_data.get('enable_file_processing_logs') == 'on'
             if enable_file_processing_logs and file_processing_logs_timer_enabled:
-                now = datetime.now()
-                
-                if file_timer_unit == 'minutes':
-                    delta = timedelta(minutes=file_timer_value)
-                elif file_timer_unit == 'hours':
-                    delta = timedelta(hours=file_timer_value)
-                elif file_timer_unit == 'days':
-                    delta = timedelta(days=file_timer_value)
-                elif file_timer_unit == 'weeks':
-                    delta = timedelta(weeks=file_timer_value)
+                # Only recalculate turnoff time if:
+                # 1. Timer settings have changed (value, unit, or enabled state), OR
+                # 2. File processing logs was just enabled, OR
+                # 3. No existing turnoff time exists
+                if file_timer_settings_changed or file_processing_logs_newly_enabled or not existing_file_turnoff_time:
+                    now = datetime.now()
+                    
+                    if file_timer_unit == 'minutes':
+                        delta = timedelta(minutes=file_timer_value)
+                    elif file_timer_unit == 'hours':
+                        delta = timedelta(hours=file_timer_value)
+                    elif file_timer_unit == 'days':
+                        delta = timedelta(days=file_timer_value)
+                    elif file_timer_unit == 'weeks':
+                        delta = timedelta(weeks=file_timer_value)
+                    else:
+                        delta = timedelta(hours=1)  # default fallback
+                    
+                    file_processing_logs_turnoff_time = now + delta
+                    # Convert to ISO string for JSON serialization
+                    file_processing_logs_turnoff_time_str = file_processing_logs_turnoff_time.isoformat()
                 else:
-                    delta = timedelta(hours=1)  # default fallback
-                
-                file_processing_logs_turnoff_time = now + delta
-                # Convert to ISO string for JSON serialization
-                file_processing_logs_turnoff_time_str = file_processing_logs_turnoff_time.isoformat()
+                    # Preserve existing turnoff time
+                    file_processing_logs_turnoff_time_str = existing_file_turnoff_time
             else:
                 file_processing_logs_turnoff_time_str = None
 
