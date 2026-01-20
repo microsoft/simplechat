@@ -2716,7 +2716,7 @@ def register_route_backend_chats(app):
                             credential = DefaultAzureCredential()
                             token_provider = get_bearer_token_provider(
                                 credential,
-                                "https://cognitiveservices.azure.com/.default"
+                                cognitive_services_scope
                             )
                             gpt_client = AzureOpenAI(
                                 api_version=api_version,
