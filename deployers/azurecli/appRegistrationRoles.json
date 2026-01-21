@@ -46,5 +46,22 @@
     "id": "b0288440-5195-4264-9a33-cf9a4635d634",
     "isEnabled": true,
     "value": "ExternalApi"
+  },
+  {
+    "allowedMemberTypes": [ "User" ],
+    "description": "Full administrative access to Control Center features",
+    "displayName": "Control Center Admin",
+    "id": "fad9b386-9392-4f15-b6df-6b47d8f1e75c",
+    "isEnabled": true,
+    "value": "ControlCenterAdmin"
+  },
+  {
+    "allowedMemberTypes": [ "User" ],
+    "description": "Read-only access to Control Center dashboard and metrics",
+    "displayName": "Control Center Dashboard Reader",
+    "id": "6399b062-9114-49ec-a291-c445a0b2b33e",
+    "isEnabled": true,
+    "value": "ControlCenterDashboardReader"
   }
+
 ]

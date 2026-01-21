@@ -12,6 +12,9 @@ param keyVault string
 param authenticationType string
 param configureApplicationPermissions bool
 
+param enablePrivateNetworking bool
+param allowedIpAddresses array = []
+
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
   name: 'diagnosticConfigs'
@@ -23,12 +26,16 @@ resource cosmosDb 'Microsoft.DocumentDB/databaseAccounts@2023-04-15' = {
   location: location
   kind: 'GlobalDocumentDB'
   properties: {
+    publicNetworkAccess: 'Enabled'  // configuration is set in post provision step in azure.yaml with post deployment script
     databaseAccountOfferType: 'Standard'
     capabilities: [
       {
         name: 'EnableServerless'
       }
     ]
+    isVirtualNetworkFilterEnabled: enablePrivateNetworking ? true : false
+    ipRules: enablePrivateNetworking ? allowedIpAddresses : []
+
     locations: [
       {
         locationName: location
@@ -85,8 +92,8 @@ resource cosmosDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-pre
 //=========================================================
 // store cosmos db keys in key vault if using key authentication and configure app permissions = true
 //=========================================================
-module storeEnterpriseAppSecret 'keyVault-Secrets.bicep' = if (authenticationType == 'key' && configureApplicationPermissions) {
-  name: 'storeEnterpriseAppSecret'
+module storeCosmosDbSecret 'keyVault-Secrets.bicep' = if (authenticationType == 'key' && configureApplicationPermissions) {
+  name: 'storeCosmosDbSecret'
   params: {
     keyVaultName: keyVault
     secretName: 'cosmos-db-key'

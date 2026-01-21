@@ -12,6 +12,8 @@ param keyVault string
 param authenticationType string
 param configureApplicationPermissions bool
 
+param enablePrivateNetworking bool
+
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
   name: 'diagnosticConfigs'
@@ -27,7 +29,7 @@ resource searchService 'Microsoft.Search/searchServices@2025-05-01' = {
   properties: {
     #disable-next-line BCP036 // template is incorrect 
     hostingMode: 'default'
-    publicNetworkAccess: 'Enabled'
+    publicNetworkAccess: enablePrivateNetworking ? 'Disabled' : 'Enabled'
     replicaCount: 1
     partitionCount: 1
     authOptions: {
@@ -54,7 +56,7 @@ resource searchDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-pre
 //=========================================================
 // store search Service keys in key vault if using key authentication and configure app permissions = true
 //=========================================================
-module searchServiceSecret 'keyVault-Secrets.bicep' = if (configureApplicationPermissions) {
+module searchServiceSecret 'keyVault-Secrets.bicep' = if (authenticationType == 'key' && configureApplicationPermissions) {
   name: 'storeSearchServiceSecret'
   params: {
     keyVaultName: keyVault
