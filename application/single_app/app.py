@@ -58,6 +58,7 @@ from route_backend_agents import bpa as admin_agents_bp
 from route_backend_public_workspaces import *
 from route_backend_public_documents import *
 from route_backend_public_prompts import *
+from route_backend_user_agreement import register_route_backend_user_agreement
 from route_backend_speech import register_route_backend_speech
 from route_backend_tts import register_route_backend_tts
 from route_enhanced_citations import register_enhanced_citations_routes
@@ -616,6 +617,9 @@ register_route_backend_public_documents(app)
 
 # ------------------- API Public Prompts Routes ----------
 register_route_backend_public_prompts(app)
+
+# ------------------- API User Agreement Routes ----------
+register_route_backend_user_agreement(app)
 
 # ------------------- Extenral Health Routes ----------
 register_route_external_health(app)

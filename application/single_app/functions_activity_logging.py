@@ -1080,3 +1080,138 @@ def log_public_workspace_status_change(
             level=logging.ERROR
         )
         debug_print(f"⚠️  Warning: Failed to log public workspace status change: {str(e)}")
+
+
+def log_user_agreement_accepted(
+    user_id: str,
+    workspace_type: str,
+    workspace_id: str,
+    workspace_name: Optional[str] = None,
+    action_context: Optional[str] = None
+) -> None:
+    """
+    Log when a user accepts a user agreement in a workspace.
+    This record is used to track acceptance and support daily acceptance features.
+    
+    Args:
+        user_id (str): The ID of the user who accepted the agreement
+        workspace_type (str): Type of workspace ('personal', 'group', 'public')
+        workspace_id (str): The ID of the workspace
+        workspace_name (str, optional): The name of the workspace
+        action_context (str, optional): The context/action that triggered the agreement 
+                                        (e.g., 'file_upload', 'chat')
+    """
+    
+    try:
+        import uuid
+        
+        # Create user agreement acceptance record
+        acceptance_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': user_id,
+            'activity_type': 'user_agreement_accepted',
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'accepted_date': datetime.utcnow().strftime('%Y-%m-%d'),  # Date only for daily lookup
+            'workspace_type': workspace_type,
+            'workspace_context': {
+                f'{workspace_type}_workspace_id': workspace_id,
+                'workspace_name': workspace_name
+            },
+            'action_context': action_context
+        }
+        
+        # Save to activity_logs container
+        cosmos_activity_logs_container.create_item(body=acceptance_record)
+        
+        # Also log to Application Insights for monitoring
+        log_event(
+            message=f"User agreement accepted: user {user_id} in {workspace_type} workspace {workspace_id}",
+            extra=acceptance_record,
+            level=logging.INFO
+        )
+        
+        debug_print(f"✅ Logged user agreement acceptance: user {user_id} in {workspace_type} workspace {workspace_id}")
+        
+    except Exception as e:
+        # Log error but don't fail the operation
+        log_event(
+            message=f"Error logging user agreement acceptance: {str(e)}",
+            extra={
+                'user_id': user_id,
+                'workspace_type': workspace_type,
+                'workspace_id': workspace_id,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+        debug_print(f"⚠️  Warning: Failed to log user agreement acceptance: {str(e)}")
+
+
+def has_user_accepted_agreement_today(
+    user_id: str,
+    workspace_type: str,
+    workspace_id: str
+) -> bool:
+    """
+    Check if a user has already accepted the user agreement today for a given workspace.
+    Used to implement the "accept once per day" feature.
+    
+    Args:
+        user_id (str): The ID of the user
+        workspace_type (str): Type of workspace ('personal', 'group', 'public')
+        workspace_id (str): The ID of the workspace
+        
+    Returns:
+        bool: True if user has accepted today, False otherwise
+    """
+    
+    try:
+        today_date = datetime.utcnow().strftime('%Y-%m-%d')
+        
+        # Query for today's acceptance record
+        query = """
+            SELECT VALUE COUNT(1) FROM c 
+            WHERE c.user_id = @user_id 
+            AND c.activity_type = 'user_agreement_accepted'
+            AND c.accepted_date = @today_date
+            AND c.workspace_type = @workspace_type
+            AND c.workspace_context[@workspace_id_key] = @workspace_id
+        """
+        
+        workspace_id_key = f'{workspace_type}_workspace_id'
+        
+        params = [
+            {"name": "@user_id", "value": user_id},
+            {"name": "@today_date", "value": today_date},
+            {"name": "@workspace_type", "value": workspace_type},
+            {"name": "@workspace_id_key", "value": workspace_id_key},
+            {"name": "@workspace_id", "value": workspace_id}
+        ]
+        
+        results = list(cosmos_activity_logs_container.query_items(
+            query=query,
+            parameters=params,
+            enable_cross_partition_query=False  # Query by partition key (user_id)
+        ))
+        
+        count = results[0] if results else 0
+        
+        debug_print(f"🔍 User agreement check: user {user_id}, workspace {workspace_id}, today={today_date}, accepted={count > 0}")
+        
+        return count > 0
+        
+    except Exception as e:
+        # Log error and return False (require re-acceptance on error)
+        log_event(
+            message=f"Error checking user agreement acceptance: {str(e)}",
+            extra={
+                'user_id': user_id,
+                'workspace_type': workspace_type,
+                'workspace_id': workspace_id,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+        debug_print(f"⚠️  Error checking user agreement acceptance: {str(e)}")
+        return False

@@ -1,6 +1,20 @@
 <!-- BEGIN release_notes.md BLOCK -->
 # Feature Release
 
+### **(v0.236.007)**
+
+#### New Features
+
+*   **User Agreement for File Uploads**
+    *   Global admin-configurable agreement that users must accept before uploading files to workspaces.
+    *   **Configuration Options**: Enable/disable toggle, workspace type selection (Personal, Group, Public, Chat), Markdown-formatted agreement text (200-word limit), optional daily acceptance mode.
+    *   **User Experience**: Modal prompt before file uploads with agreement text, "Accept & Upload" or "Cancel" options, daily acceptance tracking to reduce repeat prompts.
+    *   **Activity Logging**: All acceptances logged to activity logs for compliance tracking with timestamp, user, workspace type, and action context.
+    *   **Admin Access**: Settings accessible via Admin Settings → Workspaces tab → User Agreement section, with sidebar navigation link.
+    *   **Files Added**: `user-agreement.js` (frontend module), `route_backend_user_agreement.py` (API endpoints).
+    *   **Files Modified**: `admin_settings.html`, `route_frontend_admin_settings.py`, `base.html`, `_sidebar_nav.html`, `functions_activity_logging.py`, `workspace-documents.js`, `group_workspaces.html`, `public_workspace.js`, `chat-input-actions.js`.
+    *   (Ref: User Agreement modal, file upload workflows, activity logging, admin configuration)
+
 ### **(v0.235.025)**
 
 #### Bug Fixes
