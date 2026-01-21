@@ -106,6 +106,75 @@ def register_route_backend_retention_policy(app):
             }), 500
     
     
+    @app.route('/api/retention-policy/defaults/<workspace_type>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def get_retention_policy_defaults(workspace_type):
+        """
+        Get organization default retention policy settings for a specific workspace type.
+        
+        Args:
+            workspace_type: One of 'personal', 'group', or 'public'
+            
+        Returns:
+            JSON with default_conversation_days and default_document_days for the workspace type
+        """
+        try:
+            # Validate workspace type
+            if workspace_type not in ['personal', 'group', 'public']:
+                return jsonify({
+                    'success': False,
+                    'error': f'Invalid workspace type: {workspace_type}'
+                }), 400
+            
+            settings = get_settings()
+            
+            # Get the default values for the specified workspace type
+            default_conversation = settings.get(f'default_retention_conversation_{workspace_type}', 'none')
+            default_document = settings.get(f'default_retention_document_{workspace_type}', 'none')
+            
+            # Get human-readable labels for the values
+            def get_retention_label(value):
+                if value == 'none' or value is None:
+                    return 'No automatic deletion'
+                try:
+                    days = int(value)
+                    if days == 1:
+                        return '1 day'
+                    elif days == 21:
+                        return '21 days (3 weeks)'
+                    elif days == 90:
+                        return '90 days (3 months)'
+                    elif days == 180:
+                        return '180 days (6 months)'
+                    elif days == 365:
+                        return '365 days (1 year)'
+                    elif days == 730:
+                        return '730 days (2 years)'
+                    else:
+                        return f'{days} days'
+                except (ValueError, TypeError):
+                    return 'No automatic deletion'
+            
+            return jsonify({
+                'success': True,
+                'workspace_type': workspace_type,
+                'default_conversation_days': default_conversation,
+                'default_document_days': default_document,
+                'default_conversation_label': get_retention_label(default_conversation),
+                'default_document_label': get_retention_label(default_document)
+            })
+            
+        except Exception as e:
+            debug_print(f"Error fetching retention policy defaults: {e}")
+            log_event(f"Fetching retention policy defaults failed: {e}", level=logging.ERROR)
+            return jsonify({
+                'success': False,
+                'error': 'Failed to fetch retention policy defaults'
+            }), 500
+    
+    
     @app.route('/api/admin/retention-policy/execute', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required

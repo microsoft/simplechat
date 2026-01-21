@@ -537,6 +537,14 @@ def register_route_frontend_admin_settings(app):
             enable_retention_policy_public = form_data.get('enable_retention_policy_public') == 'on'
             retention_policy_execution_hour = int(form_data.get('retention_policy_execution_hour', 2))
             
+            # Default retention policy values for each workspace type
+            default_retention_conversation_personal = form_data.get('default_retention_conversation_personal', 'none')
+            default_retention_document_personal = form_data.get('default_retention_document_personal', 'none')
+            default_retention_conversation_group = form_data.get('default_retention_conversation_group', 'none')
+            default_retention_document_group = form_data.get('default_retention_document_group', 'none')
+            default_retention_conversation_public = form_data.get('default_retention_conversation_public', 'none')
+            default_retention_document_public = form_data.get('default_retention_document_public', 'none')
+            
             # Validate execution hour (0-23)
             if retention_policy_execution_hour < 0 or retention_policy_execution_hour > 23:
                 retention_policy_execution_hour = 2  # Default to 2 AM
@@ -696,6 +704,12 @@ def register_route_frontend_admin_settings(app):
                 'enable_retention_policy_public': enable_retention_policy_public,
                 'retention_policy_execution_hour': retention_policy_execution_hour,
                 'retention_policy_next_run': retention_policy_next_run,
+                'default_retention_conversation_personal': default_retention_conversation_personal,
+                'default_retention_document_personal': default_retention_document_personal,
+                'default_retention_conversation_group': default_retention_conversation_group,
+                'default_retention_document_group': default_retention_document_group,
+                'default_retention_conversation_public': default_retention_conversation_public,
+                'default_retention_document_public': default_retention_document_public,
 
                 # User Agreement
                 'enable_user_agreement': enable_user_agreement,

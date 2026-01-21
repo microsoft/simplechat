@@ -2289,6 +2289,129 @@
                         </div>
                     </div>
                     
+                    <!-- Default Retention Policy Settings -->
+                    <div class="card bg-light p-3 mb-3">
+                        <h6 class="mb-3"><i class="bi bi-sliders me-2"></i>Default Retention Policies</h6>
+                        <p class="text-muted small mb-3">Set organization-wide default retention periods for each workspace type. Users can override these defaults with their own preferences. Setting a default here means new users/workspaces will start with this retention period.</p>
+                        
+                        <!-- Personal Workspace Defaults -->
+                        <div class="row g-3 mb-3" id="retention_defaults_personal" style="{% if not settings.enable_retention_policy_personal %}display: none;{% endif %}">
+                            <div class="col-12">
+                                <label class="form-label fw-bold"><i class="bi bi-person me-1"></i>Personal Workspace Defaults</label>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="default_retention_conversation_personal" class="form-label">Conversation Retention</label>
+                                <select class="form-select" id="default_retention_conversation_personal" name="default_retention_conversation_personal">
+                                    <option value="none" {% if settings.default_retention_conversation_personal == 'none' %}selected{% endif %}>No automatic deletion</option>
+                                    <option value="1" {% if settings.default_retention_conversation_personal == '1' or settings.default_retention_conversation_personal == 1 %}selected{% endif %}>1 day</option>
+                                    <option value="5" {% if settings.default_retention_conversation_personal == '5' or settings.default_retention_conversation_personal == 5 %}selected{% endif %}>5 days</option>
+                                    <option value="10" {% if settings.default_retention_conversation_personal == '10' or settings.default_retention_conversation_personal == 10 %}selected{% endif %}>10 days</option>
+                                    <option value="21" {% if settings.default_retention_conversation_personal == '21' or settings.default_retention_conversation_personal == 21 %}selected{% endif %}>21 days (3 weeks)</option>
+                                    <option value="30" {% if settings.default_retention_conversation_personal == '30' or settings.default_retention_conversation_personal == 30 %}selected{% endif %}>30 days</option>
+                                    <option value="60" {% if settings.default_retention_conversation_personal == '60' or settings.default_retention_conversation_personal == 60 %}selected{% endif %}>60 days</option>
+                                    <option value="90" {% if settings.default_retention_conversation_personal == '90' or settings.default_retention_conversation_personal == 90 %}selected{% endif %}>90 days (3 months)</option>
+                                    <option value="180" {% if settings.default_retention_conversation_personal == '180' or settings.default_retention_conversation_personal == 180 %}selected{% endif %}>180 days (6 months)</option>
+                                    <option value="365" {% if settings.default_retention_conversation_personal == '365' or settings.default_retention_conversation_personal == 365 %}selected{% endif %}>365 days (1 year)</option>
+                                    <option value="730" {% if settings.default_retention_conversation_personal == '730' or settings.default_retention_conversation_personal == 730 %}selected{% endif %}>730 days (2 years)</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="default_retention_document_personal" class="form-label">Document Retention</label>
+                                <select class="form-select" id="default_retention_document_personal" name="default_retention_document_personal">
+                                    <option value="none" {% if settings.default_retention_document_personal == 'none' %}selected{% endif %}>No automatic deletion</option>
+                                    <option value="1" {% if settings.default_retention_document_personal == '1' or settings.default_retention_document_personal == 1 %}selected{% endif %}>1 day</option>
+                                    <option value="5" {% if settings.default_retention_document_personal == '5' or settings.default_retention_document_personal == 5 %}selected{% endif %}>5 days</option>
+                                    <option value="10" {% if settings.default_retention_document_personal == '10' or settings.default_retention_document_personal == 10 %}selected{% endif %}>10 days</option>
+                                    <option value="21" {% if settings.default_retention_document_personal == '21' or settings.default_retention_document_personal == 21 %}selected{% endif %}>21 days (3 weeks)</option>
+                                    <option value="30" {% if settings.default_retention_document_personal == '30' or settings.default_retention_document_personal == 30 %}selected{% endif %}>30 days</option>
+                                    <option value="60" {% if settings.default_retention_document_personal == '60' or settings.default_retention_document_personal == 60 %}selected{% endif %}>60 days</option>
+                                    <option value="90" {% if settings.default_retention_document_personal == '90' or settings.default_retention_document_personal == 90 %}selected{% endif %}>90 days (3 months)</option>
+                                    <option value="180" {% if settings.default_retention_document_personal == '180' or settings.default_retention_document_personal == 180 %}selected{% endif %}>180 days (6 months)</option>
+                                    <option value="365" {% if settings.default_retention_document_personal == '365' or settings.default_retention_document_personal == 365 %}selected{% endif %}>365 days (1 year)</option>
+                                    <option value="730" {% if settings.default_retention_document_personal == '730' or settings.default_retention_document_personal == 730 %}selected{% endif %}>730 days (2 years)</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <!-- Group Workspace Defaults -->
+                        <div class="row g-3 mb-3" id="retention_defaults_group" style="{% if not settings.enable_retention_policy_group %}display: none;{% endif %}">
+                            <div class="col-12">
+                                <label class="form-label fw-bold"><i class="bi bi-people me-1"></i>Group Workspace Defaults</label>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="default_retention_conversation_group" class="form-label">Conversation Retention</label>
+                                <select class="form-select" id="default_retention_conversation_group" name="default_retention_conversation_group">
+                                    <option value="none" {% if settings.default_retention_conversation_group == 'none' %}selected{% endif %}>No automatic deletion</option>
+                                    <option value="1" {% if settings.default_retention_conversation_group == '1' or settings.default_retention_conversation_group == 1 %}selected{% endif %}>1 day</option>
+                                    <option value="5" {% if settings.default_retention_conversation_group == '5' or settings.default_retention_conversation_group == 5 %}selected{% endif %}>5 days</option>
+                                    <option value="10" {% if settings.default_retention_conversation_group == '10' or settings.default_retention_conversation_group == 10 %}selected{% endif %}>10 days</option>
+                                    <option value="21" {% if settings.default_retention_conversation_group == '21' or settings.default_retention_conversation_group == 21 %}selected{% endif %}>21 days (3 weeks)</option>
+                                    <option value="30" {% if settings.default_retention_conversation_group == '30' or settings.default_retention_conversation_group == 30 %}selected{% endif %}>30 days</option>
+                                    <option value="60" {% if settings.default_retention_conversation_group == '60' or settings.default_retention_conversation_group == 60 %}selected{% endif %}>60 days</option>
+                                    <option value="90" {% if settings.default_retention_conversation_group == '90' or settings.default_retention_conversation_group == 90 %}selected{% endif %}>90 days (3 months)</option>
+                                    <option value="180" {% if settings.default_retention_conversation_group == '180' or settings.default_retention_conversation_group == 180 %}selected{% endif %}>180 days (6 months)</option>
+                                    <option value="365" {% if settings.default_retention_conversation_group == '365' or settings.default_retention_conversation_group == 365 %}selected{% endif %}>365 days (1 year)</option>
+                                    <option value="730" {% if settings.default_retention_conversation_group == '730' or settings.default_retention_conversation_group == 730 %}selected{% endif %}>730 days (2 years)</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="default_retention_document_group" class="form-label">Document Retention</label>
+                                <select class="form-select" id="default_retention_document_group" name="default_retention_document_group">
+                                    <option value="none" {% if settings.default_retention_document_group == 'none' %}selected{% endif %}>No automatic deletion</option>
+                                    <option value="1" {% if settings.default_retention_document_group == '1' or settings.default_retention_document_group == 1 %}selected{% endif %}>1 day</option>
+                                    <option value="5" {% if settings.default_retention_document_group == '5' or settings.default_retention_document_group == 5 %}selected{% endif %}>5 days</option>
+                                    <option value="10" {% if settings.default_retention_document_group == '10' or settings.default_retention_document_group == 10 %}selected{% endif %}>10 days</option>
+                                    <option value="21" {% if settings.default_retention_document_group == '21' or settings.default_retention_document_group == 21 %}selected{% endif %}>21 days (3 weeks)</option>
+                                    <option value="30" {% if settings.default_retention_document_group == '30' or settings.default_retention_document_group == 30 %}selected{% endif %}>30 days</option>
+                                    <option value="60" {% if settings.default_retention_document_group == '60' or settings.default_retention_document_group == 60 %}selected{% endif %}>60 days</option>
+                                    <option value="90" {% if settings.default_retention_document_group == '90' or settings.default_retention_document_group == 90 %}selected{% endif %}>90 days (3 months)</option>
+                                    <option value="180" {% if settings.default_retention_document_group == '180' or settings.default_retention_document_group == 180 %}selected{% endif %}>180 days (6 months)</option>
+                                    <option value="365" {% if settings.default_retention_document_group == '365' or settings.default_retention_document_group == 365 %}selected{% endif %}>365 days (1 year)</option>
+                                    <option value="730" {% if settings.default_retention_document_group == '730' or settings.default_retention_document_group == 730 %}selected{% endif %}>730 days (2 years)</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <!-- Public Workspace Defaults -->
+                        <div class="row g-3" id="retention_defaults_public" style="{% if not settings.enable_retention_policy_public %}display: none;{% endif %}">
+                            <div class="col-12">
+                                <label class="form-label fw-bold"><i class="bi bi-globe me-1"></i>Public Workspace Defaults</label>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="default_retention_conversation_public" class="form-label">Conversation Retention</label>
+                                <select class="form-select" id="default_retention_conversation_public" name="default_retention_conversation_public">
+                                    <option value="none" {% if settings.default_retention_conversation_public == 'none' %}selected{% endif %}>No automatic deletion</option>
+                                    <option value="1" {% if settings.default_retention_conversation_public == '1' or settings.default_retention_conversation_public == 1 %}selected{% endif %}>1 day</option>
+                                    <option value="5" {% if settings.default_retention_conversation_public == '5' or settings.default_retention_conversation_public == 5 %}selected{% endif %}>5 days</option>
+                                    <option value="10" {% if settings.default_retention_conversation_public == '10' or settings.default_retention_conversation_public == 10 %}selected{% endif %}>10 days</option>
+                                    <option value="21" {% if settings.default_retention_conversation_public == '21' or settings.default_retention_conversation_public == 21 %}selected{% endif %}>21 days (3 weeks)</option>
+                                    <option value="30" {% if settings.default_retention_conversation_public == '30' or settings.default_retention_conversation_public == 30 %}selected{% endif %}>30 days</option>
+                                    <option value="60" {% if settings.default_retention_conversation_public == '60' or settings.default_retention_conversation_public == 60 %}selected{% endif %}>60 days</option>
+                                    <option value="90" {% if settings.default_retention_conversation_public == '90' or settings.default_retention_conversation_public == 90 %}selected{% endif %}>90 days (3 months)</option>
+                                    <option value="180" {% if settings.default_retention_conversation_public == '180' or settings.default_retention_conversation_public == 180 %}selected{% endif %}>180 days (6 months)</option>
+                                    <option value="365" {% if settings.default_retention_conversation_public == '365' or settings.default_retention_conversation_public == 365 %}selected{% endif %}>365 days (1 year)</option>
+                                    <option value="730" {% if settings.default_retention_conversation_public == '730' or settings.default_retention_conversation_public == 730 %}selected{% endif %}>730 days (2 years)</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="default_retention_document_public" class="form-label">Document Retention</label>
+                                <select class="form-select" id="default_retention_document_public" name="default_retention_document_public">
+                                    <option value="none" {% if settings.default_retention_document_public == 'none' %}selected{% endif %}>No automatic deletion</option>
+                                    <option value="1" {% if settings.default_retention_document_public == '1' or settings.default_retention_document_public == 1 %}selected{% endif %}>1 day</option>
+                                    <option value="5" {% if settings.default_retention_document_public == '5' or settings.default_retention_document_public == 5 %}selected{% endif %}>5 days</option>
+                                    <option value="10" {% if settings.default_retention_document_public == '10' or settings.default_retention_document_public == 10 %}selected{% endif %}>10 days</option>
+                                    <option value="21" {% if settings.default_retention_document_public == '21' or settings.default_retention_document_public == 21 %}selected{% endif %}>21 days (3 weeks)</option>
+                                    <option value="30" {% if settings.default_retention_document_public == '30' or settings.default_retention_document_public == 30 %}selected{% endif %}>30 days</option>
+                                    <option value="60" {% if settings.default_retention_document_public == '60' or settings.default_retention_document_public == 60 %}selected{% endif %}>60 days</option>
+                                    <option value="90" {% if settings.default_retention_document_public == '90' or settings.default_retention_document_public == 90 %}selected{% endif %}>90 days (3 months)</option>
+                                    <option value="180" {% if settings.default_retention_document_public == '180' or settings.default_retention_document_public == 180 %}selected{% endif %}>180 days (6 months)</option>
+                                    <option value="365" {% if settings.default_retention_document_public == '365' or settings.default_retention_document_public == 365 %}selected{% endif %}>365 days (1 year)</option>
+                                    <option value="730" {% if settings.default_retention_document_public == '730' or settings.default_retention_document_public == 730 %}selected{% endif %}>730 days (2 years)</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    
                     <!-- Scheduled execution time -->
                     <div class="mb-3">
                         <label for="retention_policy_execution_hour" class="form-label">Scheduled Execution Time (Hour of Day)</label>
@@ -4046,6 +4169,33 @@
     });
 
     // Retention Policy Functions
+    
+    // Toggle retention default sections visibility based on enable checkboxes
+    function toggleRetentionDefaultsVisibility() {
+        const personalEnabled = document.getElementById('enable_retention_policy_personal').checked;
+        const groupEnabled = document.getElementById('enable_retention_policy_group').checked;
+        const publicEnabled = document.getElementById('enable_retention_policy_public').checked;
+        
+        const personalDefaults = document.getElementById('retention_defaults_personal');
+        const groupDefaults = document.getElementById('retention_defaults_group');
+        const publicDefaults = document.getElementById('retention_defaults_public');
+        
+        if (personalDefaults) {
+            personalDefaults.style.display = personalEnabled ? '' : 'none';
+        }
+        if (groupDefaults) {
+            groupDefaults.style.display = groupEnabled ? '' : 'none';
+        }
+        if (publicDefaults) {
+            publicDefaults.style.display = publicEnabled ? '' : 'none';
+        }
+    }
+    
+    // Attach event listeners to retention policy enable checkboxes
+    document.getElementById('enable_retention_policy_personal')?.addEventListener('change', toggleRetentionDefaultsVisibility);
+    document.getElementById('enable_retention_policy_group')?.addEventListener('change', toggleRetentionDefaultsVisibility);
+    document.getElementById('enable_retention_policy_public')?.addEventListener('change', toggleRetentionDefaultsVisibility);
+    
     function showManualExecutionModal() {
         const modal = new bootstrap.Modal(document.getElementById('manualExecutionModal'));
         
