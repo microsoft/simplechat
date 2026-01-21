@@ -338,7 +338,46 @@
   <script src="{{ url_for('static', filename='js/profile-image.js') }}"></script>
   <!-- Notifications JavaScript (for badge polling on all pages) -->
   <script src="{{ url_for('static', filename='js/notifications.js') }}"></script>
+  <!-- User Agreement JavaScript (for file upload prompts) -->
+  {% if app_settings.enable_user_agreement %}
+  <script src="{{ url_for('static', filename='js/user-agreement.js') }}"></script>
+  {% endif %}
   {% block scripts %}{% endblock %}
+
+  <!-- User Agreement Upload Modal (shown before file uploads when enabled) -->
+  {% if app_settings.enable_user_agreement %}
+  <div class="modal fade" id="userAgreementUploadModal" tabindex="-1" aria-labelledby="userAgreementUploadModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+      <div class="modal-content">
+        <div class="modal-header bg-primary text-white">
+          <h5 class="modal-title" id="userAgreementUploadModalLabel">
+            <i class="bi bi-file-earmark-check me-2"></i>User Agreement Required
+          </h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-muted small mb-3">
+            Please read and accept the following agreement before uploading files:
+          </p>
+          <div id="userAgreementUploadContent" class="border rounded p-3 mb-3" 
+               style="max-height: 300px; overflow-y: auto; background-color: var(--bs-light);">
+            <!-- Rendered Markdown content will be inserted here -->
+          </div>
+          <div id="userAgreementUploadDailyCheck" class="text-muted small" style="display: none;">
+            <i class="bi bi-info-circle me-1"></i>
+            Your acceptance will be remembered for today.
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="userAgreementUploadCancelBtn" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-primary" id="userAgreementUploadAcceptBtn">
+            <i class="bi bi-check-lg me-1"></i>Accept & Upload
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
 </body>
 
 </html>

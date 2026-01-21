@@ -1294,10 +1294,22 @@ app_settings.app_title }} {% endblock %} {% block head %}
   // Manual button click (fallback)
   const uploadArea = document.getElementById("upload-area");
   if (groupFileInput && uploadArea && groupUploadStatusSpan) {
-    // Auto-upload on file selection
+    // Auto-upload on file selection (with user agreement check)
     groupFileInput.addEventListener("change", () => {
       if (groupFileInput.files && groupFileInput.files.length > 0) {
-        uploadGroupFiles(groupFileInput.files);
+        // Check for user agreement before uploading
+        if (window.UserAgreementManager && activeGroupId) {
+          window.UserAgreementManager.checkBeforeUpload(
+            groupFileInput.files,
+            'group',
+            activeGroupId,
+            function(files) {
+              uploadGroupFiles(files);
+            }
+          );
+        } else {
+          uploadGroupFiles(groupFileInput.files);
+        }
       }
     });
 
@@ -1324,7 +1336,19 @@ app_settings.app_title }} {% endblock %} {% block head %}
       uploadArea.classList.remove("dragover");
       uploadArea.style.borderColor = "";
       if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-        uploadGroupFiles(e.dataTransfer.files);
+        // Check for user agreement before uploading (drag-and-drop)
+        if (window.UserAgreementManager && activeGroupId) {
+          window.UserAgreementManager.checkBeforeUpload(
+            e.dataTransfer.files,
+            'group',
+            activeGroupId,
+            function(files) {
+              uploadGroupFiles(files);
+            }
+          );
+        } else {
+          uploadGroupFiles(e.dataTransfer.files);
+        }
       }
     });
   }

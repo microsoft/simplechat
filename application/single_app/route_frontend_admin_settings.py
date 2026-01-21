@@ -158,6 +158,16 @@ def register_route_frontend_admin_settings(app):
         if 'classification_banner_text_color' not in settings:
             settings['classification_banner_text_color'] = '#ffffff'  # White text by default
         
+        # --- Add defaults for user agreement ---
+        if 'enable_user_agreement' not in settings:
+            settings['enable_user_agreement'] = False
+        if 'user_agreement_text' not in settings:
+            settings['user_agreement_text'] = ''
+        if 'user_agreement_apply_to' not in settings:
+            settings['user_agreement_apply_to'] = []
+        if 'enable_user_agreement_daily' not in settings:
+            settings['enable_user_agreement_daily'] = False
+        
         # --- Add defaults for key vault
         if 'enable_key_vault_secret_storage' not in settings:
             settings['enable_key_vault_secret_storage'] = False
@@ -537,6 +547,28 @@ def register_route_frontend_admin_settings(app):
                 
                 retention_policy_next_run = next_run.isoformat()
 
+            # --- User Agreement Settings ---
+            enable_user_agreement = form_data.get('enable_user_agreement') == 'on'
+            user_agreement_text = form_data.get('user_agreement_text', '').strip()
+            enable_user_agreement_daily = form_data.get('enable_user_agreement_daily') == 'on'
+            
+            # Build apply_to list from checkboxes
+            user_agreement_apply_to = []
+            if form_data.get('user_agreement_apply_personal') == 'on':
+                user_agreement_apply_to.append('personal')
+            if form_data.get('user_agreement_apply_group') == 'on':
+                user_agreement_apply_to.append('group')
+            if form_data.get('user_agreement_apply_public') == 'on':
+                user_agreement_apply_to.append('public')
+            if form_data.get('user_agreement_apply_chat') == 'on':
+                user_agreement_apply_to.append('chat')
+            
+            # Validate word count (max 200 words)
+            if enable_user_agreement and user_agreement_text:
+                word_count = len(user_agreement_text.split())
+                if word_count > 200:
+                    flash('User Agreement text exceeds 200 word limit. Please shorten the text.', 'warning')
+
             # --- Authentication & Redirect Settings ---
             enable_front_door = form_data.get('enable_front_door') == 'on'
             front_door_url = form_data.get('front_door_url', '').strip()
@@ -657,6 +689,12 @@ def register_route_frontend_admin_settings(app):
                 'enable_retention_policy_public': enable_retention_policy_public,
                 'retention_policy_execution_hour': retention_policy_execution_hour,
                 'retention_policy_next_run': retention_policy_next_run,
+
+                # User Agreement
+                'enable_user_agreement': enable_user_agreement,
+                'user_agreement_text': user_agreement_text,
+                'user_agreement_apply_to': user_agreement_apply_to,
+                'enable_user_agreement_daily': enable_user_agreement_daily,
 
                 # Multimedia & Metadata
                 'enable_video_file_support': enable_video_file_support,
