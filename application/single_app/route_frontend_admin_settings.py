@@ -135,6 +135,9 @@ def register_route_frontend_admin_settings(app):
                     'name': 'default_agent',
                     'is_global': True
                 }
+                log_event("Error retrieving global agents for default selection.", level=logging.ERROR)
+                debug_print("Error retrieving global agents for default selection.")
+                
         if 'allow_user_agents' not in settings:
             settings['allow_user_agents'] = False
         if 'allow_user_custom_agent_endpoints' not in settings:
@@ -200,7 +203,7 @@ def register_route_frontend_admin_settings(app):
                      pass # Replace with actual logic
             except Exception as e:
                  print(f"Error retrieving GPT deployments: {e}")
-            # ... similar try/except for embedding and image models ...
+                 log_event(f"Error retrieving GPT deployments: {e}", level=logging.ERROR)
 
             # Check for application updates
             current_version = app.config['VERSION']
@@ -243,6 +246,7 @@ def register_route_frontend_admin_settings(app):
                         settings.update(new_settings)
                 except Exception as e:
                     print(f"Error checking for updates: {e}")
+                    log_event(f"Error checking for updates: {e}", level=logging.ERROR)
             
             # Get the persisted values for template rendering
             update_available = settings.get('update_available', False)
@@ -377,19 +381,22 @@ def register_route_frontend_admin_settings(app):
             except Exception as e:
                 print(f"Error parsing gpt_model_json: {e}")
                 flash('Error parsing GPT model data. Changes may not be saved.', 'warning')
+                log_event(f"Error parsing GPT model data: {e}", level=logging.ERROR)
                 gpt_model_obj = settings.get('gpt_model', {'selected': [], 'all': []}) # Fallback
-            # ... similar try/except for embedding and image models ...
+                
             try:
                 embedding_model_obj = json.loads(embedding_model_json) if embedding_model_json else {'selected': [], 'all': []}
             except Exception as e:
                 print(f"Error parsing embedding_model_json: {e}")
                 flash('Error parsing Embedding model data. Changes may not be saved.', 'warning')
+                log_event(f"Error parsing Embedding model data: {e}", level=logging.ERROR)
                 embedding_model_obj = settings.get('embedding_model', {'selected': [], 'all': []}) # Fallback
             try:
                 image_gen_model_obj = json.loads(image_gen_model_json) if image_gen_model_json else {'selected': [], 'all': []}
             except Exception as e:
                 print(f"Error parsing image_gen_model_json: {e}")
                 flash('Error parsing Image Gen model data. Changes may not be saved.', 'warning')
+                log_event(f"Error parsing Image Gen model data: {e}", level=logging.ERROR)
                 image_gen_model_obj = settings.get('image_gen_model', {'selected': [], 'all': []}) # Fallback
 
             # --- Extract banner fields from form_data ---
@@ -904,7 +911,7 @@ def register_route_frontend_admin_settings(app):
                 except Exception as e:
                     print(f"Error processing logo file: {e}") # Log the error for debugging
                     flash(f"Error processing logo file: {e}. Existing logo preserved.", "danger")
-                    # On error, new_settings['custom_logo_base64'] keeps its initial value (the old logo)
+                    log_event(f"Error processing logo file: {e}", level=logging.ERROR)
 
             # Process dark mode logo file upload
             logo_dark_file = request.files.get('logo_dark_file')
@@ -987,7 +994,7 @@ def register_route_frontend_admin_settings(app):
                 except Exception as e:
                     print(f"Error processing dark mode logo file: {e}") # Log the error for debugging
                     flash(f"Error processing dark mode logo file: {e}. Existing dark mode logo preserved.", "danger")
-                    # On error, new_settings['custom_logo_dark_base64'] keeps its initial value (the old logo)
+                    log_event(f"Error processing dark mode logo file: {e}", level=logging.ERROR)
 
             # Process favicon file upload
             favicon_file = request.files.get('favicon_file')
@@ -1061,7 +1068,7 @@ def register_route_frontend_admin_settings(app):
                 except Exception as e:
                     print(f"Error processing favicon file: {e}") # Log the error for debugging
                     flash(f"Error processing favicon file: {e}. Existing favicon preserved.", "danger")
-                    # On error, new_settings['custom_favicon_base64'] keeps its initial value (the old favicon)
+                    log_event(f"Error processing favicon file: {e}", level=logging.ERROR)
 
             # --- Update settings in DB ---
             # new_settings now contains either the new logo/favicon base64 or the original ones

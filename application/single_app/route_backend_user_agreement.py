@@ -160,6 +160,7 @@ def register_route_backend_user_agreement(app):
             
         except Exception as e:
             debug_print(f"[USER_AGREEMENT] Error recording acceptance: {str(e)}")
+            log_event(f"Error recording user agreement acceptance: {str(e)}", level=logging.ERROR)
             return jsonify({
                 "success": False,
                 "error": f"Failed to record acceptance: {str(e)}"
