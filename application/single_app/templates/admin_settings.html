@@ -2410,6 +2410,19 @@
                                 </select>
                             </div>
                         </div>
+                        
+                        <!-- Force Push Button -->
+                        <div class="row g-3 mt-3">
+                            <div class="col-12">
+                                <div class="alert alert-warning mb-2">
+                                    <i class="bi bi-exclamation-triangle me-2"></i>
+                                    <strong>Force Push:</strong> Override all user/group/workspace custom retention policies with the organization defaults above. Users will then use the organization default until they set their own preference.
+                                </div>
+                                <button type="button" class="btn btn-warning" onclick="showForcePushModal()">
+                                    <i class="bi bi-arrow-repeat me-2"></i>Force Push Defaults to All
+                                </button>
+                            </div>
+                        </div>
                     </div>
                     
                     <!-- Scheduled execution time -->
@@ -3685,6 +3698,71 @@
             </div>
         </div>
 
+        <!-- Force Push Retention Policy Modal -->
+        <div class="modal fade" id="forcePushRetentionModal" tabindex="-1" aria-labelledby="forcePushRetentionModalLabel" aria-hidden="true">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header bg-warning">
+                        <h5 class="modal-title" id="forcePushRetentionModalLabel">
+                            <i class="bi bi-exclamation-triangle me-2"></i>Force Push Retention Defaults
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p>Select which workspace types to force push the organization defaults to. This will reset all custom retention policies to use the organization default.</p>
+                        
+                        <div class="alert alert-info mb-3">
+                            <i class="bi bi-info-circle me-2"></i>
+                            <strong>Note:</strong> This action will first save any changes you've made to the default retention settings above, then push those defaults to all selected workspaces.
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Select Workspace Types:</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="force_push_personal" value="personal">
+                                <label class="form-check-label" for="force_push_personal">
+                                    Personal Workspaces (all users)
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="force_push_group" value="group">
+                                <label class="form-check-label" for="force_push_group">
+                                    Group Workspaces
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="force_push_public" value="public">
+                                <label class="form-check-label" for="force_push_public">
+                                    Public Workspaces
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <div class="alert alert-danger">
+                            <i class="bi bi-exclamation-circle me-2"></i>
+                            <strong>Warning:</strong> This will override any custom retention policies users have set. They will need to reconfigure if they want different settings.
+                        </div>
+                        
+                        <div id="force-push-status" class="mt-3" style="display: none;">
+                            <div class="alert alert-info">
+                                <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                                <span id="force-push-status-text">Processing...</span>
+                            </div>
+                        </div>
+                        
+                        <div id="force-push-results" class="mt-3" style="display: none;"></div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" id="force-push-cancel-btn" data-bs-dismiss="modal">Cancel</button>
+                        <button type="button" class="btn btn-warning" id="force-push-btn" onclick="executeForcePush()">
+                            <i class="bi bi-arrow-repeat me-1"></i>Force Push
+                        </button>
+                        <button type="button" class="btn btn-primary" id="force-push-close-btn" data-bs-dismiss="modal" style="display: none;">Close</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Video Indexer Info Modal -->
         {% include '_video_indexer_info.html' %}
 
@@ -4195,6 +4273,150 @@
     document.getElementById('enable_retention_policy_personal')?.addEventListener('change', toggleRetentionDefaultsVisibility);
     document.getElementById('enable_retention_policy_group')?.addEventListener('change', toggleRetentionDefaultsVisibility);
     document.getElementById('enable_retention_policy_public')?.addEventListener('change', toggleRetentionDefaultsVisibility);
+    
+    // Force Push Modal Functions
+    function showForcePushModal() {
+        const modal = new bootstrap.Modal(document.getElementById('forcePushRetentionModal'));
+        
+        // Reset modal state
+        document.getElementById('force-push-status').style.display = 'none';
+        document.getElementById('force-push-results').style.display = 'none';
+        document.getElementById('force_push_personal').checked = false;
+        document.getElementById('force_push_group').checked = false;
+        document.getElementById('force_push_public').checked = false;
+        document.getElementById('force-push-btn').disabled = false;
+        
+        // Reset button visibility
+        document.getElementById('force-push-cancel-btn').style.display = '';
+        document.getElementById('force-push-btn').style.display = '';
+        document.getElementById('force-push-close-btn').style.display = 'none';
+        
+        modal.show();
+    }
+    
+    function executeForcePush() {
+        const personal = document.getElementById('force_push_personal').checked;
+        const group = document.getElementById('force_push_group').checked;
+        const publicWs = document.getElementById('force_push_public').checked;
+        
+        const scopes = [];
+        if (personal) scopes.push('personal');
+        if (group) scopes.push('group');
+        if (publicWs) scopes.push('public');
+        
+        if (scopes.length === 0) {
+            alert('Please select at least one workspace type.');
+            return;
+        }
+        
+        // Confirm before executing
+        if (!confirm(`Are you sure you want to force push defaults to ${scopes.join(', ')} workspaces? This will save the current settings and override all custom retention policies.`)) {
+            return;
+        }
+        
+        // Show processing status
+        document.getElementById('force-push-status').style.display = 'block';
+        document.getElementById('force-push-status-text').textContent = 'Saving settings first...';
+        document.getElementById('force-push-results').style.display = 'none';
+        document.getElementById('force-push-btn').disabled = true;
+        
+        // First, save the admin settings form via AJAX
+        const form = document.getElementById('admin-settings-form');
+        const formData = new FormData(form);
+        
+        fetch(window.location.pathname, {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Failed to save settings');
+            }
+            // Settings saved, now execute force push
+            document.getElementById('force-push-status-text').textContent = 'Pushing defaults to workspaces...';
+            
+            return fetch('/api/admin/retention-policy/force-push', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ scopes: scopes })
+            });
+        })
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('force-push-status').style.display = 'none';
+            document.getElementById('force-push-results').style.display = 'block';
+            
+            if (data.success) {
+                let resultHtml = `
+                    <div class="alert alert-success">
+                        <i class="bi bi-check-circle me-2"></i>
+                        <strong>Success!</strong> Settings saved and defaults pushed successfully.
+                    </div>
+                    <div class="card">
+                        <div class="card-body">
+                            <h6>Summary:</h6>
+                            <ul class="mb-0">`;
+                
+                if (data.details) {
+                    if (data.details.personal !== undefined) {
+                        resultHtml += `<li>Personal workspaces updated: <strong>${data.details.personal}</strong></li>`;
+                    }
+                    if (data.details.group !== undefined) {
+                        resultHtml += `<li>Group workspaces updated: <strong>${data.details.group}</strong></li>`;
+                    }
+                    if (data.details.public !== undefined) {
+                        resultHtml += `<li>Public workspaces updated: <strong>${data.details.public}</strong></li>`;
+                    }
+                }
+                
+                resultHtml += `<li>Total items updated: <strong>${data.updated_count || 0}</strong></li>
+                            </ul>
+                        </div>
+                    </div>`;
+                
+                document.getElementById('force-push-results').innerHTML = resultHtml;
+                
+                // Reset the form dirty state since we just saved
+                if (typeof resetFormDirtyState === 'function') {
+                    resetFormDirtyState();
+                }
+                // Disable the save button since we just saved
+                const saveBtn = document.getElementById('floating-save-btn');
+                if (saveBtn) {
+                    saveBtn.disabled = true;
+                    saveBtn.classList.remove('btn-primary');
+                    saveBtn.classList.add('btn-secondary');
+                }
+            } else {
+                document.getElementById('force-push-results').innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="bi bi-x-circle me-2"></i>
+                        <strong>Error:</strong> ${data.error || 'Failed to push defaults'}
+                    </div>`;
+            }
+            
+            // Hide Cancel and Force Push buttons, show Close button
+            document.getElementById('force-push-cancel-btn').style.display = 'none';
+            document.getElementById('force-push-btn').style.display = 'none';
+            document.getElementById('force-push-close-btn').style.display = '';
+        })
+        .catch(error => {
+            document.getElementById('force-push-status').style.display = 'none';
+            document.getElementById('force-push-results').style.display = 'block';
+            document.getElementById('force-push-results').innerHTML = `
+                <div class="alert alert-danger">
+                    <i class="bi bi-x-circle me-2"></i>
+                    <strong>Error:</strong> ${error.message}
+                </div>`;
+            
+            // Hide Cancel and Force Push buttons, show Close button
+            document.getElementById('force-push-cancel-btn').style.display = 'none';
+            document.getElementById('force-push-btn').style.display = 'none';
+            document.getElementById('force-push-close-btn').style.display = '';
+        });
+    }
     
     function showManualExecutionModal() {
         const modal = new bootstrap.Modal(document.getElementById('manualExecutionModal'));

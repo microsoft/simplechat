@@ -1215,3 +1215,75 @@ def has_user_accepted_agreement_today(
         )
         debug_print(f"⚠️  Error checking user agreement acceptance: {str(e)}")
         return False
+
+
+def log_retention_policy_force_push(
+    admin_user_id: str,
+    admin_email: str,
+    scopes: list,
+    results: dict,
+    total_updated: int
+) -> None:
+    """
+    Log retention policy force push action to activity_logs container.
+    
+    This creates a permanent audit record when an admin forces organization
+    default retention policies to be applied to all workspaces.
+    
+    Args:
+        admin_user_id (str): User ID of the admin performing the force push
+        admin_email (str): Email of the admin performing the force push
+        scopes (list): List of workspace types affected (e.g., ['personal', 'group', 'public'])
+        results (dict): Breakdown of updates per workspace type
+        total_updated (int): Total number of workspaces/users updated
+    """
+    
+    try:
+        # Create force push activity record
+        force_push_activity = {
+            'id': str(uuid.uuid4()),
+            'user_id': admin_user_id,  # Partition key
+            'activity_type': 'retention_policy_force_push',
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'admin': {
+                'user_id': admin_user_id,
+                'email': admin_email
+            },
+            'force_push_details': {
+                'scopes': scopes,
+                'results': results,
+                'total_updated': total_updated,
+                'executed_at': datetime.utcnow().isoformat()
+            },
+            'workspace_type': 'admin',
+            'workspace_context': {
+                'action': 'retention_policy_force_push'
+            }
+        }
+        
+        # Save to activity_logs container for permanent audit trail
+        cosmos_activity_logs_container.create_item(body=force_push_activity)
+        
+        # Also log to Application Insights for monitoring
+        log_event(
+            message=f"Retention policy force push executed by {admin_email} for scopes: {', '.join(scopes)}. Total updated: {total_updated}",
+            extra=force_push_activity,
+            level=logging.INFO
+        )
+        
+        debug_print(f"✅ Retention policy force push logged: {scopes} by {admin_email}, updated {total_updated}")
+        
+    except Exception as e:
+        # Log error but don't break the force push flow
+        log_event(
+            message=f"Error logging retention policy force push: {str(e)}",
+            extra={
+                'admin_user_id': admin_user_id,
+                'scopes': scopes,
+                'total_updated': total_updated,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+        debug_print(f"⚠️  Warning: Failed to log retention policy force push: {str(e)}")

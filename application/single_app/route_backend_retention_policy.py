@@ -3,7 +3,8 @@
 from config import *
 from functions_authentication import *
 from functions_settings import *
-from functions_retention_policy import execute_retention_policy
+from functions_retention_policy import execute_retention_policy, get_all_user_settings, get_all_groups, get_all_public_workspaces
+from functions_activity_logging import log_retention_policy_force_push
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_debug import debug_print
 
@@ -221,6 +222,162 @@ def register_route_backend_retention_policy(app):
             return jsonify({
                 'success': False,
                 'error': f'Failed to execute retention policy: {str(e)}'
+            }), 500
+    
+    
+    @app.route('/api/admin/retention-policy/force-push', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def force_push_retention_defaults():
+        """
+        Force push organization default retention policies to all users/groups/workspaces.
+        This resets all custom retention policies to use the organization default ('default' value).
+        
+        Body:
+            scopes (list): List of workspace types to push defaults to: 'personal', 'group', 'public'
+        """
+        try:
+            data = request.get_json()
+            scopes = data.get('scopes', [])
+            
+            if not scopes:
+                return jsonify({
+                    'success': False,
+                    'error': 'No workspace scopes provided'
+                }), 400
+            
+            # Validate scopes
+            valid_scopes = ['personal', 'group', 'public']
+            invalid_scopes = [s for s in scopes if s not in valid_scopes]
+            if invalid_scopes:
+                return jsonify({
+                    'success': False,
+                    'error': f'Invalid workspace scopes: {", ".join(invalid_scopes)}'
+                }), 400
+            
+            details = {}
+            total_updated = 0
+            
+            # Force push to personal workspaces (user settings)
+            if 'personal' in scopes:
+                debug_print("Force pushing retention defaults to personal workspaces...")
+                all_users = get_all_user_settings()
+                personal_count = 0
+                
+                for user in all_users:
+                    user_id = user.get('id')
+                    if not user_id:
+                        continue
+                    
+                    try:
+                        # Update user's retention policy to use 'default'
+                        user_settings = user.get('settings', {})
+                        user_settings['retention_policy'] = {
+                            'conversation_retention_days': 'default',
+                            'document_retention_days': 'default'
+                        }
+                        user['settings'] = user_settings
+                        
+                        cosmos_user_settings_container.upsert_item(user)
+                        personal_count += 1
+                    except Exception as e:
+                        debug_print(f"Error updating user {user_id}: {e}")
+                        continue
+                
+                details['personal'] = personal_count
+                total_updated += personal_count
+                debug_print(f"Updated {personal_count} personal workspaces")
+            
+            # Force push to group workspaces
+            if 'group' in scopes:
+                debug_print("Force pushing retention defaults to group workspaces...")
+                from functions_group import cosmos_groups_container
+                all_groups = get_all_groups()
+                group_count = 0
+                
+                for group in all_groups:
+                    group_id = group.get('id')
+                    if not group_id:
+                        continue
+                    
+                    try:
+                        # Update group's retention policy to use 'default'
+                        group['retention_policy'] = {
+                            'conversation_retention_days': 'default',
+                            'document_retention_days': 'default'
+                        }
+                        
+                        cosmos_groups_container.upsert_item(group)
+                        group_count += 1
+                    except Exception as e:
+                        debug_print(f"Error updating group {group_id}: {e}")
+                        continue
+                
+                details['group'] = group_count
+                total_updated += group_count
+                debug_print(f"Updated {group_count} group workspaces")
+            
+            # Force push to public workspaces
+            if 'public' in scopes:
+                debug_print("Force pushing retention defaults to public workspaces...")
+                from functions_public_workspaces import cosmos_public_workspaces_container
+                all_workspaces = get_all_public_workspaces()
+                public_count = 0
+                
+                for workspace in all_workspaces:
+                    workspace_id = workspace.get('id')
+                    if not workspace_id:
+                        continue
+                    
+                    try:
+                        # Update workspace's retention policy to use 'default'
+                        workspace['retention_policy'] = {
+                            'conversation_retention_days': 'default',
+                            'document_retention_days': 'default'
+                        }
+                        
+                        cosmos_public_workspaces_container.upsert_item(workspace)
+                        public_count += 1
+                    except Exception as e:
+                        debug_print(f"Error updating public workspace {workspace_id}: {e}")
+                        continue
+                
+                details['public'] = public_count
+                total_updated += public_count
+                debug_print(f"Updated {public_count} public workspaces")
+            
+            # Log to activity logs for audit trail
+            admin_user_id = session.get('user', {}).get('oid', 'unknown')
+            admin_email = session.get('user', {}).get('preferred_username', session.get('user', {}).get('email', 'unknown'))
+            log_retention_policy_force_push(
+                admin_user_id=admin_user_id,
+                admin_email=admin_email,
+                scopes=scopes,
+                results=details,
+                total_updated=total_updated
+            )
+            
+            log_event("retention_policy_force_push", {
+                "scopes": scopes,
+                "updated_count": total_updated,
+                "details": details
+            })
+            
+            return jsonify({
+                'success': True,
+                'message': f'Defaults pushed to {total_updated} items',
+                'updated_count': total_updated,
+                'scopes': scopes,
+                'details': details
+            })
+            
+        except Exception as e:
+            debug_print(f"Error force pushing retention defaults: {e}")
+            log_event(f"Force push retention defaults failed: {e}", level=logging.ERROR)
+            return jsonify({
+                'success': False,
+                'error': f'Failed to push retention defaults: {str(e)}'
             }), 500
     
     
