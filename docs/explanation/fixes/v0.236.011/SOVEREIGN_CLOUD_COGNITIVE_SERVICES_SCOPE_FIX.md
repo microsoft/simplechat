@@ -4,7 +4,7 @@
 
 Fixed hardcoded commercial Azure cognitive services scope references in chat streaming and Smart HTTP Plugin that prevented proper authentication in Azure Government (MAG) and custom cloud environments.
 
-**Version Implemented:** 0.236.008
+**Version Implemented:** 0.236.011
 
 **Related Issue:** [#616](https://github.com/microsoft/simplechat/issues/616#issue-3835164022)
 

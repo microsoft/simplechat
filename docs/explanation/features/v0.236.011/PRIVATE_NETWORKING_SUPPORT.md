@@ -4,7 +4,7 @@
 
 Comprehensive private networking support for SimpleChat deployments via Azure Developer CLI (AZD) and Bicep infrastructure-as-code. This feature enables secure, isolated deployments with private endpoints, virtual networks, and private DNS zones.
 
-**Version Implemented:** 0.236.008
+**Version Implemented:** 0.236.011
 
 ## Key Features
 

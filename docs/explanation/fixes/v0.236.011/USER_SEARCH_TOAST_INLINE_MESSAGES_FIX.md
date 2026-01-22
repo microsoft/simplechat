@@ -4,7 +4,7 @@
 
 Updated the `searchUsers()` function to use inline and toast messages instead of browser alert pop-ups, improving user experience and aligning with modern UI patterns.
 
-**Version Implemented:** 0.236.008
+**Version Implemented:** 0.236.011
 
 **Related PR:** [#608](https://github.com/microsoft/simplechat/pull/608#discussion_r2701900020)
 
