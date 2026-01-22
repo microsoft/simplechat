@@ -144,7 +144,8 @@ def validate_template_payload(payload: Dict[str, Any]) -> Optional[str]:
             _parse_additional_settings(payload['additional_settings'])
         except ValueError as exc:
             return str(exc)
-    return None
+    # Return false if valid to keep with consistency of returning bools or values because we return the error.
+    return False
 
 
 def list_agent_templates(status: Optional[str] = None, include_internal: bool = False) -> List[Dict[str, Any]]:

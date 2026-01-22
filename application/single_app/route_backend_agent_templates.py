@@ -63,6 +63,7 @@ def submit_agent_template():
     data = request.get_json(silent=True) or {}
     payload = data.get('template') or data
     validation_error = validate_template_payload(payload)
+    # validate_template_payload returns false if valid, returns the simple error otherwise.
     if validation_error:
         return jsonify({'error': validation_error}), 400
 
