@@ -6,6 +6,10 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional schema reference for tooling."
+    },
     "allowedAuthTypes": {
       "type": "array",
       "description": "List of auth types this plugin supports. Values must match auth.type in plugin.schema.json.",
