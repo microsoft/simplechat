@@ -12,6 +12,8 @@ param keyVault string
 param authenticationType string
 param configureApplicationPermissions bool
 
+param enablePrivateNetworking bool
+
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
   name: 'diagnosticConfigs'
@@ -26,7 +28,9 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2022-09-01' = {
     name: 'Standard_LRS'
   }
   kind: 'StorageV2'
+  
   properties: {
+    publicNetworkAccess: enablePrivateNetworking ? 'Disabled' : 'Enabled'
     accessTier: 'Hot'
     allowBlobPublicAccess: false
     allowSharedKeyAccess: true

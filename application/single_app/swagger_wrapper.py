@@ -94,6 +94,7 @@ import json
 import re
 import inspect
 import ast
+import logging
 from datetime import datetime, timedelta
 import hashlib
 import time
@@ -205,7 +206,8 @@ class SwaggerCache:
                     return json_content, 200, 'application/json'
                     
             except Exception as e:
-                print(f"Error generating swagger spec: {e}")
+                debug_print(f"Error generating swagger spec: {e}")
+                log_event(f"Swagger spec generation failed: {str(e)}", level=logging.ERROR)
                 error_response = {"error": "Failed to generate specification"}
                 return error_response, 500, 'application/json'
     
@@ -257,7 +259,46 @@ def _analyze_function_returns(func) -> Dict[str, Any]:
         import textwrap
         source = textwrap.dedent(source)
         
-        tree = ast.parse(source)
+        # If textwrap.dedent didn't fully dedent, manually remove common leading whitespace
+        lines = source.split('\n')
+        if lines and lines[0]:  # If first line exists and is not empty
+            # Find how much leading whitespace the first non-empty line has
+            first_indent = len(lines[0]) - len(lines[0].lstrip())
+            if first_indent > 0:
+                # Only remove whitespace from lines that have enough indentation
+                # This preserves multi-line strings that may have less indentation
+                dedented_lines = []
+                for line in lines:
+                    if line.strip():  # Non-empty line
+                        # Calculate this line's leading whitespace
+                        line_leading = len(line) - len(line.lstrip())
+                        if line_leading >= first_indent:
+                            # Line has enough indentation - remove first_indent amount
+                            dedented_lines.append(line[first_indent:])
+                        else:
+                            # Line has less indentation - preserve it as-is
+                            dedented_lines.append(line)
+                    else:
+                        # Empty line - preserve
+                        dedented_lines.append(line)
+                source = '\n'.join(dedented_lines)
+        
+        try:
+            tree = ast.parse(source)
+        except SyntaxError as se:
+            # Log the problematic source for debugging
+            debug_print(f"AST parse error in {func.__name__} at line {se.lineno}: {se.msg}")
+            debug_print(f"Problematic source (first 500 chars): {source[:500]}")
+            if se.lineno:
+                # Show the problematic line and surrounding context
+                source_lines = source.split('\n')
+                start_line = max(0, se.lineno - 3)
+                end_line = min(len(source_lines), se.lineno + 2)
+                debug_print(f"Context around line {se.lineno}:")
+                for i in range(start_line, end_line):
+                    marker = ">>>" if i == se.lineno - 1 else "   "
+                    debug_print(f"{marker} {i+1}: {source_lines[i][:100]}")
+            raise
         
         responses = {}
         
@@ -334,6 +375,8 @@ def _analyze_function_returns(func) -> Dict[str, Any]:
         
     except Exception as e:
         # Fallback to default responses if analysis fails
+        debug_print(f"Warning: Could not analyze return statements for {func.__name__}: {e}")
+        log_event(f"Return statement analysis failed for {func.__name__}: {str(e)}", level=logging.WARNING)
         return {
             "200": {
                 "description": "Success",
@@ -432,6 +475,9 @@ def _get_error_description(status_code: int) -> str:
 def _analyze_function_parameters(func) -> List[Dict[str, Any]]:
     """
     Analyze function parameters to generate parameter documentation.
+    Automatically detects:
+    - Path parameters from function signature
+    - Query parameters from request.args.get() calls in source code
     
     Args:
         func: Function to analyze
@@ -440,9 +486,10 @@ def _analyze_function_parameters(func) -> List[Dict[str, Any]]:
         List of parameter definitions
     """
     try:
-        sig = inspect.signature(func)
         parameters = []
         
+        # First, check for path parameters from function signature
+        sig = inspect.signature(func)
         for param_name, param in sig.parameters.items():
             # Skip common Flask route parameters
             if param_name in ['args', 'kwargs']:
@@ -450,9 +497,9 @@ def _analyze_function_parameters(func) -> List[Dict[str, Any]]:
                 
             param_def = {
                 "name": param_name,
-                "in": "path",  # Assume path parameters for now
+                "in": "path",
                 "required": param.default == inspect.Parameter.empty,
-                "description": f"Parameter: {param_name}",
+                "description": f"Path parameter: {param_name}",
                 "schema": {"type": "string"}
             }
             
@@ -469,9 +516,167 @@ def _analyze_function_parameters(func) -> List[Dict[str, Any]]:
             
             parameters.append(param_def)
         
+        # Second, analyze source code for query parameters (request.args.get calls)
+        try:
+            source = inspect.getsource(func)
+            import textwrap
+            source = textwrap.dedent(source)
+            
+            # If textwrap.dedent didn't fully dedent, manually remove common leading whitespace
+            lines = source.split('\n')
+            if lines and lines[0]:  # If first line exists and is not empty
+                # Find how much leading whitespace the first non-empty line has
+                first_indent = len(lines[0]) - len(lines[0].lstrip())
+                if first_indent > 0:
+                    # Only remove whitespace from lines that have enough indentation
+                    # This preserves multi-line strings that may have less indentation
+                    dedented_lines = []
+                    for line in lines:
+                        if line.strip():  # Non-empty line
+                            # Calculate this line's leading whitespace
+                            line_leading = len(line) - len(line.lstrip())
+                            if line_leading >= first_indent:
+                                # Line has enough indentation - remove first_indent amount
+                                dedented_lines.append(line[first_indent:])
+                            else:
+                                # Line has less indentation - preserve it as-is
+                                dedented_lines.append(line)
+                        else:
+                            # Empty line - preserve
+                            dedented_lines.append(line)
+                    source = '\n'.join(dedented_lines)
+            
+            try:
+                tree = ast.parse(source)
+            except SyntaxError as se:
+                # Log the problematic source for debugging
+                debug_print(f"AST parse error in {func.__name__} at line {se.lineno}: {se.msg}")
+                debug_print(f"Problematic source (first 500 chars): {source[:500]}")
+                if se.lineno:
+                    # Show the problematic line and surrounding context
+                    source_lines = source.split('\n')
+                    start_line = max(0, se.lineno - 3)
+                    end_line = min(len(source_lines), se.lineno + 2)
+                    debug_print(f"Context around line {se.lineno}:")
+                    for i in range(start_line, end_line):
+                        marker = ">>>" if i == se.lineno - 1 else "   "
+                        debug_print(f"{marker} {i+1}: {source_lines[i][:100]}")
+                raise
+            
+            query_params = {}  # {param_name: {type, default, description}}
+            
+            class QueryParameterVisitor(ast.NodeVisitor):
+                def visit_Assign(self, node):
+                    """Look for patterns like: page = int(request.args.get('page', 1))"""
+                    # Check if this is an assignment
+                    if isinstance(node.value, ast.Call):
+                        # Check for type conversion wrapper (int, str, float, bool)
+                        type_wrapper = None
+                        inner_call = node.value
+                        
+                        if (isinstance(node.value.func, ast.Name) and 
+                            node.value.func.id in ['int', 'str', 'float', 'bool'] and
+                            len(node.value.args) > 0 and
+                            isinstance(node.value.args[0], ast.Call)):
+                            type_wrapper = node.value.func.id
+                            inner_call = node.value.args[0]
+                        
+                        # Check if inner call is request.args.get()
+                        if (isinstance(inner_call.func, ast.Attribute) and
+                            isinstance(inner_call.func.value, ast.Attribute) and
+                            isinstance(inner_call.func.value.value, ast.Name) and
+                            inner_call.func.value.value.id == 'request' and
+                            inner_call.func.value.attr == 'args' and
+                            inner_call.func.attr == 'get'):
+                            
+                            # Extract parameter name
+                            if inner_call.args and isinstance(inner_call.args[0], ast.Constant):
+                                param_name = inner_call.args[0].value
+                                
+                                # Extract default value
+                                default_value = None
+                                if len(inner_call.args) > 1:
+                                    default_node = inner_call.args[1]
+                                    if isinstance(default_node, ast.Constant):
+                                        default_value = default_node.value
+                                
+                                # Determine type
+                                param_type = "string"  # default
+                                if type_wrapper == 'int':
+                                    param_type = "integer"
+                                elif type_wrapper == 'float':
+                                    param_type = "number"
+                                elif type_wrapper == 'bool':
+                                    param_type = "boolean"
+                                elif type_wrapper == 'str':
+                                    param_type = "string"
+                                
+                                # Extract variable name for description
+                                var_name = None
+                                if isinstance(node.targets[0], ast.Name):
+                                    var_name = node.targets[0].id
+                                
+                                query_params[param_name] = {
+                                    'type': param_type,
+                                    'default': default_value,
+                                    'var_name': var_name
+                                }
+                    
+                    self.generic_visit(node)
+            
+            visitor = QueryParameterVisitor()
+            visitor.visit(tree)
+            
+            # Also try to extract descriptions from docstring
+            docstring_descriptions = {}
+            if func.__doc__:
+                doc_lines = func.__doc__.strip().split('\n')
+                in_query_params_section = False
+                for line in doc_lines:
+                    stripped = line.strip()
+                    if 'Query Parameters:' in stripped or 'Parameters:' in stripped:
+                        in_query_params_section = True
+                        continue
+                    if in_query_params_section:
+                        # Look for patterns like: page (int): Description
+                        match = re.match(r'(\w+)\s*\([^)]+\):\s*(.+)', stripped)
+                        if match:
+                            param_name = match.group(1)
+                            description = match.group(2)
+                            docstring_descriptions[param_name] = description
+                        elif stripped and not stripped.startswith('-'):
+                            # End of parameters section if we hit non-parameter text
+                            if not any(c in stripped for c in ['(', ')']):
+                                in_query_params_section = False
+            
+            # Add query parameters to the parameters list
+            for param_name, param_info in query_params.items():
+                schema = {"type": param_info['type']}
+                if param_info['default'] is not None:
+                    schema['default'] = param_info['default']
+                
+                description = docstring_descriptions.get(param_name, f"Query parameter: {param_name}")
+                
+                param_def = {
+                    "name": param_name,
+                    "in": "query",
+                    "required": False,  # Query params with defaults are not required
+                    "description": description,
+                    "schema": schema
+                }
+                parameters.append(param_def)
+        
+        except Exception as e:
+            # If source code analysis fails, just return path parameters
+            debug_print(f"Note: Could not analyze source code for query parameters in {func.__name__}: {e}")
+            log_event(f"Query parameter analysis failed for {func.__name__}: {str(e)}", level=logging.WARNING)
+            pass
+        
         return parameters
         
-    except Exception:
+    except Exception as e:
+        debug_print(f"Warning: Could not analyze parameters for {func.__name__}: {e}")
+        log_event(f"Parameter analysis failed for {func.__name__}: {str(e)}", level=logging.WARNING)
         return []
 
 def _analyze_function_request_body(func) -> Optional[Dict[str, Any]]:
@@ -492,7 +697,46 @@ def _analyze_function_request_body(func) -> Optional[Dict[str, Any]]:
         import textwrap
         source = textwrap.dedent(source)
         
-        tree = ast.parse(source)
+        # If textwrap.dedent didn't fully dedent, manually remove common leading whitespace
+        lines = source.split('\n')
+        if lines and lines[0]:  # If first line exists and is not empty
+            # Find how much leading whitespace the first non-empty line has
+            first_indent = len(lines[0]) - len(lines[0].lstrip())
+            if first_indent > 0:
+                # Only remove whitespace from lines that have enough indentation
+                # This preserves multi-line strings that may have less indentation
+                dedented_lines = []
+                for line in lines:
+                    if line.strip():  # Non-empty line
+                        # Calculate this line's leading whitespace
+                        line_leading = len(line) - len(line.lstrip())
+                        if line_leading >= first_indent:
+                            # Line has enough indentation - remove first_indent amount
+                            dedented_lines.append(line[first_indent:])
+                        else:
+                            # Line has less indentation - preserve it as-is
+                            dedented_lines.append(line)
+                    else:
+                        # Empty line - preserve
+                        dedented_lines.append(line)
+                source = '\n'.join(dedented_lines)
+        
+        try:
+            tree = ast.parse(source)
+        except SyntaxError as se:
+            # Log the problematic source for debugging
+            debug_print(f"AST parse error in {func.__name__} at line {se.lineno}: {se.msg}")
+            debug_print(f"Problematic source (first 500 chars): {source[:500]}")
+            if se.lineno:
+                # Show the problematic line and surrounding context
+                source_lines = source.split('\n')
+                start_line = max(0, se.lineno - 3)
+                end_line = min(len(source_lines), se.lineno + 2)
+                debug_print(f"Context around line {se.lineno}:")
+                for i in range(start_line, end_line):
+                    marker = ">>>" if i == se.lineno - 1 else "   "
+                    debug_print(f"{marker} {i+1}: {source_lines[i][:100]}")
+            raise
         
         request_body_detected = False
         json_fields = set()
@@ -713,6 +957,8 @@ def _analyze_function_request_body(func) -> Optional[Dict[str, Any]]:
         
     except Exception as e:
         # If analysis fails, return None (no auto-generated request body)
+        debug_print(f"Warning: Could not analyze request body for {func.__name__}: {e}")
+        log_event(f"Request body analysis failed for {func.__name__}: {str(e)}", level=logging.WARNING)
         return None
 
 def _infer_form_field_definition(field_name: str, source_code: str) -> Dict[str, Any]:

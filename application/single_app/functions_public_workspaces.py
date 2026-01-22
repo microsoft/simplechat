@@ -334,3 +334,84 @@ def get_user_visible_public_workspace_docs(user_id: str) -> list:
     ]
     
     return visible_workspaces
+
+
+def check_public_workspace_status_allows_operation(workspace_doc, operation_type):
+    """
+    Check if the public workspace's status allows the specified operation.
+    
+    Args:
+        workspace_doc: The public workspace document from Cosmos DB
+        operation_type: One of 'upload', 'delete', 'chat', 'view'
+    
+    Returns:
+        tuple: (allowed: bool, reason: str)
+    
+    Status definitions:
+        - active: All operations allowed
+        - locked: Read-only mode (view and chat only, no modifications)
+        - upload_disabled: No new uploads, but deletions and chat allowed
+        - inactive: No operations allowed except admin viewing
+    """
+    if not workspace_doc:
+        return False, "Public workspace not found"
+    
+    status = workspace_doc.get('status', 'active')  # Default to 'active' if not set
+    
+    # Define what each status allows
+    status_permissions = {
+        'active': {
+            'upload': True,
+            'delete': True,
+            'chat': True,
+            'view': True
+        },
+        'locked': {
+            'upload': False,
+            'delete': False,
+            'chat': True,
+            'view': True
+        },
+        'upload_disabled': {
+            'upload': False,
+            'delete': True,
+            'chat': True,
+            'view': True
+        },
+        'inactive': {
+            'upload': False,
+            'delete': False,
+            'chat': False,
+            'view': False
+        }
+    }
+    
+    # Get permissions for current status
+    permissions = status_permissions.get(status, status_permissions['active'])
+    
+    # Check if operation is allowed
+    allowed = permissions.get(operation_type, False)
+    
+    # Generate helpful reason message if not allowed
+    if not allowed:
+        reasons = {
+            'locked': {
+                'upload': 'This public workspace is locked (read-only mode). Document uploads are disabled.',
+                'delete': 'This public workspace is locked (read-only mode). Document deletions are disabled.'
+            },
+            'upload_disabled': {
+                'upload': 'Document uploads are disabled for this public workspace.'
+            },
+            'inactive': {
+                'upload': 'This public workspace is inactive. All operations are disabled.',
+                'delete': 'This public workspace is inactive. All operations are disabled.',
+                'chat': 'This public workspace is inactive. All operations are disabled.',
+                'view': 'This public workspace is inactive. Access is restricted to administrators.'
+            }
+        }
+        
+        reason = reasons.get(status, {}).get(operation_type, 
+                                             f'This operation is not allowed when public workspace status is "{status}".')
+        return False, reason
+    
+    return True, ""

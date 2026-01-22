@@ -12,9 +12,7 @@ from functions_debug import debug_print
 
 def register_route_frontend_chats(app):
     @app.route('/chats', methods=['GET'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def chats():
@@ -60,9 +58,7 @@ def register_route_frontend_chats(app):
         )
     
     @app.route('/upload', methods=['POST'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @file_upload_required
@@ -435,9 +431,7 @@ def register_route_frontend_chats(app):
     
     # THIS IS THE OLD ROUTE, KEEPING IT FOR REFERENCE, WILL DELETE LATER
     @app.route("/view_pdf", methods=["GET"])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def view_pdf():
@@ -592,9 +586,7 @@ def register_route_frontend_chats(app):
 
     # --- Updated route ---
     @app.route('/view_document')
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def view_document():

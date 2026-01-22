@@ -4,123 +4,498 @@
 {% block title %}
   Manage Group - {{app_settings.app_title }}
 {% endblock %}
+{% block head %}
+<style>
+  .profile-hero {
+    border-radius: 15px;
+    padding: 3rem 2rem;
+    margin-bottom: 2rem;
+    color: white;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .profile-hero::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(135deg, #0078d4 0%, #005a9e 100%);
+    z-index: 0;
+  }
+
+  [data-bs-theme="dark"] .profile-hero::before {
+    filter: brightness(0.7);
+  }
+
+  .profile-hero > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  .profile-hero-placeholder {
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 3rem;
+    font-weight: bold;
+    border: 5px solid rgba(255,255,255,0.3);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+    backdrop-filter: blur(10px);
+  }
+
+  .section-card {
+    background: var(--bs-body-bg);
+    border-radius: 12px;
+    padding: 2rem;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    border: 1px solid var(--bs-border-color);
+    margin-bottom: 2rem;
+  }
+
+  .color-picker-wrapper {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-top: 0.5rem;
+  }
+
+  .color-option {
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    cursor: pointer;
+    border: 3px solid transparent;
+    transition: border-color 0.2s, transform 0.2s;
+  }
+
+  .color-option:hover {
+    transform: scale(1.1);
+  }
+
+  .color-option.selected {
+    border-color: white;
+    box-shadow: 0 0 0 2px var(--bs-primary);
+  }
+
+  .stat-card {
+    background: var(--bs-body-bg);
+    border-radius: 12px;
+    padding: 1.5rem;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    border: 1px solid var(--bs-border-color);
+    transition: transform 0.2s, box-shadow 0.2s;
+    height: 100%;
+  }
+
+  .stat-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  }
+
+  .stat-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.5rem;
+    margin-bottom: 1rem;
+  }
+
+  .stat-value {
+    font-size: 2rem;
+    font-weight: 700;
+    line-height: 1;
+    margin-bottom: 0.5rem;
+  }
+
+  .stat-label {
+    color: var(--bs-secondary-color);
+    font-size: 0.875rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .chart-card {
+    background: var(--bs-body-bg);
+    border-radius: 12px;
+    padding: 1.5rem;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    border: 1px solid var(--bs-border-color);
+    margin-bottom: 2rem;
+  }
+
+  .chart-container {
+    position: relative;
+    height: 300px;
+  }
+
+  .activity-item {
+    transition: all 0.2s ease;
+    background: var(--bs-body-bg);
+    cursor: pointer;
+    padding: 1rem;
+    border: 1px solid var(--bs-border-color);
+    border-radius: 8px;
+    margin-bottom: 0.5rem;
+  }
+  
+  .activity-item:hover {
+    background: rgba(var(--bs-primary-rgb), 0.05);
+    transform: translateX(4px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  }
+  
+  .activity-icon {
+    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: rgba(var(--bs-secondary-rgb), 0.1);
+  }
+  
+  [data-bs-theme="dark"] .activity-item {
+    border-color: var(--bs-border-color) !important;
+  }
+</style>
+{% endblock %}
 {% block content %}
 
-<div class="container">
-  <h2>Manage Group</h2>
-  <form method="POST" action="/set_active_group" style="display:inline;">
-    <input type="hidden" name="group_id" value="{{ group_id }}">
-    <button type="submit" class="btn btn-outline-primary btn-sm mb-3">Go to Group Workspace</button>
-  </form>
-  <div id="groupInfoContainer" class="mb-3">
-    <!-- Group name, description, etc. loaded via JS -->
-  </div>
-
-  <!-- If user is Owner, show "Owner Actions" -->
-  <div id="ownerActionsContainer" style="display: none">
-    <h5>Owner Actions</h5>
-    <!-- Transfer Ownership Button -->
-    <button class="btn btn-warning btn-sm" id="transferOwnershipBtn">
-      Transfer Ownership
-    </button>
-    <!-- Delete Group Button -->
-    <button class="btn btn-danger btn-sm" id="deleteGroupBtn">
-      Delete Group
-    </button>
-  </div>
-
-  <!-- If user is Owner, show update form -->
-  <div id="editGroupContainer" class="mb-3" style="display: none">
-    <h5>Edit Group</h5>
-    <form id="editGroupForm">
-      <div class="mb-2">
-        <label for="editGroupName" class="form-label">Group Name</label>
-        <input type="text" class="form-control" id="editGroupName" />
-      </div>
-      <div class="mb-2">
-        <label for="editGroupDescription" class="form-label">Description</label>
-        <textarea class="form-control" id="editGroupDescription"></textarea>
-      </div>
-      <button type="submit" class="btn btn-primary btn-sm">Save Changes</button>
-    </form>
-  </div>
-
-  <!-- If user is NOT owner, show “Leave Group” button -->
-  <div id="leaveGroupContainer" class="mb-3" style="display: none">
-    <button class="btn btn-danger btn-sm" id="leaveGroupBtn">
-      Leave Group
-    </button>
-  </div>
-
-  <hr />
-
-  <div>
-    <h5>Membership</h5>
-
-    <!-- Member Search/Filter Controls -->
-    <div class="row mb-2">
+<div class="container-fluid px-4 py-3">
+  <!-- Profile Hero Section -->
+  <div class="profile-hero" id="groupHero">
+    <div class="row align-items-center">
       <div class="col-auto">
-        <input
-          type="text"
-          id="memberSearchInput"
-          class="form-control form-control-sm"
-          placeholder="Search members..."
-        />
+        <div class="profile-hero-placeholder" id="groupInitial">
+          G
+        </div>
       </div>
-      <div class="col-auto">
-        <select id="memberRoleFilter" class="form-select form-select-sm">
-          <option value="">All Roles</option>
-          <option value="Admin">Admin</option>
-          <option value="DocumentManager">Document Manager</option>
-          <option value="User">User</option>
-        </select>
+      <div class="col">
+        <h2 class="mb-2" id="groupHeroName">Loading...</h2>
+        <p class="mb-1 opacity-90">
+          <i class="bi bi-person-circle me-2"></i><strong>Owner:</strong> <span id="groupOwnerName">Loading...</span>
+        </p>
+        <p class="mb-3 opacity-90">
+          <i class="bi bi-envelope me-2"></i><span id="groupOwnerEmail">Loading...</span>
+        </p>
+        <p class="mb-0 opacity-75" id="groupHeroDescription">Loading description...</p>
       </div>
-      <div class="col-auto">
-        <button
-          type="button"
-          class="btn btn-sm btn-secondary"
-          id="memberSearchBtn"
-        >
-          Search
-        </button>
+    </div>
+  </div>
+
+  <!-- Group Status Alert -->
+  <div class="alert d-none mb-3" id="group-status-alert">
+    <div id="group-status-content"></div>
+  </div>
+
+  <!-- Navigation Tabs -->
+  <ul class="nav nav-tabs mb-3" id="groupTabs" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button class="nav-link active" id="general-tab" data-bs-toggle="tab" data-bs-target="#general"
+        type="button" role="tab" aria-controls="general" aria-selected="true">
+        <i class="bi bi-gear me-2"></i>General
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="membership-tab" data-bs-toggle="tab" data-bs-target="#membership"
+        type="button" role="tab" aria-controls="membership" aria-selected="false">
+        <i class="bi bi-people me-2"></i>Membership
+      </button>
+    </li>
+    <li class="nav-item" role="presentation" id="stats-tab-item" style="display:none">
+      <button class="nav-link" id="stats-tab" data-bs-toggle="tab" data-bs-target="#stats"
+        type="button" role="tab" aria-controls="stats" aria-selected="false">
+        <i class="bi bi-graph-up me-2"></i>Stats
+      </button>
+    </li>
+  </ul>
+
+  <!-- Tab Content -->
+  <div class="tab-content" id="groupTabContent">
+    <!-- General Tab -->
+    <div class="tab-pane fade show active" id="general" role="tabpanel">
+      <div class="row">
+        <div class="col-lg-6">
+          <div class="section-card">
+            <h5 class="mb-3"><i class="bi bi-info-circle me-2"></i>Group Details</h5>
+            <form method="POST" action="/set_active_group" class="mb-3">
+              <input type="hidden" name="group_id" value="{{ group_id }}">
+              <button type="submit" class="btn btn-outline-primary btn-sm">
+                <i class="bi bi-box-arrow-in-right me-1"></i>Go to Group Workspace
+              </button>
+            </form>
+
+            <!-- Edit group (Owner only) -->
+            <div id="editGroupContainer" style="display:none">
+              <h5>Edit Group</h5>
+              <form id="editGroupForm">
+                <div class="mb-3">
+                  <label for="editGroupName" class="form-label">Group Name</label>
+                  <input type="text" class="form-control" id="editGroupName" />
+                </div>
+                <div class="mb-3">
+                  <label for="editGroupDescription" class="form-label">Description</label>
+                  <textarea class="form-control" id="editGroupDescription" rows="3"></textarea>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label">Hero Color</label>
+                  <div class="color-picker-wrapper" id="colorPicker">
+                    <div class="color-option" data-color="#0078d4" style="background: linear-gradient(135deg, #0078d4 0%, #005a9e 100%);"></div>
+                    <div class="color-option" data-color="#107c10" style="background: linear-gradient(135deg, #107c10 0%, #0b5a08 100%);"></div>
+                    <div class="color-option" data-color="#d83b01" style="background: linear-gradient(135deg, #d83b01 0%, #a62d00 100%);"></div>
+                    <div class="color-option" data-color="#7719aa" style="background: linear-gradient(135deg, #7719aa 0%, #531277 100%);"></div>
+                    <div class="color-option" data-color="#ca5010" style="background: linear-gradient(135deg, #ca5010 0%, #8e3a0d 100%);"></div>
+                    <div class="color-option" data-color="#0099bc" style="background: linear-gradient(135deg, #0099bc 0%, #006d85 100%);"></div>
+                  </div>
+                  <input type="hidden" id="selectedColor" value="#0078d4">
+                </div>
+                <button type="submit" class="btn btn-primary btn-sm">
+                  <i class="bi bi-save me-1"></i>Save Changes
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-lg-6">
+          <!-- Owner actions -->
+          <div id="ownerActionsContainer" class="section-card" style="display:none">
+            <h5 class="mb-3"><i class="bi bi-shield-lock me-2"></i>Owner Actions</h5>
+            <div class="d-flex gap-2 flex-wrap">
+              <button id="transferOwnershipBtn" class="btn btn-warning btn-sm">
+                <i class="bi bi-arrow-left-right me-1"></i>Transfer Ownership
+              </button>
+              <button id="deleteGroupBtn" class="btn btn-danger btn-sm">
+                <i class="bi bi-trash me-1"></i>Delete Group
+              </button>
+            </div>
+          </div>
+
+          <!-- Member actions (non-owner) -->
+          <div id="leaveGroupContainer" class="section-card" style="display:none">
+            <h5 class="mb-3"><i class="bi bi-box-arrow-right me-2"></i>Member Actions</h5>
+            <button id="leaveGroupBtn" class="btn btn-danger btn-sm">
+              <i class="bi bi-box-arrow-right me-1"></i>Leave Group
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 
-    <table class="table table-sm" id="membersTable">
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>Role</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        <!-- Filled by JS loadMembers() -->
-      </tbody>
-    </table>
+    <!-- Membership Tab -->
+    <div class="tab-pane fade" id="membership" role="tabpanel">
+      <div class="section-card">
+        <h5 class="mb-3"><i class="bi bi-people me-2"></i>Members</h5>
+        
+        <!-- Member Search/Filter Controls -->
+        <div class="row mb-3">
+          <div class="col-auto">
+            <input id="memberSearchInput" class="form-control form-control-sm"
+                   placeholder="Search members…">
+          </div>
+          <div class="col-auto">
+            <select id="memberRoleFilter" class="form-select form-select-sm">
+              <option value="">All Roles</option>
+              <option value="Admin">Admin</option>
+              <option value="DocumentManager">Document Manager</option>
+              <option value="User">User</option>
+            </select>
+          </div>
+          <div class="col-auto">
+            <button id="memberSearchBtn" class="btn btn-sm btn-secondary">
+              <i class="bi bi-search me-1"></i>Search
+            </button>
+          </div>
+        </div>
 
-    <!-- Add member button (Owner/Admin only) -->
-    <button
-      class="btn btn-success btn-sm mb-3"
-      id="addMemberBtn"
-      style="display: none"
-    >
-      Add Member
-    </button>
+        <!-- Bulk Actions Bar (shown when members are selected) -->
+        <div id="bulkActionsBar" class="alert alert-info py-2 mb-2" style="display: none;">
+          <div class="d-flex align-items-center justify-content-between">
+            <div>
+              <strong><span id="selectedCount">0</span> member(s) selected</strong>
+            </div>
+            <div>
+              <button type="button" class="btn btn-sm btn-primary me-2" id="bulkAssignRoleBtn">
+                <i class="bi bi-person-badge me-1"></i>Assign Role
+              </button>
+              <button type="button" class="btn btn-sm btn-danger" id="bulkRemoveMembersBtn">
+                <i class="bi bi-person-dash me-1"></i>Remove Selected
+              </button>
+              <button type="button" class="btn btn-sm btn-secondary ms-2" id="clearSelectionBtn">
+                Clear Selection
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <table id="membersTable" class="table table-sm">
+          <thead>
+            <tr>
+              <th style="width: 40px;">
+                <input type="checkbox" id="selectAllMembers" class="form-check-input" title="Select all members">
+              </th>
+              <th>Name</th>
+              <th>Role</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- Filled by JS loadMembers() -->
+          </tbody>
+        </table>
+        
+        <button id="addMemberBtn" class="btn btn-success btn-sm mb-3" style="display:none">
+          <i class="bi bi-person-plus me-1"></i>Add Member
+        </button>
+        <button id="addBulkMemberBtn" class="btn btn-primary btn-sm mb-3 ms-2" style="display:none">
+          <i class="bi bi-upload me-1"></i>Add Bulk Members
+        </button>
+      </div>
+
+      <!-- Pending requests (Owner/Admin) -->
+      <div id="pendingRequestsSection" class="section-card" style="display:none">
+        <h5 class="mb-3"><i class="bi bi-clock-history me-2"></i>Pending Requests</h5>
+        <table id="pendingRequestsTable" class="table table-sm">
+          <thead><tr><th>Name</th><th>Email</th><th>Actions</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Stats Tab -->
+    <div class="tab-pane fade" id="stats" role="tabpanel">
+      <!-- Quick Stats -->
+      <div class="row g-3 mb-4">
+        <div class="col-md-3">
+          <div class="stat-card">
+            <div class="stat-icon bg-info bg-opacity-10 text-info">
+              <i class="bi bi-file-earmark-text"></i>
+            </div>
+            <div class="stat-value" id="stat-documents">-</div>
+            <div class="stat-label">Total Documents</div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="stat-card">
+            <div class="stat-icon bg-success bg-opacity-10 text-success">
+              <i class="bi bi-hdd"></i>
+            </div>
+            <div class="stat-value" id="stat-storage">-</div>
+            <div class="stat-label">Storage Used</div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="stat-card">
+            <div class="stat-icon bg-warning bg-opacity-10 text-warning">
+              <i class="bi bi-cpu"></i>
+            </div>
+            <div class="stat-value" id="stat-tokens">-</div>
+            <div class="stat-label">Total Tokens</div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="stat-card">
+            <div class="stat-icon bg-primary bg-opacity-10 text-primary">
+              <i class="bi bi-people"></i>
+            </div>
+            <div class="stat-value" id="stat-members">-</div>
+            <div class="stat-label">Total Members</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Activity Charts -->
+      <div class="row g-3 mb-4">
+        <div class="col-lg-6">
+          <div class="chart-card">
+            <h5 class="mb-3"><i class="bi bi-file-earmark-bar-graph me-2"></i>Document Activity (Last 30 Days)</h5>
+            <div class="chart-container">
+              <canvas id="documentChart"></canvas>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-6">
+          <div class="chart-card">
+            <h5 class="mb-3"><i class="bi bi-hdd me-2"></i>Storage Usage</h5>
+            <div class="chart-container">
+              <canvas id="storageChart"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row g-3 mb-4">
+        <div class="col-12">
+          <div class="chart-card">
+            <h5 class="mb-3"><i class="bi bi-cpu me-2"></i>Token Usage (Last 30 Days)</h5>
+            <div class="chart-container">
+              <canvas id="tokenChart"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Activity Timeline (Owner/Admin only) -->
+      <div class="section-card" id="activityTimelineSection" style="display:none;">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h5 class="mb-0"><i class="bi bi-activity me-2"></i>Activity Timeline</h5>
+          <div class="btn-group" role="group" aria-label="Activity limit">
+            <input type="radio" class="btn-check" name="activityLimit" id="limit10" value="10" autocomplete="off">
+            <label class="btn btn-outline-primary btn-sm" for="limit10">10</label>
+            
+            <input type="radio" class="btn-check" name="activityLimit" id="limit20" value="20" autocomplete="off">
+            <label class="btn btn-outline-primary btn-sm" for="limit20">20</label>
+            
+            <input type="radio" class="btn-check" name="activityLimit" id="limit50" value="50" autocomplete="off" checked>
+            <label class="btn btn-outline-primary btn-sm" for="limit50">50</label>
+          </div>
+        </div>
+        <div style="max-height: 500px; overflow-y: auto; border: 1px solid var(--bs-border-color); border-radius: 8px; padding: 1rem; background: var(--bs-body-bg);">
+          <div id="activityTimeline">
+            <p class="text-muted">Loading activity...</p>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
+</div>
 
-  <div id="pendingRequestsSection" style="display: none">
-    <h5>Pending Requests</h5>
-    <table class="table table-sm" id="pendingRequestsTable">
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>Email</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
+<!-- Raw Activity Modal -->
+<div class="modal fade" id="rawActivityModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="rawActivityModalLabel">Activity Details</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="d-flex justify-content-end mb-2">
+          <button type="button" class="btn btn-sm btn-outline-primary" onclick="copyRawActivityToClipboard()">
+            <i class="bi bi-clipboard me-1"></i>Copy to Clipboard
+          </button>
+        </div>
+        <div id="rawActivityModalBody" class="border rounded p-3" style="background-color: var(--bs-secondary-bg);">
+          <!-- Activity JSON will be inserted here -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -289,6 +664,204 @@
   </div>
 </div>
 
+<!-- Bulk Assign Role Modal -->
+<div class="modal fade" id="bulkAssignRoleModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <form id="bulkAssignRoleForm">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Assign Role to Multiple Members</h5>
+          <button
+            type="button"
+            class="btn-close"
+            data-bs-dismiss="modal"
+            aria-label="Close"
+          ></button>
+        </div>
+        <div class="modal-body">
+          <p>You are about to assign a role to <strong><span id="bulkRoleCount">0</span> member(s)</strong>.</p>
+          <div class="mb-3">
+            <label for="bulkRoleSelect" class="form-label">Select Role</label>
+            <select id="bulkRoleSelect" class="form-select">
+              <option value="User">User</option>
+              <option value="DocumentManager">Document Manager</option>
+              <option value="Admin">Admin</option>
+            </select>
+          </div>
+          <div class="alert alert-info">
+            <small><i class="bi bi-info-circle me-1"></i>This action will update the role for all selected members.</small>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button
+            type="button"
+            class="btn btn-secondary btn-sm"
+            data-bs-dismiss="modal"
+          >
+            Cancel
+          </button>
+          <button type="submit" class="btn btn-primary btn-sm">Assign Role</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Bulk Remove Members Confirmation Modal -->
+<div class="modal fade" id="bulkRemoveMembersModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <form id="bulkRemoveMembersForm">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Remove Multiple Members</h5>
+          <button
+            type="button"
+            class="btn-close"
+            data-bs-dismiss="modal"
+            aria-label="Close"
+          ></button>
+        </div>
+        <div class="modal-body">
+          <div class="alert alert-warning">
+            <i class="bi bi-exclamation-triangle me-2"></i>
+            <strong>Warning:</strong> You are about to remove <strong><span id="bulkRemoveCount">0</span> member(s)</strong> from this group.
+          </div>
+          <p>This action cannot be undone. Removed members will lose access to group conversations and resources.</p>
+          <div id="bulkRemoveMembersList" class="mb-2" style="max-height: 200px; overflow-y: auto;">
+            <!-- Will be populated with list of members to be removed -->
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button
+            type="button"
+            class="btn btn-secondary btn-sm"
+            data-bs-dismiss="modal"
+          >
+            Cancel
+          </button>
+          <button type="submit" class="btn btn-danger btn-sm">Remove Members</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- CSV Bulk Upload Modal -->
+<div class="modal fade" id="csvBulkUploadModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-upload me-2"></i>Bulk Member Import (CSV)</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close" id="csvModalClose"></button>
+      </div>
+      <div class="modal-body">
+        <!-- Stage 1: File Selection -->
+        <div id="csvStage1">
+          <p class="text-muted">Upload a CSV file to add multiple members at once.</p>
+          
+          <div class="mb-3">
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="csvExampleBtn">
+              <i class="bi bi-download me-1"></i>Download Example CSV
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-info ms-2" id="csvConfigBtn">
+              <i class="bi bi-info-circle me-1"></i>CSV Format Info
+            </button>
+          </div>
+
+          <div class="mb-3">
+            <label for="csvFileInput" class="form-label">Select CSV File</label>
+            <input type="file" class="form-control" id="csvFileInput" accept=".csv">
+            <small class="text-muted">Maximum 1,000 members per upload</small>
+          </div>
+
+          <!-- Validation Results -->
+          <div id="csvValidationResults" class="alert alert-info" style="display: none;">
+            <h6><i class="bi bi-check-circle me-1"></i>File Validation</h6>
+            <div id="csvValidationDetails"></div>
+          </div>
+
+          <div id="csvErrorDetails" class="alert alert-danger" style="display: none;">
+            <h6><i class="bi bi-exclamation-triangle me-1"></i>Validation Errors</h6>
+            <div id="csvErrorList"></div>
+          </div>
+        </div>
+
+        <!-- Stage 2: Upload Progress -->
+        <div id="csvStage2" style="display: none;">
+          <div class="text-center mb-3">
+            <div class="spinner-border text-primary" role="status">
+              <span class="visually-hidden">Uploading...</span>
+            </div>
+            <p class="mt-2"><strong>Uploading Members...</strong></p>
+          </div>
+          
+          <div class="progress mb-2" style="height: 25px;">
+            <div id="csvProgressBar" class="progress-bar progress-bar-striped progress-bar-animated" 
+                 role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+              <span id="csvProgressText">0%</span>
+            </div>
+          </div>
+          
+          <div class="text-center">
+            <small id="csvStatusText" class="text-muted">Preparing upload...</small>
+          </div>
+        </div>
+
+        <!-- Stage 3: Summary -->
+        <div id="csvStage3" style="display: none;">
+          <div class="alert alert-success">
+            <h6><i class="bi bi-check-circle me-1"></i>Upload Complete</h6>
+            <div id="csvSummary"></div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" id="csvCancelBtn">Cancel</button>
+        <button type="button" class="btn btn-primary" id="csvNextBtn" disabled>Next</button>
+        <button type="button" class="btn btn-success" id="csvDoneBtn" style="display: none;">Done</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- CSV Format Info Modal -->
+<div class="modal fade" id="csvFormatInfoModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-info-circle me-2"></i>CSV Format Information</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <h6>Required Columns (in this exact order):</h6>
+        <ol>
+          <li><strong>userId</strong> - Azure AD Object ID (GUID format)</li>
+          <li><strong>displayName</strong> - User's display name</li>
+          <li><strong>email</strong> - User's email address</li>
+          <li><strong>role</strong> - Member role: user, admin, or document_manager</li>
+        </ol>
+        
+        <h6 class="mt-3">Rules:</h6>
+        <ul>
+          <li>Header row must be: <code>userId,displayName,email,role</code></li>
+          <li>Maximum 1,000 rows (excluding header)</li>
+          <li>Each userId must be a valid GUID</li>
+          <li>Each email must be a valid email address</li>
+          <li>Valid roles: user, admin, document_manager (case-insensitive)</li>
+          <li>Duplicates will be skipped automatically</li>
+        </ul>
+        
+        <h6 class="mt-3">Example:</h6>
+        <pre class="bg-light p-2 rounded"><code>userId,displayName,email,role
+00000000-0000-0000-0000-000000000001,John Smith,john.smith@contoso.com,admin</code></pre>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Delete Group Warning Modal (if documents exist) -->
 <div
   class="modal fade"
@@ -333,12 +906,13 @@
 {% endblock %} 
 
 {% block scripts %}
-
+<script src="{{ url_for('static', filename='js/chart.min.js') }}"></script>
 <script>
   // Inline the real group ID from Jinja
   const groupId = "{{ group_id }}"; // This will become the real UUID
   const userId = "{{ session['user'].get('oid') }}";
 </script>
 
-<script src="{{ url_for('static', filename='js/group/manage_group.js') }}"></script>
+<script src="{{ url_for('static', filename='js/validation-utils.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/group/manage_group.js') }}"></script>
 {% endblock %}

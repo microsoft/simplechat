@@ -34,14 +34,27 @@ async function setUserNavLayout(navLayout) {
 
 // Update toggle text based on current layout
 function updateNavLayoutToggleText(navLayout) {
-  document.querySelectorAll('.nav-layout-toggle').forEach(btn => {
-    const icon = '<i class="bi bi-window-sidebar me-2"></i>';
-    if (navLayout === 'sidebar') {
-      btn.innerHTML = icon + 'Top Nav';
-    } else {
-      btn.innerHTML = icon + 'Left Nav';
-    }
-  });
+  // Top nav elements
+  const switchToLeftNavText = document.getElementById('switchToLeftNavText');
+  const switchToTopNavText = document.getElementById('switchToTopNavText');
+  
+  // Sidebar nav elements
+  const sidebarSwitchToLeftNavText = document.getElementById('sidebarSwitchToLeftNavText');
+  const sidebarSwitchToTopNavText = document.getElementById('sidebarSwitchToTopNavText');
+  
+  if (navLayout === 'top') {
+    // Currently in top nav mode, show option to switch to left nav (sidebar)
+    if (switchToLeftNavText) switchToLeftNavText.classList.remove('d-none');
+    if (switchToTopNavText) switchToTopNavText.classList.add('d-none');
+    if (sidebarSwitchToLeftNavText) sidebarSwitchToLeftNavText.classList.remove('d-none');
+    if (sidebarSwitchToTopNavText) sidebarSwitchToTopNavText.classList.add('d-none');
+  } else {
+    // Currently in sidebar mode, show option to switch to top nav
+    if (switchToLeftNavText) switchToLeftNavText.classList.add('d-none');
+    if (switchToTopNavText) switchToTopNavText.classList.remove('d-none');
+    if (sidebarSwitchToLeftNavText) sidebarSwitchToLeftNavText.classList.add('d-none');
+    if (sidebarSwitchToTopNavText) sidebarSwitchToTopNavText.classList.remove('d-none');
+  }
 }
 
 // Initialize sidebar navigation functionality
@@ -74,7 +87,20 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Apply same logic as server-side: use sidebar if user chose it OR if no user choice and admin default is true
     const effectiveLayout = userNavLayout === 'sidebar' || (!userNavLayout && adminDefault) ? 'sidebar' : 'top';
+    
+    // Debug logging
+    console.log('Nav Layout Debug:', {
+      userNavLayout,
+      adminDefault,
+      effectiveLayout,
+      settingsObject: settings
+    });
+    
     updateNavLayoutToggleText(effectiveLayout);
+  }).catch(error => {
+    console.error('Error loading nav layout settings:', error);
+    // Default to top nav if error
+    updateNavLayoutToggleText('top');
   });
 });
 

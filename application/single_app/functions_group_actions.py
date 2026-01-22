@@ -6,7 +6,7 @@ import re
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-
+from functions_debug import debug_print
 from azure.cosmos import exceptions
 from flask import current_app
 
@@ -42,7 +42,7 @@ def get_group_actions(
     except exceptions.CosmosResourceNotFoundError:
         return []
     except Exception as exc:
-        current_app.logger.error(
+        debug_print(
             "Error fetching group actions for %s: %s", group_id, exc
         )
         return []
@@ -74,7 +74,7 @@ def get_group_action(
             return None
         action = actions[0]
     except Exception as exc:
-        current_app.logger.error(
+        debug_print(
             "Error fetching group action %s for %s: %s", action_id, group_id, exc
         )
         return None
@@ -113,7 +113,7 @@ def save_group_action(group_id: str, action_data: Dict[str, Any]) -> Dict[str, A
         stored = cosmos_group_actions_container.upsert_item(body=payload)
         return _clean_action(stored, group_id, SecretReturnType.TRIGGER)
     except Exception as exc:
-        current_app.logger.error(
+        debug_print(
             "Error saving group action %s for %s: %s", action_id, group_id, exc
         )
         raise
@@ -137,7 +137,7 @@ def delete_group_action(group_id: str, action_id: str) -> bool:
         )
         return True
     except Exception as exc:
-        current_app.logger.error(
+        debug_print(
             "Error deleting group action %s for %s: %s", action_id, group_id, exc
         )
         raise

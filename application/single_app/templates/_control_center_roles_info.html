@@ -1,0 +1,331 @@
+<!-- Control Center Roles Configuration Information Modal -->
+<div class="modal fade" id="controlCenterRolesInfoModal" tabindex="-1" aria-labelledby="controlCenterRolesInfoModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header bg-success text-white">
+                <h5 class="modal-title" id="controlCenterRolesInfoModalLabel">
+                    <i class="bi bi-shield-check me-2"></i>
+                    Control Center Roles Configuration Guide
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info">
+                    <i class="bi bi-info-circle me-2"></i>
+                    <strong>What are Control Center Roles?</strong> Control Center roles allow you to delegate administrative responsibilities by assigning specific permissions to users. This enables separation of duties and provides granular access control for your organization.
+                </div>
+
+                <!-- Role Overview -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-people-fill me-2"></i>Available Roles</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <div class="card border-success">
+                                    <div class="card-body">
+                                        <h6 class="card-title">
+                                            <i class="bi bi-shield-fill-check text-success me-2"></i>ControlCenterAdmin
+                                        </h6>
+                                        <p class="card-text small mb-2">Full administrative access to Control Center.</p>
+                                        <strong class="small">Permissions:</strong>
+                                        <ul class="small mb-0">
+                                            <li>User Management (view, edit, block, delete)</li>
+                                            <li>Group Management (view, edit, delete)</li>
+                                            <li>Public Workspaces (view, edit, hide, delete)</li>
+                                            <li>Activity Logs (view all system activity)</li>
+                                            <li>Dashboard (view statistics and trends)</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="card border-info">
+                                    <div class="card-body">
+                                        <h6 class="card-title">
+                                            <i class="bi bi-eye text-info me-2"></i>ControlCenterDashboardReader
+                                        </h6>
+                                        <p class="card-text small mb-2">Read-only access to Dashboard metrics.</p>
+                                        <strong class="small">Permissions:</strong>
+                                        <ul class="small mb-0">
+                                            <li>Dashboard Statistics (view only)</li>
+                                            <li>Activity Trends (view and export)</li>
+                                            <li>Usage Metrics (view only)</li>
+                                            <li><span class="text-danger">No management permissions</span></li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="alert alert-warning">
+                            <i class="bi bi-exclamation-triangle me-2"></i>
+                            <strong>Important:</strong> When role requirements are enabled, regular Admins without the specific roles will lose access to Control Center features.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 1: Add Roles to App Registration -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-1-circle me-2"></i>Step 1: Add App Roles to App Registration</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-4">
+                            <h6>Navigate to Your App Registration</h6>
+                            <ol class="mb-3">
+                                <li>Sign in to the <a href="https://portal.azure.com" target="_blank">Azure Portal</a></li>
+                                <li>Navigate to <strong>Microsoft Entra ID</strong> (formerly Azure Active Directory)</li>
+                                <li>Select <strong>App registrations</strong> from the left menu</li>
+                                <li>Find and click on your application's registration</li>
+                            </ol>
+                        </div>
+
+                        <div class="mb-4">
+                            <h6>Create App Roles</h6>
+                            <ol class="mb-3">
+                                <li>In your app registration, select <strong>App roles</strong> from the left menu</li>
+                                <li>Click <strong>+ Create app role</strong></li>
+                                <li>For the <strong>ControlCenterAdmin</strong> role, enter:
+                                    <ul class="mt-2">
+                                        <li><strong>Display name:</strong> <code>ControlCenterAdmin</code></li>
+                                        <li><strong>Allowed member types:</strong> Select <code>Users/Groups</code></li>
+                                        <li><strong>Value:</strong> <code>ControlCenterAdmin</code></li>
+                                        <li><strong>Description:</strong> <code>Full administrative access to Control Center features</code></li>
+                                        <li><strong>Do you want to enable this app role?</strong> Check the box</li>
+                                    </ul>
+                                </li>
+                                <li>Click <strong>Apply</strong></li>
+                                <li>Repeat the process for <strong>ControlCenterDashboardReader</strong>:
+                                    <ul class="mt-2">
+                                        <li><strong>Display name:</strong> <code>ControlCenterDashboardReader</code></li>
+                                        <li><strong>Allowed member types:</strong> Select <code>Users/Groups</code></li>
+                                        <li><strong>Value:</strong> <code>ControlCenterDashboardReader</code></li>
+                                        <li><strong>Description:</strong> <code>Read-only access to Control Center dashboard and metrics</code></li>
+                                        <li><strong>Do you want to enable this app role?</strong> Check the box</li>
+                                    </ul>
+                                </li>
+                                <li>Click <strong>Apply</strong></li>
+                            </ol>
+                        </div>
+
+                        <div class="alert alert-success">
+                            <i class="bi bi-check-circle me-2"></i>
+                            <strong>Note:</strong> The <strong>Value</strong> field must exactly match the role names shown above (case-sensitive).
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 2: Assign Users to Roles via Enterprise Application -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-2-circle me-2"></i>Step 2: Assign Users to Roles (Enterprise Application)</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-4">
+                            <h6>Navigate to Enterprise Applications</h6>
+                            <ol class="mb-3">
+                                <li>In the Azure Portal, navigate to <strong>Microsoft Entra ID</strong></li>
+                                <li>Select <strong>Enterprise applications</strong> from the left menu</li>
+                                <li>Set the <strong>Application type</strong> filter to <strong>All applications</strong></li>
+                                <li>Search for and select your application by name</li>
+                            </ol>
+                            <div class="alert alert-info">
+                                <strong>Tip:</strong> The enterprise application has the same name as your app registration.
+                            </div>
+                        </div>
+
+                        <div class="mb-4">
+                            <h6>Assign Users or Groups to Roles</h6>
+                            <ol class="mb-3">
+                                <li>In your enterprise application, select <strong>Users and groups</strong> from the left menu</li>
+                                <li>Click <strong>+ Add user/group</strong></li>
+                                <li>Under <strong>Users</strong>, click <strong>None Selected</strong></li>
+                                <li>Search for and select the user or group you want to assign</li>
+                                <li>Click <strong>Select</strong></li>
+                                <li>Under <strong>Select a role</strong>, click <strong>None Selected</strong></li>
+                                <li>Choose the appropriate role:
+                                    <ul class="mt-2">
+                                        <li><strong>ControlCenterAdmin</strong> - For IT administrators</li>
+                                        <li><strong>ControlCenterDashboardReader</strong> - For managers/compliance officers</li>
+                                    </ul>
+                                </li>
+                                <li>Click <strong>Select</strong></li>
+                                <li>Click <strong>Assign</strong> to complete the assignment</li>
+                            </ol>
+                        </div>
+
+                        <div class="alert alert-warning">
+                            <i class="bi bi-exclamation-triangle me-2"></i>
+                            <strong>Important:</strong> Users must sign out and sign back in for role assignments to take effect.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Alternative: PowerShell Method -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-terminal me-2"></i>Alternative: Assign Roles Using PowerShell</h6>
+                    </div>
+                    <div class="card-body">
+                        <p class="mb-3">For bulk assignments or automation, you can use Microsoft Graph PowerShell:</p>
+                        
+                        <div class="mb-3">
+                            <h6>1. Install Microsoft Graph PowerShell Module</h6>
+                            <pre class="bg-dark text-light p-3 rounded"><code>Install-Module Microsoft.Graph -Scope CurrentUser</code></pre>
+                        </div>
+
+                        <div class="mb-3">
+                            <h6>2. Connect to Microsoft Graph</h6>
+                            <pre class="bg-dark text-light p-3 rounded"><code>Connect-MgGraph -Scopes "AppRoleAssignment.ReadWrite.All", "User.Read.All"</code></pre>
+                        </div>
+
+                        <div class="mb-3">
+                            <h6>3. Get Service Principal and App Role IDs</h6>
+                            <pre class="bg-dark text-light p-3 rounded"><code># Get your app's service principal
+$sp = Get-MgServicePrincipal -Filter "displayName eq 'YourAppName'"
+
+# List available app roles
+$sp.AppRoles | Select-Object DisplayName, Id, Value</code></pre>
+                        </div>
+
+                        <div class="mb-3">
+                            <h6>4. Assign User to Role</h6>
+                            <pre class="bg-dark text-light p-3 rounded"><code># Get the user
+$user = Get-MgUser -UserId "user@domain.com"
+
+# Get the app role ID (from step 3)
+$appRoleId = "role-guid-from-step-3"
+
+# Create the assignment
+$params = @{
+    principalId = $user.Id
+    resourceId = $sp.Id
+    appRoleId = $appRoleId
+}
+
+New-MgUserAppRoleAssignment -UserId $user.Id -BodyParameter $params</code></pre>
+                        </div>
+
+                        <div class="alert alert-info">
+                            <strong>Note:</strong> Replace <code>YourAppName</code> with your application's display name and <code>user@domain.com</code> with the actual user email.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Verification -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-check-circle me-2"></i>Step 3: Verify Role Assignments</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <h6>Check User Assignments</h6>
+                            <ol class="mb-3">
+                                <li>In your enterprise application, go to <strong>Users and groups</strong></li>
+                                <li>Verify that users appear with their assigned roles</li>
+                                <li>The <strong>Role</strong> column should show the assigned role name</li>
+                            </ol>
+                        </div>
+
+                        <div class="mb-3">
+                            <h6>Test Role Access</h6>
+                            <ol class="mb-3">
+                                <li>Assigned users must <strong>sign out and sign back in</strong></li>
+                                <li>Enable the role requirements in Admin Settings (this page)</li>
+                                <li>Navigate to Control Center to verify access</li>
+                                <li>ControlCenterAdmin users should see all tabs</li>
+                                <li>ControlCenterDashboardReader users should only see the Dashboard tab</li>
+                            </ol>
+                        </div>
+
+                        <div class="alert alert-success">
+                            <i class="bi bi-check-circle me-2"></i>
+                            <strong>Success!</strong> Your Control Center roles are now configured and ready to use.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Troubleshooting -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-wrench me-2"></i>Troubleshooting</h6>
+                    </div>
+                    <div class="card-body">
+                        <h6>Common Issues</h6>
+                        <div class="accordion" id="troubleshootingAccordion">
+                            <div class="accordion-item">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#trouble1">
+                                        User doesn't see Control Center after role assignment
+                                    </button>
+                                </h2>
+                                <div id="trouble1" class="accordion-collapse collapse" data-bs-parent="#troubleshootingAccordion">
+                                    <div class="accordion-body">
+                                        <ul>
+                                            <li>Ensure the user has signed out and signed back in</li>
+                                            <li>Verify the role value exactly matches (case-sensitive): <code>ControlCenterAdmin</code> or <code>ControlCenterDashboardReader</code></li>
+                                            <li>Confirm the role requirement is enabled in Admin Settings</li>
+                                            <li>Check that the user also has the base <code>Admin</code> role</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="accordion-item">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#trouble2">
+                                        Roles don't appear in Enterprise Application assignment
+                                    </button>
+                                </h2>
+                                <div id="trouble2" class="accordion-collapse collapse" data-bs-parent="#troubleshootingAccordion">
+                                    <div class="accordion-body">
+                                        <ul>
+                                            <li>Verify you created the roles in the <strong>App registration</strong>, not the Enterprise application</li>
+                                            <li>Ensure roles are <strong>enabled</strong> (checkbox is selected)</li>
+                                            <li>Wait a few minutes for roles to propagate to the Enterprise application</li>
+                                            <li>Refresh the Enterprise application page</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="accordion-item">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#trouble3">
+                                        DashboardReader sees "Forbidden" errors
+                                    </button>
+                                </h2>
+                                <div id="trouble3" class="accordion-collapse collapse" data-bs-parent="#troubleshootingAccordion">
+                                    <div class="accordion-body">
+                                        <ul>
+                                            <li>DashboardReader role only has access to the Dashboard tab</li>
+                                            <li>Attempting to access other tabs (Users, Groups, Workspaces, Activity Logs) will result in access denied</li>
+                                            <li>If full access is needed, assign the <code>ControlCenterAdmin</code> role instead</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Additional Resources -->
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-book me-2"></i>Additional Resources</h6>
+                    </div>
+                    <div class="card-body">
+                        <ul class="mb-0">
+                            <li><a href="https://learn.microsoft.com/en-us/entra/identity-platform/howto-add-app-roles-in-apps" target="_blank">Microsoft Learn: Add app roles to your application</a></li>
+                            <li><a href="https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/assign-user-or-group-access-portal" target="_blank">Microsoft Learn: Assign users and groups to an application</a></li>
+                            <li><a href="https://learn.microsoft.com/en-us/powershell/microsoftgraph/overview" target="_blank">Microsoft Graph PowerShell SDK</a></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>

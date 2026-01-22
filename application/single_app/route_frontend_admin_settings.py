@@ -135,6 +135,9 @@ def register_route_frontend_admin_settings(app):
                     'name': 'default_agent',
                     'is_global': True
                 }
+                log_event("Error retrieving global agents for default selection.", level=logging.ERROR)
+                debug_print("Error retrieving global agents for default selection.")
+                
         if 'allow_user_agents' not in settings:
             settings['allow_user_agents'] = False
         if 'allow_user_custom_agent_endpoints' not in settings:
@@ -157,6 +160,16 @@ def register_route_frontend_admin_settings(app):
             settings['classification_banner_color'] = '#ffc107'  # Bootstrap warning color
         if 'classification_banner_text_color' not in settings:
             settings['classification_banner_text_color'] = '#ffffff'  # White text by default
+        
+        # --- Add defaults for user agreement ---
+        if 'enable_user_agreement' not in settings:
+            settings['enable_user_agreement'] = False
+        if 'user_agreement_text' not in settings:
+            settings['user_agreement_text'] = ''
+        if 'user_agreement_apply_to' not in settings:
+            settings['user_agreement_apply_to'] = []
+        if 'enable_user_agreement_daily' not in settings:
+            settings['enable_user_agreement_daily'] = False
         
         # --- Add defaults for key vault
         if 'enable_key_vault_secret_storage' not in settings:
@@ -190,7 +203,7 @@ def register_route_frontend_admin_settings(app):
                      pass # Replace with actual logic
             except Exception as e:
                  print(f"Error retrieving GPT deployments: {e}")
-            # ... similar try/except for embedding and image models ...
+                 log_event(f"Error retrieving GPT deployments: {e}", level=logging.ERROR)
 
             # Check for application updates
             current_version = app.config['VERSION']
@@ -233,14 +246,21 @@ def register_route_frontend_admin_settings(app):
                         settings.update(new_settings)
                 except Exception as e:
                     print(f"Error checking for updates: {e}")
+                    log_event(f"Error checking for updates: {e}", level=logging.ERROR)
             
             # Get the persisted values for template rendering
             update_available = settings.get('update_available', False)
             latest_version = settings.get('latest_version_available')
+            
+            # Get user settings for profile and navigation
+            user_id = get_current_user_id()
+            user_settings = get_user_settings(user_id)
 
             return render_template(
                 'admin_settings.html',
+                app_settings=settings,  # Admin needs unsanitized settings to view/edit all configuration
                 settings=settings,
+                user_settings=user_settings,
                 update_available=update_available,
                 latest_version=latest_version,
                 download_url=download_url
@@ -270,6 +290,7 @@ def register_route_frontend_admin_settings(app):
             require_member_of_create_public_workspace = form_data.get('require_member_of_create_public_workspace') == 'on'
             require_member_of_safety_violation_admin = form_data.get('require_member_of_safety_violation_admin') == 'on'
             require_member_of_control_center_admin = form_data.get('require_member_of_control_center_admin') == 'on'
+            require_member_of_control_center_dashboard_reader = form_data.get('require_member_of_control_center_dashboard_reader') == 'on'
             require_member_of_feedback_admin = form_data.get('require_member_of_feedback_admin') == 'on'
 
             # --- Handle Document Classification Toggle ---
@@ -360,19 +381,22 @@ def register_route_frontend_admin_settings(app):
             except Exception as e:
                 print(f"Error parsing gpt_model_json: {e}")
                 flash('Error parsing GPT model data. Changes may not be saved.', 'warning')
+                log_event(f"Error parsing GPT model data: {e}", level=logging.ERROR)
                 gpt_model_obj = settings.get('gpt_model', {'selected': [], 'all': []}) # Fallback
-            # ... similar try/except for embedding and image models ...
+                
             try:
                 embedding_model_obj = json.loads(embedding_model_json) if embedding_model_json else {'selected': [], 'all': []}
             except Exception as e:
                 print(f"Error parsing embedding_model_json: {e}")
                 flash('Error parsing Embedding model data. Changes may not be saved.', 'warning')
+                log_event(f"Error parsing Embedding model data: {e}", level=logging.ERROR)
                 embedding_model_obj = settings.get('embedding_model', {'selected': [], 'all': []}) # Fallback
             try:
                 image_gen_model_obj = json.loads(image_gen_model_json) if image_gen_model_json else {'selected': [], 'all': []}
             except Exception as e:
                 print(f"Error parsing image_gen_model_json: {e}")
                 flash('Error parsing Image Gen model data. Changes may not be saved.', 'warning')
+                log_event(f"Error parsing Image Gen model data: {e}", level=logging.ERROR)
                 image_gen_model_obj = settings.get('image_gen_model', {'selected': [], 'all': []}) # Fallback
 
             # --- Extract banner fields from form_data ---
@@ -406,24 +430,47 @@ def register_route_frontend_admin_settings(app):
                 if debug_timer_value < min_val or debug_timer_value > max_val:
                     debug_timer_value = min(max(debug_timer_value, min_val), max_val)
             
+            # Get existing timer settings to check if they've changed
+            existing_debug_timer_enabled = settings.get('debug_logging_timer_enabled', False)
+            existing_debug_timer_value = settings.get('debug_timer_value', 1)
+            existing_debug_timer_unit = settings.get('debug_timer_unit', 'hours')
+            existing_debug_logging_enabled = settings.get('enable_debug_logging', False)
+            existing_debug_turnoff_time = settings.get('debug_logging_turnoff_time')
+            
+            # Determine if timer settings have changed
+            timer_settings_changed = (
+                debug_logging_timer_enabled != existing_debug_timer_enabled or
+                debug_timer_value != existing_debug_timer_value or
+                debug_timer_unit != existing_debug_timer_unit
+            )
+            debug_logging_newly_enabled = enable_debug_logging and not existing_debug_logging_enabled
+            
             # Calculate debug logging turnoff time if timer is enabled and debug logging is on
             if enable_debug_logging and debug_logging_timer_enabled:
-                now = datetime.now()
-                
-                if debug_timer_unit == 'minutes':
-                    delta = timedelta(minutes=debug_timer_value)
-                elif debug_timer_unit == 'hours':
-                    delta = timedelta(hours=debug_timer_value)
-                elif debug_timer_unit == 'days':
-                    delta = timedelta(days=debug_timer_value)
-                elif debug_timer_unit == 'weeks':
-                    delta = timedelta(weeks=debug_timer_value)
+                # Only recalculate turnoff time if:
+                # 1. Timer settings have changed (value, unit, or enabled state), OR
+                # 2. Debug logging was just enabled, OR
+                # 3. No existing turnoff time exists
+                if timer_settings_changed or debug_logging_newly_enabled or not existing_debug_turnoff_time:
+                    now = datetime.now()
+                    
+                    if debug_timer_unit == 'minutes':
+                        delta = timedelta(minutes=debug_timer_value)
+                    elif debug_timer_unit == 'hours':
+                        delta = timedelta(hours=debug_timer_value)
+                    elif debug_timer_unit == 'days':
+                        delta = timedelta(days=debug_timer_value)
+                    elif debug_timer_unit == 'weeks':
+                        delta = timedelta(weeks=debug_timer_value)
+                    else:
+                        delta = timedelta(hours=1)  # default fallback
+                    
+                    debug_logging_turnoff_time = now + delta
+                    # Convert to ISO string for JSON serialization
+                    debug_logging_turnoff_time_str = debug_logging_turnoff_time.isoformat()
                 else:
-                    delta = timedelta(hours=1)  # default fallback
-                
-                debug_logging_turnoff_time = now + delta
-                # Convert to ISO string for JSON serialization
-                debug_logging_turnoff_time_str = debug_logging_turnoff_time.isoformat()
+                    # Preserve existing turnoff time
+                    debug_logging_turnoff_time_str = existing_debug_turnoff_time
             else:
                 debug_logging_turnoff_time_str = None
 
@@ -432,6 +479,7 @@ def register_route_frontend_admin_settings(app):
             file_timer_value = int(form_data.get('file_timer_value', 1))
             file_timer_unit = form_data.get('file_timer_unit', 'hours')
             file_processing_logs_turnoff_time = None
+            enable_file_processing_logs = form_data.get('enable_file_processing_logs') == 'on'
             
             # Validate file timer values
             if file_timer_unit in timer_limits:
@@ -439,27 +487,94 @@ def register_route_frontend_admin_settings(app):
                 if file_timer_value < min_val or file_timer_value > max_val:
                     file_timer_value = min(max(file_timer_value, min_val), max_val)
             
+            # Get existing file timer settings to check if they've changed
+            existing_file_timer_enabled = settings.get('file_processing_logs_timer_enabled', False)
+            existing_file_timer_value = settings.get('file_timer_value', 1)
+            existing_file_timer_unit = settings.get('file_timer_unit', 'hours')
+            existing_file_processing_logs_enabled = settings.get('enable_file_processing_logs', False)
+            existing_file_turnoff_time = settings.get('file_processing_logs_turnoff_time')
+            
+            # Determine if timer settings have changed
+            file_timer_settings_changed = (
+                file_processing_logs_timer_enabled != existing_file_timer_enabled or
+                file_timer_value != existing_file_timer_value or
+                file_timer_unit != existing_file_timer_unit
+            )
+            file_processing_logs_newly_enabled = enable_file_processing_logs and not existing_file_processing_logs_enabled
+            
             # Calculate file processing logs turnoff time if timer is enabled and file processing logs are on
-            enable_file_processing_logs = form_data.get('enable_file_processing_logs') == 'on'
             if enable_file_processing_logs and file_processing_logs_timer_enabled:
-                now = datetime.now()
-                
-                if file_timer_unit == 'minutes':
-                    delta = timedelta(minutes=file_timer_value)
-                elif file_timer_unit == 'hours':
-                    delta = timedelta(hours=file_timer_value)
-                elif file_timer_unit == 'days':
-                    delta = timedelta(days=file_timer_value)
-                elif file_timer_unit == 'weeks':
-                    delta = timedelta(weeks=file_timer_value)
+                # Only recalculate turnoff time if:
+                # 1. Timer settings have changed (value, unit, or enabled state), OR
+                # 2. File processing logs was just enabled, OR
+                # 3. No existing turnoff time exists
+                if file_timer_settings_changed or file_processing_logs_newly_enabled or not existing_file_turnoff_time:
+                    now = datetime.now()
+                    
+                    if file_timer_unit == 'minutes':
+                        delta = timedelta(minutes=file_timer_value)
+                    elif file_timer_unit == 'hours':
+                        delta = timedelta(hours=file_timer_value)
+                    elif file_timer_unit == 'days':
+                        delta = timedelta(days=file_timer_value)
+                    elif file_timer_unit == 'weeks':
+                        delta = timedelta(weeks=file_timer_value)
+                    else:
+                        delta = timedelta(hours=1)  # default fallback
+                    
+                    file_processing_logs_turnoff_time = now + delta
+                    # Convert to ISO string for JSON serialization
+                    file_processing_logs_turnoff_time_str = file_processing_logs_turnoff_time.isoformat()
                 else:
-                    delta = timedelta(hours=1)  # default fallback
-                
-                file_processing_logs_turnoff_time = now + delta
-                # Convert to ISO string for JSON serialization
-                file_processing_logs_turnoff_time_str = file_processing_logs_turnoff_time.isoformat()
+                    # Preserve existing turnoff time
+                    file_processing_logs_turnoff_time_str = existing_file_turnoff_time
             else:
                 file_processing_logs_turnoff_time_str = None
+
+            # --- Retention Policy Settings ---
+            enable_retention_policy_personal = form_data.get('enable_retention_policy_personal') == 'on'
+            enable_retention_policy_group = form_data.get('enable_retention_policy_group') == 'on'
+            enable_retention_policy_public = form_data.get('enable_retention_policy_public') == 'on'
+            retention_policy_execution_hour = int(form_data.get('retention_policy_execution_hour', 2))
+            
+            # Validate execution hour (0-23)
+            if retention_policy_execution_hour < 0 or retention_policy_execution_hour > 23:
+                retention_policy_execution_hour = 2  # Default to 2 AM
+            
+            # Calculate next scheduled execution time if any retention policy is enabled
+            retention_policy_next_run = None
+            if enable_retention_policy_personal or enable_retention_policy_group or enable_retention_policy_public:
+                now = datetime.now(timezone.utc)
+                # Create next run datetime with the specified hour
+                next_run = now.replace(hour=retention_policy_execution_hour, minute=0, second=0, microsecond=0)
+                
+                # If the scheduled time has already passed today, schedule for tomorrow
+                if next_run <= now:
+                    next_run = next_run + timedelta(days=1)
+                
+                retention_policy_next_run = next_run.isoformat()
+
+            # --- User Agreement Settings ---
+            enable_user_agreement = form_data.get('enable_user_agreement') == 'on'
+            user_agreement_text = form_data.get('user_agreement_text', '').strip()
+            enable_user_agreement_daily = form_data.get('enable_user_agreement_daily') == 'on'
+            
+            # Build apply_to list from checkboxes
+            user_agreement_apply_to = []
+            if form_data.get('user_agreement_apply_personal') == 'on':
+                user_agreement_apply_to.append('personal')
+            if form_data.get('user_agreement_apply_group') == 'on':
+                user_agreement_apply_to.append('group')
+            if form_data.get('user_agreement_apply_public') == 'on':
+                user_agreement_apply_to.append('public')
+            if form_data.get('user_agreement_apply_chat') == 'on':
+                user_agreement_apply_to.append('chat')
+            
+            # Validate word count (max 200 words)
+            if enable_user_agreement and user_agreement_text:
+                word_count = len(user_agreement_text.split())
+                if word_count > 200:
+                    flash('User Agreement text exceeds 200 word limit. Please shorten the text.', 'warning')
 
             # --- Authentication & Redirect Settings ---
             enable_front_door = form_data.get('enable_front_door') == 'on'
@@ -563,7 +678,8 @@ def register_route_frontend_admin_settings(app):
                 # Workspaces
                 'enable_user_workspace': form_data.get('enable_user_workspace') == 'on',
                 'enable_group_workspaces': form_data.get('enable_group_workspaces') == 'on',
-                'enable_group_creation': form_data.get('enable_group_creation') == 'on',
+                # disable_group_creation is inverted: when checked (on), enable_group_creation = False
+                'enable_group_creation': form_data.get('disable_group_creation') != 'on',
                 'enable_public_workspaces': form_data.get('enable_public_workspaces') == 'on',
                 'enable_file_sharing': form_data.get('enable_file_sharing') == 'on',
                 'enable_file_processing_logs': enable_file_processing_logs,
@@ -573,6 +689,19 @@ def register_route_frontend_admin_settings(app):
                 'file_processing_logs_turnoff_time': file_processing_logs_turnoff_time_str,
                 'require_member_of_create_group': require_member_of_create_group,
                 'require_member_of_create_public_workspace': require_member_of_create_public_workspace,
+                
+                # Retention Policy
+                'enable_retention_policy_personal': enable_retention_policy_personal,
+                'enable_retention_policy_group': enable_retention_policy_group,
+                'enable_retention_policy_public': enable_retention_policy_public,
+                'retention_policy_execution_hour': retention_policy_execution_hour,
+                'retention_policy_next_run': retention_policy_next_run,
+
+                # User Agreement
+                'enable_user_agreement': enable_user_agreement,
+                'user_agreement_text': user_agreement_text,
+                'user_agreement_apply_to': user_agreement_apply_to,
+                'enable_user_agreement_daily': enable_user_agreement_daily,
 
                 # Multimedia & Metadata
                 'enable_video_file_support': enable_video_file_support,
@@ -673,6 +802,12 @@ def register_route_frontend_admin_settings(app):
                 'speech_service_locale': form_data.get('speech_service_locale', '').strip(),
                 'speech_service_authentication_type': form_data.get('speech_service_authentication_type', 'key'),
                 'speech_service_key': form_data.get('speech_service_key', '').strip(),
+                
+                # Speech-to-text chat input
+                'enable_speech_to_text_input': form_data.get('enable_speech_to_text_input') == 'on',
+                
+                # Text-to-speech chat output
+                'enable_text_to_speech': form_data.get('enable_text_to_speech') == 'on',
 
                 'metadata_extraction_model': form_data.get('metadata_extraction_model', '').strip(),
 
@@ -686,7 +821,8 @@ def register_route_frontend_admin_settings(app):
                 'classification_banner_color': classification_banner_color,
                 'classification_banner_text_color': classification_banner_text_color,
 
-                'require_member_of_control_center_admin': require_member_of_control_center_admin
+                'require_member_of_control_center_admin': require_member_of_control_center_admin,
+                'require_member_of_control_center_dashboard_reader': require_member_of_control_center_dashboard_reader
             }
             
             # --- Prevent Legacy Fields from Being Created/Updated ---
@@ -775,7 +911,7 @@ def register_route_frontend_admin_settings(app):
                 except Exception as e:
                     print(f"Error processing logo file: {e}") # Log the error for debugging
                     flash(f"Error processing logo file: {e}. Existing logo preserved.", "danger")
-                    # On error, new_settings['custom_logo_base64'] keeps its initial value (the old logo)
+                    log_event(f"Error processing logo file: {e}", level=logging.ERROR)
 
             # Process dark mode logo file upload
             logo_dark_file = request.files.get('logo_dark_file')
@@ -858,7 +994,7 @@ def register_route_frontend_admin_settings(app):
                 except Exception as e:
                     print(f"Error processing dark mode logo file: {e}") # Log the error for debugging
                     flash(f"Error processing dark mode logo file: {e}. Existing dark mode logo preserved.", "danger")
-                    # On error, new_settings['custom_logo_dark_base64'] keeps its initial value (the old logo)
+                    log_event(f"Error processing dark mode logo file: {e}", level=logging.ERROR)
 
             # Process favicon file upload
             favicon_file = request.files.get('favicon_file')
@@ -932,7 +1068,7 @@ def register_route_frontend_admin_settings(app):
                 except Exception as e:
                     print(f"Error processing favicon file: {e}") # Log the error for debugging
                     flash(f"Error processing favicon file: {e}. Existing favicon preserved.", "danger")
-                    # On error, new_settings['custom_favicon_base64'] keeps its initial value (the old favicon)
+                    log_event(f"Error processing favicon file: {e}", level=logging.ERROR)
 
             # --- Update settings in DB ---
             # new_settings now contains either the new logo/favicon base64 or the original ones

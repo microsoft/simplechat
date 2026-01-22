@@ -274,11 +274,6 @@
                   <i class="bi bi-gear-fill me-2" style="font-size: 0.8em;"></i><span class="nav-text">System Settings</span>
                 </a>
               </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="general" data-section="control-center-admin-section">
-                  <i class="bi bi-shield-check me-2" style="font-size: 0.8em;"></i><span class="nav-text">Control Center</span>
-                </a>
-              </li>
             </ul>
           </li>
           <li class="nav-item">
@@ -354,10 +349,15 @@
               </li>
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="scale" data-section="front-door-section">
-                  <i class="bi bi-globe me-2" style="font-size: 0.8em;"></i><span class="nav-text">Front Door</span>
+                  <i class="bi bi-door-open me-2" style="font-size: 0.8em;"></i><span class="nav-text">Azure Front Door</span>
                 </a>
               </li>
             </ul>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="control-center-config">
+              <i class="bi bi-speedometer2 me-2"></i><span class="nav-text">Control Center</span>
+            </a>
           </li>
           <li class="nav-item">
             <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="workspaces">
@@ -392,6 +392,16 @@
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="document-classification-section">
                   <i class="bi bi-tags me-2" style="font-size: 0.8em;"></i><span class="nav-text">Document Classification</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="retention-policy-section">
+                  <i class="bi bi-hourglass-split me-2" style="font-size: 0.8em;"></i><span class="nav-text">Retention Policy</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="user-agreement-section">
+                  <i class="bi bi-file-earmark-check me-2" style="font-size: 0.8em;"></i><span class="nav-text">User Agreement</span>
                 </a>
               </li>
             </ul>
@@ -441,18 +451,6 @@
             </ul>
           </li>
           <li class="nav-item">
-            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="pii">
-              <i class="bi bi-shield-check me-2"></i><span class="nav-text">PII Analysis</span>
-            </a>
-            <ul class="nav flex-column ms-3" style="display: none;" id="pii-submenu">
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="pii" data-section="pii-analysis-section">
-                  <i class="bi bi-shield-check me-2" style="font-size: 0.8em;"></i><span class="nav-text">PII Analysis</span>
-                </a>
-              </li>
-            </ul>
-          </li>
-          <li class="nav-item">
             <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="security">
               <i class="bi bi-shield-lock me-2"></i><span class="nav-text">Security</span>
             </a>
@@ -491,8 +489,11 @@
     </div>
     {% endif %}
 
-    <!-- Control Center Section - Only show when on control center page and user is admin with proper role -->
-    {% if request.endpoint == 'control_center' and 'Admin' in session['user']['roles'] and ((app_settings.require_member_of_control_center_admin and session.get('user') and 'ControlCenterAdmin' in session['user']['roles']) or not app_settings.require_member_of_control_center_admin) %}
+    <!-- Control Center Section - Show when on control center page for users with proper access -->
+    <!-- Access logic: When require_member_of_control_center_admin is ENABLED, only ControlCenterAdmin role grants access -->
+    <!-- When DISABLED (default), only regular Admin role grants access (ControlCenterAdmin is ignored) -->
+    <!-- DashboardReader role grants dashboard-only access when that setting is enabled -->
+    {% if request.endpoint == 'control_center' and ((app_settings.require_member_of_control_center_admin and session.get('user') and 'ControlCenterAdmin' in session['user']['roles']) or (app_settings.require_member_of_control_center_dashboard_reader and session.get('user') and 'ControlCenterDashboardReader' in session['user']['roles']) or (not app_settings.require_member_of_control_center_admin and 'Admin' in session['user']['roles'])) %}
     <div class="overflow-auto">
       <div id="control-center-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center justify-content-between" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;">
         <div class="d-flex align-items-center">
@@ -520,6 +521,10 @@
               <i class="bi bi-speedometer2 me-2"></i><span class="nav-text">Dashboard</span>
             </a>
           </li>
+          {# Only show admin tabs if user has full admin access based on settings #}
+          {# When require_member_of_control_center_admin is ENABLED: need ControlCenterAdmin role #}
+          {# When DISABLED: need regular Admin role #}
+          {% if (app_settings.require_member_of_control_center_admin and session.get('user') and 'ControlCenterAdmin' in session['user']['roles']) or (not app_settings.require_member_of_control_center_admin and session.get('user') and 'Admin' in session['user']['roles']) %}
           <li class="nav-item">
             <a class="nav-link d-flex align-items-center control-center-nav-tab" href="#" data-tab="users">
               <i class="bi bi-people me-2"></i><span class="nav-text">User Management</span>
@@ -540,6 +545,7 @@
               <i class="bi bi-clock-history me-2"></i><span class="nav-text">Activity Logs</span>
             </a>
           </li>
+          {% endif %}
         </ul>
       </div>
     </div>
@@ -600,7 +606,7 @@
       <div class="dropdown">
         <a class="nav-link dropdown-toggle p-0 d-flex align-items-center w-100" href="#" id="sidebarUserDropdown" data-bs-toggle="dropdown" aria-expanded="false" style="display: flex; align-items: center; gap: 0.5rem; min-width: 0;">
           {% set profile_image = user_settings.get("settings", {}).get("profileImage", "") %}
-          <div id="sidebar-profile-avatar" class="rounded-circle bg-secondary d-flex align-items-center justify-content-center" style="width: 28px; height: 28px;">
+          <div id="sidebar-profile-avatar" class="rounded-circle bg-secondary d-flex align-items-center justify-content-center" style="width: 28px; height: 28px; position: relative;">
             {% if profile_image %}
               <!-- Render profile image directly from server data -->
               <img src="{{ profile_image }}" alt="Profile" class="rounded-circle" style="width: 28px; height: 28px; object-fit: cover;">
@@ -608,6 +614,8 @@
               <!-- Fallback to initials with class for JS targeting -->
               <span class="text-white fw-bold sidebar-initials" style="font-size: 1rem;">{{ session['user'].get('name', '')[:2] }}</span>
             {% endif %}
+            <!-- Notification badge - positioned at bottom-right corner -->
+            <span id="sidebar-notification-badge" class="position-absolute badge rounded-circle bg-danger align-items-center justify-content-center" style="display: none; font-size: 0.6rem; font-weight: 700; bottom: -2px; right: -2px; width: 18px; height: 18px; padding: 0; line-height: 1; border: 2px solid white;"></span>
           </div>
           <div class="d-flex flex-column justify-content-center flex-grow-1" style="line-height: 1; min-width: 0;">
             <span class="fw-semibold text-truncate" style="font-size: 1rem;" title="{{ session['user'].get('name', 'User') }}">{{ session['user'].get('name', 'User') }}</span>
@@ -637,7 +645,27 @@
             </a>
           </li>
           <li>
-            <a class="dropdown-item nav-layout-toggle" href="#"><i class="bi bi-window-sidebar me-2"></i>Top Nav</a>
+            <a class="dropdown-item nav-layout-toggle" href="#">
+              <span id="sidebarSwitchToLeftNavText" class="">
+                <i class="bi bi-layout-sidebar me-2"></i>Left Nav
+              </span>
+              <span id="sidebarSwitchToTopNavText" class="d-none">
+                <i class="bi bi-window-dock me-2"></i>Top Nav
+              </span>
+            </a>
+          </li>
+          <li><hr class="dropdown-divider"></li>
+          <!-- Notifications -->
+          <li>
+            <a class="dropdown-item" href="{{ url_for('notifications') }}">
+              <i class="bi bi-bell me-2"></i>Notifications
+              <span id="sidebar-notification-count-badge" class="badge bg-danger ms-2" style="display: none;">0</span>
+            </a>
+          </li>
+          <li>
+            <a class="dropdown-item" href="{{ url_for('approvals') }}">
+              <i class="bi bi-check-circle me-2"></i>Approval Requests
+            </a>
           </li>
           <li><hr class="dropdown-divider"></li>
           {% if app_settings.enable_group_workspaces %}
@@ -668,25 +696,31 @@
           <li>
             <a class="dropdown-item" href="{{ url_for('admin_settings') }}">App Settings</a>
           </li>
-          {% if (app_settings.require_member_of_control_center_admin and session.get('user') and 'ControlCenterAdmin' in session['user']['roles']) or not app_settings.require_member_of_control_center_admin %}
+          {% endif %}
+          {# Control Center - access based on role requirements #}
+          {# When require_member_of_control_center_admin ENABLED: only ControlCenterAdmin role grants access #}
+          {# When DISABLED (default): only regular Admin role grants access #}
+          {# DashboardReader role grants dashboard-only access when that setting is enabled #}
+          {% if (app_settings.require_member_of_control_center_admin and session.get('user') and 'ControlCenterAdmin' in session['user']['roles']) or (app_settings.require_member_of_control_center_dashboard_reader and session.get('user') and 'ControlCenterDashboardReader' in session['user']['roles']) or (not app_settings.require_member_of_control_center_admin and 'Admin' in session['user']['roles']) %}
           <li>
             <a class="dropdown-item" href="{{ url_for('control_center') }}">Control Center</a>
           </li>
           {% endif %}
+          {# Safety Violations - only show when requirement enabled AND user has role, OR requirement disabled AND user is admin #}
           {% if app_settings.enable_content_safety %}
-            {% if (app_settings.require_member_of_safety_violation_admin and session.get('user') and 'SafetyViolationAdmin' in session['user']['roles']) or not app_settings.require_member_of_safety_violation_admin %}
+            {% if (app_settings.require_member_of_safety_violation_admin and session.get('user') and 'SafetyViolationAdmin' in session['user']['roles']) or (not app_settings.require_member_of_safety_violation_admin and 'Admin' in session['user']['roles']) %}
             <li>
               <a class="dropdown-item" href="{{ url_for('admin_safety_violations') }}">Safety Violations</a>
             </li>
             {% endif %}
           {% endif %}
+          {# Feedback Review - only show when requirement enabled AND user has role, OR requirement disabled AND user is admin #}
           {% if app_settings.enable_user_feedback %}
-            {% if (app_settings.require_member_of_feedback_admin and session.get('user') and 'FeedbackAdmin' in session['user']['roles']) or not app_settings.require_member_of_feedback_admin %}
+            {% if (app_settings.require_member_of_feedback_admin and session.get('user') and 'FeedbackAdmin' in session['user']['roles']) or (not app_settings.require_member_of_feedback_admin and 'Admin' in session['user']['roles']) %}
             <li>
               <a class="dropdown-item" href="{{ url_for('admin_feedback_review') }}">Feedback Review</a>
             </li>
             {% endif %}
-          {% endif %}
           {% endif %}
           <li><hr class="dropdown-divider"></li>
           <li>

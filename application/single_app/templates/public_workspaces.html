@@ -36,6 +36,33 @@
   #public-dropdown .public-search-container { position:sticky; top:0; z-index:1; background:#fff; border-bottom:1px solid #dee2e6; padding-bottom:0.5rem; }
   #public-dropdown .dropdown-items-container { max-height:300px; overflow-y:auto; }
   #public-dropdown-button { text-align:left; }
+  /* Activity Timeline Styles */
+  .activity-item {
+    transition: all 0.2s ease;
+    background: var(--bs-body-bg);
+    cursor: pointer;
+  }
+  
+  .activity-item:hover {
+    background: rgba(var(--bs-primary-rgb), 0.05);
+    transform: translateX(4px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  }
+  
+  .activity-icon {
+    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: rgba(var(--bs-secondary-rgb), 0.1);
+  }
+  
+  [data-bs-theme="dark"] .activity-item {
+    border-color: var(--bs-border-color) !important;
+  }
 </style>
 {% endblock %}
 {% block content %}
@@ -66,6 +93,11 @@
 
   <div class="alert alert-info" id="user-public-role-display" style="display:none">
     Your role in <strong id="active-public-name-role"></strong>: <span id="user-public-role" class="fw-bold"></span>
+  </div>
+
+  <!-- Workspace Status Alert (shown for locked, upload_disabled, inactive) -->
+  <div class="alert d-none" id="workspace-status-alert">
+    <div id="workspace-status-content"></div>
   </div>
 
   <ul class="nav nav-tabs" id="publicWorkspaceTab" role="tablist">
@@ -151,6 +183,23 @@
         </div>
 
         <!-- Removed duplicate filter row outside the collapsible area -->
+
+        <!-- Bulk Actions Bar (shown when documents are selected) -->
+        <div id="publicBulkActionsBar" class="alert alert-info py-2 mb-2" style="display: none;">
+          <div class="d-flex align-items-center justify-content-between">
+            <div>
+              <strong><span id="publicSelectedCount">0</span> document(s) selected</strong>
+            </div>
+            <div>
+              <button type="button" class="btn btn-sm btn-danger" id="public-delete-selected-btn">
+                <i class="bi bi-trash me-1"></i>Delete Selected
+              </button>
+              <button type="button" class="btn btn-sm btn-secondary ms-2" id="public-clear-selection-btn">
+                Clear Selection
+              </button>
+            </div>
+          </div>
+        </div>
 
         <table class="table table-striped" id="public-documents-table">
           <thead>
@@ -284,12 +333,67 @@
 
 <!-- Prompt Modal -->
 <div class="modal fade" id="publicPromptModal" tabindex="-1"><div class="modal-dialog modal-xl"><form id="public-prompt-form"><div class="modal-content"><div class="modal-header"><h5 class="modal-title" id="publicPromptModalLabel">Create Public Prompt</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><input type="hidden" id="public-prompt-id" /><div class="mb-3"><label for="public-prompt-name" class="form-label">Prompt Name</label><input type="text" class="form-control" id="public-prompt-name" required /></div><div class="mb-3"><label for="public-prompt-content" class="form-label">Prompt Content</label><textarea class="form-control" id="public-prompt-content" rows="10"></textarea></div></div><div class="modal-footer"><button id="public-prompt-save-btn" type="submit" class="btn btn-primary">Save Prompt</button></div></div></form></div></div>
+
+<!-- Activity Timeline Modal -->
+<div class="modal fade" id="activityTimelineModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">
+          <i class="bi bi-activity me-2"></i>Activity Timeline
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="timeline-container" style="max-height: 400px; overflow-y: auto;">
+          <div id="activityTimeline">
+            <div class="text-center py-4">
+              <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+              </div>
+              <div class="mt-2">Loading activity...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Raw Activity Modal -->
+<div class="modal fade" id="rawActivityModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="rawActivityModalTitle">Activity Details</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="d-flex justify-content-end mb-2">
+          <button type="button" class="btn btn-sm btn-outline-primary" onclick="copyRawActivityToClipboard()">
+            <i class="bi bi-clipboard me-1"></i>Copy to Clipboard
+          </button>
+        </div>
+        <div id="rawActivityModalBody" class="border rounded p-3" style="background-color: #f8f9fa;">
+          <!-- Activity JSON will be inserted here -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}
 {% block scripts %}
 <script>
   // Pass settings to JavaScript
   window.max_file_size_mb = {{ settings.max_file_size_mb | default(16) }};
 </script>
+<script src="/static/js/public/public_workspace_utility.js"></script>
 <script src="/static/js/public/public_workspace.js"></script>
 <script>
   // --- Filter toggle button logic and upload status/progress visibility ---

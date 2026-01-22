@@ -2,6 +2,141 @@
 // Control Center JavaScript functionality
 // Handles user management, pagination, modals, and API interactions
 
+import { showToast } from "./chat/chat-toast.js";
+
+// Group Table Sorter - similar to user table but for groups
+class GroupTableSorter {
+    constructor(tableId) {
+        this.table = document.getElementById(tableId);
+        this.currentSort = { column: null, direction: 'asc' };
+        this.initializeSorting();
+    }
+
+    initializeSorting() {
+        if (!this.table) return;
+        
+        const headers = this.table.querySelectorAll('th.sortable');
+        headers.forEach(header => {
+            header.addEventListener('click', () => {
+                const sortKey = header.getAttribute('data-sort');
+                this.sortTable(sortKey, header);
+            });
+        });
+    }
+
+    sortTable(sortKey, headerElement) {
+        const tbody = this.table.querySelector('tbody');
+        const rows = Array.from(tbody.querySelectorAll('tr')).filter(row => 
+            !row.querySelector('td[colspan]') // Exclude loading/empty rows
+        );
+
+        // Toggle sort direction
+        if (this.currentSort.column === sortKey) {
+            this.currentSort.direction = this.currentSort.direction === 'asc' ? 'desc' : 'asc';
+        } else {
+            this.currentSort.direction = 'asc';
+        }
+        this.currentSort.column = sortKey;
+
+        // Remove sorting classes from all headers
+        this.table.querySelectorAll('th.sortable').forEach(th => {
+            th.classList.remove('sort-asc', 'sort-desc');
+        });
+
+        // Add sorting class to current header
+        headerElement.classList.add(this.currentSort.direction === 'asc' ? 'sort-asc' : 'sort-desc');
+
+        // Sort rows
+        const sortedRows = rows.sort((a, b) => {
+            let aValue = this.getCellValue(a, sortKey);
+            let bValue = this.getCellValue(b, sortKey);
+
+            // Handle different data types
+            if (sortKey === 'members' || sortKey === 'documents') {
+                // Numeric sorting for numbers and dates
+                aValue = this.parseNumericValue(aValue);
+                bValue = this.parseNumericValue(bValue);
+                
+                if (this.currentSort.direction === 'asc') {
+                    return aValue - bValue;
+                } else {
+                    return bValue - aValue;
+                }
+            } else {
+                // String sorting for text values
+                const result = aValue.localeCompare(bValue, undefined, { numeric: true, sensitivity: 'base' });
+                return this.currentSort.direction === 'asc' ? result : -result;
+            }
+        });
+
+        // Clear tbody and append sorted rows
+        tbody.innerHTML = '';
+        sortedRows.forEach(row => tbody.appendChild(row));
+    }
+
+    getCellValue(row, sortKey) {
+        const cellIndex = this.getColumnIndex(sortKey);
+        if (cellIndex === -1) return '';
+        
+        const cell = row.cells[cellIndex];
+        if (!cell) return '';
+
+        // Extract text content, handling different cell structures
+        let value = '';
+        
+        switch (sortKey) {
+            case 'name':
+                // Extract group name
+                const nameElement = cell.querySelector('.fw-bold') || cell;
+                value = nameElement.textContent.trim();
+                break;
+            case 'owner':
+                // Extract owner name
+                value = cell.textContent.trim();
+                break;
+            case 'members':
+                // Extract member count
+                const memberText = cell.textContent.trim();
+                const memberMatch = memberText.match(/(\d+)/);
+                value = memberMatch ? memberMatch[1] : '0';
+                break;
+            case 'status':
+                // Extract status from badge
+                const statusBadge = cell.querySelector('.group-status-badge, .badge');
+                value = statusBadge ? statusBadge.textContent.trim() : cell.textContent.trim();
+                break;
+            case 'documents':
+                // Extract document count
+                const docText = cell.textContent.trim();
+                const docMatch = docText.match(/(\d+)/);
+                value = docMatch ? docMatch[1] : '0';
+                break;
+            default:
+                value = cell.textContent.trim();
+        }
+        
+        return value;
+    }
+
+    getColumnIndex(sortKey) {
+        const headers = this.table.querySelectorAll('th');
+        for (let i = 0; i < headers.length; i++) {
+            if (headers[i].getAttribute('data-sort') === sortKey) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    parseNumericValue(value) {
+        if (!value || value === '' || value.toLowerCase() === 'never') return 0;
+        
+        // Extract numeric value from string
+        const numMatch = value.match(/(\d+)/);
+        return numMatch ? parseInt(numMatch[1]) : 0;
+    }
+}
+
 class ControlCenter {
     constructor() {
         this.currentPage = 1;
@@ -29,15 +164,24 @@ class ControlCenter {
     
     init() {
         this.bindEvents();
-        this.loadUsers();
-        this.loadActivityTrends();
         
-        // Also load groups and public workspaces on initial page load
-        // This ensures they get their cached metrics on first load
-        setTimeout(() => {
-            this.loadGroups();
-            this.loadPublicWorkspaces();
-        }, 500); // Small delay to ensure DOM is ready
+        // Check if user has admin role (passed from backend)
+        const hasAdminRole = window.hasControlCenterAdmin === true;
+        
+        // Only load admin features if user has ControlCenterAdmin role
+        if (hasAdminRole) {
+            this.loadUsers();
+            
+            // Also load groups and public workspaces on initial page load
+            // This ensures they get their cached metrics on first load
+            setTimeout(() => {
+                this.loadGroups();
+                this.loadPublicWorkspaces();
+            }, 500); // Small delay to ensure DOM is ready
+        }
+        
+        // Always load activity trends (available to all Control Center users)
+        this.loadActivityTrends();
     }
     
     bindEvents() {
@@ -122,6 +266,10 @@ class ControlCenter {
         // User management modal
         document.getElementById('saveUserChangesBtn')?.addEventListener('click', 
             () => this.saveUserChanges());
+        document.getElementById('deleteUserDocumentsBtn')?.addEventListener('click',
+            () => this.deleteUserDocuments());
+        document.getElementById('confirmDeleteUserDocumentsBtn')?.addEventListener('click',
+            () => this.confirmDeleteUserDocuments());
         
         // Modal controls
         document.getElementById('accessStatusSelect')?.addEventListener('change', 
@@ -339,18 +487,9 @@ class ControlCenter {
     }
     
     renderChatMetrics(chatMetrics) {
-        if (!chatMetrics) {
-            return '<div class="small text-muted">No data<br><em>Use Refresh Data button</em></div>';
-        }
-        
-        const totalConversations = chatMetrics.total_conversations || 0;
-        const totalMessages = chatMetrics.total_messages || 0;
-        const messageSize = chatMetrics.total_message_size || 0;
-        
-        // If all values are zero/empty, show refresh message
-        if (totalConversations === 0 && totalMessages === 0 && messageSize === 0) {
-            return '<div class="small text-muted">No cached data<br><em>Use Refresh Data button</em></div>';
-        }
+        const totalConversations = chatMetrics?.total_conversations || 0;
+        const totalMessages = chatMetrics?.total_messages || 0;
+        const messageSize = chatMetrics?.total_message_size || 0;
         
         return `
             <div class="small">
@@ -362,21 +501,12 @@ class ControlCenter {
     }
     
     renderDocumentMetrics(docMetrics) {
-        if (!docMetrics) {
-            return '<div class="small text-muted">No data<br><em>Use Refresh Data button</em></div>';
-        }
-        
-        const totalDocs = docMetrics.total_documents || 0;
-        const aiSearchSize = docMetrics.ai_search_size || 0;
-        const storageSize = docMetrics.storage_account_size || 0;
+        const totalDocs = docMetrics?.total_documents || 0;
+        const aiSearchSize = docMetrics?.ai_search_size || 0;
+        const storageSize = docMetrics?.storage_account_size || 0;
         // Always get enhanced citation setting from app settings, not user data
         const enhancedCitation = (typeof appSettings !== 'undefined' && appSettings.enable_enhanced_citations) || false;
-        const personalWorkspace = docMetrics.personal_workspace_enabled;
-        
-        // If all values are zero/empty, show refresh message
-        if (totalDocs === 0 && aiSearchSize === 0 && storageSize === 0) {
-            return '<div class="small text-muted">No cached data<br><em>Use Refresh Data button</em></div>';
-        }
+        const personalWorkspace = docMetrics?.personal_workspace_enabled;
         
         let html = `
             <div class="small">
@@ -401,20 +531,11 @@ class ControlCenter {
     }
     
     renderGroupDocumentMetrics(docMetrics) {
-        if (!docMetrics) {
-            return '<div class="small text-muted">No data<br><em>Use Refresh Data button</em></div>';
-        }
-        
-        const totalDocs = docMetrics.total_documents || 0;
-        const aiSearchSize = docMetrics.ai_search_size || 0;
-        const storageSize = docMetrics.storage_account_size || 0;
+        const totalDocs = docMetrics?.total_documents || 0;
+        const aiSearchSize = docMetrics?.ai_search_size || 0;
+        const storageSize = docMetrics?.storage_account_size || 0;
         // Always get enhanced citation setting from app settings, not user data
         const enhancedCitation = (typeof appSettings !== 'undefined' && appSettings.enable_enhanced_citations) || false;
-        
-        // If all values are zero/empty, show refresh message
-        if (totalDocs === 0 && aiSearchSize === 0 && storageSize === 0) {
-            return '<div class="small text-muted">No cached data<br><em>Use Refresh Data button</em></div>';
-        }
         
         let html = `
             <div class="small">
@@ -432,19 +553,10 @@ class ControlCenter {
     }
     
     renderLoginActivity(loginMetrics) {
-        if (!loginMetrics) {
-            return '<div class="small text-muted">No login data<br><em>Use Refresh Data button</em></div>';
-        }
+        const totalLogins = loginMetrics?.total_logins || 0;
+        const lastLogin = loginMetrics?.last_login;
         
-        const totalLogins = loginMetrics.total_logins || 0;
-        const lastLogin = loginMetrics.last_login;
-        
-        // If no logins recorded and no last login, show refresh message
-        if (totalLogins === 0 && !lastLogin) {
-            return '<div class="small text-muted">No cached data<br><em>Use Refresh Data button</em></div>';
-        }
-        
-        let lastLoginFormatted = 'Never';
+        let lastLoginFormatted = 'None';
         if (lastLogin) {
             try {
                 const date = new Date(lastLogin);
@@ -455,7 +567,7 @@ class ControlCenter {
                     year: 'numeric'
                 });
             } catch {
-                lastLoginFormatted = 'Invalid date';
+                lastLoginFormatted = 'None';
             }
         }
         
@@ -641,13 +753,23 @@ class ControlCenter {
             // Extract user info from table row
             const nameCell = cells[1];
             const userName = nameCell.querySelector('.fw-semibold')?.textContent || 'Unknown User';
-            const userEmail = nameCell.querySelector('.text-muted')?.textContent || '';
+            const userEmail = nameCell.querySelectorAll('.text-muted')[0]?.textContent || '';
+            
+            // Extract document count from cell 6 (Document Metrics column)
+            const docMetricsCell = cells[6];
+            const totalDocsText = docMetricsCell?.querySelector('div > div:first-child')?.textContent || '';
+            const docCount = totalDocsText.match(/Total Docs:\s*(\d+)/)?.[1] || '0';
+            
+            // Extract last login from cell 4 (Login Activity column)
+            const loginActivityCell = cells[4];
+            const lastLoginText = loginActivityCell?.querySelector('div > div:first-child')?.textContent || '';
+            const lastLogin = lastLoginText.replace('Last Login:', '').trim() || 'None';
             
             // Populate modal
             document.getElementById('modalUserName').textContent = userName;
             document.getElementById('modalUserEmail').textContent = userEmail;
-            document.getElementById('modalUserDocuments').textContent = cells[4]?.textContent.split('\n')[0] || '0 docs';
-            document.getElementById('modalUserLastActivity').textContent = cells[4]?.textContent.split('\n')[1]?.replace('Last: ', '') || 'Unknown';
+            document.getElementById('modalUserDocuments').textContent = `${docCount} docs`;
+            document.getElementById('modalUserLastActivity').textContent = lastLogin;
             
             // Set current user
             this.currentUser = { id: userId, name: userName, email: userEmail };
@@ -682,6 +804,66 @@ class ControlCenter {
         const group = document.getElementById('fileUploadDateTimeGroup');
         if (select && group) {
             group.style.display = select.value === 'deny_until' ? 'block' : 'none';
+        }
+    }
+    
+    deleteUserDocuments() {
+        if (!this.currentUser) {
+            this.showError('No user selected');
+            return;
+        }
+        
+        // Clear previous reason and show confirmation modal
+        document.getElementById('deleteUserDocumentsReason').value = '';
+        const deleteModal = new bootstrap.Modal(document.getElementById('deleteUserDocumentsModal'));
+        deleteModal.show();
+    }
+    
+    async confirmDeleteUserDocuments() {
+        if (!this.currentUser) {
+            this.showError('No user selected');
+            return;
+        }
+        
+        const reason = document.getElementById('deleteUserDocumentsReason').value.trim();
+        const confirmBtn = document.getElementById('confirmDeleteUserDocumentsBtn');
+        
+        if (!reason) {
+            this.showError('Please provide a reason for deleting this user\'s documents');
+            return;
+        }
+        
+        // Disable button during request
+        confirmBtn.disabled = true;
+        confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Submitting...';
+        
+        try {
+            const response = await fetch(`/api/admin/control-center/users/${this.currentUser.id}/delete-documents`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reason })
+            });
+            
+            const data = await response.json();
+            
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to create document deletion request');
+            }
+            
+            // Close both modals
+            bootstrap.Modal.getInstance(document.getElementById('deleteUserDocumentsModal')).hide();
+            bootstrap.Modal.getInstance(document.getElementById('userManagementModal')).hide();
+            
+            this.showSuccess('Document deletion request created successfully. It requires approval from another admin.');
+            
+            // Refresh user list
+            this.loadUsers();
+            
+        } catch (error) {
+            this.showError(error.message);
+        } finally {
+            confirmBtn.disabled = false;
+            confirmBtn.innerHTML = '<i class="bi bi-trash me-1"></i>Submit Request';
         }
     }
     
@@ -1147,7 +1329,9 @@ class ControlCenter {
     // Activity Trends Methods
     async loadActivityTrends() {
         try {
-            console.log('🔍 [Frontend Debug] Loading activity trends for', this.currentTrendDays, 'days');
+            if (appSettings?.enable_debug_logging) {
+                console.log('🔍 [Frontend Debug] Loading activity trends for', this.currentTrendDays, 'days');
+            }
             
             // Build API URL with custom date range if specified
             let apiUrl = `/api/admin/control-center/activity-trends?days=${this.currentTrendDays}`;
@@ -1156,13 +1340,19 @@ class ControlCenter {
             }
             
             const response = await fetch(apiUrl);
-            console.log('🔍 [Frontend Debug] API response status:', response.status);
+            if (appSettings?.enable_debug_logging) {
+                console.log('🔍 [Frontend Debug] API response status:', response.status);
+            }
             
             const data = await response.json();
-            console.log('🔍 [Frontend Debug] API response data:', data);
+            if (appSettings?.enable_debug_logging) {
+                console.log('🔍 [Frontend Debug] API response data:', data);
+            }
             
             if (response.ok) {
-                console.log('🔍 [Frontend Debug] Activity data received:', data.activity_data);
+                if (appSettings?.enable_debug_logging) {
+                    console.log('🔍 [Frontend Debug] Activity data received:', data.activity_data);
+                }
                 // Render all four charts
                 this.renderLoginsChart(data.activity_data);
                 this.renderChatsChart(data.activity_data);
@@ -1185,7 +1375,9 @@ class ControlCenter {
     }
     
     renderLoginsChart(activityData) {
-        console.log('🔍 [Frontend Debug] Rendering logins chart with data:', activityData.logins);
+        if (appSettings?.enable_debug_logging) {
+            console.log('🔍 [Frontend Debug] Rendering logins chart with data:', activityData.logins);
+        }
         this.renderSingleChart('loginsChart', 'logins', activityData.logins, {
             label: 'Logins',
             backgroundColor: 'rgba(255, 193, 7, 0.2)',
@@ -1194,25 +1386,125 @@ class ControlCenter {
     }
     
     renderChatsChart(activityData) {
-        console.log('🔍 [Frontend Debug] Rendering chats chart with data:', activityData.chats);
-        this.renderSingleChart('chatsChart', 'chats', activityData.chats, {
-            label: 'Chats',
-            backgroundColor: 'rgba(13, 110, 253, 0.2)',
-            borderColor: '#0d6efd'
+        if (appSettings?.enable_debug_logging) {
+            console.log('🔍 [Frontend Debug] Rendering chats chart with data:', activityData);
+        }
+        
+        // Check if Chart.js is available
+        if (typeof Chart === 'undefined') {
+            console.error(`❌ [Frontend Debug] Chart.js is not loaded. Cannot render chats chart.`);
+            this.showChartError('chatsChart', 'chats');
+            return;
+        }
+        
+        const canvas = document.getElementById('chatsChart');
+        if (!canvas) {
+            console.error(`❌ [Frontend Debug] Chart canvas element chatsChart not found`);
+            return;
+        }
+        
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+            console.error(`❌ [Frontend Debug] Could not get 2D context from chatsChart canvas`);
+            return;
+        }
+        
+        // Show canvas
+        canvas.style.display = 'block';
+        
+        // Destroy existing chart if it exists
+        if (this.chatsChart) {
+            this.chatsChart.destroy();
+        }
+        
+        // Get data for created and deleted chats
+        const createdData = activityData.chats_created || {};
+        const deletedData = activityData.chats_deleted || {};
+        const allDates = [...new Set([...Object.keys(createdData), ...Object.keys(deletedData)])].sort();
+        
+        const labels = allDates.map(date => {
+            const dateObj = new Date(date);
+            return dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        });
+        
+        const createdValues = allDates.map(date => createdData[date] || 0);
+        const deletedValues = allDates.map(date => deletedData[date] || 0);
+        
+        const datasets = [
+            {
+                label: 'New Chats',
+                data: createdValues,
+                borderColor: '#0d6efd',
+                backgroundColor: 'rgba(13, 110, 253, 0.1)',
+                borderWidth: 2,
+                fill: true,
+                tension: 0.4,
+                type: 'line'
+            },
+            {
+                label: 'Deleted Chats',
+                data: deletedValues,
+                backgroundColor: 'rgba(220, 53, 69, 0.7)',
+                borderColor: '#dc3545',
+                borderWidth: 1,
+                type: 'bar'
+            }
+        ];
+        
+        this.chatsChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: datasets
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top',
+                        labels: {
+                            usePointStyle: true,
+                            padding: 15
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        display: true,
+                        grid: { display: false }
+                    },
+                    y: {
+                        display: true,
+                        beginAtZero: true,
+                        grid: { color: 'rgba(0, 0, 0, 0.1)' },
+                        ticks: { precision: 0 }
+                    }
+                }
+            }
         });
     }
     
     renderDocumentsChart(activityData) {
-        console.log('🔍 [Frontend Debug] Rendering documents chart with personal, group, and public data');
-        console.log('🔍 [Frontend Debug] Personal documents:', activityData.personal_documents);
-        console.log('🔍 [Frontend Debug] Group documents:', activityData.group_documents);
-        console.log('🔍 [Frontend Debug] Public documents:', activityData.public_documents);
+        if (appSettings?.enable_debug_logging) {
+            console.log('🔍 [Frontend Debug] Rendering documents chart with creation/deletion data');
+            console.log('🔍 [Frontend Debug] Personal created:', activityData.personal_documents_created);
+            console.log('🔍 [Frontend Debug] Personal deleted:', activityData.personal_documents_deleted);
+            console.log('🔍 [Frontend Debug] Group created:', activityData.group_documents_created);
+            console.log('🔍 [Frontend Debug] Group deleted:', activityData.group_documents_deleted);
+            console.log('🔍 [Frontend Debug] Public created:', activityData.public_documents_created);
+            console.log('🔍 [Frontend Debug] Public deleted:', activityData.public_documents_deleted);
+        }
         
-        // Render combined chart with personal, group, and public documents
+        // Render combined chart with creations (lines) and deletions (bars)
         this.renderCombinedDocumentsChart('documentsChart', {
-            personal: activityData.personal_documents || {},
-            group: activityData.group_documents || {},
-            public: activityData.public_documents || {}
+            personal_created: activityData.personal_documents_created || {},
+            personal_deleted: activityData.personal_documents_deleted || {},
+            group_created: activityData.group_documents_created || {},
+            group_deleted: activityData.group_documents_deleted || {},
+            public_created: activityData.public_documents_created || {},
+            public_deleted: activityData.public_documents_deleted || {}
         });
     }
     
@@ -1249,10 +1541,14 @@ class ControlCenter {
         }
         
         // Prepare data for Chart.js - get all unique dates and sort them
-        const personalDates = Object.keys(documentsData.personal || {});
-        const groupDates = Object.keys(documentsData.group || {});
-        const publicDates = Object.keys(documentsData.public || {});
-        const allDates = [...new Set([...personalDates, ...groupDates, ...publicDates])].sort();
+        const allDates = [...new Set([
+            ...Object.keys(documentsData.personal_created || {}),
+            ...Object.keys(documentsData.personal_deleted || {}),
+            ...Object.keys(documentsData.group_created || {}),
+            ...Object.keys(documentsData.group_deleted || {}),
+            ...Object.keys(documentsData.public_created || {}),
+            ...Object.keys(documentsData.public_deleted || {})
+        ])].sort();
         
         console.log(`🔍 [Frontend Debug] Documents date range:`, allDates);
         
@@ -1261,42 +1557,77 @@ class ControlCenter {
             return dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
         });
         
-        // Prepare datasets for personal, group, and public documents
-        const personalData = allDates.map(date => (documentsData.personal || {})[date] || 0);
-        const groupData = allDates.map(date => (documentsData.group || {})[date] || 0);
-        const publicData = allDates.map(date => (documentsData.public || {})[date] || 0);
+        // Prepare datasets - lines for creations, bars for deletions
+        const personalCreated = allDates.map(date => (documentsData.personal_created || {})[date] || 0);
+        const personalDeleted = allDates.map(date => (documentsData.personal_deleted || {})[date] || 0);
+        const groupCreated = allDates.map(date => (documentsData.group_created || {})[date] || 0);
+        const groupDeleted = allDates.map(date => (documentsData.group_deleted || {})[date] || 0);
+        const publicCreated = allDates.map(date => (documentsData.public_created || {})[date] || 0);
+        const publicDeleted = allDates.map(date => (documentsData.public_deleted || {})[date] || 0);
         
-        console.log(`🔍 [Frontend Debug] Personal documents data:`, personalData);
-        console.log(`🔍 [Frontend Debug] Group documents data:`, groupData);
-        console.log(`🔍 [Frontend Debug] Public documents data:`, publicData);
+        console.log(`🔍 [Frontend Debug] Personal created:`, personalCreated);
+        console.log(`🔍 [Frontend Debug] Personal deleted:`, personalDeleted);
+        console.log(`🔍 [Frontend Debug] Group created:`, groupCreated);
+        console.log(`🔍 [Frontend Debug] Group deleted:`, groupDeleted);
+        console.log(`🔍 [Frontend Debug] Public created:`, publicCreated);
+        console.log(`🔍 [Frontend Debug] Public deleted:`, publicDeleted);
         
         const datasets = [
+            // Lines for new documents
             {
-                label: 'Personal',
-                data: personalData,
-                backgroundColor: 'rgba(144, 238, 144, 0.4)',  // Light green
-                borderColor: '#90EE90',                        // Light green
+                label: 'Personal (New)',
+                data: personalCreated,
+                borderColor: '#90EE90',
+                backgroundColor: 'rgba(144, 238, 144, 0.1)',
                 borderWidth: 2,
-                fill: false,
-                tension: 0.1
+                fill: true,
+                tension: 0.4,
+                type: 'line'
             },
             {
-                label: 'Group',
-                data: groupData,
-                backgroundColor: 'rgba(34, 139, 34, 0.4)',    // Medium green (forest green)
-                borderColor: '#228B22',                        // Medium green (forest green)
+                label: 'Group (New)',
+                data: groupCreated,
+                borderColor: '#228B22',
+                backgroundColor: 'rgba(34, 139, 34, 0.1)',
                 borderWidth: 2,
-                fill: false,
-                tension: 0.1
+                fill: true,
+                tension: 0.4,
+                type: 'line'
             },
             {
-                label: 'Public',
-                data: publicData,
-                backgroundColor: 'rgba(0, 100, 0, 0.4)',      // Dark green
-                borderColor: '#006400',                        // Dark green
+                label: 'Public (New)',
+                data: publicCreated,
+                borderColor: '#006400',
+                backgroundColor: 'rgba(0, 100, 0, 0.1)',
                 borderWidth: 2,
-                fill: false,
-                tension: 0.1
+                fill: true,
+                tension: 0.4,
+                type: 'line'
+            },
+            // Bars for deleted documents
+            {
+                label: 'Personal (Deleted)',
+                data: personalDeleted,
+                backgroundColor: 'rgba(255, 182, 193, 0.7)',
+                borderColor: '#FFB6C1',
+                borderWidth: 1,
+                type: 'bar'
+            },
+            {
+                label: 'Group (Deleted)',
+                data: groupDeleted,
+                backgroundColor: 'rgba(220, 53, 69, 0.7)',
+                borderColor: '#dc3545',
+                borderWidth: 1,
+                type: 'bar'
+            },
+            {
+                label: 'Public (Deleted)',
+                data: publicDeleted,
+                backgroundColor: 'rgba(139, 0, 0, 0.7)',
+                borderColor: '#8B0000',
+                borderWidth: 1,
+                type: 'bar'
             }
         ];
         
@@ -1305,7 +1636,7 @@ class ControlCenter {
         // Create new chart
         try {
             this.documentsChart = new Chart(ctx, {
-                type: 'line',
+                type: 'bar',
                 data: {
                     labels: labels,
                     datasets: datasets
@@ -1315,11 +1646,12 @@ class ControlCenter {
                     maintainAspectRatio: false,
                     plugins: {
                         legend: {
-                            display: true,  // Show legend for multiple datasets
+                            display: true,
                             position: 'top',
                             labels: {
                                 usePointStyle: true,
-                                padding: 15
+                                padding: 10,
+                                font: { size: 10 }
                             }
                         },
                         tooltip: {
@@ -1374,7 +1706,9 @@ class ControlCenter {
     }
 
     renderTokensChart(activityData) {
-        console.log('🔍 [Frontend Debug] Rendering tokens chart with data:', activityData.tokens);
+        if (appSettings?.enable_debug_logging) {
+            console.log('🔍 [Frontend Debug] Rendering tokens chart with data:', activityData.tokens);
+        }
         
         // Render combined chart with embedding and chat tokens
         this.renderCombinedTokensChart('tokensChart', activityData.tokens || {});
@@ -1405,13 +1739,17 @@ class ControlCenter {
         
         // Destroy existing chart if it exists
         if (this.tokensChart) {
-            console.log('🔍 [Frontend Debug] Destroying existing tokens chart');
+            if (appSettings?.enable_debug_logging) {
+                console.log('🔍 [Frontend Debug] Destroying existing tokens chart');
+            }
             this.tokensChart.destroy();
         }
         
         // Prepare data from tokens object (format: { "YYYY-MM-DD": { "embedding": count, "chat": count } })
         const allDates = Object.keys(tokensData).sort();
-        console.log('🔍 [Frontend Debug] Token dates:', allDates);
+        if (appSettings?.enable_debug_logging) {
+            console.log('🔍 [Frontend Debug] Token dates:', allDates);
+        }
         
         // Format labels for display
         const labels = allDates.map(dateStr => {
@@ -1423,8 +1761,10 @@ class ControlCenter {
         const embeddingTokens = allDates.map(date => tokensData[date]?.embedding || 0);
         const chatTokens = allDates.map(date => tokensData[date]?.chat || 0);
         
-        console.log('🔍 [Frontend Debug] Embedding tokens:', embeddingTokens);
-        console.log('🔍 [Frontend Debug] Chat tokens:', chatTokens);
+        if (appSettings?.enable_debug_logging) {
+            console.log('🔍 [Frontend Debug] Embedding tokens:', embeddingTokens);
+            console.log('🔍 [Frontend Debug] Chat tokens:', chatTokens);
+        }
         
         // Create datasets
         const datasets = [
@@ -1716,12 +2056,12 @@ class ControlCenter {
         const endDate = document.getElementById('endDate').value;
         
         if (!startDate || !endDate) {
-            alert('Please select both start and end dates.');
+            showToast('Please select both start and end dates.', 'warning');
             return;
         }
         
         if (new Date(startDate) > new Date(endDate)) {
-            alert('Start date must be before end date.');
+            showToast('Start date must be before end date.', 'warning');
             return;
         }
         
@@ -1768,7 +2108,7 @@ class ControlCenter {
             if (document.getElementById('exportTokens').checked) selectedCharts.push('tokens');
             
             if (selectedCharts.length === 0) {
-                alert('Please select at least one chart to export.');
+                showToast('Please select at least one chart to export.', 'warning');
                 return;
             }
             
@@ -1787,12 +2127,12 @@ class ControlCenter {
                 const endDate = document.getElementById('exportEndDate').value;
                 
                 if (!startDate || !endDate) {
-                    alert('Please select both start and end dates for custom range.');
+                    showToast('Please select both start and end dates for custom range.', 'warning');
                     return;
                 }
                 
                 if (new Date(startDate) > new Date(endDate)) {
-                    alert('Start date must be before end date.');
+                    showToast('Start date must be before end date.', 'warning');
                     return;
                 }
                 
@@ -1900,6 +2240,9 @@ class ControlCenter {
     }
 
     renderActivityLogs(logs, userMap) {
+        // Store logs for modal access
+        this.currentActivityLogs = logs;
+        
         const tbody = document.getElementById('activityLogsTableBody');
         if (!tbody) return;
 
@@ -1915,15 +2258,27 @@ class ControlCenter {
         }
 
         tbody.innerHTML = logs.map(log => {
-            const user = userMap[log.user_id] || {};
-            const userName = user.display_name || user.email || log.user_id;
+            // Handle user identification - some activities may not have user_id (system activities)
+            let userName = 'System';
+            if (log.user_id) {
+                const user = userMap[log.user_id] || {};
+                userName = user.display_name || user.email || log.user_id || 'Unknown User';
+            } else if (log.admin_email) {
+                userName = log.admin_email;
+            } else if (log.requester_email) {
+                userName = log.requester_email;
+            } else if (log.added_by_email) {
+                userName = log.added_by_email;
+            }
+            
             const timestamp = new Date(log.timestamp).toLocaleString();
             const activityType = this.formatActivityType(log.activity_type);
             const details = this.formatActivityDetails(log);
             const workspaceType = log.workspace_type || 'N/A';
 
+            const logIndex = logs.indexOf(log);
             return `
-                <tr>
+                <tr style="cursor: pointer;" onclick="window.controlCenter.showRawLogModal(${logIndex})" title="Click to view raw log data">
                     <td>${timestamp}</td>
                     <td><span class="badge bg-primary">${activityType}</span></td>
                     <td>${this.escapeHtml(userName)}</td>
@@ -1938,12 +2293,20 @@ class ControlCenter {
         const typeMap = {
             'user_login': 'User Login',
             'conversation_creation': 'Conversation Created',
-            'document_creation': 'Document Created',
-            'token_usage': 'Token Usage',
             'conversation_deletion': 'Conversation Deleted',
-            'conversation_archival': 'Conversation Archived'
+            'conversation_archival': 'Conversation Archived',
+            'document_creation': 'Document Created',
+            'document_deletion': 'Document Deleted',
+            'document_metadata_update': 'Document Metadata Updated',
+            'token_usage': 'Token Usage',
+            'group_status_change': 'Group Status Change',
+            'group_member_deleted': 'Group Member Deleted',
+            'add_member_directly': 'Add Member Directly',
+            'admin_take_ownership_approved': 'Admin Take Ownership (Approved)',
+            'delete_group_approved': 'Delete Group (Approved)',
+            'delete_all_documents_approved': 'Delete All Documents (Approved)'
         };
-        return typeMap[activityType] || activityType;
+        return typeMap[activityType] || activityType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
     }
 
     formatActivityDetails(log) {
@@ -1958,17 +2321,6 @@ class ControlCenter {
                 const convId = log.conversation?.conversation_id || 'N/A';
                 return `Title: ${this.escapeHtml(convTitle)}<br><small class="text-muted">ID: ${convId}</small>`;
                 
-            case 'document_creation':
-                const fileName = log.document?.file_name || 'Unknown';
-                const fileType = log.document?.file_type || '';
-                return `File: ${this.escapeHtml(fileName)}<br><small class="text-muted">Type: ${fileType}</small>`;
-                
-            case 'token_usage':
-                const tokenType = log.token_type || 'unknown';
-                const totalTokens = log.usage?.total_tokens || 0;
-                const model = log.usage?.model || 'N/A';
-                return `Type: ${tokenType}<br>Tokens: ${totalTokens.toLocaleString()}<br><small class="text-muted">Model: ${model}</small>`;
-                
             case 'conversation_deletion':
                 const delTitle = log.conversation?.title || 'Untitled';
                 const delId = log.conversation?.conversation_id || 'N/A';
@@ -1978,6 +2330,110 @@ class ControlCenter {
                 const archTitle = log.conversation?.title || 'Untitled';
                 const archId = log.conversation?.conversation_id || 'N/A';
                 return `Archived: ${this.escapeHtml(archTitle)}<br><small class="text-muted">ID: ${archId}</small>`;
+                
+            case 'document_creation':
+                const fileName = log.document?.file_name || 'Unknown';
+                const fileType = log.document?.file_type || '';
+                return `File: ${this.escapeHtml(fileName)}<br><small class="text-muted">Type: ${fileType}</small>`;
+                
+            case 'document_deletion':
+                const delFileName = log.document?.file_name || 'Unknown';
+                const delFileType = log.document?.file_type || '';
+                return `Deleted: ${this.escapeHtml(delFileName)}<br><small class="text-muted">Type: ${delFileType}</small>`;
+                
+            case 'document_metadata_update':
+                const updatedFileName = log.document?.file_name || 'Unknown';
+                const updatedFields = Object.keys(log.updated_fields || {}).join(', ') || 'N/A';
+                return `File: ${this.escapeHtml(updatedFileName)}<br><small class="text-muted">Updated: ${updatedFields}</small>`;
+                
+            case 'token_usage':
+                const tokenType = log.token_type || 'unknown';
+                const totalTokens = log.usage?.total_tokens || 0;
+                const model = log.usage?.model || 'N/A';
+                return `Type: ${tokenType}<br>Tokens: ${totalTokens.toLocaleString()}<br><small class="text-muted">Model: ${model}</small>`;
+                
+            case 'group_status_change':
+                const groupName = log.group?.group_name || 'Unknown Group';
+                const oldStatus = log.status_change?.old_status || 'N/A';
+                const newStatus = log.status_change?.new_status || 'N/A';
+                return `Group: ${this.escapeHtml(groupName)}<br>Status: ${oldStatus} → ${newStatus}`;
+                
+            case 'group_member_deleted':
+                const memberName = log.removed_member?.name || log.removed_member?.email || 'Unknown';
+                const memberGroupName = log.group?.group_name || 'Unknown Group';
+                return `Removed: ${this.escapeHtml(memberName)}<br><small class="text-muted">From: ${this.escapeHtml(memberGroupName)}</small>`;
+                
+            case 'add_member_directly':
+                const addedMemberName = log.member_name || log.member_email || 'Unknown';
+                const addedToGroup = log.group_name || 'Unknown Group';
+                const memberRole = log.member_role || 'user';
+                return `Added: ${this.escapeHtml(addedMemberName)}<br><small class="text-muted">To: ${this.escapeHtml(addedToGroup)} (${memberRole})</small>`;
+                
+            case 'admin_take_ownership_approved':
+                const ownershipGroup = log.group_name || 'Unknown Group';
+                const oldOwner = log.old_owner_email || 'Unknown';
+                const newOwner = log.new_owner_email || 'Unknown';
+                const approver = log.approver_email || 'N/A';
+                return `Group: ${this.escapeHtml(ownershipGroup)}<br>Old Owner: ${this.escapeHtml(oldOwner)}<br>New Owner: ${this.escapeHtml(newOwner)}<br><small class="text-muted">Approved by: ${this.escapeHtml(approver)}</small>`;
+                
+            case 'delete_group_approved':
+                const deletedGroup = log.group_name || 'Unknown Group';
+                const requester = log.requester_email || 'Unknown';
+                const delApprover = log.approver_email || 'N/A';
+                return `Group: ${this.escapeHtml(deletedGroup)}<br>Requested by: ${this.escapeHtml(requester)}<br><small class="text-muted">Approved by: ${this.escapeHtml(delApprover)}</small>`;
+                
+            case 'delete_all_documents_approved':
+                const docsGroup = log.group_name || 'Unknown Group';
+                const docsDeleted = log.documents_deleted !== undefined ? log.documents_deleted : 'N/A';
+                const docsRequester = log.requester_email || 'Unknown';
+                const docsApprover = log.approver_email || 'N/A';
+                return `Group: ${this.escapeHtml(docsGroup)}<br>Documents Deleted: ${docsDeleted}<br>Requested by: ${this.escapeHtml(docsRequester)}<br><small class="text-muted">Approved by: ${this.escapeHtml(docsApprover)}</small>`;
+                
+            case 'public_workspace_status_change':
+                const workspaceName = log.public_workspace?.workspace_name || log.workspace_context?.public_workspace_name || log.public_workspace_name || 'Unknown Workspace';
+                const wsOldStatus = log.status_change?.old_status || 'N/A';
+                const wsNewStatus = log.status_change?.new_status || 'N/A';
+                return `Workspace: ${this.escapeHtml(workspaceName)}<br>Status: ${wsOldStatus} → ${wsNewStatus}`;
+                
+            case 'admin_take_workspace_ownership_approved':
+                const wsOwnershipName = log.workspace_name || log.public_workspace_name || 'Unknown Workspace';
+                const wsOldOwner = log.old_owner_email || 'Unknown';
+                const wsNewOwner = log.new_owner_email || 'Unknown';
+                const wsApprover = log.approver_email || 'N/A';
+                return `Workspace: ${this.escapeHtml(wsOwnershipName)}<br>Old Owner: ${this.escapeHtml(wsOldOwner)}<br>New Owner: ${this.escapeHtml(wsNewOwner)}<br><small class="text-muted">Approved by: ${this.escapeHtml(wsApprover)}</small>`;
+                
+            case 'transfer_workspace_ownership_approved':
+                const wsTransferName = log.workspace_name || log.public_workspace_name || 'Unknown Workspace';
+                const wsTransferOldOwner = log.old_owner_email || 'Unknown';
+                const wsTransferNewOwner = log.new_owner_email || 'Unknown';
+                const wsTransferApprover = log.approver_email || 'N/A';
+                return `Workspace: ${this.escapeHtml(wsTransferName)}<br>Old Owner: ${this.escapeHtml(wsTransferOldOwner)}<br>New Owner: ${this.escapeHtml(wsTransferNewOwner)}<br><small class="text-muted">Approved by: ${this.escapeHtml(wsTransferApprover)}</small>`;
+                
+            case 'transfer_ownership_approved':
+                const transferGroup = log.group_name || 'Unknown Group';
+                const transferOldOwner = log.old_owner_email || 'Unknown';
+                const transferNewOwner = log.new_owner_email || 'Unknown';
+                const transferApprover = log.approver_email || 'N/A';
+                return `Group: ${this.escapeHtml(transferGroup)}<br>Old Owner: ${this.escapeHtml(transferOldOwner)}<br>New Owner: ${this.escapeHtml(transferNewOwner)}<br><small class="text-muted">Approved by: ${this.escapeHtml(transferApprover)}</small>`;
+                
+            case 'add_workspace_member_directly':
+                const wsAddedMemberName = log.member_name || log.member_email || 'Unknown';
+                const wsAddedTo = log.workspace_name || log.public_workspace_name || 'Unknown Workspace';
+                const wsMemberRole = log.member_role || 'user';
+                return `Added: ${this.escapeHtml(wsAddedMemberName)}<br><small class="text-muted">To: ${this.escapeHtml(wsAddedTo)} (${wsMemberRole})</small>`;
+                
+            case 'delete_workspace_documents_approved':
+                const wsDocsName = log.workspace_name || log.public_workspace_name || 'Unknown Workspace';
+                const wsDocsDeleted = log.documents_deleted !== undefined ? log.documents_deleted : 'N/A';
+                const wsDocsRequester = log.requester_email || 'Unknown';
+                const wsDocsApprover = log.approver_email || 'N/A';
+                return `Workspace: ${this.escapeHtml(wsDocsName)}<br>Documents Deleted: ${wsDocsDeleted}<br>Requested by: ${this.escapeHtml(wsDocsRequester)}<br><small class="text-muted">Approved by: ${this.escapeHtml(wsDocsApprover)}</small>`;
+                
+            case 'delete_workspace_approved':
+                const deletedWorkspace = log.workspace_name || log.public_workspace_name || 'Unknown Workspace';
+                const wsDelRequester = log.requester_email || 'Unknown';
+                const wsDelApprover = log.approver_email || 'N/A';
+                return `Workspace: ${this.escapeHtml(deletedWorkspace)}<br>Requested by: ${this.escapeHtml(wsDelRequester)}<br><small class="text-muted">Approved by: ${this.escapeHtml(wsDelApprover)}</small>`;
                 
             default:
                 return 'N/A';
@@ -2137,7 +2593,7 @@ class ControlCenter {
             
         } catch (error) {
             console.error('Error exporting activity logs:', error);
-            alert('Failed to export activity logs. Please try again.');
+            showToast('Failed to export activity logs. Please try again.', 'danger');
         }
     }
 
@@ -2188,7 +2644,57 @@ class ControlCenter {
         return str.charAt(0).toUpperCase() + str.slice(1);
     }
 
+    showRawLogModal(logIndex) {
+        if (!this.currentActivityLogs || !this.currentActivityLogs[logIndex]) {
+            showToast('Log data not available', 'warning');
+            return;
+        }
+
+        const log = this.currentActivityLogs[logIndex];
+        const modalBody = document.getElementById('rawLogModalBody');
+        const modalTitle = document.getElementById('rawLogModalTitle');
+        
+        if (!modalBody || !modalTitle) {
+            showToast('Modal elements not found', 'danger');
+            return;
+        }
+
+        // Set title
+        const activityType = this.formatActivityType(log.activity_type);
+        const timestamp = new Date(log.timestamp).toLocaleString();
+        modalTitle.textContent = `${activityType} - ${timestamp}`;
+
+        // Display JSON with pretty formatting
+        modalBody.innerHTML = `<pre class="mb-0" style="max-height: 500px; overflow-y: auto;">${this.escapeHtml(JSON.stringify(log, null, 2))}</pre>`;
+
+        // Show modal
+        const modal = new bootstrap.Modal(document.getElementById('rawLogModal'));
+        modal.show();
+    }
+
+    copyRawLogToClipboard() {
+        const rawLogText = document.getElementById('rawLogModalBody')?.textContent;
+        if (!rawLogText) {
+            showToast('No log data to copy', 'warning');
+            return;
+        }
+
+        navigator.clipboard.writeText(rawLogText).then(() => {
+            this.showToast('Log data copied to clipboard', 'success');
+        }).catch(err => {
+            console.error('Failed to copy:', err);
+            showToast('Failed to copy to clipboard', 'danger');
+        });
+    }
+
     escapeHtml(text) {
+        // Handle undefined, null, or non-string values
+        if (text === undefined || text === null) {
+            return '';
+        }
+        // Convert to string if not already
+        text = String(text);
+        
         const map = {
             '&': '&amp;',
             '<': '&lt;',
@@ -2226,7 +2732,7 @@ class ControlCenter {
             if (document.getElementById('chatDocuments').checked) selectedCharts.push('documents');
             
             if (selectedCharts.length === 0) {
-                alert('Please select at least one chart to include in the chat.');
+                showToast('Please select at least one chart to include in the chat.', 'warning');
                 return;
             }
             
@@ -2245,12 +2751,12 @@ class ControlCenter {
                 const endDate = document.getElementById('chatEndDate').value;
                 
                 if (!startDate || !endDate) {
-                    alert('Please select both start and end dates for custom range.');
+                    showToast('Please select both start and end dates for custom range.', 'warning');
                     return;
                 }
                 
                 if (new Date(startDate) > new Date(endDate)) {
-                    alert('Start date must be before end date.');
+                    showToast('Start date must be before end date.', 'warning');
                     return;
                 }
                 
@@ -2329,7 +2835,9 @@ class ControlCenter {
             this.groupDocumentsChart.destroy();
             this.groupDocumentsChart = null;
         }
-        console.log('🔍 [Frontend Debug] All charts destroyed');
+        if (appSettings?.enable_debug_logging) {
+            console.log('🔍 [Frontend Debug] All charts destroyed');
+        }
     }
     
     showAllChartsError() {
@@ -2341,7 +2849,9 @@ class ControlCenter {
         
         // Ensure main loading overlay is hidden when showing error
         this.showLoading(false);
-        console.log('🔍 [Frontend Debug] Main loading overlay hidden after all charts error');
+        if (appSettings?.enable_debug_logging) {
+            console.log('🔍 [Frontend Debug] Main loading overlay hidden after all charts error');
+        }
     }
     
     showChartError(canvasId, chartType) {
@@ -2498,20 +3008,30 @@ class ControlCenter {
     
     createGroupRow(group) {
         // Format storage size
-        const storageSize = group.activity?.document_metrics?.storage_account_size || 0;
+        const storageSize = group.metrics?.document_metrics?.storage_account_size || group.activity?.document_metrics?.storage_account_size || 0;
         const storageSizeFormatted = storageSize > 0 ? this.formatBytes(storageSize) : '0 B';
         
         // Format AI search size
-        const aiSearchSize = group.activity?.document_metrics?.ai_search_size || 0;
+        const aiSearchSize = group.metrics?.document_metrics?.ai_search_size || group.activity?.document_metrics?.ai_search_size || 0;
         const aiSearchSizeFormatted = aiSearchSize > 0 ? this.formatBytes(aiSearchSize) : '0 B';
         
         // Get document metrics
-        const totalDocs = group.activity?.document_metrics?.total_documents || 0;
+        const totalDocs = group.metrics?.document_metrics?.total_documents || group.activity?.document_metrics?.total_documents || 0;
         
         // Get group info
-        const memberCount = group.member_count || 0;
+        const memberCount = group.member_count || (group.users ? group.users.length : 0);
         const ownerName = group.owner?.displayName || group.owner?.display_name || 'Unknown';
         const ownerEmail = group.owner?.email || '';
+        
+        // Get status and format badge
+        const status = group.status || 'active';
+        const statusConfig = {
+            'active': { class: 'bg-success', text: 'Active' },
+            'locked': { class: 'bg-warning text-dark', text: 'Locked' },
+            'upload_disabled': { class: 'bg-info text-dark', text: 'Upload Disabled' },
+            'inactive': { class: 'bg-secondary', text: 'Inactive' }
+        };
+        const statusInfo = statusConfig[status] || statusConfig['active'];
         
         return `
             <tr>
@@ -2519,7 +3039,7 @@ class ControlCenter {
                     <input type="checkbox" class="form-check-input group-checkbox" value="${group.id}">
                 </td>
                 <td>
-                    <div><strong>${this.escapeHtml(group.name || 'Unnamed Group')}</strong></div>
+                    <div class="fw-semibold">${this.escapeHtml(group.name || 'Unnamed Group')}</div>
                     <div class="text-muted small">${this.escapeHtml(group.description || 'No description')}</div>
                     <div class="text-muted small">ID: ${group.id}</div>
                 </td>
@@ -2528,20 +3048,21 @@ class ControlCenter {
                     <div class="text-muted small">${this.escapeHtml(ownerEmail)}</div>
                 </td>
                 <td>
-                    <span class="badge bg-success">Active</span>
-                    <div class="text-muted small">${memberCount} members</div>
+                    <div class="small"><strong>${memberCount}</strong> member${memberCount === 1 ? '' : 's'}</div>
                 </td>
                 <td>
-                    <span class="badge bg-success">Active</span>
+                    <span class="badge ${statusInfo.class}">${statusInfo.text}</span>
                 </td>
                 <td>
-                    <div><strong>Total Docs:</strong> ${totalDocs}</div>
-                    <div><strong>AI Search:</strong> ${aiSearchSizeFormatted}</div>
-                    <div><strong>Storage:</strong> ${storageSizeFormatted}</div>
-                    ${group.activity?.document_metrics?.storage_account_size > 0 ? '<div class="text-muted small">(Enhanced)</div>' : ''}
+                    <div class="small">
+                        <div><strong>Total Docs:</strong> ${totalDocs}</div>
+                        <div><strong>AI Search:</strong> ${aiSearchSizeFormatted}</div>
+                        <div><strong>Storage:</strong> ${storageSizeFormatted}</div>
+                        ${storageSize > 0 ? '<div class="text-muted">(Enhanced)</div>' : ''}
+                    </div>
                 </td>
                 <td>
-                    <button class="btn btn-outline-primary btn-sm" onclick="window.controlCenter.manageGroup('${group.id}')">
+                    <button class="btn btn-outline-primary btn-sm" onclick="GroupManager.manageGroup('${group.id}')">
                         <i class="bi bi-gear me-1"></i>Manage
                     </button>
                 </td>
@@ -2558,9 +3079,14 @@ class ControlCenter {
     }
     
     manageGroup(groupId) {
-        // Placeholder for group management - can be implemented later
-        console.log('Managing group:', groupId);
-        alert('Group management functionality would open here');
+        // Call the GroupManager's manageGroup function directly
+        console.log('ControlCenter.manageGroup() redirecting to GroupManager.manageGroup()');
+        if (typeof GroupManager !== 'undefined' && GroupManager.manageGroup) {
+            GroupManager.manageGroup(groupId);
+        } else {
+            console.error('GroupManager not found or manageGroup method not available');
+            showToast('Group management functionality is not available', 'danger');
+        }
     }
 
     // Public Workspaces Management Methods
@@ -2697,13 +3223,23 @@ class ControlCenter {
         const ownerName = workspace.owner?.displayName || workspace.owner?.display_name || workspace.owner_name || 'Unknown';
         const ownerEmail = workspace.owner?.email || workspace.owner_email || '';
         
+        // Get status and format badge
+        const status = workspace.status || 'active';
+        const statusConfig = {
+            'active': { class: 'bg-success', text: 'Active' },
+            'locked': { class: 'bg-warning text-dark', text: 'Locked' },
+            'upload_disabled': { class: 'bg-info text-dark', text: 'Upload Disabled' },
+            'inactive': { class: 'bg-secondary', text: 'Inactive' }
+        };
+        const statusInfo = statusConfig[status] || statusConfig['active'];
+        
         return `
             <tr>
                 <td>
                     <input type="checkbox" class="form-check-input public-workspace-checkbox" value="${workspace.id}">
                 </td>
                 <td>
-                    <div><strong>${workspace.name || 'Unnamed Workspace'}</strong></div>
+                    <div class="fw-semibold">${workspace.name || 'Unnamed Workspace'}</div>
                     <div class="text-muted small">${workspace.description || 'No description'}</div>
                     <div class="text-muted small">ID: ${workspace.id}</div>
                 </td>
@@ -2712,16 +3248,18 @@ class ControlCenter {
                     <div class="text-muted small">${ownerEmail}</div>
                 </td>
                 <td>
-                    <span class="badge bg-light text-dark">${memberCount} member${memberCount !== 1 ? 's' : ''}</span>
+                    <div class="small"><strong>${memberCount}</strong> member${memberCount !== 1 ? 's' : ''}</div>
                 </td>
                 <td>
-                    <span class="badge bg-success">Active</span>
+                    <span class="badge ${statusInfo.class}">${statusInfo.text}</span>
                 </td>
                 <td>
-                    <div><strong>Total Docs:</strong> ${totalDocs}</div>
-                    <div><strong>AI Search:</strong> ${aiSearchSizeFormatted}</div>
-                    <div><strong>Storage:</strong> ${storageSizeFormatted}</div>
-                    ${workspace.activity?.document_metrics?.storage_account_size > 0 ? '<div class="text-muted small">(Enhanced)</div>' : ''}
+                    <div class="small">
+                        <div><strong>Total Docs:</strong> ${totalDocs}</div>
+                        <div><strong>AI Search:</strong> ${aiSearchSizeFormatted}</div>
+                        <div><strong>Storage:</strong> ${storageSizeFormatted}</div>
+                        ${workspace.activity?.document_metrics?.storage_account_size > 0 ? '<div class="text-muted">(Enhanced)</div>' : ''}
+                    </div>
                 </td>
                 <td>
                     <button class="btn btn-outline-primary btn-sm" onclick="window.controlCenter.managePublicWorkspace('${workspace.id}')">
@@ -2733,9 +3271,12 @@ class ControlCenter {
     }
     
     managePublicWorkspace(workspaceId) {
-        // Placeholder for public workspace management - can be implemented later
-        console.log('Managing public workspace:', workspaceId);
-        alert('Public workspace management functionality would open here');
+        console.log('Managing workspace:', workspaceId);
+        if (window.WorkspaceManager) {
+            WorkspaceManager.manageWorkspace(workspaceId);
+        } else {
+            showToast('Workspace manager not loaded', 'danger');
+        }
     }
 
     searchPublicWorkspaces(searchTerm) {
@@ -3012,6 +3553,11 @@ async function refreshControlCenterData() {
 }
 
 async function loadRefreshStatus() {
+    // Only admins can see refresh status
+    if (window.hasControlCenterAdmin !== true) {
+        return;
+    }
+    
     try {
         const response = await fetch('/api/admin/control-center/refresh-status');
         if (response.ok) {
@@ -3167,6 +3713,11 @@ function showAlert(message, type = 'info') {
 
 // Activity Log Migration Functions
 async function checkMigrationStatus() {
+    // Only admins can see migration status
+    if (window.hasControlCenterAdmin !== true) {
+        return;
+    }
+    
     try {
         const response = await fetch('/api/admin/control-center/migrate/status');
         if (!response.ok) {
@@ -3255,9 +3806,16 @@ function hideMigrationBanner() {
 }
 
 async function performMigration() {
-    // Confirm with user
-    if (!confirm('This migration may take several minutes and could affect system performance. Are you sure you want to continue?\n\nRecommended to run during off-peak hours.')) {
-        return;
+    // Show confirmation modal
+    const modal = new bootstrap.Modal(document.getElementById('migrationConfirmModal'));
+    modal.show();
+}
+
+async function executeMigration() {
+    // Close the confirmation modal
+    const modal = bootstrap.Modal.getInstance(document.getElementById('migrationConfirmModal'));
+    if (modal) {
+        modal.hide();
     }
     
     try {
@@ -3293,18 +3851,13 @@ async function performMigration() {
                 const totalMigrated = result.total_migrated || 0;
                 const totalFailed = result.total_failed || 0;
                 
-                let message = `Migration completed successfully!\n\n`;
-                message += `✓ Conversations migrated: ${result.conversations_migrated || 0}\n`;
-                message += `✓ Personal documents migrated: ${result.personal_documents_migrated || 0}\n`;
-                message += `✓ Group documents migrated: ${result.group_documents_migrated || 0}\n`;
-                message += `✓ Public documents migrated: ${result.public_documents_migrated || 0}\n`;
-                message += `\nTotal: ${totalMigrated} records migrated`;
+                let message = `Migration completed! Conversations: ${result.conversations_migrated || 0}, Personal docs: ${result.personal_documents_migrated || 0}, Group docs: ${result.group_documents_migrated || 0}, Public docs: ${result.public_documents_migrated || 0}. Total: ${totalMigrated} records migrated`;
                 
                 if (totalFailed > 0) {
-                    message += `\n\n⚠ ${totalFailed} records failed to migrate (check logs for details)`;
+                    message += `. Warning: ${totalFailed} records failed (check logs)`;
                 }
                 
-                alert(message);
+                showToast(message, 'success');
                 
                 // Refresh activity trends to show new data
                 if (window.controlCenter) {
@@ -3316,7 +3869,7 @@ async function performMigration() {
     } catch (error) {
         console.error('Migration error:', error);
         hideMigrationProgress();
-        alert('Migration failed: ' + error.message + '\n\nPlease check the console and server logs for details.');
+        showToast(`Migration failed: ${error.message}. Check console and server logs for details.`, 'danger');
     }
 }
 
@@ -3342,15 +3895,29 @@ window.debugControlCenterElements = function() {
 document.addEventListener('DOMContentLoaded', function() {
     window.controlCenter = new ControlCenter();
     
+    // Export GroupTableSorter to window for global access
+    window.GroupTableSorter = GroupTableSorter;
+    
+    // Wire up migration confirmation button
+    const confirmMigrationBtn = document.getElementById('confirmMigrationBtn');
+    if (confirmMigrationBtn) {
+        confirmMigrationBtn.addEventListener('click', executeMigration);
+    }
+    
     // Debug: Log element availability
     console.log('Control Center Elements Check on DOM Ready:');
     window.debugControlCenterElements();
     
-    // Load initial refresh status with a slight delay to ensure elements are rendered
-    setTimeout(() => {
-        loadRefreshStatus();
-        
-        // Check migration status
-        checkMigrationStatus();
-    }, 100);
+    // Only load admin features if user has ControlCenterAdmin role
+    const hasAdminRole = window.hasControlCenterAdmin === true;
+    
+    if (hasAdminRole) {
+        // Load initial refresh status with a slight delay to ensure elements are rendered
+        setTimeout(() => {
+            loadRefreshStatus();
+            
+            // Check migration status
+            checkMigrationStatus();
+        }, 100);
+    }
 });
