@@ -55,6 +55,7 @@ from route_backend_notifications import *
 from route_backend_retention_policy import *
 from route_backend_plugins import bpap as admin_plugins_bp, bpdp as dynamic_plugins_bp
 from route_backend_agents import bpa as admin_agents_bp
+from route_backend_agent_templates import bp_agent_templates
 from route_backend_public_workspaces import *
 from route_backend_public_documents import *
 from route_backend_public_prompts import *
@@ -98,6 +99,7 @@ Session(app)
 app.register_blueprint(admin_plugins_bp)
 app.register_blueprint(dynamic_plugins_bp)
 app.register_blueprint(admin_agents_bp)
+app.register_blueprint(bp_agent_templates)
 app.register_blueprint(plugin_validation_bp)
 app.register_blueprint(bp_migration)
 app.register_blueprint(plugin_logging_bp)

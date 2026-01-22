@@ -10,6 +10,7 @@ from functions_settings import get_settings, update_settings, get_user_settings,
 from functions_global_agents import get_global_agents, save_global_agent, delete_global_agent
 from functions_personal_agents import get_personal_agents, ensure_migration_complete, save_personal_agent, delete_personal_agent
 from functions_group import require_active_group, assert_group_role
+from functions_agent_payload import sanitize_agent_payload, AgentPayloadError
 from functions_group_agents import (
     get_group_agents,
     get_group_agent,
@@ -111,15 +112,16 @@ def set_user_agents():
     for agent in agents:
         if agent.get('is_global', False):
             continue  # Skip global agents
-        agent['is_global'] = False  # Ensure user agents are not global
-        agent['is_group'] = False
-        # --- Require at least one deployment field ---
-        #if not (agent.get('azure_openai_gpt_deployment') or agent.get('azure_agent_apim_gpt_deployment')):
-        #    return jsonify({'error': f'Agent "{agent.get("name", "(unnamed)")}" must have either azure_openai_gpt_deployment or azure_agent_apim_gpt_deployment set.'}), 400
-        validation_error = validate_agent(agent)
+        try:
+            cleaned_agent = sanitize_agent_payload(agent)
+        except AgentPayloadError as exc:
+            return jsonify({'error': str(exc)}), 400
+        cleaned_agent['is_global'] = False
+        cleaned_agent['is_group'] = False
+        validation_error = validate_agent(cleaned_agent)
         if validation_error:
             return jsonify({'error': f'Agent validation failed: {validation_error}'}), 400
-        filtered_agents.append(agent)
+        filtered_agents.append(cleaned_agent)
 
     # Enforce global agent only if per_user_semantic_kernel is False
     per_user_semantic_kernel = settings.get('per_user_semantic_kernel', False)
@@ -258,14 +260,15 @@ def create_group_agent_route():
     payload = request.get_json(silent=True) or {}
     try:
         validate_group_agent_payload(payload, partial=False)
-    except ValueError as exc:
+        cleaned_payload = sanitize_agent_payload(payload)
+    except (ValueError, AgentPayloadError) as exc:
         return jsonify({'error': str(exc)}), 400
 
     for key in ('group_id', 'last_updated', 'is_global', 'is_group'):
-        payload.pop(key, None)
+        cleaned_payload.pop(key, None)
 
     try:
-        saved = save_group_agent(active_group, payload)
+        saved = save_group_agent(active_group, cleaned_payload)
     except Exception as exc:
         debug_print('Failed to save group agent: %s', exc)
         return jsonify({'error': 'Unable to save agent'}), 500
@@ -313,7 +316,12 @@ def update_group_agent_route(agent_id):
         return jsonify({'error': str(exc)}), 400
 
     try:
-        saved = save_group_agent(active_group, merged)
+        cleaned_payload = sanitize_agent_payload(merged)
+    except AgentPayloadError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+    try:
+        saved = save_group_agent(active_group, cleaned_payload)
     except Exception as exc:
         debug_print('Failed to update group agent %s: %s', agent_id, exc)
         return jsonify({'error': 'Unable to update agent'}), 500
@@ -466,26 +474,31 @@ def add_agent():
     try:
         agents = get_global_agents()
         new_agent = request.json.copy() if hasattr(request.json, 'copy') else dict(request.json)
-        new_agent['is_global'] = True
-        new_agent['is_group'] = False
-        validation_error = validate_agent(new_agent)
+        try:
+            cleaned_agent = sanitize_agent_payload(new_agent)
+        except AgentPayloadError as exc:
+            log_event("Add agent failed: payload error", level=logging.WARNING, extra={"action": "add", "error": str(exc)})
+            return jsonify({'error': str(exc)}), 400
+        cleaned_agent['is_global'] = True
+        cleaned_agent['is_group'] = False
+        validation_error = validate_agent(cleaned_agent)
         if validation_error:
-            log_event("Add agent failed: validation error", level=logging.WARNING, extra={"action": "add", "agent": new_agent, "error": validation_error})
+            log_event("Add agent failed: validation error", level=logging.WARNING, extra={"action": "add", "agent": cleaned_agent, "error": validation_error})
             return jsonify({'error': validation_error}), 400
         # Prevent duplicate names (case-insensitive)
-        if any(a['name'].lower() == new_agent['name'].lower() for a in agents):
-            log_event("Add agent failed: duplicate name", level=logging.WARNING, extra={"action": "add", "agent": new_agent})
+        if any(a['name'].lower() == cleaned_agent['name'].lower() for a in agents):
+            log_event("Add agent failed: duplicate name", level=logging.WARNING, extra={"action": "add", "agent": cleaned_agent})
             return jsonify({'error': 'Agent with this name already exists.'}), 400
         # Assign a new GUID as id unless this is the default agent (which should have a static GUID)
-        if not new_agent.get('default_agent', False):
-            new_agent['id'] = str(uuid.uuid4())
+        if not cleaned_agent.get('default_agent', False):
+            cleaned_agent['id'] = str(uuid.uuid4())
         else:
             # If default_agent, ensure the static GUID is present (do not overwrite if already set)
-            if not new_agent.get('id'):
-                new_agent['id'] = '15b0c92a-741d-42ff-ba0b-367c7ee0c848'
+            if not cleaned_agent.get('id'):
+                cleaned_agent['id'] = '15b0c92a-741d-42ff-ba0b-367c7ee0c848'
         
         # Save to global agents container
-        result = save_global_agent(new_agent)
+        result = save_global_agent(cleaned_agent)
         if not result:
             return jsonify({'error': 'Failed to save agent.'}), 500
         
@@ -499,7 +512,7 @@ def add_agent():
             if not found:
                 return jsonify({'error': 'There must be at least one agent matching the global_selected_agent.'}), 400
         
-        log_event("Agent added", extra={"action": "add", "agent": {k: v for k, v in new_agent.items() if k != 'id'}, "user": str(get_current_user_id())})
+        log_event("Agent added", extra={"action": "add", "agent": {k: v for k, v in cleaned_agent.items() if k != 'id'}, "user": str(get_current_user_id())})
         # --- HOT RELOAD TRIGGER ---
         setattr(builtins, "kernel_reload_needed", True)
         return jsonify({'success': True})
@@ -576,15 +589,20 @@ def edit_agent(agent_name):
     try:
         agents = get_global_agents()
         updated_agent = request.json.copy() if hasattr(request.json, 'copy') else dict(request.json)
-        updated_agent['is_global'] = True
-        updated_agent['is_group'] = False
-        validation_error = validate_agent(updated_agent)
+        try:
+            cleaned_agent = sanitize_agent_payload(updated_agent)
+        except AgentPayloadError as exc:
+            log_event("Edit agent failed: payload error", level=logging.WARNING, extra={"action": "edit", "agent_name": agent_name, "error": str(exc)})
+            return jsonify({'error': str(exc)}), 400
+        cleaned_agent['is_global'] = True
+        cleaned_agent['is_group'] = False
+        validation_error = validate_agent(cleaned_agent)
         if validation_error:
-            log_event("Edit agent failed: validation error", level=logging.WARNING, extra={"action": "edit", "agent": updated_agent, "error": validation_error})
+            log_event("Edit agent failed: validation error", level=logging.WARNING, extra={"action": "edit", "agent": cleaned_agent, "error": validation_error})
             return jsonify({'error': validation_error}), 400
         # --- Require at least one deployment field ---
-        if not (updated_agent.get('azure_openai_gpt_deployment') or updated_agent.get('azure_agent_apim_gpt_deployment')):
-            log_event("Edit agent failed: missing deployment field", level=logging.WARNING, extra={"action": "edit", "agent": updated_agent})
+        if not (cleaned_agent.get('azure_openai_gpt_deployment') or cleaned_agent.get('azure_agent_apim_gpt_deployment')):
+            log_event("Edit agent failed: missing deployment field", level=logging.WARNING, extra={"action": "edit", "agent": cleaned_agent})
             return jsonify({'error': 'Agent must have either azure_openai_gpt_deployment or azure_agent_apim_gpt_deployment set.'}), 400
         
         # Find the agent to update
@@ -592,7 +610,7 @@ def edit_agent(agent_name):
         for a in agents:
             if a['name'] == agent_name:
                 # Preserve the existing id
-                updated_agent['id'] = a.get('id')
+                cleaned_agent['id'] = a.get('id')
                 agent_found = True
                 break
         
@@ -601,7 +619,7 @@ def edit_agent(agent_name):
             return jsonify({'error': 'Agent not found.'}), 404
         
         # Save the updated agent
-        result = save_global_agent(updated_agent)
+        result = save_global_agent(cleaned_agent)
         if not result:
             return jsonify({'error': 'Failed to save agent.'}), 500
         
@@ -619,7 +637,7 @@ def edit_agent(agent_name):
             f"Agent {agent_name} edited",
             extra={
                 "action": "edit", 
-                "agent": {k: v for k, v in updated_agent.items() if k != 'id'},
+                "agent": {k: v for k, v in cleaned_agent.items() if k != 'id'},
                 "user": str(get_current_user_id()),
             }
         )

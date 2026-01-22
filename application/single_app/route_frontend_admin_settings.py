@@ -4,6 +4,7 @@ from config import *
 from functions_documents import *
 from functions_authentication import *
 from functions_settings import *
+from functions_activity_logging import log_web_search_consent_acceptance
 from functions_logging import *
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta
@@ -78,6 +79,9 @@ def register_route_frontend_admin_settings(app):
             settings['per_user_semantic_kernel'] = False
         if 'enable_semantic_kernel' not in settings:
             settings['enable_semantic_kernel'] = False
+
+        if 'web_search_consent_accepted' not in settings:
+            settings['web_search_consent_accepted'] = False
         
         # --- Add default for swagger documentation ---
         if 'enable_swagger' not in settings:
@@ -150,6 +154,12 @@ def register_route_frontend_admin_settings(app):
             settings['allow_group_custom_agent_endpoints'] = False
         if 'allow_group_plugins' not in settings:
             settings['allow_group_plugins'] = False
+        if 'enable_agent_template_gallery' not in settings:
+            settings['enable_agent_template_gallery'] = True
+        if 'agent_templates_allow_user_submission' not in settings:
+            settings['agent_templates_allow_user_submission'] = True
+        if 'agent_templates_require_approval' not in settings:
+            settings['agent_templates_require_approval'] = True
 
         # --- Add defaults for classification banner ---
         if 'classification_banner_enabled' not in settings:
@@ -272,6 +282,7 @@ def register_route_frontend_admin_settings(app):
 
         if request.method == 'POST':
             form_data = request.form # Use a variable for easier access
+            user_id = get_current_user_id()
 
             # --- Fetch all other form data as before ---
             app_title = form_data.get('app_title', 'AI Chat Application')
@@ -292,6 +303,33 @@ def register_route_frontend_admin_settings(app):
             require_member_of_control_center_admin = form_data.get('require_member_of_control_center_admin') == 'on'
             require_member_of_control_center_dashboard_reader = form_data.get('require_member_of_control_center_dashboard_reader') == 'on'
             require_member_of_feedback_admin = form_data.get('require_member_of_feedback_admin') == 'on'
+
+            web_search_consent_message = (
+                "When you use Grounding with Bing Search, your customer data is transferred "
+                "outside of the Azure compliance boundary to the Grounding with Bing Search service. "
+                "Grounding with Bing Search is not subject to the same data processing terms "
+                "(including location of processing) and does not have the same compliance standards "
+                "and certifications as the Azure AI Agent Service, as described in the "
+                "Grounding with Bing Search TOU (https://www.microsoft.com/en-us/bing/apis/grounding-legal). "
+                "It is your responsibility to assess whether use of Grounding with Bing Search in your agent "
+                "meets your needs and requirements."
+            )
+            web_search_consent_accepted = form_data.get('web_search_consent_accepted') == 'true'
+            requested_enable_web_search = form_data.get('enable_web_search') == 'on'
+            enable_web_search = requested_enable_web_search and web_search_consent_accepted
+
+            if requested_enable_web_search and not web_search_consent_accepted:
+                flash('Web search requires consent before it can be enabled.', 'warning')
+
+            if enable_web_search and web_search_consent_accepted and not settings.get('web_search_consent_accepted'):
+                admin_user = session.get('user', {})
+                admin_email = admin_user.get('preferred_username', admin_user.get('email', 'unknown'))
+                log_web_search_consent_acceptance(
+                    user_id=user_id,
+                    admin_email=admin_email,
+                    consent_text=web_search_consent_message,
+                    source='admin_settings'
+                )
 
             # --- Handle Document Classification Toggle ---
             enable_document_classification = form_data.get('enable_document_classification') == 'on'
@@ -633,6 +671,9 @@ def register_route_frontend_admin_settings(app):
                 'enable_swagger': form_data.get('enable_swagger') == 'on',
                 'enable_semantic_kernel': form_data.get('enable_semantic_kernel') == 'on',
                 'per_user_semantic_kernel': form_data.get('per_user_semantic_kernel') == 'on',
+                'enable_agent_template_gallery': form_data.get('enable_agent_template_gallery') == 'on',
+                'agent_templates_allow_user_submission': form_data.get('agent_templates_allow_user_submission') == 'on',
+                'agent_templates_require_approval': form_data.get('agent_templates_require_approval') == 'on',
 
                 # GPT (Direct & APIM)
                 'enable_gpt_apim': form_data.get('enable_gpt_apim') == 'on',
@@ -765,11 +806,31 @@ def register_route_frontend_admin_settings(app):
                 'enable_user_feedback': form_data.get('enable_user_feedback') == 'on',
                 'enable_conversation_archiving': form_data.get('enable_conversation_archiving') == 'on',
 
-                # Search (Web Search Direct & APIM)
-                'enable_web_search': form_data.get('enable_web_search') == 'on',
-                'enable_web_search_apim': form_data.get('enable_web_search_apim') == 'on',
-                'azure_apim_web_search_endpoint': form_data.get('azure_apim_web_search_endpoint', '').strip(),
-                'azure_apim_web_search_subscription_key': form_data.get('azure_apim_web_search_subscription_key', '').strip(),
+                # Search (Web Search via Azure AI Foundry agent)
+                'enable_web_search': enable_web_search,
+                'web_search_consent_accepted': web_search_consent_accepted,
+                'web_search_agent': {
+                    'agent_type': 'aifoundry',
+                    'azure_openai_gpt_endpoint': form_data.get('web_search_foundry_endpoint', '').strip(),
+                    'azure_openai_gpt_api_version': form_data.get('web_search_foundry_api_version', '').strip(),
+                    'azure_openai_gpt_deployment': '',
+                    'other_settings': {
+                        'azure_ai_foundry': {
+                            'agent_id': form_data.get('web_search_foundry_agent_id', '').strip(),
+                            'endpoint': form_data.get('web_search_foundry_endpoint', '').strip(),
+                            'api_version': form_data.get('web_search_foundry_api_version', '').strip(),
+                            'authentication_type': form_data.get('web_search_foundry_auth_type', 'managed_identity').strip(),
+                            'managed_identity_type': form_data.get('web_search_foundry_managed_identity_type', 'system_assigned').strip(),
+                            'managed_identity_client_id': form_data.get('web_search_foundry_managed_identity_client_id', '').strip(),
+                            'tenant_id': form_data.get('web_search_foundry_tenant_id', '').strip(),
+                            'client_id': form_data.get('web_search_foundry_client_id', '').strip(),
+                            'client_secret': form_data.get('web_search_foundry_client_secret', '').strip(),
+                            'cloud': form_data.get('web_search_foundry_cloud', '').strip(),
+                            'authority': form_data.get('web_search_foundry_authority', '').strip(),
+                            'notes': form_data.get('web_search_foundry_notes', '').strip()
+                        }
+                    }
+                },
 
                 # Search (AI Search Direct & APIM)
                 'azure_ai_search_endpoint': form_data.get('azure_ai_search_endpoint', '').strip(),
@@ -845,6 +906,16 @@ def register_route_frontend_admin_settings(app):
                 del new_settings['semantic_kernel_agents']
             if 'semantic_kernel_plugins' in new_settings:
                 del new_settings['semantic_kernel_plugins']
+
+            # Remove legacy web search keys if present
+            for legacy_key in [
+                'bing_search_key',
+                'enable_web_search_apim',
+                'azure_apim_web_search_endpoint',
+                'azure_apim_web_search_subscription_key'
+            ]:
+                if legacy_key in new_settings:
+                    del new_settings[legacy_key]
             
             logo_file = request.files.get('logo_file')
             if logo_file and allowed_file(logo_file.filename, ALLOWED_EXTENSIONS_IMG):

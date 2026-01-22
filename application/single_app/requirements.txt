@@ -6,7 +6,7 @@ Flask-WTF==1.2.1
 gunicorn
 Werkzeug==3.1.5
 requests==2.32.4
-openai==1.67
+openai>=1.98.0,<2.0.0
 docx2txt==0.8
 Markdown==3.3.4
 bleach==6.1.0
@@ -41,7 +41,7 @@ xlrd==2.0.1
 pillow==11.1.0
 ffmpeg-binaries-compat==1.0.1
 ffmpeg-python==0.2.0
-semantic-kernel>=1.32.1
+semantic-kernel>=1.39.2
 redis>=5.0,<6.0
 pyodbc>=4.0.0
 PyMySQL>=1.0.0

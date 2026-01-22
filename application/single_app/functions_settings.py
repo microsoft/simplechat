@@ -40,6 +40,12 @@ def get_settings(use_cosmos=False):
         'allow_user_plugins': False,
         'allow_group_agents': False,
         'allow_group_custom_agent_endpoints': False,
+        'allow_ai_foundry_agents': False,
+        'allow_group_ai_foundry_agents': False,
+        'allow_personal_ai_foundry_agents': False,
+        'enable_agent_template_gallery': True,
+        'agent_templates_allow_user_submission': True,
+        'agent_templates_require_approval': True,
         'allow_group_plugins': False,
         'id': 'app_settings',
         # Control Center settings
@@ -215,6 +221,32 @@ def get_settings(use_cosmos=False):
         'enable_document_intelligence_apim': False,
         'azure_apim_document_intelligence_endpoint': '',
         'azure_apim_document_intelligence_subscription_key': '',
+
+        # Web search (via Azure AI Foundry agent)
+        'enable_web_search': False,
+        'web_search_consent_accepted': False,
+        'web_search_agent': {
+            'agent_type': 'aifoundry',
+            'azure_openai_gpt_endpoint': '',
+            'azure_openai_gpt_api_version': '',
+            'azure_openai_gpt_deployment': '',
+            'other_settings': {
+                'azure_ai_foundry': {
+                    'agent_id': '',
+                    'endpoint': '',
+                    'api_version': '',
+                    'authentication_type': 'managed_identity',
+                    'managed_identity_type': 'system_assigned',
+                    'managed_identity_client_id': '',
+                    'tenant_id': '',
+                    'client_id': '',
+                    'client_secret': '',
+                    'cloud': '',
+                    'authority': '',
+                    'notes': ''
+                }
+            }
+        },
 
         # Authentication & Redirect Settings
         'enable_front_door': False,
@@ -741,9 +773,26 @@ def enabled_required(setting_key):
     return decorator
 
 def sanitize_settings_for_user(full_settings: dict) -> dict:
-    # Exclude any key containing "key", "base64", "storage_account_url"
-    return {k: v for k, v in full_settings.items() 
-            if "key" not in k.lower() and "storage_account_url" not in k.lower()}
+    if not isinstance(full_settings, dict):
+        return full_settings
+
+    sensitive_terms = ("key", "secret", "password", "connection", "base64", "storage_account_url")
+    sanitized = {}
+
+    for k, v in full_settings.items():
+        if any(term in k.lower() for term in sensitive_terms):
+            continue
+        if isinstance(v, dict):
+            sanitized[k] = sanitize_settings_for_user(v)
+        elif isinstance(v, list):
+            sanitized[k] = [
+                sanitize_settings_for_user(item) if isinstance(item, dict) else item
+                for item in v
+            ]
+        else:
+            sanitized[k] = v
+
+    return sanitized
 
 def sanitize_settings_for_logging(full_settings: dict) -> dict:
     """

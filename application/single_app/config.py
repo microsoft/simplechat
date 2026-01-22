@@ -377,6 +377,12 @@ cosmos_global_actions_container = cosmos_database.create_container_if_not_exists
     partition_key=PartitionKey(path="/id")
 )
 
+cosmos_agent_templates_container_name = "agent_templates"
+cosmos_agent_templates_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_agent_templates_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
 cosmos_agent_facts_container_name = "agent_facts"
 cosmos_agent_facts_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_agent_facts_container_name,
