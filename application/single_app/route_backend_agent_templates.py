@@ -1,6 +1,7 @@
 """Backend routes for agent template management."""
 
 from flask import Blueprint, jsonify, request, session
+from swagger_wrapper import swagger_route, get_auth_security
 
 from functions_authentication import (
     admin_required,
