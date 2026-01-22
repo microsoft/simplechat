@@ -351,7 +351,7 @@ function populateReviewModal(template) {
 
   const submittedBy = template.created_by_name || 'Unknown submitter';
   const submittedAt = formatDate(template.created_at);
-  subtitleEl.textContent = `Submitted by ${submittedBy}`;
+  subtitleEl.textContent = `Submitted by ${submittedBy} on ${submittedAt}`;
   metaEl.textContent = `Updated ${formatDate(template.updated_at)}`;
 
   if (Array.isArray(template.actions_to_load) && template.actions_to_load.length) {
