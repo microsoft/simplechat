@@ -283,6 +283,7 @@ def register_route_backend_retention_policy(app):
                         personal_count += 1
                     except Exception as e:
                         debug_print(f"Error updating user {user_id}: {e}")
+                        log_event(f"Error updating user {user_id} during force push: {e}", level=logging.ERROR)
                         continue
                 
                 details['personal'] = personal_count
@@ -312,6 +313,7 @@ def register_route_backend_retention_policy(app):
                         group_count += 1
                     except Exception as e:
                         debug_print(f"Error updating group {group_id}: {e}")
+                        log_event(f"Error updating group {group_id} during force push: {e}", level=logging.ERROR)
                         continue
                 
                 details['group'] = group_count
@@ -341,6 +343,7 @@ def register_route_backend_retention_policy(app):
                         public_count += 1
                     except Exception as e:
                         debug_print(f"Error updating public workspace {workspace_id}: {e}")
+                        log_event(f"Error updating public workspace {workspace_id} during force push: {e}", level=logging.ERROR)
                         continue
                 
                 details['public'] = public_count
