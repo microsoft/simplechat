@@ -1,3 +1,4 @@
+# functions_agent_templates.py
 """Agent template helper functions.
 
 This module centralizes CRUD operations for agent templates stored in the
@@ -23,6 +24,20 @@ STATUS_APPROVED = "approved"
 STATUS_REJECTED = "rejected"
 STATUS_ARCHIVED = "archived"
 ALLOWED_STATUSES = {STATUS_PENDING, STATUS_APPROVED, STATUS_REJECTED, STATUS_ARCHIVED}
+
+_MAX_TEMPLATE_FIELD_LENGTHS = {
+    "title": 200,
+    "display_name": 200,
+    "helper_text": 140,
+    "description": 2000,
+    "instructions": 30000,
+    "template_key": 128,
+}
+
+_MAX_TEMPLATE_LIST_ITEM_LENGTHS = {
+    "tags": 64,
+    "actions_to_load": 128,
+}
 
 
 def _utc_now() -> str:
@@ -98,6 +113,21 @@ def _sanitize_template(doc: Dict[str, Any], include_internal: bool = False) -> D
             cleaned.pop(field, None)
 
     return cleaned
+
+
+def _validate_template_lengths(payload: Dict[str, Any]) -> None:
+    for field, max_len in _MAX_TEMPLATE_FIELD_LENGTHS.items():
+        value = payload.get(field, "")
+        if isinstance(value, str) and len(value) > max_len:
+            raise ValueError(f"{field} exceeds maximum length of {max_len}.")
+
+    for field, max_len in _MAX_TEMPLATE_LIST_ITEM_LENGTHS.items():
+        values = payload.get(field) or []
+        if not isinstance(values, list):
+            continue
+        for item in values:
+            if isinstance(item, str) and len(item) > max_len:
+                raise ValueError(f"{field} entries exceed maximum length of {max_len}.")
 
 
 def validate_template_payload(payload: Dict[str, Any]) -> Optional[str]:
@@ -239,8 +269,13 @@ def update_agent_template(template_id: str, updates: Dict[str, Any]) -> Optional
         **doc,
         **payload,
     }
+    template['helper_text'] = _normalize_helper_text(
+        template.get('description', ''),
+        template.get('helper_text')
+    )
     template['updated_at'] = _utc_now()
     template['additional_settings'] = payload['additional_settings']
+    _validate_template_lengths(template)
 
     try:
         cosmos_agent_templates_container.upsert_item(template)

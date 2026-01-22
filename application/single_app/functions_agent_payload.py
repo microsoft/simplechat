@@ -11,6 +11,18 @@ _APIM_FIELDS = [
     "azure_agent_apim_gpt_deployment",
     "azure_agent_apim_gpt_api_version",
 ]
+_GPT_FIELDS = [
+    "azure_openai_gpt_endpoint",
+    "azure_openai_gpt_key",
+    "azure_openai_gpt_deployment",
+    "azure_openai_gpt_api_version",
+]
+_FREE_FORM_TEXT = [
+    "name",
+    "display_name",
+    "description",
+    "instructions",
+]
 _TEXT_FIELDS = [
     "name",
     "display_name",
@@ -33,6 +45,31 @@ _STRING_DEFAULT_FIELDS = [
     "azure_agent_apim_gpt_deployment",
     "azure_agent_apim_gpt_api_version",
 ]
+
+_MAX_FIELD_LENGTHS = {
+    "name": 100,
+    "display_name": 200,
+    "description": 2000,
+    "instructions": 30000,
+    "azure_openai_gpt_endpoint": 2048,
+    "azure_openai_gpt_key": 1024,
+    "azure_openai_gpt_deployment": 256,
+    "azure_openai_gpt_api_version": 64,
+    "azure_agent_apim_gpt_endpoint": 2048,
+    "azure_agent_apim_gpt_subscription_key": 1024,
+    "azure_agent_apim_gpt_deployment": 256,
+    "azure_agent_apim_gpt_api_version": 64,
+}
+_FOUNDRY_FIELD_LENGTHS = {
+    "agent_id": 128,
+    "endpoint": 2048,
+    "api_version": 64,
+    "authority": 2048,
+    "tenant_id": 64,
+    "client_id": 64,
+    "client_secret": 1024,
+    "managed_identity_client_id": 64,
+}
 
 
 class AgentPayloadError(ValueError):
@@ -96,6 +133,18 @@ def _coerce_completion_tokens(value: Any) -> int:
     except (TypeError, ValueError) as exc:
         raise AgentPayloadError("max_completion_tokens must be an integer.") from exc
 
+def _validate_field_lengths(payload: Dict[str, Any]) -> None:
+    for field, max_len in _MAX_FIELD_LENGTHS.items():
+        value = payload.get(field, "")
+        if isinstance(value, str) and len(value) > max_len:
+            raise AgentPayloadError(f"{field} exceeds maximum length of {max_len}.")
+
+
+def _validate_foundry_field_lengths(foundry_settings: Dict[str, Any]) -> None:
+    for field, max_len in _FOUNDRY_FIELD_LENGTHS.items():
+        value = foundry_settings.get(field, "")
+        if isinstance(value, str) and len(value) > max_len:
+            raise AgentPayloadError(f"azure_ai_foundry.{field} exceeds maximum length of {max_len}.")
 
 def sanitize_agent_payload(agent: Dict[str, Any]) -> Dict[str, Any]:
     """Return a sanitized copy of the agent payload or raise AgentPayloadError."""
@@ -109,6 +158,8 @@ def sanitize_agent_payload(agent: Dict[str, Any]) -> Dict[str, Any]:
         value = sanitized.get(field)
         if value is None:
             sanitized[field] = ""
+
+    _validate_field_lengths(sanitized)
 
     agent_type = _coerce_agent_type(sanitized.get("agent_type"))
     sanitized["agent_type"] = agent_type
@@ -142,6 +193,7 @@ def sanitize_agent_payload(agent: Dict[str, Any]) -> Dict[str, Any]:
                 "Azure AI Foundry agents require other_settings.azure_ai_foundry.agent_id."
             )
         foundry_settings["agent_id"] = agent_id
+        _validate_foundry_field_lengths(foundry_settings)
         sanitized["other_settings"]["azure_ai_foundry"] = foundry_settings
     else:
         # Remove stale foundry metadata when toggling back to local agents.
