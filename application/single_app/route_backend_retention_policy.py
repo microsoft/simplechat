@@ -380,7 +380,7 @@ def register_route_backend_retention_policy(app):
             log_event(f"Force push retention defaults failed: {e}", level=logging.ERROR)
             return jsonify({
                 'success': False,
-                'error': f'Failed to push retention defaults: {str(e)}'
+                'error': f'Failed to push retention defaults'
             }), 500
     
     
