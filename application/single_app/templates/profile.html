@@ -308,7 +308,7 @@
         
         <div class="alert alert-info">
             <i class="bi bi-info-circle me-2"></i>
-            <strong>Default:</strong> Set to "No automatic deletion" means items are never automatically deleted. Choose a retention period to enable automatic cleanup.
+            <strong>Default:</strong> You can use the organization default or set your own retention period. Choose "No automatic deletion" to keep items indefinitely.
         </div>
         
         <form id="retention-settings-form">
@@ -316,6 +316,7 @@
                 <div class="col-md-6">
                     <label for="conversation_retention_days" class="form-label">Conversation Retention</label>
                     <select class="form-select" id="conversation_retention_days" name="conversation_retention_days">
+                        <option value="default">Using organization default</option>
                         <option value="none">No automatic deletion</option>
                         <option value="1">1 day</option>
                         <option value="5">5 days</option>
@@ -334,6 +335,7 @@
                 <div class="col-md-6">
                     <label for="document_retention_days" class="form-label">Document Retention</label>
                     <select class="form-select" id="document_retention_days" name="document_retention_days">
+                        <option value="default">Using organization default</option>
                         <option value="none">No automatic deletion</option>
                         <option value="1">1 day</option>
                         <option value="5">5 days</option>
@@ -1055,24 +1057,52 @@ function formatRelativeTime(dateStr) {
     return date.toLocaleDateString();
 }
 
-function loadRetentionSettings() {
-    fetch('/api/user/settings')
-        .then(response => response.json())
-        .then(data => {
-            const retentionPolicy = data.settings?.retention_policy || {};
+async function loadRetentionSettings() {
+    try {
+        // Fetch both user settings and organization defaults in parallel
+        const [userSettingsResp, orgDefaultsResp] = await Promise.all([
+            fetch('/api/user/settings'),
+            fetch('/api/retention-policy/defaults/personal')
+        ]);
+        
+        const userData = await userSettingsResp.json();
+        const orgData = await orgDefaultsResp.json();
+        
+        const retentionPolicy = userData.settings?.retention_policy || {};
+        
+        // Get user's current settings (default to 'default' if not set, for backwards compatibility treat 'none' as user choice)
+        let convRetention = retentionPolicy.conversation_retention_days;
+        let docRetention = retentionPolicy.document_retention_days;
+        
+        // If user has no setting at all (undefined), use 'default'
+        if (convRetention === undefined) {
+            convRetention = 'default';
+        }
+        if (docRetention === undefined) {
+            docRetention = 'default';
+        }
+        
+        const convSelect = document.getElementById('conversation_retention_days');
+        const docSelect = document.getElementById('document_retention_days');
+        
+        // Update the "Using organization default" option text with the actual default value
+        if (orgData.success) {
+            const convDefaultOption = convSelect?.querySelector('option[value="default"]');
+            const docDefaultOption = docSelect?.querySelector('option[value="default"]');
             
-            const convRetention = retentionPolicy.conversation_retention_days || 'none';
-            const docRetention = retentionPolicy.document_retention_days || 'none';
-            
-            const convSelect = document.getElementById('conversation_retention_days');
-            const docSelect = document.getElementById('document_retention_days');
-            
-            if (convSelect) convSelect.value = convRetention;
-            if (docSelect) docSelect.value = docRetention;
-        })
-        .catch(error => {
-            console.error('Error loading retention settings:', error);
-        });
+            if (convDefaultOption) {
+                convDefaultOption.textContent = `Using organization default (${orgData.default_conversation_label})`;
+            }
+            if (docDefaultOption) {
+                docDefaultOption.textContent = `Using organization default (${orgData.default_document_label})`;
+            }
+        }
+        
+        if (convSelect) convSelect.value = convRetention;
+        if (docSelect) docSelect.value = docRetention;
+    } catch (error) {
+        console.error('Error loading retention settings:', error);
+    }
 }
 
 function saveRetentionSettings() {

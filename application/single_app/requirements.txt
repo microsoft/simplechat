@@ -4,7 +4,7 @@ azure-monitor-query==1.4.1
 Flask==2.2.5
 Flask-WTF==1.2.1
 gunicorn
-Werkzeug==3.1.4
+Werkzeug==3.1.5
 requests==2.32.4
 openai==1.67
 docx2txt==0.8
@@ -49,7 +49,7 @@ azure-monitor-opentelemetry==1.6.13
 psycopg2-binary==2.9.10
 cython
 pyyaml==6.0.2
-aiohttp==3.12.15
+aiohttp==3.13.3
 html2text==2025.4.15
 matplotlib==3.10.7
 azure-cognitiveservices-speech==1.47.0
