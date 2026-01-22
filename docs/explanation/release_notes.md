@@ -36,8 +36,65 @@
     *   **Files Added**: `user-agreement.js` (frontend module), `route_backend_user_agreement.py` (API endpoints).
     *   **Files Modified**: `admin_settings.html`, `route_frontend_admin_settings.py`, `base.html`, `_sidebar_nav.html`, `functions_activity_logging.py`, `workspace-documents.js`, `group_workspaces.html`, `public_workspace.js`, `chat-input-actions.js`.
     *   (Ref: User Agreement modal, file upload workflows, activity logging, admin configuration)
+
+*   **Web Search via Azure AI Foundry Agents**
+    *   Web search capability through Azure AI Foundry agents using Grounding with Bing Search service.
+    *   **Admin Consent Flow**: Requires explicit administrator consent before enabling due to data processing considerations outside Azure compliance boundary.
+    *   **Consent Logging**: All consent acceptances are logged to activity logs for compliance and audit purposes.
+    *   **Seamless Integration**: Web search results automatically integrated into AI responses when enabled.
+    *   **Settings**: `enable_web_search` toggle and `web_search_consent_accepted` tracking in admin settings.
+    *   **Files Modified**: `route_frontend_admin_settings.py`, `functions_activity_logging.py`.
+    *   (Ref: Grounding with Bing Search, Azure AI Foundry, consent workflow, activity logging)
+
+*   **Conversation Deep Linking**
+    *   Direct URL links to specific conversations via query parameters for sharing and bookmarking.
+    *   **URL Parameters**: Supports both `conversationId` and `conversation_id` query parameters.
+    *   **Automatic URL Updates**: Current conversation ID automatically added to URL when selecting conversations.
+    *   **Browser Integration**: Uses `history.replaceState()` for seamless URL updates without new history entries.
+    *   **Error Handling**: Graceful handling of invalid or inaccessible conversation IDs with toast notifications.
+    *   **Files Modified**: `chat-onload.js`, `chat-conversations.js`.
+    *   (Ref: deep linking, URL parameters, conversation navigation, shareability)
+
+*   **Agent Template Gallery**
+    *   Curated collection of reusable agent configurations as starting points for new agents.
+    *   **User Submission**: Users can submit their agents as templates for community use.
+    *   **Admin Review Workflow**: Submitted templates require admin approval before publication (pending → approved → rejected workflow).
+    *   **Rich Metadata**: Templates include titles, descriptions, helper text (140 char), tags, and predefined actions.
+    *   **Configuration Options**: `enable_agent_template_gallery`, `agent_templates_allow_user_submission`, `agent_templates_require_approval`.
+    *   **Database**: New `agent_templates` Cosmos DB container with partition key on `/id`.
+    *   **Files Added**: `functions_agent_templates.py`.
+    *   **Files Modified**: `config.py`, `route_frontend_admin_settings.py`.
+    *   (Ref: agent templates, template gallery, admin approval workflow, reusable configurations)
+
+*   **Plugin Authentication Type Constraints**
+    *   Per-plugin-type authentication method restrictions for better security and API compatibility.
+    *   **Schema-Based Defaults**: Falls back to global `AuthType` enum from `plugin.schema.json`.
+    *   **Definition File Overrides**: Plugin-specific `.definition.json` files can restrict available auth types.
+    *   **API Endpoint**: New `/api/plugins/<plugin_type>/auth-types` endpoint returns allowed auth types and source.
+    *   **Frontend Integration**: UI can query allowed auth types to display only valid options.
+    *   **Files Modified**: `route_backend_plugins.py`.
+    *   (Ref: plugin authentication, auth type constraints, OpenAPI plugins, security)
+
+*   **Azure AI Foundry Agent Support**
+    *   First-class support for Azure AI Foundry agents as a native agent type.
+    *   **Agent Type**: New `aifoundry` agent type in agent configuration.
+    *   **Semantic Kernel Integration**: Uses Semantic Kernel's `AzureAIAgent` for execution.
+    *   **Credential Support**: Supports Azure Default Credential and Client Secret authentication.
+    *   **Citation & Model Tracking**: Captures citations and model information from Foundry agent responses.
+    *   **Configuration**: Agent ID specified in `other_settings.azure_ai_foundry.agent_id`.
+    *   **Files Added**: `foundry_agent_runtime.py`.
+    *   **Files Modified**: `route_frontend_admin_settings.py`.
+    *   (Ref: Azure AI Foundry, AzureAIAgent, Semantic Kernel, cloud-hosted agents)
     
 #### Bug Fixes
+
+*   **Control Center Chart Date Labels Fix**
+    *   Fixed activity trends chart date labels to parse dates in local time instead of UTC.
+    *   **Root Cause**: JavaScript `new Date()` was parsing date strings as UTC, causing labels to display previous day in western timezones.
+    *   **Solution**: Parse date components explicitly and construct Date objects in local timezone.
+    *   **Impact**: Chart x-axis labels now correctly show the intended dates regardless of user timezone.
+    *   **Files Modified**: `control_center.html` (Chart.js date parsing logic).
+    *   (Ref: Chart.js, date parsing, timezone handling, activity trends)
 
 *   **Sovereign Cloud Cognitive Services Scope Fix**
     *   Fixed hardcoded commercial Azure cognitive services scope references that prevented authentication in Azure Government (MAG) and custom cloud environments.
