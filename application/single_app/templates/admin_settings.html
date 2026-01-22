@@ -2500,6 +2500,111 @@
                         <strong>Important:</strong> Deleted items respect your archiving settings. If conversation archiving is enabled, items will be archived before deletion. Activity logs are created for all deletions.
                     </div>
                 </div>
+
+                <!-- User Agreement Section -->
+                <div class="card mb-3 p-3" id="user-agreement-section">
+                    <h5>
+                        <i class="bi bi-file-earmark-check me-2"></i>User Agreement
+                    </h5>
+                    <p class="text-muted">
+                        Configure a user agreement that users must accept before uploading files. 
+                        Supports Markdown formatting.
+                    </p>
+                    
+                    <!-- Enable Toggle -->
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox" 
+                            class="form-check-input" 
+                            id="enable_user_agreement" 
+                            name="enable_user_agreement"
+                            {% if settings.enable_user_agreement %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_user_agreement">
+                            Enable User Agreement
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, users must accept the agreement before uploading files in the selected workspace types."></i>
+                    </div>
+
+                    <!-- User Agreement Settings (shown when enabled) -->
+                    <div id="user_agreement_settings" {% if not settings.enable_user_agreement %}style="display: none;"{% endif %}>
+                        <hr>
+                        
+                        <!-- Apply To Checkboxes -->
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Apply to <span class="text-danger">*</span></label>
+                            <p class="text-muted small mb-2">Select where the user agreement should be shown (at least one required):</p>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="form-check mb-2">
+                                        <input type="checkbox" class="form-check-input" id="user_agreement_apply_personal" name="user_agreement_apply_personal"
+                                            {% if settings.user_agreement_apply_to and 'personal' in settings.user_agreement_apply_to %}checked{% endif %}>
+                                        <label class="form-check-label" for="user_agreement_apply_personal">
+                                            <i class="bi bi-person me-1"></i>Personal Workspaces
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
+                                        <input type="checkbox" class="form-check-input" id="user_agreement_apply_group" name="user_agreement_apply_group"
+                                            {% if settings.user_agreement_apply_to and 'group' in settings.user_agreement_apply_to %}checked{% endif %}>
+                                        <label class="form-check-label" for="user_agreement_apply_group">
+                                            <i class="bi bi-people me-1"></i>Group Workspaces
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="form-check mb-2">
+                                        <input type="checkbox" class="form-check-input" id="user_agreement_apply_public" name="user_agreement_apply_public"
+                                            {% if settings.user_agreement_apply_to and 'public' in settings.user_agreement_apply_to %}checked{% endif %}>
+                                        <label class="form-check-label" for="user_agreement_apply_public">
+                                            <i class="bi bi-globe me-1"></i>Public Workspaces
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
+                                        <input type="checkbox" class="form-check-input" id="user_agreement_apply_chat" name="user_agreement_apply_chat"
+                                            {% if settings.user_agreement_apply_to and 'chat' in settings.user_agreement_apply_to %}checked{% endif %}>
+                                        <label class="form-check-label" for="user_agreement_apply_chat">
+                                            <i class="bi bi-chat-dots me-1"></i>Chat
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="user_agreement_apply_to_validation" class="text-danger small" style="display: none;">
+                                <i class="bi bi-exclamation-circle me-1"></i>At least one location must be selected
+                            </div>
+                        </div>
+
+                        <!-- Agreement Text -->
+                        <div class="mb-3">
+                            <label for="user_agreement_text" class="form-label fw-bold">
+                                Agreement Text <span class="text-danger">*</span>
+                                <span class="text-muted fw-normal ms-2">(Markdown supported)</span>
+                            </label>
+                            <textarea class="form-control" id="user_agreement_text" name="user_agreement_text" rows="6"
+                                placeholder="Enter the agreement text that users must accept before uploading files...&#10;&#10;Example:&#10;**I confirm that:**&#10;- The documents I am uploading do not contain PII&#10;- I have permission to share these documents">{{ settings.user_agreement_text or '' }}</textarea>
+                            <div class="d-flex justify-content-between mt-1">
+                                <small id="user_agreement_word_count" class="text-muted">0 / 200 words</small>
+                                <small id="user_agreement_word_warning" class="text-danger" style="display: none;">
+                                    <i class="bi bi-exclamation-circle me-1"></i>Exceeds 200 word limit
+                                </small>
+                            </div>
+                        </div>
+
+                        <!-- Daily Acceptance Option -->
+                        <div class="form-group form-check form-switch mb-3">
+                            <input type="checkbox" class="form-check-input" id="enable_user_agreement_daily" name="enable_user_agreement_daily"
+                                {% if settings.enable_user_agreement_daily %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="enable_user_agreement_daily">
+                                Allow users to accept once per day
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, users only need to accept the agreement once per day instead of every time they upload files."></i>
+                        </div>
+
+                        <!-- Test Preview Button -->
+                        <div class="d-flex gap-2 flex-wrap">
+                            <button type="button" class="btn btn-outline-secondary" id="test_user_agreement_btn">
+                                <i class="bi bi-eye me-1"></i>Test Preview
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             
@@ -3806,6 +3911,41 @@
 
         <!-- Key Vault Info Modal -->
         {% include '_key_vault_info.html' %}
+
+        <!-- User Agreement Preview Modal -->
+        <div class="modal fade" id="userAgreementPreviewModal" tabindex="-1" aria-labelledby="userAgreementPreviewModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="userAgreementPreviewModalLabel">
+                            <i class="bi bi-file-earmark-check me-2"></i>User Agreement (Preview)
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="alert alert-info mb-3">
+                            <i class="bi bi-info-circle me-2"></i>
+                            This is a preview of how the user agreement will appear to users before file uploads.
+                        </div>
+                        <div id="userAgreementPreviewContent" class="border rounded p-3 bg-light">
+                            <!-- Rendered markdown content will be inserted here -->
+                        </div>
+                        <div class="form-check mt-3" id="userAgreementDailyCheckPreview" style="display: none;">
+                            <input type="checkbox" class="form-check-input" id="userAgreementDailyAcceptPreview" disabled>
+                            <label class="form-check-label" for="userAgreementDailyAcceptPreview">
+                                I accept this agreement for today (won't be asked again until tomorrow)
+                            </label>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close Preview</button>
+                        <button type="button" class="btn btn-success" disabled>
+                            <i class="bi bi-check-circle me-1"></i>Accept & Continue (Preview)
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 {% endblock %}
@@ -4347,6 +4487,96 @@
                 </div>
             `;
             document.getElementById('execute-btn').disabled = false;
+        });
+    }
+
+    // =====================
+    // User Agreement Logic
+    // =====================
+    
+    // Toggle visibility of user agreement settings
+    const enableUserAgreementToggle = document.getElementById('enable_user_agreement');
+    const userAgreementSettingsDiv = document.getElementById('user_agreement_settings');
+    
+    if (enableUserAgreementToggle && userAgreementSettingsDiv) {
+        enableUserAgreementToggle.addEventListener('change', function() {
+            userAgreementSettingsDiv.style.display = this.checked ? 'block' : 'none';
+        });
+    }
+
+    // Word count for user agreement text
+    const userAgreementTextarea = document.getElementById('user_agreement_text');
+    const userAgreementWordCount = document.getElementById('user_agreement_word_count');
+    const userAgreementWordWarning = document.getElementById('user_agreement_word_warning');
+    
+    function updateUserAgreementWordCount() {
+        if (!userAgreementTextarea || !userAgreementWordCount) return;
+        
+        const text = userAgreementTextarea.value.trim();
+        const words = text ? text.split(/\s+/).filter(word => word.length > 0) : [];
+        const wordCount = words.length;
+        
+        userAgreementWordCount.textContent = `${wordCount} / 200 words`;
+        
+        if (wordCount > 200) {
+            userAgreementWordCount.classList.remove('text-muted');
+            userAgreementWordCount.classList.add('text-danger');
+            if (userAgreementWordWarning) {
+                userAgreementWordWarning.style.display = 'inline';
+            }
+        } else {
+            userAgreementWordCount.classList.remove('text-danger');
+            userAgreementWordCount.classList.add('text-muted');
+            if (userAgreementWordWarning) {
+                userAgreementWordWarning.style.display = 'none';
+            }
+        }
+    }
+    
+    if (userAgreementTextarea) {
+        userAgreementTextarea.addEventListener('input', updateUserAgreementWordCount);
+        // Initial count on page load
+        updateUserAgreementWordCount();
+    }
+
+    // Test Preview button for User Agreement
+    const testUserAgreementBtn = document.getElementById('test_user_agreement_btn');
+    
+    if (testUserAgreementBtn) {
+        testUserAgreementBtn.addEventListener('click', function() {
+            const agreementText = userAgreementTextarea ? userAgreementTextarea.value.trim() : '';
+            const allowDaily = document.getElementById('enable_user_agreement_daily');
+            
+            if (!agreementText) {
+                alert('Please enter agreement text before previewing.');
+                return;
+            }
+            
+            // Render markdown to HTML
+            const previewContent = document.getElementById('userAgreementPreviewContent');
+            if (previewContent) {
+                // Use marked if available, otherwise show raw text
+                if (typeof marked !== 'undefined') {
+                    let html = marked.parse(agreementText);
+                    // Sanitize if DOMPurify is available
+                    if (typeof DOMPurify !== 'undefined') {
+                        html = DOMPurify.sanitize(html);
+                    }
+                    previewContent.innerHTML = html;
+                } else {
+                    previewContent.textContent = agreementText;
+                }
+            }
+            
+            // Show/hide daily acceptance checkbox preview
+            const dailyCheckPreview = document.getElementById('userAgreementDailyCheckPreview');
+            if (dailyCheckPreview && allowDaily) {
+                dailyCheckPreview.style.display = allowDaily.checked ? 'block' : 'none';
+            }
+            
+            // Show the modal
+            const modal = new bootstrap.Modal(document.getElementById('userAgreementPreviewModal'));
+            modal.show();
         });
     }
 

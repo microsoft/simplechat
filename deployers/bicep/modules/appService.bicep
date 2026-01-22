@@ -24,6 +24,8 @@ param authenticationType string
 @secure()
 param enterpriseAppClientSecret string = ''
 param keyVaultUri string
+param enablePrivateNetworking bool
+param appServiceSubnetId string = ''
 
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
@@ -62,6 +64,11 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
   kind: 'app,linux,container'
   properties: {
     serverFarmId: appServicePlanId
+
+    virtualNetworkSubnetId: appServiceSubnetId != '' ? appServiceSubnetId : null
+    publicNetworkAccess: 'Enabled' // configuration is set in post provision step in azure.yaml with post deployment script
+    vnetImagePullEnabled: enablePrivateNetworking ? true : false
+     
     siteConfig: {
       linuxFxVersion: 'DOCKER|${containerImageName}'
       acrUseManagedIdentityCreds: true
@@ -198,7 +205,7 @@ resource authSettings 'Microsoft.Web/sites/config@2022-03-01' = {
       azureActiveDirectory: {
         enabled: true
         registration: {
-          openIdIssuer: 'https://sts.windows.net/${tenant().tenantId}/'
+          openIdIssuer: azurePlatform == 'AzureUSGovernment' ? 'https://login.microsoftonline.us/${tenant().tenantId}/' : 'https://sts.windows.net/${tenant().tenantId}/'
           clientId: enterpriseAppClientId
           clientSecretSettingName: 'MICROSOFT_PROVIDER_AUTHENTICATION_SECRET'
         }

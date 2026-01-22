@@ -12,6 +12,8 @@ param keyVault string
 param authenticationType string
 param configureApplicationPermissions bool
 
+param enablePrivateNetworking bool
+
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
   name: 'diagnosticConfigs'
@@ -29,7 +31,7 @@ resource speechService 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
     type: 'SystemAssigned'
   }
   properties: {
-    publicNetworkAccess: 'Enabled'
+    publicNetworkAccess: enablePrivateNetworking ? 'Disabled' : 'Enabled'
     customSubDomainName: toLower('${appName}-${environment}-speech')
   }
   tags: tags
