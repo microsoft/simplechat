@@ -308,6 +308,15 @@ def get_settings(use_cosmos=False):
         'retention_conversation_max_days': 3650,  # ~10 years
         'retention_document_min_days': 1,
         'retention_document_max_days': 3650,  # ~10 years
+        # Default retention policies for each workspace type
+        # 'none' means no automatic deletion (users can still set their own)
+        # Numeric values (e.g., 30, 60, 90, 180, 365, 730) represent days
+        'default_retention_conversation_personal': 'none',
+        'default_retention_document_personal': 'none',
+        'default_retention_conversation_group': 'none',
+        'default_retention_document_group': 'none',
+        'default_retention_conversation_public': 'none',
+        'default_retention_document_public': 'none',
     }
 
     try:

@@ -82,6 +82,47 @@ def get_all_public_workspaces():
         return []
 
 
+def resolve_retention_value(value, workspace_type, retention_type, settings=None):
+    """
+    Resolve a retention value, handling 'default' by looking up organization defaults.
+    
+    Args:
+        value: The retention value ('none', 'default', or a number/string of days)
+        workspace_type: 'personal', 'group', or 'public'
+        retention_type: 'conversation' or 'document'
+        settings: Optional pre-loaded settings dict (to avoid repeated lookups)
+        
+    Returns:
+        str or int: 'none' if no deletion, or the number of days as int
+    """
+    if value is None or value == 'default' or value == '':
+        # Look up the organization default
+        if settings is None:
+            settings = get_settings()
+        
+        setting_key = f'default_retention_{retention_type}_{workspace_type}'
+        default_value = settings.get(setting_key, 'none')
+        
+        # If the org default is also 'none', return 'none'
+        if default_value == 'none' or default_value is None:
+            return 'none'
+        
+        # Return the org default as the effective value
+        try:
+            return int(default_value)
+        except (ValueError, TypeError):
+            return 'none'
+    
+    # User/workspace has their own explicit value
+    if value == 'none':
+        return 'none'
+    
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return 'none'
+
+
 def execute_retention_policy(workspace_scopes=None, manual_execution=False):
     """
     Execute retention policy for specified workspace scopes.
@@ -185,6 +226,9 @@ def process_personal_retention():
         # Get all user settings
         all_users = get_all_user_settings()
         
+        # Pre-load settings once for efficiency
+        settings = get_settings()
+        
         for user in all_users:
             user_id = user.get('id')
             if not user_id:
@@ -194,10 +238,15 @@ def process_personal_retention():
             user_settings = user.get('settings', {})
             retention_settings = user_settings.get('retention_policy', {})
             
-            conversation_retention_days = retention_settings.get('conversation_retention_days', 'none')
-            document_retention_days = retention_settings.get('document_retention_days', 'none')
+            # Get raw values (may be 'default', 'none', or a number)
+            raw_conversation_days = retention_settings.get('conversation_retention_days')
+            raw_document_days = retention_settings.get('document_retention_days')
             
-            # Skip if both are set to "none"
+            # Resolve to effective values (handles 'default' -> org default lookup)
+            conversation_retention_days = resolve_retention_value(raw_conversation_days, 'personal', 'conversation', settings)
+            document_retention_days = resolve_retention_value(raw_document_days, 'personal', 'document', settings)
+            
+            # Skip if both resolve to "none"
             if conversation_retention_days == 'none' and document_retention_days == 'none':
                 continue
             
@@ -273,6 +322,9 @@ def process_group_retention():
         # Get all groups
         all_groups = get_all_groups()
         
+        # Pre-load settings once for efficiency
+        settings = get_settings()
+        
         for group in all_groups:
             group_id = group.get('id')
             if not group_id:
@@ -281,10 +333,15 @@ def process_group_retention():
             # Get group's retention settings
             retention_settings = group.get('retention_policy', {})
             
-            conversation_retention_days = retention_settings.get('conversation_retention_days', 'none')
-            document_retention_days = retention_settings.get('document_retention_days', 'none')
+            # Get raw values (may be 'default', 'none', or a number)
+            raw_conversation_days = retention_settings.get('conversation_retention_days')
+            raw_document_days = retention_settings.get('document_retention_days')
             
-            # Skip if both are set to "none"
+            # Resolve to effective values (handles 'default' -> org default lookup)
+            conversation_retention_days = resolve_retention_value(raw_conversation_days, 'group', 'conversation', settings)
+            document_retention_days = resolve_retention_value(raw_document_days, 'group', 'document', settings)
+            
+            # Skip if both resolve to "none"
             if conversation_retention_days == 'none' and document_retention_days == 'none':
                 continue
             
@@ -359,6 +416,9 @@ def process_public_retention():
         # Get all public workspaces
         all_workspaces = get_all_public_workspaces()
         
+        # Pre-load settings once for efficiency
+        settings = get_settings()
+        
         for workspace in all_workspaces:
             workspace_id = workspace.get('id')
             if not workspace_id:
@@ -367,10 +427,15 @@ def process_public_retention():
             # Get workspace's retention settings
             retention_settings = workspace.get('retention_policy', {})
             
-            conversation_retention_days = retention_settings.get('conversation_retention_days', 'none')
-            document_retention_days = retention_settings.get('document_retention_days', 'none')
+            # Get raw values (may be 'default', 'none', or a number)
+            raw_conversation_days = retention_settings.get('conversation_retention_days')
+            raw_document_days = retention_settings.get('document_retention_days')
             
-            # Skip if both are set to "none"
+            # Resolve to effective values (handles 'default' -> org default lookup)
+            conversation_retention_days = resolve_retention_value(raw_conversation_days, 'public', 'conversation', settings)
+            document_retention_days = resolve_retention_value(raw_document_days, 'public', 'document', settings)
+            
+            # Skip if both resolve to "none"
             if conversation_retention_days == 'none' and document_retention_days == 'none':
                 continue
             
