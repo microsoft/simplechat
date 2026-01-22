@@ -1661,13 +1661,18 @@
                                 <div class="card-body">
                                     <div class="alert alert-info small">
                                         <i class="bi bi-info-circle me-1"></i>
-                                        Configure automatic deletion of aged conversations and documents. Set to "No automatic deletion" to keep items indefinitely.
+                                        Configure automatic deletion of aged conversations and documents. You can use the organization default or set a custom retention period.
                                     </div>
                                     <div class="row">
                                         <div class="col-md-6 mb-3">
                                             <label class="form-label">Conversation Retention</label>
                                             <select class="form-select" id="groupConversationRetention">
+                                                <option value="default">Using organization default</option>
                                                 <option value="none">No automatic deletion</option>
+                                                <option value="1">1 day</option>
+                                                <option value="5">5 days</option>
+                                                <option value="10">10 days</option>
+                                                <option value="21">21 days (3 weeks)</option>
                                                 <option value="30">30 days</option>
                                                 <option value="60">60 days</option>
                                                 <option value="90">90 days (3 months)</option>
@@ -1679,7 +1684,12 @@
                                         <div class="col-md-6 mb-3">
                                             <label class="form-label">Document Retention</label>
                                             <select class="form-select" id="groupDocumentRetention">
+                                                <option value="default">Using organization default</option>
                                                 <option value="none">No automatic deletion</option>
+                                                <option value="1">1 day</option>
+                                                <option value="5">5 days</option>
+                                                <option value="10">10 days</option>
+                                                <option value="21">21 days (3 weeks)</option>
                                                 <option value="30">30 days</option>
                                                 <option value="60">60 days</option>
                                                 <option value="90">90 days (3 months)</option>
@@ -2258,6 +2268,59 @@
                             </div>
                         </div>
                     </div>
+
+                    <!-- Retention Policy -->
+                    {% if app_settings.enable_retention_policy_public %}
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="fw-bold"><i class="bi bi-hourglass-split me-2"></i>Retention Policy</h6>
+                            <div class="card">
+                                <div class="card-body">
+                                    <div class="alert alert-info small">
+                                        <i class="bi bi-info-circle me-1"></i>
+                                        Configure automatic deletion of aged conversations and documents. You can use the organization default or set a custom retention period.
+                                    </div>
+                                    <div class="row">
+                                        <div class="col-md-6 mb-3">
+                                            <label class="form-label">Conversation Retention</label>
+                                            <select class="form-select" id="publicConversationRetention">
+                                                <option value="default">Using organization default</option>
+                                                <option value="none">No automatic deletion</option>
+                                                <option value="1">1 day</option>
+                                                <option value="5">5 days</option>
+                                                <option value="10">10 days</option>
+                                                <option value="21">21 days (3 weeks)</option>
+                                                <option value="30">30 days</option>
+                                                <option value="60">60 days</option>
+                                                <option value="90">90 days (3 months)</option>
+                                                <option value="180">180 days (6 months)</option>
+                                                <option value="365">365 days (1 year)</option>
+                                                <option value="730">730 days (2 years)</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-md-6 mb-3">
+                                            <label class="form-label">Document Retention</label>
+                                            <select class="form-select" id="publicDocumentRetention">
+                                                <option value="default">Using organization default</option>
+                                                <option value="none">No automatic deletion</option>
+                                                <option value="1">1 day</option>
+                                                <option value="5">5 days</option>
+                                                <option value="10">10 days</option>
+                                                <option value="21">21 days (3 weeks)</option>
+                                                <option value="30">30 days</option>
+                                                <option value="60">60 days</option>
+                                                <option value="90">90 days (3 months)</option>
+                                                <option value="180">180 days (6 months)</option>
+                                                <option value="365">365 days (1 year)</option>
+                                                <option value="730">730 days (2 years)</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
 
                     <!-- Dangerous Actions -->
                     <div class="row mb-4">
@@ -3186,22 +3249,43 @@ window.GroupManager = {
             await GroupManager.loadGroupMembersForTransfer(groupId);
             
             // Load retention settings if enabled
-            if (group.retention_policy) {
-                const convSelect = document.getElementById('groupConversationRetention');
-                const docSelect = document.getElementById('groupDocumentRetention');
+            const convSelect = document.getElementById('groupConversationRetention');
+            const docSelect = document.getElementById('groupDocumentRetention');
+            
+            // Fetch organization defaults for group retention
+            try {
+                const orgDefaultsResp = await fetch('/api/retention-policy/defaults/group');
+                const orgData = await orgDefaultsResp.json();
                 
-                if (convSelect) {
-                    convSelect.value = group.retention_policy.conversation_retention_days || 'none';
+                if (orgData.success) {
+                    const convDefaultOption = convSelect?.querySelector('option[value="default"]');
+                    const docDefaultOption = docSelect?.querySelector('option[value="default"]');
+                    
+                    if (convDefaultOption) {
+                        convDefaultOption.textContent = `Using organization default (${orgData.default_conversation_label})`;
+                    }
+                    if (docDefaultOption) {
+                        docDefaultOption.textContent = `Using organization default (${orgData.default_document_label})`;
+                    }
                 }
-                if (docSelect) {
-                    docSelect.value = group.retention_policy.document_retention_days || 'none';
-                }
+            } catch (error) {
+                console.error('Error loading group retention defaults:', error);
+            }
+            
+            if (group.retention_policy) {
+                let convRetention = group.retention_policy.conversation_retention_days;
+                let docRetention = group.retention_policy.document_retention_days;
+                
+                // If undefined, use 'default'
+                if (convRetention === undefined) convRetention = 'default';
+                if (docRetention === undefined) docRetention = 'default';
+                
+                if (convSelect) convSelect.value = convRetention;
+                if (docSelect) docSelect.value = docRetention;
             } else {
-                // Set defaults if no retention policy
-                const convSelect = document.getElementById('groupConversationRetention');
-                const docSelect = document.getElementById('groupDocumentRetention');
-                if (convSelect) convSelect.value = 'none';
-                if (docSelect) docSelect.value = 'none';
+                // Set to organization default if no retention policy set
+                if (convSelect) convSelect.value = 'default';
+                if (docSelect) docSelect.value = 'default';
             }
             
             // Store current group ID for saving changes
