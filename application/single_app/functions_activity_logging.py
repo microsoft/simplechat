@@ -118,6 +118,58 @@ def log_user_activity(
         debug_print(f"Error logging user activity for user {user_id}: {str(e)}")
 
 
+def log_web_search_consent_acceptance(
+    user_id: str,
+    admin_email: str,
+    consent_text: str,
+    source: str = 'admin_settings'
+) -> None:
+    """
+    Log web search consent acceptance to activity_logs and App Insights.
+
+    Args:
+        user_id (str): Admin user ID who accepted the consent.
+        admin_email (str): Admin email who accepted the consent.
+        consent_text (str): Consent message accepted by the admin.
+        source (str, optional): Origin of the consent action.
+    """
+    try:
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'activity_type': 'web_search_consent_acceptance',
+            'user_id': user_id,
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'accepted_by': {
+                'user_id': user_id,
+                'email': admin_email
+            },
+            'source': source,
+            'description': consent_text
+        }
+
+        cosmos_activity_logs_container.create_item(body=activity_record)
+
+        log_event(
+            message=consent_text,
+            extra=activity_record,
+            level=logging.INFO
+        )
+        debug_print(f"Logged web search consent acceptance for user {user_id}")
+
+    except Exception as e:
+        log_event(
+            message=f"Error logging web search consent acceptance: {str(e)}",
+            extra={
+                'user_id': user_id,
+                'admin_email': admin_email,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+        debug_print(f"Error logging web search consent acceptance for user {user_id}: {str(e)}")
+
+
 def log_document_upload(
     user_id: str,
     container_type: str,

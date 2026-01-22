@@ -1,3 +1,4 @@
+# foundry_agent_runtime.py
 """Azure AI Foundry agent execution helpers."""
 
 import asyncio
@@ -84,9 +85,24 @@ class AzureAIFoundryChatCompletionAgent:
                 )
             )
         except RuntimeError:
+            log_event(
+                "[FoundryAgent] Invocation runtime error",
+                extra={
+                    "agent_id": self.id,
+                    "agent_name": self.name,
+                },
+                level=logging.ERROR,
+            )
             raise
         except Exception as exc:  # pragma: no cover - defensive logging
-            debug_print(f"[FoundryAgent] Invocation error: {exc}")
+            log_event(
+                "[FoundryAgent] Invocation error",
+                extra={
+                    "agent_id": self.id,
+                    "agent_name": self.name,
+                },
+                level=logging.ERROR,
+            )
             raise
 
         self.last_run_citations = result.citations
@@ -135,13 +151,27 @@ async def execute_foundry_agent(
             raise FoundryAgentInvocationError("Foundry agent returned no messages.")
 
         last_response = responses[-1]
+
+        thread_id = None
         if last_response.thread is not None:
-            try:
-                await last_response.thread.delete()
-            except Exception as cleanup_error:  # pragma: no cover - best effort cleanup
-                _logger.warning("Failed to delete Foundry thread: %s", cleanup_error)
+            thread_id = getattr(last_response.thread, "id", None)
 
         message_obj = last_response.message
+
+        if not thread_id:
+            metadata_thread_id = None
+            if isinstance(message_obj.metadata, dict):
+                metadata_thread_id = message_obj.metadata.get("thread_id")
+            thread_id = metadata_thread_id or metadata.get("thread_id")
+
+        if thread_id:
+            try:
+                if last_response.thread is not None and hasattr(last_response.thread, "delete"):
+                    await last_response.thread.delete()
+                elif hasattr(client, "agents") and hasattr(client.agents, "delete_thread"):
+                    await client.agents.delete_thread(thread_id)
+            except Exception as cleanup_error:  # pragma: no cover - best effort cleanup
+                _logger.warning("Failed to delete Foundry thread: %s", cleanup_error)
         text = _extract_message_text(message_obj)
         citations = _extract_citations(message_obj)
         model_name = getattr(definition, "model", None)
@@ -179,17 +209,32 @@ def _resolve_endpoint(foundry_settings: Dict[str, Any], global_settings: Dict[st
         or global_settings.get("azure_ai_foundry_endpoint")
         or os.getenv("AZURE_AI_AGENT_ENDPOINT")
     )
-    if not endpoint:
-        raise FoundryAgentInvocationError(
-            "Azure AI Foundry endpoint is not configured. Provide endpoint in the agent's other_settings.azure_ai_foundry or global settings."
-        )
-    return endpoint.rstrip("/")
+    if endpoint:
+        return endpoint.rstrip("/")
+
+    raise FoundryAgentInvocationError(
+        "Azure AI Foundry endpoint is not configured. Provide an endpoint in the agent's other_settings.azure_ai_foundry or global settings."
+    )
 
 
 def _build_async_credential(
     foundry_settings: Dict[str, Any],
     global_settings: Dict[str, Any],
 ):
+    auth_type = (
+        foundry_settings.get("authentication_type")
+        or foundry_settings.get("auth_type")
+        or global_settings.get("azure_ai_foundry_authentication_type")
+    )
+    managed_identity_type = (
+        foundry_settings.get("managed_identity_type")
+        or global_settings.get("azure_ai_foundry_managed_identity_type")
+    )
+    managed_identity_client_id = (
+        foundry_settings.get("managed_identity_client_id")
+        or global_settings.get("azure_ai_foundry_managed_identity_client_id")
+    )
+
     authority = (
         foundry_settings.get("authority")
         or global_settings.get("azure_ai_foundry_authority")
@@ -206,7 +251,11 @@ def _build_async_credential(
         "azure_ai_foundry_client_secret"
     )
 
-    if client_secret:
+    if auth_type == "service_principal":
+        if not client_secret:
+            raise FoundryAgentInvocationError(
+                "Foundry service principals require client_secret value."
+            )
         resolved_secret = _resolve_secret_value(client_secret)
         if not tenant_id or not client_id:
             raise FoundryAgentInvocationError(
@@ -218,6 +267,27 @@ def _build_async_credential(
             client_secret=resolved_secret,
             authority=authority,
         )
+
+    if client_secret and auth_type != "managed_identity":
+        resolved_secret = _resolve_secret_value(client_secret)
+        if not tenant_id or not client_id:
+            raise FoundryAgentInvocationError(
+                "Foundry service principals require tenant_id and client_id values."
+            )
+        return ClientSecretCredential(
+            tenant_id=tenant_id,
+            client_id=client_id,
+            client_secret=resolved_secret,
+            authority=authority,
+        )
+
+    if auth_type == "managed_identity":
+        if managed_identity_type == "user_assigned" and managed_identity_client_id:
+            return DefaultAzureCredential(
+                authority=authority,
+                managed_identity_client_id=managed_identity_client_id,
+            )
+        return DefaultAzureCredential(authority=authority)
 
     # Fall back to default chained credentials (managed identity, CLI, etc.)
     return DefaultAzureCredential(authority=authority)
@@ -260,4 +330,26 @@ def _extract_citations(message: ChatMessageContent) -> List[Dict[str, Any]]:
     citations = metadata.get("citations")
     if isinstance(citations, list):
         return [c for c in citations if isinstance(c, dict)]
+    items = getattr(message, "items", None)
+    if isinstance(items, list):
+        extracted: List[Dict[str, Any]] = []
+        for item in items:
+            content_type = getattr(item, "content_type", None)
+            if content_type != "annotation":
+                continue
+            url = getattr(item, "url", None)
+            title = getattr(item, "title", None)
+            quote = getattr(item, "quote", None)
+            if not url:
+                continue
+            extracted.append(
+                {
+                    "url": url,
+                    "title": title,
+                    "quote": quote,
+                    "citation_type": getattr(item, "citation_type", None),
+                }
+            )
+        if extracted:
+            return extracted
     return []

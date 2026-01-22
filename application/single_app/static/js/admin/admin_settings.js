@@ -1576,11 +1576,144 @@ function setupToggles() {
 
     const enableWebSearch = document.getElementById('enable_web_search');
     const webSearchFoundrySettings = document.getElementById('web_search_foundry_settings');
+    const webSearchConsentInput = document.getElementById('web_search_consent_accepted');
+    const webSearchConsentModalEl = document.getElementById('web-search-consent-modal');
+    const webSearchConsentAcceptBtn = document.getElementById('web-search-consent-accept');
+    const webSearchConsentDeclineBtn = document.getElementById('web-search-consent-decline');
+    let webSearchConsentModal = null;
+    const toggleVisibility = (element, isVisible) => {
+        if (!element) {
+            return;
+        }
+        element.classList.toggle('d-none', !isVisible);
+    };
     if (enableWebSearch && webSearchFoundrySettings) {
-        webSearchFoundrySettings.style.display = enableWebSearch.checked ? 'block' : 'none';
+        const setConsentAccepted = (value) => {
+            if (webSearchConsentInput) {
+                webSearchConsentInput.value = value ? 'true' : 'false';
+            }
+        };
+
+        const showConsentModal = () => {
+            if (!webSearchConsentModalEl) {
+                showToast('Consent modal could not be loaded.', 'warning');
+                return;
+            }
+
+            if (!webSearchConsentModal) {
+                webSearchConsentModal = new bootstrap.Modal(webSearchConsentModalEl, {
+                    backdrop: 'static',
+                    keyboard: false
+                });
+            }
+
+            webSearchConsentModal.show();
+        };
+
+        const hasConsent = () => webSearchConsentInput?.value === 'true';
+
+        if (enableWebSearch.checked && !hasConsent()) {
+            enableWebSearch.checked = false;
+        }
+        toggleVisibility(webSearchFoundrySettings, enableWebSearch.checked && hasConsent());
+
         enableWebSearch.addEventListener('change', function () {
-            webSearchFoundrySettings.style.display = this.checked ? 'block' : 'none';
+            if (this.checked && !hasConsent()) {
+                this.checked = false;
+                toggleVisibility(webSearchFoundrySettings, false);
+                showConsentModal();
+                return;
+            }
+
+            toggleVisibility(webSearchFoundrySettings, this.checked);
             markFormAsModified();
+        });
+
+        if (webSearchConsentAcceptBtn) {
+            webSearchConsentAcceptBtn.addEventListener('click', () => {
+                setConsentAccepted(true);
+                enableWebSearch.checked = true;
+                toggleVisibility(webSearchFoundrySettings, true);
+                markFormAsModified();
+                if (webSearchConsentModal) {
+                    webSearchConsentModal.hide();
+                }
+            });
+        }
+
+        if (webSearchConsentDeclineBtn) {
+            webSearchConsentDeclineBtn.addEventListener('click', () => {
+                setConsentAccepted(false);
+                enableWebSearch.checked = false;
+                toggleVisibility(webSearchFoundrySettings, false);
+                markFormAsModified();
+                if (webSearchConsentModal) {
+                    webSearchConsentModal.hide();
+                }
+            });
+        }
+    }
+
+    const foundryAuthType = document.getElementById('web_search_foundry_auth_type');
+    const foundryMiType = document.getElementById('web_search_foundry_managed_identity_type');
+    const foundryCloud = document.getElementById('web_search_foundry_cloud');
+    const foundrySpFields = document.getElementById('web_search_foundry_service_principal_fields');
+    const foundryMiTypeContainer = document.getElementById('web_search_foundry_managed_identity_type_container');
+    const foundryMiClientIdContainer = document.getElementById('web_search_foundry_managed_identity_client_id_container');
+    const foundryCloudContainer = document.getElementById('web_search_foundry_cloud_container');
+    const foundryAuthorityContainer = document.getElementById('web_search_foundry_authority_container');
+
+    function updateFoundryAuthVisibility() {
+        const authType = foundryAuthType?.value || 'managed_identity';
+        const cloudValue = foundryCloud?.value || '';
+
+        toggleVisibility(foundrySpFields, authType === 'service_principal');
+        toggleVisibility(foundryCloudContainer, authType === 'service_principal');
+        toggleVisibility(
+            foundryAuthorityContainer,
+            authType === 'service_principal' && cloudValue === 'custom'
+        );
+        toggleVisibility(foundryMiTypeContainer, authType === 'managed_identity');
+        if (foundryMiClientIdContainer) {
+            const miType = foundryMiType?.value || 'system_assigned';
+            toggleVisibility(
+                foundryMiClientIdContainer,
+                authType === 'managed_identity' && miType === 'user_assigned'
+            );
+        }
+    }
+
+    if (foundryAuthType || foundryMiType || foundryCloud) {
+        updateFoundryAuthVisibility();
+    }
+
+    if (foundryMiType) {
+        foundryMiType.addEventListener('change', () => {
+            updateFoundryAuthVisibility();
+            markFormAsModified();
+        });
+    }
+
+    if (foundryCloud) {
+        foundryCloud.addEventListener('change', () => {
+            updateFoundryAuthVisibility();
+            markFormAsModified();
+        });
+    }
+
+    if (foundryAuthType) {
+        foundryAuthType.addEventListener('change', () => {
+            updateFoundryAuthVisibility();
+            markFormAsModified();
+        });
+    }
+
+    const toggleFoundrySecret = document.getElementById('toggle_web_search_foundry_client_secret');
+    const foundrySecretInput = document.getElementById('web_search_foundry_client_secret');
+    if (toggleFoundrySecret && foundrySecretInput) {
+        toggleFoundrySecret.addEventListener('click', () => {
+            foundrySecretInput.type = foundrySecretInput.type === 'password' ? 'text' : 'password';
+            toggleFoundrySecret.textContent = foundrySecretInput.type === 'password' ? 'Show' : 'Hide';
         });
     }
 

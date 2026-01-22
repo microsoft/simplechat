@@ -41,7 +41,7 @@ xlrd==2.0.1
 pillow==11.1.0
 ffmpeg-binaries-compat==1.0.1
 ffmpeg-python==0.2.0
-semantic-kernel>=1.39.0
+semantic-kernel>=1.39.2
 redis>=5.0,<6.0
 pyodbc>=4.0.0
 PyMySQL>=1.0.0

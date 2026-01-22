@@ -8,10 +8,13 @@ from semantic_kernel.connectors.ai.chat_completion_client_base import ChatComple
 from semantic_kernel_fact_memory_store import FactMemoryStore
 from semantic_kernel_loader import initialize_semantic_kernel
 from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
+from foundry_agent_runtime import FoundryAgentInvocationError, execute_foundry_agent
 import builtins
 import asyncio, types
+import ast
 import json
-from typing import Any, Dict, List
+import re
+from typing import Any, Dict, List, Mapping, Optional
 from config import *
 from flask import g
 from functions_authentication import *
@@ -22,7 +25,7 @@ from functions_group import find_group_by_id
 from functions_chat import *
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_debug import debug_print
-from functions_activity_logging import log_chat_activity, log_conversation_creation
+from functions_activity_logging import log_chat_activity, log_conversation_creation, log_token_usage
 from flask import current_app
 from swagger_wrapper import swagger_route, get_auth_security
 
@@ -154,6 +157,7 @@ def register_route_backend_chats(app):
             search_query = user_message # <--- ADD THIS LINE (Initialize search_query)
             hybrid_citations_list = [] # <--- ADD THIS LINE (Initialize hybrid list)
             agent_citations_list = [] # <--- ADD THIS LINE (Initialize agent citations list)
+            web_search_citations_list = []
             system_messages_for_augmentation = [] # Collect system messages from search
             search_results = []
             selected_agent = None  # Initialize selected_agent early to prevent NameError
@@ -1453,9 +1457,22 @@ def register_route_backend_chats(app):
                         'error': user_friendly_message
                     }), status_code
 
-            # Web Search placeholder (until Foundry agent is wired)
             if web_search_enabled:
-                perform_web_search()
+                perform_web_search(
+                    settings=settings,
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    user_message=user_message,
+                    user_message_id=user_message_id,
+                    chat_type=chat_type,
+                    document_scope=document_scope,
+                    active_group_id=active_group_id,
+                    active_public_workspace_id=active_public_workspace_id,
+                    search_query=search_query,
+                    system_messages_for_augmentation=system_messages_for_augmentation,
+                    agent_citations_list=agent_citations_list,
+                    web_search_citations_list=web_search_citations_list,
+                )
             
         # region 5 - FINAL conversation history preparation
             # ---------------------------------------------------------------------
@@ -2489,6 +2506,7 @@ def register_route_backend_chats(app):
                 'timestamp': datetime.utcnow().isoformat(),
                 'augmented': bool(system_messages_for_augmentation),
                 'hybrid_citations': hybrid_citations_list, # <--- SIMPLIFIED: Directly use the list
+                'web_search_citations': web_search_citations_list,
                 'hybridsearch_query': search_query if hybrid_search_enabled and search_results else None, # Log query only if hybrid search ran and found results
                 'agent_citations': agent_citations_list, # <--- NEW: Store agent tool invocation results
                 'user_message': user_message,
@@ -2620,6 +2638,7 @@ def register_route_backend_chats(app):
                 'blocked': False, # Explicitly false if we got this far
                 'augmented': bool(system_messages_for_augmentation),
                 'hybrid_citations': hybrid_citations_list,
+                'web_search_citations': web_search_citations_list,
                 'agent_citations': agent_citations_list,
                 'reload_messages': reload_messages_required,
                 'kernel_fallback_notice': kernel_fallback_notice
@@ -2679,6 +2698,7 @@ def register_route_backend_chats(app):
                 user_message = data.get('message', '')
                 conversation_id = data.get('conversation_id')
                 hybrid_search_enabled = data.get('hybrid_search')
+                web_search_enabled = data.get('web_search_enabled')
                 selected_document_id = data.get('selected_document_id')
                 image_gen_enabled = data.get('image_generation')
                 document_scope = data.get('doc_scope')
@@ -2756,6 +2776,7 @@ def register_route_backend_chats(app):
                 search_query = user_message
                 hybrid_citations_list = []
                 agent_citations_list = []
+                web_search_citations_list = []
                 system_messages_for_augmentation = []
                 search_results = []
                 selected_agent = None
@@ -2769,6 +2790,8 @@ def register_route_backend_chats(app):
                 # Convert toggles
                 if isinstance(hybrid_search_enabled, str):
                     hybrid_search_enabled = hybrid_search_enabled.lower() == 'true'
+                if isinstance(web_search_enabled, str):
+                    web_search_enabled = web_search_enabled.lower() == 'true'
                 
                 # Initialize GPT client (simplified version)
                 gpt_model = ""
@@ -3246,7 +3269,21 @@ def register_route_backend_chats(app):
                         hybrid_citations_list.sort(key=lambda x: x.get('page_number', 0), reverse=True)
                 
                 if web_search_enabled:
-                    perform_web_search()
+                    perform_web_search(
+                        settings=settings,
+                        conversation_id=conversation_id,
+                        user_id=user_id,
+                        user_message=user_message,
+                        user_message_id=user_message_id,
+                        chat_type=chat_type,
+                        document_scope=document_scope,
+                        active_group_id=active_group_id,
+                        active_public_workspace_id=active_public_workspace_id,
+                        search_query=search_query,
+                        system_messages_for_augmentation=system_messages_for_augmentation,
+                        agent_citations_list=agent_citations_list,
+                        web_search_citations_list=web_search_citations_list,
+                    )
 
                 # Update message chat type
                 message_chat_type = None
@@ -3631,6 +3668,7 @@ def register_route_backend_chats(app):
                         'timestamp': datetime.utcnow().isoformat(),
                         'augmented': bool(system_messages_for_augmentation),
                         'hybrid_citations': hybrid_citations_list,
+                        'web_search_citations': web_search_citations_list,
                         'hybridsearch_query': search_query if hybrid_search_enabled and search_results else None,
                         'agent_citations': agent_citations_list,
                         'user_message': user_message,
@@ -3721,6 +3759,7 @@ def register_route_backend_chats(app):
                         'user_message_id': user_message_id,
                         'augmented': bool(system_messages_for_augmentation),
                         'hybrid_citations': hybrid_citations_list,
+                        'web_search_citations': web_search_citations_list,
                         'agent_citations': agent_citations_list,
                         'agent_display_name': agent_display_name_used if use_agent_streaming else None,
                         'agent_name': agent_name_used if use_agent_streaming else None,
@@ -3744,6 +3783,7 @@ def register_route_backend_chats(app):
                             'timestamp': datetime.utcnow().isoformat(),
                             'augmented': bool(system_messages_for_augmentation),
                             'hybrid_citations': hybrid_citations_list,
+                            'web_search_citations': web_search_citations_list,
                             'hybridsearch_query': search_query if hybrid_search_enabled and search_results else None,
                             'agent_citations': agent_citations_list,
                             'user_message': user_message,
@@ -3993,21 +4033,306 @@ def remove_masked_content(content, masked_ranges):
     
     return result
 
-def perform_web_search():
-    # Web Search placeholder (until Foundry agent is wired)
-    log_event(
-        "[WebSearch] Placeholder invoked – routing would call Foundry web search agent here",
-        extra={
-            "user_id": user_id,
+
+def _extract_web_search_citations_from_content(content: str) -> List[Dict[str, str]]:
+    if not content:
+        return []
+    debug_print(f"[Citation Extraction] Extracting citations from:\n{content}\n")
+
+    citations: List[Dict[str, str]] = []
+
+    markdown_pattern = re.compile(r"\[([^\]]+)\]\((https?://[^\s\)]+)(?:\s+\"([^\"]+)\")?\)")
+    html_pattern = re.compile(
+        r"<a[^>]+href=\"(https?://[^\"]+)\"([^>]*)>(.*?)</a>",
+        re.IGNORECASE | re.DOTALL,
+    )
+    title_pattern = re.compile(r"title=\"([^\"]+)\"", re.IGNORECASE)
+    url_pattern = re.compile(r"https?://[^\s\)\]\">]+")
+
+    occupied_spans: List[range] = []
+
+    for match in markdown_pattern.finditer(content):
+        text, url, title = match.groups()
+        url = (url or "").strip().rstrip(".,)")
+        if not url:
+            continue
+        display_title = (title or text or url).strip()
+        citations.append({"url": url, "title": display_title})
+        occupied_spans.append(range(match.start(), match.end()))
+
+    for match in html_pattern.finditer(content):
+        url, attrs, inner = match.groups()
+        url = (url or "").strip().rstrip(".,)")
+        if not url:
+            continue
+        title_match = title_pattern.search(attrs or "")
+        title = title_match.group(1) if title_match else None
+        inner_text = re.sub(r"<[^>]+>", "", inner or "").strip()
+        display_title = (title or inner_text or url).strip()
+        citations.append({"url": url, "title": display_title})
+        occupied_spans.append(range(match.start(), match.end()))
+
+    for match in url_pattern.finditer(content):
+        if any(match.start() in span for span in occupied_spans):
+            continue
+        url = (match.group(0) or "").strip().rstrip(".,)")
+        if not url:
+            continue
+        citations.append({"url": url, "title": url})
+    debug_print(f"[Citation Extraction] Extracted {len(citations)} citations. - {citations}\n")
+
+    return citations
+
+
+def _extract_token_usage_from_metadata(metadata: Dict[str, Any]) -> Dict[str, int]:
+    if not isinstance(metadata, Mapping):
+        debug_print(
+            "[Web Search][Token Usage Extraction] Metadata is not a mapping. "
+            f"type={type(metadata)}"
+        )
+        return {}
+
+    usage = metadata.get("usage")
+    if not usage:
+        debug_print("[Web Search][Token Usage Extraction] No usage field found in metadata.")
+        return {}
+
+    if isinstance(usage, str):
+        raw_usage = usage.strip()
+        if not raw_usage:
+            debug_print("[Web Search][Token Usage Extraction] Usage string was empty.")
+            return {}
+        try:
+            usage = json.loads(raw_usage)
+        except json.JSONDecodeError:
+            try:
+                usage = ast.literal_eval(raw_usage)
+            except (ValueError, SyntaxError):
+                debug_print(
+                    "[Web Search][Token Usage Extraction] Failed to parse usage string."
+                )
+                return {}
+
+    if not isinstance(usage, Mapping):
+        debug_print(
+            "[Web Search][Token Usage Extraction] Usage is not a mapping. "
+            f"type={type(usage)}"
+        )
+        return {}
+
+    def to_int(value: Any) -> Optional[int]:
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return None
+
+    total_tokens = to_int(usage.get("total_tokens"))
+    if total_tokens is None:
+        debug_print(
+            "[Web Search][Token Usage Extraction] total_tokens missing or invalid. "
+            f"usage={usage}"
+        )
+        return {}
+
+    prompt_tokens = to_int(usage.get("prompt_tokens")) or 0
+    completion_tokens = to_int(usage.get("completion_tokens")) or 0
+    debug_print(
+        "[Web Search][Token Usage Extraction] Extracted token usage - "
+        f"prompt: {prompt_tokens}, completion: {completion_tokens}, total: {total_tokens}"
+    )
+
+    return {
+        "total_tokens": int(total_tokens),
+        "prompt_tokens": int(prompt_tokens),
+        "completion_tokens": int(completion_tokens),
+    }
+
+def perform_web_search(
+    *,
+    settings,
+    conversation_id,
+    user_id,
+    user_message,
+    user_message_id,
+    chat_type,
+    document_scope,
+    active_group_id,
+    active_public_workspace_id,
+    search_query,
+    system_messages_for_augmentation,
+    agent_citations_list,
+    web_search_citations_list,
+):
+    if not settings.get("enable_web_search"):
+        return
+
+    web_search_agent = settings.get("web_search_agent") or {}
+    foundry_settings = (
+        (web_search_agent.get("other_settings") or {}).get("azure_ai_foundry") or {}
+    )
+
+    agent_id = (foundry_settings.get("agent_id") or "").strip()
+    if not agent_id:
+        log_event(
+            "[WebSearch] Skipping Foundry web search: agent_id is not configured",
+            extra={
+                "conversation_id": conversation_id,
+                "user_id": user_id,
+            },
+            level=logging.WARNING,
+        )
+        return
+
+    query_text = None
+    try:
+        query_text = search_query
+    except NameError:
+        query_text = None
+
+    query_text = (query_text or user_message or "").strip()
+    if not query_text:
+        log_event(
+            "[WebSearch] Skipping Foundry web search: empty query",
+            extra={
+                "conversation_id": conversation_id,
+                "user_id": user_id,
+            },
+            level=logging.WARNING,
+        )
+        return
+
+    message_history = [
+        ChatMessageContent(role="user", content=query_text)
+    ]
+
+    try:
+        foundry_metadata = {
             "conversation_id": conversation_id,
-            "doc_scope": document_scope,
-            "group_id": active_group_id,
+            "user_id": user_id,
+            "message_id": user_message_id,
+            "chat_type": chat_type,
+            "document_scope": document_scope,
+            "group_id": active_group_id if chat_type == "group" else None,
             "public_workspace_id": active_public_workspace_id,
+            "search_query": query_text,
+        }
+
+        result = asyncio.run(
+            execute_foundry_agent(
+                foundry_settings=foundry_settings,
+                global_settings=settings,
+                message_history=message_history,
+                metadata={k: v for k, v in foundry_metadata.items() if v is not None},
+            )
+        )
+    except FoundryAgentInvocationError as exc:
+        log_event(
+            f"[WebSearch] Foundry agent invocation failed: {exc}",
+            extra={
+                "conversation_id": conversation_id,
+                "user_id": user_id,
+                "agent_id": agent_id,
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return
+    except Exception as exc:
+        log_event(
+            f"[WebSearch] Unexpected error invoking Foundry agent: {exc}",
+            extra={
+                "conversation_id": conversation_id,
+                "user_id": user_id,
+                "agent_id": agent_id,
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return
+
+    if result.metadata:
+        try:
+            metadata_payload = json.dumps(result.metadata, default=str)
+        except (TypeError, ValueError):
+            metadata_payload = str(result.metadata)
+        debug_print(f"[WebSearch] Foundry metadata: {metadata_payload}")
+    else:
+        debug_print("[WebSearch] Foundry metadata: <empty>")
+
+    if result.message:
+        system_messages_for_augmentation.append({
+            "role": "system",
+            "content": f"Web search results:\n{result.message}",
+        })
+
+        web_citations = _extract_web_search_citations_from_content(result.message)
+        if web_citations:
+            web_search_citations_list.extend(web_citations)
+
+    citations = result.citations or []
+    if citations:
+        for citation in citations:
+            try:
+                serializable = json.loads(json.dumps(citation, default=str))
+            except (TypeError, ValueError):
+                serializable = {"value": str(citation)}
+            citation_title = serializable.get("title") or serializable.get("url") or "Web search source"
+            agent_citations_list.append({
+                "tool_name": citation_title,
+                "function_name": "azure_ai_foundry_web_search",
+                "plugin_name": "azure_ai_foundry",
+                "function_arguments": serializable,
+                "function_result": serializable,
+                "timestamp": datetime.utcnow().isoformat(),
+                "success": True,
+            })
+
+    debug_print(f"[WebSearch] Starting token usage extraction from Foundry metadata. Metadata: {result.metadata}")
+    token_usage = _extract_token_usage_from_metadata(result.metadata or {})
+    if token_usage.get("total_tokens"):
+        try:
+            workspace_type = 'personal'
+            if active_public_workspace_id:
+                workspace_type = 'public'
+            elif active_group_id:
+                workspace_type = 'group'
+
+            log_token_usage(
+                user_id=user_id,
+                token_type='web_search',
+                total_tokens=token_usage.get('total_tokens', 0),
+                model=result.model or 'azure-ai-foundry-web-search',
+                workspace_type=workspace_type,
+                prompt_tokens=token_usage.get('prompt_tokens'),
+                completion_tokens=token_usage.get('completion_tokens'),
+                conversation_id=conversation_id,
+                message_id=user_message_id,
+                group_id=active_group_id,
+                public_workspace_id=active_public_workspace_id,
+                additional_context={
+                    'agent_id': agent_id,
+                    'search_query': query_text,
+                    'token_source': 'foundry_metadata'
+                }
+            )
+        except Exception as log_error:
+            log_event(
+                f"[WebSearch] Failed to log web search token usage: {log_error}",
+                extra={
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                    "agent_id": agent_id,
+                },
+                level=logging.WARNING,
+            )
+
+    log_event(
+        "[WebSearch] Foundry web search invocation complete",
+        extra={
+            "conversation_id": conversation_id,
+            "user_id": user_id,
+            "agent_id": agent_id,
+            "citation_count": len(citations),
         },
         level=logging.INFO,
     )
-    # Optionally surface a hint to the model/UI
-    system_messages_for_augmentation.append({
-        "role": "system",
-        "content": "Web search placeholder: request was flagged for web search, but no agent is configured yet."
-    })

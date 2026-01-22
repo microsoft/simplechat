@@ -306,6 +306,13 @@ export function showAgentCitationModal(toolName, toolArgs, toolResult) {
               <h6 class="fw-bold">Tool Name:</h6>
               <div id="agent-tool-name" class="bg-light p-2 rounded"></div>
             </div>
+            <div class="mb-3 d-none" id="agent-tool-source">
+              <h6 class="fw-bold">Source:</h6>
+              <div>
+                <a id="agent-tool-url" href="#" target="_blank" rel="noopener noreferrer"></a>
+              </div>
+              <div id="agent-tool-url-meta" class="text-muted small"></div>
+            </div>
             <div class="mb-3">
               <h6 class="fw-bold">Function Arguments:</h6>
               <pre id="agent-tool-args" class="bg-light p-2 rounded" style="white-space: pre-wrap; word-wrap: break-word;"></pre>
@@ -325,17 +332,20 @@ export function showAgentCitationModal(toolName, toolArgs, toolResult) {
   const toolNameEl = document.getElementById("agent-tool-name");
   const toolArgsEl = document.getElementById("agent-tool-args");
   const toolResultEl = document.getElementById("agent-tool-result");
+  const toolSourceEl = document.getElementById("agent-tool-source");
+  const toolUrlEl = document.getElementById("agent-tool-url");
+  const toolUrlMetaEl = document.getElementById("agent-tool-url-meta");
 
   if (toolNameEl) {
     toolNameEl.textContent = toolName || "Unknown";
   }
   
+  let parsedArgs = null;
   if (toolArgsEl) {
     // Handle empty or no parameters more gracefully
     let argsContent = "";
     
     try {
-      let parsedArgs;
       if (!toolArgs || toolArgs === "" || toolArgs === "{}") {
         argsContent = "No parameters required";
       } else {
@@ -379,9 +389,9 @@ export function showAgentCitationModal(toolName, toolArgs, toolResult) {
   if (toolResultEl) {
     // Handle result formatting and truncation with expand/collapse
     let resultContent = "";
+    let parsedResult = null;
     
     try {
-      let parsedResult;
       if (!toolResult || toolResult === "" || toolResult === "{}") {
         resultContent = "No result";
       } else if (toolResult === "[object Object]") {
@@ -399,6 +409,9 @@ export function showAgentCitationModal(toolName, toolArgs, toolResult) {
     } catch (e) {
       resultContent = toolResult || "No result";
     }
+
+    const citationDetails = extractAgentCitationDetails(parsedResult || parsedArgs);
+    updateAgentCitationSource(toolSourceEl, toolUrlEl, toolUrlMetaEl, citationDetails);
     
     // Add truncation with expand/collapse if content is long
     if (resultContent.length > 300) {
@@ -422,6 +435,63 @@ export function showAgentCitationModal(toolName, toolArgs, toolResult) {
 
   const modal = new bootstrap.Modal(modalContainer);
   modal.show();
+}
+
+function extractAgentCitationDetails(source) {
+  if (!source || typeof source !== "object") {
+    return null;
+  }
+
+  const url = source.url;
+  if (!isValidHttpUrl(url)) {
+    return null;
+  }
+
+  return {
+    url,
+    title: source.title || null,
+    quote: source.quote || null,
+    citationType: source.citation_type || null,
+  };
+}
+
+function updateAgentCitationSource(containerEl, linkEl, metaEl, details) {
+  if (!containerEl || !linkEl || !metaEl) {
+    return;
+  }
+
+  if (!details || !details.url) {
+    containerEl.classList.add("d-none");
+    linkEl.textContent = "";
+    linkEl.removeAttribute("href");
+    metaEl.textContent = "";
+    return;
+  }
+
+  containerEl.classList.remove("d-none");
+  linkEl.href = details.url;
+  linkEl.textContent = details.title || details.url;
+
+  const metaParts = [];
+  if (details.citationType) {
+    metaParts.push(`Type: ${details.citationType}`);
+  }
+  if (details.quote) {
+    metaParts.push(`Quote: ${details.quote}`);
+  }
+  metaEl.textContent = metaParts.join(" • ");
+}
+
+function isValidHttpUrl(value) {
+  if (!value || typeof value !== "string") {
+    return false;
+  }
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch (error) {
+    return false;
+  }
 }
 
 // --- MODIFIED: Added citationId parameter and fallback in catch ---

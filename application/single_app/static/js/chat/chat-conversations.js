@@ -1074,6 +1074,7 @@ export async function createNewConversation(callback) {
     if (titleEl) {
       titleEl.textContent = data.title || "New Conversation";
     }
+    updateConversationUrl(data.conversation_id);
     console.log('[createNewConversation] Created conversation without reload:', data.conversation_id);
 
     // Execute callback if provided (e.g., to send the first message)

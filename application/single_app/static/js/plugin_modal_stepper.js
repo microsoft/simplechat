@@ -53,13 +53,13 @@ export class PluginModalStepper {
     }
 
     try {
-      const res = await fetch(`/static/json/schemas/${safeType}.definition.json`);
-      if (!res.ok) throw new Error(`Definition fetch failed with status ${res.status}`);
+      const res = await fetch(`/api/plugins/${encodeURIComponent(type)}/auth-types`);
+      if (!res.ok) throw new Error(`Auth types fetch failed with status ${res.status}`);
       const json = await res.json();
       this.pluginDefinitionCache[safeType] = json;
       return json;
     } catch (err) {
-      console.warn(`No plugin definition found for type '${safeType}':`, err.message || err);
+      console.warn(`Failed to load auth types for type '${safeType}':`, err.message || err);
       this.pluginDefinitionCache[safeType] = null;
       return null;
     }

@@ -2923,31 +2923,114 @@
                         >
                         <label class="form-check-label ms-2" for="enable_web_search">Enable Web Search via Foundry Agent</label>
                     </div>
+                    <input
+                        type="hidden"
+                        id="web_search_consent_accepted"
+                        name="web_search_consent_accepted"
+                        value="{{ 'true' if settings.web_search_consent_accepted else 'false' }}"
+                    >
 
-                    <div id="web_search_foundry_settings" {% if not settings.enable_web_search %}style="display: none;"{% endif %}>
+                    <div id="web_search_foundry_settings" class="{% if not settings.enable_web_search %}d-none{% endif %}">
                         <div class="alert alert-warning py-2 small">
                             <strong>Note:</strong> Configure the Azure AI Foundry agent that will execute web searches. This agent is stored in global settings (not in the agents list).
                         </div>
                         <div class="row g-3">
-                            <div class="col-md-6">
-                                <label for="web_search_foundry_endpoint" class="form-label">Foundry Endpoint</label>
-                                <input type="text" class="form-control" id="web_search_foundry_endpoint" name="web_search_foundry_endpoint" value="{{ settings.web_search_agent.azure_openai_gpt_endpoint or '' }}" placeholder="https://<resource>.openai.azure.com/">
+                            <div class="col-12" id="web_search_foundry_endpoint_container">
+                                <label for="web_search_foundry_endpoint" class="form-label">Foundry Project Endpoint</label>
+                                <input type="text" class="form-control" id="web_search_foundry_endpoint" name="web_search_foundry_endpoint" value="{{ settings.web_search_agent.other_settings.azure_ai_foundry.endpoint if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else settings.web_search_agent.azure_openai_gpt_endpoint or '' }}" placeholder="https://<resource>.services.ai.azure.com/api/projects/<project-name>">
+                                <div class="form-text">Project endpoint format: https://&lt;foundry-resource&gt;.services.ai.azure.com/api/projects/&lt;project-name&gt; (not the inference endpoint).</div>
                             </div>
-                            <div class="col-md-6">
+                            <div class="col-md-6" id="web_search_foundry_api_version_container">
                                 <label for="web_search_foundry_api_version" class="form-label">Foundry API Version</label>
-                                <input type="text" class="form-control" id="web_search_foundry_api_version" name="web_search_foundry_api_version" value="{{ settings.web_search_agent.azure_openai_gpt_api_version or '' }}" placeholder="2024-10-01-preview">
-                            </div>
-                            <div class="col-md-6">
-                                <label for="web_search_foundry_deployment" class="form-label">Foundry Deployment / Project</label>
-                                <input type="text" class="form-control" id="web_search_foundry_deployment" name="web_search_foundry_deployment" value="{{ settings.web_search_agent.azure_openai_gpt_deployment or '' }}" placeholder="deployment or project">
+                                <input type="text" class="form-control" id="web_search_foundry_api_version" name="web_search_foundry_api_version" value="{{ settings.web_search_agent.other_settings.azure_ai_foundry.api_version if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else settings.web_search_agent.azure_openai_gpt_api_version or '' }}" placeholder="2025-05-01">
+                                <a href="https://learn.microsoft.com/en-us/rest/api/aifoundry/aiprojects/?view=foundry#versioning" target="_blank" class="ms-2" rel="noopener noreferrer">
+                                    AI Foundry Versioning<i class="bi bi-box-arrow-up-right"></i>
+                                </a>
                             </div>
                             <div class="col-md-6">
                                 <label for="web_search_foundry_agent_id" class="form-label">Foundry Agent ID</label>
                                 <input type="text" class="form-control" id="web_search_foundry_agent_id" name="web_search_foundry_agent_id" value="{{ settings.web_search_agent.other_settings.azure_ai_foundry.agent_id if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else '' }}" placeholder="GUID from Azure AI Foundry">
                             </div>
+                            <div class="col-md-4">
+                                <label for="web_search_foundry_auth_type" class="form-label">Authentication Type</label>
+                                <select class="form-select" id="web_search_foundry_auth_type" name="web_search_foundry_auth_type">
+                                    {% set foundry_auth_type = settings.web_search_agent.other_settings.azure_ai_foundry.authentication_type if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else 'managed_identity' %}
+                                    <option value="managed_identity" {% if foundry_auth_type=='managed_identity' %}selected{% endif %}>Managed Identity</option>
+                                    <option value="service_principal" {% if foundry_auth_type=='service_principal' %}selected{% endif %}>Service Principal</option>
+                                </select>
+                                <div class="form-text text-muted">Identity must have Cognitive Services User and AI Developer roles on the Foundry project.</div>
+                            </div>
+                            <div class="col-md-4" id="web_search_foundry_cloud_container">
+                                <label for="web_search_foundry_cloud" class="form-label">Cloud</label>
+                                <select class="form-select" id="web_search_foundry_cloud" name="web_search_foundry_cloud">
+                                    {% set foundry_cloud = settings.web_search_agent.other_settings.azure_ai_foundry.cloud if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else '' %}
+                                    <option value="" {% if foundry_cloud=='' %}selected{% endif %}>Azure Public</option>
+                                    <option value="usgov" {% if foundry_cloud=='usgov' or foundry_cloud=='usgovernment' or foundry_cloud=='gcc' %}selected{% endif %}>Azure Government</option>
+                                    <option value="custom" {% if foundry_cloud=='custom' %}selected{% endif %}>Custom</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4" id="web_search_foundry_managed_identity_type_container">
+                                <label for="web_search_foundry_managed_identity_type" class="form-label">Managed Identity Type</label>
+                                <select class="form-select" id="web_search_foundry_managed_identity_type" name="web_search_foundry_managed_identity_type">
+                                    {% set foundry_mi_type = settings.web_search_agent.other_settings.azure_ai_foundry.managed_identity_type if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else 'system_assigned' %}
+                                    <option value="system_assigned" {% if foundry_mi_type=='system_assigned' %}selected{% endif %}>System-assigned (SAMI)</option>
+                                    <option value="user_assigned" {% if foundry_mi_type=='user_assigned' %}selected{% endif %}>User-assigned (UAMI)</option>
+                                </select>
+                            </div>
+                            <div class="col-12" id="web_search_foundry_authority_container">
+                                <label for="web_search_foundry_authority" class="form-label">Authority Endpoint (Custom Cloud)</label>
+                                <input type="text" class="form-control" id="web_search_foundry_authority" name="web_search_foundry_authority" value="{{ settings.web_search_agent.other_settings.azure_ai_foundry.authority if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else '' }}" placeholder="https://login.microsoftonline.com/ or https://login.microsoftonline.us/">
+                            </div>
+                            <div class="col-md-6" id="web_search_foundry_managed_identity_client_id_container">
+                                <label for="web_search_foundry_managed_identity_client_id" class="form-label">Managed Identity Client ID (UAMI)</label>
+                                <input type="text" class="form-control" id="web_search_foundry_managed_identity_client_id" name="web_search_foundry_managed_identity_client_id" value="{{ settings.web_search_agent.other_settings.azure_ai_foundry.managed_identity_client_id if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else '' }}" placeholder="Client ID for user-assigned managed identity">
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mt-1" id="web_search_foundry_service_principal_fields">
+                            <div class="col-md-4">
+                                <label for="web_search_foundry_tenant_id" class="form-label">Tenant ID</label>
+                                <input type="text" class="form-control" id="web_search_foundry_tenant_id" name="web_search_foundry_tenant_id" value="{{ settings.web_search_agent.other_settings.azure_ai_foundry.tenant_id if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else '' }}" placeholder="Entra tenant ID">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="web_search_foundry_client_id" class="form-label">Client ID</label>
+                                <input type="text" class="form-control" id="web_search_foundry_client_id" name="web_search_foundry_client_id" value="{{ settings.web_search_agent.other_settings.azure_ai_foundry.client_id if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else '' }}" placeholder="App registration client ID">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="web_search_foundry_client_secret" class="form-label">Client Secret</label>
+                                <div class="input-group">
+                                    <input type="password" class="form-control" id="web_search_foundry_client_secret" name="web_search_foundry_client_secret" value="{{ settings.web_search_agent.other_settings.azure_ai_foundry.client_secret if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else '' }}" placeholder="Secret or Key Vault reference">
+                                    <button type="button" class="btn btn-outline-secondary" id="toggle_web_search_foundry_client_secret">Show</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mt-1">
                             <div class="col-12">
                                 <label for="web_search_foundry_notes" class="form-label">Notes (optional)</label>
                                 <textarea class="form-control" id="web_search_foundry_notes" name="web_search_foundry_notes" rows="2" placeholder="Where to find these values in Azure AI Foundry or any internal notes.">{{ settings.web_search_agent.other_settings.azure_ai_foundry.notes if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else '' }}</textarea>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="web-search-consent-modal" tabindex="-1" aria-labelledby="web-search-consent-title" aria-hidden="true">
+                    <div class="modal-dialog modal-dialog-centered modal-lg">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="web-search-consent-title">Web Search Consent Required</h5>
+                            </div>
+                            <div class="modal-body">
+                                <p>
+                                    When you use Grounding with Bing Search, your customer data is transferred outside of the Azure compliance boundary to the Grounding with Bing Search service. Grounding with Bing Search is not subject to the same data processing terms (including location of processing) and does not have the same compliance standards and certifications as the Azure AI Agent Service, as described in the <a href="https://www.microsoft.com/en-us/bing/apis/grounding-legal" target="_blank" rel="noopener noreferrer">Grounding with Bing Search TOU</a>. It is your responsibility to assess whether use of Grounding with Bing Search in your agent meets your needs and requirements.
+                                </p>
+                                <div class="alert alert-warning mb-0">
+                                    You must accept this consent to enable web search.
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-outline-secondary" id="web-search-consent-decline">Disagree</button>
+                                <button type="button" class="btn btn-primary" id="web-search-consent-accept">Agree</button>
                             </div>
                         </div>
                     </div>

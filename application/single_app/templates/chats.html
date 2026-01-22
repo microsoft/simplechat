@@ -273,7 +273,7 @@
                             </span>
                         </button>
                         <button id="upload-btn" class="btn btn-secondary btn-sm" style="display: none">Add to Chat</button>
-                        {% if settings.enable_web_search %}
+                        {% if settings.enable_web_search and settings.web_search_consent_accepted %}
                         <button
                             id="search-web-btn"
                             class="btn btn-outline-secondary btn-sm search-btn"
