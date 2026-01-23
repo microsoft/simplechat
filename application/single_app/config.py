@@ -651,7 +651,7 @@ def initialize_clients(settings):
             azure_apim_content_safety_endpoint = settings.get("azure_apim_content_safety_endpoint")
             azure_apim_content_safety_subscription_key = settings.get("azure_apim_content_safety_subscription_key")
 
-            if safety_endpoint and safety_key:
+            if safety_endpoint:
                 try:
                     if enable_content_safety_apim:
                         content_safety_client = ContentSafetyClient(
