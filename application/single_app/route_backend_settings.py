@@ -761,42 +761,45 @@ def _test_azure_ai_search_connection(payload):
     """Attempt to connect to Azure Cognitive Search (or APIM-wrapped)."""
     enable_apim = payload.get('enable_apim', False)
 
-    if enable_apim:
-        apim_data = payload.get('apim', {})
-        endpoint = apim_data.get('endpoint')  # e.g. https://my-apim.azure-api.net/search
-        subscription_key = apim_data.get('subscription_key')
-        url = f"{endpoint.rstrip('/')}/indexes?api-version=2023-11-01"
-        headers = {
-            'api-key': subscription_key,
-            'Content-Type': 'application/json'
-        }
-    else:
-        direct_data = payload.get('direct', {})
-        endpoint = direct_data.get('endpoint')  # e.g. https://<searchservice>.search.windows.net
-        key = direct_data.get('key')
-        url = f"{endpoint.rstrip('/')}/indexes?api-version=2023-11-01"
-
-        if direct_data.get('auth_type') == 'managed_identity':
-            credential_scopes=search_resource_manager + "/.default"
-            arm_scope = credential_scopes
-            credential = DefaultAzureCredential()
-            arm_token = credential.get_token(arm_scope).token
-            headers = {
-                'Authorization': f'Bearer {arm_token}',
-                'Content-Type': 'application/json'
-            }
+    try:
+        if enable_apim:
+            apim_data = payload.get('apim', {})
+            endpoint = apim_data.get('endpoint')
+            subscription_key = apim_data.get('subscription_key')
+            
+            # Use SearchIndexClient for APIM
+            credential = AzureKeyCredential(subscription_key)
+            client = SearchIndexClient(endpoint=endpoint, credential=credential)
         else:
-            headers = {
-                'api-key': key,
-                'Content-Type': 'application/json'
-            }
+            direct_data = payload.get('direct', {})
+            endpoint = direct_data.get('endpoint')
+            key = direct_data.get('key')
 
-    # A small GET to /indexes to verify we have connectivity
-    resp = requests.get(url, headers=headers, timeout=10)
-    if resp.status_code == 200:
+            if direct_data.get('auth_type') == 'managed_identity':
+                credential = DefaultAzureCredential()
+                # For managed identity, use the SDK which handles authentication properly
+                if AZURE_ENVIRONMENT in ("usgovernment", "custom"):
+                    client = SearchIndexClient(
+                        endpoint=endpoint,
+                        credential=credential,
+                        audience=search_resource_manager
+                    )
+                else:
+                    # For public cloud, don't use audience parameter
+                    client = SearchIndexClient(
+                        endpoint=endpoint,
+                        credential=credential
+                    )
+            else:
+                credential = AzureKeyCredential(key)
+                client = SearchIndexClient(endpoint=endpoint, credential=credential)
+
+        # Test by listing indexes (simple operation to verify connectivity)
+        indexes = list(client.list_indexes())
         return jsonify({'message': 'Azure AI search connection successful'}), 200
-    else:
-        raise Exception(f"Azure AI search connection error: {resp.status_code} - {resp.text}")
+
+    except Exception as e:
+        return jsonify({'error': f'Azure AI search connection error: {str(e)}'}), 500
 
 
 def _test_azure_doc_intelligence_connection(payload):

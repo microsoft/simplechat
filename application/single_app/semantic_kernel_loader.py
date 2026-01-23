@@ -1180,65 +1180,44 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
     ensure_agents_migration_complete(user_id)
     agents_cfg = get_personal_agents(user_id)
 
-    print(f"[SK Loader] User settings found {len(agents_cfg)} agents for user '{user_id}'")
+    print(f"[SK Loader] User settings found {len(agents_cfg)} personal agents for user '{user_id}'")
 
-    # Always mark user agents as is_global: False
+    # Always mark personal agents as is_global: False, is_group: False
     for agent in agents_cfg:
         agent['is_global'] = False
-
-    # Append selected group agent (if any) to the candidate list so downstream selection logic can resolve it
-    selected_agent_data = selected_agent if isinstance(selected_agent, dict) else {}
-    selected_agent_is_group = selected_agent_data.get('is_group', False)
-    if selected_agent_is_group:
-        resolved_group_id = selected_agent_data.get('group_id')
-        try:
-            active_group_id = require_active_group(user_id)
-            if not resolved_group_id:
-                resolved_group_id = active_group_id
-            elif resolved_group_id != active_group_id:
-                debug_print(
-                    f"[SK Loader] Selected group agent references group {resolved_group_id}, active group is {active_group_id}."
-                )
-        except ValueError as err:
-            debug_print(f"[SK Loader] No active group available while loading group agent: {err}")
-            if not resolved_group_id:
-                log_event(
-                    "[SK Loader] Group agent selected but no active group in settings.",
-                    level=logging.WARNING
-                )
-
-        if resolved_group_id:
-            agent_identifier = selected_agent_data.get('id') or selected_agent_data.get('name')
-            group_agent_cfg = None
-            if agent_identifier:
-                group_agent_cfg = get_group_agent(resolved_group_id, agent_identifier)
-            if not group_agent_cfg:
-                # Fallback: search by name across group agents if ID lookup failed
-                for candidate in get_group_agents(resolved_group_id):
-                    if candidate.get('name') == selected_agent_data.get('name'):
-                        group_agent_cfg = candidate
-                        break
-
-            if group_agent_cfg:
-                group_agent_cfg['is_global'] = False
-                group_agent_cfg['is_group'] = True
-                group_agent_cfg.setdefault('group_id', resolved_group_id)
-                group_agent_cfg['group_name'] = selected_agent_data.get('group_name')
-                agents_cfg.append(group_agent_cfg)
-                log_event(
-                    f"[SK Loader] Added group agent '{group_agent_cfg.get('name')}' from group {resolved_group_id} to candidate list.",
-                    level=logging.INFO
-                )
-            else:
-                log_event(
-                    f"[SK Loader] Selected group agent '{selected_agent_data.get('name')}' not found for group {resolved_group_id}.",
-                    level=logging.WARNING
-                )
-        else:
-            log_event(
-                "[SK Loader] Unable to resolve group ID for selected group agent; skipping group agent load.",
-                level=logging.WARNING
-            )
+        agent['is_group'] = False
+    
+    # Load group agents from all groups the user is a member of
+    from functions_group import get_user_groups
+    from functions_group_agents import get_group_agents
+    
+    user_groups = []  # Initialize to empty list
+    try:
+        user_groups = get_user_groups(user_id)
+        print(f"[SK Loader] User '{user_id}' is a member of {len(user_groups)} groups")
+        
+        group_agent_count = 0
+        for group in user_groups:
+            group_id = group.get('id')
+            group_name = group.get('name', 'Unknown')
+            if group_id:
+                group_agents = get_group_agents(group_id)
+                for group_agent in group_agents:
+                    group_agent['is_global'] = False
+                    group_agent['is_group'] = True
+                    group_agent['group_id'] = group_id
+                    group_agent['group_name'] = group_name
+                    agents_cfg.append(group_agent)
+                    group_agent_count += 1
+                print(f"[SK Loader] Loaded {len(group_agents)} agents from group '{group_name}' (id: {group_id})")
+        
+        if group_agent_count > 0:
+            log_event(f"[SK Loader] Loaded {group_agent_count} group agents from {len(user_groups)} groups for user '{user_id}'", level=logging.INFO)
+    except Exception as e:
+        log_event(f"[SK Loader] Error loading group agents for user '{user_id}': {e}", {"error": str(e)}, level=logging.ERROR, exceptionTraceback=True)
+        user_groups = []  # Reset to empty on error
+    
+    print(f"[SK Loader] Total agents loaded: {len(agents_cfg)} (personal + group) for user '{user_id}'")
 
     # PATCH: Merge global agents if enabled
     merge_global = settings.get('merge_global_semantic_kernel_with_workspace', False)
@@ -1278,9 +1257,27 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
             "agents": agents_cfg
         },
         level=logging.INFO)
+    
     # Ensure migration is complete (will migrate any remaining legacy data)
     ensure_actions_migration_complete(user_id)
     plugin_manifests = get_personal_actions(user_id, return_type=SecretReturnType.NAME)
+    
+    # Load group actions from all groups the user is a member of
+    try:
+        group_action_count = 0
+        for group in user_groups:
+            group_id = group.get('id')
+            group_name = group.get('name', 'Unknown')
+            if group_id:
+                group_actions = get_group_actions(group_id, return_type=SecretReturnType.NAME)
+                plugin_manifests.extend(group_actions)
+                group_action_count += len(group_actions)
+                print(f"[SK Loader] Loaded {len(group_actions)} actions from group '{group_name}' (id: {group_id})")
+        
+        if group_action_count > 0:
+            log_event(f"[SK Loader] Loaded {group_action_count} group actions from {len(user_groups)} groups for user '{user_id}'", level=logging.INFO)
+    except Exception as e:
+        log_event(f"[SK Loader] Error loading group actions for user '{user_id}': {e}", {"error": str(e)}, level=logging.ERROR, exceptionTraceback=True)
         
     # PATCH: Merge global plugins if enabled
     if merge_global:

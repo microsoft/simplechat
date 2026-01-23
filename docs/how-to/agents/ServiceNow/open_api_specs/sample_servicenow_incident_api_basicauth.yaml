@@ -1,0 +1,570 @@
+openapi: 3.0.0
+info:
+  title: ServiceNow Incident Management API (Basic Auth)
+  description: ServiceNow REST API for incident management operations - Basic Authentication version for Simple Chat integration
+  version: 1.0.0
+  contact:
+    name: ServiceNow API Support
+    url: https://developer.servicenow.com
+
+servers:
+  - url: https://dev222288.service-now.com/api/now
+    description: ServiceNow Developer Instance
+
+security:
+  - basicAuth: []
+
+paths:
+  /table/incident:
+    get:
+      operationId: queryIncidents
+      summary: Query incidents with filters
+      description: Retrieve incidents from ServiceNow based on query parameters and filters
+      parameters:
+        - name: sysparm_query
+          in: query
+          required: false
+          schema:
+            type: string
+          description: |
+            Encoded query string for filtering results. Examples:
+            - Last 7 days: sys_created_onONLast 7 days@gs.daysAgoStart(7)
+            - By priority: priority=1
+            - By state: state=1 (1=New, 2=In Progress, 6=Resolved, 7=Closed)
+            - Combined: priority=1^state=1^sys_created_onONLast 30 days@gs.daysAgoStart(30)
+          example: "sys_created_onONLast 7 days@gs.daysAgoStart(7)"
+        
+        - name: sysparm_limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 100
+            maximum: 10000
+          description: Maximum number of records to return
+          example: 50
+        
+        - name: sysparm_offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+          description: Number of records to skip for pagination
+          example: 0
+        
+        - name: sysparm_fields
+          in: query
+          required: false
+          schema:
+            type: string
+          description: |
+            Comma-separated list of fields to return.
+            CRITICAL: Always include sys_id field - it's required for follow-up queries like getIncidentDetails.
+          example: "sys_id,number,short_description,priority,state,assigned_to,sys_created_on,category"
+        
+        - name: sysparm_display_value
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [true, false, all]
+            default: "false"
+          description: Return display values instead of actual values
+          example: "true"
+
+      responses:
+        '200':
+          description: List of incidents retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Incident'
+              example:
+                result:
+                  - sys_id: "9d385017c611228701d22104cc95c371"
+                    number: "INC0000001"
+                    short_description: "Email server not responding"
+                    priority: "2"
+                    state: "1"
+                    sys_created_on: "2026-01-15 10:30:00"
+        
+        '401':
+          description: Unauthorized - Invalid credentials
+        '403':
+          description: Forbidden - Insufficient permissions
+
+    post:
+      operationId: createIncident
+      summary: Create a new incident
+      description: Create a new incident in ServiceNow
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - short_description
+              properties:
+                short_description:
+                  type: string
+                  description: Brief summary of the incident
+                  example: "Email server not responding for Finance team"
+                
+                description:
+                  type: string
+                  description: Detailed description of the incident
+                  example: "Users in Finance department cannot access email server. Error message: Connection timeout."
+                
+                urgency:
+                  type: string
+                  enum: ["1", "2", "3"]
+                  description: "Urgency level: 1=High, 2=Medium, 3=Low"
+                  example: "1"
+                
+                priority:
+                  type: string
+                  enum: ["1", "2", "3", "4", "5"]
+                  description: "Priority: 1=Critical, 2=High, 3=Moderate, 4=Low, 5=Planning"
+                  example: "2"
+                
+                impact:
+                  type: string
+                  enum: ["1", "2", "3"]
+                  description: "Impact: 1=High, 2=Medium, 3=Low"
+                  example: "2"
+                
+                category:
+                  type: string
+                  description: Incident category
+                  example: "Email"
+                
+                subcategory:
+                  type: string
+                  description: Incident subcategory
+                  example: "Server"
+                
+                assignment_group:
+                  type: string
+                  description: Assignment group name or sys_id
+                  example: "IT Support"
+                
+                assigned_to:
+                  type: string
+                  description: Assigned user name or sys_id
+                  example: ""
+                
+                caller_id:
+                  type: string
+                  description: User reporting the incident (name or sys_id)
+                  example: ""
+
+      responses:
+        '201':
+          description: Incident created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    $ref: '#/components/schemas/Incident'
+              example:
+                result:
+                  number: "INC0010025"
+                  sys_id: "xyz789abc"
+                  short_description: "Email server not responding for Finance team"
+                  state: "1"
+        
+        '400':
+          description: Bad request - Invalid input
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+
+  /table/incident/{sys_id}:
+    get:
+      operationId: getIncidentDetails
+      summary: Get incident details by sys_id
+      description: |
+        Retrieve details of a specific incident.
+        
+        CRITICAL: This operation requires the sys_id (NOT the incident number).
+        - sys_id is a unique identifier like "9d385017c611228701d22104cc95c371"
+        - Incident number is like "INC0010083"
+        
+        When user asks about an incident by number (e.g., "INC0010083"):
+        1. First use queryIncidents with sysparm_query=numberLIKEINC0010083
+        2. Get the sys_id from the result
+        3. Then call getIncidentDetails with that sys_id
+      parameters:
+        - name: sys_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The sys_id of the incident
+          example: "abc123xyz789"
+        
+        - name: sysparm_fields
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Comma-separated list of fields to return
+          example: "number,short_description,description,priority,state,assigned_to,sys_created_on,resolved_at,close_notes"
+        
+        - name: sysparm_display_value
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [true, false, all]
+            default: "false"
+          description: Return display values
+
+      responses:
+        '200':
+          description: Incident details retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    $ref: '#/components/schemas/Incident'
+        
+        '404':
+          description: Incident not found
+        '401':
+          description: Unauthorized
+
+    put:
+      operationId: updateIncident
+      summary: Update an existing incident
+      description: |
+        Update incident fields
+        
+        ⚠️ CRITICAL: YOU MUST QUERY FOR sys_id FIRST - DO NOT USE CACHED VALUES ⚠️
+        
+        This operation requires the sys_id (NOT the incident number).
+        - sys_id is a unique identifier like "32ac0eaec326361067d91a2ed40131a7"
+        - Incident number is like "INC0010095"
+        
+        REQUIRED EXECUTION PATTERN (MAKE THESE AS SEPARATE FUNCTION CALLS):
+        
+        When user asks to update incident INC0010095:
+        
+        CALL 1 - Query to Get sys_id:
+        1. Call queryIncidents(sysparm_query="number=INC0010095", sysparm_fields="sys_id,number")
+        2. Extract sys_id from result: e.g., "32ac0eaec326361067d91a2ed40131a7"
+        3. Verify you got exactly 1 result
+        
+        CALL 2 - Update with Retrieved sys_id:
+        1. Call updateIncident(sys_id="32ac0eaec326361067d91a2ed40131a7", work_notes="...")
+        2. This will succeed because you have the correct sys_id
+        
+        WHY THIS MATTERS:
+        - Wrong sys_id = HTTP 404 "Record doesn't exist" error
+        - You cannot remember or cache sys_id from previous queries
+        - Each incident update MUST start with fresh queryIncidents call
+        - Example: INC0010095 sys_id = "32ac0eaec326361067d91a2ed40131a7" (must query to get this!)
+        
+        DO NOT:
+        ❌ Use sys_id from memory or previous conversation
+        ❌ Assume sys_id stays the same across conversations
+        ❌ Skip the queryIncidents call - always query first
+        ❌ Use sys_id from a different incident
+      parameters:
+        - name: sys_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The sys_id of the incident to update (must query by incident number first if only number is known)
+          example: "abc123xyz789"
+
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                state:
+                  type: string
+                  description: "State: 1=New, 2=In Progress, 3=On Hold, 6=Resolved, 7=Closed, 8=Canceled"
+                  example: "6"
+                
+                work_notes:
+                  type: string
+                  description: |
+                    Add work note (internal journal entry)
+                    
+                    ⚠️ CRITICAL: work_notes is a JOURNAL FIELD ⚠️
+                    
+                    IMPORTANT BEHAVIOR:
+                    - work_notes is WRITE-ONLY via ServiceNow API
+                    - When you PATCH with work_notes, the API returns HTTP 200 success
+                    - The work note IS written to incident journal history
+                    - BUT work_notes field will ALWAYS return EMPTY in GET requests
+                    - Journal fields do NOT return values - they only accept input
+                    
+                    AFTER ADDING A WORK NOTE:
+                    - Do NOT expect to see it in work_notes field (will be empty)
+                    - Tell user: "Work note added to incident journal successfully"
+                    - Add: "(Note: Work notes are visible in ServiceNow UI, not in API GET responses)"
+                    - The note WAS added even though field shows empty
+                    
+                    EXAMPLE:
+                    You send: PATCH incident/abc123 with body {"work_notes": "Investigating issue"}
+                    API returns: HTTP 200 success with updated incident ✅
+                    You query: GET incident/abc123
+                    Result: work_notes="" ← EMPTY is NORMAL, note was still written!
+                  example: "Investigating email server logs. Found timeout errors in SMTP connector."
+                
+                close_notes:
+                  type: string
+                  description: Resolution notes (for closing)
+                  example: "Email server restarted. Service restored."
+                
+                priority:
+                  type: string
+                  description: Updated priority
+                  example: "3"
+                
+                assigned_to:
+                  type: string
+                  description: Reassign to user (name or sys_id)
+                  example: ""
+
+      responses:
+        '200':
+          description: Incident updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    $ref: '#/components/schemas/Incident'
+        
+        '400':
+          description: Bad request
+        '404':
+          description: Incident not found
+        '401':
+          description: Unauthorized
+
+  /stats/incident:
+    get:
+      operationId: getIncidentStats
+      summary: Get incident statistics
+      description: Retrieve aggregated statistics for incidents
+      parameters:
+        - name: sysparm_query
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Query filter for statistics
+          example: "sys_created_onONLast 30 days@gs.daysAgoStart(30)"
+        
+        - name: sysparm_count
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: true
+          description: Include count in results
+        
+        - name: sysparm_group_by
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Field to group by (e.g., priority, category, assigned_to)
+          example: "category"
+        
+        - name: sysparm_avg_fields
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Fields to calculate average
+          example: "business_duration"
+        
+        - name: sysparm_sum_fields
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Fields to sum
+          example: ""
+
+      responses:
+        '200':
+          description: Statistics retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        groupby_value:
+                          type: string
+                        count:
+                          type: string
+                        avg:
+                          type: object
+                        sum:
+                          type: object
+              example:
+                result:
+                  - groupby_value: "Email"
+                    count: "45"
+                  - groupby_value: "Network"
+                    count: "32"
+                  - groupby_value: "Hardware"
+                    count: "18"
+        
+        '401':
+          description: Unauthorized
+
+components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+      description: |
+        HTTP Basic Authentication using ServiceNow username and password.
+        
+        Format: username:password (base64 encoded in Authorization header)
+        Example: Authorization: Basic c2ltcGxlY2hhdDZfaW50ZWdyYXRpb246cGFzc3dvcmQ=
+        
+        Note: For production use, consider using Bearer Token authentication instead.
+
+  schemas:
+    Incident:
+      type: object
+      properties:
+        sys_id:
+          type: string
+          description: Unique system identifier
+          example: "abc123xyz789"
+        
+        number:
+          type: string
+          description: Incident number
+          example: "INC0000001"
+        
+        short_description:
+          type: string
+          description: Brief summary
+          example: "Email server not responding"
+        
+        description:
+          type: string
+          description: Detailed description
+          example: "Users cannot access email. Server shows timeout errors."
+        
+        priority:
+          type: string
+          description: "Priority: 1=Critical, 2=High, 3=Moderate, 4=Low, 5=Planning"
+          example: "2"
+        
+        urgency:
+          type: string
+          description: "Urgency: 1=High, 2=Medium, 3=Low"
+          example: "1"
+        
+        impact:
+          type: string
+          description: "Impact: 1=High, 2=Medium, 3=Low"
+          example: "2"
+        
+        state:
+          type: string
+          description: "State: 1=New, 2=In Progress, 3=On Hold, 6=Resolved, 7=Closed, 8=Canceled"
+          example: "1"
+        
+        category:
+          type: string
+          description: Incident category
+          example: "Email"
+        
+        subcategory:
+          type: string
+          description: Incident subcategory
+          example: "Server"
+        
+        assigned_to:
+          type: string
+          description: Assigned user
+          example: "John Doe"
+        
+        assignment_group:
+          type: string
+          description: Assignment group
+          example: "IT Support"
+        
+        caller_id:
+          type: string
+          description: User who reported the incident
+          example: "Jane Smith"
+        
+        sys_created_on:
+          type: string
+          format: date-time
+          description: Creation timestamp
+          example: "2026-01-15 10:30:00"
+        
+        sys_updated_on:
+          type: string
+          format: date-time
+          description: Last update timestamp
+          example: "2026-01-15 14:22:00"
+        
+        opened_at:
+          type: string
+          format: date-time
+          description: When incident was opened
+          example: "2026-01-15 10:30:00"
+        
+        resolved_at:
+          type: string
+          format: date-time
+          description: Resolution timestamp
+          example: "2026-01-15 16:45:00"
+        
+        closed_at:
+          type: string
+          format: date-time
+          description: Closure timestamp
+          example: "2026-01-16 09:00:00"
+        
+        work_notes:
+          type: string
+          description: Work notes (internal)
+          example: "Investigating email server logs"
+        
+        close_notes:
+          type: string
+          description: Resolution notes
+          example: "Issue resolved by restarting email service"
+        
+        business_duration:
+          type: string
+          description: Business hours duration
+          example: "2 hours 30 minutes"

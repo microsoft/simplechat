@@ -1,0 +1,320 @@
+openapi: 3.0.0
+info:
+  title: ServiceNow Knowledge Base API (Basic Auth)
+  description: ServiceNow REST API for knowledge article searching and retrieval - Basic Authentication version
+  version: 1.0.0
+  contact:
+    name: ServiceNow API Support
+    url: https://developer.servicenow.com
+
+servers:
+  - url: https://dev222288.service-now.com
+    description: ServiceNow Developer Instance
+
+security:
+  - basicAuth: []
+
+paths:
+  /api/now/knowledgebase/articles:
+    get:
+      operationId: searchKnowledgeFacets
+      summary: Search knowledge articles with facets
+      description: |
+        Search for knowledge articles using text queries and faceted search.
+        
+        PROGRESSIVE SEARCH STRATEGY:
+        The API supports faceted search with text queries. For optimal results:
+        
+        1. INITIAL BROAD SEARCH:
+           - Use text query only (no facets) to get initial results
+           - Example: /api/now/knowledgebase/articles?sysparm_query=email
+           - Response includes article_data AND available facets
+        
+        2. ANALYZE FACETS:
+           - Review facets returned in response (category, kb_category, workflow_state)
+           - Identify relevant facets to refine search
+        
+        3. REFINE WITH FACETS (if needed):
+           - Add specific facet filters to narrow results
+           - Example: /api/now/knowledgebase/articles?sysparm_query=email&sysparm_facets=kb_category:Network
+        
+        4. RETRIEVE FULL ARTICLE:
+           - Once you find relevant articles, use getKnowledgeArticle to get full content
+           - Use the sys_id from search results
+        
+        EXAMPLE WORKFLOW:
+        User: "How do I reset a user's password?"
+        
+        Step 1: Initial search
+        GET /api/now/knowledgebase/articles?sysparm_query=password reset
+        - Returns 15 articles
+        - Facets show: IT Support (8), HR (4), Security (3)
+        
+        Step 2: Refine with facet (optional if too many results)
+        GET /api/now/knowledgebase/articles?sysparm_query=password reset&sysparm_facets=kb_category:IT Support
+        - Returns 8 articles focused on IT Support category
+        
+        Step 3: Get full article content
+        GET /api/now/knowledgebase/articles/{sys_id}
+        - Returns complete article with all fields
+      parameters:
+        - name: sysparm_query
+          in: query
+          required: false
+          schema:
+            type: string
+          description: |
+            Text search query. Searches across article text, short description, and keywords.
+            Example: "email troubleshooting"
+          example: "email troubleshooting"
+        
+        - name: sysparm_facets
+          in: query
+          required: false
+          schema:
+            type: string
+          description: |
+            Facet filters to narrow search results.
+            Format: facet_field:facet_value
+            Multiple facets: facet1:value1,facet2:value2
+            
+            Available facets:
+            - kb_category: Knowledge base category
+            - category: System category
+            - workflow_state: Article status (published, draft, retired)
+          example: "kb_category:IT Support"
+        
+        - name: sysparm_limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 10
+            maximum: 100
+          description: Maximum number of articles to return
+          example: 10
+        
+        - name: sysparm_offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+          description: Number of articles to skip (for pagination)
+          example: 0
+
+      responses:
+        '200':
+          description: Search results with articles and facets
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: object
+                    properties:
+                      article_data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/KnowledgeArticle'
+                      facets:
+                        type: object
+                        description: Available facets for refining search
+                        additionalProperties:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              value:
+                                type: string
+                              count:
+                                type: integer
+              example:
+                result:
+                  article_data:
+                    - sys_id: "kb123xyz"
+                      number: "KB0000001"
+                      short_description: "How to reset user password in Active Directory"
+                      text: "Step 1: Open Active Directory Users and Computers..."
+                      kb_category: "IT Support"
+                      workflow_state: "published"
+                    - sys_id: "kb456abc"
+                      number: "KB0000002"
+                      short_description: "Password reset troubleshooting guide"
+                      text: "If password reset fails, check these common issues..."
+                      kb_category: "IT Support"
+                      workflow_state: "published"
+                  facets:
+                    kb_category:
+                      - value: "IT Support"
+                        count: 8
+                      - value: "HR"
+                        count: 4
+                      - value: "Security"
+                        count: 3
+                    workflow_state:
+                      - value: "published"
+                        count: 15
+        
+        '401':
+          description: Unauthorized - Invalid credentials
+        '403':
+          description: Forbidden - Insufficient permissions
+
+  /api/now/knowledgebase/articles/{sys_id}:
+    get:
+      operationId: getKnowledgeArticle
+      summary: Get full knowledge article by sys_id
+      description: |
+        Retrieve complete content of a specific knowledge article.
+        
+        Use this after searchKnowledgeFacets to get the full article content.
+        The sys_id comes from the search results.
+      parameters:
+        - name: sys_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The sys_id of the knowledge article
+          example: "kb123xyz789"
+        
+        - name: sysparm_fields
+          in: query
+          required: false
+          schema:
+            type: string
+          description: |
+            Comma-separated list of fields to return.
+            If omitted, returns all fields.
+          example: "number,short_description,text,kb_category,workflow_state,sys_view_count"
+
+      responses:
+        '200':
+          description: Knowledge article retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    $ref: '#/components/schemas/KnowledgeArticle'
+              example:
+                result:
+                  sys_id: "kb123xyz"
+                  number: "KB0000001"
+                  short_description: "How to reset user password in Active Directory"
+                  text: |
+                    <h2>Password Reset Procedure</h2>
+                    <p>Follow these steps to reset a user's password:</p>
+                    <ol>
+                      <li>Open Active Directory Users and Computers</li>
+                      <li>Navigate to the user's organizational unit</li>
+                      <li>Right-click the user account and select 'Reset Password'</li>
+                      <li>Enter the new password and confirm</li>
+                      <li>Check 'User must change password at next logon' if required</li>
+                      <li>Click OK to complete the reset</li>
+                    </ol>
+                  kb_category: "IT Support"
+                  category: "Active Directory"
+                  workflow_state: "published"
+                  author: "John Doe"
+                  sys_created_on: "2025-01-15 09:00:00"
+                  sys_updated_on: "2026-01-20 14:30:00"
+                  sys_view_count: "342"
+        
+        '404':
+          description: Article not found
+        '401':
+          description: Unauthorized
+
+components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+      description: |
+        HTTP Basic Authentication using ServiceNow username and password.
+        
+        Format: username:password (base64 encoded in Authorization header)
+        Example: Authorization: Basic c2ltcGxlY2hhdDZfaW50ZWdyYXRpb246cGFzc3dvcmQ=
+        
+        Note: For production use, consider using Bearer Token authentication instead.
+
+  schemas:
+    KnowledgeArticle:
+      type: object
+      properties:
+        sys_id:
+          type: string
+          description: Unique system identifier for the article
+          example: "kb123xyz789"
+        
+        number:
+          type: string
+          description: Knowledge article number
+          example: "KB0000001"
+        
+        short_description:
+          type: string
+          description: Brief summary of the article
+          example: "How to reset user password in Active Directory"
+        
+        text:
+          type: string
+          description: Full article content (may contain HTML)
+          example: "<h2>Password Reset Procedure</h2><p>Follow these steps...</p>"
+        
+        kb_category:
+          type: string
+          description: Knowledge base category
+          example: "IT Support"
+        
+        category:
+          type: string
+          description: System category
+          example: "Active Directory"
+        
+        workflow_state:
+          type: string
+          description: "Article status: published, draft, retired"
+          example: "published"
+        
+        author:
+          type: string
+          description: Article author
+          example: "John Doe"
+        
+        sys_created_on:
+          type: string
+          format: date-time
+          description: Creation timestamp
+          example: "2025-01-15 09:00:00"
+        
+        sys_updated_on:
+          type: string
+          format: date-time
+          description: Last update timestamp
+          example: "2026-01-20 14:30:00"
+        
+        sys_view_count:
+          type: string
+          description: Number of times article has been viewed
+          example: "342"
+        
+        keywords:
+          type: string
+          description: Article keywords for search
+          example: "password, reset, active directory, user account"
+        
+        article_type:
+          type: string
+          description: Type of article
+          example: "How-to"
+        
+        valid_to:
+          type: string
+          format: date-time
+          description: Article expiration date
+          example: "2027-12-31 23:59:59"
