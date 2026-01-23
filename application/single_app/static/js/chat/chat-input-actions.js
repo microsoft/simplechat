@@ -347,8 +347,38 @@ if (imageGenBtn) {
 }
 
 if (webSearchBtn) {
+  const webSearchNoticeContainer = document.getElementById("web-search-notice-container");
+  const webSearchNoticeDismiss = document.getElementById("web-search-notice-dismiss");
+  const webSearchNoticeSessionKey = "webSearchNoticeDismissed";
+  
+  // Check if notice was dismissed this session
+  const isNoticeDismissed = () => sessionStorage.getItem(webSearchNoticeSessionKey) === "true";
+  
+  // Show/hide notice based on web search state
+  const updateWebSearchNotice = (isActive) => {
+    if (webSearchNoticeContainer && window.appSettings?.enable_web_search_user_notice) {
+      if (isActive && !isNoticeDismissed()) {
+        webSearchNoticeContainer.style.display = "block";
+      } else {
+        webSearchNoticeContainer.style.display = "none";
+      }
+    }
+  };
+  
+  // Dismiss button handler
+  if (webSearchNoticeDismiss) {
+    webSearchNoticeDismiss.addEventListener("click", function() {
+      sessionStorage.setItem(webSearchNoticeSessionKey, "true");
+      if (webSearchNoticeContainer) {
+        webSearchNoticeContainer.style.display = "none";
+      }
+    });
+  }
+  
   webSearchBtn.addEventListener("click", function () {
     this.classList.toggle("active");
+    const isActive = this.classList.contains("active");
+    updateWebSearchNotice(isActive);
   });
 }
 
