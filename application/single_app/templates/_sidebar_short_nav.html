@@ -331,7 +331,7 @@
       <img src="{{ url_for('static', filename='images/custom_logo.png') }}?v={{ app_settings.logo_version | default(1) }}" 
            alt="Logo" height="24" style="max-width: none;" class="d-light-mode-only" />
     {% else %}
-      <img src="{{ url_for('static', filename='images/logo.png') }}" 
+      <img src="{{ url_for('static', filename='images/logo-lightmode.png') }}" 
            alt="Logo" height="24" style="max-width: none;" class="d-light-mode-only" />
     {% endif %}
     <!-- Dark mode logo -->
@@ -342,10 +342,11 @@
       <img src="{{ url_for('static', filename='images/custom_logo.png') }}?v={{ app_settings.logo_version | default(1) }}" 
            alt="Logo" height="24" style="max-width: none;" class="d-dark-mode-only" />
     {% else %}
-      <img src="{{ url_for('static', filename='images/logo.png') }}" 
+      <img src="{{ url_for('static', filename='images/logo-darkmode.png') }}" 
            alt="Logo" height="24" style="max-width: none;" class="d-dark-mode-only" />
     {% endif %}
   {% else %}
-    <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Logo" height="24" style="max-width: none;" />
+    <img src="{{ url_for('static', filename='images/logo-lightmode.png') }}" alt="Logo" height="24" style="max-width: none;" class="d-light-mode-only" />
+    <img src="{{ url_for('static', filename='images/logo-darkmode.png') }}" alt="Logo" height="24" style="max-width: none;" class="d-dark-mode-only" />
   {% endif %}
 </button>

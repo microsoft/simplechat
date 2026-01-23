@@ -1355,7 +1355,8 @@ def get_activity_trends_data(start_date, end_date):
                 date_key = current_date.strftime('%Y-%m-%d')
                 token_daily_data[date_key] = {
                     'embedding': 0,
-                    'chat': 0
+                    'chat': 0,
+                    'web_search': 0
                 }
                 current_date += timedelta(days=1)
             
@@ -1364,7 +1365,7 @@ def get_activity_trends_data(start_date, end_date):
                 token_type = token_record.get('token_type', '')
                 token_count = token_record.get('token_count', 0)
                 
-                if timestamp and token_type in ['embedding', 'chat']:
+                if timestamp and token_type in ['embedding', 'chat', 'web_search']:
                     try:
                         if isinstance(timestamp, str):
                             token_date = datetime.fromisoformat(timestamp.replace('Z', '+00:00') if 'Z' in timestamp else timestamp)
@@ -1387,7 +1388,7 @@ def get_activity_trends_data(start_date, end_date):
             current_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
             while current_date <= end_date:
                 date_key = current_date.strftime('%Y-%m-%d')
-                token_daily_data[date_key] = {'embedding': 0, 'chat': 0}
+                token_daily_data[date_key] = {'embedding': 0, 'chat': 0, 'web_search': 0}
                 current_date += timedelta(days=1)
 
         # Calculate totals for each day

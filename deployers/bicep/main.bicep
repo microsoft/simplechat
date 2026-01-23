@@ -76,6 +76,10 @@ param specialTags object = {}
 - Default is false''')
 param enableDiagLogging bool
 
+@description('''Enable private endpoints and virtual network integration for deployed resources. 
+- Default is false''')
+param enablePrivateNetworking bool
+
 @description('''Array of GPT model names to deploy to the OpenAI resource.''')
 param gptModels array = [
   {
@@ -107,7 +111,20 @@ param embeddingModels array = [
     skuCapacity: 150
   }
 ]
+
 //----------------
+// allowed IP addresses for resources
+@description('''Comma separated list of IP addresses or ranges to allow access to resources when private networking is enabled.
+Leave blank if not using private networking.
+- Format for single IP: 'x.x.x.x'
+- Format for range: 'x.x.x.x/y'
+- Example:  1.2.3.4, 2.3.4.5/32
+''')
+param allowedIpAddresses string
+var allowedIpAddressesSplit = empty(allowedIpAddresses) ? [] : split(allowedIpAddresses!, ',')
+var allowedIpAddressesArray = [for ip in allowedIpAddressesSplit: trim(ip)]
+//----------------
+
 // optional services
 
 @description('''Enable deployment of Content Safety service and related resources.
@@ -136,6 +153,15 @@ var acrCloudSuffix = cloudEnvironment == 'AzureCloud' ? '.azurecr.io' : '.azurec
 var acrName = toLower('${appName}${environment}acr')
 var containerRegistry = '${acrName}${acrCloudSuffix}'
 var containerImageName = '${containerRegistry}/${imageName}'
+var vNetName = '${appName}-${environment}-vnet'
+var allowedIpsForCosmos = union(['0.0.0.0'], allowedIpAddressesArray)
+var cosmosDbIpRules = [for ip in allowedIpsForCosmos: {
+  ipAddressOrRange: ip
+}]
+var acrIpRules = [for ip in allowedIpAddressesArray: {
+  action: 'Allow'
+  value: ip
+}]
 
 //=========================================================
 // Resource group deployment
@@ -144,6 +170,34 @@ resource rg 'Microsoft.Resources/resourceGroups@2022-09-01' = {
   name: rgName
   location: location
   tags: tags
+}
+
+//=========================================================
+// Create Virtual Network if private networking is enabled
+//=========================================================
+module virtualNetwork 'modules/virtualNetwork.bicep' = if (enablePrivateNetworking) {
+  scope: rg
+  name: 'virtualNetwork'
+  params: {
+    location: location
+    vNetName: vNetName
+    addressSpaces: ['10.0.0.0/21']
+    subnetConfigs: [
+      {
+        name: 'AppServiceIntegration' // this subnet name must be present for app service vnet integration
+        addressPrefix: '10.0.0.0/24'
+        enablePrivateEndpointNetworkPolicies: true
+        enablePrivateLinkServiceNetworkPolicies: true
+      }
+      {
+        name: 'PrivateEndpoints' // this subnet name must be present if private endpoints are to be used
+        addressPrefix: '10.0.2.0/24'
+        enablePrivateEndpointNetworkPolicies: true
+        enablePrivateLinkServiceNetworkPolicies: true
+      }
+    ]
+    tags: tags
+  }
 }
 
 //=========================================================
@@ -221,6 +275,8 @@ module cosmosDB 'modules/cosmosDb.bicep' = {
     keyVault: keyVault.outputs.keyVaultName
     authenticationType: authenticationType
     configureApplicationPermissions: configureApplicationPermissions
+    enablePrivateNetworking: enablePrivateNetworking
+    allowedIpAddresses: cosmosDbIpRules
   }
 }
 
@@ -240,6 +296,8 @@ module acr 'modules/azureContainerRegistry.bicep' = {
     keyVault: keyVault.outputs.keyVaultName
     authenticationType: authenticationType
     configureApplicationPermissions: configureApplicationPermissions
+    enablePrivateNetworking: enablePrivateNetworking
+    allowedIpAddresses: acrIpRules
   }
 }
 
@@ -260,6 +318,8 @@ module searchService 'modules/search.bicep' = {
     keyVault: keyVault.outputs.keyVaultName
     authenticationType: authenticationType
     configureApplicationPermissions: configureApplicationPermissions
+
+    enablePrivateNetworking: enablePrivateNetworking
   }
 }
 
@@ -280,6 +340,8 @@ module docIntel 'modules/documentIntelligence.bicep' = {
     keyVault: keyVault.outputs.keyVaultName
     authenticationType: authenticationType
     configureApplicationPermissions: configureApplicationPermissions
+
+    enablePrivateNetworking: enablePrivateNetworking
   }
 }
 
@@ -300,6 +362,8 @@ module storageAccount 'modules/storageAccount.bicep' = {
     keyVault: keyVault.outputs.keyVaultName
     authenticationType: authenticationType
     configureApplicationPermissions: configureApplicationPermissions
+
+    enablePrivateNetworking: enablePrivateNetworking
   }
 }
 
@@ -323,6 +387,8 @@ module openAI 'modules/openAI.bicep' = {
 
     gptModels: gptModels
     embeddingModels: embeddingModels
+
+    enablePrivateNetworking: enablePrivateNetworking
   }
 }
 
@@ -369,6 +435,10 @@ module appService 'modules/appService.bicep' = {
     enterpriseAppClientSecret: enterpriseAppClientSecret
     authenticationType: authenticationType
     keyVaultUri: keyVault.outputs.keyVaultUri
+
+    enablePrivateNetworking: enablePrivateNetworking
+    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
+    appServiceSubnetId: enablePrivateNetworking? virtualNetwork.outputs.appServiceSubnetId : ''
   }
 }
 
@@ -393,6 +463,8 @@ module contentSafety 'modules/contentSafety.bicep' = if (deployContentSafety) {
     keyVault: keyVault.outputs.keyVaultName
     authenticationType: authenticationType
     configureApplicationPermissions: configureApplicationPermissions
+
+    enablePrivateNetworking: enablePrivateNetworking
   }
 }
 
@@ -413,6 +485,8 @@ module redisCache 'modules/redisCache.bicep' = if (deployRedisCache) {
     keyVault: keyVault.outputs.keyVaultName
     authenticationType: authenticationType
     configureApplicationPermissions: configureApplicationPermissions
+
+    //enablePrivateNetworking: enablePrivateNetworking
   }
 }
 
@@ -433,6 +507,8 @@ module speechService 'modules/speechService.bicep' = if (deploySpeechService) {
     keyVault: keyVault.outputs.keyVaultName
     authenticationType: authenticationType
     configureApplicationPermissions: configureApplicationPermissions
+
+    enablePrivateNetworking: enablePrivateNetworking
   }
 }
 
@@ -452,6 +528,8 @@ module videoIndexerService 'modules/videoIndexer.bicep' = if (deployVideoIndexer
 
     storageAccount: storageAccount.outputs.name
     openAiServiceName: openAI.outputs.openAIName
+
+    enablePrivateNetworking: enablePrivateNetworking
   }
 }
 
@@ -472,9 +550,12 @@ module setPermissions 'modules/setPermissions.bicep' = if (configureApplicationP
     openAIName: openAI.outputs.openAIName
     docIntelName: docIntel.outputs.documentIntelligenceServiceName
     storageAccountName: storageAccount.outputs.name
+    searchServiceName: searchService.outputs.searchServiceName
+
     #disable-next-line BCP318 // expect one value to be null
     speechServiceName: deploySpeechService ? speechService.outputs.speechServiceName : ''
-    searchServiceName: searchService.outputs.searchServiceName
+    #disable-next-line BCP318 // expect one value to be null
+    redisCacheName: deployRedisCache ? redisCache.outputs.redisCacheName : ''
     #disable-next-line BCP318 // expect one value to be null
     contentSafetyName: deployContentSafety ? contentSafety.outputs.contentSafetyName : ''
     #disable-next-line BCP318 // expect one value to be null
@@ -483,41 +564,82 @@ module setPermissions 'modules/setPermissions.bicep' = if (configureApplicationP
 }
 
 //=========================================================
+// configure private networking
+//=========================================================
+module privateNetworking 'modules/privateNetworking.bicep' = if (enablePrivateNetworking) {
+  name: 'privateNetworking'
+  scope: rg
+  params: {
+
+    #disable-next-line BCP318 // value can't be null based on enablePrivateNetworking condition
+    virtualNetworkId: virtualNetwork.outputs.vNetId
+    #disable-next-line BCP318 // value can't be null based on enablePrivateNetworking condition
+    privateEndpointSubnetId: virtualNetwork.outputs.privateNetworkSubnetId
+
+    location: location
+    appName: appName
+    environment: environment
+    tags: tags
+
+    keyVaultName: keyVault.outputs.keyVaultName
+    cosmosDBName: cosmosDB.outputs.cosmosDbName
+    acrName: acr.outputs.acrName
+    searchServiceName: searchService.outputs.searchServiceName
+    docIntelName: docIntel.outputs.documentIntelligenceServiceName
+    storageAccountName: storageAccount.outputs.name
+    openAIName: openAI.outputs.openAIName
+    webAppName: appService.outputs.name
+    
+    #disable-next-line BCP318 // expect one value to be null
+    contentSafetyName: deployContentSafety ? contentSafety.outputs.contentSafetyName : ''
+    #disable-next-line BCP318 // expect one value to be null
+    speechServiceName: deploySpeechService ? speechService.outputs.speechServiceName : ''
+    #disable-next-line BCP318 // expect one value to be null
+    videoIndexerName: deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerServiceName : ''
+  }
+}
+
+
+//=========================================================
 // output values
 //=========================================================
-// output required for both predeploy and postprovision scripts in azure.yaml
-output var_rgName string = rgName
 
-// output values required for predeploy script in azure.yaml
-output var_webService string = appService.outputs.name
-output var_imageName string = contains(imageName, ':') ? split(imageName, ':')[0] : imageName
-output var_imageTag string = split(imageName, ':')[1]
-output var_containerRegistry string = containerRegistry
-output var_acrName string = toLower('${appName}${environment}acr')
 
 // output values required for postprovision script in azure.yaml
-output var_configureApplication bool = configureApplicationPermissions
-output var_keyVaultUri string = keyVault.outputs.keyVaultUri
-output var_cosmosDb_uri string = cosmosDB.outputs.cosmosDbUri
-output var_subscriptionId string = subscription().subscriptionId
+output var_acrName string = toLower('${appName}${environment}acr')
 output var_authenticationType string = toLower(authenticationType)
-output var_openAIEndpoint string = openAI.outputs.openAIEndpoint
-output var_openAIResourceGroup string = openAI.outputs.openAIResourceGroup //may be able to remove
-output var_openAIGPTModels array = gptModels
-output var_openAIEmbeddingModels array = embeddingModels
 output var_blobStorageEndpoint string = storageAccount.outputs.endpoint
+output var_configureApplication bool = configureApplicationPermissions
 #disable-next-line BCP318 // expect one value to be null
 output var_contentSafetyEndpoint string = deployContentSafety ? contentSafety.outputs.contentSafetyEndpoint : ''
+output var_cosmosDb_accountName string = cosmosDB.outputs.cosmosDbName
+output var_cosmosDb_uri string = cosmosDB.outputs.cosmosDbUri
 output var_deploymentLocation string = rg.location
-output var_searchServiceEndpoint string = searchService.outputs.searchServiceEndpoint
 output var_documentIntelligenceServiceEndpoint string = docIntel.outputs.documentIntelligenceServiceEndpoint
-output var_videoIndexerName string = deployVideoIndexerService
+output var_keyVaultName string = keyVault.outputs.keyVaultName
+output var_keyVaultUri string = keyVault.outputs.keyVaultUri
+output var_openAIEndpoint string = openAI.outputs.openAIEndpoint
+output var_openAIGPTModels array = gptModels
+output var_openAIResourceGroup string = openAI.outputs.openAIResourceGroup //may be able to remove
+output var_openAIEmbeddingModels array = embeddingModels
 #disable-next-line BCP318 // expect one value to be null
-  ? videoIndexerService.outputs.videoIndexerServiceName
-  : ''
-output var_videoIndexerAccountId string = deployVideoIndexerService
-#disable-next-line BCP318 // expect one value to be null
-  ? videoIndexerService.outputs.videoIndexerAccountId
-  : ''
+output var_redisCacheHostName string = deployRedisCache ? redisCache.outputs.redisCacheHostName : ''
+output var_rgName string = rgName
+output var_searchServiceEndpoint string = searchService.outputs.searchServiceEndpoint
 #disable-next-line BCP318 // expect one value to be null
 output var_speechServiceEndpoint string = deploySpeechService ? speechService.outputs.speechServiceEndpoint : ''
+output var_subscriptionId string = subscription().subscriptionId
+#disable-next-line BCP318 // expect one value to be null
+output var_videoIndexerAccountId string = deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerAccountId : ''
+#disable-next-line BCP318 // expect one value to be null
+output var_videoIndexerName string = deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerServiceName : ''
+
+// output values required for predeploy script in azure.yaml
+output var_containerRegistry string = containerRegistry
+output var_imageName string = contains(imageName, ':') ? split(imageName, ':')[0] : imageName
+output var_imageTag string = split(imageName, ':')[1]
+output var_webService string = appService.outputs.name
+
+// output values required for postup script in azure.yaml
+output var_enablePrivateNetworking bool = enablePrivateNetworking
+

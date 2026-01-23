@@ -1,8 +1,27 @@
-
+// control-center.js
 // Control Center JavaScript functionality
 // Handles user management, pagination, modals, and API interactions
 
 import { showToast } from "./chat/chat-toast.js";
+
+function parseDateKey(dateStr) {
+    if (!dateStr) {
+        return null;
+    }
+
+    const parts = dateStr.split("-");
+    if (parts.length === 3) {
+        const year = Number(parts[0]);
+        const month = Number(parts[1]);
+        const day = Number(parts[2]);
+        if (Number.isFinite(year) && Number.isFinite(month) && Number.isFinite(day)) {
+            return new Date(year, month - 1, day);
+        }
+    }
+
+    const parsed = new Date(dateStr);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
 
 // Group Table Sorter - similar to user table but for groups
 class GroupTableSorter {
@@ -1423,8 +1442,10 @@ class ControlCenter {
         const allDates = [...new Set([...Object.keys(createdData), ...Object.keys(deletedData)])].sort();
         
         const labels = allDates.map(date => {
-            const dateObj = new Date(date);
-            return dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            const dateObj = parseDateKey(date);
+            return dateObj
+                ? dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                : date;
         });
         
         const createdValues = allDates.map(date => createdData[date] || 0);
@@ -1553,8 +1574,10 @@ class ControlCenter {
         console.log(`🔍 [Frontend Debug] Documents date range:`, allDates);
         
         const labels = allDates.map(date => {
-            const dateObj = new Date(date);
-            return dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            const dateObj = parseDateKey(date);
+            return dateObj
+                ? dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                : date;
         });
         
         // Prepare datasets - lines for creations, bars for deletions
@@ -1661,7 +1684,10 @@ class ControlCenter {
                                 title: function(context) {
                                     const dataIndex = context[0].dataIndex;
                                     const dateStr = allDates[dataIndex];
-                                    const date = new Date(dateStr);
+                                    const date = parseDateKey(dateStr);
+                                    if (!date) {
+                                        return dateStr;
+                                    }
                                     return date.toLocaleDateString('en-US', { 
                                         weekday: 'long', 
                                         year: 'numeric', 
@@ -1710,7 +1736,7 @@ class ControlCenter {
             console.log('🔍 [Frontend Debug] Rendering tokens chart with data:', activityData.tokens);
         }
         
-        // Render combined chart with embedding and chat tokens
+        // Render combined chart with embedding, chat, and web search tokens
         this.renderCombinedTokensChart('tokensChart', activityData.tokens || {});
     }
 
@@ -1745,7 +1771,7 @@ class ControlCenter {
             this.tokensChart.destroy();
         }
         
-        // Prepare data from tokens object (format: { "YYYY-MM-DD": { "embedding": count, "chat": count } })
+        // Prepare data from tokens object (format: { "YYYY-MM-DD": { "embedding": count, "chat": count, "web_search": count } })
         const allDates = Object.keys(tokensData).sort();
         if (appSettings?.enable_debug_logging) {
             console.log('🔍 [Frontend Debug] Token dates:', allDates);
@@ -1753,17 +1779,21 @@ class ControlCenter {
         
         // Format labels for display
         const labels = allDates.map(dateStr => {
-            const date = new Date(dateStr);
-            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            const date = parseDateKey(dateStr);
+            return date
+                ? date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                : dateStr;
         });
         
-        // Extract embedding and chat token counts
+        // Extract embedding, chat, and web search token counts
         const embeddingTokens = allDates.map(date => tokensData[date]?.embedding || 0);
         const chatTokens = allDates.map(date => tokensData[date]?.chat || 0);
+        const webSearchTokens = allDates.map(date => tokensData[date]?.web_search || 0);
         
         if (appSettings?.enable_debug_logging) {
             console.log('🔍 [Frontend Debug] Embedding tokens:', embeddingTokens);
             console.log('🔍 [Frontend Debug] Chat tokens:', chatTokens);
+            console.log('🔍 [Frontend Debug] Web search tokens:', webSearchTokens);
         }
         
         // Create datasets
@@ -1791,6 +1821,18 @@ class ControlCenter {
                 pointRadius: 3,
                 pointHoverRadius: 5,
                 pointBackgroundColor: '#0dcaf0'
+            },
+            {
+                label: 'Web Search Tokens',
+                data: webSearchTokens,
+                backgroundColor: 'rgba(32, 201, 151, 0.2)',
+                borderColor: '#20c997',
+                borderWidth: 2,
+                fill: false,
+                tension: 0.4,
+                pointRadius: 3,
+                pointHoverRadius: 5,
+                pointBackgroundColor: '#20c997'
             }
         ];
         
@@ -1823,7 +1865,10 @@ class ControlCenter {
                                 title: function(context) {
                                     const dataIndex = context[0].dataIndex;
                                     const dateStr = allDates[dataIndex];
-                                    const date = new Date(dateStr);
+                                    const date = parseDateKey(dateStr);
+                                    if (!date) {
+                                        return dateStr;
+                                    }
                                     return date.toLocaleDateString('en-US', { 
                                         weekday: 'long', 
                                         year: 'numeric', 
@@ -1919,8 +1964,10 @@ class ControlCenter {
         console.log(`🔍 [Frontend Debug] ${chartType} date range:`, dates);
         
         const labels = dates.map(date => {
-            const dateObj = new Date(date);
-            return dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            const dateObj = parseDateKey(date);
+            return dateObj
+                ? dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                : date;
         });
         
         const data = dates.map(date => chartData[date] || 0);
@@ -1962,7 +2009,10 @@ class ControlCenter {
                                 title: function(context) {
                                     const dataIndex = context[0].dataIndex;
                                     const dateStr = dates[dataIndex];
-                                    const date = new Date(dateStr);
+                                    const date = parseDateKey(dateStr);
+                                    if (!date) {
+                                        return dateStr;
+                                    }
                                     return date.toLocaleDateString('en-US', { 
                                         weekday: 'long', 
                                         year: 'numeric', 

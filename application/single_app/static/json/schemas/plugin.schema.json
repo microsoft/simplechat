@@ -2,6 +2,20 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$ref": "#/definitions/Plugin",
   "definitions": {
+    "AuthType": {
+      "type": "string",
+      "enum": [
+        "NoAuth",
+        "key",
+        "identity",
+        "user",
+        "servicePrincipal",
+        "connection_string",
+        "basic",
+        "username_password"
+      ],
+      "description": "Supported authentication types for plugins."
+    },
     "Plugin": {
       "type": "object",
       "additionalProperties": false,
@@ -40,9 +54,8 @@
           "type": "object",
           "properties": {
             "type": {
-              "type": "string",
-              "enum": ["NoAuth", "key", "identity", "user", "servicePrincipal", "connection_string", "basic", "username_password"],
-              "description": "Auth type must be 'key', 'user', 'identity', 'servicePrincipal', 'connection_string', 'basic', or 'username_password'"
+              "$ref": "#/definitions/AuthType",
+              "description": "Auth type must be one of the supported authentication modes."
             },
             "key": {
               "type": "string",

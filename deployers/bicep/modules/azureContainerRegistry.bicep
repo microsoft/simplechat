@@ -11,6 +11,9 @@ param keyVault string
 param authenticationType string
 param configureApplicationPermissions bool
 
+param enablePrivateNetworking bool
+param allowedIpAddresses array = []
+
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
   name: 'diagnosticConfigs'
@@ -22,11 +25,15 @@ resource acr 'Microsoft.ContainerRegistry/registries@2025-04-01' = {
   location: location
 
   sku: {
-    name: 'Standard'
+    name: enablePrivateNetworking ? 'Premium' : 'Standard'
   }
   properties: {
     adminUserEnabled: true
-    publicNetworkAccess: 'Enabled'
+    publicNetworkAccess: 'Enabled'  // configuration is set in post provision step in azure.yaml with post deployment script
+    networkRuleSet: enablePrivateNetworking ? {
+      defaultAction: 'Deny'
+      ipRules: allowedIpAddresses
+    } : null
   }
   tags: tags
 }

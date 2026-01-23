@@ -556,23 +556,44 @@ function rejectRequest(requestId) {
 }
 
 // Search users for manual add
+// Search users for manual add
 function searchUsers() {
   const term = $("#userSearchTerm").val().trim();
   if (!term) {
-    alert("Enter a name or email to search.");
+    // Show inline validation error
+    $("#searchStatus").text("⚠️ Please enter a name or email to search");
+    $("#searchStatus").removeClass("text-muted text-success").addClass("text-warning");
+    $("#userSearchTerm").addClass("is-invalid");
     return;
   }
+  
+  // Clear any previous validation states
+  $("#userSearchTerm").removeClass("is-invalid");
+  $("#searchStatus").removeClass("text-warning text-danger text-success").addClass("text-muted");
   $("#searchStatus").text("Searching...");
   $("#searchUsersBtn").prop("disabled", true);
 
   $.get("/api/userSearch", { query: term })
-    .done(renderUserSearchResults)
+    .done(function(users) {
+      renderUserSearchResults(users);
+      // Show success status
+      if (users && users.length > 0) {
+        $("#searchStatus").text(`✓ Found ${users.length} user(s)`);
+        $("#searchStatus").removeClass("text-muted text-warning text-danger").addClass("text-success");
+      } else {
+        $("#searchStatus").text("No users found");
+        $("#searchStatus").removeClass("text-muted text-warning text-success").addClass("text-muted");
+      }
+    })
     .fail(function (jq) {
       const err = jq.responseJSON?.error || jq.statusText;
-      alert("User search failed: " + err);
+      // Show inline error
+      $("#searchStatus").text(`❌ Search failed: ${err}`);
+      $("#searchStatus").removeClass("text-muted text-warning text-success").addClass("text-danger");
+      // Also show toast for critical errors
+      showToast("User search failed: " + err, "danger");
     })
     .always(function () {
-      $("#searchStatus").text("");
       $("#searchUsersBtn").prop("disabled", false);
     });
 }

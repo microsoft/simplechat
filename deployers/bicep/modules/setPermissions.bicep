@@ -11,6 +11,7 @@ param docIntelName string
 param storageAccountName string
 param speechServiceName string
 param searchServiceName string
+param redisCacheName string
 param contentSafetyName string
 param videoIndexerName string
 
@@ -48,6 +49,10 @@ resource speechService 'Microsoft.CognitiveServices/accounts@2024-10-01' existin
 
 resource searchService 'Microsoft.Search/searchServices@2025-05-01' existing = {
   name: searchServiceName
+}
+
+resource redisCache 'Microsoft.Cache/Redis@2024-11-01' existing = if (redisCacheName != '') {
+  name: redisCacheName
 }
 
 resource contentSafety 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = if (contentSafetyName != '') {
@@ -266,6 +271,20 @@ resource videoIndexerStorageCogServicesUserRole 'Microsoft.Authorization/roleAss
     )
     #disable-next-line BCP318 // may be null if video indexer not deployed
     principalId: videoIndexerService.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// grant the managed identity access to redis cache as a Redis Cache Contributor
+resource redisCacheContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (redisCacheName != '') {
+  name: guid(redisCache.id, webApp.id, 'redis-cache-contributor')
+  scope: redisCache
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      'e0f68234-74aa-48ed-b826-c38b57376e17'
+    )
+    principalId: webApp.identity.principalId
     principalType: 'ServicePrincipal'
   }
 }

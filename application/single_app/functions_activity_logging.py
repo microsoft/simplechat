@@ -118,6 +118,58 @@ def log_user_activity(
         debug_print(f"Error logging user activity for user {user_id}: {str(e)}")
 
 
+def log_web_search_consent_acceptance(
+    user_id: str,
+    admin_email: str,
+    consent_text: str,
+    source: str = 'admin_settings'
+) -> None:
+    """
+    Log web search consent acceptance to activity_logs and App Insights.
+
+    Args:
+        user_id (str): Admin user ID who accepted the consent.
+        admin_email (str): Admin email who accepted the consent.
+        consent_text (str): Consent message accepted by the admin.
+        source (str, optional): Origin of the consent action.
+    """
+    try:
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'activity_type': 'web_search_consent_acceptance',
+            'user_id': user_id,
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'accepted_by': {
+                'user_id': user_id,
+                'email': admin_email
+            },
+            'source': source,
+            'description': consent_text
+        }
+
+        cosmos_activity_logs_container.create_item(body=activity_record)
+
+        log_event(
+            message=consent_text,
+            extra=activity_record,
+            level=logging.INFO
+        )
+        debug_print(f"Logged web search consent acceptance for user {user_id}")
+
+    except Exception as e:
+        log_event(
+            message=f"Error logging web search consent acceptance: {str(e)}",
+            extra={
+                'user_id': user_id,
+                'admin_email': admin_email,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+        debug_print(f"Error logging web search consent acceptance for user {user_id}: {str(e)}")
+
+
 def log_document_upload(
     user_id: str,
     container_type: str,
@@ -1080,3 +1132,210 @@ def log_public_workspace_status_change(
             level=logging.ERROR
         )
         debug_print(f"⚠️  Warning: Failed to log public workspace status change: {str(e)}")
+
+
+def log_user_agreement_accepted(
+    user_id: str,
+    workspace_type: str,
+    workspace_id: str,
+    workspace_name: Optional[str] = None,
+    action_context: Optional[str] = None
+) -> None:
+    """
+    Log when a user accepts a user agreement in a workspace.
+    This record is used to track acceptance and support daily acceptance features.
+    
+    Args:
+        user_id (str): The ID of the user who accepted the agreement
+        workspace_type (str): Type of workspace ('personal', 'group', 'public')
+        workspace_id (str): The ID of the workspace
+        workspace_name (str, optional): The name of the workspace
+        action_context (str, optional): The context/action that triggered the agreement 
+                                        (e.g., 'file_upload', 'chat')
+    """
+    
+    try:
+        import uuid
+        
+        # Create user agreement acceptance record
+        acceptance_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': user_id,
+            'activity_type': 'user_agreement_accepted',
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'accepted_date': datetime.utcnow().strftime('%Y-%m-%d'),  # Date only for daily lookup
+            'workspace_type': workspace_type,
+            'workspace_context': {
+                f'{workspace_type}_workspace_id': workspace_id,
+                'workspace_name': workspace_name
+            },
+            'action_context': action_context
+        }
+        
+        # Save to activity_logs container
+        cosmos_activity_logs_container.create_item(body=acceptance_record)
+        
+        # Also log to Application Insights for monitoring
+        log_event(
+            message=f"User agreement accepted: user {user_id} in {workspace_type} workspace {workspace_id}",
+            extra=acceptance_record,
+            level=logging.INFO
+        )
+        
+        debug_print(f"✅ Logged user agreement acceptance: user {user_id} in {workspace_type} workspace {workspace_id}")
+        
+    except Exception as e:
+        # Log error but don't fail the operation
+        log_event(
+            message=f"Error logging user agreement acceptance: {str(e)}",
+            extra={
+                'user_id': user_id,
+                'workspace_type': workspace_type,
+                'workspace_id': workspace_id,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+        debug_print(f"⚠️  Warning: Failed to log user agreement acceptance: {str(e)}")
+
+
+def has_user_accepted_agreement_today(
+    user_id: str,
+    workspace_type: str,
+    workspace_id: str
+) -> bool:
+    """
+    Check if a user has already accepted the user agreement today for a given workspace.
+    Used to implement the "accept once per day" feature.
+    
+    Args:
+        user_id (str): The ID of the user
+        workspace_type (str): Type of workspace ('personal', 'group', 'public')
+        workspace_id (str): The ID of the workspace
+        
+    Returns:
+        bool: True if user has accepted today, False otherwise
+    """
+    
+    try:
+        today_date = datetime.utcnow().strftime('%Y-%m-%d')
+        
+        # Query for today's acceptance record
+        query = """
+            SELECT VALUE COUNT(1) FROM c 
+            WHERE c.user_id = @user_id 
+            AND c.activity_type = 'user_agreement_accepted'
+            AND c.accepted_date = @today_date
+            AND c.workspace_type = @workspace_type
+            AND c.workspace_context[@workspace_id_key] = @workspace_id
+        """
+        
+        workspace_id_key = f'{workspace_type}_workspace_id'
+        
+        params = [
+            {"name": "@user_id", "value": user_id},
+            {"name": "@today_date", "value": today_date},
+            {"name": "@workspace_type", "value": workspace_type},
+            {"name": "@workspace_id_key", "value": workspace_id_key},
+            {"name": "@workspace_id", "value": workspace_id}
+        ]
+        
+        results = list(cosmos_activity_logs_container.query_items(
+            query=query,
+            parameters=params,
+            enable_cross_partition_query=False  # Query by partition key (user_id)
+        ))
+        
+        count = results[0] if results else 0
+        
+        debug_print(f"🔍 User agreement check: user {user_id}, workspace {workspace_id}, today={today_date}, accepted={count > 0}")
+        
+        return count > 0
+        
+    except Exception as e:
+        # Log error and return False (require re-acceptance on error)
+        log_event(
+            message=f"Error checking user agreement acceptance: {str(e)}",
+            extra={
+                'user_id': user_id,
+                'workspace_type': workspace_type,
+                'workspace_id': workspace_id,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+        debug_print(f"⚠️  Error checking user agreement acceptance: {str(e)}")
+        return False
+
+
+def log_retention_policy_force_push(
+    admin_user_id: str,
+    admin_email: str,
+    scopes: list,
+    results: dict,
+    total_updated: int
+) -> None:
+    """
+    Log retention policy force push action to activity_logs container.
+    
+    This creates a permanent audit record when an admin forces organization
+    default retention policies to be applied to all workspaces.
+    
+    Args:
+        admin_user_id (str): User ID of the admin performing the force push
+        admin_email (str): Email of the admin performing the force push
+        scopes (list): List of workspace types affected (e.g., ['personal', 'group', 'public'])
+        results (dict): Breakdown of updates per workspace type
+        total_updated (int): Total number of workspaces/users updated
+    """
+    
+    try:
+        # Create force push activity record
+        force_push_activity = {
+            'id': str(uuid.uuid4()),
+            'user_id': admin_user_id,  # Partition key
+            'activity_type': 'retention_policy_force_push',
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'admin': {
+                'user_id': admin_user_id,
+                'email': admin_email
+            },
+            'force_push_details': {
+                'scopes': scopes,
+                'results': results,
+                'total_updated': total_updated,
+                'executed_at': datetime.utcnow().isoformat()
+            },
+            'workspace_type': 'admin',
+            'workspace_context': {
+                'action': 'retention_policy_force_push'
+            }
+        }
+        
+        # Save to activity_logs container for permanent audit trail
+        cosmos_activity_logs_container.create_item(body=force_push_activity)
+        
+        # Also log to Application Insights for monitoring
+        log_event(
+            message=f"Retention policy force push executed by {admin_email} for scopes: {', '.join(scopes)}. Total updated: {total_updated}",
+            extra=force_push_activity,
+            level=logging.INFO
+        )
+        
+        debug_print(f"✅ Retention policy force push logged: {scopes} by {admin_email}, updated {total_updated}")
+        
+    except Exception as e:
+        # Log error but don't break the force push flow
+        log_event(
+            message=f"Error logging retention policy force push: {str(e)}",
+            extra={
+                'admin_user_id': admin_user_id,
+                'scopes': scopes,
+                'total_updated': total_updated,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+        debug_print(f"⚠️  Warning: Failed to log retention policy force push: {str(e)}")

@@ -16,6 +16,7 @@ from datetime import datetime
 from config import cosmos_global_agents_container
 from functions_keyvault import keyvault_agent_save_helper, keyvault_agent_get_helper, keyvault_agent_delete_helper
 from functions_settings import *
+from functions_agent_payload import sanitize_agent_payload, AgentPayloadError
 
 
 def ensure_default_global_agent_exists():
@@ -173,21 +174,19 @@ def save_global_agent(agent_data):
         dict: Saved agent data or None if failed
     """
     try:
-        # Ensure required fields
         user_id = get_current_user_id()
-        if 'id' not in agent_data:
-            agent_data['id'] = str(uuid.uuid4())
-        # Add metadata
-        agent_data['is_global'] = True
-        agent_data['is_group'] = False
-        agent_data.setdefault('agent_type', 'local')
-        agent_data['created_at'] = datetime.utcnow().isoformat()
-        agent_data['updated_at'] = datetime.utcnow().isoformat()
+        cleaned_agent = sanitize_agent_payload(agent_data)
+        if 'id' not in cleaned_agent:
+            cleaned_agent['id'] = str(uuid.uuid4())
+        cleaned_agent['is_global'] = True
+        cleaned_agent['is_group'] = False
+        cleaned_agent['created_at'] = datetime.utcnow().isoformat()
+        cleaned_agent['updated_at'] = datetime.utcnow().isoformat()
         log_event(
             "Saving global agent.",
-            extra={"agent_name": agent_data.get('name', 'Unknown')},
+            extra={"agent_name": cleaned_agent.get('name', 'Unknown')},
         )
-        print(f"Saving global agent: {agent_data.get('name', 'Unknown')}")
+        print(f"Saving global agent: {cleaned_agent.get('name', 'Unknown')}")
         
         # Use the new helper to store sensitive agent keys in Key Vault
         agent_data = keyvault_agent_save_helper(agent_data, agent_data['id'], scope="global")
@@ -198,7 +197,7 @@ def save_global_agent(agent_data):
         if agent_data.get('reasoning_effort') == '':
             agent_data.pop('reasoning_effort', None)
 
-        result = cosmos_global_agents_container.upsert_item(body=agent_data)
+        result = cosmos_global_agents_container.upsert_item(body=cleaned_agent)
         log_event(
             "Global agent saved successfully.",
             extra={"agent_id": result['id'], "user_id": user_id},

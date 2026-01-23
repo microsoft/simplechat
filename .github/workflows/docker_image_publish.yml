@@ -1,4 +1,3 @@
-
 name: SimpleChat Docker Image Publish
 
 on:
@@ -8,9 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
-
   build:
-
     runs-on: ubuntu-latest
 
     steps:
@@ -18,16 +15,25 @@ jobs:
       uses: Azure/docker-login@v2
       with:
         # Container registry username
-        username: ${{ secrets.ACR_USERNAME }}
+        username: ${{ secrets.MAIN_ACR_USERNAME }}
         # Container registry password
-        password: ${{ secrets.ACR_PASSWORD }}
+        password: ${{ secrets.MAIN_ACR_PASSWORD }}
         # Container registry server url
-        login-server: ${{ secrets.ACR_LOGIN_SERVER }}
+        login-server: ${{ secrets.MAIN_ACR_LOGIN_SERVER }}
+    - name: Normalize branch name for tag
+      run: |
+        REF="${GITHUB_REF_NAME}"
+        SAFE=$(echo "$REF" \
+          | tr '[:upper:]' '[:lower:]' \
+          | sed 's#[^a-z0-9._-]#-#g' \
+          | sed 's/^-*//;s/-*$//' \
+          | cut -c1-128)
+        echo "BRANCH_TAG=$SAFE" >> "$GITHUB_ENV"
         
     - uses: actions/checkout@v3
     - name: Build the Docker image
       run:         
-        docker build . --file application/single_app/Dockerfile --tag ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat:$(date +'%Y-%m-%d')_$GITHUB_RUN_NUMBER;
-        docker tag ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat:$(date +'%Y-%m-%d')_$GITHUB_RUN_NUMBER ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat:latest;
-        docker push ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat:$(date +'%Y-%m-%d')_$GITHUB_RUN_NUMBER;
+        docker build . --file application/single_app/Dockerfile --tag ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat:$(date +'%Y-%m-%d')_${BRANCH_TAG}_$GITHUB_RUN_NUMBER;
+        docker tag ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat:$(date +'%Y-%m-%d')_${BRANCH_TAG}_$GITHUB_RUN_NUMBER ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat:latest;
+        docker push ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat:$(date +'%Y-%m-%d')_${BRANCH_TAG}_$GITHUB_RUN_NUMBER;
         docker push ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat:latest;
