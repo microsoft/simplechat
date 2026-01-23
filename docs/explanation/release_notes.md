@@ -36,8 +36,48 @@
     *   **Files Added**: `user-agreement.js` (frontend module), `route_backend_user_agreement.py` (API endpoints).
     *   **Files Modified**: `admin_settings.html`, `route_frontend_admin_settings.py`, `base.html`, `_sidebar_nav.html`, `functions_activity_logging.py`, `workspace-documents.js`, `group_workspaces.html`, `public_workspace.js`, `chat-input-actions.js`.
     *   (Ref: User Agreement modal, file upload workflows, activity logging, admin configuration)
+
+*   **Web Search via Azure AI Foundry Agents**
+    *   Web search capability through Azure AI Foundry agents using Grounding with Bing Search service.
+    *   **Pricing**: $14 per 1,000 transactions (150 transactions/second, 1M transactions/day limit).
+    *   **Admin Consent Flow**: Requires explicit administrator consent before enabling due to data processing considerations outside Azure compliance boundary.
+    *   **Consent Logging**: All consent acceptances are logged to activity logs for compliance and audit purposes.
+    *   **Setup Guide Modal**: Comprehensive in-app configuration guide with step-by-step instructions for creating the agent, configuring Bing grounding, setting result count to 10, and recommended agent instructions.
+    *   **User Data Notice**: Admin-configurable notification banner that appears when users activate web search, informing them that their message will be sent to Microsoft Bing. Customizable notice text, dismissible per session.
+    *   **Graceful Error Handling**: When web search fails, the system informs users rather than answering from outdated training data.
+    *   **Seamless Integration**: Web search results automatically integrated into AI responses when enabled.
+    *   **Settings**: `enable_web_search` toggle, `web_search_consent_accepted` tracking, `enable_web_search_user_notice` toggle, and `web_search_user_notice_text` customization in admin settings.
+    *   **Files Added**: `_web_search_foundry_info.html` (setup guide modal).
+    *   **Files Modified**: `route_frontend_admin_settings.py`, `route_backend_chats.py`, `functions_activity_logging.py`, `admin_settings.html`, `chats.html`, `chat-input-actions.js`, `functions_settings.py`.
+    *   (Ref: Grounding with Bing Search, Azure AI Foundry, consent workflow, activity logging, pricing, user transparency)
+
+*   **Conversation Deep Linking**
+    *   Direct URL links to specific conversations via query parameters for sharing and bookmarking.
+    *   **URL Parameters**: Supports both `conversationId` and `conversation_id` query parameters.
+    *   **Automatic URL Updates**: Current conversation ID automatically added to URL when selecting conversations.
+    *   **Browser Integration**: Uses `history.replaceState()` for seamless URL updates without new history entries.
+    *   **Error Handling**: Graceful handling of invalid or inaccessible conversation IDs with toast notifications.
+    *   **Files Modified**: `chat-onload.js`, `chat-conversations.js`.
+    *   (Ref: deep linking, URL parameters, conversation navigation, shareability)
+
+*   **Plugin Authentication Type Constraints**
+    *   Per-plugin-type authentication method restrictions for better security and API compatibility.
+    *   **Schema-Based Defaults**: Falls back to global `AuthType` enum from `plugin.schema.json`.
+    *   **Definition File Overrides**: Plugin-specific `.definition.json` files can restrict available auth types.
+    *   **API Endpoint**: New `/api/plugins/<plugin_type>/auth-types` endpoint returns allowed auth types and source.
+    *   **Frontend Integration**: UI can query allowed auth types to display only valid options.
+    *   **Files Modified**: `route_backend_plugins.py`.
+    *   (Ref: plugin authentication, auth type constraints, OpenAPI plugins, security)
     
 #### Bug Fixes
+
+*   **Control Center Chart Date Labels Fix**
+    *   Fixed activity trends chart date labels to parse dates in local time instead of UTC.
+    *   **Root Cause**: JavaScript `new Date()` was parsing date strings as UTC, causing labels to display previous day in western timezones.
+    *   **Solution**: Parse date components explicitly and construct Date objects in local timezone.
+    *   **Impact**: Chart x-axis labels now correctly show the intended dates regardless of user timezone.
+    *   **Files Modified**: `control_center.html` (Chart.js date parsing logic).
+    *   (Ref: Chart.js, date parsing, timezone handling, activity trends)
 
 *   **Sovereign Cloud Cognitive Services Scope Fix**
     *   Fixed hardcoded commercial Azure cognitive services scope references that prevented authentication in Azure Government (MAG) and custom cloud environments.

@@ -1654,6 +1654,16 @@ function setupToggles() {
         }
     }
 
+    // Web Search User Notice toggle
+    const enableWebSearchUserNotice = document.getElementById('enable_web_search_user_notice');
+    const webSearchUserNoticeSettings = document.getElementById('web_search_user_notice_settings');
+    if (enableWebSearchUserNotice && webSearchUserNoticeSettings) {
+        enableWebSearchUserNotice.addEventListener('change', function() {
+            toggleVisibility(webSearchUserNoticeSettings, this.checked);
+            markFormAsModified();
+        });
+    }
+
     const foundryAuthType = document.getElementById('web_search_foundry_auth_type');
     const foundryMiType = document.getElementById('web_search_foundry_managed_identity_type');
     const foundryCloud = document.getElementById('web_search_foundry_cloud');
