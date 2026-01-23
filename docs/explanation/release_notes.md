@@ -60,17 +60,6 @@
     *   **Files Modified**: `chat-onload.js`, `chat-conversations.js`.
     *   (Ref: deep linking, URL parameters, conversation navigation, shareability)
 
-*   **Agent Template Gallery**
-    *   Curated collection of reusable agent configurations as starting points for new agents.
-    *   **User Submission**: Users can submit their agents as templates for community use.
-    *   **Admin Review Workflow**: Submitted templates require admin approval before publication (pending → approved → rejected workflow).
-    *   **Rich Metadata**: Templates include titles, descriptions, helper text (140 char), tags, and predefined actions.
-    *   **Configuration Options**: `enable_agent_template_gallery`, `agent_templates_allow_user_submission`, `agent_templates_require_approval`.
-    *   **Database**: New `agent_templates` Cosmos DB container with partition key on `/id`.
-    *   **Files Added**: `functions_agent_templates.py`.
-    *   **Files Modified**: `config.py`, `route_frontend_admin_settings.py`.
-    *   (Ref: agent templates, template gallery, admin approval workflow, reusable configurations)
-
 *   **Plugin Authentication Type Constraints**
     *   Per-plugin-type authentication method restrictions for better security and API compatibility.
     *   **Schema-Based Defaults**: Falls back to global `AuthType` enum from `plugin.schema.json`.
