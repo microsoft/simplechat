@@ -39,12 +39,16 @@
 
 *   **Web Search via Azure AI Foundry Agents**
     *   Web search capability through Azure AI Foundry agents using Grounding with Bing Search service.
+    *   **Pricing**: $14 per 1,000 transactions (150 transactions/second, 1M transactions/day limit).
     *   **Admin Consent Flow**: Requires explicit administrator consent before enabling due to data processing considerations outside Azure compliance boundary.
     *   **Consent Logging**: All consent acceptances are logged to activity logs for compliance and audit purposes.
+    *   **Setup Guide Modal**: Comprehensive in-app configuration guide with step-by-step instructions for creating the agent, configuring Bing grounding, setting result count to 10, and recommended agent instructions.
+    *   **Graceful Error Handling**: When web search fails, the system informs users rather than answering from outdated training data.
     *   **Seamless Integration**: Web search results automatically integrated into AI responses when enabled.
     *   **Settings**: `enable_web_search` toggle and `web_search_consent_accepted` tracking in admin settings.
-    *   **Files Modified**: `route_frontend_admin_settings.py`, `functions_activity_logging.py`.
-    *   (Ref: Grounding with Bing Search, Azure AI Foundry, consent workflow, activity logging)
+    *   **Files Added**: `_web_search_foundry_info.html` (setup guide modal).
+    *   **Files Modified**: `route_frontend_admin_settings.py`, `route_backend_chats.py`, `functions_activity_logging.py`, `admin_settings.html`.
+    *   (Ref: Grounding with Bing Search, Azure AI Foundry, consent workflow, activity logging, pricing)
 
 *   **Conversation Deep Linking**
     *   Direct URL links to specific conversations via query parameters for sharing and bookmarking.

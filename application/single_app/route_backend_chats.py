@@ -4180,7 +4180,7 @@ def perform_web_search(
     
     if not enable_web_search:
         debug_print("[WebSearch] Web search is DISABLED in settings, returning early")
-        return
+        return True  # Not an error, just disabled
 
     debug_print("[WebSearch] Web search is ENABLED, proceeding...")
     
@@ -4214,7 +4214,12 @@ def perform_web_search(
             level=logging.WARNING,
         )
         debug_print("[WebSearch] Foundry agent_id not configured, skipping web search.")
-        return
+        # Add failure message so the model knows search was requested but not configured
+        system_messages_for_augmentation.append({
+            "role": "system",
+            "content": "Web search was requested but is not properly configured. Please inform the user that web search is currently unavailable and you cannot provide real-time information. Do not attempt to answer questions requiring current information from your training data.",
+        })
+        return False  # Configuration error
 
     debug_print(f"[WebSearch] Agent ID is configured: {agent_id}")
     
@@ -4239,7 +4244,7 @@ def perform_web_search(
             },
             level=logging.WARNING,
         )
-        return
+        return True  # Not an error, just empty query
 
     debug_print(f"[WebSearch] Building message history with query: {query_text[:100]}...")
     message_history = [
@@ -4283,7 +4288,12 @@ def perform_web_search(
             level=logging.ERROR,
             exceptionTraceback=True,
         )
-        return
+        # Add failure message so the model informs the user
+        system_messages_for_augmentation.append({
+            "role": "system",
+            "content": f"Web search failed with error: {exc}. Please inform the user that the web search encountered an error and you cannot provide real-time information for this query. Do not attempt to answer questions requiring current information from your training data - instead, acknowledge the search failure and suggest the user try again.",
+        })
+        return False  # Search failed
     except Exception as exc:
         log_event(
             f"[WebSearch] Unexpected error invoking Foundry agent: {exc}",
@@ -4295,7 +4305,12 @@ def perform_web_search(
             level=logging.ERROR,
             exceptionTraceback=True,
         )
-        return
+        # Add failure message so the model informs the user
+        system_messages_for_augmentation.append({
+            "role": "system",
+            "content": f"Web search failed with an unexpected error: {exc}. Please inform the user that the web search encountered an error and you cannot provide real-time information for this query. Do not attempt to answer questions requiring current information from your training data - instead, acknowledge the search failure and suggest the user try again.",
+        })
+        return False  # Search failed
 
     debug_print("[WebSearch] ========== FOUNDRY AGENT RESULT ==========")
     debug_print(f"[WebSearch] Result type: {type(result)}")
@@ -4425,3 +4440,5 @@ def perform_web_search(
         },
         level=logging.INFO,
     )
+    
+    return True  # Search succeeded

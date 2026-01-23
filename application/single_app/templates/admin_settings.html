@@ -3152,7 +3152,12 @@
                 </p>
 
                 <div class="card p-3 mb-3" id="web-search-foundry-section">
-                    <h5><i class="bi bi-globe me-2"></i>Web Search (Azure AI Foundry Agent)</h5>
+                    <div class="d-flex align-items-center justify-content-between mb-2">
+                        <h5 class="mb-0"><i class="bi bi-globe me-2"></i>Web Search (Azure AI Foundry Agent)</h5>
+                        <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#webSearchFoundryInfoModal">
+                            <i class="bi bi-info-circle me-1"></i>Setup Guide
+                        </button>
+                    </div>
                     <p class="text-muted mb-2">Enable web search by routing queries through an Azure AI Foundry agent configured by admins.</p>
                     <div class="form-check form-switch mb-3">
                         <input
@@ -3172,9 +3177,6 @@
                     >
 
                     <div id="web_search_foundry_settings" class="{% if not settings.enable_web_search %}d-none{% endif %}">
-                        <div class="alert alert-warning py-2 small">
-                            <strong>Note:</strong> Configure the Azure AI Foundry agent that will execute web searches. This agent is stored in global settings (not in the agents list).
-                        </div>
                         <div class="row g-3">
                             <div class="col-12" id="web_search_foundry_endpoint_container">
                                 <label for="web_search_foundry_endpoint" class="form-label">Foundry Project Endpoint</label>
@@ -3243,13 +3245,6 @@
                                     <input type="password" class="form-control" id="web_search_foundry_client_secret" name="web_search_foundry_client_secret" value="{{ settings.web_search_agent.other_settings.azure_ai_foundry.client_secret if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else '' }}" placeholder="Secret or Key Vault reference">
                                     <button type="button" class="btn btn-outline-secondary" id="toggle_web_search_foundry_client_secret">Show</button>
                                 </div>
-                            </div>
-                        </div>
-
-                        <div class="row g-3 mt-1">
-                            <div class="col-12">
-                                <label for="web_search_foundry_notes" class="form-label">Notes (optional)</label>
-                                <textarea class="form-control" id="web_search_foundry_notes" name="web_search_foundry_notes" rows="2" placeholder="Where to find these values in Azure AI Foundry or any internal notes.">{{ settings.web_search_agent.other_settings.azure_ai_foundry.notes if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else '' }}</textarea>
                             </div>
                         </div>
                     </div>
@@ -4109,6 +4104,9 @@
 
         <!-- Video Indexer Info Modal -->
         {% include '_video_indexer_info.html' %}
+
+        <!-- Web Search Foundry Info Modal -->
+        {% include '_web_search_foundry_info.html' %}
 
         <!-- Key Vault Info Modal -->
         {% include '_key_vault_info.html' %}

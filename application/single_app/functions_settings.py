@@ -234,7 +234,7 @@ def get_settings(use_cosmos=False):
                 'azure_ai_foundry': {
                     'agent_id': '',
                     'endpoint': '',
-                    'api_version': '',
+                    'api_version': 'v1',
                     'authentication_type': 'managed_identity',
                     'managed_identity_type': 'system_assigned',
                     'managed_identity_client_id': '',
