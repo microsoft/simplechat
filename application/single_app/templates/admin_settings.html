@@ -3177,6 +3177,26 @@
                     >
 
                     <div id="web_search_foundry_settings" class="{% if not settings.enable_web_search %}d-none{% endif %}">
+                        <!-- User Notice Settings -->
+                        <div class="card p-3 mb-3 bg-light">
+                            <h6 class="mb-2"><i class="bi bi-bell me-2"></i>User Data Notice</h6>
+                            <p class="text-muted small mb-2">Optionally show users a one-time notice explaining that their message will be sent to Bing for web search.</p>
+                            <div class="form-check form-switch mb-3">
+                                <input
+                                    type="checkbox"
+                                    class="form-check-input mb-3"
+                                    id="enable_web_search_user_notice"
+                                    name="enable_web_search_user_notice"
+                                    {% if settings.enable_web_search_user_notice %}checked{% endif %}
+                                >
+                                <label class="form-check-label ms-2 mb-3" for="enable_web_search_user_notice">Show data notice to users when web search is used</label>
+                            </div>
+                            <div id="web_search_user_notice_settings" class="{% if not settings.enable_web_search_user_notice %}d-none{% endif %}">
+                                <label for="web_search_user_notice_text" class="form-label">Notice Text</label>
+                                <textarea class="form-control" id="web_search_user_notice_text" name="web_search_user_notice_text" rows="2" placeholder="Your message will be sent to Microsoft Bing for web search...">{{ settings.web_search_user_notice_text or 'Your message will be sent to Microsoft Bing for web search. Only your current message is sent, not your conversation history.' }}</textarea>
+                                <div class="form-text">This message will be shown to users once per session when they first use web search.</div>
+                            </div>
+                        </div>
                         <div class="row g-3">
                             <div class="col-12" id="web_search_foundry_endpoint_container">
                                 <label for="web_search_foundry_endpoint" class="form-label">Foundry Project Endpoint</label>

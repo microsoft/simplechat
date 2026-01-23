@@ -225,6 +225,8 @@ def get_settings(use_cosmos=False):
         # Web search (via Azure AI Foundry agent)
         'enable_web_search': False,
         'web_search_consent_accepted': False,
+        'enable_web_search_user_notice': False,  # Show popup to users explaining their message will be sent to Bing
+        'web_search_user_notice_text': 'Your message will be sent to Microsoft Bing for web search. Only your current message is sent, not your conversation history.',
         'web_search_agent': {
             'agent_type': 'aifoundry',
             'azure_openai_gpt_endpoint': '',
