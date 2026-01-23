@@ -192,6 +192,22 @@
         #right-pane {
             transition: margin-left 0.3s ease-in-out, max-width 0.3s ease-in-out, width 0.3s ease-in-out !important;
         }
+        
+        /* Web search notice styling - connects with input field */
+        #web-search-notice-container {
+            margin-bottom: 0 !important;
+        }
+        
+        #web-search-notice-container > div {
+            border-bottom-left-radius: 0 !important;
+            border-bottom-right-radius: 0 !important;
+        }
+        
+        /* When notice is visible, adjust input field to connect */
+        #web-search-notice-container:not([style*="display: none"]) + .chat-input-container #user-input {
+            border-top-left-radius: 0 !important;
+            border-top-right-radius: 0 !important;
+        }
     </style>
 {% endblock %}
 
@@ -440,6 +456,16 @@
                 </div>
                 {% endif %}
 
+                <!-- Web Search User Notice (shown when web search is active and notice is enabled) -->
+                {% if settings.enable_web_search and settings.web_search_consent_accepted and settings.enable_web_search_user_notice %}
+                <div id="web-search-notice-container" class="mb-2" style="display: none;">
+                    <div class="d-flex align-items-center px-3 py-2 rounded-top border border-bottom-0" style="background-color: var(--bs-tertiary-bg); border-color: var(--bs-border-color) !important;">
+                        <i class="bi bi-info-circle text-primary me-2"></i>
+                        <span class="small" id="web-search-notice-text">{{ settings.web_search_user_notice_text or 'Your message will be sent to Microsoft Bing for web search. Only your current message is sent, not your conversation history.' }}</span>
+                        <button type="button" class="btn-close btn-close-sm ms-auto" id="web-search-notice-dismiss" aria-label="Dismiss" style="font-size: 0.65rem;"></button>
+                    </div>
+                </div>
+                {% endif %}
                 
                 <div class="chat-input-container position-relative">
                     <!-- Textarea container with send button inside -->
@@ -894,7 +920,8 @@
     // App settings for feature detection
     window.appSettings = {
         enable_text_to_speech: {{ 'true' if app_settings.enable_text_to_speech else 'false' }},
-        enable_speech_to_text_input: {{ 'true' if app_settings.enable_speech_to_text_input else 'false' }}
+        enable_speech_to_text_input: {{ 'true' if app_settings.enable_speech_to_text_input else 'false' }},
+        enable_web_search_user_notice: {{ 'true' if settings.enable_web_search_user_notice else 'false' }}
     };
 
     // Layout related globals (can stay here or move entirely into chat-layout.js if preferred)
