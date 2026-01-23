@@ -7,9 +7,7 @@ from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_frontend_group_workspaces(app):
     @app.route('/group_workspaces', methods=['GET'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_group_workspaces")
@@ -46,6 +44,18 @@ def register_route_frontend_group_workspaces(app):
             )
         )
         legacy_count = legacy_docs_from_cosmos[0] if legacy_docs_from_cosmos else 0
+        
+        # Build allowed extensions string
+        allowed_extensions = [
+            "txt", "pdf", "doc", "docm", "docx", "xlsx", "xls", "xlsm","csv", "pptx", "html",
+            "jpg", "jpeg", "png", "bmp", "tiff", "tif", "heif", "md", "json",
+            "xml", "yaml", "yml", "log"
+        ]
+        if enable_video_file_support in [True, 'True', 'true']:
+            allowed_extensions += ["mp4", "mov", "avi", "wmv", "mkv", "webm"]
+        if enable_audio_file_support in [True, 'True', 'true']:
+            allowed_extensions += ["mp3", "wav", "ogg", "aac", "flac", "m4a"]
+        allowed_extensions_str = "Allowed: " + ", ".join(allowed_extensions)
 
         # Build allowed extensions string
         allowed_extensions = [
@@ -72,9 +82,7 @@ def register_route_frontend_group_workspaces(app):
         )
 
     @app.route('/set_active_group', methods=['POST'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_group_workspaces")

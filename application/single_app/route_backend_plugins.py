@@ -2,6 +2,7 @@
 
 import re
 import builtins
+import json
 from flask import Blueprint, jsonify, request, current_app
 from semantic_kernel_plugins.plugin_loader import get_all_plugin_metadata
 from semantic_kernel_plugins.plugin_health_checker import PluginHealthChecker, PluginErrorRecovery
@@ -11,7 +12,7 @@ from functions_appinsights import log_event
 from swagger_wrapper import swagger_route, get_auth_security
 import logging
 import os
-
+from functions_debug import debug_print
 import importlib.util
 from functions_plugins import get_merged_plugin_settings
 from semantic_kernel_plugins.base_plugin import BasePlugin
@@ -342,7 +343,7 @@ def set_user_plugins():
             delete_personal_action(user_id, plugin_name)
             
     except Exception as e:
-        current_app.logger.error(f"Error saving personal actions for user {user_id}: {e}")
+        debug_print(f"Error saving personal actions for user {user_id}: {e}")
         return jsonify({'error': 'Failed to save plugins'}), 500
     log_event("User plugins updated", extra={"user_id": user_id, "plugins_count": len(filtered_plugins)})
     return jsonify({'success': True})
@@ -460,7 +461,7 @@ def create_group_action_route():
     try:
         saved = save_group_action(active_group, payload)
     except Exception as exc:
-        current_app.logger.error('Failed to save group action: %s', exc)
+        debug_print('Failed to save group action: %s', exc)
         return jsonify({'error': 'Unable to save action'}), 500
 
     return jsonify(saved), 201
@@ -513,7 +514,7 @@ def update_group_action_route(action_id):
     try:
         saved = save_group_action(active_group, merged)
     except Exception as exc:
-        current_app.logger.error('Failed to update group action %s: %s', action_id, exc)
+        debug_print('Failed to update group action %s: %s', action_id, exc)
         return jsonify({'error': 'Unable to update action'}), 500
 
     return jsonify(saved), 200
@@ -539,7 +540,7 @@ def delete_group_action_route(action_id):
     try:
         removed = delete_group_action(active_group, action_id)
     except Exception as exc:
-        current_app.logger.error('Failed to delete group action %s: %s', action_id, exc)
+        debug_print('Failed to delete group action %s: %s', action_id, exc)
         return jsonify({'error': 'Unable to delete action'}), 500
 
     if not removed:
@@ -801,6 +802,58 @@ def merge_plugin_settings(plugin_type):
     schema_dir = os.path.join(current_app.root_path, 'static', 'json', 'schemas')
     merged = get_merged_plugin_settings(plugin_type, current_settings, schema_dir)
     return jsonify(merged)
+
+
+@bpap.route('/api/plugins/<plugin_type>/auth-types', methods=['GET'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+def get_plugin_auth_types(plugin_type):
+    """
+    Returns allowed auth types for a plugin type. Uses definition file if present,
+    otherwise falls back to AuthType enum in plugin.schema.json.
+    """
+    schema_dir = os.path.join(current_app.root_path, 'static', 'json', 'schemas')
+    safe_type = re.sub(r'[^a-zA-Z0-9_]', '_', plugin_type).lower()
+
+    definition_path = os.path.join(schema_dir, f'{safe_type}.definition.json')
+    schema_path = os.path.join(schema_dir, 'plugin.schema.json')
+
+    allowed_auth_types = []
+    source = "schema"
+
+    try:
+        with open(schema_path, 'r', encoding='utf-8') as schema_file:
+            schema = json.load(schema_file)
+        allowed_auth_types = (
+            schema
+            .get('definitions', {})
+            .get('AuthType', {})
+            .get('enum', [])
+        )
+    except Exception as exc:
+        debug_print(f"Failed to read plugin.schema.json: {exc}")
+        allowed_auth_types = []
+
+    if os.path.exists(definition_path):
+        try:
+            with open(definition_path, 'r', encoding='utf-8') as definition_file:
+                definition = json.load(definition_file)
+            allowed_from_definition = definition.get('allowedAuthTypes')
+            if isinstance(allowed_from_definition, list) and allowed_from_definition:
+                allowed_auth_types = allowed_from_definition
+                source = "definition"
+        except Exception as exc:
+            debug_print(f"Failed to read {definition_path}: {exc}")
+
+    if not allowed_auth_types:
+        allowed_auth_types = []
+        source = "schema"
+
+    return jsonify({
+        "allowedAuthTypes": allowed_auth_types,
+        "source": source
+    })
 
 ##########################################################################################################
 # Dynamic Plugin Metadata Endpoint

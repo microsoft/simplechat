@@ -7,7 +7,7 @@ applyTo: '**'
 ## Documentation Directory
 All bug fixes and issue resolution documentation should be placed in:
 ```
-..\docs\fixes\
+..\docs\explanation\fixes\
 ```
 
 ## File Naming Convention

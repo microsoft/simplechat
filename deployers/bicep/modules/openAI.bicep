@@ -15,6 +15,8 @@ param configureApplicationPermissions bool
 param gptModels array
 param embeddingModels array
 
+param enablePrivateNetworking bool
+
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
   name: 'diagnosticConfigs'
@@ -32,7 +34,7 @@ resource openAI 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
     type: 'SystemAssigned'
   }
   properties: {
-    publicNetworkAccess: 'Enabled'
+    publicNetworkAccess: enablePrivateNetworking ? 'Disabled' : 'Enabled'
     customSubDomainName: toLower('${appName}-${environment}-openai')
   }
   tags: tags

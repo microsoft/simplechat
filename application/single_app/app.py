@@ -36,6 +36,7 @@ from route_frontend_group_workspaces import *
 from route_frontend_public_workspaces import *
 from route_frontend_safety import *
 from route_frontend_feedback import *
+from route_frontend_notifications import *
 
 from route_backend_chats import *
 from route_backend_conversations import *
@@ -50,11 +51,17 @@ from route_backend_settings import *
 from route_backend_prompts import *
 from route_backend_group_prompts import *
 from route_backend_control_center import *
+from route_backend_notifications import *
+from route_backend_retention_policy import *
 from route_backend_plugins import bpap as admin_plugins_bp, bpdp as dynamic_plugins_bp
 from route_backend_agents import bpa as admin_agents_bp
+from route_backend_agent_templates import bp_agent_templates
 from route_backend_public_workspaces import *
 from route_backend_public_documents import *
 from route_backend_public_prompts import *
+from route_backend_user_agreement import register_route_backend_user_agreement
+from route_backend_speech import register_route_backend_speech
+from route_backend_tts import register_route_backend_tts
 from route_enhanced_citations import register_enhanced_citations_routes
 from plugin_validation_endpoint import plugin_validation_bp
 from route_openapi import register_openapi_routes
@@ -85,12 +92,14 @@ if SESSION_TYPE == 'filesystem':
         os.makedirs(app.config['SESSION_FILE_DIR'], exist_ok=True)
     except Exception as e:
         print(f"WARNING: Unable to create session directory {app.config.get('SESSION_FILE_DIR')}: {e}")
+        log_event(f"Unable to create session directory {app.config.get('SESSION_FILE_DIR')}: {e}", level=logging.ERROR)
 
 Session(app)
 
 app.register_blueprint(admin_plugins_bp)
 app.register_blueprint(dynamic_plugins_bp)
 app.register_blueprint(admin_agents_bp)
+app.register_blueprint(bp_agent_templates)
 app.register_blueprint(plugin_validation_bp)
 app.register_blueprint(bp_migration)
 app.register_blueprint(plugin_logging_bp)
@@ -100,6 +109,12 @@ register_openapi_routes(app)
 
 # Register Enhanced Citations routes
 register_enhanced_citations_routes(app)
+
+# Register Speech routes
+register_route_backend_speech(app)
+
+# Register TTS routes
+register_route_backend_tts(app)
 
 # Register Swagger documentation routes
 from swagger_wrapper import register_swagger_routes
@@ -127,38 +142,55 @@ def configure_sessions(settings):
             redis_auth_type = settings.get('redis_auth_type', 'key').strip().lower()
 
             if redis_url:
-                app.config['SESSION_TYPE'] = 'redis'
-                if redis_auth_type == 'managed_identity':
-                    print("Redis enabled using Managed Identity")
-                    from config import get_redis_cache_infrastructure_endpoint
-                    credential = DefaultAzureCredential()
-                    redis_hostname = redis_url.split('.')[0]
-                    cache_endpoint = get_redis_cache_infrastructure_endpoint(redis_hostname)
-                    token = credential.get_token(cache_endpoint)
-                    app.config['SESSION_REDIS'] = Redis(
-                        host=redis_url,
-                        port=6380,
-                        db=0,
-                        password=token.token,
-                        ssl=True
-                    )
-                else:
-                    redis_key = settings.get('redis_key', '').strip()
-                    print("Redis enabled using Access Key")
-                    app.config['SESSION_REDIS'] = Redis(
-                        host=redis_url,
-                        port=6380,
-                        db=0,
-                        password=redis_key,
-                        ssl=True
-                    )
+                redis_client = None
+                try:
+                    if redis_auth_type == 'managed_identity':
+                        print("Redis enabled using Managed Identity")
+                        from config import get_redis_cache_infrastructure_endpoint
+                        credential = DefaultAzureCredential()
+                        redis_hostname = redis_url.split('.')[0]
+                        cache_endpoint = get_redis_cache_infrastructure_endpoint(redis_hostname)
+                        token = credential.get_token(cache_endpoint)
+                        redis_client = Redis(
+                            host=redis_url,
+                            port=6380,
+                            db=0,
+                            password=token.token,
+                            ssl=True,
+                            socket_connect_timeout=5,
+                            socket_timeout=5
+                        )
+                    else:
+                        redis_key = settings.get('redis_key', '').strip()
+                        print("Redis enabled using Access Key")
+                        redis_client = Redis(
+                            host=redis_url,
+                            port=6380,
+                            db=0,
+                            password=redis_key,
+                            ssl=True,
+                            socket_connect_timeout=5,
+                            socket_timeout=5
+                        )
+                    
+                    # Test the connection
+                    redis_client.ping()
+                    print("✅ Redis connection successful")
+                    app.config['SESSION_TYPE'] = 'redis'
+                    app.config['SESSION_REDIS'] = redis_client
+                    
+                except Exception as redis_error:
+                    print(f"⚠️  WARNING: Redis connection failed: {redis_error}")
+                    print("Falling back to filesystem sessions for reliability")
+                    app.config['SESSION_TYPE'] = 'filesystem'
             else:
                 print("Redis enabled but URL missing; falling back to filesystem.")
                 app.config['SESSION_TYPE'] = 'filesystem'
         else:
             app.config['SESSION_TYPE'] = 'filesystem'
     except Exception as e:
-        print(f"WARNING: Session configuration error; falling back to filesystem: {e}")
+        print(f"⚠️  WARNING: Session configuration error; falling back to filesystem: {e}")
+        log_event(f"Session configuration error; falling back to filesystem: {e}", level=logging.ERROR)
         app.config['SESSION_TYPE'] = 'filesystem'
 
     # Initialize session interface
@@ -239,6 +271,7 @@ def before_first_request():
                 
             except Exception as e:
                 print(f"Error in logging timer check: {e}")
+                log_event(f"Error in logging timer check: {e}", level=logging.ERROR)
             
             # Check every 60 seconds
             time.sleep(60)
@@ -247,6 +280,109 @@ def before_first_request():
     timer_thread = threading.Thread(target=check_logging_timers, daemon=True)
     timer_thread.start()
     print("Logging timer background task started.")
+
+    # Background task to check for expired approval requests
+    def check_expired_approvals():
+        """Background task that checks for expired approval requests and auto-denies them"""
+        while True:
+            try:
+                from functions_approvals import auto_deny_expired_approvals
+                denied_count = auto_deny_expired_approvals()
+                if denied_count > 0:
+                    print(f"Auto-denied {denied_count} expired approval request(s).")
+            except Exception as e:
+                print(f"Error in approval expiration check: {e}")
+                log_event(f"Error in approval expiration check: {e}", level=logging.ERROR)
+            
+            # Check every 6 hours (21600 seconds)
+            time.sleep(21600)
+
+    # Start the approval expiration check thread
+    approval_thread = threading.Thread(target=check_expired_approvals, daemon=True)
+    approval_thread.start()
+    print("Approval expiration background task started.")
+
+    # Background task to check retention policy execution time
+    def check_retention_policy():
+        """Background task that executes retention policy at scheduled time"""
+        while True:
+            try:
+                settings = get_settings()
+                
+                # Check if any retention policy is enabled
+                personal_enabled = settings.get('enable_retention_policy_personal', False)
+                group_enabled = settings.get('enable_retention_policy_group', False)
+                public_enabled = settings.get('enable_retention_policy_public', False)
+                
+                if personal_enabled or group_enabled or public_enabled:
+                    current_time = datetime.now(timezone.utc)
+                    
+                    # Check if next scheduled run time has passed
+                    next_run = settings.get('retention_policy_next_run')
+                    should_run = False
+                    
+                    if next_run:
+                        try:
+                            next_run_dt = datetime.fromisoformat(next_run)
+                            # Run if we've passed the scheduled time
+                            if current_time >= next_run_dt:
+                                should_run = True
+                        except Exception as parse_error:
+                            print(f"Error parsing next_run timestamp: {parse_error}")
+                            # If we can't parse, fall back to checking last_run
+                            last_run = settings.get('retention_policy_last_run')
+                            if last_run:
+                                try:
+                                    last_run_dt = datetime.fromisoformat(last_run)
+                                    # Run if last run was more than 23 hours ago
+                                    if (current_time - last_run_dt).total_seconds() > (23 * 3600):
+                                        should_run = True
+                                except:
+                                    should_run = True
+                            else:
+                                should_run = True
+                    else:
+                        # No next_run set, check last_run instead
+                        last_run = settings.get('retention_policy_last_run')
+                        if last_run:
+                            try:
+                                last_run_dt = datetime.fromisoformat(last_run)
+                                # Run if last run was more than 23 hours ago
+                                if (current_time - last_run_dt).total_seconds() > (23 * 3600):
+                                    should_run = True
+                            except:
+                                should_run = True
+                        else:
+                            # Never run before, execute now
+                            should_run = True
+                    
+                    if should_run:
+                        print(f"Executing scheduled retention policy at {current_time.isoformat()}")
+                        from functions_retention_policy import execute_retention_policy
+                        results = execute_retention_policy(manual_execution=False)
+                        
+                        if results.get('success'):
+                            print(f"Retention policy execution completed: "
+                                 f"{results['personal']['conversations']} personal conversations, "
+                                 f"{results['personal']['documents']} personal documents, "
+                                 f"{results['group']['conversations']} group conversations, "
+                                 f"{results['group']['documents']} group documents, "
+                                 f"{results['public']['conversations']} public conversations, "
+                                 f"{results['public']['documents']} public documents deleted.")
+                        else:
+                            print(f"Retention policy execution failed: {results.get('errors')}")
+                
+            except Exception as e:
+                print(f"Error in retention policy check: {e}")
+                log_event(f"Error in retention policy check: {e}", level=logging.ERROR)
+            
+            # Check every 5 minutes for more responsive scheduling
+            time.sleep(300)
+
+    # Start the retention policy check thread
+    retention_thread = threading.Thread(target=check_retention_policy, daemon=True)
+    retention_thread.start()
+    print("Retention policy background task started.")
 
     # Initialize Semantic Kernel and plugins
     enable_semantic_kernel = settings.get('enable_semantic_kernel', False)
@@ -270,6 +406,8 @@ def inject_settings():
             from functions_settings import get_user_settings
             user_settings = get_user_settings(user_id) or {}
     except Exception as e:
+        print(f"Error injecting user settings: {e}")
+        log_event(f"Error injecting user settings: {e}", level=logging.ERROR)
         user_settings = {}
     return dict(app_settings=public_settings, user_settings=user_settings)
 
@@ -336,6 +474,7 @@ app.jinja_env.filters['markdown'] = markdown_filter
 
 # =================== Default Routes =====================
 @app.route('/')
+@swagger_route(security=get_auth_security())
 def index():
     settings = get_settings()
     public_settings = sanitize_settings_for_user(settings)
@@ -349,14 +488,17 @@ def index():
     return render_template('index.html', app_settings=public_settings, landing_html=landing_html)
 
 @app.route('/robots933456.txt')
+@swagger_route(security=get_auth_security())
 def robots():
     return send_from_directory('static', 'robots.txt')
 
 @app.route('/favicon.ico')
+@swagger_route(security=get_auth_security())
 def favicon():
     return send_from_directory('static', 'favicon.ico')
 
 @app.route('/static/js/<path:filename>')
+@swagger_route(security=get_auth_security())
 def serve_js_modules(filename):
     """Serve JavaScript modules with correct MIME type."""
     from flask import send_from_directory, Response
@@ -369,10 +511,12 @@ def serve_js_modules(filename):
         return send_from_directory('static/js', filename)
 
 @app.route('/acceptable_use_policy.html')
+@swagger_route(security=get_auth_security())
 def acceptable_use_policy():
     return render_template('acceptable_use_policy.html')
 
 @app.route('/api/semantic-kernel/plugins')
+@swagger_route(security=get_auth_security())
 def list_semantic_kernel_plugins():
     """Test endpoint: List loaded Semantic Kernel plugins and their functions."""
     global kernel
@@ -419,6 +563,9 @@ register_route_frontend_safety(app)
 # ------------------- Feedback Routes -------------------
 register_route_frontend_feedback(app)
 
+# ------------------- Notifications Routes --------------
+register_route_frontend_notifications(app)
+
 # ------------------- API Chat Routes --------------------
 register_route_backend_chats(app)
 
@@ -458,6 +605,12 @@ register_route_backend_group_prompts(app)
 # ------------------- API Control Center Routes ---------
 register_route_backend_control_center(app)
 
+# ------------------- API Notifications Routes ----------
+register_route_backend_notifications(app)
+
+# ------------------- API Retention Policy Routes --------
+register_route_backend_retention_policy(app)
+
 # ------------------- API Public Workspaces Routes -------
 register_route_backend_public_workspaces(app)
 
@@ -466,6 +619,9 @@ register_route_backend_public_documents(app)
 
 # ------------------- API Public Prompts Routes ----------
 register_route_backend_public_prompts(app)
+
+# ------------------- API User Agreement Routes ----------
+register_route_backend_user_agreement(app)
 
 # ------------------- Extenral Health Routes ----------
 register_route_external_health(app)

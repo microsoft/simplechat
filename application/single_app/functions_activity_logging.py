@@ -9,12 +9,8 @@ import uuid
 from datetime import datetime
 from typing import Optional
 from functions_appinsights import log_event
+from functions_debug import debug_print
 from config import cosmos_activity_logs_container
-
-# Debug print function for logging
-def debug_print(message):
-    """Print debug messages to console."""
-    print(message)
 
 def log_chat_activity(
     user_id: str,
@@ -58,6 +54,7 @@ def log_chat_activity(
             },
             level=logging.INFO
         )
+        debug_print(f"Logged chat activity: {message_type} for user {user_id}")
         
     except Exception as e:
         # Log error but don't break the chat flow
@@ -70,6 +67,7 @@ def log_chat_activity(
             },
             level=logging.ERROR
         )
+        debug_print(f"Error logging chat activity for user {user_id}: {str(e)}")
 
 
 def log_user_activity(
@@ -104,6 +102,7 @@ def log_user_activity(
             extra=activity_data,
             level=logging.INFO
         )
+        debug_print(f"Logged user activity: {activity_type} for user {user_id}")
         
     except Exception as e:
         # Log error but don't break the user flow
@@ -116,6 +115,59 @@ def log_user_activity(
             },
             level=logging.ERROR
         )
+        debug_print(f"Error logging user activity for user {user_id}: {str(e)}")
+
+
+def log_web_search_consent_acceptance(
+    user_id: str,
+    admin_email: str,
+    consent_text: str,
+    source: str = 'admin_settings'
+) -> None:
+    """
+    Log web search consent acceptance to activity_logs and App Insights.
+
+    Args:
+        user_id (str): Admin user ID who accepted the consent.
+        admin_email (str): Admin email who accepted the consent.
+        consent_text (str): Consent message accepted by the admin.
+        source (str, optional): Origin of the consent action.
+    """
+    try:
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'activity_type': 'web_search_consent_acceptance',
+            'user_id': user_id,
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'accepted_by': {
+                'user_id': user_id,
+                'email': admin_email
+            },
+            'source': source,
+            'description': consent_text
+        }
+
+        cosmos_activity_logs_container.create_item(body=activity_record)
+
+        log_event(
+            message=consent_text,
+            extra=activity_record,
+            level=logging.INFO
+        )
+        debug_print(f"Logged web search consent acceptance for user {user_id}")
+
+    except Exception as e:
+        log_event(
+            message=f"Error logging web search consent acceptance: {str(e)}",
+            extra={
+                'user_id': user_id,
+                'admin_email': admin_email,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+        debug_print(f"Error logging web search consent acceptance for user {user_id}: {str(e)}")
 
 
 def log_document_upload(
@@ -151,6 +203,7 @@ def log_document_upload(
             },
             level=logging.INFO
         )
+        debug_print(f"Logged document upload for user {user_id}")
         
     except Exception as e:
         # Log error but don't break the upload flow
@@ -163,6 +216,7 @@ def log_document_upload(
             },
             level=logging.ERROR
         )
+        debug_print(f"Error logging document upload for user {user_id}: {str(e)}")
 
 
 def log_document_creation_transaction(
@@ -265,8 +319,8 @@ def log_document_creation_transaction(
             extra=activity_record,
             level=logging.INFO
         )
-        
-        print(f"✅ Document creation transaction logged to activity_logs: {document_id}")
+        debug_print(f"Logged document creation transaction: {document_id} for user {user_id}")
+
         
     except Exception as e:
         # Log error but don't break the document creation flow
@@ -280,7 +334,7 @@ def log_document_creation_transaction(
             },
             level=logging.ERROR
         )
-        print(f"⚠️  Warning: Failed to log document creation transaction: {str(e)}")
+        debug_print(f"Error logging document creation transaction for user {user_id}: {str(e)}")
 
 
 def log_document_deletion_transaction(
@@ -353,7 +407,7 @@ def log_document_deletion_transaction(
             level=logging.INFO
         )
         
-        print(f"✅ Document deletion transaction logged to activity_logs: {document_id}")
+        debug_print(f"Logged document deletion transaction: {document_id} for user {user_id}")
         
     except Exception as e:
         # Log error but don't break the document deletion flow
@@ -367,7 +421,91 @@ def log_document_deletion_transaction(
             },
             level=logging.ERROR
         )
-        print(f"⚠️  Warning: Failed to log document deletion transaction: {str(e)}")
+        debug_print(f"Error logging document deletion transaction for user {user_id}: {str(e)}")
+
+
+def log_document_metadata_update_transaction(
+    user_id: str,
+    document_id: str,
+    workspace_type: str,
+    file_name: str,
+    updated_fields: dict,
+    file_type: Optional[str] = None,
+    group_id: Optional[str] = None,
+    public_workspace_id: Optional[str] = None,
+    additional_metadata: Optional[dict] = None
+) -> None:
+    """
+    Log document metadata update transaction to activity_logs container.
+    This creates a permanent record of metadata modifications.
+    
+    Args:
+        user_id (str): The ID of the user who updated the metadata
+        document_id (str): The ID of the updated document
+        workspace_type (str): Type of workspace ('personal', 'group', 'public')
+        file_name (str): Name of the document file
+        updated_fields (dict): Dictionary of fields that were updated with their new values
+        file_type (str, optional): File extension/type (.pdf, .docx, etc.)
+        group_id (str, optional): Group ID if group workspace
+        public_workspace_id (str, optional): Public workspace ID if public workspace
+        additional_metadata (dict, optional): Any additional metadata to store
+    """
+    
+    try:
+        import uuid
+        
+        # Create metadata update activity log record
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': user_id,
+            'activity_type': 'document_metadata_update',
+            'workspace_type': workspace_type,
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'document': {
+                'document_id': document_id,
+                'file_name': file_name,
+                'file_type': file_type
+            },
+            'updated_fields': updated_fields,
+            'workspace_context': {}
+        }
+        
+        # Add workspace-specific context
+        if workspace_type == 'group' and group_id:
+            activity_record['workspace_context']['group_id'] = group_id
+        elif workspace_type == 'public' and public_workspace_id:
+            activity_record['workspace_context']['public_workspace_id'] = public_workspace_id
+            
+        # Add any additional metadata
+        if additional_metadata:
+            activity_record['additional_metadata'] = additional_metadata
+            
+        # Save to activity_logs container for permanent record
+        cosmos_activity_logs_container.create_item(body=activity_record)
+        
+        # Also log to Application Insights for monitoring
+        log_event(
+            message=f"Document metadata update transaction logged: {file_name} for user {user_id}",
+            extra=activity_record,
+            level=logging.INFO
+        )
+        
+        debug_print(f"Logged document metadata update transaction: {document_id} for user {user_id}")
+        
+    except Exception as e:
+        # Log error but don't break the document update flow
+        log_event(
+            message=f"Error logging document metadata update transaction: {str(e)}",
+            extra={
+                'user_id': user_id,
+                'document_id': document_id,
+                'workspace_type': workspace_type,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+        debug_print(f"Error logging document metadata update transaction for user {user_id}: {str(e)}")
 
 
 def log_token_usage(
@@ -459,6 +597,7 @@ def log_token_usage(
             extra=activity_record,
             level=logging.INFO
         )
+        debug_print(f"Logged token usage: {token_type} - {total_tokens} tokens for user {user_id}")
         
     except Exception as e:
         # Log error but don't break the flow
@@ -472,6 +611,7 @@ def log_token_usage(
             },
             level=logging.ERROR
         )
+        debug_print(f"Error logging token usage for user {user_id}: {str(e)}")
 
 
 def log_conversation_creation(
@@ -534,7 +674,7 @@ def log_conversation_creation(
     except Exception as e:
         # Non-blocking error handling
         debug_print(f"⚠️ Error logging conversation creation: {str(e)}")
-        log_to_blob(
+        log_event(
             message=f"Error logging conversation creation: {str(e)}",
             extra={
                 'user_id': user_id,
@@ -613,7 +753,7 @@ def log_conversation_deletion(
     except Exception as e:
         # Non-blocking error handling
         debug_print(f"⚠️ Error logging conversation deletion: {str(e)}")
-        log_to_blob(
+        log_event(
             message=f"Error logging conversation deletion: {str(e)}",
             extra={
                 'user_id': user_id,
@@ -684,7 +824,7 @@ def log_conversation_archival(
     except Exception as e:
         # Non-blocking error handling
         debug_print(f"⚠️ Error logging conversation archival: {str(e)}")
-        log_to_blob(
+        log_event(
             message=f"Error logging conversation archival: {str(e)}",
             extra={
                 'user_id': user_id,
@@ -732,6 +872,7 @@ def log_user_login(
             extra=login_activity,
             level=logging.INFO
         )
+        debug_print(f"✅ User login activity logged for user {user_id}")
         
     except Exception as e:
         # Log error but don't break the login flow
@@ -744,3 +885,457 @@ def log_user_login(
             },
             level=logging.ERROR
         )
+        debug_print(f"⚠️  Warning: Failed to log user login activity for user {user_id}: {str(e)}")
+
+
+def log_group_status_change(
+    group_id: str,
+    group_name: str,
+    old_status: str,
+    new_status: str,
+    changed_by_user_id: str,
+    changed_by_email: str,
+    reason: Optional[str] = None
+) -> None:
+    """
+    Log group status change to activity_logs container for audit trail.
+    
+    Args:
+        group_id (str): The ID of the group whose status is changing
+        group_name (str): The name of the group
+        old_status (str): Previous status value
+        new_status (str): New status value
+        changed_by_user_id (str): User ID of admin who made the change
+        changed_by_email (str): Email of admin who made the change
+        reason (str, optional): Optional reason for the status change
+    """
+    
+    try:
+        import uuid
+        
+        # Create status change activity record
+        status_change_activity = {
+            'id': str(uuid.uuid4()),
+            'activity_type': 'group_status_change',
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'group': {
+                'group_id': group_id,
+                'group_name': group_name
+            },
+            'status_change': {
+                'old_status': old_status,
+                'new_status': new_status,
+                'changed_at': datetime.utcnow().isoformat()
+            },
+            'changed_by': {
+                'user_id': changed_by_user_id,
+                'email': changed_by_email
+            },
+            'workspace_type': 'group',
+            'workspace_context': {
+                'group_id': group_id
+            }
+        }
+        
+        # Add reason if provided
+        if reason:
+            status_change_activity['status_change']['reason'] = reason
+        
+        # Save to activity_logs container for permanent audit trail
+        cosmos_activity_logs_container.create_item(body=status_change_activity)
+        
+        # Also log to Application Insights for monitoring
+        log_event(
+            message=f"Group status changed: {group_name} ({group_id}) from '{old_status}' to '{new_status}' by {changed_by_email}",
+            extra=status_change_activity,
+            level=logging.INFO
+        )
+        
+        debug_print(f"✅ Group status change logged: {group_id} -> {new_status}")
+        
+    except Exception as e:
+        # Log error but don't break the status update flow
+        log_event(
+            message=f"Error logging group status change: {str(e)}",
+            extra={
+                'group_id': group_id,
+                'new_status': new_status,
+                'changed_by_user_id': changed_by_user_id,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+        debug_print(f"⚠️  Warning: Failed to log group status change: {str(e)}")
+
+
+def log_group_member_deleted(
+    removed_by_user_id: str,
+    removed_by_email: str,
+    removed_by_role: str,
+    member_user_id: str,
+    member_email: str,
+    member_name: str,
+    group_id: str,
+    group_name: str,
+    action: str,
+    description: Optional[str] = None
+) -> None:
+    """
+    Log group member deletion/removal transaction to activity_logs container.
+    This creates a permanent record when users are removed from groups.
+    
+    Args:
+        removed_by_user_id (str): ID of user performing the removal
+        removed_by_email (str): Email of user performing the removal
+        removed_by_role (str): Role of user performing the removal (Owner, Admin, Member)
+        member_user_id (str): ID of the member being removed
+        member_email (str): Email of the member being removed
+        member_name (str): Display name of the member being removed
+        group_id (str): ID of the group
+        group_name (str): Name of the group
+        action (str): Specific action ('member_left_group' or 'admin_removed_member')
+        description (str, optional): Human-readable description of the action
+    """
+    
+    try:
+        import uuid
+        
+        # Create group member deletion activity log record
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': removed_by_user_id,  # Person who performed the action (for partitioning)
+            'activity_type': 'group_member_deleted',
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'removed_by': {
+                'user_id': removed_by_user_id,
+                'email': removed_by_email,
+                'role': removed_by_role
+            },
+            'removed_member': {
+                'user_id': member_user_id,
+                'email': member_email,
+                'name': member_name
+            },
+            'group': {
+                'group_id': group_id,
+                'group_name': group_name
+            },
+            'description': description or f"{removed_by_role} removed member from group"
+        }
+        
+        # Save to activity_logs container for permanent record
+        cosmos_activity_logs_container.create_item(body=activity_record)
+        
+        # Also log to Application Insights for monitoring
+        log_event(
+            message=f"Group member deleted: {member_name} ({member_email}) removed from {group_name}",
+            extra=activity_record,
+            level=logging.INFO
+        )
+        
+        debug_print(f"✅ Group member deletion logged to activity_logs: {member_user_id} from group {group_id}")
+        
+    except Exception as e:
+        # Log error but don't break the member removal flow
+        log_event(
+            message=f"Error logging group member deletion: {str(e)}",
+            extra={
+                'removed_by_user_id': removed_by_user_id,
+                'member_user_id': member_user_id,
+                'group_id': group_id,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+        debug_print(f"⚠️  Warning: Failed to log group member deletion: {str(e)}")
+
+
+def log_public_workspace_status_change(
+    workspace_id: str,
+    workspace_name: str,
+    old_status: str,
+    new_status: str,
+    changed_by_user_id: str,
+    changed_by_email: str,
+    reason: Optional[str] = None
+) -> None:
+    """
+    Log public workspace status change to activity_logs container for audit trail.
+    
+    Args:
+        workspace_id (str): The ID of the public workspace whose status is changing
+        workspace_name (str): The name of the public workspace
+        old_status (str): Previous status value
+        new_status (str): New status value
+        changed_by_user_id (str): User ID of admin who made the change
+        changed_by_email (str): Email of admin who made the change
+        reason (str, optional): Optional reason for the status change
+    """
+    
+    try:
+        import uuid
+        
+        # Create status change activity record
+        status_change_activity = {
+            'id': str(uuid.uuid4()),
+            'activity_type': 'public_workspace_status_change',
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'public_workspace': {
+                'workspace_id': workspace_id,
+                'workspace_name': workspace_name
+            },
+            'status_change': {
+                'old_status': old_status,
+                'new_status': new_status,
+                'changed_at': datetime.utcnow().isoformat()
+            },
+            'changed_by': {
+                'user_id': changed_by_user_id,
+                'email': changed_by_email
+            },
+            'workspace_type': 'public_workspace',
+            'workspace_context': {
+                'public_workspace_id': workspace_id
+            }
+        }
+        
+        # Add reason if provided
+        if reason:
+            status_change_activity['status_change']['reason'] = reason
+        
+        # Save to activity_logs container for permanent audit trail
+        cosmos_activity_logs_container.create_item(body=status_change_activity)
+        
+        # Also log to Application Insights for monitoring
+        log_event(
+            message=f"Public workspace status changed: {workspace_name} ({workspace_id}) from '{old_status}' to '{new_status}' by {changed_by_email}",
+            extra=status_change_activity,
+            level=logging.INFO
+        )
+        
+        debug_print(f"✅ Logged public workspace status change: {workspace_name} ({workspace_id}) {old_status} -> {new_status}")
+        
+    except Exception as e:
+        # Log error but don't fail the operation
+        log_event(
+            message=f"Error logging public workspace status change: {str(e)}",
+            extra={
+                'workspace_id': workspace_id,
+                'old_status': old_status,
+                'new_status': new_status,
+                'changed_by_user_id': changed_by_user_id,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+        debug_print(f"⚠️  Warning: Failed to log public workspace status change: {str(e)}")
+
+
+def log_user_agreement_accepted(
+    user_id: str,
+    workspace_type: str,
+    workspace_id: str,
+    workspace_name: Optional[str] = None,
+    action_context: Optional[str] = None
+) -> None:
+    """
+    Log when a user accepts a user agreement in a workspace.
+    This record is used to track acceptance and support daily acceptance features.
+    
+    Args:
+        user_id (str): The ID of the user who accepted the agreement
+        workspace_type (str): Type of workspace ('personal', 'group', 'public')
+        workspace_id (str): The ID of the workspace
+        workspace_name (str, optional): The name of the workspace
+        action_context (str, optional): The context/action that triggered the agreement 
+                                        (e.g., 'file_upload', 'chat')
+    """
+    
+    try:
+        import uuid
+        
+        # Create user agreement acceptance record
+        acceptance_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': user_id,
+            'activity_type': 'user_agreement_accepted',
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'accepted_date': datetime.utcnow().strftime('%Y-%m-%d'),  # Date only for daily lookup
+            'workspace_type': workspace_type,
+            'workspace_context': {
+                f'{workspace_type}_workspace_id': workspace_id,
+                'workspace_name': workspace_name
+            },
+            'action_context': action_context
+        }
+        
+        # Save to activity_logs container
+        cosmos_activity_logs_container.create_item(body=acceptance_record)
+        
+        # Also log to Application Insights for monitoring
+        log_event(
+            message=f"User agreement accepted: user {user_id} in {workspace_type} workspace {workspace_id}",
+            extra=acceptance_record,
+            level=logging.INFO
+        )
+        
+        debug_print(f"✅ Logged user agreement acceptance: user {user_id} in {workspace_type} workspace {workspace_id}")
+        
+    except Exception as e:
+        # Log error but don't fail the operation
+        log_event(
+            message=f"Error logging user agreement acceptance: {str(e)}",
+            extra={
+                'user_id': user_id,
+                'workspace_type': workspace_type,
+                'workspace_id': workspace_id,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+        debug_print(f"⚠️  Warning: Failed to log user agreement acceptance: {str(e)}")
+
+
+def has_user_accepted_agreement_today(
+    user_id: str,
+    workspace_type: str,
+    workspace_id: str
+) -> bool:
+    """
+    Check if a user has already accepted the user agreement today for a given workspace.
+    Used to implement the "accept once per day" feature.
+    
+    Args:
+        user_id (str): The ID of the user
+        workspace_type (str): Type of workspace ('personal', 'group', 'public')
+        workspace_id (str): The ID of the workspace
+        
+    Returns:
+        bool: True if user has accepted today, False otherwise
+    """
+    
+    try:
+        today_date = datetime.utcnow().strftime('%Y-%m-%d')
+        
+        # Query for today's acceptance record
+        query = """
+            SELECT VALUE COUNT(1) FROM c 
+            WHERE c.user_id = @user_id 
+            AND c.activity_type = 'user_agreement_accepted'
+            AND c.accepted_date = @today_date
+            AND c.workspace_type = @workspace_type
+            AND c.workspace_context[@workspace_id_key] = @workspace_id
+        """
+        
+        workspace_id_key = f'{workspace_type}_workspace_id'
+        
+        params = [
+            {"name": "@user_id", "value": user_id},
+            {"name": "@today_date", "value": today_date},
+            {"name": "@workspace_type", "value": workspace_type},
+            {"name": "@workspace_id_key", "value": workspace_id_key},
+            {"name": "@workspace_id", "value": workspace_id}
+        ]
+        
+        results = list(cosmos_activity_logs_container.query_items(
+            query=query,
+            parameters=params,
+            enable_cross_partition_query=False  # Query by partition key (user_id)
+        ))
+        
+        count = results[0] if results else 0
+        
+        debug_print(f"🔍 User agreement check: user {user_id}, workspace {workspace_id}, today={today_date}, accepted={count > 0}")
+        
+        return count > 0
+        
+    except Exception as e:
+        # Log error and return False (require re-acceptance on error)
+        log_event(
+            message=f"Error checking user agreement acceptance: {str(e)}",
+            extra={
+                'user_id': user_id,
+                'workspace_type': workspace_type,
+                'workspace_id': workspace_id,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+        debug_print(f"⚠️  Error checking user agreement acceptance: {str(e)}")
+        return False
+
+
+def log_retention_policy_force_push(
+    admin_user_id: str,
+    admin_email: str,
+    scopes: list,
+    results: dict,
+    total_updated: int
+) -> None:
+    """
+    Log retention policy force push action to activity_logs container.
+    
+    This creates a permanent audit record when an admin forces organization
+    default retention policies to be applied to all workspaces.
+    
+    Args:
+        admin_user_id (str): User ID of the admin performing the force push
+        admin_email (str): Email of the admin performing the force push
+        scopes (list): List of workspace types affected (e.g., ['personal', 'group', 'public'])
+        results (dict): Breakdown of updates per workspace type
+        total_updated (int): Total number of workspaces/users updated
+    """
+    
+    try:
+        # Create force push activity record
+        force_push_activity = {
+            'id': str(uuid.uuid4()),
+            'user_id': admin_user_id,  # Partition key
+            'activity_type': 'retention_policy_force_push',
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'admin': {
+                'user_id': admin_user_id,
+                'email': admin_email
+            },
+            'force_push_details': {
+                'scopes': scopes,
+                'results': results,
+                'total_updated': total_updated,
+                'executed_at': datetime.utcnow().isoformat()
+            },
+            'workspace_type': 'admin',
+            'workspace_context': {
+                'action': 'retention_policy_force_push'
+            }
+        }
+        
+        # Save to activity_logs container for permanent audit trail
+        cosmos_activity_logs_container.create_item(body=force_push_activity)
+        
+        # Also log to Application Insights for monitoring
+        log_event(
+            message=f"Retention policy force push executed by {admin_email} for scopes: {', '.join(scopes)}. Total updated: {total_updated}",
+            extra=force_push_activity,
+            level=logging.INFO
+        )
+        
+        debug_print(f"✅ Retention policy force push logged: {scopes} by {admin_email}, updated {total_updated}")
+        
+    except Exception as e:
+        # Log error but don't break the force push flow
+        log_event(
+            message=f"Error logging retention policy force push: {str(e)}",
+            extra={
+                'admin_user_id': admin_user_id,
+                'scopes': scopes,
+                'total_updated': total_updated,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+        debug_print(f"⚠️  Warning: Failed to log retention policy force push: {str(e)}")

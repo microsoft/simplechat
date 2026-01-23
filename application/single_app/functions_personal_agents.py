@@ -18,6 +18,8 @@ import logging
 from config import cosmos_personal_agents_container
 from functions_settings import get_settings, get_user_settings, update_user_settings
 from functions_keyvault import keyvault_agent_save_helper, keyvault_agent_get_helper, keyvault_agent_delete_helper
+from functions_agent_payload import sanitize_agent_payload
+from functions_debug import debug_print
 
 def get_personal_agents(user_id):
     """
@@ -58,7 +60,7 @@ def get_personal_agents(user_id):
     except exceptions.CosmosResourceNotFoundError:
         return []
     except Exception as e:
-        current_app.logger.error(f"Error fetching personal agents for user {user_id}: {e}")
+        debug_print(f"Error fetching personal agents for user {user_id}: {e}")
         return []
 
 def get_personal_agent(user_id, agent_id):
@@ -92,10 +94,10 @@ def get_personal_agent(user_id, agent_id):
             cleaned_agent.pop('reasoning_effort', None)
         return cleaned_agent
     except exceptions.CosmosResourceNotFoundError:
-        current_app.logger.warning(f"Agent {agent_id} not found for user {user_id}")
+        debug_print(f"Agent {agent_id} not found for user {user_id}")
         return None
     except Exception as e:
-        current_app.logger.error(f"Error fetching agent {agent_id} for user {user_id}: {e}")
+        debug_print(f"Error fetching agent {agent_id} for user {user_id}: {e}")
         return None
 
 def save_personal_agent(user_id, agent_data):
@@ -110,12 +112,27 @@ def save_personal_agent(user_id, agent_data):
         dict: Saved agent data with ID
     """
     try:
-        # Ensure required fields
-        if 'id' not in agent_data:
-            agent_data['id'] = str(f"{user_id}_{agent_data.get('name', 'default')}")
+        cleaned_agent = sanitize_agent_payload(agent_data)
+        for field in ['name', 'display_name', 'description', 'instructions']:
+            cleaned_agent.setdefault(field, '')
+        for field in [
+            'azure_openai_gpt_endpoint',
+            'azure_openai_gpt_key',
+            'azure_openai_gpt_deployment',
+            'azure_openai_gpt_api_version',
+            'azure_agent_apim_gpt_endpoint',
+            'azure_agent_apim_gpt_subscription_key',
+            'azure_agent_apim_gpt_deployment',
+            'azure_agent_apim_gpt_api_version'
+        ]:
+            cleaned_agent.setdefault(field, '')
+        if 'id' not in cleaned_agent:
+            cleaned_agent['id'] = str(f"{user_id}_{cleaned_agent.get('name', 'default')}")
             
-        agent_data['user_id'] = user_id
-        agent_data['last_updated'] = datetime.utcnow().isoformat()
+        cleaned_agent['user_id'] = user_id
+        cleaned_agent['last_updated'] = datetime.utcnow().isoformat()
+        cleaned_agent['is_global'] = False
+        cleaned_agent['is_group'] = False
         
         # Validate required fields
         required_fields = ['name', 'display_name', 'description', 'instructions']
@@ -153,7 +170,7 @@ def save_personal_agent(user_id, agent_data):
         return cleaned_result
         
     except Exception as e:
-        current_app.logger.error(f"Error saving agent for user {user_id}: {e}")
+        debug_print(f"Error saving agent for user {user_id}: {e}")
         raise
 
 def delete_personal_agent(user_id, agent_id):
@@ -185,10 +202,10 @@ def delete_personal_agent(user_id, agent_id):
         )
         return True
     except exceptions.CosmosResourceNotFoundError:
-        current_app.logger.warning(f"Agent {agent_id} not found for user {user_id}")
+        debug_print(f"Agent {agent_id} not found for user {user_id}")
         return False
     except Exception as e:
-        current_app.logger.error(f"Error deleting agent {agent_id} for user {user_id}: {e}")
+        debug_print(f"Error deleting agent {agent_id} for user {user_id}: {e}")
         raise
 
 def ensure_migration_complete(user_id):
@@ -219,13 +236,13 @@ def ensure_migration_complete(user_id):
                 settings_to_update = user_settings.get('settings', {})
                 settings_to_update['agents'] = []  # Set to empty array instead of removing
                 update_user_settings(user_id, settings_to_update)
-                current_app.logger.info(f"Cleaned up legacy agent data for user {user_id} (already migrated)")
+                debug_print(f"Cleaned up legacy agent data for user {user_id} (already migrated)")
                 return 0
         
         return 0
         
     except Exception as e:
-        current_app.logger.error(f"Error ensuring agent migration complete for user {user_id}: {e}")
+        debug_print(f"Error ensuring agent migration complete for user {user_id}: {e}")
         return 0
 
 def migrate_agents_from_user_settings(user_id):
@@ -249,7 +266,7 @@ def migrate_agents_from_user_settings(user_id):
             try:
                 # Skip if agent already exists in personal container
                 if agent.get('name') in existing_agent_names:
-                    current_app.logger.info(f"Skipping migration of agent '{agent.get('name')}' - already exists")
+                    debug_print(f"Skipping migration of agent '{agent.get('name')}' - already exists")
                     continue
                 # Ensure agent has an ID
                 if 'id' not in agent:
@@ -257,14 +274,14 @@ def migrate_agents_from_user_settings(user_id):
                 save_personal_agent(user_id, agent)
                 migrated_count += 1
             except Exception as e:
-                current_app.logger.error(f"Error migrating agent {agent.get('name', 'unknown')} for user {user_id}: {e}")
+                debug_print(f"Error migrating agent {agent.get('name', 'unknown')} for user {user_id}: {e}")
         # Always remove agents from user settings after processing (even if no new ones migrated)
         settings_to_update = user_settings.get('settings', {})
         settings_to_update['agents'] = []  # Set to empty array instead of removing
         update_user_settings(user_id, settings_to_update)
-        current_app.logger.info(f"Migrated {migrated_count} new agents for user {user_id}, cleaned up legacy data")
+        debug_print(f"Migrated {migrated_count} new agents for user {user_id}, cleaned up legacy data")
         return migrated_count
     except Exception as e:
-        current_app.logger.error(f"Error during agent migration for user {user_id}: {e}")
+        debug_print(f"Error during agent migration for user {user_id}: {e}")
         return 0
 

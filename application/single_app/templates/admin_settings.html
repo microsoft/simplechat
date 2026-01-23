@@ -1,7 +1,5 @@
 {% extends "base.html" %}
-{% block title %}
-    Admin Settings - {{ app_settings.app_title }}
-{% endblock %}
+{% block title %}Admin Settings - {{ app_settings.app_title }}{% endblock %}
 
 {% block head %}
     <!-- <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/simplemde/dist/simplemde.min.css">
@@ -87,6 +85,69 @@
 {% endblock %}
 
 {% block content %}
+<div class="modal fade" id="agentTemplateReviewModal" tabindex="-1" aria-labelledby="agentTemplateReviewModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="me-3">
+                    <h5 class="modal-title mb-0" id="agentTemplateReviewModalLabel">Agent Template</h5>
+                    <small class="text-muted d-block" id="agent-template-review-subtitle"></small>
+                </div>
+                <span class="badge bg-secondary" id="agent-template-review-status">Pending</span>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="agent-template-review-error" class="alert alert-danger d-none"></div>
+                <div class="mb-3">
+                    <label class="fw-semibold text-muted small">Helper Text</label>
+                    <p class="mb-1" id="agent-template-review-helper">-</p>
+                    <div class="small text-muted" id="agent-template-review-meta"></div>
+                </div>
+                <div class="mb-3 d-flex flex-wrap gap-2" id="agent-template-review-tags"></div>
+                <div class="mb-3">
+                    <label class="fw-semibold text-muted small">Description</label>
+                    <p id="agent-template-review-description" class="mb-0"></p>
+                </div>
+                <div class="mb-3">
+                    <label class="fw-semibold text-muted small">Instructions</label>
+                    <pre class="bg-dark text-white rounded p-3" id="agent-template-review-instructions"></pre>
+                </div>
+                <div class="mb-3 d-none" id="agent-template-review-settings-wrapper">
+                    <label class="fw-semibold text-muted small">Additional Settings</label>
+                    <pre class="bg-light border rounded p-3" id="agent-template-review-settings"></pre>
+                </div>
+                <div class="mb-3 d-none" id="agent-template-review-actions-wrapper">
+                    <label class="fw-semibold text-muted small">Recommended Actions</label>
+                    <div id="agent-template-review-actions" class="d-flex flex-wrap gap-2"></div>
+                </div>
+                <div class="mb-3">
+                    <label for="agent-template-review-notes" class="form-label">Reviewer notes (optional)</label>
+                    <textarea class="form-control" id="agent-template-review-notes" rows="2" placeholder="Add guidance for the submitter or other admins..."></textarea>
+                </div>
+                <div class="mb-3">
+                    <label for="agent-template-reject-reason" class="form-label">Rejection reason</label>
+                    <textarea class="form-control" id="agent-template-reject-reason" rows="2" placeholder="Required when rejecting a template." aria-describedby="agent-template-reject-help"></textarea>
+                    <div class="form-text" id="agent-template-reject-help">Write clear, descriptive feedback so any admin can explain the rejection to the submitter, and plan to notify the user directly.</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-danger me-auto" id="agent-template-delete-btn">
+                    <i class="bi bi-trash"></i>
+                    Delete
+                </button>
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-outline-danger" id="agent-template-reject-btn">
+                    <i class="bi bi-x-circle"></i>
+                    Reject
+                </button>
+                <button type="button" class="btn btn-success" id="agent-template-approve-btn">
+                    <i class="bi bi-check-circle"></i>
+                    Approve
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
 <div id="index-warning-user" class="alert alert-warning" style="display:none;">
     <strong>⚠️ User-index schema mismatch:</strong>
     Missing fields: <span id="missing-fields-user"></span>
@@ -119,7 +180,7 @@
 
 <div class="container">
     <h2>Admin Settings</h2>
-    <form method="post" enctype="multipart/form-data" id="admin-settings-form" style="padding-bottom:80px;">
+    <form method="post" enctype="multipart/form-data" id="admin-settings-form" style="padding-bottom:80px;" novalidate>
         <p class="text-muted">Use this form to configure the administrative settings for your application.</p>
         <p class="text-muted">
             Version: {{ config['VERSION'] }}
@@ -497,30 +558,49 @@
                 </button>
             </li>
             
-            <!-- Security -->
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="safety-tab" data-bs-toggle="tab" data-bs-target="#safety"
                     type="button" role="tab" aria-controls="safety" aria-selected="false">
                     Safety
                 </button>
             </li>
-            
-            <!-- User Features -->
             <li class="nav-item" role="presentation">
-                <button class="nav-link" id="agents-tab" data-bs-toggle="tab" data-bs-target="#agents" type="button" role="tab" aria-controls="agents" aria-selected="false">
+                <button class="nav-link" id="security-tab" data-bs-toggle="tab" data-bs-target="#security" type="button" role="tab" aria-controls="security" aria-selected="false">
+                    Security
+                </button>
+            </li>
+            
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="security-tab" data-bs-toggle="tab" data-bs-target="#security"
+                    type="button" role="tab" aria-controls="security" aria-selected="false">
+                    Security
+                </button>
+            </li>
+            
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="agents-tab" data-bs-toggle="tab" data-bs-target="#agents" 
+                    type="button" role="tab" aria-controls="agents" aria-selected="false">
                     Agents
                 </button>
             </li>
             
-            <!-- System Administration -->
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="scale-tab" data-bs-toggle="tab" data-bs-target="#scale"
                     type="button" role="tab" aria-controls="scale" aria-selected="false">
                     Scale
                 </button>
             </li>
+
             <li class="nav-item" role="presentation">
-                <button class="nav-link" id="logging-tab" data-bs-toggle="tab" data-bs-target="#logging" type="button" role="tab" aria-controls="logging" aria-selected="false">
+                <button class="nav-link" id="control-center-config-tab" data-bs-toggle="tab" data-bs-target="#control-center-config"
+                    type="button" role="tab" aria-controls="control-center-config" aria-selected="false">
+                    Control Center
+                </button>
+            </li>
+
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="logging-tab" data-bs-toggle="tab" data-bs-target="#logging" 
+                    type="button" role="tab" aria-controls="logging" aria-selected="false">
                     Logging
                 </button>
             </li>
@@ -528,7 +608,65 @@
         {% endif %}
         
         <div class="tab-content mt-3" id="adminSettingsTabContent">
-            <!-- Agents Tab Content (Consolidated: Agents + Actions) -->
+            <div class="tab-pane fade show active" id="security" role="tabpanel" aria-labelledby="security-tab">
+                <p class="text-muted">
+                    Manage security settings for key vault and other security configurations.
+                <div class="card p-3 mb-3" id="keyvault-section">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h5>
+                            <i class="bi bi-safe me-2"></i>Key Vault
+                        </h5>
+                        <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#keyVaultInfoModal">
+                            <i class="bi bi-info-circle me-1"></i>Configuration Guide
+                        </button>
+                    </div>
+                    
+                    <p class="text-muted">
+                        Configure Key Vault settings.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
+                        <input
+                            type="checkbox"
+                            class="form-check-input me-2"
+                            id="enable_key_vault_secret_storage"
+                            name="enable_key_vault_secret_storage"
+                            {% if settings.enable_key_vault_secret_storage %}checked{% endif %}
+                        >
+                        <label class="form-check-label" for="enable_key_vault_secret_storage">
+                            Enable Key Vault for Agent and Action Secrets
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Store agent and action sensitive information like API keys and secrets securely in Azure Key Vault."></i>
+                    </div>
+                    
+                    <div id="key_vault_settings" {% if not settings.enable_key_vault_secret_storage %}style="display: none;"{% endif %}>
+                        <div id="key-vault-warning" class="alert alert-warning mt-2 mb-3">
+                            <strong>⚠️ Warning:</strong> Once you enable Key Vault, you should <u>NOT</u> disable it. Disabling Key Vault after enabling <u>WILL</u> cause loss of access to secrets and break application functionality.
+                        </div>
+                        <div class="mb-3">
+                            <label for="key_vault_name" class="form-label">Key Vault Name</label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="The name of the key vault resource. Endpoint is determined by your AZURE_ENVIRONMENT app service configuration."></i>
+                            <input type="text" class="form-control" id="key_vault_name" name="key_vault_name" value="{{ settings.key_vault_name or '' }}" {% if settings.enable_key_vault_secret_storage %}required{% endif %}>
+                        </div>
+                        <div class="mb-3">
+                            <label for="key_vault_identity" class="form-label">Key Vault Managed Identity Client ID</label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="The Client ID of the User Assigned Managed Identity. Leave blank for system-assigned identity of the app service."></i>
+                            <input type="text" class="form-control" id="key_vault_identity" name="key_vault_identity" value="{{ settings.key_vault_identity or '' }}">
+                        </div>
+                        <button
+                            type="button"
+                            class="btn btn-secondary mt-3"
+                            style="width: auto;"
+                            id="test_key_vault_button"
+                        >
+                            Test Key Vault Connection
+                        </button>
+                        <div id="test_key_vault_result" class="mt-2">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+
             <div class="tab-pane fade" id="agents" role="tabpanel" aria-labelledby="agents-tab">
                 
                 <p class="text-muted">
@@ -595,6 +733,11 @@
                                     <label class="form-check-label ms-2" for="toggle-merge-global-sk">Merge Global Agents/Plugins into Workspace</label>
                                     <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="If enabled, workspace agents/plugins will include global ones as well."></i>
                                 </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-enable-agent-template-gallery" name="enable_agent_template_gallery" {% if settings.enable_agent_template_gallery %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-enable-agent-template-gallery">Enable Agent Template Gallery</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow workspace users to browse approved templates and submit their own for review."></i>
+                                </div>
                             </div>
                             <!-- End Agent Feature Flags -->
                             
@@ -617,7 +760,13 @@
                         </div>
                         <div class="d-flex justify-content-between align-items-center mb-3">
                             <h4>Global  Agents</h4>
-                            <button type="button" class="btn btn-primary" id="add-agent-btn">Add Agent</button>
+                            <div class="d-flex align-items-center gap-2">
+                                <button type="button" class="btn btn-outline-info btn-sm agent-examples-trigger" data-bs-toggle="modal" data-bs-target="#agentExamplesModal" data-trigger-button="#add-agent-btn">
+                                    <i class="bi bi-magic"></i>
+                                    Agent Templates
+                                </button>
+                                <button type="button" class="btn btn-primary" id="add-agent-btn">Add Agent</button>
+                            </div>
                         </div>
                         <div class="mb-3 d-flex align-items-center">
                             {% if settings.orchestration_type == "default_agent" %}
@@ -646,6 +795,88 @@
                         </table>
                     </div>
                 {% endif %}
+                </div>
+
+                <!-- Agent Template Submissions Section -->
+                <div class="card p-3 mb-4" id="agent-templates-admin-panel">
+                    <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+                        <div>
+                            <h5 class="mb-1">
+                                <i class="bi bi-layers me-2"></i>Agent Template Gallery
+                            </h5>
+                            <p class="text-muted small mb-0">Approve community templates before they appear in the gallery.</p>
+                        </div>
+                        <div class="btn-group btn-group-sm" role="group" id="agent-template-status-filters">
+                            <button type="button" class="btn btn-outline-secondary active" data-status="pending">Pending</button>
+                            <button type="button" class="btn btn-outline-secondary" data-status="approved">Approved</button>
+                            <button type="button" class="btn btn-outline-secondary" data-status="rejected">Rejected</button>
+                            <button type="button" class="btn btn-outline-secondary" data-status="all">All</button>
+                        </div>
+                    </div>
+                    <div class="row g-3 mb-3">
+                        <div class="col-xl-6">
+                            <div class="form-check form-switch mb-0">
+                                <input class="form-check-input" type="checkbox" role="switch" id="toggle-agent-template-submissions" name="agent_templates_allow_user_submission" {% if settings.agent_templates_allow_user_submission %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="toggle-agent-template-submissions">Allow User Template Submissions</label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow workspace users to submit their custom agents for review."></i>
+                            </div>
+                        </div>
+                        <div class="col-xl-6">
+                            <div class="form-check form-switch mb-0">
+                                <input class="form-check-input" type="checkbox" role="switch" id="toggle-agent-template-approval" name="agent_templates_require_approval" {% if settings.agent_templates_require_approval %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="toggle-agent-template-approval">Require Admin Approval</label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Keep user submissions pending until an admin approves them."></i>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row g-3 align-items-end mb-3">
+                        <div class="col-lg-6">
+                            <label for="agent-template-search" class="form-label mb-1">Search templates</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                <input type="search" class="form-control" id="agent-template-search" placeholder="Search by template name or submitter">
+                            </div>
+                        </div>
+                        <div class="col-lg-6">
+                            <div class="form-text">Matches template titles, display names, and submitter names/emails.</div>
+                        </div>
+                    </div>
+                    <div class="alert alert-info d-none" id="agent-templates-disabled-alert">
+                        <div class="d-flex gap-2 align-items-start">
+                            <i class="bi bi-info-circle"></i>
+                            <div>
+                                <strong>Template gallery is disabled.</strong>
+                                <div>Enable it under Global Agent Feature Toggles (and allow submissions) to collect templates.</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table align-middle" id="agent-templates-table">
+                            <thead>
+                                <tr>
+                                    <th>Template</th>
+                                    <th>Status</th>
+                                    <th>Submitted By</th>
+                                    <th>Updated</th>
+                                    <th class="text-end">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="agent-template-table-body">
+                                <tr>
+                                    <td colspan="5" class="text-center text-muted py-4">
+                                        <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
+                                        Loading templates...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 mt-2">
+                        <div class="text-muted small" id="agent-template-pagination-summary"></div>
+                        <nav id="agent-template-pagination-nav" aria-label="Template pagination">
+                            <ul class="pagination pagination-sm mb-0" id="agent-template-pagination"></ul>
+                        </nav>
+                    </div>
                 </div>
 
                 <!-- Actions Configuration Section -->
@@ -1326,6 +1557,7 @@
                     <div class="mb-3">
                         <label for="azure_apim_gpt_deployment" class="form-label">Azure APIM Deployment</label>
                         <br><small class="text-muted">Each model defined here will be available in the Chat UI as an option for the User. You can include multiple models seperated by a comma (example: gpt-4o, o-1, o-3).</small>
+                        <br><small class="text-muted">NOTE: The APIM GPT Test is against the first model in the list.</small>
                         <input type="text" class="form-control" id="azure_apim_gpt_deployment"
                             name="azure_apim_gpt_deployment" value="{{ settings.azure_apim_gpt_deployment or '' }}">
                     </div>
@@ -1653,6 +1885,119 @@
                     Test Image Connection
                 </button>
                 <div id="test_image_result" class="mt-2"></div>
+                </div>
+            </div>
+
+            <!-- Control Center Configuration Tab -->
+            <div class="tab-pane fade" id="control-center-config" role="tabpanel" aria-labelledby="control-center-config-tab">
+                <p class="text-muted">
+                    Configure Control Center access and permissions for administrators.
+                </p>
+
+                <!-- Control Center Overview Card -->
+                <div class="card p-4 mb-4 border-success shadow-sm" id="control-center-overview-section">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div class="d-flex align-items-center">
+                            <div class="bg-success text-white rounded-circle p-3 me-3" style="width: 50px; height: 50px; display: flex; align-items: center; justify-content: center;">
+                                <i class="bi bi-speedometer2 fs-4"></i>
+                            </div>
+                            <div>
+                                <h4 class="mb-1">
+                                    <i class="bi bi-gear-wide-connected me-2"></i>Control Center Access
+                                </h4>
+                                <p class="text-muted mb-0 small">Manage who can access Control Center features and administrative tools</p>
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-outline-success btn-sm" data-bs-toggle="modal" data-bs-target="#controlCenterRolesInfoModal">
+                            <i class="bi bi-question-circle me-1"></i>Role Setup Guide
+                        </button>
+                    </div>
+
+                    <div class="alert alert-info mb-4">
+                        <i class="bi bi-info-circle-fill me-2"></i>
+                        <strong>About Control Center:</strong> The Control Center is a powerful administrative dashboard that provides user management, group oversight, public workspace control, and detailed activity monitoring. Use role-based access controls below to delegate administrative responsibilities.
+                    </div>
+
+                    <!-- ControlCenterAdmin Role -->
+                    <div class="mb-4">
+                        <div class="form-check form-switch mb-2">
+                            <input
+                                type="checkbox"
+                                class="form-check-input"
+                                id="require_member_of_control_center_admin"
+                                name="require_member_of_control_center_admin"
+                                {% if settings.require_member_of_control_center_admin %}checked{% endif %}
+                            >
+                            <label class="form-check-label ms-2 fw-bold" for="require_member_of_control_center_admin">
+                                <i class="bi bi-shield-fill-check me-1"></i> Require ControlCenterAdmin Role for Full Access
+                            </label>
+                        </div>
+                        <p class="text-muted small ms-4 ps-3 mb-2">
+                            When enabled, <strong>only users with the ControlCenterAdmin role</strong> can access the Control Center and all its features (User Management, Group Management, Public Workspaces, Activity Logs). Regular Admins will lose access when this is enabled.
+                        </p>
+                        <div class="ms-4 ps-3">
+                            <span class="badge bg-success-subtle text-success-emphasis me-2">
+                                <i class="bi bi-people-fill me-1"></i> User Management
+                            </span>
+                            <span class="badge bg-success-subtle text-success-emphasis me-2">
+                                <i class="bi bi-collection me-1"></i> Group Management
+                            </span>
+                            <span class="badge bg-success-subtle text-success-emphasis me-2">
+                                <i class="bi bi-folder2-open me-1"></i> Public Workspaces
+                            </span>
+                            <span class="badge bg-success-subtle text-success-emphasis">
+                                <i class="bi bi-clock-history me-1"></i> Activity Logs
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- ControlCenterDashboardReader Role -->
+                    <div class="mb-4">
+                        <div class="form-check form-switch mb-2">
+                            <input
+                                type="checkbox"
+                                class="form-check-input"
+                                id="require_member_of_control_center_dashboard_reader"
+                                name="require_member_of_control_center_dashboard_reader"
+                                {% if settings.require_member_of_control_center_dashboard_reader %}checked{% endif %}
+                            >
+                            <label class="form-check-label ms-2 fw-bold" for="require_member_of_control_center_dashboard_reader">
+                                <i class="bi bi-eye me-1"></i> Allow ControlCenterDashboardReader Role for Dashboard-Only Access
+                            </label>
+                        </div>
+                        <p class="text-muted small ms-4 ps-3 mb-2">
+                            When enabled, users with <strong>ControlCenterDashboardReader role</strong> can view the Control Center Dashboard tab (read-only statistics and metrics only). Users with <strong>ControlCenterAdmin role</strong> can also access the dashboard in addition to all management features. Regular Admins will lose dashboard access when this is enabled.
+                        </p>
+                        <div class="ms-4 ps-3">
+                            <span class="badge bg-info-subtle text-info-emphasis me-2">
+                                <i class="bi bi-speedometer2 me-1"></i> Dashboard Statistics
+                            </span>
+                            <span class="badge bg-info-subtle text-info-emphasis me-2">
+                                <i class="bi bi-graph-up me-1"></i> Activity Trends
+                            </span>
+                            <span class="badge bg-info-subtle text-info-emphasis">
+                                <i class="bi bi-bar-chart-line me-1"></i> Usage Metrics
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-warning-subtle border-warning mb-3">
+                        <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                        <strong>Important:</strong> Configure these roles in your identity provider (Entra ID). When role requirements are enabled, standard Admins without the specific roles will be denied access to Control Center features.
+                    </div>
+
+                    <!-- Best Practices -->
+                    <div class="border-top pt-3">
+                        <h5 class="mb-3">
+                            <i class="bi bi-lightbulb-fill me-2"></i>Best Practices
+                        </h5>
+                        <ul class="text-muted small">
+                            <li><strong>ControlCenterAdmin:</strong> Grant to IT administrators who need full control over users, groups, and workspaces</li>
+                            <li><strong>ControlCenterDashboardReader:</strong> Grant to managers, compliance officers, or stakeholders who need visibility into platform usage without administrative powers</li>
+                            <li><strong>Separation of Duties:</strong> Enable role requirements if you need to restrict Control Center access from general application admins</li>
+                            <li><strong>Audit Trail:</strong> All Control Center actions are logged in Activity Logs for compliance and security auditing</li>
+                        </ul>
+                    </div>
                 </div>
             </div>
 
@@ -2060,7 +2405,342 @@
                     </div>
                 </div>
                 
+                <!-- Retention Policy Section -->
+                <div class="card p-3 mb-3" id="retention-policy-section">
+                    <h5>
+                        <i class="bi bi-hourglass-split me-2"></i>Retention Policy
+                    </h5>
+                    <p class="text-muted">Automatically delete aged conversations and documents based on configurable retention periods. Users, group owners, and public workspace admins can set their own retention policies.</p>
+                    
+                    <div class="alert alert-info mb-3" role="alert">
+                        <i class="bi bi-info-circle me-2"></i>
+                        <strong>How it works:</strong> Enable retention policy for workspace types below. Users/owners can then configure how many days to retain conversations and documents. Items older than the configured period are automatically deleted. Default is "none" (no deletion) until explicitly set by each user/owner.
+                    </div>
+                    
+                    <!-- Enable toggles for different workspace types -->
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-4">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" role="switch" id="enable_retention_policy_personal" name="enable_retention_policy_personal" {% if settings.enable_retention_policy_personal %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="enable_retention_policy_personal">
+                                    Enable for Personal Workspaces
+                                </label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to configure retention policies for their personal conversations and documents."></i>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" role="switch" id="enable_retention_policy_group" name="enable_retention_policy_group" {% if settings.enable_retention_policy_group %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="enable_retention_policy_group">
+                                    Enable for Group Workspaces
+                                </label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow group owners and admins to configure retention policies for group conversations and documents."></i>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" role="switch" id="enable_retention_policy_public" name="enable_retention_policy_public" {% if settings.enable_retention_policy_public %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="enable_retention_policy_public">
+                                    Enable for Public Workspaces
+                                </label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow public workspace owners and admins to configure retention policies for workspace conversations and documents."></i>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Default Retention Policy Settings -->
+                    <div class="card bg-light p-3 mb-3">
+                        <h6 class="mb-3"><i class="bi bi-sliders me-2"></i>Default Retention Policies</h6>
+                        <p class="text-muted small mb-3">Set organization-wide default retention periods for each workspace type. Users can override these defaults with their own preferences. Setting a default here means new users/workspaces will start with this retention period.</p>
+                        
+                        <!-- Personal Workspace Defaults -->
+                        <div class="row g-3 mb-3" id="retention_defaults_personal" style="{% if not settings.enable_retention_policy_personal %}display: none;{% endif %}">
+                            <div class="col-12">
+                                <label class="form-label fw-bold"><i class="bi bi-person me-1"></i>Personal Workspace Defaults</label>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="default_retention_conversation_personal" class="form-label">Conversation Retention</label>
+                                <select class="form-select" id="default_retention_conversation_personal" name="default_retention_conversation_personal">
+                                    <option value="none" {% if settings.default_retention_conversation_personal == 'none' %}selected{% endif %}>No automatic deletion</option>
+                                    <option value="1" {% if settings.default_retention_conversation_personal == '1' or settings.default_retention_conversation_personal == 1 %}selected{% endif %}>1 day</option>
+                                    <option value="5" {% if settings.default_retention_conversation_personal == '5' or settings.default_retention_conversation_personal == 5 %}selected{% endif %}>5 days</option>
+                                    <option value="10" {% if settings.default_retention_conversation_personal == '10' or settings.default_retention_conversation_personal == 10 %}selected{% endif %}>10 days</option>
+                                    <option value="21" {% if settings.default_retention_conversation_personal == '21' or settings.default_retention_conversation_personal == 21 %}selected{% endif %}>21 days (3 weeks)</option>
+                                    <option value="30" {% if settings.default_retention_conversation_personal == '30' or settings.default_retention_conversation_personal == 30 %}selected{% endif %}>30 days</option>
+                                    <option value="60" {% if settings.default_retention_conversation_personal == '60' or settings.default_retention_conversation_personal == 60 %}selected{% endif %}>60 days</option>
+                                    <option value="90" {% if settings.default_retention_conversation_personal == '90' or settings.default_retention_conversation_personal == 90 %}selected{% endif %}>90 days (3 months)</option>
+                                    <option value="180" {% if settings.default_retention_conversation_personal == '180' or settings.default_retention_conversation_personal == 180 %}selected{% endif %}>180 days (6 months)</option>
+                                    <option value="365" {% if settings.default_retention_conversation_personal == '365' or settings.default_retention_conversation_personal == 365 %}selected{% endif %}>365 days (1 year)</option>
+                                    <option value="730" {% if settings.default_retention_conversation_personal == '730' or settings.default_retention_conversation_personal == 730 %}selected{% endif %}>730 days (2 years)</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="default_retention_document_personal" class="form-label">Document Retention</label>
+                                <select class="form-select" id="default_retention_document_personal" name="default_retention_document_personal">
+                                    <option value="none" {% if settings.default_retention_document_personal == 'none' %}selected{% endif %}>No automatic deletion</option>
+                                    <option value="1" {% if settings.default_retention_document_personal == '1' or settings.default_retention_document_personal == 1 %}selected{% endif %}>1 day</option>
+                                    <option value="5" {% if settings.default_retention_document_personal == '5' or settings.default_retention_document_personal == 5 %}selected{% endif %}>5 days</option>
+                                    <option value="10" {% if settings.default_retention_document_personal == '10' or settings.default_retention_document_personal == 10 %}selected{% endif %}>10 days</option>
+                                    <option value="21" {% if settings.default_retention_document_personal == '21' or settings.default_retention_document_personal == 21 %}selected{% endif %}>21 days (3 weeks)</option>
+                                    <option value="30" {% if settings.default_retention_document_personal == '30' or settings.default_retention_document_personal == 30 %}selected{% endif %}>30 days</option>
+                                    <option value="60" {% if settings.default_retention_document_personal == '60' or settings.default_retention_document_personal == 60 %}selected{% endif %}>60 days</option>
+                                    <option value="90" {% if settings.default_retention_document_personal == '90' or settings.default_retention_document_personal == 90 %}selected{% endif %}>90 days (3 months)</option>
+                                    <option value="180" {% if settings.default_retention_document_personal == '180' or settings.default_retention_document_personal == 180 %}selected{% endif %}>180 days (6 months)</option>
+                                    <option value="365" {% if settings.default_retention_document_personal == '365' or settings.default_retention_document_personal == 365 %}selected{% endif %}>365 days (1 year)</option>
+                                    <option value="730" {% if settings.default_retention_document_personal == '730' or settings.default_retention_document_personal == 730 %}selected{% endif %}>730 days (2 years)</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <!-- Group Workspace Defaults -->
+                        <div class="row g-3 mb-3" id="retention_defaults_group" style="{% if not settings.enable_retention_policy_group %}display: none;{% endif %}">
+                            <div class="col-12">
+                                <label class="form-label fw-bold"><i class="bi bi-people me-1"></i>Group Workspace Defaults</label>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="default_retention_conversation_group" class="form-label">Conversation Retention</label>
+                                <select class="form-select" id="default_retention_conversation_group" name="default_retention_conversation_group">
+                                    <option value="none" {% if settings.default_retention_conversation_group == 'none' %}selected{% endif %}>No automatic deletion</option>
+                                    <option value="1" {% if settings.default_retention_conversation_group == '1' or settings.default_retention_conversation_group == 1 %}selected{% endif %}>1 day</option>
+                                    <option value="5" {% if settings.default_retention_conversation_group == '5' or settings.default_retention_conversation_group == 5 %}selected{% endif %}>5 days</option>
+                                    <option value="10" {% if settings.default_retention_conversation_group == '10' or settings.default_retention_conversation_group == 10 %}selected{% endif %}>10 days</option>
+                                    <option value="21" {% if settings.default_retention_conversation_group == '21' or settings.default_retention_conversation_group == 21 %}selected{% endif %}>21 days (3 weeks)</option>
+                                    <option value="30" {% if settings.default_retention_conversation_group == '30' or settings.default_retention_conversation_group == 30 %}selected{% endif %}>30 days</option>
+                                    <option value="60" {% if settings.default_retention_conversation_group == '60' or settings.default_retention_conversation_group == 60 %}selected{% endif %}>60 days</option>
+                                    <option value="90" {% if settings.default_retention_conversation_group == '90' or settings.default_retention_conversation_group == 90 %}selected{% endif %}>90 days (3 months)</option>
+                                    <option value="180" {% if settings.default_retention_conversation_group == '180' or settings.default_retention_conversation_group == 180 %}selected{% endif %}>180 days (6 months)</option>
+                                    <option value="365" {% if settings.default_retention_conversation_group == '365' or settings.default_retention_conversation_group == 365 %}selected{% endif %}>365 days (1 year)</option>
+                                    <option value="730" {% if settings.default_retention_conversation_group == '730' or settings.default_retention_conversation_group == 730 %}selected{% endif %}>730 days (2 years)</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="default_retention_document_group" class="form-label">Document Retention</label>
+                                <select class="form-select" id="default_retention_document_group" name="default_retention_document_group">
+                                    <option value="none" {% if settings.default_retention_document_group == 'none' %}selected{% endif %}>No automatic deletion</option>
+                                    <option value="1" {% if settings.default_retention_document_group == '1' or settings.default_retention_document_group == 1 %}selected{% endif %}>1 day</option>
+                                    <option value="5" {% if settings.default_retention_document_group == '5' or settings.default_retention_document_group == 5 %}selected{% endif %}>5 days</option>
+                                    <option value="10" {% if settings.default_retention_document_group == '10' or settings.default_retention_document_group == 10 %}selected{% endif %}>10 days</option>
+                                    <option value="21" {% if settings.default_retention_document_group == '21' or settings.default_retention_document_group == 21 %}selected{% endif %}>21 days (3 weeks)</option>
+                                    <option value="30" {% if settings.default_retention_document_group == '30' or settings.default_retention_document_group == 30 %}selected{% endif %}>30 days</option>
+                                    <option value="60" {% if settings.default_retention_document_group == '60' or settings.default_retention_document_group == 60 %}selected{% endif %}>60 days</option>
+                                    <option value="90" {% if settings.default_retention_document_group == '90' or settings.default_retention_document_group == 90 %}selected{% endif %}>90 days (3 months)</option>
+                                    <option value="180" {% if settings.default_retention_document_group == '180' or settings.default_retention_document_group == 180 %}selected{% endif %}>180 days (6 months)</option>
+                                    <option value="365" {% if settings.default_retention_document_group == '365' or settings.default_retention_document_group == 365 %}selected{% endif %}>365 days (1 year)</option>
+                                    <option value="730" {% if settings.default_retention_document_group == '730' or settings.default_retention_document_group == 730 %}selected{% endif %}>730 days (2 years)</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <!-- Public Workspace Defaults -->
+                        <div class="row g-3" id="retention_defaults_public" style="{% if not settings.enable_retention_policy_public %}display: none;{% endif %}">
+                            <div class="col-12">
+                                <label class="form-label fw-bold"><i class="bi bi-globe me-1"></i>Public Workspace Defaults</label>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="default_retention_conversation_public" class="form-label">Conversation Retention</label>
+                                <select class="form-select" id="default_retention_conversation_public" name="default_retention_conversation_public">
+                                    <option value="none" {% if settings.default_retention_conversation_public == 'none' %}selected{% endif %}>No automatic deletion</option>
+                                    <option value="1" {% if settings.default_retention_conversation_public == '1' or settings.default_retention_conversation_public == 1 %}selected{% endif %}>1 day</option>
+                                    <option value="5" {% if settings.default_retention_conversation_public == '5' or settings.default_retention_conversation_public == 5 %}selected{% endif %}>5 days</option>
+                                    <option value="10" {% if settings.default_retention_conversation_public == '10' or settings.default_retention_conversation_public == 10 %}selected{% endif %}>10 days</option>
+                                    <option value="21" {% if settings.default_retention_conversation_public == '21' or settings.default_retention_conversation_public == 21 %}selected{% endif %}>21 days (3 weeks)</option>
+                                    <option value="30" {% if settings.default_retention_conversation_public == '30' or settings.default_retention_conversation_public == 30 %}selected{% endif %}>30 days</option>
+                                    <option value="60" {% if settings.default_retention_conversation_public == '60' or settings.default_retention_conversation_public == 60 %}selected{% endif %}>60 days</option>
+                                    <option value="90" {% if settings.default_retention_conversation_public == '90' or settings.default_retention_conversation_public == 90 %}selected{% endif %}>90 days (3 months)</option>
+                                    <option value="180" {% if settings.default_retention_conversation_public == '180' or settings.default_retention_conversation_public == 180 %}selected{% endif %}>180 days (6 months)</option>
+                                    <option value="365" {% if settings.default_retention_conversation_public == '365' or settings.default_retention_conversation_public == 365 %}selected{% endif %}>365 days (1 year)</option>
+                                    <option value="730" {% if settings.default_retention_conversation_public == '730' or settings.default_retention_conversation_public == 730 %}selected{% endif %}>730 days (2 years)</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="default_retention_document_public" class="form-label">Document Retention</label>
+                                <select class="form-select" id="default_retention_document_public" name="default_retention_document_public">
+                                    <option value="none" {% if settings.default_retention_document_public == 'none' %}selected{% endif %}>No automatic deletion</option>
+                                    <option value="1" {% if settings.default_retention_document_public == '1' or settings.default_retention_document_public == 1 %}selected{% endif %}>1 day</option>
+                                    <option value="5" {% if settings.default_retention_document_public == '5' or settings.default_retention_document_public == 5 %}selected{% endif %}>5 days</option>
+                                    <option value="10" {% if settings.default_retention_document_public == '10' or settings.default_retention_document_public == 10 %}selected{% endif %}>10 days</option>
+                                    <option value="21" {% if settings.default_retention_document_public == '21' or settings.default_retention_document_public == 21 %}selected{% endif %}>21 days (3 weeks)</option>
+                                    <option value="30" {% if settings.default_retention_document_public == '30' or settings.default_retention_document_public == 30 %}selected{% endif %}>30 days</option>
+                                    <option value="60" {% if settings.default_retention_document_public == '60' or settings.default_retention_document_public == 60 %}selected{% endif %}>60 days</option>
+                                    <option value="90" {% if settings.default_retention_document_public == '90' or settings.default_retention_document_public == 90 %}selected{% endif %}>90 days (3 months)</option>
+                                    <option value="180" {% if settings.default_retention_document_public == '180' or settings.default_retention_document_public == 180 %}selected{% endif %}>180 days (6 months)</option>
+                                    <option value="365" {% if settings.default_retention_document_public == '365' or settings.default_retention_document_public == 365 %}selected{% endif %}>365 days (1 year)</option>
+                                    <option value="730" {% if settings.default_retention_document_public == '730' or settings.default_retention_document_public == 730 %}selected{% endif %}>730 days (2 years)</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <!-- Force Push Button -->
+                        <div class="row g-3 mt-3">
+                            <div class="col-12">
+                                <div class="alert alert-warning mb-2">
+                                    <i class="bi bi-exclamation-triangle me-2"></i>
+                                    <strong>Force Push:</strong> Override all user/group/workspace custom retention policies with the organization defaults above. Users will then use the organization default until they set their own preference.
+                                </div>
+                                <button type="button" class="btn btn-warning" onclick="showForcePushModal()">
+                                    <i class="bi bi-arrow-repeat me-2"></i>Force Push Defaults to All
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Scheduled execution time -->
+                    <div class="mb-3">
+                        <label for="retention_policy_execution_hour" class="form-label">Scheduled Execution Time (Hour of Day)</label>
+                        <select class="form-select" id="retention_policy_execution_hour" name="retention_policy_execution_hour" style="max-width: 300px;">
+                            {% for hour in range(24) %}
+                            <option value="{{ hour }}" {% if settings.retention_policy_execution_hour == hour %}selected{% endif %}>
+                                {{ "%02d"|format(hour) }}:00 ({{ "Midnight" if hour == 0 else ("%d AM"|format(hour) if hour < 12 else ("Noon" if hour == 12 else "%d PM"|format(hour - 12))) }})
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <small class="form-text text-muted">Retention policy will run once daily at this hour (UTC timezone).</small>
+                    </div>
+                    
+                    <!-- Status information -->
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Last Execution:</label>
+                            <div class="form-control-plaintext">
+                                {% if settings.retention_policy_last_run %}
+                                    <span class="text-success">{{ settings.retention_policy_last_run }}</span>
+                                {% else %}
+                                    <span class="text-muted">Never run</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Next Scheduled Execution:</label>
+                            <div class="form-control-plaintext">
+                                {% if settings.retention_policy_next_run %}
+                                    <span class="text-info">{{ settings.retention_policy_next_run }}</span>
+                                {% else %}
+                                    <span class="text-muted">Not scheduled</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Manual execution button -->
+                    <div class="mt-3">
+                        <button type="button" class="btn btn-warning" onclick="showManualExecutionModal()">
+                            <i class="bi bi-play-circle me-2"></i>Manual Execution
+                        </button>
+                        <small class="form-text text-muted d-block mt-2">
+                            Trigger retention policy execution immediately for selected workspace types, bypassing the scheduled time.
+                        </small>
+                    </div>
+                    
+                    <div class="alert alert-warning mt-3" role="alert">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        <strong>Important:</strong> Deleted items respect your archiving settings. If conversation archiving is enabled, items will be archived before deletion. Activity logs are created for all deletions.
+                    </div>
+                </div>
 
+                <!-- User Agreement Section -->
+                <div class="card mb-3 p-3" id="user-agreement-section">
+                    <h5>
+                        <i class="bi bi-file-earmark-check me-2"></i>User Agreement
+                    </h5>
+                    <p class="text-muted">
+                        Configure a user agreement that users must accept before uploading files. 
+                        Supports Markdown formatting.
+                    </p>
+                    
+                    <!-- Enable Toggle -->
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox" 
+                            class="form-check-input" 
+                            id="enable_user_agreement" 
+                            name="enable_user_agreement"
+                            {% if settings.enable_user_agreement %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_user_agreement">
+                            Enable User Agreement
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, users must accept the agreement before uploading files in the selected workspace types."></i>
+                    </div>
+
+                    <!-- User Agreement Settings (shown when enabled) -->
+                    <div id="user_agreement_settings" {% if not settings.enable_user_agreement %}style="display: none;"{% endif %}>
+                        <hr>
+                        
+                        <!-- Apply To Checkboxes -->
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Apply to <span class="text-danger">*</span></label>
+                            <p class="text-muted small mb-2">Select where the user agreement should be shown (at least one required):</p>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="form-check mb-2">
+                                        <input type="checkbox" class="form-check-input" id="user_agreement_apply_personal" name="user_agreement_apply_personal"
+                                            {% if settings.user_agreement_apply_to and 'personal' in settings.user_agreement_apply_to %}checked{% endif %}>
+                                        <label class="form-check-label" for="user_agreement_apply_personal">
+                                            <i class="bi bi-person me-1"></i>Personal Workspaces
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
+                                        <input type="checkbox" class="form-check-input" id="user_agreement_apply_group" name="user_agreement_apply_group"
+                                            {% if settings.user_agreement_apply_to and 'group' in settings.user_agreement_apply_to %}checked{% endif %}>
+                                        <label class="form-check-label" for="user_agreement_apply_group">
+                                            <i class="bi bi-people me-1"></i>Group Workspaces
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="form-check mb-2">
+                                        <input type="checkbox" class="form-check-input" id="user_agreement_apply_public" name="user_agreement_apply_public"
+                                            {% if settings.user_agreement_apply_to and 'public' in settings.user_agreement_apply_to %}checked{% endif %}>
+                                        <label class="form-check-label" for="user_agreement_apply_public">
+                                            <i class="bi bi-globe me-1"></i>Public Workspaces
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
+                                        <input type="checkbox" class="form-check-input" id="user_agreement_apply_chat" name="user_agreement_apply_chat"
+                                            {% if settings.user_agreement_apply_to and 'chat' in settings.user_agreement_apply_to %}checked{% endif %}>
+                                        <label class="form-check-label" for="user_agreement_apply_chat">
+                                            <i class="bi bi-chat-dots me-1"></i>Chat
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="user_agreement_apply_to_validation" class="text-danger small" style="display: none;">
+                                <i class="bi bi-exclamation-circle me-1"></i>At least one location must be selected
+                            </div>
+                        </div>
+
+                        <!-- Agreement Text -->
+                        <div class="mb-3">
+                            <label for="user_agreement_text" class="form-label fw-bold">
+                                Agreement Text <span class="text-danger">*</span>
+                                <span class="text-muted fw-normal ms-2">(Markdown supported)</span>
+                            </label>
+                            <textarea class="form-control" id="user_agreement_text" name="user_agreement_text" rows="6"
+                                placeholder="Enter the agreement text that users must accept before uploading files...&#10;&#10;Example:&#10;**I confirm that:**&#10;- The documents I am uploading do not contain PII&#10;- I have permission to share these documents">{{ settings.user_agreement_text or '' }}</textarea>
+                            <div class="d-flex justify-content-between mt-1">
+                                <small id="user_agreement_word_count" class="text-muted">0 / 200 words</small>
+                                <small id="user_agreement_word_warning" class="text-danger" style="display: none;">
+                                    <i class="bi bi-exclamation-circle me-1"></i>Exceeds 200 word limit
+                                </small>
+                            </div>
+                        </div>
+
+                        <!-- Daily Acceptance Option -->
+                        <div class="form-group form-check form-switch mb-3">
+                            <input type="checkbox" class="form-check-input" id="enable_user_agreement_daily" name="enable_user_agreement_daily"
+                                {% if settings.enable_user_agreement_daily %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="enable_user_agreement_daily">
+                                Allow users to accept once per day
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, users only need to accept the agreement once per day instead of every time they upload files."></i>
+                        </div>
+
+                        <!-- Test Preview Button -->
+                        <div class="d-flex gap-2 flex-wrap">
+                            <button type="button" class="btn btn-outline-secondary" id="test_user_agreement_btn">
+                                <i class="bi bi-eye me-1"></i>Test Preview
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             
@@ -2471,6 +3151,147 @@
                     Configure Azure AI Search, Document Intelligence, and multimedia support settings.
                 </p>
 
+                <div class="card p-3 mb-3" id="web-search-foundry-section">
+                    <div class="d-flex align-items-center justify-content-between mb-2">
+                        <h5 class="mb-0"><i class="bi bi-globe me-2"></i>Web Search (Azure AI Foundry Agent)</h5>
+                        <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#webSearchFoundryInfoModal">
+                            <i class="bi bi-info-circle me-1"></i>Setup Guide
+                        </button>
+                    </div>
+                    <p class="text-muted mb-2">Enable web search by routing queries through an Azure AI Foundry agent configured by admins.</p>
+                    <div class="form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_web_search"
+                            name="enable_web_search"
+                            {% if settings.enable_web_search %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_web_search">Enable Web Search via Foundry Agent</label>
+                    </div>
+                    <input
+                        type="hidden"
+                        id="web_search_consent_accepted"
+                        name="web_search_consent_accepted"
+                        value="{{ 'true' if settings.web_search_consent_accepted else 'false' }}"
+                    >
+
+                    <div id="web_search_foundry_settings" class="{% if not settings.enable_web_search %}d-none{% endif %}">
+                        <!-- User Notice Settings -->
+                        <div class="card p-3 mb-3 bg-light">
+                            <h6 class="mb-2"><i class="bi bi-bell me-2"></i>User Data Notice</h6>
+                            <p class="text-muted small mb-2">Optionally show users a one-time notice explaining that their message will be sent to Bing for web search.</p>
+                            <div class="form-check form-switch mb-3">
+                                <input
+                                    type="checkbox"
+                                    class="form-check-input mb-3"
+                                    id="enable_web_search_user_notice"
+                                    name="enable_web_search_user_notice"
+                                    {% if settings.enable_web_search_user_notice %}checked{% endif %}
+                                >
+                                <label class="form-check-label ms-2 mb-3" for="enable_web_search_user_notice">Show data notice to users when web search is used</label>
+                            </div>
+                            <div id="web_search_user_notice_settings" class="{% if not settings.enable_web_search_user_notice %}d-none{% endif %}">
+                                <label for="web_search_user_notice_text" class="form-label">Notice Text</label>
+                                <textarea class="form-control" id="web_search_user_notice_text" name="web_search_user_notice_text" rows="2" placeholder="Your message will be sent to Microsoft Bing for web search...">{{ settings.web_search_user_notice_text or 'Your message will be sent to Microsoft Bing for web search. Only your current message is sent, not your conversation history.' }}</textarea>
+                                <div class="form-text">This message will be shown to users once per session when they first use web search.</div>
+                            </div>
+                        </div>
+                        <div class="row g-3">
+                            <div class="col-12" id="web_search_foundry_endpoint_container">
+                                <label for="web_search_foundry_endpoint" class="form-label">Foundry Project Endpoint</label>
+                                <input type="text" class="form-control" id="web_search_foundry_endpoint" name="web_search_foundry_endpoint" value="{{ settings.web_search_agent.other_settings.azure_ai_foundry.endpoint if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else settings.web_search_agent.azure_openai_gpt_endpoint or '' }}" placeholder="https://<resource>.services.ai.azure.com/api/projects/<project-name>">
+                                <div class="form-text">Project endpoint format: https://&lt;foundry-resource&gt;.services.ai.azure.com/api/projects/&lt;project-name&gt; (not the inference endpoint).</div>
+                            </div>
+                            <div class="col-md-6" id="web_search_foundry_api_version_container">
+                                <label for="web_search_foundry_api_version" class="form-label">Foundry API Version</label>
+                                <input type="text" class="form-control" id="web_search_foundry_api_version" name="web_search_foundry_api_version" value="{{ settings.web_search_agent.other_settings.azure_ai_foundry.api_version if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else settings.web_search_agent.azure_openai_gpt_api_version or '' }}" placeholder="2025-05-01">
+                                <a href="https://learn.microsoft.com/en-us/rest/api/aifoundry/aiprojects/?view=foundry#versioning" target="_blank" class="ms-2" rel="noopener noreferrer">
+                                    AI Foundry Versioning<i class="bi bi-box-arrow-up-right"></i>
+                                </a>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="web_search_foundry_agent_id" class="form-label">Foundry Agent ID</label>
+                                <input type="text" class="form-control" id="web_search_foundry_agent_id" name="web_search_foundry_agent_id" value="{{ settings.web_search_agent.other_settings.azure_ai_foundry.agent_id if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else '' }}" placeholder="GUID from Azure AI Foundry">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="web_search_foundry_auth_type" class="form-label">Authentication Type</label>
+                                <select class="form-select" id="web_search_foundry_auth_type" name="web_search_foundry_auth_type">
+                                    {% set foundry_auth_type = settings.web_search_agent.other_settings.azure_ai_foundry.authentication_type if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else 'managed_identity' %}
+                                    <option value="managed_identity" {% if foundry_auth_type=='managed_identity' %}selected{% endif %}>Managed Identity</option>
+                                    <option value="service_principal" {% if foundry_auth_type=='service_principal' %}selected{% endif %}>Service Principal</option>
+                                </select>
+                                <div class="form-text text-muted">Identity must have Cognitive Services User and AI Developer roles on the Foundry project.</div>
+                            </div>
+                            <div class="col-md-4" id="web_search_foundry_cloud_container">
+                                <label for="web_search_foundry_cloud" class="form-label">Cloud</label>
+                                <select class="form-select" id="web_search_foundry_cloud" name="web_search_foundry_cloud">
+                                    {% set foundry_cloud = settings.web_search_agent.other_settings.azure_ai_foundry.cloud if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else '' %}
+                                    <option value="" {% if foundry_cloud=='' %}selected{% endif %}>Azure Public</option>
+                                    <option value="usgov" {% if foundry_cloud=='usgov' or foundry_cloud=='usgovernment' or foundry_cloud=='gcc' %}selected{% endif %}>Azure Government</option>
+                                    <option value="custom" {% if foundry_cloud=='custom' %}selected{% endif %}>Custom</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4" id="web_search_foundry_managed_identity_type_container">
+                                <label for="web_search_foundry_managed_identity_type" class="form-label">Managed Identity Type</label>
+                                <select class="form-select" id="web_search_foundry_managed_identity_type" name="web_search_foundry_managed_identity_type">
+                                    {% set foundry_mi_type = settings.web_search_agent.other_settings.azure_ai_foundry.managed_identity_type if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else 'system_assigned' %}
+                                    <option value="system_assigned" {% if foundry_mi_type=='system_assigned' %}selected{% endif %}>System-assigned (SAMI)</option>
+                                    <option value="user_assigned" {% if foundry_mi_type=='user_assigned' %}selected{% endif %}>User-assigned (UAMI)</option>
+                                </select>
+                            </div>
+                            <div class="col-12" id="web_search_foundry_authority_container">
+                                <label for="web_search_foundry_authority" class="form-label">Authority Endpoint (Custom Cloud)</label>
+                                <input type="text" class="form-control" id="web_search_foundry_authority" name="web_search_foundry_authority" value="{{ settings.web_search_agent.other_settings.azure_ai_foundry.authority if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else '' }}" placeholder="https://login.microsoftonline.com/ or https://login.microsoftonline.us/">
+                            </div>
+                            <div class="col-md-6" id="web_search_foundry_managed_identity_client_id_container">
+                                <label for="web_search_foundry_managed_identity_client_id" class="form-label">Managed Identity Client ID (UAMI)</label>
+                                <input type="text" class="form-control" id="web_search_foundry_managed_identity_client_id" name="web_search_foundry_managed_identity_client_id" value="{{ settings.web_search_agent.other_settings.azure_ai_foundry.managed_identity_client_id if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else '' }}" placeholder="Client ID for user-assigned managed identity">
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mt-1" id="web_search_foundry_service_principal_fields">
+                            <div class="col-md-4">
+                                <label for="web_search_foundry_tenant_id" class="form-label">Tenant ID</label>
+                                <input type="text" class="form-control" id="web_search_foundry_tenant_id" name="web_search_foundry_tenant_id" value="{{ settings.web_search_agent.other_settings.azure_ai_foundry.tenant_id if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else '' }}" placeholder="Entra tenant ID">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="web_search_foundry_client_id" class="form-label">Client ID</label>
+                                <input type="text" class="form-control" id="web_search_foundry_client_id" name="web_search_foundry_client_id" value="{{ settings.web_search_agent.other_settings.azure_ai_foundry.client_id if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else '' }}" placeholder="App registration client ID">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="web_search_foundry_client_secret" class="form-label">Client Secret</label>
+                                <div class="input-group">
+                                    <input type="password" class="form-control" id="web_search_foundry_client_secret" name="web_search_foundry_client_secret" value="{{ settings.web_search_agent.other_settings.azure_ai_foundry.client_secret if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else '' }}" placeholder="Secret or Key Vault reference">
+                                    <button type="button" class="btn btn-outline-secondary" id="toggle_web_search_foundry_client_secret">Show</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="web-search-consent-modal" tabindex="-1" aria-labelledby="web-search-consent-title" aria-hidden="true">
+                    <div class="modal-dialog modal-dialog-centered modal-lg">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="web-search-consent-title">Web Search Consent Required</h5>
+                            </div>
+                            <div class="modal-body">
+                                <p>
+                                    When you use Grounding with Bing Search, your customer data is transferred outside of the Azure compliance boundary to the Grounding with Bing Search service. Grounding with Bing Search is not subject to the same data processing terms (including location of processing) and does not have the same compliance standards and certifications as the Azure AI Agent Service, as described in the <a href="https://www.microsoft.com/en-us/bing/apis/grounding-legal" target="_blank" rel="noopener noreferrer">Grounding with Bing Search TOU</a>. It is your responsibility to assess whether use of Grounding with Bing Search in your agent meets your needs and requirements.
+                                </p>
+                                <div class="alert alert-warning mb-0">
+                                    You must accept this consent to enable web search.
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-outline-secondary" id="web-search-consent-decline">Disagree</button>
+                                <button type="button" class="btn btn-primary" id="web-search-consent-accept">Agree</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 
                 <div class="card p-3 mb-3" id="azure-ai-search-section">
                     <h5><i class="bi bi-search me-2"></i>Azure AI Search</h5>
@@ -2709,37 +3530,71 @@
                     </div>
                 </div>
 
-                <!-- Multimedia Support Section -->
-                <div class="card p-3 mb-3" id="multimedia-support-section">
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <h5 class="mb-0"><i class="bi bi-play-circle me-2"></i>Multimedia Support</h5>
-                        <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#videoIndexerInfoModal">
-                            <i class="bi bi-info-circle me-1"></i>Configuration Guide
+                <!-- AI Video Intelligence Card -->
+                <div class="card p-4 mb-4 border-info shadow-sm" id="video-intelligence-section">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div class="d-flex align-items-center">
+                            <div class="bg-info text-white rounded-circle p-3 me-3" style="width: 50px; height: 50px; display: flex; align-items: center; justify-content: center;">
+                                <i class="bi bi-camera-video-fill fs-4"></i>
+                            </div>
+                            <div>
+                                <h4 class="mb-1">
+                                    <i class="bi bi-play-circle me-2"></i>AI Video Intelligence
+                                </h4>
+                                <p class="text-muted mb-0 small">Extract insights and make video content searchable and interactive</p>
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#videoIndexerInfoModal">
+                            <i class="bi bi-info-circle me-1"></i>Setup Guide
                         </button>
                     </div>
-                    <p class="text-muted mb-3">
-                        Support video and audio file upload for transcription, indexing, and embedding.
-                    </p>
 
-                    <!-- Video File Support -->
-                    <div class="form-group form-check form-switch mb-3">
-                        <input
-                            type="checkbox"
-                            class="form-check-input"
-                            id="enable_video_file_support"
-                            name="enable_video_file_support"
-                            {% if settings.enable_video_file_support %}checked{% endif %}
-                        >
-                        <label class="form-check-label ms-2" for="enable_video_file_support">
-                            Enable Video File Support
-                        </label>
-                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow video file uploads with automatic transcription and indexing for AI-powered content search and analysis."></i>
+                    <div class="alert alert-info mb-4">
+                        <i class="bi bi-lightbulb-fill me-2"></i>
+                        <strong>Make Video Content Fully Searchable:</strong> Upload videos to your workspace and automatically extract transcripts, identify speakers, detect topics, and generate searchable timestamps. Your AI can then answer questions about video content, cite specific moments, and provide deep insights.
                     </div>
 
-                    <div id="video_indexer_settings" class="card mb-3 p-3"
+                    <!-- Video File Support Toggle -->
+                    <div class="mb-4">
+                        <div class="form-check form-switch mb-2">
+                            <input
+                                type="checkbox"
+                                class="form-check-input"
+                                id="enable_video_file_support"
+                                name="enable_video_file_support"
+                                {% if settings.enable_video_file_support %}checked{% endif %}
+                            >
+                            <label class="form-check-label ms-2 fw-bold" for="enable_video_file_support">
+                                <i class="bi bi-camera-video me-1"></i> Enable Video File Upload & Processing
+                            </label>
+                        </div>
+                        <p class="text-muted small ms-4 ps-3 mb-2">
+                            Upload video files (MP4, AVI, MOV, etc.) to workspaces where Azure Video Indexer automatically processes them. 
+                            Extract spoken content, identify speakers, detect faces, recognize brands, and generate searchable metadata—perfect for meetings, presentations, training videos, and recorded content.
+                        </p>
+                        <div class="ms-4 ps-3">
+                            <span class="badge bg-primary-subtle text-primary-emphasis me-2">
+                                <i class="bi bi-search me-1"></i> Full-Text Search
+                            </span>
+                            <span class="badge bg-primary-subtle text-primary-emphasis me-2">
+                                <i class="bi bi-person-badge me-1"></i> Speaker ID
+                            </span>
+                            <span class="badge bg-primary-subtle text-primary-emphasis me-2">
+                                <i class="bi bi-clock-history me-1"></i> Timestamped Citations
+                            </span>
+                            <span class="badge bg-primary-subtle text-primary-emphasis">
+                                <i class="bi bi-translate me-1"></i> Multi-Language
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- Video Indexer Configuration (collapsible) -->
+                    <div id="video_indexer_settings" class="border-top pt-3"
                             {% if not settings.enable_video_file_support %}style="display: none;"{% endif %}>
-                        <h5>Azure Video Indexer Settings</h5>
-                        <p class="text-muted">Configure Azure Video Indexer for transcription & indexing using Managed Identity authentication.</p>
+                        <h5 class="mb-3">
+                            <i class="bi bi-gear-fill me-2"></i>Azure Video Indexer Configuration
+                        </h5>
+                        <p class="text-muted small mb-3">Connect to your Azure Video Indexer resource for advanced video processing and content extraction.</p>
                         
                         <div class="alert alert-info">
                             <strong><i class="bi bi-info-circle"></i> Prerequisites:</strong>
@@ -2819,25 +3674,114 @@
                         </div>
                     </div>
 
-                    <!-- Audio File Support -->
-                    <div class="form-group form-check form-switch mb-3">
-                        <input
-                            type="checkbox"
-                            class="form-check-input"
-                            id="enable_audio_file_support"
-                            name="enable_audio_file_support"
-                            {% if settings.enable_audio_file_support %}checked{% endif %}
-                        >
-                        <label class="form-check-label ms-2" for="enable_audio_file_support">
-                            Enable Audio File Support
-                        </label>
-                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow audio file uploads with automatic transcription and indexing for AI-powered content search and analysis."></i>
-                    </div>
+                    <!-- AI Voice Chat Card -->
+                    <div class="card p-4 mb-4 border-primary shadow-sm" id="ai-voice-chat-section">
+                        <div class="d-flex align-items-center mb-3">
+                            <div class="bg-primary text-white rounded-circle p-3 me-3" style="width: 50px; height: 50px; display: flex; align-items: center; justify-content: center;">
+                                <i class="bi bi-mic-fill fs-4"></i>
+                            </div>
+                            <div>
+                                <h4 class="mb-1">
+                                    <i class="bi bi-soundwave me-2"></i>AI Voice Conversations
+                                </h4>
+                                <p class="text-muted mb-0 small">Transform your AI experience with natural voice interactions</p>
+                            </div>
+                        </div>
 
-                    <div id="audio_service_settings" class="card mb-3 p-3"
-                            {% if not settings.enable_audio_file_support %}style="display: none;"{% endif %}>
-                        <h5>Speech Service Settings</h5>
-                        <p class="text-muted">Configure Azure Speech Service for audio transcription & embedding.</p>
+                        <div class="alert alert-info mb-4">
+                            <i class="bi bi-lightbulb-fill me-2"></i>
+                            <strong>Create a Complete Voice Experience:</strong> Enable both features together for seamless two-way voice conversations—speak your questions and hear AI responses aloud. Perfect for hands-free workflows, accessibility, and natural interactions.
+                        </div>
+
+                        <!-- Audio File Support -->
+                        <div class="mb-4">
+                            <div class="form-check form-switch mb-2">
+                                <input
+                                    type="checkbox"
+                                    class="form-check-input"
+                                    id="enable_audio_file_support"
+                                    name="enable_audio_file_support"
+                                    {% if settings.enable_audio_file_support %}checked{% endif %}
+                                >
+                                <label class="form-check-label ms-2 fw-bold" for="enable_audio_file_support">
+                                    <i class="bi bi-file-earmark-music me-1"></i> Enable Audio File Upload & Processing
+                                </label>
+                            </div>
+                            <p class="text-muted small ms-4 ps-3 mb-0">
+                                Upload audio files (MP3, WAV, M4A, etc.) to workspaces where they're automatically transcribed and indexed. 
+                                The AI can then search, analyze, and answer questions about audio content—perfect for meetings, interviews, lectures, and podcasts.
+                            </p>
+                        </div>
+
+                        <!-- Speech-to-Text -->
+                        <div class="mb-4">
+                            <div class="form-check form-switch mb-2">
+                                <input
+                                    type="checkbox"
+                                    class="form-check-input"
+                                    id="enable_speech_to_text_input"
+                                    name="enable_speech_to_text_input"
+                                    {% if settings.enable_speech_to_text_input %}checked{% endif %}
+                                >
+                                <label class="form-check-label ms-2 fw-bold" for="enable_speech_to_text_input">
+                                    <i class="bi bi-mic me-1"></i> Enable Voice Input (Speech-to-Text)
+                                </label>
+                            </div>
+                            <p class="text-muted small ms-4 ps-3 mb-2">
+                                Talk to your AI instead of typing. Record voice messages up to 90 seconds directly in the chat interface. 
+                                Azure Speech Service instantly transcribes your speech with high accuracy, supporting multiple languages and accents.
+                            </p>
+                            <div class="ms-4 ps-3">
+                                <span class="badge bg-success-subtle text-success-emphasis me-2">
+                                    <i class="bi bi-hand-thumbs-up-fill me-1"></i> Hands-Free
+                                </span>
+                                <span class="badge bg-success-subtle text-success-emphasis me-2">
+                                    <i class="bi bi-universal-access me-1"></i> Accessible
+                                </span>
+                                <span class="badge bg-success-subtle text-success-emphasis">
+                                    <i class="bi bi-lightning-fill me-1"></i> Fast Input
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- Text-to-Speech -->
+                        <div class="mb-4">
+                            <div class="form-check form-switch mb-2">
+                                <input
+                                    type="checkbox"
+                                    class="form-check-input"
+                                    id="enable_text_to_speech"
+                                    name="enable_text_to_speech"
+                                    {% if settings.enable_text_to_speech %}checked{% endif %}
+                                >
+                                <label class="form-check-label ms-2 fw-bold" for="enable_text_to_speech">
+                                    <i class="bi bi-volume-up me-1"></i> Enable Voice Responses (Text-to-Speech)
+                                </label>
+                            </div>
+                            <p class="text-muted small ms-4 ps-3 mb-2">
+                                Hear AI responses read aloud in natural, human-like voices powered by Azure's advanced neural Text-to-Speech. 
+                                Each message includes a speaker button—click to listen while multitasking, commuting, or whenever reading isn't convenient.
+                            </p>
+                            <div class="ms-4 ps-3">
+                                <span class="badge bg-info-subtle text-info-emphasis me-2">
+                                    <i class="bi bi-ear-fill me-1"></i> Natural Voices
+                                </span>
+                                <span class="badge bg-info-subtle text-info-emphasis me-2">
+                                    <i class="bi bi-arrows-fullscreen me-1"></i> Multitask-Friendly
+                                </span>
+                                <span class="badge bg-info-subtle text-info-emphasis">
+                                    <i class="bi bi-globe me-1"></i> Multi-Language
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- Speech Service Configuration (collapsible) -->
+                        <div id="audio_service_settings" class="border-top pt-3"
+                                {% if not (settings.enable_audio_file_support or settings.enable_speech_to_text_input or settings.enable_text_to_speech) %}style="display: none;"{% endif %}>
+                            <h5 class="mb-3">
+                                <i class="bi bi-gear-fill me-2"></i>Azure Speech Service Configuration
+                            </h5>
+                            <p class="text-muted small mb-3">Connect to your Azure Speech Service for audio transcription, voice input, and text-to-speech capabilities.</p>
 
                         <div class="mb-3">
                             <label for="speech_service_endpoint" class="form-label">Endpoint</label>
@@ -2907,8 +3851,65 @@
                     </p>
                 </div>
             </div>
+            
 
-        </div> 
+        </div>
+        <div class="tab-pane fade" id="security" role="tabpanel" aria-labelledby="security-tab">
+                 <p class="text-muted">
+                    Configure Security Settings.
+                </p>
+                <div class="card p-3 mb-3" id="keyvault-section">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h5>
+                            <i class="bi bi-safe me-2"></i>Key Vault
+                        </h5>
+                        <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#keyVaultInfoModal">
+                            <i class="bi bi-info-circle me-1"></i>Configuration Guide
+                        </button>
+                    </div>
+                    
+                    <p class="text-muted">
+                        Configure Key Vault settings.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
+                        <input
+                            type="checkbox"
+                            class="form-check-input me-2"
+                            id="enable_key_vault_secret_storage"
+                            name="enable_key_vault_secret_storage"
+                            {% if settings.enable_key_vault_secret_storage %}checked{% endif %}
+                        >
+                        <label class="form-check-label" for="enable_key_vault_secret_storage">
+                            Enable Key Vault for Agent and Action Secrets
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Store agent and action sensitive information like API keys and secrets securely in Azure Key Vault."></i>
+                    </div>
+                    <div id="key-vault-warning" class="alert alert-warning mt-2">
+                        <strong>⚠️ Warning:</strong> Once you enable Key Vault, you should <u>NOT</u> disable it. Disabling Key Vault after enabling <u>WILL</u> cause loss of access to secrets and break application functionality.
+                    </div>
+                    <div class="mb-3">
+                        <label for="key_vault_name" class="form-label">Key Vault Name</label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="The name of the key vault resource. Endpoint is determined by your AZURE_ENVIRONMENT app service configuration."></i>
+                        <input type="text" class="form-control" id="key_vault_name" name="key_vault_name" value="{{ settings.key_vault_name or '' }}" {% if settings.enable_key_vault_secret_storage %}required{% endif %}>
+                    </div>
+                    <div class="mb-3">
+                        <label for="key_vault_identity" class="form-label">Key Vault Managed Identity Client ID</label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="The Client ID of the User Assigned Managed Identity. Leave blank for system-assigned identity of the app service."></i>
+                        <input type="text" class="form-control" id="key_vault_identity" name="key_vault_identity" value="{{ settings.key_vault_identity or '' }}">
+                    </div>
+                    <button
+                        type="button"
+                        class="btn btn-secondary mt-3"
+                        style="width: auto;"
+                        id="test_key_vault_button"
+                    >
+                        Test Key Vault Connection
+                    </button>
+                    <div id="test_key_vault_result" class="mt-2">
+                    </div>
+                </div>
+            </div>
+        </div> <!-- End of Admin tab content -->
     </form>
     
     <!-- Floating Save Button -->
@@ -2928,6 +3929,12 @@
 
         <!-- Health Check Info Modal -->
         {% include '_health_check_info.html' %}
+
+        <!-- Key Vault Info Modal -->
+        {% include '_key_vault_info.html' %}
+        
+        <!-- Control Center Roles Info Modal -->
+        {% include '_control_center_roles_info.html' %}
 
         <!-- Swagger Info Modal -->
         <div class="modal fade" id="swaggerInfoModal" tabindex="-1" aria-labelledby="swaggerInfoModalLabel" aria-hidden="true">
@@ -2988,8 +3995,176 @@
             </div>
         </div>
 
+        <!-- Manual Retention Policy Execution Modal -->
+        <div class="modal fade" id="manualExecutionModal" tabindex="-1" aria-labelledby="manualExecutionModalLabel" aria-hidden="true">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="manualExecutionModalLabel">
+                            <i class="bi bi-play-circle me-2"></i>Manual Retention Policy Execution
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p>Select which workspace types to process. The retention policy will execute immediately for the selected scopes, deleting conversations and documents that exceed their configured retention periods.</p>
+                        
+                        <div class="alert alert-warning">
+                            <i class="bi bi-exclamation-triangle me-2"></i>
+                            <strong>Warning:</strong> This action will permanently delete items (or archive them if archiving is enabled). This cannot be undone.
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Select Workspace Scopes:</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="manual_exec_personal" value="personal">
+                                <label class="form-check-label" for="manual_exec_personal">
+                                    Personal Workspaces
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="manual_exec_group" value="group">
+                                <label class="form-check-label" for="manual_exec_group">
+                                    Group Workspaces
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="manual_exec_public" value="public">
+                                <label class="form-check-label" for="manual_exec_public">
+                                    Public Workspaces
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <div id="execution-status" class="mt-3" style="display: none;">
+                            <div class="alert alert-info">
+                                <i class="bi bi-hourglass-split me-2"></i>
+                                <span id="execution-status-text">Processing...</span>
+                            </div>
+                        </div>
+                        
+                        <div id="execution-results" class="mt-3" style="display: none;">
+                            <h6>Execution Results:</h6>
+                            <div id="results-content"></div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" id="modal-close-btn">Close</button>
+                        <button type="button" class="btn btn-danger" onclick="executeRetentionPolicy()" id="execute-btn">
+                            <i class="bi bi-play-circle me-1"></i>Execute Now
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Force Push Retention Policy Modal -->
+        <div class="modal fade" id="forcePushRetentionModal" tabindex="-1" aria-labelledby="forcePushRetentionModalLabel" aria-hidden="true">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header bg-warning">
+                        <h5 class="modal-title" id="forcePushRetentionModalLabel">
+                            <i class="bi bi-exclamation-triangle me-2"></i>Force Push Retention Defaults
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p>Select which workspace types to force push the organization defaults to. This will reset all custom retention policies to use the organization default.</p>
+                        
+                        <div class="alert alert-info mb-3">
+                            <i class="bi bi-info-circle me-2"></i>
+                            <strong>Note:</strong> This action will first save any changes you've made to the default retention settings above, then push those defaults to all selected workspaces.
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Select Workspace Types:</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="force_push_personal" value="personal">
+                                <label class="form-check-label" for="force_push_personal">
+                                    Personal Workspaces (all users)
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="force_push_group" value="group">
+                                <label class="form-check-label" for="force_push_group">
+                                    Group Workspaces
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="force_push_public" value="public">
+                                <label class="form-check-label" for="force_push_public">
+                                    Public Workspaces
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <div class="alert alert-danger">
+                            <i class="bi bi-exclamation-circle me-2"></i>
+                            <strong>Warning:</strong> This will override any custom retention policies users have set. They will need to reconfigure if they want different settings.
+                        </div>
+                        
+                        <div id="force-push-status" class="mt-3" style="display: none;">
+                            <div class="alert alert-info">
+                                <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                                <span id="force-push-status-text">Processing...</span>
+                            </div>
+                        </div>
+                        
+                        <div id="force-push-results" class="mt-3" style="display: none;"></div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" id="force-push-cancel-btn" data-bs-dismiss="modal">Cancel</button>
+                        <button type="button" class="btn btn-warning" id="force-push-btn" onclick="executeForcePush()">
+                            <i class="bi bi-arrow-repeat me-1"></i>Force Push
+                        </button>
+                        <button type="button" class="btn btn-primary" id="force-push-close-btn" data-bs-dismiss="modal" style="display: none;">Close</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Video Indexer Info Modal -->
         {% include '_video_indexer_info.html' %}
+
+        <!-- Web Search Foundry Info Modal -->
+        {% include '_web_search_foundry_info.html' %}
+
+        <!-- Key Vault Info Modal -->
+        {% include '_key_vault_info.html' %}
+
+        <!-- User Agreement Preview Modal -->
+        <div class="modal fade" id="userAgreementPreviewModal" tabindex="-1" aria-labelledby="userAgreementPreviewModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="userAgreementPreviewModalLabel">
+                            <i class="bi bi-file-earmark-check me-2"></i>User Agreement (Preview)
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="alert alert-info mb-3">
+                            <i class="bi bi-info-circle me-2"></i>
+                            This is a preview of how the user agreement will appear to users before file uploads.
+                        </div>
+                        <div id="userAgreementPreviewContent" class="border rounded p-3 bg-light">
+                            <!-- Rendered markdown content will be inserted here -->
+                        </div>
+                        <div class="form-check mt-3" id="userAgreementDailyCheckPreview" style="display: none;">
+                            <input type="checkbox" class="form-check-input" id="userAgreementDailyAcceptPreview" disabled>
+                            <label class="form-check-label" for="userAgreementDailyAcceptPreview">
+                                I accept this agreement for today (won't be asked again until tomorrow)
+                            </label>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close Preview</button>
+                        <button type="button" class="btn btn-success" disabled>
+                            <i class="bi bi-check-circle me-1"></i>Accept & Continue (Preview)
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 {% endblock %}
@@ -3040,6 +4215,7 @@
         if (!simplemde) {
             simplemde = new SimpleMDE({
                 element: document.getElementById("landing_page_text_editor"),
+                autoDownloadFontAwesome: false,
                 // Optionally add any SimpleMDE config here:
                 // placeholder: "Enter your landing page markdown..."
             });
@@ -3133,6 +4309,7 @@
 {% if settings.enable_semantic_kernel %}
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_plugins.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_agents.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/admin/admin_agent_templates.js') }}"></script>
 {% endif %}
 
 <!-- Script to update the walkthrough steps based on form changes -->
@@ -3167,14 +4344,36 @@
         
         // Handle audio support toggle in main form
         const audioSupportToggle = document.getElementById('enable_audio_file_support');
+        const speechInputToggle = document.getElementById('enable_speech_to_text_input');
+        const ttsToggle = document.getElementById('enable_text_to_speech');
+        
+        function updateAudioServiceSettings() {
+            const audioServiceSettings = document.getElementById('audio_service_settings');
+            const audioEnabled = audioSupportToggle?.checked || false;
+            const speechInputEnabled = speechInputToggle?.checked || false;
+            const ttsEnabled = ttsToggle?.checked || false;
+            
+            if (audioServiceSettings) {
+                if (audioEnabled || speechInputEnabled || ttsEnabled) {
+                    audioServiceSettings.style.display = 'block';
+                } else {
+                    audioServiceSettings.style.display = 'none';
+                }
+            }
+            
+            updateWalkthroughRequirements();
+        }
+        
         if (audioSupportToggle) {
-            audioSupportToggle.addEventListener('change', function() {
-                updateWalkthroughRequirements();
-                
-                // Recalculate available steps and refresh navigation
-                const currentStep = getCurrentWalkthroughStep();
-                navigateToWalkthroughStep(currentStep);
-            });
+            audioSupportToggle.addEventListener('change', updateAudioServiceSettings);
+        }
+        
+        if (speechInputToggle) {
+            speechInputToggle.addEventListener('change', updateAudioServiceSettings);
+        }
+        
+        if (ttsToggle) {
+            ttsToggle.addEventListener('change', updateAudioServiceSettings);
         }
         
         // Handle Front Door toggle in main form
@@ -3409,6 +4608,367 @@
         updateTimerLimits('debug');
         updateTimerLimits('file');
     });
+
+    // Retention Policy Functions
+    
+    // Toggle retention default sections visibility based on enable checkboxes
+    function toggleRetentionDefaultsVisibility() {
+        const personalEnabled = document.getElementById('enable_retention_policy_personal').checked;
+        const groupEnabled = document.getElementById('enable_retention_policy_group').checked;
+        const publicEnabled = document.getElementById('enable_retention_policy_public').checked;
+        
+        const personalDefaults = document.getElementById('retention_defaults_personal');
+        const groupDefaults = document.getElementById('retention_defaults_group');
+        const publicDefaults = document.getElementById('retention_defaults_public');
+        
+        if (personalDefaults) {
+            personalDefaults.style.display = personalEnabled ? '' : 'none';
+        }
+        if (groupDefaults) {
+            groupDefaults.style.display = groupEnabled ? '' : 'none';
+        }
+        if (publicDefaults) {
+            publicDefaults.style.display = publicEnabled ? '' : 'none';
+        }
+    }
+    
+    // Attach event listeners to retention policy enable checkboxes
+    document.getElementById('enable_retention_policy_personal')?.addEventListener('change', toggleRetentionDefaultsVisibility);
+    document.getElementById('enable_retention_policy_group')?.addEventListener('change', toggleRetentionDefaultsVisibility);
+    document.getElementById('enable_retention_policy_public')?.addEventListener('change', toggleRetentionDefaultsVisibility);
+    
+    // Force Push Modal Functions
+    function showForcePushModal() {
+        const modal = new bootstrap.Modal(document.getElementById('forcePushRetentionModal'));
+        
+        // Reset modal state
+        document.getElementById('force-push-status').style.display = 'none';
+        document.getElementById('force-push-results').style.display = 'none';
+        document.getElementById('force_push_personal').checked = false;
+        document.getElementById('force_push_group').checked = false;
+        document.getElementById('force_push_public').checked = false;
+        document.getElementById('force-push-btn').disabled = false;
+        
+        // Reset button visibility
+        document.getElementById('force-push-cancel-btn').style.display = '';
+        document.getElementById('force-push-btn').style.display = '';
+        document.getElementById('force-push-close-btn').style.display = 'none';
+        
+        modal.show();
+    }
+    
+    function executeForcePush() {
+        const personal = document.getElementById('force_push_personal').checked;
+        const group = document.getElementById('force_push_group').checked;
+        const publicWs = document.getElementById('force_push_public').checked;
+        
+        const scopes = [];
+        if (personal) scopes.push('personal');
+        if (group) scopes.push('group');
+        if (publicWs) scopes.push('public');
+        
+        if (scopes.length === 0) {
+            alert('Please select at least one workspace type.');
+            return;
+        }
+        
+        // Confirm before executing
+        if (!confirm(`Are you sure you want to force push defaults to ${scopes.join(', ')} workspaces? This will save the current settings and override all custom retention policies.`)) {
+            return;
+        }
+        
+        // Show processing status
+        document.getElementById('force-push-status').style.display = 'block';
+        document.getElementById('force-push-status-text').textContent = 'Saving settings first...';
+        document.getElementById('force-push-results').style.display = 'none';
+        document.getElementById('force-push-btn').disabled = true;
+        
+        // First, save the admin settings form via AJAX
+        const form = document.getElementById('admin-settings-form');
+        const formData = new FormData(form);
+        
+        fetch(window.location.pathname, {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Failed to save settings');
+            }
+            // Settings saved, now execute force push
+            document.getElementById('force-push-status-text').textContent = 'Pushing defaults to workspaces...';
+            
+            return fetch('/api/admin/retention-policy/force-push', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ scopes: scopes })
+            });
+        })
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('force-push-status').style.display = 'none';
+            document.getElementById('force-push-results').style.display = 'block';
+            
+            if (data.success) {
+                let resultHtml = `
+                    <div class="alert alert-success">
+                        <i class="bi bi-check-circle me-2"></i>
+                        <strong>Success!</strong> Settings saved and defaults pushed successfully.
+                    </div>
+                    <div class="card">
+                        <div class="card-body">
+                            <h6>Summary:</h6>
+                            <ul class="mb-0">`;
+                
+                if (data.details) {
+                    if (data.details.personal !== undefined) {
+                        resultHtml += `<li>Personal workspaces updated: <strong>${data.details.personal}</strong></li>`;
+                    }
+                    if (data.details.group !== undefined) {
+                        resultHtml += `<li>Group workspaces updated: <strong>${data.details.group}</strong></li>`;
+                    }
+                    if (data.details.public !== undefined) {
+                        resultHtml += `<li>Public workspaces updated: <strong>${data.details.public}</strong></li>`;
+                    }
+                }
+                
+                resultHtml += `<li>Total items updated: <strong>${data.updated_count || 0}</strong></li>
+                            </ul>
+                        </div>
+                    </div>`;
+                
+                document.getElementById('force-push-results').innerHTML = resultHtml;
+                
+                // Reset the form dirty state since we just saved
+                if (typeof resetFormDirtyState === 'function') {
+                    resetFormDirtyState();
+                }
+                // Disable the save button since we just saved
+                const saveBtn = document.getElementById('floating-save-btn');
+                if (saveBtn) {
+                    saveBtn.disabled = true;
+                    saveBtn.classList.remove('btn-primary');
+                    saveBtn.classList.add('btn-secondary');
+                }
+            } else {
+                document.getElementById('force-push-results').innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="bi bi-x-circle me-2"></i>
+                        <strong>Error:</strong> ${data.error || 'Failed to push defaults'}
+                    </div>`;
+            }
+            
+            // Hide Cancel and Force Push buttons, show Close button
+            document.getElementById('force-push-cancel-btn').style.display = 'none';
+            document.getElementById('force-push-btn').style.display = 'none';
+            document.getElementById('force-push-close-btn').style.display = '';
+        })
+        .catch(error => {
+            document.getElementById('force-push-status').style.display = 'none';
+            document.getElementById('force-push-results').style.display = 'block';
+            document.getElementById('force-push-results').innerHTML = `
+                <div class="alert alert-danger">
+                    <i class="bi bi-x-circle me-2"></i>
+                    <strong>Error:</strong> ${error.message}
+                </div>`;
+            
+            // Hide Cancel and Force Push buttons, show Close button
+            document.getElementById('force-push-cancel-btn').style.display = 'none';
+            document.getElementById('force-push-btn').style.display = 'none';
+            document.getElementById('force-push-close-btn').style.display = '';
+        });
+    }
+    
+    function showManualExecutionModal() {
+        const modal = new bootstrap.Modal(document.getElementById('manualExecutionModal'));
+        
+        // Reset modal state
+        document.getElementById('execution-status').style.display = 'none';
+        document.getElementById('execution-results').style.display = 'none';
+        document.getElementById('manual_exec_personal').checked = false;
+        document.getElementById('manual_exec_group').checked = false;
+        document.getElementById('manual_exec_public').checked = false;
+        document.getElementById('execute-btn').disabled = false;
+        
+        modal.show();
+    }
+
+    function executeRetentionPolicy() {
+        const personal = document.getElementById('manual_exec_personal').checked;
+        const group = document.getElementById('manual_exec_group').checked;
+        const publicWs = document.getElementById('manual_exec_public').checked;
+        
+        const scopes = [];
+        if (personal) scopes.push('personal');
+        if (group) scopes.push('group');
+        if (publicWs) scopes.push('public');
+        
+        if (scopes.length === 0) {
+            alert('Please select at least one workspace scope.');
+            return;
+        }
+        
+        // Confirm before executing
+        if (!confirm(`Are you sure you want to execute retention policy for ${scopes.join(', ')} workspaces? This will delete aged items according to configured retention periods.`)) {
+            return;
+        }
+        
+        // Show processing status
+        document.getElementById('execution-status').style.display = 'block';
+        document.getElementById('execution-status-text').textContent = 'Processing...';
+        document.getElementById('execution-results').style.display = 'none';
+        document.getElementById('execute-btn').disabled = true;
+        
+        // Execute via API
+        fetch('/api/admin/retention-policy/execute', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ scopes: scopes })
+        })
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('execution-status').style.display = 'none';
+            document.getElementById('execution-results').style.display = 'block';
+            
+            if (data.success) {
+                const results = data.results;
+                let html = '<div class="alert alert-success"><i class="bi bi-check-circle me-2"></i><strong>Execution completed successfully!</strong></div>';
+                
+                html += '<div class="table-responsive"><table class="table table-sm">';
+                html += '<thead><tr><th>Workspace Type</th><th>Conversations Deleted</th><th>Documents Deleted</th><th>Workspaces/Users Affected</th></tr></thead>';
+                html += '<tbody>';
+                
+                if (scopes.includes('personal')) {
+                    html += `<tr><td>Personal</td><td>${results.personal.conversations}</td><td>${results.personal.documents}</td><td>${results.personal.users_affected} users</td></tr>`;
+                }
+                if (scopes.includes('group')) {
+                    html += `<tr><td>Group</td><td>${results.group.conversations}</td><td>${results.group.documents}</td><td>${results.group.workspaces_affected} groups</td></tr>`;
+                }
+                if (scopes.includes('public')) {
+                    html += `<tr><td>Public</td><td>${results.public.conversations}</td><td>${results.public.documents}</td><td>${results.public.workspaces_affected} workspaces</td></tr>`;
+                }
+                
+                html += '</tbody></table></div>';
+                html += '<p class="text-muted small mt-2">Affected users/owners will receive notifications with details of deleted items.</p>';
+                
+                document.getElementById('results-content').innerHTML = html;
+            } else {
+                document.getElementById('results-content').innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        <strong>Execution failed:</strong> ${data.error || 'Unknown error'}
+                    </div>
+                `;
+            }
+            
+            document.getElementById('execute-btn').disabled = false;
+        })
+        .catch(error => {
+            document.getElementById('execution-status').style.display = 'none';
+            document.getElementById('execution-results').style.display = 'block';
+            document.getElementById('results-content').innerHTML = `
+                <div class="alert alert-danger">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    <strong>Error:</strong> ${error.message}
+                </div>
+            `;
+            document.getElementById('execute-btn').disabled = false;
+        });
+    }
+
+    // =====================
+    // User Agreement Logic
+    // =====================
+    
+    // Toggle visibility of user agreement settings
+    const enableUserAgreementToggle = document.getElementById('enable_user_agreement');
+    const userAgreementSettingsDiv = document.getElementById('user_agreement_settings');
+    
+    if (enableUserAgreementToggle && userAgreementSettingsDiv) {
+        enableUserAgreementToggle.addEventListener('change', function() {
+            userAgreementSettingsDiv.style.display = this.checked ? 'block' : 'none';
+        });
+    }
+
+    // Word count for user agreement text
+    const userAgreementTextarea = document.getElementById('user_agreement_text');
+    const userAgreementWordCount = document.getElementById('user_agreement_word_count');
+    const userAgreementWordWarning = document.getElementById('user_agreement_word_warning');
+    
+    function updateUserAgreementWordCount() {
+        if (!userAgreementTextarea || !userAgreementWordCount) return;
+        
+        const text = userAgreementTextarea.value.trim();
+        const words = text ? text.split(/\s+/).filter(word => word.length > 0) : [];
+        const wordCount = words.length;
+        
+        userAgreementWordCount.textContent = `${wordCount} / 200 words`;
+        
+        if (wordCount > 200) {
+            userAgreementWordCount.classList.remove('text-muted');
+            userAgreementWordCount.classList.add('text-danger');
+            if (userAgreementWordWarning) {
+                userAgreementWordWarning.style.display = 'inline';
+            }
+        } else {
+            userAgreementWordCount.classList.remove('text-danger');
+            userAgreementWordCount.classList.add('text-muted');
+            if (userAgreementWordWarning) {
+                userAgreementWordWarning.style.display = 'none';
+            }
+        }
+    }
+    
+    if (userAgreementTextarea) {
+        userAgreementTextarea.addEventListener('input', updateUserAgreementWordCount);
+        // Initial count on page load
+        updateUserAgreementWordCount();
+    }
+
+    // Test Preview button for User Agreement
+    const testUserAgreementBtn = document.getElementById('test_user_agreement_btn');
+    
+    if (testUserAgreementBtn) {
+        testUserAgreementBtn.addEventListener('click', function() {
+            const agreementText = userAgreementTextarea ? userAgreementTextarea.value.trim() : '';
+            const allowDaily = document.getElementById('enable_user_agreement_daily');
+            
+            if (!agreementText) {
+                alert('Please enter agreement text before previewing.');
+                return;
+            }
+            
+            // Render markdown to HTML
+            const previewContent = document.getElementById('userAgreementPreviewContent');
+            if (previewContent) {
+                // Use marked if available, otherwise show raw text
+                if (typeof marked !== 'undefined') {
+                    let html = marked.parse(agreementText);
+                    // Sanitize if DOMPurify is available
+                    if (typeof DOMPurify !== 'undefined') {
+                        html = DOMPurify.sanitize(html);
+                    }
+                    previewContent.innerHTML = html;
+                } else {
+                    previewContent.textContent = agreementText;
+                }
+            }
+            
+            // Show/hide daily acceptance checkbox preview
+            const dailyCheckPreview = document.getElementById('userAgreementDailyCheckPreview');
+            if (dailyCheckPreview && allowDaily) {
+                dailyCheckPreview.style.display = allowDaily.checked ? 'block' : 'none';
+            }
+            
+            // Show the modal
+            const modal = new bootstrap.Modal(document.getElementById('userAgreementPreviewModal'));
+            modal.show();
+        });
+    }
 
 </script>
 {% endblock %}

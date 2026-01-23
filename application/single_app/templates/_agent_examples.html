@@ -1,0 +1,45 @@
+{% macro agent_examples(accordion_id='agentExamples', show_copy_buttons=True, show_create_buttons=False) %}
+<div class="agent-template-gallery"
+     data-accordion-id="{{ accordion_id }}"
+     data-show-copy="{{ 'true' if show_copy_buttons else 'false' }}"
+     data-show-create="{{ 'true' if show_create_buttons else 'false' }}">
+  <div class="agent-template-gallery-loading py-4 text-center">
+    <div class="spinner-border" role="status">
+      <span class="visually-hidden">Loading...</span>
+    </div>
+    <p class="text-muted mt-3 mb-0">Loading agent templates...</p>
+  </div>
+
+  <div class="alert alert-warning d-none agent-template-gallery-empty" role="status">
+    <div class="d-flex align-items-start gap-2">
+      <i class="bi bi-inbox"></i>
+      <div>
+        <strong>No templates yet.</strong>
+        <div>Be the first to submit a reusable agent configuration.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="alert alert-info d-none agent-template-gallery-disabled" role="alert">
+    <div class="d-flex align-items-start gap-2">
+      <i class="bi bi-sliders"></i>
+      <div>
+        <strong>Agent template gallery is disabled.</strong>
+        <div>Ask an admin to enable the feature in Admin &gt; Agents.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="alert alert-danger d-none agent-template-gallery-error" role="alert">
+    <div class="d-flex align-items-start gap-2">
+      <i class="bi bi-exclamation-triangle"></i>
+      <div>
+        <strong>Unable to load agent templates.</strong>
+        <div class="agent-template-gallery-error-text">Please try again in a few moments.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="accordion d-none" id="{{ accordion_id }}"></div>
+</div>
+{% endmacro %}

@@ -13,9 +13,7 @@ def register_route_backend_models(app):
     """
 
     @app.route('/api/models/gpt', methods=['GET'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def get_gpt_models():
@@ -75,9 +73,7 @@ def register_route_backend_models(app):
 
 
     @app.route('/api/models/embedding', methods=['GET'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def get_embedding_models():
@@ -135,9 +131,7 @@ def register_route_backend_models(app):
 
 
     @app.route('/api/models/image', methods=['GET'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def get_image_models():

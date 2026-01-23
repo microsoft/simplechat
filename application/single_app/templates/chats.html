@@ -5,6 +5,9 @@
 
 {% block head %}
     <link rel="stylesheet" href="/static/css/chats.css">
+    {% if app_settings.enable_speech_to_text_input %}
+    <link rel="stylesheet" href="/static/css/chat-speech-input.css">
+    {% endif %}
     <style>
         /* Initial layout styles to prevent shifting when top nav is active */
         {% set nav_layout = user_settings.get('settings', {}).get('navLayout') %}
@@ -82,17 +85,23 @@
             transition: opacity 0.2s ease, transform 0.2s ease;
             min-width: 0;
             padding: 8px; /* Padding for better touch target */
-            right: 6px; /* Some padding from right edge */
+            right: 15px; /* More padding from right edge to avoid scrollbar */
             bottom: 6px; /* Some padding from bottom edge */
             z-index: 10;
             height: 36px; /* Square button height */
             width: 36px; /* Square button width */
             border-radius: 0.375rem; /* Rounded corners for square button */
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            line-height: 1;
         }
         
         /* Show send button when there's content */
         #send-btn.show {
-            display: block !important;
+            display: flex !important;
+            align-items: center;
+            justify-content: center;
         }
         
         /* Set minimum height for input field */
@@ -183,6 +192,22 @@
         #right-pane {
             transition: margin-left 0.3s ease-in-out, max-width 0.3s ease-in-out, width 0.3s ease-in-out !important;
         }
+        
+        /* Web search notice styling - connects with input field */
+        #web-search-notice-container {
+            margin-bottom: 0 !important;
+        }
+        
+        #web-search-notice-container > div {
+            border-bottom-left-radius: 0 !important;
+            border-bottom-right-radius: 0 !important;
+        }
+        
+        /* When notice is visible, adjust input field to connect */
+        #web-search-notice-container:not([style*="display: none"]) + .chat-input-container #user-input {
+            border-top-left-radius: 0 !important;
+            border-top-right-radius: 0 !important;
+        }
     </style>
 {% endblock %}
 
@@ -256,14 +281,23 @@
                             <i class="bi bi-file-earmark-text"></i> <span class="search-btn-text d-none d-md-inline">Workspaces</span>
                         </button>
                         {% endif %}
-                         <input type="file" id="file-input" accept=".txt,.pdf,.doc,.docm,.docx,.xlsx,.xlsm,.pptx,.html,.jpg,.jpeg,.png,.bmp,.tiff,.tif,.heif,.md,.json,.csv,.xml,.yaml,.yml,.log" style="display: none"/>
-                         <button id="choose-file-btn" class="btn btn-outline-secondary btn-sm file-btn position-relative" data-bs-toggle="tooltip" data-bs-placement="top" title="Select and automatically upload a file to this conversation (txt, pdf, doc, docm, docx, xlsx, pptx, html, images, md, json, csv, xml, yaml, yml, log)">
-                             <i class="bi bi-paperclip"></i> <span class="file-btn-text d-none d-md-inline">File</span>
-                             <span id="cancel-file-selection" class="position-absolute top-50 end-0 translate-middle-y me-1" style="display: none; cursor: pointer;" title="Cancel file selection">
-                                 <i class="bi bi-x-circle-fill text-danger"></i>
-                             </span>
-                         </button>
-                         <button id="upload-btn" class="btn btn-secondary btn-sm" style="display: none">Add to Chat</button>
+                        <input type="file" id="file-input" accept=".txt,.pdf,.doc,.docm,.docx,.xlsx,.xlsm,.pptx,.html,.jpg,.jpeg,.png,.bmp,.tiff,.tif,.heif,.md,.json,.csv,.xml,.yaml,.yml,.log" style="display: none"/>
+                        <button id="choose-file-btn" class="btn btn-outline-secondary btn-sm file-btn position-relative" data-bs-toggle="tooltip" data-bs-placement="top" title="Select and automatically upload a file to this conversation (txt, pdf, doc, docm, docx, xlsx, pptx, html, images, md, json, csv, xml, yaml, yml, log)">
+                            <i class="bi bi-paperclip"></i> <span class="file-btn-text d-none d-md-inline">File</span>
+                            <span id="cancel-file-selection" class="position-absolute top-50 end-0 translate-middle-y me-1" style="display: none; cursor: pointer;" title="Cancel file selection">
+                                <i class="bi bi-x-circle-fill text-danger"></i>
+                            </span>
+                        </button>
+                        <button id="upload-btn" class="btn btn-secondary btn-sm" style="display: none">Add to Chat</button>
+                        {% if settings.enable_web_search and settings.web_search_consent_accepted %}
+                        <button
+                            id="search-web-btn"
+                            class="btn btn-outline-secondary btn-sm search-btn"
+                            data-bs-toggle="tooltip" data-bs-placement="top" title="Search the web using Bing"
+                        >
+                            <i class="bi bi-globe"></i> <span class="search-btn-text d-none d-md-inline">Web</span>
+                        </button>
+                        {% endif %}
                         {% if settings.enable_user_workspace or settings.enable_group_workspaces %}
                         <button id="search-prompts-btn" class="btn btn-outline-secondary btn-sm search-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="Select a saved prompt">
                             <i class="bi bi-lightbulb"></i> <span class="search-btn-text d-none d-md-inline">Prompts</span>
@@ -278,6 +312,21 @@
                     
                     <!-- Right side selectors -->
                     <div class="d-flex align-items-center gap-2">
+
+                        <!-- TTS Autoplay toggle button -->
+                        {% if app_settings.enable_text_to_speech %}
+                        <button 
+                            id="tts-autoplay-toggle-btn" 
+                            class="btn btn-outline-secondary btn-sm rounded-circle" 
+                            data-bs-toggle="tooltip" 
+                            data-bs-placement="top" 
+                            data-bs-title="Toggle AI voice response"
+                            title="Auto voice response disabled - click to enable"
+                            style="width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center;"
+                        >
+                            <i class="bi bi-volume-mute"></i>
+                        </button>
+                        {% endif %}
 
                         <!-- Streaming toggle button -->
                         <button 
@@ -407,16 +456,48 @@
                 </div>
                 {% endif %}
 
+                <!-- Web Search User Notice (shown when web search is active and notice is enabled) -->
+                {% if settings.enable_web_search and settings.web_search_consent_accepted and settings.enable_web_search_user_notice %}
+                <div id="web-search-notice-container" class="mb-2" style="display: none;">
+                    <div class="d-flex align-items-center px-3 py-2 rounded-top border border-bottom-0" style="background-color: var(--bs-tertiary-bg); border-color: var(--bs-border-color) !important;">
+                        <i class="bi bi-info-circle text-primary me-2"></i>
+                        <span class="small" id="web-search-notice-text">{{ settings.web_search_user_notice_text or 'Your message will be sent to Microsoft Bing for web search. Only your current message is sent, not your conversation history.' }}</span>
+                        <button type="button" class="btn-close btn-close-sm ms-auto" id="web-search-notice-dismiss" aria-label="Dismiss" style="font-size: 0.65rem;"></button>
+                    </div>
+                </div>
+                {% endif %}
                 
                 <div class="chat-input-container position-relative">
                     <!-- Textarea container with send button inside -->
-                    <div class="position-relative">
+                    <div class="position-relative" id="normal-input-container">
                          <textarea id="user-input" class="form-control" placeholder="Type your message..." rows="1" style="resize: none; padding-right: 15px;" oninput="this.style.height = ''; this.style.height = Math.min(this.scrollHeight, 200) + 'px'; window.handleInputChange && window.handleInputChange();"></textarea>
+                         
+                         <!-- Microphone Button for Speech Input -->
+                         {% if app_settings.enable_speech_to_text_input %}
+                         <button class="btn btn-outline-secondary position-absolute" id="speech-input-btn" title="Voice Input" style="left: 10px; bottom: 6px; display: block;">
+                              <i class="bi bi-mic-fill"></i>
+                         </button>
+                         {% endif %}
                          
                          <!-- Send Button positioned inside textarea area - initially hidden -->
                          <button class="btn btn-primary position-absolute" id="send-btn" title="Send Message">
                               <i class="bi bi-send-fill"></i>
                          </button>
+                    </div>
+                    
+                    <!-- Recording UI Container (hidden by default) -->
+                    <div class="position-relative" id="recording-container" style="display: none;">
+                        <div class="recording-ui d-flex align-items-center gap-2">
+                            <canvas id="waveform-canvas" style="flex: 1;"></canvas>
+                            <div class="recording-buttons d-flex gap-2">
+                                <button class="btn btn-danger" id="cancel-recording-btn" title="Cancel Recording">
+                                    <i class="bi bi-x-circle-fill"></i>
+                                </button>
+                                <button class="btn btn-success" id="send-recording-btn" title="Send Recording">
+                                    <i class="bi bi-check-circle-fill"></i>
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -836,6 +917,13 @@
         display_name: "{{ user_display_name }}"
     };
 
+    // App settings for feature detection
+    window.appSettings = {
+        enable_text_to_speech: {{ 'true' if app_settings.enable_text_to_speech else 'false' }},
+        enable_speech_to_text_input: {{ 'true' if app_settings.enable_speech_to_text_input else 'false' }},
+        enable_web_search_user_notice: {{ 'true' if settings.enable_web_search_user_notice else 'false' }}
+    };
+
     // Layout related globals (can stay here or move entirely into chat-layout.js if preferred)
     let splitInstance = null;
     let currentLayout = 'split'; // Default layout
@@ -846,6 +934,12 @@
 <script src="{{ url_for('static', filename='js/chat/chat-global.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-layout.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-utils.js') }}"></script>
+{% if app_settings.enable_speech_to_text_input %}
+<script type="module" src="{{ url_for('static', filename='js/chat/chat-speech-input.js') }}"></script>
+{% endif %}
+{% if app_settings.enable_text_to_speech %}
+<script type="module" src="{{ url_for('static', filename='js/chat/chat-tts.js') }}"></script>
+{% endif %}
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-messages.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-conversations.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-sidebar-conversations.js') }}"></script>

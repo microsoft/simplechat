@@ -1,0 +1,22 @@
+{
+  "azurecloud": {
+    "aisearch": "privatelink.search.windows.net",
+    "blobStorage": "privatelink.blob.core.windows.net",
+    "cognitiveServices": "privatelink.cognitiveservices.azure.com",
+    "containerRegistry": "privatelink.azurecr.io",
+    "cosmosDb": "privatelink.documents.azure.com",
+    "keyVault": "privatelink.vaultcore.azure.net",
+    "openAi": "privatelink.openai.azure.com",
+    "webSites": "privatelink.azurewebsites.net"
+  },
+  "azureusgovernment": {
+    "aisearch": "privatelink.search.azure.us",
+    "blobStorage": "privatelink.blob.core.usgovcloudapi.net",
+    "cognitiveServices": "privatelink.cognitiveservices.azure.us",
+    "containerRegistry": "privatelink.azurecr.us",
+    "cosmosDb": "privatelink.documents.azure.us",
+    "keyVault": "privatelink.vaultcore.azure.us",
+    "openAi": "privatelink.openai.azure.us",
+    "webSites": "privatelink.azurewebsites.us"
+  }
+}

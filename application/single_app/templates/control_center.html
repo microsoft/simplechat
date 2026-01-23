@@ -347,6 +347,90 @@
             height: 100% !important;
         }
         
+        /* Activity Timeline Styles */
+        .activity-item {
+            transition: all 0.2s ease;
+            background: var(--bs-body-bg);
+        }
+        
+        .activity-item:hover {
+            background: rgba(var(--bs-primary-rgb), 0.05);
+            transform: translateX(4px);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+        
+        .activity-icon {
+            flex-shrink: 0;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            background: rgba(var(--bs-secondary-rgb), 0.1);
+        }
+        
+        .activity-item .text-success {
+            color: var(--bs-success) !important;
+        }
+        
+        .activity-item .text-danger {
+            color: var(--bs-danger) !important;
+        }
+        
+        .activity-item .text-warning {
+            color: var(--bs-warning) !important;
+        }
+        
+        .activity-item .text-info {
+            color: var(--bs-info) !important;
+        }
+        
+        .activity-item .text-primary {
+            color: var(--bs-primary) !important;
+        }
+        
+        .activity-item .text-secondary {
+            color: var(--bs-secondary) !important;
+        }
+        
+        [data-bs-theme="dark"] .activity-item {
+            border-color: var(--bs-border-color) !important;
+        }
+        
+        [data-bs-theme="dark"] .activity-item:hover {
+            background: rgba(var(--bs-primary-rgb), 0.1);
+        }
+        
+        .timeline-container {
+            position: relative;
+        }
+        
+        .timeline-container::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        .timeline-container::-webkit-scrollbar-track {
+            background: var(--bs-light);
+            border-radius: 4px;
+        }
+        
+        .timeline-container::-webkit-scrollbar-thumb {
+            background: var(--bs-secondary);
+            border-radius: 4px;
+        }
+        
+        .timeline-container::-webkit-scrollbar-thumb:hover {
+            background: var(--bs-dark);
+        }
+        
+        [data-bs-theme="dark"] .timeline-container::-webkit-scrollbar-track {
+            background: var(--bs-dark);
+        }
+        
+        [data-bs-theme="dark"] .timeline-container::-webkit-scrollbar-thumb {
+            background: var(--bs-secondary);
+        }
 
     </style>
 {% endblock %}
@@ -457,10 +541,11 @@
                             <!-- System Summary Cards -->
                             <div class="row mb-4 control-center-stats">
                                 <div class="col-md-4 mb-3">
-                                    <div class="card stat-card h-100 clickable" onclick="navigateToTab('users-tab')" 
+                                    <div class="card stat-card h-100{% if has_control_center_admin %} clickable{% endif %}" 
+                                         {% if has_control_center_admin %}onclick="navigateToTab('users-tab')" 
                                          title="Click to view User Management" role="button" tabindex="0" 
                                          onkeydown="if(event.key==='Enter'||event.key===' ') navigateToTab('users-tab')"
-                                         aria-label="Navigate to User Management. Total users: {{ statistics.total_users or 0 }}">
+                                         aria-label="Navigate to User Management. Total users: {{ statistics.total_users or 0 }}"{% else %}title="User Management (Admin access required)"{% endif %}>
                                         <div class="card-body">
                                             <div class="d-flex justify-content-between align-items-center">
                                                 <div>
@@ -479,10 +564,11 @@
                                 </div>
                                 
                                 <div class="col-md-4 mb-3">
-                                    <div class="card stat-card h-100 clickable" onclick="navigateToTab('groups-tab')" 
+                                    <div class="card stat-card h-100{% if has_control_center_admin %} clickable{% endif %}" 
+                                         {% if has_control_center_admin %}onclick="navigateToTab('groups-tab')" 
                                          title="Click to view Group Management" role="button" tabindex="0"
                                          onkeydown="if(event.key==='Enter'||event.key===' ') navigateToTab('groups-tab')"
-                                         aria-label="Navigate to Group Management. Total groups: {{ statistics.total_groups or 0 }}">
+                                         aria-label="Navigate to Group Management. Total groups: {{ statistics.total_groups or 0 }}"{% else %}title="Group Management (Admin access required)"{% endif %}>
                                         <div class="card-body">
                                             <div class="d-flex justify-content-between align-items-center">
                                                 <div>
@@ -501,10 +587,11 @@
                                 </div>
                                 
                                 <div class="col-md-4 mb-3">
-                                    <div class="card stat-card h-100 clickable" onclick="navigateToTab('workspaces-tab')" 
+                                    <div class="card stat-card h-100{% if has_control_center_admin %} clickable{% endif %}" 
+                                         {% if has_control_center_admin %}onclick="navigateToTab('workspaces-tab')" 
                                          title="Click to view Public Workspaces Management" role="button" tabindex="0"
                                          onkeydown="if(event.key==='Enter'||event.key===' ') navigateToTab('workspaces-tab')"
-                                         aria-label="Navigate to Public Workspaces Management. Total workspaces: {{ statistics.total_public_workspaces or 0 }}">
+                                         aria-label="Navigate to Public Workspaces Management. Total workspaces: {{ statistics.total_public_workspaces or 0 }}"{% else %}title="Public Workspaces Management (Admin access required)"{% endif %}>
                                         <div class="card-body">
                                             <div class="d-flex justify-content-between align-items-center">
                                                 <div>
@@ -560,8 +647,9 @@
                                     <div class="d-flex justify-content-between align-items-center flex-wrap">
                                         <h5 class="mb-0">
                                             <i class="bi bi-graph-up me-2"></i>Activity Trends
-                                            <small>Real-time, does not require refresh</small>
+                                            
                                         </h5>
+                                        <small>Real-time, does not require refresh</small>
                                         <div class="d-flex align-items-center gap-2">
                                             <!-- Date Range Buttons -->
                                             <div class="btn-group" role="group">
@@ -989,10 +1077,18 @@
                                         <option value="all">All Activity Types</option>
                                         <option value="user_login">User Login</option>
                                         <option value="conversation_creation">Conversation Creation</option>
-                                        <option value="document_creation">Document Creation</option>
-                                        <option value="token_usage">Token Usage</option>
                                         <option value="conversation_deletion">Conversation Deletion</option>
                                         <option value="conversation_archival">Conversation Archival</option>
+                                        <option value="document_creation">Document Creation</option>
+                                        <option value="document_deletion">Document Deletion</option>
+                                        <option value="document_metadata_update">Document Metadata Update</option>
+                                        <option value="token_usage">Token Usage</option>
+                                        <option value="group_status_change">Group Status Change</option>
+                                        <option value="group_member_deleted">Group Member Deleted</option>
+                                        <option value="add_member_directly">Add Member Directly</option>
+                                        <option value="admin_take_ownership_approved">Admin Take Ownership (Approved)</option>
+                                        <option value="delete_group_approved">Delete Group (Approved)</option>
+                                        <option value="delete_all_documents_approved">Delete All Documents (Approved)</option>
                                     </select>
                                 </div>
                                 <div class="col-md-2">
@@ -1146,9 +1242,45 @@
                     </div>
                 </div>
                 <div class="modal-footer">
+                    <button type="button" class="btn btn-danger me-auto" id="deleteUserDocumentsBtn">
+                        <i class="bi bi-trash me-1"></i>Delete All Documents
+                    </button>
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                     <button type="button" class="btn btn-primary" id="saveUserChangesBtn">
                         <i class="bi bi-check-lg me-1"></i>Save Changes
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Delete User Documents Confirmation Modal -->
+    <div class="modal fade" id="deleteUserDocumentsModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title">
+                        <i class="bi bi-exclamation-triangle me-2"></i>Delete All User Documents
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-warning">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        <strong>Warning:</strong> This will create an approval request to permanently delete ALL documents for this user.
+                        This action cannot be undone after approval.
+                    </div>
+                    <div class="mb-3">
+                        <label for="deleteUserDocumentsReason" class="form-label">Reason (Required)</label>
+                        <textarea class="form-control" id="deleteUserDocumentsReason" rows="3" 
+                                  placeholder="Explain why this user's documents need to be deleted..."></textarea>
+                        <div class="form-text">This reason will be visible to approvers and logged in the activity log.</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-danger" id="confirmDeleteUserDocumentsBtn">
+                        <i class="bi bi-trash me-1"></i>Submit Request
                     </button>
                 </div>
             </div>
@@ -1298,7 +1430,7 @@
                             <li><strong>Personal Documents:</strong> Display name, email, user ID, personal document details, sizes, upload date</li>
                         <li><strong>Group Documents:</strong> Display name, email, user ID, group document details, sizes, upload date</li>
                             <li><strong>Public Documents:</strong> Display name, email, user ID, public document details, sizes, upload date</li>
-                            <li><strong>Token Usage:</strong> Display name, email, user ID, token type (chat/embedding), model name, prompt tokens, completion tokens, total tokens, timestamp</li>
+                            <li><strong>Token Usage:</strong> Display name, email, user ID, token type (chat/embedding/web_search), model name, prompt tokens, completion tokens, total tokens, timestamp</li>
                         </ul>
                     </div>
                 </div>
@@ -1451,7 +1583,9 @@
                                             <option value="upload_disabled">Upload Disabled</option>
                                             <option value="inactive">Inactive</option>
                                         </select>
-                                        <div class="form-text">Locked groups prevent members from adding users or files. Upload disabled prevents new file uploads only.</div>
+                                        <div class="form-text" id="groupStatusHelpText">
+                                            <strong>🟢 Active:</strong> Full functionality enabled. Members can upload documents, chat, and search documents. All group features work normally.
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -1473,9 +1607,20 @@
                                         </select>
                                     </div>
                                     <div class="mb-3" id="transferUserGroup" style="display: none;">
-                                        <label class="form-label">New Owner Email</label>
-                                        <input type="email" class="form-control" id="groupNewOwnerEmail" placeholder="Enter user email">
-                                        <div class="form-text">User must be a member of the group to become owner.</div>
+                                        <label class="form-label">New Owner</label>
+                                        <select class="form-select" id="groupNewOwnerSelect">
+                                            <option value="">Select a group member...</option>
+                                        </select>
+                                        <div class="form-text">Only current group members can become the owner.</div>
+                                    </div>
+                                    <div class="mb-3" id="ownershipReasonGroup" style="display: none;">
+                                        <label class="form-label">Reason for Ownership Change <span class="text-danger">*</span></label>
+                                        <textarea class="form-control" id="groupOwnershipReason" rows="3" 
+                                                  placeholder="Explain why this ownership change is necessary..."></textarea>
+                                        <div class="form-text text-info">
+                                            <i class="bi bi-info-circle me-1"></i>
+                                            Ownership changes require approval from the group owner or another admin.
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -1496,7 +1641,7 @@
                                             <small class="text-muted">Add/remove members and assign roles</small>
                                         </div>
                                         <div class="col-md-6 mb-3">
-                                            <button type="button" class="btn btn-secondary w-100" id="viewActivityBtn" data-bs-toggle="modal" data-bs-target="#groupActivityModal">
+                                            <button type="button" class="btn btn-secondary w-100" id="viewActivityBtn">
                                                 <i class="bi bi-activity me-2"></i>View Group Activity
                                             </button>
                                             <small class="text-muted">See detailed group activity timeline</small>
@@ -1506,6 +1651,59 @@
                             </div>
                         </div>
                     </div>
+
+                    <!-- Retention Policy -->
+                    {% if app_settings.enable_retention_policy_group %}
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="fw-bold"><i class="bi bi-hourglass-split me-2"></i>Retention Policy</h6>
+                            <div class="card">
+                                <div class="card-body">
+                                    <div class="alert alert-info small">
+                                        <i class="bi bi-info-circle me-1"></i>
+                                        Configure automatic deletion of aged conversations and documents. You can use the organization default or set a custom retention period.
+                                    </div>
+                                    <div class="row">
+                                        <div class="col-md-6 mb-3">
+                                            <label class="form-label">Conversation Retention</label>
+                                            <select class="form-select" id="groupConversationRetention">
+                                                <option value="default">Using organization default</option>
+                                                <option value="none">No automatic deletion</option>
+                                                <option value="1">1 day</option>
+                                                <option value="5">5 days</option>
+                                                <option value="10">10 days</option>
+                                                <option value="21">21 days (3 weeks)</option>
+                                                <option value="30">30 days</option>
+                                                <option value="60">60 days</option>
+                                                <option value="90">90 days (3 months)</option>
+                                                <option value="180">180 days (6 months)</option>
+                                                <option value="365">365 days (1 year)</option>
+                                                <option value="730">730 days (2 years)</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-md-6 mb-3">
+                                            <label class="form-label">Document Retention</label>
+                                            <select class="form-select" id="groupDocumentRetention">
+                                                <option value="default">Using organization default</option>
+                                                <option value="none">No automatic deletion</option>
+                                                <option value="1">1 day</option>
+                                                <option value="5">5 days</option>
+                                                <option value="10">10 days</option>
+                                                <option value="21">21 days (3 weeks)</option>
+                                                <option value="30">30 days</option>
+                                                <option value="60">60 days</option>
+                                                <option value="90">90 days (3 months)</option>
+                                                <option value="180">180 days (6 months)</option>
+                                                <option value="365">365 days (1 year)</option>
+                                                <option value="730">730 days (2 years)</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
 
                     <!-- Dangerous Actions -->
                     <div class="row mb-4">
@@ -1649,12 +1847,15 @@
                 </div>
                 <div class="modal-body">
                     <div class="row mb-3">
-                        <div class="col-md-8">
+                        <div class="col-md-6">
                             <h6 id="membersGroupName">Group Members</h6>
                         </div>
-                        <div class="col-md-4 text-end">
-                            <button type="button" class="btn btn-primary btn-sm" id="addMemberBtn">
+                        <div class="col-md-6 text-end">
+                            <button type="button" class="btn btn-primary btn-sm me-2" id="addSingleMemberBtn">
                                 <i class="bi bi-person-plus me-1"></i>Add Member
+                            </button>
+                            <button type="button" class="btn btn-success btn-sm" id="addBulkMemberBtn">
+                                <i class="bi bi-file-earmark-spreadsheet me-1"></i>Add Bulk Members
                             </button>
                         </div>
                     </div>
@@ -1663,11 +1864,8 @@
                         <table class="table table-hover">
                             <thead>
                                 <tr>
-                                    <th>Member</th>
+                                    <th>Name</th>
                                     <th>Role</th>
-                                    <th>Joined</th>
-                                    <th>Last Active</th>
-                                    <th>Actions</th>
                                 </tr>
                             </thead>
                             <tbody id="groupMembersTableBody">
@@ -1678,9 +1876,869 @@
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                    <button type="button" class="btn btn-primary" id="saveMemberChangesBtn">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- CSV Bulk Upload Modal -->
+    <div class="modal fade" id="csvBulkUploadModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-upload me-2"></i>Bulk Member Import (CSV)</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close" id="csvModalClose"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- Stage 1: File Selection -->
+                    <div id="csvStage1">
+                        <p class="text-muted">Upload a CSV file to add multiple members at once.</p>
+                        
+                        <div class="mb-3">
+                            <button type="button" class="btn btn-sm btn-outline-secondary" id="csvExampleBtn">
+                                <i class="bi bi-download me-1"></i>Download Example CSV
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-info ms-2" id="csvConfigBtn">
+                                <i class="bi bi-info-circle me-1"></i>CSV Format Info
+                            </button>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="csvFileInput" class="form-label">Select CSV File</label>
+                            <input type="file" class="form-control" id="csvFileInput" accept=".csv">
+                            <small class="text-muted">Maximum 1,000 members per upload</small>
+                        </div>
+
+                        <!-- Validation Results -->
+                        <div id="csvValidationResults" class="alert alert-info" style="display: none;">
+                            <h6><i class="bi bi-check-circle me-1"></i>File Validation</h6>
+                            <div id="csvValidationDetails"></div>
+                        </div>
+
+                        <div id="csvErrorDetails" class="alert alert-danger" style="display: none;">
+                            <h6><i class="bi bi-exclamation-triangle me-1"></i>Validation Errors</h6>
+                            <div id="csvErrorList"></div>
+                        </div>
+                    </div>
+
+                    <!-- Stage 2: Upload Progress -->
+                    <div id="csvStage2" style="display: none;">
+                        <div class="text-center mb-3">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Uploading...</span>
+                            </div>
+                            <p class="mt-2"><strong>Uploading Members...</strong></p>
+                        </div>
+                        
+                        <div class="progress mb-2" style="height: 25px;">
+                            <div id="csvProgressBar" class="progress-bar progress-bar-striped progress-bar-animated" 
+                                 role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+                                <span id="csvProgressText">0%</span>
+                            </div>
+                        </div>
+                        
+                        <div class="text-center">
+                            <small id="csvStatusText" class="text-muted">Preparing upload...</small>
+                        </div>
+                    </div>
+
+                    <!-- Stage 3: Summary -->
+                    <div id="csvStage3" style="display: none;">
+                        <div class="alert alert-success">
+                            <h6><i class="bi bi-check-circle me-1"></i>Upload Complete</h6>
+                            <div id="csvSummary"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" id="csvCancelBtn">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="csvNextBtn" disabled>Next</button>
+                    <button type="button" class="btn btn-success" id="csvDoneBtn" style="display: none;">Done</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- CSV Format Info Modal -->
+    <div class="modal fade" id="csvFormatInfoModal" tabindex="-1" aria-hidden="true" style="z-index: 1060;">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-info-circle me-2"></i>CSV Format Information</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <h6>Required Columns (in this exact order):</h6>
+                    <ol>
+                        <li><strong>userId</strong> - Azure AD Object ID (GUID format)</li>
+                        <li><strong>displayName</strong> - User's display name</li>
+                        <li><strong>email</strong> - User's email address</li>
+                        <li><strong>role</strong> - Member role: user, admin, or document_manager</li>
+                    </ol>
+                    
+                    <h6 class="mt-3">Rules:</h6>
+                    <ul>
+                        <li>Header row must be: <code>userId,displayName,email,role</code></li>
+                        <li>Maximum 1,000 rows (excluding header)</li>
+                        <li>Each userId must be a valid GUID</li>
+                        <li>Each email must be a valid email address</li>
+                        <li>Valid roles: user, admin, document_manager (case-insensitive)</li>
+                        <li>Duplicates will be skipped automatically</li>
+                    </ul>
+                    
+                    <h6 class="mt-3">Example:</h6>
+                    <pre class="bg-light p-2 rounded"><code>userId,displayName,email,role
+00000000-0000-0000-0000-000000000001,John Smith,john.smith@contoso.com,admin</code></pre>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Member Directly Modal -->
+    <div class="modal fade" id="addMemberDirectlyModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <form id="addMemberDirectlyForm">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">
+                            <i class="bi bi-person-plus me-2"></i>Add Member Directly
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <!-- Search Section -->
+                        <div class="mb-3">
+                            <label for="ccUserSearchTerm" class="form-label">Search for user (by name or email)</label>
+                            <input type="text" class="form-control" id="ccUserSearchTerm" 
+                                   placeholder="e.g. John or jsmith@contoso.com" />
+                            <button type="button" class="btn btn-secondary btn-sm mt-2" id="ccSearchUsersBtn">
+                                Search
+                            </button>
+                            <span id="ccSearchStatus" class="text-muted ms-2"></span>
+                        </div>
+
+                        <!-- Search Results Container -->
+                        <div id="ccSearchResultsContainer" style="display: none;" class="mb-3">
+                            <div class="table-responsive" style="max-height: 200px; overflow: auto">
+                                <table class="table table-sm">
+                                    <thead>
+                                        <tr>
+                                            <th>Name</th>
+                                            <th>Email</th>
+                                            <th>User ID</th>
+                                            <th class="text-end">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="ccSearchResults">
+                                        <!-- Populated by search results -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <hr />
+
+                        <p class="text-muted mb-2">Or fill in user details manually:</p>
+
+                        <div class="mb-2">
+                            <label for="ccNewUserId" class="form-label">User ID (AAD Object ID)</label>
+                            <input type="text" class="form-control" id="ccNewUserId" required />
+                        </div>
+                        <div class="mb-2">
+                            <label for="ccNewUserDisplayName" class="form-label">Name</label>
+                            <input type="text" class="form-control" id="ccNewUserDisplayName" />
+                        </div>
+                        <div class="mb-2">
+                            <label for="ccNewUserEmail" class="form-label">Email</label>
+                            <input type="email" class="form-control" id="ccNewUserEmail" />
+                        </div>
+                        
+                        <div class="mb-2">
+                            <label for="ccNewUserRole" class="form-label">Role</label>
+                            <select class="form-select" id="ccNewUserRole">
+                                <option value="user">User</option>
+                                <option value="document_manager">Document Manager</option>
+                                <option value="admin">Admin</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">
+                            Cancel
+                        </button>
+                        <button type="submit" class="btn btn-primary btn-sm">Add Member</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Delete All Documents Confirmation Modal -->
+    <div class="modal fade" id="deleteDocumentsModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-warning">
+                    <h5 class="modal-title">
+                        <i class="bi bi-exclamation-triangle me-2"></i>Delete All Documents
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted mb-3">
+                        <strong>This action requires approval from the group owner or another admin.</strong>
+                    </p>
+                    <p>Please provide a reason for deleting all documents in this group:</p>
+                    <textarea class="form-control" id="deleteDocumentsReason" rows="3" 
+                              placeholder="Enter your reason here..." required></textarea>
+                    <div class="alert alert-warning mt-3 mb-0">
+                        <i class="bi bi-info-circle me-2"></i>
+                        This will create an approval request. Once approved, all documents will be permanently deleted.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-warning" id="confirmDeleteDocumentsBtn">
+                        <i class="bi bi-trash me-1"></i>Submit Request
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Group Confirmation Modal -->
+    <div class="modal fade" id="deleteGroupModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title">
+                        <i class="bi bi-exclamation-triangle me-2"></i>Delete Entire Group
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted mb-3">
+                        <strong>This action requires approval from the group owner or another admin.</strong>
+                    </p>
+                    <p>Please provide a reason for deleting this group:</p>
+                    <textarea class="form-control" id="deleteGroupReason" rows="3" 
+                              placeholder="Enter your reason here..." required></textarea>
+                    <div class="alert alert-danger mt-3 mb-0">
+                        <i class="bi bi-exclamation-circle me-2"></i>
+                        <strong>Warning:</strong> This will create an approval request. Once approved, the group, all members, and all documents will be permanently deleted. This action cannot be undone.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-danger" id="confirmDeleteGroupBtn">
+                        <i class="bi bi-trash me-1"></i>Submit Request
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Public Workspace Management Modal -->
+    <div class="modal fade" id="publicWorkspaceManagementModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-globe me-2"></i>Manage Public Workspace
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- Workspace Info Section -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="fw-bold">Workspace Information</h6>
+                            <div class="card bg-light">
+                                <div class="card-body">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <strong>Name:</strong> <span id="modalWorkspaceName">-</span>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <strong>Owner:</strong> <span id="modalWorkspaceOwner">-</span>
+                                        </div>
+                                    </div>
+                                    <div class="row mt-2">
+                                        <div class="col-md-6">
+                                            <strong>Members:</strong> <span id="modalWorkspaceMembers">-</span>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <strong>Documents:</strong> <span id="modalWorkspaceDocuments">-</span>
+                                        </div>
+                                    </div>
+                                    <div class="row mt-2">
+                                        <div class="col-md-6">
+                                            <strong>Created:</strong> <span id="modalWorkspaceCreated">-</span>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <strong>Workspace ID:</strong> <small class="text-muted" id="modalWorkspaceId">-</small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Workspace Status Control -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="fw-bold">Workspace Status Control</h6>
+                            <div class="card">
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <label class="form-label">Workspace Status</label>
+                                        <select class="form-select" id="workspaceStatusSelect">
+                                            <option value="active">Active</option>
+                                            <option value="locked">Locked (Read-only)</option>
+                                            <option value="upload_disabled">Upload Disabled</option>
+                                            <option value="inactive">Inactive</option>
+                                        </select>
+                                        <div class="form-text" id="workspaceStatusHelpText">
+                                            <strong>🟢 Active:</strong> Full functionality enabled. Members can upload documents, chat, and search documents. All workspace features work normally.
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Workspace Ownership -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="fw-bold">Workspace Ownership</h6>
+                            <div class="card">
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <label class="form-label">Transfer Ownership</label>
+                                        <select class="form-select" id="workspaceOwnershipSelect">
+                                            <option value="">Keep current owner</option>
+                                            <option value="admin">Take Administrator Ownership</option>
+                                            <option value="transfer">Transfer to Another User</option>
+                                        </select>
+                                    </div>
+                                    <div class="mb-3" id="transferUserWorkspace" style="display: none;">
+                                        <label class="form-label">New Owner</label>
+                                        <select class="form-select" id="workspaceNewOwnerSelect">
+                                            <option value="">Select a workspace member...</option>
+                                        </select>
+                                        <div class="form-text">Only current workspace admins or document managers can become the owner.</div>
+                                    </div>
+                                    <div class="mb-3" id="ownershipReasonWorkspace" style="display: none;">
+                                        <label class="form-label">Reason for Ownership Change <span class="text-danger">*</span></label>
+                                        <textarea class="form-control" id="workspaceOwnershipReason" rows="3" 
+                                                  placeholder="Explain why this ownership change is necessary..."></textarea>
+                                        <div class="form-text text-info">
+                                            <i class="bi bi-info-circle me-1"></i>
+                                            Ownership changes require approval from the workspace owner or another admin.
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Member Management -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="fw-bold">Member Management</h6>
+                            <div class="card">
+                                <div class="card-body">
+                                    <div class="row">
+                                        <div class="col-md-6 mb-3">
+                                            <button type="button" class="btn btn-info w-100" id="manageWorkspaceMembersBtn" data-bs-toggle="modal" data-bs-target="#workspaceMembersModal">
+                                                <i class="bi bi-people me-2"></i>View & Manage Members
+                                            </button>
+                                            <small class="text-muted">Add/remove members and assign roles</small>
+                                        </div>
+                                        <div class="col-md-6 mb-3">
+                                            <button type="button" class="btn btn-secondary w-100" id="viewWorkspaceActivityBtn">
+                                                <i class="bi bi-activity me-2"></i>View Workspace Activity
+                                            </button>
+                                            <small class="text-muted">See detailed workspace activity timeline</small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Retention Policy -->
+                    {% if app_settings.enable_retention_policy_public %}
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="fw-bold"><i class="bi bi-hourglass-split me-2"></i>Retention Policy</h6>
+                            <div class="card">
+                                <div class="card-body">
+                                    <div class="alert alert-info small">
+                                        <i class="bi bi-info-circle me-1"></i>
+                                        Configure automatic deletion of aged conversations and documents. You can use the organization default or set a custom retention period.
+                                    </div>
+                                    <div class="row">
+                                        <div class="col-md-6 mb-3">
+                                            <label class="form-label">Conversation Retention</label>
+                                            <select class="form-select" id="publicConversationRetention">
+                                                <option value="default">Using organization default</option>
+                                                <option value="none">No automatic deletion</option>
+                                                <option value="1">1 day</option>
+                                                <option value="5">5 days</option>
+                                                <option value="10">10 days</option>
+                                                <option value="21">21 days (3 weeks)</option>
+                                                <option value="30">30 days</option>
+                                                <option value="60">60 days</option>
+                                                <option value="90">90 days (3 months)</option>
+                                                <option value="180">180 days (6 months)</option>
+                                                <option value="365">365 days (1 year)</option>
+                                                <option value="730">730 days (2 years)</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-md-6 mb-3">
+                                            <label class="form-label">Document Retention</label>
+                                            <select class="form-select" id="publicDocumentRetention">
+                                                <option value="default">Using organization default</option>
+                                                <option value="none">No automatic deletion</option>
+                                                <option value="1">1 day</option>
+                                                <option value="5">5 days</option>
+                                                <option value="10">10 days</option>
+                                                <option value="21">21 days (3 weeks)</option>
+                                                <option value="30">30 days</option>
+                                                <option value="60">60 days</option>
+                                                <option value="90">90 days (3 months)</option>
+                                                <option value="180">180 days (6 months)</option>
+                                                <option value="365">365 days (1 year)</option>
+                                                <option value="730">730 days (2 years)</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    <!-- Dangerous Actions -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="fw-bold text-danger">Dangerous Actions</h6>
+                            <div class="card border-danger">
+                                <div class="card-body">
+                                    <div class="alert alert-warning">
+                                        <i class="bi bi-exclamation-triangle me-2"></i>
+                                        These actions cannot be undone. Please proceed with caution.
+                                    </div>
+                                    <div class="row">
+                                        <div class="col-md-6 mb-3">
+                                            <button type="button" class="btn btn-outline-danger w-100" id="deleteWorkspaceDocumentsBtn">
+                                                <i class="bi bi-trash me-2"></i>Delete All Documents
+                                            </button>
+                                            <small class="text-muted">Remove all files but keep workspace structure</small>
+                                        </div>
+                                        <div class="col-md-6 mb-3">
+                                            <button type="button" class="btn btn-danger w-100" id="deleteWorkspaceBtn">
+                                                <i class="bi bi-trash-fill me-2"></i>Delete Entire Workspace
+                                            </button>
+                                            <small class="text-muted">Permanently delete workspace and all content</small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" id="saveWorkspaceChangesBtn">
                         <i class="bi bi-check-lg me-1"></i>Save Changes
                     </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Workspace Documents Confirmation Modal -->
+    <div class="modal fade" id="deleteWorkspaceDocumentsModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-warning">
+                    <h5 class="modal-title">
+                        <i class="bi bi-exclamation-triangle me-2"></i>Delete All Documents
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted mb-3">
+                        <strong>This action requires approval from the workspace owner or another admin.</strong>
+                    </p>
+                    <p>Please provide a reason for deleting all documents in this workspace:</p>
+                    <textarea class="form-control" id="deleteWorkspaceDocumentsReason" rows="3" 
+                              placeholder="Enter your reason here..." required></textarea>
+                    <div class="alert alert-warning mt-3 mb-0">
+                        <i class="bi bi-info-circle me-2"></i>
+                        This will create an approval request. Once approved, all documents will be permanently deleted.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-warning" id="confirmDeleteWorkspaceDocumentsBtn">
+                        <i class="bi bi-trash me-1"></i>Submit Request
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Workspace Confirmation Modal -->
+    <div class="modal fade" id="deleteWorkspaceModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title">
+                        <i class="bi bi-exclamation-triangle me-2"></i>Delete Entire Workspace
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p>Are you sure you want to delete this public workspace?</p>
+                    <div class="alert alert-danger mb-0">
+                        <i class="bi bi-exclamation-circle me-2"></i>
+                        <strong>Warning:</strong> The workspace, all members, and all documents will be permanently deleted. This action cannot be undone.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-danger" id="confirmDeleteWorkspaceBtn">
+                        <i class="bi bi-trash me-1"></i>Delete Workspace
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Workspace Activity Modal -->
+    <div class="modal fade" id="workspaceActivityModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-activity me-2"></i>Workspace Activity Timeline
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row mb-3">
+                        <div class="col-md-8">
+                            <h6 id="activityWorkspaceName">Workspace Activity</h6>
+                        </div>
+                        <div class="col-md-4 text-end">
+                            <select class="form-select form-select-sm" id="activityWorkspaceTimeRange">
+                                <option value="7">Last 7 days</option>
+                                <option value="30" selected>Last 30 days</option>
+                                <option value="90">Last 90 days</option>
+                                <option value="all">All time</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="timeline-container" style="max-height: 400px; overflow-y: auto;">
+                        <div id="activityWorkspaceTimeline">
+                            <!-- Activity timeline will be populated here -->
+                            <div class="text-center py-4">
+                                <div class="spinner-border text-primary" role="status">
+                                    <span class="visually-hidden">Loading...</span>
+                                </div>
+                                <div class="mt-2">Loading activity...</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-primary" id="exportWorkspaceActivityBtn">
+                        <i class="bi bi-download me-1"></i>Export Activity
+                    </button>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Workspace Members Management Modal -->
+    <div class="modal fade" id="workspaceMembersModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-people me-2"></i>Manage Workspace Members
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <h6 id="membersWorkspaceName">Workspace Members</h6>
+                        </div>
+                        <div class="col-md-6 text-end">
+                            <button type="button" class="btn btn-primary btn-sm me-2" id="addSingleWorkspaceMemberBtn">
+                                <i class="bi bi-person-plus me-1"></i>Add Member
+                            </button>
+                            <button type="button" class="btn btn-success btn-sm" id="addBulkWorkspaceMemberBtn">
+                                <i class="bi bi-file-earmark-spreadsheet me-1"></i>Add Bulk Members
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Role</th>
+                                </tr>
+                            </thead>
+                            <tbody id="workspaceMembersTableBody">
+                                <!-- Members will be populated here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Workspace Member Modal -->
+    <div class="modal fade" id="addWorkspaceMemberModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <form id="addWorkspaceMemberForm">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">
+                            <i class="bi bi-person-plus me-2"></i>Add Member to Workspace
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <!-- Search Section -->
+                        <div class="mb-3">
+                            <label for="wsUserSearchTerm" class="form-label">Search for user (by name or email)</label>
+                            <input type="text" class="form-control" id="wsUserSearchTerm" 
+                                   placeholder="e.g. John or jsmith@contoso.com" />
+                            <button type="button" class="btn btn-secondary btn-sm mt-2" id="wsSearchUsersBtn">
+                                Search
+                            </button>
+                            <span id="wsSearchStatus" class="text-muted ms-2"></span>
+                        </div>
+
+                        <!-- Search Results Container -->
+                        <div id="wsSearchResultsContainer" style="display: none;" class="mb-3">
+                            <div class="table-responsive" style="max-height: 200px; overflow: auto">
+                                <table class="table table-sm">
+                                    <thead>
+                                        <tr>
+                                            <th>Name</th>
+                                            <th>Email</th>
+                                            <th>User ID</th>
+                                            <th class="text-end">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="wsSearchResults">
+                                        <!-- Populated by search results -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <hr />
+
+                        <p class="text-muted mb-2">Or fill in user details manually:</p>
+
+                        <div class="mb-2">
+                            <label for="wsNewUserId" class="form-label">User ID (AAD Object ID)</label>
+                            <input type="text" class="form-control" id="wsNewUserId" required />
+                        </div>
+                        <div class="mb-2">
+                            <label for="wsNewUserDisplayName" class="form-label">Name</label>
+                            <input type="text" class="form-control" id="wsNewUserDisplayName" />
+                        </div>
+                        <div class="mb-2">
+                            <label for="wsNewUserEmail" class="form-label">Email</label>
+                            <input type="email" class="form-control" id="wsNewUserEmail" />
+                        </div>
+                        
+                        <div class="mb-2">
+                            <label for="wsNewUserRole" class="form-label">Role</label>
+                            <select class="form-select" id="wsNewUserRole">
+                                <option value="document_manager">Document Manager</option>
+                                <option value="admin">Admin</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">
+                            Cancel
+                        </button>
+                        <button type="submit" class="btn btn-primary btn-sm">Add Member</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Workspace CSV Bulk Upload Modal -->
+    <div class="modal fade" id="workspaceCsvBulkUploadModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-upload me-2"></i>Bulk Member Import (CSV)</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close" id="workspaceCsvModalClose"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- Stage 1: File Selection -->
+                    <div id="workspaceCsvStage1">
+                        <p class="text-muted">Upload a CSV file to add multiple workspace members at once.</p>
+                        
+                        <div class="mb-3">
+                            <button type="button" class="btn btn-sm btn-outline-secondary" id="workspaceCsvExampleBtn">
+                                <i class="bi bi-download me-1"></i>Download Example CSV
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-info ms-2" id="workspaceCsvConfigBtn">
+                                <i class="bi bi-info-circle me-1"></i>CSV Format Info
+                            </button>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="workspaceCsvFileInput" class="form-label">Select CSV File</label>
+                            <input type="file" class="form-control" id="workspaceCsvFileInput" accept=".csv">
+                            <small class="text-muted">Maximum 1,000 members per upload</small>
+                        </div>
+
+                        <!-- Validation Results -->
+                        <div id="workspaceCsvValidationResults" class="alert alert-info" style="display: none;">
+                            <h6><i class="bi bi-check-circle me-1"></i>File Validation</h6>
+                            <div id="workspaceCsvValidationDetails"></div>
+                        </div>
+
+                        <div id="workspaceCsvErrorDetails" class="alert alert-danger" style="display: none;">
+                            <h6><i class="bi bi-exclamation-triangle me-1"></i>Validation Errors</h6>
+                            <div id="workspaceCsvErrorList"></div>
+                        </div>
+                    </div>
+
+                    <!-- Stage 2: Upload Progress -->
+                    <div id="workspaceCsvStage2" style="display: none;">
+                        <div class="text-center mb-3">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Uploading...</span>
+                            </div>
+                            <p class="mt-2"><strong>Uploading Members...</strong></p>
+                        </div>
+                        
+                        <div class="progress mb-2" style="height: 25px;">
+                            <div id="workspaceCsvProgressBar" class="progress-bar progress-bar-striped progress-bar-animated" 
+                                 role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+                                <span id="workspaceCsvProgressText">0%</span>
+                            </div>
+                        </div>
+                        
+                        <div class="text-center">
+                            <small id="workspaceCsvStatusText" class="text-muted">Preparing upload...</small>
+                        </div>
+                    </div>
+
+                    <!-- Stage 3: Summary -->
+                    <div id="workspaceCsvStage3" style="display: none;">
+                        <div class="alert alert-success">
+                            <h6><i class="bi bi-check-circle me-1"></i>Upload Complete</h6>
+                            <div id="workspaceCsvSummary"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" id="workspaceCsvCancelBtn">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="workspaceCsvNextBtn" disabled>Next</button>
+                    <button type="button" class="btn btn-success" id="workspaceCsvDoneBtn" style="display: none;">Done</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Raw Activity Modal (for Group Activity Timeline) -->
+    <div class="modal fade" id="rawActivityModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="rawActivityModalTitle">Activity Details</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="d-flex justify-content-end mb-2">
+                        <button type="button" class="btn btn-sm btn-outline-primary" onclick="GroupManager.copyRawActivityToClipboard()">
+                            <i class="bi bi-clipboard me-1"></i>Copy to Clipboard
+                        </button>
+                    </div>
+                    <div id="rawActivityModalBody" class="border rounded p-3" style="background-color: var(--bs-secondary-bg);">
+                        <!-- Activity JSON will be inserted here -->
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Raw Activity Modal (for Workspace Activity Timeline) -->
+    <div class="modal fade" id="rawWorkspaceActivityModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="rawWorkspaceActivityModalTitle">Activity Details</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="d-flex justify-content-end mb-2">
+                        <button type="button" class="btn btn-sm btn-outline-primary" onclick="WorkspaceManager.copyRawWorkspaceActivityToClipboard()">
+                            <i class="bi bi-clipboard me-1"></i>Copy to Clipboard
+                        </button>
+                    </div>
+                    <div id="rawWorkspaceActivityModalBody" class="border rounded p-3" style="background-color: var(--bs-secondary-bg);">
+                        <!-- Activity JSON will be inserted here -->
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Raw Log Modal -->
+    <div class="modal fade" id="rawLogModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="rawLogModalTitle">Activity Log</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="d-flex justify-content-end mb-2">
+                        <button type="button" class="btn btn-sm btn-outline-primary" onclick="window.controlCenter.copyRawLogToClipboard()">
+                            <i class="bi bi-clipboard me-1"></i>Copy to Clipboard
+                        </button>
+                    </div>
+                    <div id="rawLogModalBody" class="border rounded p-3" style="background-color: var(--bs-secondary-bg);">
+                        <!-- Log JSON will be inserted here -->
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
                 </div>
             </div>
         </div>
@@ -1699,12 +2757,47 @@
             </div>
         </div>
     </div>
+
+    <!-- Database Migration Confirmation Modal -->
+    <div class="modal fade" id="migrationConfirmModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-warning text-dark">
+                    <h5 class="modal-title">
+                        <i class="bi bi-exclamation-triangle me-2"></i>Confirm Database Migration
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="mb-3">
+                        This migration may take several minutes and could affect system performance during execution.
+                    </p>
+                    <div class="alert alert-warning mb-0">
+                        <i class="bi bi-clock me-2"></i>
+                        <strong>Recommendation:</strong> Run this migration during off-peak hours to minimize impact on users.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-warning" id="confirmMigrationBtn">
+                        <i class="bi bi-arrow-repeat me-1"></i>Start Migration
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 
 <!-- Control Center Scripts -->
 <script src="{{ url_for('static', filename='js/chart.min.js') }}"></script>
-<script src="{{ url_for('static', filename='js/control-center.js') }}"></script>
+<script>
+// Pass user role information to JavaScript
+window.hasControlCenterAdmin = {{ 'true' if has_control_center_admin else 'false' }};
+</script>
+<script src="{{ url_for('static', filename='js/validation-utils.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/control-center.js') }}"></script>
 <script src="{{ url_for('static', filename='js/control-center-sidebar-nav.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/workspace-manager.js') }}"></script>
 
 <script>
 // Function to navigate to specific tabs when stat cards are clicked
@@ -1886,146 +2979,16 @@ class TableSorter {
     }
 }
 
-// Group Table Sorter - similar to user table but for groups
-class GroupTableSorter {
-    constructor(tableId) {
-        this.table = document.getElementById(tableId);
-        this.currentSort = { column: null, direction: 'asc' };
-        this.initializeSorting();
-    }
-
-    initializeSorting() {
-        if (!this.table) return;
-        
-        const headers = this.table.querySelectorAll('th.sortable');
-        headers.forEach(header => {
-            header.addEventListener('click', () => {
-                const sortKey = header.getAttribute('data-sort');
-                this.sortTable(sortKey, header);
-            });
-        });
-    }
-
-    sortTable(sortKey, headerElement) {
-        const tbody = this.table.querySelector('tbody');
-        const rows = Array.from(tbody.querySelectorAll('tr')).filter(row => 
-            !row.querySelector('td[colspan]') // Exclude loading/empty rows
-        );
-
-        // Toggle sort direction
-        if (this.currentSort.column === sortKey) {
-            this.currentSort.direction = this.currentSort.direction === 'asc' ? 'desc' : 'asc';
-        } else {
-            this.currentSort.direction = 'asc';
-        }
-        this.currentSort.column = sortKey;
-
-        // Remove sorting classes from all headers
-        this.table.querySelectorAll('th.sortable').forEach(th => {
-            th.classList.remove('sort-asc', 'sort-desc');
-        });
-
-        // Add sorting class to current header
-        headerElement.classList.add(this.currentSort.direction === 'asc' ? 'sort-asc' : 'sort-desc');
-
-        // Sort rows
-        const sortedRows = rows.sort((a, b) => {
-            let aValue = this.getCellValue(a, sortKey);
-            let bValue = this.getCellValue(b, sortKey);
-
-            // Handle different data types
-            if (sortKey === 'members' || sortKey === 'documents') {
-                // Numeric sorting for numbers and dates
-                aValue = this.parseNumericValue(aValue);
-                bValue = this.parseNumericValue(bValue);
-                
-                if (this.currentSort.direction === 'asc') {
-                    return aValue - bValue;
-                } else {
-                    return bValue - aValue;
-                }
-            } else {
-                // String sorting for text values
-                const result = aValue.localeCompare(bValue, undefined, { numeric: true, sensitivity: 'base' });
-                return this.currentSort.direction === 'asc' ? result : -result;
-            }
-        });
-
-        // Clear tbody and append sorted rows
-        tbody.innerHTML = '';
-        sortedRows.forEach(row => tbody.appendChild(row));
-    }
-
-    getCellValue(row, sortKey) {
-        const cellIndex = this.getColumnIndex(sortKey);
-        if (cellIndex === -1) return '';
-        
-        const cell = row.cells[cellIndex];
-        if (!cell) return '';
-
-        // Extract text content, handling different cell structures
-        let value = '';
-        
-        switch (sortKey) {
-            case 'name':
-                // Extract group name
-                const nameElement = cell.querySelector('.fw-bold') || cell;
-                value = nameElement.textContent.trim();
-                break;
-            case 'owner':
-                // Extract owner name
-                value = cell.textContent.trim();
-                break;
-            case 'members':
-                // Extract member count
-                const memberText = cell.textContent.trim();
-                const memberMatch = memberText.match(/(\d+)/);
-                value = memberMatch ? memberMatch[1] : '0';
-                break;
-            case 'status':
-                // Extract status from badge
-                const statusBadge = cell.querySelector('.group-status-badge, .badge');
-                value = statusBadge ? statusBadge.textContent.trim() : cell.textContent.trim();
-                break;
-
-            case 'documents':
-                // Extract document count
-                const docText = cell.textContent.trim();
-                const docMatch = docText.match(/(\d+)/);
-                value = docMatch ? docMatch[1] : '0';
-                break;
-            default:
-                value = cell.textContent.trim();
-        }
-        
-        return value;
-    }
-
-    getColumnIndex(sortKey) {
-        const headers = this.table.querySelectorAll('th');
-        for (let i = 0; i < headers.length; i++) {
-            if (headers[i].getAttribute('data-sort') === sortKey) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    parseNumericValue(value) {
-        if (!value || value === '' || value.toLowerCase() === 'never') return 0;
-        
-        // Extract numeric value from string
-        const numMatch = value.match(/(\d+)/);
-        return numMatch ? parseInt(numMatch[1]) : 0;
-    }
-}
-
-// Group Management Functions
-const GroupManager = {
+// Group Management Functions - make it globally accessible
+window.GroupManager = {
+    currentGroupId: null,
+    csvParsedData: [],
+    
     // Initialize group management functionality
     init: function() {
         this.bindEvents();
-        this.loadGroups();
+        // Note: loadGroups is now handled by window.controlCenter.loadGroups()
+        // which provides enhanced formatting with description, group ID, and better metrics
     },
 
     // Bind event handlers
@@ -2045,83 +3008,101 @@ const GroupManager = {
         document.getElementById('selectAllGroups')?.addEventListener('change', this.handleSelectAll);
         
         // Modal controls
+        document.getElementById('groupStatusSelect')?.addEventListener('change', this.handleStatusChange);
         document.getElementById('groupOwnershipSelect')?.addEventListener('change', this.handleOwnershipChange);
         document.getElementById('saveGroupChangesBtn')?.addEventListener('click', this.saveGroupChanges);
         document.getElementById('deleteDocumentsBtn')?.addEventListener('click', this.deleteDocuments);
         document.getElementById('deleteGroupBtn')?.addEventListener('click', this.deleteGroup);
+        document.getElementById('confirmDeleteDocumentsBtn')?.addEventListener('click', () => this.confirmDeleteDocuments());
+        document.getElementById('confirmDeleteGroupBtn')?.addEventListener('click', () => this.confirmDeleteGroup());
         
         // Member management modal
         document.getElementById('manageMembersBtn')?.addEventListener('click', this.loadGroupMembers);
+        
+        // Activity timeline modal
+        document.getElementById('viewActivityBtn')?.addEventListener('click', () => {
+            const groupId = document.getElementById('groupManagementModal').getAttribute('data-group-id');
+            if (groupId) {
+                // Prevent the default modal toggle behavior
+                event.preventDefault();
+                GroupManager.viewActivity(groupId);
+            }
+        });
+        
+        // CSV bulk upload
+        document.getElementById('addBulkMemberBtn')?.addEventListener('click', () => {
+            const csvModal = new bootstrap.Modal(document.getElementById('csvBulkUploadModal'));
+            csvModal.show();
+        });
+        document.getElementById('csvExampleBtn')?.addEventListener('click', this.downloadCsvExample);
+        document.getElementById('csvConfigBtn')?.addEventListener('click', this.showCsvConfig);
+        document.getElementById('csvFileInput')?.addEventListener('change', this.handleCsvFileSelect);
+        document.getElementById('csvNextBtn')?.addEventListener('click', this.startCsvUpload);
+        document.getElementById('csvDoneBtn')?.addEventListener('click', () => {
+            GroupManager.resetCsvModal();
+            GroupManager.loadGroupMembers();
+        });
+        
+        // Reset CSV modal when closed
+        document.getElementById('csvBulkUploadModal')?.addEventListener('hidden.bs.modal', () => {
+            GroupManager.resetCsvModal();
+        });
+        
+        // Reset group management modal when closed
+        document.getElementById('groupManagementModal')?.addEventListener('hidden.bs.modal', () => {
+            document.getElementById('groupOwnershipSelect').value = '';
+            document.getElementById('groupOwnershipReason').value = '';
+            document.getElementById('ownershipReasonGroup').style.display = 'none';
+            document.getElementById('transferUserGroup').style.display = 'none';
+        });
+        
+        // Clean up activity modal when closed
+        document.getElementById('groupActivityModal')?.addEventListener('hidden.bs.modal', () => {
+            // Clear the timeline
+            const timeline = document.getElementById('activityTimeline');
+            if (timeline) {
+                timeline.innerHTML = '<div class="text-center py-4"><div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div><div class="mt-2">Loading activity...</div></div>';
+            }
+            
+            // Only remove backdrops if no other modals are open
+            const openModals = document.querySelectorAll('.modal.show');
+            if (openModals.length === 0) {
+                // No other modals are open, safe to clean up
+                document.querySelectorAll('.modal-backdrop').forEach(backdrop => {
+                    backdrop.remove();
+                });
+                document.body.classList.remove('modal-open');
+                document.body.style.overflow = '';
+                document.body.style.paddingRight = '';
+            }
+        });
+        
+        // Single member add
+        document.getElementById('addSingleMemberBtn')?.addEventListener('click', () => {
+            GroupManager.openAddMemberModal();
+        });
+        document.getElementById('addMemberDirectlyForm')?.addEventListener('submit', (e) => {
+            e.preventDefault();
+            GroupManager.addMemberDirectly();
+        });
+        document.getElementById('ccSearchUsersBtn')?.addEventListener('click', () => {
+            GroupManager.searchUsersForAdd();
+        });
+        document.getElementById('ccUserSearchTerm')?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.keyCode === 13) {
+                e.preventDefault();
+                GroupManager.searchUsersForAdd();
+            }
+        });
     },
 
     // Load groups data from backend API
+    // Delegates to window.controlCenter.loadGroups() for enhanced formatting
     loadGroups: async function() {
-        const tbody = document.getElementById('groupsTableBody');
-        if (!tbody) return;
-
-        // Show loading state
-        tbody.innerHTML = `
-            <tr>
-                <td colspan="8" class="text-center py-4">
-                    <div class="spinner-border text-primary" role="status">
-                        <span class="visually-hidden">Loading...</span>
-                    </div>
-                    <div class="mt-2">Loading groups...</div>
-                </td>
-            </tr>
-        `;
-
-        try {
-            // Get current filter values
-            const searchTerm = document.getElementById('groupSearchInput')?.value || '';
-            const statusFilter = document.getElementById('groupStatusFilterSelect')?.value || 'all';
-
-            // Build API URL with filters
-            const params = new URLSearchParams({
-                page: 1,
-                per_page: 100, // Get more groups for now
-                search: searchTerm,
-                status_filter: statusFilter
-            });
-
-            const response = await fetch(`/api/admin/control-center/groups?${params}`);
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-
-            const data = await response.json();
-            
-            if (data.groups && data.groups.length > 0) {
-                tbody.innerHTML = data.groups.map(group => this.createGroupRow(group)).join('');
-            } else {
-                tbody.innerHTML = `
-                    <tr>
-                        <td colspan="8" class="text-center py-4">
-                            <i class="bi bi-collection" style="font-size: 2rem; color: var(--bs-secondary);"></i>
-                            <div class="mt-2">No groups found</div>
-                        </td>
-                    </tr>
-                `;
-            }
-
-            // Initialize sorting after data is loaded
-            if (!window.groupTableSorter) {
-                window.groupTableSorter = new GroupTableSorter('groupsTable');
-            }
-
-        } catch (error) {
-            console.error('Error loading groups:', error);
-            tbody.innerHTML = `
-                <tr>
-                    <td colspan="8" class="text-center py-4 text-danger">
-                        <i class="bi bi-exclamation-triangle" style="font-size: 2rem;"></i>
-                        <div class="mt-2">Error loading groups: ${error.message}</div>
-                        <button class="btn btn-sm btn-outline-primary mt-2" onclick="GroupManager.loadGroups()">
-                            <i class="bi bi-arrow-clockwise me-1"></i>Retry
-                        </button>
-                    </td>
-                </tr>
-            `;
+        if (window.controlCenter && typeof window.controlCenter.loadGroups === 'function') {
+            return window.controlCenter.loadGroups();
+        } else {
+            console.error('window.controlCenter.loadGroups() not available');
         }
     },
 
@@ -2136,77 +3117,6 @@ const GroupManager = {
     applyPendingGlobalSettings: function() {
         // This function is kept for backward compatibility but no longer needed
         // Initial state is now set directly in HTML template
-    },
-
-    // Create group table row from API data
-    createGroupRow: function(group) {
-        const statusClass = `group-status-${(group.status || 'active').replace('_', '-')}`;
-        const statusText = {
-            'active': 'Active',
-            'locked': 'Locked',
-            'upload_disabled': 'Upload Disabled',
-            'inactive': 'Inactive'
-        }[group.status || 'active'] || 'Unknown';
-
-        // Format storage size
-        const formatStorageSize = (sizeBytes) => {
-            if (!sizeBytes || sizeBytes === 0) return '0 B';
-            
-            const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-            let size = sizeBytes;
-            let unitIndex = 0;
-            
-            while (size >= 1024 && unitIndex < units.length - 1) {
-                size /= 1024;
-                unitIndex++;
-            }
-            
-            return `${size.toFixed(1)} ${units[unitIndex]}`;
-        };
-
-        // Format date or show "Never"
-        const formatDate = (dateStr) => {
-            if (!dateStr) return 'Never';
-            try {
-                const date = new Date(dateStr);
-                return date.toLocaleDateString();
-            } catch (e) {
-                return 'Never';
-            }
-        };
-
-        // Get member count - prioritize member_count, fallback to members array length
-        const memberCount = group.member_count || (group.members ? group.members.length : 0);
-
-        return `
-            <tr data-group-id="${group.id}">
-                <td>
-                    <input type="checkbox" class="form-check-input group-checkbox" value="${group.id}">
-                </td>
-                <td>
-                    <div class="fw-bold">${group.name || 'Unnamed Group'}</div>
-                </td>
-                <td>
-                    <div>${group.owner_name || group.created_by || 'Unknown'}</div>
-                    <small class="text-muted">${group.owner_email || ''}</small>
-                </td>
-                <td>
-                    ${memberCount} members
-                </td>
-                <td>
-                    <span class="badge group-status-badge ${statusClass}">${statusText}</span>
-                </td>
-                <td>
-                    ${window.controlCenter ? window.controlCenter.renderGroupDocumentMetrics(group.activity?.document_metrics) : `<div class="small">${group.document_count || 0} docs</div>`}
-                </td>
-                <td>
-                    <button type="button" class="btn btn-sm btn-outline-primary" 
-                            onclick="GroupManager.manageGroup('${group.id}')" title="Manage Group">
-                        <i class="bi bi-gear me-1"></i>Manage
-                    </button>
-                </td>
-            </tr>
-        `;
     },
 
     // Handle search functionality
@@ -2323,7 +3233,60 @@ const GroupManager = {
 
             
             // Set group status
-            document.getElementById('groupStatusSelect').value = group.status || 'active';
+            const statusSelect = document.getElementById('groupStatusSelect');
+            statusSelect.value = group.status || 'active';
+            
+            // Update help text to match current status
+            GroupManager.handleStatusChange({ target: statusSelect });
+            
+            // Reset ownership select to default
+            document.getElementById('groupOwnershipSelect').value = '';
+            document.getElementById('transferUserGroup').style.display = 'none';
+            document.getElementById('ownershipReasonGroup').style.display = 'none';
+            document.getElementById('groupOwnershipReason').value = '';
+            
+            // Load group members for ownership transfer dropdown
+            await GroupManager.loadGroupMembersForTransfer(groupId);
+            
+            // Load retention settings if enabled
+            const convSelect = document.getElementById('groupConversationRetention');
+            const docSelect = document.getElementById('groupDocumentRetention');
+            
+            // Fetch organization defaults for group retention
+            try {
+                const orgDefaultsResp = await fetch('/api/retention-policy/defaults/group');
+                const orgData = await orgDefaultsResp.json();
+                
+                if (orgData.success) {
+                    const convDefaultOption = convSelect?.querySelector('option[value="default"]');
+                    const docDefaultOption = docSelect?.querySelector('option[value="default"]');
+                    
+                    if (convDefaultOption) {
+                        convDefaultOption.textContent = `Using organization default (${orgData.default_conversation_label})`;
+                    }
+                    if (docDefaultOption) {
+                        docDefaultOption.textContent = `Using organization default (${orgData.default_document_label})`;
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading group retention defaults:', error);
+            }
+            
+            if (group.retention_policy) {
+                let convRetention = group.retention_policy.conversation_retention_days;
+                let docRetention = group.retention_policy.document_retention_days;
+                
+                // If undefined, use 'default'
+                if (convRetention === undefined) convRetention = 'default';
+                if (docRetention === undefined) docRetention = 'default';
+                
+                if (convSelect) convSelect.value = convRetention;
+                if (docSelect) docSelect.value = docRetention;
+            } else {
+                // Set to organization default if no retention policy set
+                if (convSelect) convSelect.value = 'default';
+                if (docSelect) docSelect.value = 'default';
+            }
             
             // Store current group ID for saving changes
             document.getElementById('groupManagementModal').setAttribute('data-group-id', groupId);
@@ -2428,9 +3391,75 @@ const GroupManager = {
     },
 
     // View group activity
-    viewActivity: function(groupId) {
-        console.log('Viewing activity for group:', groupId);  
-        alert(`Activity view for ${groupId} would open here`);
+    viewActivity: async function(groupId) {
+        console.log('[Activity] viewActivity called with groupId:', groupId);
+        
+        try {
+            // Set the current group ID for loading activity
+            GroupManager.currentGroupId = groupId;
+            console.log('[Activity] Set currentGroupId to:', groupId);
+            
+            // Fetch group details to get the name
+            console.log('[Activity] Fetching group details...');
+            const groupResponse = await fetch(`/api/admin/control-center/groups/${groupId}`);
+            if (!groupResponse.ok) {
+                throw new Error('Failed to fetch group details');
+            }
+            const group = await groupResponse.json();
+            console.log('[Activity] Group details:', group.name);
+            
+            // Set the group name in the modal
+            const groupNameElement = document.getElementById('activityGroupName');
+            if (groupNameElement) {
+                groupNameElement.textContent = `${group.name || 'Unknown Group'} - Activity Timeline`;
+                console.log('[Activity] Set group name in modal');
+            } else {
+                console.error('[Activity] activityGroupName element not found');
+            }
+            
+            // Show the modal
+            console.log('[Activity] Showing modal...');
+            const modalElement = document.getElementById('groupActivityModal');
+            if (!modalElement) {
+                console.error('[Activity] Modal element not found!');
+                throw new Error('Activity modal element not found');
+            }
+            
+            const modal = new bootstrap.Modal(modalElement);
+            modal.show();
+            console.log('[Activity] Modal shown');
+            
+            // Load initial activity (default: 30 days)
+            console.log('[Activity] Starting to load activity data...');
+            await GroupManager.loadGroupActivity(groupId, 30);
+            console.log('[Activity] Activity data load complete');
+            
+            // Set up time range change listener
+            const timeRangeSelect = document.getElementById('activityTimeRange');
+            if (timeRangeSelect) {
+                timeRangeSelect.onchange = async function(e) {
+                    console.log('[Activity] Time range changed to:', e.target.value);
+                    await GroupManager.loadGroupActivity(groupId, e.target.value);
+                };
+            } else {
+                console.error('[Activity] Time range select not found');
+            }
+            
+            // Set up export button
+            const exportBtn = document.getElementById('exportActivityBtn');
+            if (exportBtn) {
+                exportBtn.onclick = function() {
+                    console.log('[Activity] Export button clicked');
+                    GroupManager.exportGroupActivity(groupId);
+                };
+            } else {
+                console.error('[Activity] Export button not found');
+            }
+            
+        } catch (error) {
+            console.error('[Activity] Error in viewActivity:', error);
+            alert(`Error loading group activity: ${error.message}`);
+        }
     },
 
     // Show bulk action modal
@@ -2456,34 +3485,231 @@ const GroupManager = {
     // Handle ownership change
     handleOwnershipChange: function(event) {
         const transferUserGroup = document.getElementById('transferUserGroup');
+        const ownershipReasonGroup = document.getElementById('ownershipReasonGroup');
+        
         if (event.target.value === 'transfer') {
             transferUserGroup.style.display = 'block';
+            ownershipReasonGroup.style.display = 'block';
+        } else if (event.target.value === 'admin') {
+            transferUserGroup.style.display = 'none';
+            ownershipReasonGroup.style.display = 'block';
         } else {
             transferUserGroup.style.display = 'none';
+            ownershipReasonGroup.style.display = 'none';
+        }
+    },
+    
+    // Load group members for ownership transfer dropdown
+    loadGroupMembersForTransfer: async function(groupId) {
+        const memberSelect = document.getElementById('groupNewOwnerSelect');
+        
+        try {
+            const response = await fetch(`/api/admin/control-center/groups/${groupId}/members`);
+            if (!response.ok) {
+                throw new Error('Failed to load group members');
+            }
+            
+            const data = await response.json();
+            const members = data.members || [];
+            
+            // Clear existing options (except the first placeholder)
+            memberSelect.innerHTML = '<option value="">Select a group member...</option>';
+            
+            // Add member options
+            members.forEach(member => {
+                const option = document.createElement('option');
+                option.value = member.userId;
+                option.textContent = `${member.displayName} (${member.email})`;
+                memberSelect.appendChild(option);
+            });
+            
+            // Show message if no members available
+            if (members.length === 0) {
+                const option = document.createElement('option');
+                option.value = '';
+                option.textContent = 'No other members available';
+                option.disabled = true;
+                memberSelect.appendChild(option);
+            }
+            
+        } catch (error) {
+            console.error('Error loading group members:', error);
+            memberSelect.innerHTML = '<option value="">Error loading members</option>';
+        }
+    },
+
+    // Handle status change to update help text
+    handleStatusChange: function(event) {
+        const status = event.target.value;
+        const helpText = document.getElementById('groupStatusHelpText');
+        
+        const statusDescriptions = {
+            'active': '<strong>🟢 Active:</strong> Full functionality enabled. Members can upload documents, chat, search documents, and create/edit prompts, agents, and actions. All group features work normally.',
+            'locked': '<strong>🔒 Locked (Read-only):</strong> Group is in read-only mode.<br>• <strong>Blocks:</strong> New document uploads and deletions, creating/editing/deleting prompts, agents, and actions<br>• <strong>Allows:</strong> Viewing existing documents, chat and search, using existing prompts/agents/actions.',
+            'upload_disabled': '<strong>📁 Upload Disabled:</strong> Restrict new content but allow other operations.<br>• <strong>Blocks:</strong> New document uploads<br>• <strong>Allows:</strong> Document deletions (cleanup), full chat and search functionality, creating/editing/deleting prompts, agents, and actions.',
+            'inactive': '<strong>⭕ Inactive:</strong> Group is completely disabled.<br>• <strong>Blocks:</strong> ALL operations (uploads, deletions, chat, document access, creating/editing/deleting prompts, agents, and actions)<br>• <strong>Allows:</strong> Only admin viewing of group information.'
+        };
+        
+        if (helpText && statusDescriptions[status]) {
+            helpText.innerHTML = statusDescriptions[status];
         }
     },
 
     // Save group changes
-    saveGroupChanges: function() {
+    saveGroupChanges: async function() {
         const modal = document.getElementById('groupManagementModal');
         const groupId = modal.getAttribute('data-group-id');
         const status = document.getElementById('groupStatusSelect').value;
         const ownership = document.getElementById('groupOwnershipSelect').value;
-        const newOwnerEmail = document.getElementById('groupNewOwnerEmail').value;
+        const newOwnerId = document.getElementById('groupNewOwnerSelect').value;
+        const ownershipReason = document.getElementById('groupOwnershipReason').value.trim();
+        const saveButton = document.getElementById('saveGroupChangesBtn');
+        
+        if (!groupId) {
+            alert('Error: No group ID found');
+            return;
+        }
+        
+        // Validate ownership change reason if ownership action selected
+        if ((ownership === 'admin' || ownership === 'transfer') && !ownershipReason) {
+            alert('Please provide a reason for the ownership change');
+            document.getElementById('groupOwnershipReason').focus();
+            return;
+        }
+        
+        // Validate transfer to another user selection
+        if (ownership === 'transfer' && !newOwnerId) {
+            alert('Please select a member to transfer ownership to');
+            return;
+        }
         
         console.log('Saving changes for group:', groupId, {
             status,
             ownership,
-            newOwnerEmail
+            newOwnerId,
+            reason: ownershipReason
         });
         
-        // Simulate API call
-        setTimeout(() => {
-            alert('Group settings saved successfully!');
+        // Disable button during save
+        if (saveButton) {
+            saveButton.disabled = true;
+            saveButton.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving...';
+        }
+        
+        try {
+            // Update retention settings first (if enabled)
+            const convRetentionSelect = document.getElementById('groupConversationRetention');
+            const docRetentionSelect = document.getElementById('groupDocumentRetention');
+            
+            if (convRetentionSelect && docRetentionSelect) {
+                const retentionData = {
+                    conversation_retention_days: convRetentionSelect.value,
+                    document_retention_days: docRetentionSelect.value
+                };
+                
+                const retentionResponse = await fetch(`/api/retention-policy/group/${groupId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(retentionData)
+                });
+                
+                if (!retentionResponse.ok) {
+                    const errorData = await retentionResponse.json();
+                    throw new Error(errorData.error || 'Failed to update retention settings');
+                }
+                
+                console.log('Retention settings updated');
+            }
+            
+            // Update group status (immediate)
+            const statusResponse = await fetch(`/api/admin/control-center/groups/${groupId}/status`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    status: status,
+                    reason: ''
+                })
+            });
+            
+            if (!statusResponse.ok) {
+                const errorData = await statusResponse.json();
+                throw new Error(errorData.error || 'Failed to update group status');
+            }
+            
+            const statusResult = await statusResponse.json();
+            console.log('Group status updated:', statusResult);
+            
+            // Handle ownership changes (creates approval request)
+            if (ownership === 'admin') {
+                // Admin takes ownership - create approval request
+                const ownershipResponse = await fetch(`/api/admin/control-center/groups/${groupId}/take-ownership`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        reason: ownershipReason
+                    })
+                });
+                
+                if (!ownershipResponse.ok) {
+                    const errorData = await ownershipResponse.json();
+                    throw new Error(errorData.error || 'Failed to request ownership');
+                }
+                
+                const ownershipResult = await ownershipResponse.json();
+                console.log('Ownership request created:', ownershipResult);
+                window.controlCenter.showToast(`Ownership transfer request submitted!<br><br>Status: Pending Approval<br>Approval ID: ${ownershipResult.approval_id}<br><br>The request requires approval from the group owner or another admin.`, 'success');
+                
+            } else if (ownership === 'transfer') {
+                // Transfer ownership to another user - create approval request
+                const transferResponse = await fetch(`/api/admin/control-center/groups/${groupId}/transfer-ownership`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        newOwnerId: newOwnerId,
+                        reason: ownershipReason
+                    })
+                });
+                
+                if (!transferResponse.ok) {
+                    const errorData = await transferResponse.json();
+                    throw new Error(errorData.error || 'Failed to request ownership transfer');
+                }
+                
+                const transferResult = await transferResponse.json();
+                console.log('Transfer request created:', transferResult);
+                window.controlCenter.showToast(`Ownership transfer request submitted!<br><br>Status: Pending Approval<br>Approval ID: ${transferResult.approval_id}<br><br>The request requires approval from the group owner or another admin.`, 'success');
+                
+            } else {
+                // No ownership change
+                window.controlCenter.showToast('Group settings saved successfully!', 'success');
+            }
+            
+            // Reset form fields
+            document.getElementById('groupOwnershipSelect').value = '';
+            document.getElementById('groupOwnershipReason').value = '';
+            document.getElementById('ownershipReasonGroup').style.display = 'none';
+            
+            // Close modal and refresh groups
             bootstrap.Modal.getInstance(modal).hide();
             // Refresh the groups table
             GroupManager.refreshGroups();
-        }, 500);
+            
+        } catch (error) {
+            console.error('Error saving group changes:', error);
+            alert('Error saving group settings: ' + error.message);
+        } finally {
+            // Re-enable button
+            if (saveButton) {
+                saveButton.disabled = false;
+                saveButton.innerHTML = '<i class="bi bi-check-circle me-2"></i>Save Changes';
+            }
+        }
     },
 
     // Delete documents
@@ -2491,40 +3717,143 @@ const GroupManager = {
         const modal = document.getElementById('groupManagementModal');
         const groupId = modal.getAttribute('data-group-id');
         
-        if (confirm('Are you sure you want to delete ALL documents in this group? This action cannot be undone.')) {
-            console.log('Deleting documents for group:', groupId);
-            alert('All documents would be deleted from this group.');
+        if (!groupId) {
+            alert('Error: No group ID found');
+            return;
+        }
+        
+        // Clear previous reason and show modal
+        document.getElementById('deleteDocumentsReason').value = '';
+        const deleteModal = new bootstrap.Modal(document.getElementById('deleteDocumentsModal'));
+        deleteModal.show();
+    },
+    
+    // Confirm delete documents (called from modal)
+    confirmDeleteDocuments: async function() {
+        const groupModal = document.getElementById('groupManagementModal');
+        const groupId = groupModal.getAttribute('data-group-id');
+        const reason = document.getElementById('deleteDocumentsReason').value.trim();
+        const confirmBtn = document.getElementById('confirmDeleteDocumentsBtn');
+        
+        if (!reason) {
+            window.controlCenter.showToast('Please provide a reason for this action.', 'warning');
+            document.getElementById('deleteDocumentsReason').focus();
+            return;
+        }
+        
+        // Disable button during request
+        confirmBtn.disabled = true;
+        confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Submitting...';
+        
+        try {
+            const response = await fetch(`/api/admin/control-center/groups/${groupId}/delete-documents`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    reason: reason
+                })
+            });
+            
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to create document deletion request');
+            }
+            
+            const result = await response.json();
+            console.log('Document deletion request created:', result);
+            
+            // Close delete modal
+            bootstrap.Modal.getInstance(document.getElementById('deleteDocumentsModal')).hide();
+            
+            // Show success message
+            window.controlCenter.showToast(
+                `Document deletion request submitted! Status: Pending Approval (ID: ${result.approval_id}). The request requires approval from the group owner or another admin.`,
+                'success'
+            );
+            
+        } catch (error) {
+            console.error('Error creating document deletion request:', error);
+            window.controlCenter.showToast('Error creating deletion request: ' + error.message, 'error');
+        } finally {
+            // Re-enable button
+            confirmBtn.disabled = false;
+            confirmBtn.innerHTML = '<i class="bi bi-trash me-1"></i>Submit Request';
         }
     },
 
     // Delete entire group
-    deleteGroup: async function() {
+    deleteGroup: function() {
         const modal = document.getElementById('groupManagementModal');
         const groupId = modal.getAttribute('data-group-id');
         
         if (!groupId) {
-            alert('No group selected for deletion');
+            window.controlCenter.showToast('No group selected for deletion', 'error');
             return;
         }
         
-        if (confirm('Are you sure you want to DELETE this entire group? This will permanently remove the group, all members, and all documents. This action cannot be undone.')) {
-            try {
-                const response = await fetch(`/api/admin/control-center/groups/${groupId}`, {
-                    method: 'DELETE'
-                });
-                
-                if (response.ok) {
-                    alert('Group deleted successfully!');
-                    bootstrap.Modal.getInstance(modal).hide();
-                    this.loadGroups(); // Refresh the groups list
-                } else {
-                    const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-                    alert(`Error deleting group: ${error.error || 'Unknown error'}`);
-                }
-            } catch (error) {
-                console.error('Error deleting group:', error);
-                alert(`Error deleting group: ${error.message}`);
+        // Clear previous reason and show modal
+        document.getElementById('deleteGroupReason').value = '';
+        const deleteModal = new bootstrap.Modal(document.getElementById('deleteGroupModal'));
+        deleteModal.show();
+    },
+    
+    // Confirm delete group (called from modal)
+    confirmDeleteGroup: async function() {
+        const groupModal = document.getElementById('groupManagementModal');
+        const groupId = groupModal.getAttribute('data-group-id');
+        const reason = document.getElementById('deleteGroupReason').value.trim();
+        const confirmBtn = document.getElementById('confirmDeleteGroupBtn');
+        
+        if (!reason) {
+            window.controlCenter.showToast('Please provide a reason for this action.', 'warning');
+            document.getElementById('deleteGroupReason').focus();
+            return;
+        }
+        
+        // Disable button during request
+        confirmBtn.disabled = true;
+        confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Submitting...';
+        
+        try {
+            const response = await fetch(`/api/admin/control-center/groups/${groupId}`, {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    reason: reason
+                })
+            });
+            
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to create group deletion request');
             }
+            
+            const result = await response.json();
+            console.log('Group deletion request created:', result);
+            
+            // Close delete modal
+            bootstrap.Modal.getInstance(document.getElementById('deleteGroupModal')).hide();
+            
+            // Close group management modal
+            bootstrap.Modal.getInstance(groupModal).hide();
+            
+            // Show success message
+            window.controlCenter.showToast(
+                `Group deletion request submitted! Status: Pending Approval (ID: ${result.approval_id}). The request requires approval from the group owner or another admin.`,
+                'success'
+            );
+            
+        } catch (error) {
+            console.error('Error creating group deletion request:', error);
+            window.controlCenter.showToast('Error creating deletion request: ' + error.message, 'error');
+        } finally {
+            // Re-enable button
+            confirmBtn.disabled = false;
+            confirmBtn.innerHTML = '<i class="bi bi-trash me-1"></i>Submit Request';
         }
     },
 
@@ -2533,51 +3862,100 @@ const GroupManager = {
         const modal = document.getElementById('groupManagementModal');
         const groupId = modal.getAttribute('data-group-id');
         
+        // Store the current group ID for CSV upload
+        GroupManager.currentGroupId = groupId;
+        
         try {
-            // TODO: Replace with actual API call to fetch group members
-            // const response = await fetch(`/api/admin/groups/${groupId}/members`);
-            // const data = await response.json();
-            // const members = data.members || [];
+            // Fetch group details to get members
+            const response = await fetch(`/api/admin/control-center/groups/${groupId}`);
+            if (!response.ok) {
+                throw new Error('Failed to fetch group details');
+            }
             
-            // Placeholder for API implementation
+            const group = await response.json();
+            const groupName = group.name || 'Unknown Group';
+            
+            // Get all members with their roles
             const members = [];
             
-            const groupName = document.getElementById('modalGroupName').textContent;
+            // Add owner
+            if (group.owner) {
+                members.push({
+                    userId: group.owner.id,
+                    name: group.owner.displayName || group.owner.email,
+                    email: group.owner.email,
+                    role: 'Owner'
+                });
+            }
+            
+            // Add admins
+            const adminIds = group.admins || [];
+            const docManagerIds = group.documentManagers || [];
+            
+            // Add all users with their roles
+            (group.users || []).forEach(user => {
+                // Skip owner (already added)
+                if (user.userId === group.owner?.id) return;
+                
+                let role = 'User';
+                if (adminIds.includes(user.userId)) {
+                    role = 'Admin';
+                } else if (docManagerIds.includes(user.userId)) {
+                    role = 'Document Manager';
+                }
+                
+                members.push({
+                    userId: user.userId,
+                    name: user.displayName || user.email,
+                    email: user.email,
+                    role: role
+                });
+            });
             
             // Populate members modal
-            document.getElementById('membersGroupName').textContent = `${groupName} Members`;
+            document.getElementById('membersGroupName').textContent = `${groupName} - ${members.length} Member${members.length !== 1 ? 's' : ''}`;
+            
+            // Store group ID and name for CSV upload
+            const csvModal = document.getElementById('csvBulkUploadModal');
+            csvModal.setAttribute('data-group-id', groupId);
+            csvModal.setAttribute('data-group-name', groupName);
             
             const tbody = document.getElementById('groupMembersTableBody');
-            tbody.innerHTML = members.map(member => `
-                <tr>
-                    <td>
-                        <div class="fw-bold">${member.name || 'Unknown User'}</div>
-                        <small class="text-muted">${member.email || 'No email'}</small>
-                    </td>
-                    <td>
-                        <span class="badge ${member.role === 'Owner' ? 'bg-primary' : member.role === 'Admin' ? 'bg-info' : 'bg-secondary'}">${member.role || 'Member'}</span>
-                    </td>
-                    <td>${member.joined || 'Unknown'}</td>
-                    <td>${member.lastActive || 'Never'}</td>
-                    <td>
-                        <div class="btn-group" role="group">
-                            <button type="button" class="btn btn-sm btn-outline-primary" title="Change Role">
-                                <i class="bi bi-person-gear"></i>
-                            </button>
-                            ${member.role !== 'Owner' ? `<button type="button" class="btn btn-sm btn-outline-danger" title="Remove Member">
-                                <i class="bi bi-person-dash"></i>
-                            </button>` : ''}
-                        </div>
-                    </td>
-                </tr>
-            `).join('');
+            if (members.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="2" class="text-center py-4">
+                            <div class="text-muted">No members found</div>
+                        </td>
+                    </tr>
+                `;
+            } else {
+                tbody.innerHTML = members.map(member => {
+                    let badgeClass = 'bg-secondary';
+                    if (member.role === 'Owner') badgeClass = 'bg-primary';
+                    else if (member.role === 'Admin') badgeClass = 'bg-info';
+                    else if (member.role === 'Document Manager') badgeClass = 'bg-warning';
+                    
+                    return `
+                        <tr>
+                            <td>
+                                <div class="fw-bold">${member.name || 'Unknown User'}</div>
+                                <small class="text-muted">${member.email || 'No email'}</small>
+                            </td>
+                            <td>
+                                <span class="badge ${badgeClass}">${member.role}</span>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+            }
             
         } catch (error) {
             console.error('Error loading group members:', error);
             const tbody = document.getElementById('groupMembersTableBody');
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="5" class="text-center py-4">
+                    <td colspan="2" class="text-center py-4">
                         <div class="text-muted">Error loading members. Please try again.</div>
                     </td>
                 </tr>
@@ -2588,17 +3966,827 @@ const GroupManager = {
     // Alias for backward compatibility
     refreshGroups: function() {
         return this.loadGroups();
+    },
+    
+    // CSV Bulk Upload Functions
+    downloadCsvExample: function() {
+        const csvContent = `userId,displayName,email,role
+00000000-0000-0000-0000-000000000001,John Smith,john.smith@contoso.com,user
+00000000-0000-0000-0000-000000000002,Jane Doe,jane.doe@contoso.com,admin
+00000000-0000-0000-0000-000000000003,Bob Johnson,bob.johnson@contoso.com,document_manager`;
+        
+        const blob = new Blob([csvContent], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'bulk_members_example.csv';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+    },
+    
+    showCsvConfig: function() {
+        const modal = new bootstrap.Modal(document.getElementById('csvFormatInfoModal'));
+        modal.show();
+    },
+    
+    validateEmail: function(email) {
+        return ValidationUtils.validateEmail(email);
+    },
+    
+    validateGuid: function(guid) {
+        return ValidationUtils.validateGuid(guid);
+    },
+    
+    handleCsvFileSelect: function(event) {
+        const file = event.target.files[0];
+        if (!file) {
+            document.getElementById('csvNextBtn').disabled = true;
+            document.getElementById('csvValidationResults').style.display = 'none';
+            document.getElementById('csvErrorDetails').style.display = 'none';
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const text = e.target.result;
+            const lines = text.split(/\r?\n/).filter(line => line.trim());
+
+            document.getElementById('csvErrorDetails').style.display = 'none';
+            document.getElementById('csvValidationResults').style.display = 'none';
+
+            // Validate header
+            if (lines.length < 2) {
+                GroupManager.showCsvError('CSV must contain at least a header row and one data row');
+                return;
+            }
+
+            const header = lines[0].toLowerCase().trim();
+            if (header !== 'userid,displayname,email,role') {
+                GroupManager.showCsvError('Invalid header. Expected: userId,displayName,email,role');
+                return;
+            }
+
+            // Validate row count
+            const dataRows = lines.slice(1);
+            if (dataRows.length > 1000) {
+                GroupManager.showCsvError(`Too many rows. Maximum 1,000 members allowed (found ${dataRows.length})`);
+                return;
+            }
+
+            // Parse and validate rows
+            GroupManager.csvParsedData = [];
+            const errors = [];
+            const validRoles = ['user', 'admin', 'document_manager'];
+            
+            for (let i = 0; i < dataRows.length; i++) {
+                const rowNum = i + 2; // +2 because header is row 1
+                const row = dataRows[i].split(',');
+                
+                if (row.length !== 4) {
+                    errors.push(`Row ${rowNum}: Expected 4 columns, found ${row.length}`);
+                    continue;
+                }
+
+                const userId = row[0].trim();
+                const displayName = row[1].trim();
+                const email = row[2].trim();
+                const role = row[3].trim().toLowerCase();
+
+                if (!userId || !displayName || !email || !role) {
+                    errors.push(`Row ${rowNum}: All fields are required`);
+                    continue;
+                }
+
+                if (!GroupManager.validateGuid(userId)) {
+                    errors.push(`Row ${rowNum}: Invalid GUID format for userId`);
+                    continue;
+                }
+
+                if (!GroupManager.validateEmail(email)) {
+                    errors.push(`Row ${rowNum}: Invalid email format`);
+                    continue;
+                }
+
+                if (!validRoles.includes(role)) {
+                    errors.push(`Row ${rowNum}: Invalid role '${role}'. Must be: user, admin, or document_manager`);
+                    continue;
+                }
+
+                GroupManager.csvParsedData.push({ userId, displayName, email, role });
+            }
+
+            if (errors.length > 0) {
+                GroupManager.showCsvError(`Found ${errors.length} validation error(s):\n` + errors.slice(0, 10).join('\n') + 
+                           (errors.length > 10 ? `\n... and ${errors.length - 10} more` : ''));
+                return;
+            }
+
+            // Show validation success
+            const sampleRows = GroupManager.csvParsedData.slice(0, 3);
+            document.getElementById('csvValidationDetails').innerHTML = `
+                <p><strong>✓ Valid CSV file detected</strong></p>
+                <p>Total members to add: <strong>${GroupManager.csvParsedData.length}</strong></p>
+                <p>Sample data (first 3):</p>
+                <ul class="mb-0">
+                    ${sampleRows.map(row => `<li>${GroupManager.escapeHtml(row.displayName)} (${GroupManager.escapeHtml(row.email)})</li>`).join('')}
+                </ul>
+            `;
+            document.getElementById('csvValidationResults').style.display = 'block';
+            document.getElementById('csvNextBtn').disabled = false;
+        };
+
+        reader.readAsText(file);
+    },
+
+    showCsvError: function(message) {
+        document.getElementById('csvErrorList').innerHTML = `<pre class="mb-0">${GroupManager.escapeHtml(message)}</pre>`;
+        document.getElementById('csvErrorDetails').style.display = 'block';
+        document.getElementById('csvNextBtn').disabled = true;
+        GroupManager.csvParsedData = [];
+    },
+    
+    startCsvUpload: async function() {
+        if (!GroupManager.csvParsedData || GroupManager.csvParsedData.length === 0) {
+            alert('No valid data to upload');
+            return;
+        }
+
+        // Switch to stage 2
+        document.getElementById('csvStage1').style.display = 'none';
+        document.getElementById('csvStage2').style.display = 'block';
+        document.getElementById('csvNextBtn').style.display = 'none';
+        document.getElementById('csvCancelBtn').style.display = 'none';
+        document.getElementById('csvModalClose').style.display = 'none';
+
+        const groupId = GroupManager.currentGroupId;
+        let successCount = 0;
+        let failedCount = 0;
+        let skippedCount = 0;
+        const failures = [];
+
+        for (let i = 0; i < GroupManager.csvParsedData.length; i++) {
+            const member = GroupManager.csvParsedData[i];
+            const progress = Math.round(((i + 1) / GroupManager.csvParsedData.length) * 100);
+            
+            GroupManager.updateCsvProgress(progress, `Processing ${i + 1} of ${GroupManager.csvParsedData.length}: ${member.displayName}`);
+
+            try {
+                const response = await fetch(`/api/admin/control-center/groups/${groupId}/add-member`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        userId: member.userId,
+                        displayName: member.displayName,
+                        email: member.email,
+                        role: member.role,  // Use role from CSV
+                        source: 'csv'
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    // Check if skipped (already a member) or successfully added
+                    if (data.skipped) {
+                        skippedCount++;
+                    } else {
+                        successCount++;
+                    }
+                } else {
+                    failedCount++;
+                    failures.push(`${member.displayName}: ${data.error || 'Unknown error'}`);
+                }
+            } catch (error) {
+                failedCount++;
+                failures.push(`${member.displayName}: ${error.message}`);
+            }
+        }
+
+        // Show summary
+        GroupManager.showCsvSummary(successCount, failedCount, skippedCount, failures);
+    },
+
+    updateCsvProgress: function(percentage, statusText) {
+        document.getElementById('csvProgressBar').style.width = percentage + '%';
+        document.getElementById('csvProgressBar').setAttribute('aria-valuenow', percentage);
+        document.getElementById('csvProgressText').textContent = percentage + '%';
+        document.getElementById('csvStatusText').textContent = statusText;
+    },
+
+    showCsvSummary: function(successCount, failedCount, skippedCount, failures) {
+        document.getElementById('csvStage2').style.display = 'none';
+        document.getElementById('csvStage3').style.display = 'block';
+        document.getElementById('csvDoneBtn').style.display = 'block';
+
+        let summaryHtml = `
+            <p><strong>Upload Summary:</strong></p>
+            <ul>
+                <li>✅ Successfully added: <strong>${successCount}</strong></li>
+                <li>⏭️ Skipped (already members): <strong>${skippedCount}</strong></li>
+                <li>❌ Failed: <strong>${failedCount}</strong></li>
+            </ul>
+        `;
+
+        if (failures.length > 0) {
+            summaryHtml += `
+                <hr>
+                <p><strong>Failed Members:</strong></p>
+                <ul class="text-danger">
+                    ${failures.slice(0, 10).map(f => `<li>${GroupManager.escapeHtml(f)}</li>`).join('')}
+                    ${failures.length > 10 ? `<li><em>... and ${failures.length - 10} more</em></li>` : ''}
+                </ul>
+            `;
+        }
+
+        document.getElementById('csvSummary').innerHTML = summaryHtml;
+    },
+    
+    resetCsvModal: function() {
+        // Reset to stage 1
+        document.getElementById('csvStage1').style.display = 'block';
+        document.getElementById('csvStage2').style.display = 'none';
+        document.getElementById('csvStage3').style.display = 'none';
+        document.getElementById('csvNextBtn').style.display = 'block';
+        document.getElementById('csvNextBtn').disabled = true;
+        document.getElementById('csvCancelBtn').style.display = 'block';
+        document.getElementById('csvDoneBtn').style.display = 'none';
+        document.getElementById('csvModalClose').style.display = 'block';
+        document.getElementById('csvValidationResults').style.display = 'none';
+        document.getElementById('csvErrorDetails').style.display = 'none';
+        document.getElementById('csvFileInput').value = '';
+        GroupManager.csvParsedData = [];
+        
+        // Reset progress
+        GroupManager.updateCsvProgress(0, 'Ready');
+    },
+    
+    escapeHtml: function(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    },
+    
+    // Single member add functions
+    openAddMemberModal: function() {
+        // Clear form fields
+        document.getElementById('ccUserSearchTerm').value = '';
+        document.getElementById('ccNewUserId').value = '';
+        document.getElementById('ccNewUserDisplayName').value = '';
+        document.getElementById('ccNewUserEmail').value = '';
+        document.getElementById('ccNewUserRole').value = 'user';
+        document.getElementById('ccSearchResultsContainer').style.display = 'none';
+        
+        // Open modal
+        const modal = new bootstrap.Modal(document.getElementById('addMemberDirectlyModal'));
+        modal.show();
+    },
+    
+    searchUsersForAdd: function() {
+        const searchTerm = document.getElementById('ccUserSearchTerm').value.trim();
+        if (!searchTerm || searchTerm.length < 2) {
+            window.controlCenter.showToast('Please enter at least 2 characters to search', 'warning');
+            return;
+        }
+        
+        const searchBtn = document.getElementById('ccSearchUsersBtn');
+        searchBtn.disabled = true;
+        searchBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Searching...';
+        
+        fetch(`/api/userSearch?query=${encodeURIComponent(searchTerm)}`)
+            .then(response => {
+                if (response.status === 401) {
+                    window.location.href = '/login';
+                    return;
+                }
+                return response.json();
+            })
+            .then(users => {
+                if (!users) return;  // Already redirected to login
+                
+                if (users && users.length > 0) {
+                    GroupManager.renderUserSearchResults(users);
+                } else {
+                    document.getElementById('ccSearchResultsContainer').style.display = 'block';
+                    document.getElementById('ccSearchResults').innerHTML = `
+                        <tr>
+                            <td colspan="4" class="text-center text-muted">
+                                <i class="bi bi-search me-1"></i> No users found matching "${searchTerm}"
+                            </td>
+                        </tr>
+                    `;
+                }
+            })
+            .catch(error => {
+                console.error('Error searching users:', error);
+                window.controlCenter.showToast('Failed to search users', 'error');
+            })
+            .finally(() => {
+                searchBtn.disabled = false;
+                searchBtn.innerHTML = '<i class="bi bi-search me-1"></i>Search';
+            });
+    },
+    
+    renderUserSearchResults: function(users) {
+        let html = '';
+        if (!users || users.length === 0) {
+            html = `
+                <tr>
+                    <td colspan="4" class="text-center text-muted">
+                        <i class="bi bi-search me-1"></i> No results found
+                    </td>
+                </tr>
+            `;
+        } else {
+            users.forEach(user => {
+                const userId = this.escapeJsString(user.id || '');
+                const displayName = this.escapeJsString(user.displayName || '');
+                const email = this.escapeJsString(user.email || '');
+                
+                html += `
+                    <tr>
+                        <td>${this.escapeHtml(user.displayName || '(no name)')}</td>
+                        <td>${this.escapeHtml(user.email || '')}</td>
+                        <td><small class="font-monospace">${this.escapeHtml(user.id || '')}</small></td>
+                        <td class="text-end">
+                            <button type="button" class="btn btn-sm btn-primary" 
+                                    onclick="GroupManager.selectUserForAdd('${userId}', '${displayName}', '${email}')">
+                                <i class="bi bi-check-circle me-1"></i>Select
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            });
+        }
+        
+        document.getElementById('ccSearchResults').innerHTML = html;
+        document.getElementById('ccSearchResultsContainer').style.display = 'block';
+    },
+    
+    escapeJsString: function(str) {
+        if (!str) return '';
+        return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+    },
+    
+    selectUserForAdd: function(userId, displayName, email) {
+        document.getElementById('ccNewUserId').value = userId;
+        document.getElementById('ccNewUserDisplayName').value = displayName;
+        document.getElementById('ccNewUserEmail').value = email;
+        
+        // Hide search results after selection
+        document.getElementById('ccSearchResultsContainer').style.display = 'none';
+        document.getElementById('ccUserSearchTerm').value = '';
+        document.getElementById('ccSearchResultsContainer').style.display = 'none';
+        
+        window.controlCenter.showToast('User selected. Choose a role and click Add Member.', 'success');
+    },
+    
+    addMemberDirectly: function() {
+        const userId = document.getElementById('ccNewUserId').value.trim();
+        const displayName = document.getElementById('ccNewUserDisplayName').value.trim();
+        const email = document.getElementById('ccNewUserEmail').value.trim();
+        const role = document.getElementById('ccNewUserRole').value;
+        
+        // Validate required fields
+        if (!userId) {
+            window.controlCenter.showToast('User ID is required', 'warning');
+            return;
+        }
+        if (!displayName) {
+            window.controlCenter.showToast('Display Name is required', 'warning');
+            return;
+        }
+        if (!email) {
+            window.controlCenter.showToast('Email is required', 'warning');
+            return;
+        }
+        if (!role) {
+            window.controlCenter.showToast('Role is required', 'warning');
+            return;
+        }
+        
+        // Validate GUID format for user ID
+        const guidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!guidRegex.test(userId)) {
+            window.controlCenter.showToast('User ID must be a valid GUID format', 'warning');
+            return;
+        }
+        
+        // Validate email format
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+            window.controlCenter.showToast('Invalid email format', 'warning');
+            return;
+        }
+        
+        const submitBtn = document.querySelector('#addMemberDirectlyForm button[type="submit"]');
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Adding...';
+        
+        const groupId = GroupManager.currentGroupId;
+        
+        fetch(`/api/admin/control-center/groups/${groupId}/add-member`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                userId: userId,
+                displayName: displayName,
+                email: email,
+                role: role,
+                source: 'single'  // Indicate this is a single member add
+            })
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Failed to add member');
+            }
+            return response.json();
+        })
+        .then(data => {
+            // API returns {message: "...", skipped: []} on success or {error: "..."} on failure
+            if (data.error) {
+                window.controlCenter.showToast(data.error, 'error');
+            } else {
+                window.controlCenter.showToast(`Successfully added ${displayName} as ${role}`, 'success');
+                
+                // Close modal
+                const modalElement = document.getElementById('addMemberDirectlyModal');
+                const modal = bootstrap.Modal.getInstance(modalElement) || new bootstrap.Modal(modalElement);
+                modal.hide();
+                
+                // Refresh member list
+                GroupManager.loadGroupMembers();
+            }
+        })
+        .catch(error => {
+            console.error('Error adding member:', error);
+            window.controlCenter.showToast('Failed to add member', 'error');
+        })
+        .finally(() => {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '<i class="bi bi-person-plus me-1"></i>Add Member';
+        });
+    },
+    
+    // Load group activity from API
+    loadGroupActivity: async function(groupId, days) {
+        console.log(`[Activity] Loading activity for group ${groupId}, days: ${days}`);
+        const timeline = document.getElementById('activityTimeline');
+        
+        if (!timeline) {
+            console.error('[Activity] Timeline element not found!');
+            return;
+        }
+        
+        // Show loading state
+        timeline.innerHTML = `
+            <div class="text-center py-4">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <div class="mt-2">Loading activity...</div>
+            </div>
+        `;
+        
+        try {
+            console.log(`[Activity] Fetching from API: /api/admin/control-center/groups/${groupId}/activity?days=${days}`);
+            const response = await fetch(`/api/admin/control-center/groups/${groupId}/activity?days=${days}`);
+            
+            console.log(`[Activity] API response status: ${response.status}`);
+            
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('[Activity] API error:', errorText);
+                throw new Error(`Failed to fetch group activity: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            console.log(`[Activity] Received ${data.activities?.length || 0} activities`);
+            const activities = data.activities || [];
+            const rawActivities = data.raw_activities || activities;  // Use raw activities for modal
+            
+            // Store RAW activities for modal access (not the formatted ones)
+            GroupManager.currentActivities = rawActivities;
+            
+            if (activities.length === 0) {
+                console.log('[Activity] No activities found');
+                timeline.innerHTML = `
+                    <div class="text-center py-5 text-muted">
+                        <i class="bi bi-inbox" style="font-size: 3rem;"></i>
+                        <p class="mt-3">No activity found for the selected time range</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            // Render timeline
+            console.log('[Activity] Rendering activities...');
+            timeline.innerHTML = activities.map((activity, index) => GroupManager.renderActivityItem(activity, index)).join('');
+            console.log('[Activity] Activities rendered successfully');
+            
+        } catch (error) {
+            console.error('[Activity] Error loading group activity:', error);
+            timeline.innerHTML = `
+                <div class="alert alert-danger">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    Error loading activity: ${GroupManager.escapeHtml(error.message)}
+                </div>
+            `;
+        }
+    },
+    
+    // Render a single activity item
+    renderActivityItem: function(activity, index) {
+        const timestamp = new Date(activity.timestamp);
+        const relativeTime = GroupManager.getRelativeTime(timestamp);
+        const formattedTime = timestamp.toLocaleString();
+        
+        // Build activity-specific content
+        let content = '';
+        let title = '';
+        
+        switch (activity.type) {
+            case 'document_creation':
+                title = 'Document Uploaded';
+                const doc = activity.document || {};
+                const sizeStr = GroupManager.formatFileSize(doc.file_size_bytes);
+                content = `
+                    <div><strong>${GroupManager.escapeHtml(doc.file_name || 'Unknown')}</strong></div>
+                    <div class="text-muted small">
+                        ${doc.file_type || 'Unknown type'} • ${sizeStr}
+                        ${doc.page_count ? ` • ${doc.page_count} pages` : ''}
+                    </div>
+                `;
+                break;
+                
+            case 'document_deletion':
+                title = 'Document Deleted';
+                const delDoc = activity.document || {};
+                content = `
+                    <div><strong>${GroupManager.escapeHtml(delDoc.file_name || 'Unknown')}</strong></div>
+                    <div class="text-muted small">${delDoc.file_type || 'Unknown type'}</div>
+                `;
+                break;
+                
+            case 'document_metadata_update':
+                title = 'Document Updated';
+                const updDoc = activity.document || {};
+                content = `
+                    <div><strong>${GroupManager.escapeHtml(updDoc.file_name || 'Unknown')}</strong></div>
+                    <div class="text-muted small">Metadata updated</div>
+                `;
+                break;
+                
+            case 'group_member_added':
+                title = 'Member Added';
+                const addedMember = activity.member || {};
+                const addedBy = activity.added_by || {};
+                content = `
+                    <div><strong>${GroupManager.escapeHtml(addedMember.name || 'Unknown')}</strong></div>
+                    <div class="text-muted small">
+                        ${GroupManager.escapeHtml(addedMember.email || '')}
+                        ${addedMember.role ? ` • Role: ${addedMember.role}` : ''}
+                    </div>
+                    ${addedBy.email ? `<div class="text-muted small">Added by: ${GroupManager.escapeHtml(addedBy.email)}</div>` : ''}
+                `;
+                break;
+                
+            case 'group_member_deleted':
+                title = 'Member Removed';
+                const removedMember = activity.member || {};
+                const removedBy = activity.removed_by || {};
+                content = `
+                    <div><strong>${GroupManager.escapeHtml(removedMember.name || 'Unknown')}</strong></div>
+                    <div class="text-muted small">${GroupManager.escapeHtml(removedMember.email || '')}</div>
+                    ${removedBy.email ? `<div class="text-muted small">Removed by: ${GroupManager.escapeHtml(removedBy.email)}</div>` : ''}
+                `;
+                break;
+                
+            case 'group_status_change':
+                title = 'Status Changed';
+                const statusChange = activity.status_change || {};
+                content = `
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="badge bg-secondary">${GroupManager.formatStatus(statusChange.from_status)}</span>
+                        <i class="bi bi-arrow-right"></i>
+                        <span class="badge bg-${GroupManager.getStatusColor(statusChange.to_status)}">${GroupManager.formatStatus(statusChange.to_status)}</span>
+                    </div>
+                `;
+                break;
+                
+            case 'conversation_creation':
+                title = 'Conversation Started';
+                content = `<div class="text-muted small">New chat conversation initiated</div>`;
+                break;
+                
+            case 'token_usage':
+                const tokenUsage = activity.token_usage || {};
+                const tokenType = tokenUsage.token_type || 'unknown';
+                title = tokenType === 'chat' ? 'Tokens Used - Chat' : tokenType === 'embedding' ? 'Tokens Used - Embedding' : 'Tokens Used';
+                
+                let tokenDetails = `
+                    <div class="mb-2">
+                        <span class="badge bg-info">${GroupManager.escapeHtml(tokenUsage.model || 'Unknown Model')}</span>
+                        <span class="badge bg-secondary ms-1">${tokenType.charAt(0).toUpperCase() + tokenType.slice(1)}</span>
+                    </div>
+                    <div class="row g-2 small">
+                        <div class="col-auto">
+                            <strong>Total:</strong> <span class="text-primary">${(tokenUsage.total_tokens || 0).toLocaleString()}</span> tokens
+                        </div>
+                `;
+                
+                if (tokenType === 'chat' && (tokenUsage.prompt_tokens || tokenUsage.completion_tokens)) {
+                    tokenDetails += `
+                        <div class="col-auto">
+                            <strong>Prompt:</strong> ${(tokenUsage.prompt_tokens || 0).toLocaleString()}
+                        </div>
+                        <div class="col-auto">
+                            <strong>Completion:</strong> ${(tokenUsage.completion_tokens || 0).toLocaleString()}
+                        </div>
+                    `;
+                }
+                
+                tokenDetails += `</div>`;
+                
+                // Add context-specific details
+                if (tokenUsage.file_name) {
+                    tokenDetails += `<div class="text-muted small mt-1"><i class="bi bi-file-earmark me-1"></i>${GroupManager.escapeHtml(tokenUsage.file_name)}</div>`;
+                }
+                
+                content = tokenDetails;
+                break;
+                
+            default:
+                title = activity.type || 'Activity';
+                content = `<div class="text-muted small">${GroupManager.escapeHtml(activity.description || 'No details available')}</div>`;
+        }
+        
+        return `
+            <div class="activity-item mb-3 p-3 border rounded" style="cursor: pointer;" onclick="GroupManager.showRawActivityModal(${index})" title="Click to view raw activity data">
+                <div class="d-flex align-items-start gap-3">
+                    <div class="activity-icon">
+                        <i class="bi bi-${activity.icon || 'circle'} text-${activity.color || 'secondary'}" style="font-size: 1.5rem;"></i>
+                    </div>
+                    <div class="flex-grow-1">
+                        <div class="d-flex justify-content-between align-items-start mb-1">
+                            <h6 class="mb-0">${title}</h6>
+                            <small class="text-muted" title="${formattedTime}">${relativeTime}</small>
+                        </div>
+                        ${content}
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+    
+    // Helper: Format file size
+    formatFileSize: function(bytes) {
+        if (!bytes || bytes === 0) return '0 B';
+        const units = ['B', 'KB', 'MB', 'GB'];
+        let size = bytes;
+        let unitIndex = 0;
+        while (size >= 1024 && unitIndex < units.length - 1) {
+            size /= 1024;
+            unitIndex++;
+        }
+        return `${size.toFixed(1)} ${units[unitIndex]}`;
+    },
+    
+    // Helper: Get relative time string
+    getRelativeTime: function(date) {
+        const now = new Date();
+        const diffMs = now - date;
+        const diffMins = Math.floor(diffMs / 60000);
+        const diffHours = Math.floor(diffMs / 3600000);
+        const diffDays = Math.floor(diffMs / 86400000);
+        
+        if (diffMins < 1) return 'Just now';
+        if (diffMins < 60) return `${diffMins}m ago`;
+        if (diffHours < 24) return `${diffHours}h ago`;
+        if (diffDays < 7) return `${diffDays}d ago`;
+        if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
+        if (diffDays < 365) return `${Math.floor(diffDays / 30)}mo ago`;
+        return `${Math.floor(diffDays / 365)}y ago`;
+    },
+    
+    // Helper: Format status name
+    formatStatus: function(status) {
+        if (!status) return 'Unknown';
+        return status.replace(/_/g, ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    },
+    
+    // Helper: Get Bootstrap color for status
+    getStatusColor: function(status) {
+        const colorMap = {
+            'active': 'success',
+            'locked': 'warning',
+            'upload_disabled': 'info',
+            'inactive': 'secondary'
+        };
+        return colorMap[status] || 'secondary';
+    },
+    
+    // Show raw activity modal
+    showRawActivityModal: function(activityIndex) {
+        if (!this.currentActivities || !this.currentActivities[activityIndex]) {
+            alert('Activity data not available');
+            return;
+        }
+
+        const activity = this.currentActivities[activityIndex];
+        const modalBody = document.getElementById('rawActivityModalBody');
+        const modalTitle = document.getElementById('rawActivityModalTitle');
+        
+        if (!modalBody || !modalTitle) {
+            alert('Modal elements not found');
+            return;
+        }
+
+        // Set title
+        const activityType = activity.type || 'Activity';
+        const timestamp = new Date(activity.timestamp).toLocaleString();
+        modalTitle.textContent = `${activityType} - ${timestamp}`;
+
+        // Display JSON with pretty formatting
+        modalBody.innerHTML = `<pre class="mb-0" style="max-height: 500px; overflow-y: auto;">${this.escapeHtml(JSON.stringify(activity, null, 2))}</pre>`;
+
+        // Show modal
+        const modal = new bootstrap.Modal(document.getElementById('rawActivityModal'));
+        modal.show();
+    },
+    
+    // Copy activity to clipboard
+    copyRawActivityToClipboard: function() {
+        const rawText = document.getElementById('rawActivityModalBody')?.textContent;
+        if (!rawText) {
+            alert('No activity data to copy');
+            return;
+        }
+
+        navigator.clipboard.writeText(rawText).then(() => {
+            window.controlCenter.showToast('Activity data copied to clipboard', 'success');
+        }).catch(err => {
+            console.error('Failed to copy:', err);
+            alert('Failed to copy to clipboard');
+        });
+    },
+    
+    // Export group activity
+    exportGroupActivity: async function(groupId) {
+        try {
+            const days = document.getElementById('activityTimeRange').value;
+            const response = await fetch(`/api/admin/control-center/groups/${groupId}/activity?days=${days}`);
+            
+            if (!response.ok) {
+                throw new Error('Failed to fetch activity data');
+            }
+            
+            const data = await response.json();
+            const activities = data.activities || [];
+            
+            // Convert to CSV
+            const csvLines = ['Timestamp,Type,Description'];
+            activities.forEach(activity => {
+                const timestamp = new Date(activity.timestamp).toISOString();
+                const type = activity.type || 'unknown';
+                const description = (activity.description || '').replace(/"/g, '""');
+                csvLines.push(`"${timestamp}","${type}","${description}"`);
+            });
+            
+            const csvContent = csvLines.join('\n');
+            const blob = new Blob([csvContent], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `group_${groupId}_activity_${new Date().toISOString().split('T')[0]}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+            
+            window.controlCenter.showToast('Activity exported successfully', 'success');
+            
+        } catch (error) {
+            console.error('Error exporting activity:', error);
+            window.controlCenter.showToast('Failed to export activity', 'error');
+        }
     }
 };
 
-// Initialize table sorting when the page loads
+// Initialize GroupManager when DOM is ready
 document.addEventListener('DOMContentLoaded', function() {
-    // Wait a bit for the control center to load
-    setTimeout(() => {
-        window.tableSorter = new TableSorter('usersTable');
-        window.groupTableSorter = new GroupTableSorter('groupsTable');
-        GroupManager.init();
-    }, 1000);
+    // Small delay to ensure control-center.js has initialized window.controlCenter first
+    setTimeout(function() {
+        if (typeof GroupManager !== 'undefined' && GroupManager.init) {
+            GroupManager.init();
+            console.log('GroupManager initialized successfully');
+        } else {
+            console.error('GroupManager not available for initialization');
+        }
+    }, 200);
 });
 </script>
 {% endblock %}
