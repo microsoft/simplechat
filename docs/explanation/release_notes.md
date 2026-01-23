@@ -68,17 +68,6 @@
     *   **Frontend Integration**: UI can query allowed auth types to display only valid options.
     *   **Files Modified**: `route_backend_plugins.py`.
     *   (Ref: plugin authentication, auth type constraints, OpenAPI plugins, security)
-
-*   **Azure AI Foundry Agent Support**
-    *   First-class support for Azure AI Foundry agents as a native agent type.
-    *   **Agent Type**: New `aifoundry` agent type in agent configuration.
-    *   **Semantic Kernel Integration**: Uses Semantic Kernel's `AzureAIAgent` for execution.
-    *   **Credential Support**: Supports Azure Default Credential and Client Secret authentication.
-    *   **Citation & Model Tracking**: Captures citations and model information from Foundry agent responses.
-    *   **Configuration**: Agent ID specified in `other_settings.azure_ai_foundry.agent_id`.
-    *   **Files Added**: `foundry_agent_runtime.py`.
-    *   **Files Modified**: `route_frontend_admin_settings.py`.
-    *   (Ref: Azure AI Foundry, AzureAIAgent, Semantic Kernel, cloud-hosted agents)
     
 #### Bug Fixes
 
