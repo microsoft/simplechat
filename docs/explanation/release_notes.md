@@ -43,12 +43,13 @@
     *   **Admin Consent Flow**: Requires explicit administrator consent before enabling due to data processing considerations outside Azure compliance boundary.
     *   **Consent Logging**: All consent acceptances are logged to activity logs for compliance and audit purposes.
     *   **Setup Guide Modal**: Comprehensive in-app configuration guide with step-by-step instructions for creating the agent, configuring Bing grounding, setting result count to 10, and recommended agent instructions.
+    *   **User Data Notice**: Admin-configurable notification banner that appears when users activate web search, informing them that their message will be sent to Microsoft Bing. Customizable notice text, dismissible per session.
     *   **Graceful Error Handling**: When web search fails, the system informs users rather than answering from outdated training data.
     *   **Seamless Integration**: Web search results automatically integrated into AI responses when enabled.
-    *   **Settings**: `enable_web_search` toggle and `web_search_consent_accepted` tracking in admin settings.
+    *   **Settings**: `enable_web_search` toggle, `web_search_consent_accepted` tracking, `enable_web_search_user_notice` toggle, and `web_search_user_notice_text` customization in admin settings.
     *   **Files Added**: `_web_search_foundry_info.html` (setup guide modal).
-    *   **Files Modified**: `route_frontend_admin_settings.py`, `route_backend_chats.py`, `functions_activity_logging.py`, `admin_settings.html`.
-    *   (Ref: Grounding with Bing Search, Azure AI Foundry, consent workflow, activity logging, pricing)
+    *   **Files Modified**: `route_frontend_admin_settings.py`, `route_backend_chats.py`, `functions_activity_logging.py`, `admin_settings.html`, `chats.html`, `chat-input-actions.js`, `functions_settings.py`.
+    *   (Ref: Grounding with Bing Search, Azure AI Foundry, consent workflow, activity logging, pricing, user transparency)
 
 *   **Conversation Deep Linking**
     *   Direct URL links to specific conversations via query parameters for sharing and bookmarking.

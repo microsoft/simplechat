@@ -11,6 +11,9 @@ SimpleChat now supports web search capability through Azure AI Foundry agents us
 - **Azure AI Foundry Integration**: Leverages Azure AI Foundry's Grounding with Bing Search capability
 - **Admin Consent Flow**: Requires explicit administrator consent before enabling due to data processing considerations
 - **Activity Logging**: All consent acceptances are logged for compliance and audit purposes
+- **Setup Guide Modal**: Comprehensive in-app configuration guide with step-by-step instructions
+- **User Data Notice**: Admin-configurable notification banner informing users when their message will be sent to Bing
+- **Graceful Error Handling**: Informs users when web search fails rather than answering from outdated training data
 - **Seamless Experience**: Web search results are automatically integrated into AI responses
 
 ## Admin Consent Requirement
@@ -44,6 +47,56 @@ Before web search can be enabled, administrators must acknowledge important data
 |---------|-------------|
 | `enable_web_search` | Master toggle for web search capability |
 | `web_search_consent_accepted` | Tracks whether consent has been accepted |
+| `enable_web_search_user_notice` | Toggle for showing user notification when web search is activated |
+| `web_search_user_notice_text` | Customizable notification message shown to users |
+
+## User Data Notice
+
+Administrators can enable a notification banner that appears when users activate web search, informing them about data being sent to Bing.
+
+### Configuration
+
+1. Navigate to **Admin Settings** > **Search and Extract** tab
+2. Locate the **User Data Notice** card in the Web Search section
+3. Enable the **Show User Notice** toggle
+4. Customize the notification text (optional)
+
+### Default Notice Text
+
+> Your message will be sent to Microsoft Bing for web search. Only your current message is sent, not your conversation history.
+
+### Behavior
+
+- **Appears**: When user clicks the "Web" button to activate web search
+- **Dismissible**: Users can dismiss the notice via the X button
+- **Session-based**: Dismissal persists for the browser session only
+- **Hides automatically**: When web search is deactivated
+
+## Setup Guide Modal
+
+The admin settings include a comprehensive setup guide modal with:
+
+### Pricing Information
+
+| Metric | Value |
+|--------|-------|
+| **Cost** | $14 per 1,000 transactions |
+| **Rate Limit** | 150 transactions/second |
+| **Daily Limit** | 1,000,000 transactions/day |
+
+### Step-by-Step Instructions
+
+1. Create an Azure AI Foundry project
+2. Navigate to Agents section
+3. Create a new agent with Bing grounding tool
+4. Configure result count to 10
+5. Add recommended agent instructions
+6. Copy the agent ID to SimpleChat admin settings
+7. Configure Azure AI Foundry connection settings
+
+### Access
+
+Click the **Setup Guide** button in the Web Search admin settings section to open the modal.
 
 ## Technical Architecture
 
@@ -52,7 +105,18 @@ Before web search can be enabled, administrators must acknowledge important data
 | File | Purpose |
 |------|---------|
 | [route_frontend_admin_settings.py](../../../../application/single_app/route_frontend_admin_settings.py) | Handles consent flow and settings persistence |
+| [route_backend_chats.py](../../../../application/single_app/route_backend_chats.py) | `perform_web_search()` with graceful error handling |
 | [functions_activity_logging.py](../../../../application/single_app/functions_activity_logging.py) | `log_web_search_consent_acceptance()` for audit logging |
+| [functions_settings.py](../../../../application/single_app/functions_settings.py) | Default settings including user notice configuration |
+
+### Frontend Components
+
+| File | Purpose |
+|------|---------|
+| [admin_settings.html](../../../../application/single_app/templates/admin_settings.html) | Admin UI for web search configuration |
+| [_web_search_foundry_info.html](../../../../application/single_app/templates/_web_search_foundry_info.html) | Setup guide modal with pricing and instructions |
+| [chats.html](../../../../application/single_app/templates/chats.html) | User notice container in chat interface |
+| [chat-input-actions.js](../../../../application/single_app/static/js/chat-input-actions.js) | Notice show/hide logic with session dismissal |
 
 ### Consent Flow Logic
 
@@ -88,12 +152,16 @@ When consent is accepted, the following information is logged:
 - Web search is transparent when enabled
 - AI responses automatically incorporate relevant web search results
 - Citations from web sources are displayed alongside responses
+- Optional notification banner when activating web search (if enabled by admin)
+- Graceful error messages when web search fails
 
 ### For Administrators
 
 - Clear consent flow before enabling
 - One-time consent acceptance (persisted in settings)
 - Audit trail of consent acceptance
+- Comprehensive setup guide with pricing information
+- Configurable user notification for transparency
 
 ## Security Considerations
 
