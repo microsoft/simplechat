@@ -72,7 +72,6 @@ Before creating the OAuth application, create a dedicated integration user:
    - URL: `https://devnnnnnn.service-now.com`
 
 2. **Navigate to OAuth Application Registry:**
-2. **Navigate to OAuth Application Registry:**
    ```
    System OAuth > Application Registry
    ```
