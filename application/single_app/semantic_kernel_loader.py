@@ -34,7 +34,7 @@ from functions_global_actions import get_global_actions
 from functions_global_agents import get_global_agents
 from functions_group_agents import get_group_agent, get_group_agents
 from functions_group_actions import get_group_actions
-from functions_group import require_active_group
+from functions_group import require_active_group, get_user_groups
 from functions_personal_actions import get_personal_actions, ensure_migration_complete as ensure_actions_migration_complete
 from functions_personal_agents import get_personal_agents, ensure_migration_complete as ensure_agents_migration_complete
 from semantic_kernel_plugins.plugin_loader import discover_plugins
@@ -1188,9 +1188,6 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
         agent['is_group'] = False
     
     # Load group agents from all groups the user is a member of
-    from functions_group import get_user_groups
-    from functions_group_agents import get_group_agents
-    
     user_groups = []  # Initialize to empty list
     try:
         user_groups = get_user_groups(user_id)

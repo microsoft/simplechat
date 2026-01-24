@@ -1,5 +1,7 @@
 # Azure Speech Service with Managed Identity Manual Setup
 
+Version: 0.236.012
+
 ## Overview
 
 This guide explains the critical difference between key-based and managed identity authentication when configuring Azure Speech Service, and the required steps to enable managed identity properly.
