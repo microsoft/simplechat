@@ -795,7 +795,7 @@ def _test_azure_ai_search_connection(payload):
                 client = SearchIndexClient(endpoint=endpoint, credential=credential)
 
         # Test by listing indexes (simple operation to verify connectivity)
-        indexes = list(client.list_indexes())
+        _ = list(client.list_indexes())
         return jsonify({'message': 'Azure AI search connection successful'}), 200
 
     except Exception as e:
