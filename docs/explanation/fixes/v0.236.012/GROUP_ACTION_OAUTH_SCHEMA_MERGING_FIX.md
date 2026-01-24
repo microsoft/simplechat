@@ -5,7 +5,7 @@
 **Fix Title:** Group Actions Missing `additionalFields` Causing OAuth Authentication Failures  
 **Issue Description:** Group actions were missing the `additionalFields` property entirely, preventing OAuth bearer token authentication from working despite having the same configuration as working global actions.  
 **Root Cause:** Group action backend routes did not call `get_merged_plugin_settings()` to merge UI form data with schema defaults, while global action routes did. This caused group actions to be saved without authentication configuration fields.  
-**Version Implemented:** 0.235.028  
+**Version Implemented:** 0.236.012
 **Date:** January 22, 2026  
 
 ## Problem Statement

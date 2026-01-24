@@ -213,7 +213,7 @@ The SDK approach eliminates the need for the `search_resource_manager` variable 
 
 ## Version Information
 
-**Version Implemented:** 0.235.004
+**Version Implemented:** 0.236.012
 
 ## References
 

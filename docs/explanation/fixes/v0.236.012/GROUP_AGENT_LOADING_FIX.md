@@ -5,7 +5,7 @@
 **Fix Title:** Group Agents Not Loading in Per-User Semantic Kernel Mode  
 **Issue Description:** Group agents and their associated actions were not being loaded when per-user semantic kernel mode was enabled, causing group agents to fall back to global agents and resulting in zero plugins/actions available.  
 **Root Cause:** The `load_user_semantic_kernel()` function only loaded personal agents and global agents (when merge enabled), but completely omitted group agents from groups the user is a member of.  
-**Version Implemented:** 0.235.027  
+**Version Implemented:** 0.236.012  
 **Date:** January 22, 2026  
 
 ## Problem Statement

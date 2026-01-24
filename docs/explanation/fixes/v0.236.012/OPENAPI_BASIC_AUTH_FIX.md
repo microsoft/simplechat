@@ -1,6 +1,7 @@
 # OpenAPI Basic Authentication Fix
 
-**Version:** 0.235.026  
+**Version:** 0.236.012
+
 **Issue:** OpenAPI actions with Basic Authentication fail with "session not authenticated" error  
 **Root Cause:** Mismatch between authentication format stored by UI and format expected by OpenAPI plugin  
 **Status:** ✅ Fixed
