@@ -125,7 +125,7 @@ Group actions failed because:
    - **Parity achieved:** Both global and group routes now call `get_merged_plugin_settings()`
 
 2. **`config.py`**
-   - Updated VERSION from "0.235.027" to "0.235.028"
+   - Updated VERSION from "0.236.011" to "0.236.012"
 
 ### Code Changes
 
