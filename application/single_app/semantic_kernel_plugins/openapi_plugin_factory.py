@@ -128,7 +128,6 @@ class OpenApiPluginFactory:
         from functions_debug import debug_print
         
         auth_config = config.get('auth', {})
-        debug_print(f"[Factory] Initial auth_config: {auth_config}")
         if not auth_config:
             return {}
         
@@ -176,6 +175,5 @@ class OpenApiPluginFactory:
                 'token': auth_config.get('key', '')
             }
         
-        debug_print(f"[Factory] Returning auth as-is: {auth_config}")
         # Return the auth config as-is for other auth types
         return auth_config
