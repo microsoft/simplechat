@@ -183,6 +183,15 @@ The integration uses two OpenAPI specification files that define all ServiceNow 
 
 ## Phase 3: Simple Chat Configuration
 
+> **📌 Important - Scope Options:**  
+> ServiceNow actions and agents can be configured at different levels based on your organization's needs:
+> 
+> - **Global Actions/Agents**: Available to all users across the entire Simple Chat instance
+> - **Group Actions/Agents**: Available only to members of specific workspaces/groups
+> - **Personal Actions/Agents**: Available only to individual users
+> 
+> Choose the appropriate scope based on your security, governance, and access control requirements. For enterprise deployments, group-level configuration is recommended to control access by department or team.
+
 ### Step 1: Add ServiceNow Actions
 
 > **Note:** This integration uses **two separate actions** because ServiceNow has distinct API endpoints for incident management and knowledge base operations, each with its own OpenAPI specification file.
