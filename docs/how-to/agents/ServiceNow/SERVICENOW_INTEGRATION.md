@@ -1,5 +1,8 @@
 # ServiceNow Integration Guide
 
+**Version:** 0.236.012  
+**Implemented in version:** 0.236.012
+
 ## Overview
 
 This guide documents the integration between Simple Chat and ServiceNow, enabling AI-powered incident management, ticket analysis, and support operations through natural language prompts.
