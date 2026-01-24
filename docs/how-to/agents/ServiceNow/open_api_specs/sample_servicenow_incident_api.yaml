@@ -8,8 +8,8 @@ info:
     url: https://developer.servicenow.com
 
 servers:
-  - url: https://dev222288.service-now.com/api/now
-    description: ServiceNow Developer Instance
+  - url: https://YOUR-INSTANCE.service-now.com/api/now
+    description: ServiceNow instance base URL (replace YOUR-INSTANCE with your instance name)
 
 security:
   - bearerAuth: []
