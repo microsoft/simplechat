@@ -172,7 +172,6 @@ locals {
   cosmos_db_name              = "${var.param_base_name}-${var.param_environment}-cosmos"
   open_ai_name                = "${var.param_base_name}-${var.param_environment}-oai"
   doc_intel_name              = "${var.param_base_name}-${var.param_environment}-docintel"
-  speech_service_name         = "${var.param_base_name}-${var.param_environment}-speech"
   key_vault_name              = "${var.param_base_name}-${var.param_environment}-kv"
   log_analytics_name          = "${var.param_base_name}-${var.param_environment}-la"
   managed_identity_name       = "${var.param_base_name}-${var.param_environment}-id"
@@ -626,14 +625,13 @@ resource "azurerm_cosmosdb_account" "cosmos" {
 
 # --- Azure OpenAI Service (Cognitive Services) ---
 resource "azurerm_cognitive_account" "openai" {
-  count                 = var.param_use_existing_openai_instance ? 0 : 1 # Only create if not using existing
-  name                  = local.open_ai_name
-  location              = azurerm_resource_group.rg.location
-  resource_group_name   = azurerm_resource_group.rg.name
-  kind                  = "OpenAI"
-  sku_name              = "S0" # Standard tier
-  custom_subdomain_name = local.open_ai_name # Required for managed identity authentication
-  tags                  = local.common_tags
+  count               = var.param_use_existing_openai_instance ? 0 : 1 # Only create if not using existing
+  name                = local.open_ai_name
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  kind                = "OpenAI"
+  sku_name            = "S0" # Standard tier
+  tags                = local.common_tags
 }
 
 # Data source for existing OpenAI instance
@@ -645,24 +643,13 @@ data "azurerm_cognitive_account" "existing_openai" {
 
 # --- Document Intelligence Service (Cognitive Services) ---
 resource "azurerm_cognitive_account" "docintel" {
-  name                  = local.doc_intel_name
-  location              = azurerm_resource_group.rg.location
-  resource_group_name   = azurerm_resource_group.rg.name
-  kind                  = "FormRecognizer"
-  sku_name              = "S0" # Standard tier
-  custom_subdomain_name = local.doc_intel_name # Required for managed identity authentication
-  tags                  = local.common_tags
-}
-
-# --- Speech Service (Cognitive Services) ---
-resource "azurerm_cognitive_account" "speech" {
-  name                  = local.speech_service_name
-  location              = azurerm_resource_group.rg.location
-  resource_group_name   = azurerm_resource_group.rg.name
-  kind                  = "SpeechServices"
-  sku_name              = "S0" # Standard tier
-  custom_subdomain_name = local.speech_service_name # Required for managed identity authentication
-  tags                  = local.common_tags
+  name                = local.doc_intel_name
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  kind                = "FormRecognizer"
+  sku_name            = "S0" # Standard tier
+  custom_subdomain_name = local.doc_intel_name # Maps to --custom-domain
+  tags                = local.common_tags
 }
 
 # https://medium.com/expert-thinking/mastering-azure-search-with-terraform-a-how-to-guide-7edc3a6b1ee3
@@ -715,20 +702,6 @@ resource "azurerm_role_assignment" "managed_identity_storage_contributor" {
   principal_id         = azurerm_user_assigned_identity.id.principal_id
 }
 
-# Cognitive Services Speech User on Speech Service
-resource "azurerm_role_assignment" "managed_identity_speech_user" {
-  scope                = azurerm_cognitive_account.speech.id
-  role_definition_name = "Cognitive Services Speech User"
-  principal_id         = azurerm_user_assigned_identity.id.principal_id
-}
-
-# Cognitive Services Speech Contributor on Speech Service
-resource "azurerm_role_assignment" "managed_identity_speech_contributor" {
-  scope                = azurerm_cognitive_account.speech.id
-  role_definition_name = "Cognitive Services Speech Contributor"
-  principal_id         = azurerm_user_assigned_identity.id.principal_id
-}
-
 # App Registration Service Principal RBAC
 # Cognitive Services OpenAI Contributor on OpenAI
 resource "azurerm_role_assignment" "app_reg_sp_openai_contributor" {
@@ -759,24 +732,10 @@ resource "azurerm_role_assignment" "app_service_smi_storage_contributor" {
   principal_id         = azurerm_linux_web_app.app.identity[0].principal_id
 }
 
-# AcrPull on Container Registry
+# Storage Blob Data Contributor on Storage Account
 resource "azurerm_role_assignment" "acr_pull" {
   scope                = data.azurerm_container_registry.acrregistry.id
   role_definition_name = "AcrPull"
-  principal_id         = azurerm_linux_web_app.app.identity[0].principal_id
-}
-
-# Cognitive Services Speech User on Speech Service
-resource "azurerm_role_assignment" "app_service_smi_speech_user" {
-  scope                = azurerm_cognitive_account.speech.id
-  role_definition_name = "Cognitive Services Speech User"
-  principal_id         = azurerm_linux_web_app.app.identity[0].principal_id
-}
-
-# Cognitive Services Speech Contributor on Speech Service
-resource "azurerm_role_assignment" "app_service_smi_speech_contributor" {
-  scope                = azurerm_cognitive_account.speech.id
-  role_definition_name = "Cognitive Services Speech Contributor"
   principal_id         = azurerm_linux_web_app.app.identity[0].principal_id
 }
 
