@@ -213,8 +213,8 @@ The SDK approach eliminates the need for the `search_resource_manager` variable 
 
 ## Version Information
 
-- Application version (`config.py` `app.config['VERSION']`): **0.236.013**
-- Fixed in version: **0.236.013**
+- Application version (`config.py` `app.config['VERSION']`): **0.236.012**
+- Fixed in version: **0.236.012**
 
 ## References
 
