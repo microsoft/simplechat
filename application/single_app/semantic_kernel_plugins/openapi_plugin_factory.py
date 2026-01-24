@@ -162,7 +162,10 @@ class OpenApiPluginFactory:
         # For bearer tokens stored as 'key' type
         if auth_type == 'key' and auth_method == 'bearer':
             token = auth_config.get('key', '')
-            debug_print(f"[Factory] *** APPLYING BEARER AUTH TRANSFORMATION - token: {token[:20]}...")
+            debug_print(
+                f"[Factory] Applying bearer auth transformation - "
+                f"token_present={bool(token)}, token_length={len(token)}"
+            )
             return {
                 'type': 'bearer',
                 'token': token
