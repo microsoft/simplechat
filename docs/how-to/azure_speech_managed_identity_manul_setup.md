@@ -1,4 +1,4 @@
-# Azure Speech Service with Managed Identity Setup
+# Azure Speech Service with Managed Identity Manual Setup
 
 ## Overview
 
