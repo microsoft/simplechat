@@ -66,7 +66,7 @@ This created a chicken-and-egg problem: the agent couldn't be selected because i
    - Removed redundant single-agent loading logic
 
 2. **`config.py`** (Line 91)
-   - Updated VERSION from "0.235.026" to "0.235.027"
+   - Updated VERSION from "0.236.011" to "0.236.012"
 
 ### Code Changes
 
