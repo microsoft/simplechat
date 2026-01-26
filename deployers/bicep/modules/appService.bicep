@@ -176,7 +176,7 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
         {name: 'CUSTOM_COGNITIVE_SERVICES_URL_VALUE', value: customCognitiveServicesScope}
         {name: 'CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE', value: customSearchResourceUrl}
         {name: 'KEY_VAULT_DOMAIN', value: az.environment().suffixes.keyvaultDns}
-        {name: 'CUSTOM_OIDC_METADATA_URL_VALUE', value: openIdMetadataUrl}] 
+        {name: 'CUSTOM_OIDC_METADATA_URL_VALUE', value: openIdMetadataUrl}]
         : [])
       ]
     }
