@@ -4,7 +4,7 @@
 
 SimpleChat now supports web search capability through Azure AI Foundry agents using the Grounding with Bing Search service. This feature enables AI responses to be augmented with real-time web search results, providing users with up-to-date information beyond the model's training data.
 
-**Version Implemented:** 0.236.011
+**Version Implemented:** v0.237.001
 
 ## Key Features
 

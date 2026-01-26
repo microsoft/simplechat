@@ -4,7 +4,7 @@
 
 SimpleChat now supports conversation deep linking through URL query parameters. Users can share direct links to specific conversations, and the application will automatically navigate to and load the referenced conversation when the link is accessed.
 
-**Version Implemented:** 0.236.011
+**Version Implemented:** v0.237.001
 
 ## Key Features
 
