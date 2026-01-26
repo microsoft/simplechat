@@ -8,7 +8,7 @@ param location string
 @allowed([
   'public'
   'usgovernment'
-  'custom'  
+  'custom'
 ])
 param cloudEnvironment string = az.environment().name == 'AzureCloud' ? 'public' : (az.environment().name == 'AzureUSGovernment' ? 'usgovernment' : 'custom')
 
