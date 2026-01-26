@@ -10,11 +10,18 @@ export class AgentModalStepper {
     this.maxSteps = 6;
     this.isEditMode = false;
     this.isAdmin = isAdmin; // Track if this is admin context
+    this.currentAgentType = 'local';
     this.originalAgent = null;  // Track original state for change detection
     this.actionsToSelect = null; // Store actions to select when they're loaded
     this.updateStepIndicatorTimeout = null; // For debouncing step indicator updates
+    this.templateSubmitButton = document.getElementById('agent-modal-submit-template-btn');
+    this.foundryPlaceholderInstructions = 'Placeholder instructions: Azure AI Foundry agent manages its own prompt.';
     
     this.bindEvents();
+
+    if (this.templateSubmitButton) {
+      this.templateSubmitButton.addEventListener('click', () => this.submitTemplate());
+    }
   }
 
   bindEvents() {
@@ -24,6 +31,7 @@ export class AgentModalStepper {
     const saveBtn = document.getElementById('agent-modal-save-btn');
     const skipBtn = document.getElementById('agent-modal-skip');
     const powerUserToggle = document.getElementById('agent-power-user-toggle');
+    const agentTypeRadios = document.querySelectorAll('input[name="agent-type"]');
     
     if (nextBtn) {
       nextBtn.addEventListener('click', () => this.nextStep());
@@ -39,6 +47,12 @@ export class AgentModalStepper {
     }
     if (powerUserToggle) {
       powerUserToggle.addEventListener('change', (e) => this.togglePowerUserMode(e.target.checked));
+    }
+
+    if (agentTypeRadios && agentTypeRadios.length) {
+      agentTypeRadios.forEach(r => {
+        r.addEventListener('change', (e) => this.handleAgentTypeChange(e.target.value));
+      });
     }
     
     // Set up display name to generated name conversion
@@ -67,6 +81,90 @@ export class AgentModalStepper {
       globalModelSelect.addEventListener('change', () => {
         this.updateReasoningEffortForModel();
       });
+    }
+  }
+
+  handleAgentTypeChange(agentType) {
+    this.currentAgentType = agentType || 'local';
+    this.applyAgentTypeVisibility();
+    // Clear actions if switching to foundry
+    if (this.currentAgentType === 'aifoundry') {
+      this.clearSelectedActions();
+    }
+    this.populateSummary();
+  }
+
+  applyAgentTypeVisibility() {
+    const isFoundry = this.currentAgentType === 'aifoundry';
+    const foundryFields = document.getElementById('agent-foundry-fields');
+    const modelGroup = document.getElementById('agent-global-model-group');
+    const customToggle = document.getElementById('agent-custom-connection-toggle');
+    const customFields = document.getElementById('agent-custom-connection-fields');
+    const actionsSection = document.getElementById('agent-step-4');
+    const actionsDisabled = document.getElementById('agent-actions-disabled');
+    const actionsContainer = document.getElementById('agent-actions-container');
+    const actionsHeader = actionsSection?.querySelector('.card');
+    const summaryActionsSection = document.getElementById('summary-actions-section');
+    const instructionsContainer = document.getElementById('agent-instructions-container');
+    const instructionsFoundryNote = document.getElementById('agent-instructions-foundry-note');
+    const instructionsInput = document.getElementById('agent-instructions');
+
+    if (foundryFields) foundryFields.classList.toggle('d-none', !isFoundry);
+    if (modelGroup) modelGroup.classList.toggle('d-none', isFoundry);
+    if (customToggle) customToggle.classList.toggle('d-none', isFoundry);
+    if (customFields) customFields.classList.toggle('d-none', isFoundry);
+
+    if (instructionsContainer) instructionsContainer.classList.toggle('d-none', isFoundry);
+    if (instructionsFoundryNote) instructionsFoundryNote.classList.toggle('d-none', !isFoundry);
+    if (instructionsInput) {
+      if (isFoundry) {
+        instructionsInput.value = this.foundryPlaceholderInstructions;
+      }
+    }
+
+    if (actionsSection) {
+      // Hide interactive actions when foundry
+      if (actionsDisabled) actionsDisabled.classList.toggle('d-none', !isFoundry);
+      if (actionsHeader) actionsHeader.classList.toggle('d-none', isFoundry);
+      if (actionsContainer) actionsContainer.classList.toggle('d-none', isFoundry);
+      const noActionsMsg = document.getElementById('agent-no-actions-message');
+      if (noActionsMsg) noActionsMsg.classList.toggle('d-none', isFoundry);
+      const selectedSummary = document.getElementById('agent-selected-actions-summary');
+      if (selectedSummary) selectedSummary.classList.toggle('d-none', isFoundry);
+    }
+
+    if (summaryActionsSection) {
+      summaryActionsSection.classList.toggle('d-none', isFoundry);
+    }
+
+    // Update helper text
+    const helper = document.getElementById('agent-type-helper');
+    if (helper) {
+      helper.textContent = isFoundry
+        ? 'Foundry agents use Azure-managed tools. Actions step is disabled.'
+        : 'Local agents can attach actions and use SK plugins.';
+    }
+  }
+
+  updateAgentTypeLock() {
+    const radios = document.querySelectorAll('input[name="agent-type"]');
+    if (!radios || !radios.length) {
+      return;
+    }
+
+    const shouldDisable = this.isEditMode || this.currentStep > 1;
+
+    radios.forEach(radio => {
+      radio.disabled = shouldDisable;
+      const wrapper = radio.closest('.form-check');
+      if (wrapper) {
+        wrapper.classList.toggle('opacity-50', shouldDisable);
+      }
+    });
+
+    const selector = document.getElementById('agent-type-selector');
+    if (selector) {
+      selector.classList.toggle('pe-none', shouldDisable);
     }
   }
 
@@ -147,6 +245,7 @@ export class AgentModalStepper {
 
   showModal(agent = null) {
     this.isEditMode = !!agent;
+    this.currentAgentType = (agent && agent.agent_type) || 'local';
     
     // Store original state for change detection
     this.originalAgent = agent ? JSON.parse(JSON.stringify(agent)) : null;
@@ -179,6 +278,9 @@ export class AgentModalStepper {
     
     // Ensure generated name is populated for both new and existing agents
     this.updateGeneratedName();
+    this.syncAgentTypeSelector();
+    this.applyAgentTypeVisibility();
+    this.updateAgentTypeLock();
     
     // Load models for the modal
     this.loadModelsForModal();
@@ -197,6 +299,7 @@ export class AgentModalStepper {
           this.updateStepIndicator();
           this.showStep(1);
           this.updateNavigationButtons();
+          this.updateTemplateButtonVisibility();
           console.log('Step indicators initialized');
         } else {
           // Modal not ready yet, try again
@@ -223,6 +326,14 @@ export class AgentModalStepper {
         generatedNameInput.value = generatedName;
       }
     }
+  }
+
+  syncAgentTypeSelector() {
+    const radios = document.querySelectorAll('input[name="agent-type"]');
+    if (!radios || !radios.length) return;
+    radios.forEach(r => {
+      r.checked = r.value === this.currentAgentType;
+    });
   }
 
   clearFields() {
@@ -282,6 +393,11 @@ export class AgentModalStepper {
       customConnection.checked = agentsCommon.shouldEnableCustomConnection(agent);
     }
 
+    // Agent type selection
+    this.currentAgentType = agent.agent_type || 'local';
+    this.syncAgentTypeSelector();
+    this.applyAgentTypeVisibility();
+
     // Use shared function to populate all fields
     if (agentsCommon && typeof agentsCommon.setAgentModalFields === 'function') {
       agentsCommon.setAgentModalFields(agent);
@@ -327,6 +443,24 @@ export class AgentModalStepper {
     if (agent.actions_to_load && Array.isArray(agent.actions_to_load)) {
       this.actionsToSelect = agent.actions_to_load;
     }
+
+    // Foundry-specific fields
+    if (agent.agent_type === 'aifoundry') {
+      const other = agent.other_settings || {};
+      const foundry = (other && other.azure_ai_foundry) || {};
+      const endpointEl = document.getElementById('agent-foundry-endpoint');
+      const apiEl = document.getElementById('agent-foundry-api-version');
+      const depEl = document.getElementById('agent-foundry-deployment');
+      const idEl = document.getElementById('agent-foundry-agent-id');
+      const notesEl = document.getElementById('agent-foundry-notes');
+      if (endpointEl) endpointEl.value = agent.azure_openai_gpt_endpoint || '';
+      if (apiEl) apiEl.value = agent.azure_openai_gpt_api_version || '';
+      if (depEl) depEl.value = agent.azure_openai_gpt_deployment || '';
+      if (idEl) idEl.value = foundry.agent_id || '';
+      if (notesEl) notesEl.value = foundry.notes || '';
+      // ensure actions cleared for UI
+      this.clearSelectedActions();
+    }
   }
 
   nextStep() {
@@ -357,7 +491,9 @@ export class AgentModalStepper {
       skipBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Skipping...`;
     }
     try {
-      await this.loadAvailableActions();
+      if (this.currentAgentType !== 'aifoundry') {
+        await this.loadAvailableActions();
+      }
       this.goToStep(this.maxSteps);
     } catch (error) {
       console.error('Error loading actions:', error);
@@ -380,6 +516,8 @@ export class AgentModalStepper {
     this.showStep(stepNumber);
     this.updateStepIndicator();
     this.updateNavigationButtons();
+    this.updateTemplateButtonVisibility();
+    this.updateAgentTypeLock();
   }
 
   showStep(stepNumber) {
@@ -398,22 +536,31 @@ export class AgentModalStepper {
     }
 
     if (stepNumber === 2) {
-      if (!this.isAdmin) {
-        const customConnectionToggle = document.getElementById('agent-custom-connection-toggle');
-        if (customConnectionToggle) {
+      const isFoundry = this.currentAgentType === 'aifoundry';
+      const customConnectionToggle = document.getElementById('agent-custom-connection-toggle');
+      const modelGroup = document.getElementById('agent-global-model-group');
+
+      if (customConnectionToggle) {
+        if (isFoundry) {
+          customConnectionToggle.classList.add('d-none');
+        } else if (!this.isAdmin) {
           const allowUserCustom = appSettings?.allow_user_custom_agent_endpoints;
-          if (!allowUserCustom) {
-            customConnectionToggle.classList.add('d-none');
-          } else {
-            customConnectionToggle.classList.remove('d-none');
-          }
+          customConnectionToggle.classList.toggle('d-none', !allowUserCustom);
+        } else {
+          customConnectionToggle.classList.remove('d-none');
         }
+      }
+
+      if (modelGroup) {
+        modelGroup.classList.toggle('d-none', isFoundry);
       }
     }
     
     // Load actions when reaching step 4
     if (stepNumber === 4) {
-      this.loadAvailableActions();
+      if (this.currentAgentType !== 'aifoundry') {
+        this.loadAvailableActions();
+      }
     }
     
     // Populate summary when reaching step 6
@@ -511,6 +658,27 @@ export class AgentModalStepper {
     }
   }
 
+  canSubmitTemplate() {
+    if (!window.appSettings || !window.appSettings.enable_agent_template_gallery) {
+      return false;
+    }
+    if (this.isAdmin) {
+      return true;
+    }
+    if (window.appSettings.allow_user_agents === false) {
+      return false;
+    }
+    return window.appSettings.agent_templates_allow_user_submission !== false;
+  }
+
+  updateTemplateButtonVisibility() {
+    if (!this.templateSubmitButton) {
+      return;
+    }
+    const shouldShow = this.canSubmitTemplate() && this.currentStep === this.maxSteps;
+    this.templateSubmitButton.classList.toggle('d-none', !shouldShow);
+  }
+
   validateCurrentStep() {
     switch (this.currentStep) {
       case 1: // Basic Info
@@ -531,20 +699,54 @@ export class AgentModalStepper {
         break;
         
       case 2: // Model & Connection
-        // Model validation would go here
+        if (this.currentAgentType === 'aifoundry') {
+          const endpoint = document.getElementById('agent-foundry-endpoint');
+          const apiVersion = document.getElementById('agent-foundry-api-version');
+          const deployment = document.getElementById('agent-foundry-deployment');
+          const agentId = document.getElementById('agent-foundry-agent-id');
+          if (!endpoint || !endpoint.value.trim()) {
+            this.showError('Azure AI Foundry endpoint is required.');
+            endpoint?.focus();
+            return false;
+          }
+          if (!apiVersion || !apiVersion.value.trim()) {
+            this.showError('Azure AI Foundry API version is required.');
+            apiVersion?.focus();
+            return false;
+          }
+          if (!deployment || !deployment.value.trim()) {
+            this.showError('Foundry deployment/project is required.');
+            deployment?.focus();
+            return false;
+          }
+          if (!agentId || !agentId.value.trim()) {
+            this.showError('Foundry agent ID is required.');
+            agentId?.focus();
+            return false;
+          }
+        }
         break;
         
       case 3: // Instructions
         const instructions = document.getElementById('agent-instructions');
-        if (!instructions || !instructions.value.trim()) {
-          this.showError('Please provide instructions for the agent.');
-          if (instructions) instructions.focus();
-          return false;
-        }
+          if (this.currentAgentType !== 'aifoundry') {
+            if (!instructions || !instructions.value.trim()) {
+              this.showError('Please provide instructions for the agent.');
+              if (instructions) instructions.focus();
+              return false;
+            }
+          } else {
+            // Ensure placeholder present
+            if (instructions && !instructions.value.trim()) {
+              instructions.value = this.foundryPlaceholderInstructions;
+            }
+          }
         break;
         
       case 4: // Actions
-        // Actions validation would go here if needed
+        if (this.currentAgentType !== 'aifoundry') {
+          // Actions validation would go here if needed
+        }
         break;
         
       case 5: // Advanced
@@ -648,6 +850,10 @@ export class AgentModalStepper {
   }
 
   getFormModelName() {
+    if (this.currentAgentType === 'aifoundry') {
+      const foundryDeployment = document.getElementById('agent-foundry-deployment');
+      return foundryDeployment?.value?.trim() || '-';
+    }
     const customConnection = document.getElementById('agent-custom-connection')?.checked || false;
     let modelName = '-';
     if (customConnection) {
@@ -671,6 +877,7 @@ export class AgentModalStepper {
     const displayName = document.getElementById('agent-display-name')?.value || '-';
     const generatedName = document.getElementById('agent-name')?.value || '-';
     const description = document.getElementById('agent-description')?.value || '-';
+    const agentType = this.currentAgentType || 'local';
     
     // Model & Connection
     const customConnection = document.getElementById('agent-custom-connection')?.checked ? 'Yes' : 'No';
@@ -691,6 +898,11 @@ export class AgentModalStepper {
     // Update configuration
     document.getElementById('summary-model').textContent = modelName;
     document.getElementById('summary-custom-connection').textContent = customConnection;
+    const typeBadge = document.getElementById('summary-agent-type-badge');
+    if (typeBadge) {
+      typeBadge.textContent = agentType === 'aifoundry' ? 'Azure AI Foundry' : 'Local (Semantic Kernel)';
+      typeBadge.className = agentType === 'aifoundry' ? 'badge bg-warning text-dark' : 'badge bg-info';
+    }
     
     // Update instructions
     document.getElementById('summary-instructions').textContent = instructions;
@@ -705,10 +917,16 @@ export class AgentModalStepper {
     const actionsListContainer = document.getElementById('summary-actions-list');
     const actionsEmptyContainer = document.getElementById('summary-actions-empty');
     
-    if (actionsCount > 0) {
+    if (this.currentAgentType === 'aifoundry') {
+      // Hide actions entirely for Foundry
+      const actionsSection = document.getElementById('summary-actions-section');
+      if (actionsSection) actionsSection.style.display = 'none';
+    } else if (actionsCount > 0) {
       // Show actions list, hide empty message
       actionsListContainer.style.display = 'block';
       actionsEmptyContainer.style.display = 'none';
+      const actionsSection = document.getElementById('summary-actions-section');
+      if (actionsSection) actionsSection.style.display = '';
       
       // Clear existing content
       actionsListContainer.innerHTML = '';
@@ -751,6 +969,8 @@ export class AgentModalStepper {
       // Hide actions list, show empty message
       actionsListContainer.style.display = 'none';
       actionsEmptyContainer.style.display = 'block';
+      const actionsSection = document.getElementById('summary-actions-section');
+      if (actionsSection) actionsSection.style.display = '';
     }
     
     // Update creation date
@@ -1247,8 +1467,12 @@ export class AgentModalStepper {
         }
       }
       
-      // Add selected actions
-      agentData.actions_to_load = this.getSelectedActionIds();
+      // Add selected actions (skip for Foundry)
+      if (agentData.agent_type === 'aifoundry') {
+        agentData.actions_to_load = [];
+      } else {
+        agentData.actions_to_load = this.getSelectedActionIds();
+      }
       agentData.is_global = this.isAdmin; // Set based on admin context
       
       // Ensure required schema fields are present
@@ -1304,6 +1528,9 @@ export class AgentModalStepper {
   }
 
   getAgentFormData() {
+    const agentTypeInput = document.querySelector('input[name="agent-type"]:checked');
+    const selectedAgentType = agentTypeInput ? agentTypeInput.value : 'local';
+
     const formData = {
       display_name: document.getElementById('agent-display-name')?.value || '',
       name: document.getElementById('agent-name')?.value || '',
@@ -1314,8 +1541,37 @@ export class AgentModalStepper {
       other_settings: document.getElementById('agent-additional-settings')?.value || '{}',
       max_completion_tokens: parseInt(document.getElementById('agent-max-completion-tokens')?.value.trim()) || null,
       reasoning_effort: document.getElementById('agent-reasoning-effort')?.value || '',
-      agent_type: 'local'
+      agent_type: selectedAgentType
     };
+
+    if (selectedAgentType === 'aifoundry') {
+      // Foundry required fields
+      formData.azure_openai_gpt_endpoint = document.getElementById('agent-foundry-endpoint')?.value?.trim() || '';
+      formData.azure_openai_gpt_deployment = document.getElementById('agent-foundry-deployment')?.value?.trim() || '';
+      formData.azure_openai_gpt_api_version = document.getElementById('agent-foundry-api-version')?.value?.trim() || '';
+      formData.instructions = document.getElementById('agent-instructions')?.value?.trim() || this.foundryPlaceholderInstructions;
+
+      // other_settings for foundry
+      let otherSettingsObj = {};
+      try {
+        otherSettingsObj = JSON.parse(formData.other_settings || '{}');
+      } catch (e) {
+        otherSettingsObj = {};
+      }
+      otherSettingsObj = otherSettingsObj || {};
+      const notesVal = document.getElementById('agent-foundry-notes')?.value || '';
+      otherSettingsObj.azure_ai_foundry = {
+        ...(otherSettingsObj.azure_ai_foundry || {}),
+        agent_id: document.getElementById('agent-foundry-agent-id')?.value?.trim() || '',
+        ...(notesVal ? { notes: notesVal } : {})
+      };
+      formData.other_settings = JSON.stringify(otherSettingsObj);
+
+      // Foundry agents cannot have actions
+      formData.actions_to_load = [];
+      formData.enable_agent_gpt_apim = false;
+      return formData;
+    }
     
     // Handle model and deployment configuration
     if (formData.custom_connection) {
@@ -1470,6 +1726,100 @@ export class AgentModalStepper {
     // Show success message
     if (window.showToast) {
       window.showToast(`Agent ${this.isEditMode ? 'updated' : 'created'} successfully!`, 'success');
+    }
+  }
+
+  validateTemplateRequirements() {
+    const displayName = document.getElementById('agent-display-name');
+    const description = document.getElementById('agent-description');
+    const instructions = document.getElementById('agent-instructions');
+
+    if (!displayName || !displayName.value.trim()) {
+      this.showError('Please add a display name before submitting a template.');
+      displayName?.focus();
+      return false;
+    }
+
+    if (!description || !description.value.trim()) {
+      this.showError('Please add a description before submitting a template.');
+      description?.focus();
+      return false;
+    }
+
+    if (!instructions || !instructions.value.trim()) {
+      this.showError('Instructions are required before submitting a template.');
+      instructions?.focus();
+      return false;
+    }
+
+    this.hideError();
+    return true;
+  }
+
+  buildTemplatePayload() {
+    const displayName = document.getElementById('agent-display-name')?.value?.trim() || '';
+    const description = document.getElementById('agent-description')?.value?.trim() || '';
+    const instructions = document.getElementById('agent-instructions')?.value || '';
+    const additionalSettings = document.getElementById('agent-additional-settings')?.value || '';
+
+    return {
+      title: displayName || 'Agent Template',
+      display_name: displayName || 'Agent Template',
+      description,
+      helper_text: description,
+      instructions,
+      additional_settings: additionalSettings,
+      actions_to_load: this.getSelectedActionIds(),
+      source_agent_id: this.originalAgent?.id,
+      source_scope: this.isAdmin ? 'global' : 'personal'
+    };
+  }
+
+  async submitTemplate() {
+    if (!this.canSubmitTemplate()) {
+      showToast('Template submissions are disabled right now.', 'warning');
+      return;
+    }
+
+    if (!this.validateTemplateRequirements()) {
+      return;
+    }
+
+    const button = this.templateSubmitButton;
+    if (!button) {
+      return;
+    }
+
+    const originalHtml = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Submitting...';
+
+    try {
+      const payload = { template: this.buildTemplatePayload() };
+      const response = await fetch('/api/agent-templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to submit agent template.');
+      }
+
+      const status = data.template?.status;
+      const successMessage = (this.isAdmin && status === 'approved')
+        ? 'Template published to the gallery!'
+        : 'Template submitted for review.';
+      showToast(successMessage, 'success');
+      this.hideError();
+    } catch (error) {
+      console.error('Template submission failed:', error);
+      this.showError(error.message || 'Failed to submit template.');
+      showToast(error.message || 'Failed to submit template.', 'error');
+    } finally {
+      button.disabled = false;
+      button.innerHTML = originalHtml;
     }
   }
 }

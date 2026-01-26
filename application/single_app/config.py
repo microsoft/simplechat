@@ -88,7 +88,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.236.007"
+VERSION = "0.237.001"
 
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -379,6 +379,12 @@ cosmos_global_actions_container = cosmos_database.create_container_if_not_exists
     partition_key=PartitionKey(path="/id")
 )
 
+cosmos_agent_templates_container_name = "agent_templates"
+cosmos_agent_templates_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_agent_templates_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
 cosmos_agent_facts_container_name = "agent_facts"
 cosmos_agent_facts_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_agent_facts_container_name,
@@ -647,7 +653,7 @@ def initialize_clients(settings):
             azure_apim_content_safety_endpoint = settings.get("azure_apim_content_safety_endpoint")
             azure_apim_content_safety_subscription_key = settings.get("azure_apim_content_safety_subscription_key")
 
-            if safety_endpoint and safety_key:
+            if safety_endpoint:
                 try:
                     if enable_content_safety_apim:
                         content_safety_client = ContentSafetyClient(

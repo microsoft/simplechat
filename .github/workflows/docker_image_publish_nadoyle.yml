@@ -5,10 +5,7 @@ on:
   push:
     branches:
     - nadoyle
-    - feature/group-agents-actions
-    - security/containerBuild
     - feature/aifoundryagents
-    - azureBillingPlugin
 
   workflow_dispatch:
 

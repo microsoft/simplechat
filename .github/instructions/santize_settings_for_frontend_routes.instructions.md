@@ -20,6 +20,8 @@ When building or working with Python frontend routes (Flask routes that render t
 
 ## Required Pattern
 
+### Exception: Admin Routes should NEVER be sanitized as it breaks many admin features.
+
 ### ✅ CORRECT - Sanitize Before Sending
 ```python
 from functions_settings import get_settings, sanitize_settings_for_user

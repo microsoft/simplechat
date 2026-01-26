@@ -1,5 +1,5 @@
 ---
-applyTo: '**'
+applyTo: '**/*.py'
 ---
 
 # Python Language Guide
@@ -11,3 +11,5 @@ applyTo: '**'
 - Use 4 spaces per indentation level. No tabs.
 
 - Code and definitions should occur after the imports block.
+
+- Prefer log_event from functions_appinsights.py for logging activites.

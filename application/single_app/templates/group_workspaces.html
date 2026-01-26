@@ -641,7 +641,13 @@ app_settings.app_title }} {% endblock %} {% block head %}
       <div class="card p-3 my-3">
         <div class="d-flex justify-content-between align-items-center mb-2">
           <h5 class="mb-0 d-flex align-items-center gap-2">Group Agents</h5>
-          <button class="btn btn-success btn-sm" id="create-group-agent-btn">New Agent</button>
+          <div class="d-flex align-items-center gap-2">
+            <button type="button" class="btn btn-outline-info btn-sm agent-examples-trigger" data-bs-toggle="modal" data-bs-target="#agentExamplesModal" data-trigger-button="#create-group-agent-btn">
+              <i class="bi bi-magic"></i>
+              Agent Templates
+            </button>
+            <button class="btn btn-success btn-sm" id="create-group-agent-btn" type="button">New Agent</button>
+          </div>
         </div>
         <div id="group-agents-permission-warning" class="alert alert-warning d-none">
           You do not have permission to manage group agents.

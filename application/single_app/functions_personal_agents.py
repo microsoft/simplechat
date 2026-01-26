@@ -18,6 +18,7 @@ import logging
 from config import cosmos_personal_agents_container
 from functions_settings import get_settings, get_user_settings, update_user_settings
 from functions_keyvault import keyvault_agent_save_helper, keyvault_agent_get_helper, keyvault_agent_delete_helper
+from functions_agent_payload import sanitize_agent_payload
 from functions_debug import debug_print
 
 def get_personal_agents(user_id):
@@ -111,12 +112,27 @@ def save_personal_agent(user_id, agent_data):
         dict: Saved agent data with ID
     """
     try:
-        # Ensure required fields
-        if 'id' not in agent_data:
-            agent_data['id'] = str(f"{user_id}_{agent_data.get('name', 'default')}")
+        cleaned_agent = sanitize_agent_payload(agent_data)
+        for field in ['name', 'display_name', 'description', 'instructions']:
+            cleaned_agent.setdefault(field, '')
+        for field in [
+            'azure_openai_gpt_endpoint',
+            'azure_openai_gpt_key',
+            'azure_openai_gpt_deployment',
+            'azure_openai_gpt_api_version',
+            'azure_agent_apim_gpt_endpoint',
+            'azure_agent_apim_gpt_subscription_key',
+            'azure_agent_apim_gpt_deployment',
+            'azure_agent_apim_gpt_api_version'
+        ]:
+            cleaned_agent.setdefault(field, '')
+        if 'id' not in cleaned_agent:
+            cleaned_agent['id'] = str(f"{user_id}_{cleaned_agent.get('name', 'default')}")
             
-        agent_data['user_id'] = user_id
-        agent_data['last_updated'] = datetime.utcnow().isoformat()
+        cleaned_agent['user_id'] = user_id
+        cleaned_agent['last_updated'] = datetime.utcnow().isoformat()
+        cleaned_agent['is_global'] = False
+        cleaned_agent['is_group'] = False
         
         # Validate required fields
         required_fields = ['name', 'display_name', 'description', 'instructions']

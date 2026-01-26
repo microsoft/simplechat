@@ -1,0 +1,629 @@
+<div class="modal fade" id="agentExamplesModal" tabindex="-1" aria-labelledby="agentExamplesModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="agentExamplesModalLabel">
+          <i class="bi bi-stars me-2"></i>
+          Agent Example Templates
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-info d-flex align-items-start gap-2">
+          <i class="bi bi-lightning-charge"></i>
+          <div>
+            <strong>Jump-start a new agent.</strong> Browse curated templates, preview their details, and apply one to the agent builder in a single click.
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label for="agent-examples-search" class="form-label">Search templates</label>
+          <div class="input-group">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input type="search" id="agent-examples-search" class="form-control" placeholder="Search by template name or submitter" autocomplete="off">
+          </div>
+          <div class="form-text">Filters template titles/display names plus submitter name and email.</div>
+        </div>
+
+        <div id="agent-examples-spinner" class="py-4 text-center">
+          <div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div>
+          <p class="text-muted mt-3 mb-0">Loading agent templates...</p>
+        </div>
+
+        <div id="agent-examples-disabled" class="alert alert-info d-none" role="alert">
+          <div class="d-flex align-items-start gap-2">
+            <i class="bi bi-sliders"></i>
+            <div>
+              <strong>Agent template gallery is disabled.</strong>
+              <div>Ask an admin to enable the feature in Admin &gt; Agents.</div>
+            </div>
+          </div>
+        </div>
+
+        <div id="agent-examples-empty" class="alert alert-warning d-none" role="status">
+          <div class="d-flex align-items-start gap-2">
+            <i class="bi bi-inbox"></i>
+            <div>
+              <strong>No templates yet.</strong>
+              <div>Be the first to submit a reusable agent configuration.</div>
+            </div>
+          </div>
+        </div>
+
+        <div id="agent-examples-error" class="alert alert-danger d-none" role="alert">
+          <div class="d-flex align-items-start gap-2">
+            <i class="bi bi-exclamation-triangle"></i>
+            <div>
+              <strong>Unable to load agent templates.</strong>
+              <div id="agent-examples-error-text">Please try again shortly.</div>
+            </div>
+          </div>
+        </div>
+
+        <div id="agent-examples-grid" class="row row-cols-1 row-cols-md-2 g-3 d-none"></div>
+
+        <div id="agent-examples-pagination-wrapper" class="d-none mt-3 flex-column flex-md-row gap-2 justify-content-between align-items-md-center">
+          <div id="agent-examples-summary" class="text-muted small"></div>
+          <nav aria-label="Agent example pagination">
+            <ul class="pagination pagination-sm mb-0" id="agent-examples-pagination"></ul>
+          </nav>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="agentExampleDetailsModal" tabindex="-1" aria-labelledby="agentExampleDetailsModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div class="me-3">
+          <h5 class="modal-title mb-0" id="agentExampleDetailsModalLabel">Agent Template</h5>
+          <small class="text-muted" id="agent-example-details-helper"></small>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted" id="agent-example-details-description"></p>
+        <div class="mb-3 d-flex flex-wrap gap-2" id="agent-example-details-tags"></div>
+        <div class="mb-3" id="agent-example-details-actions"></div>
+        <div class="mb-3">
+          <label class="fw-semibold text-muted small">Instructions</label>
+          <pre class="bg-dark text-white rounded p-3" id="agent-example-details-instructions"></pre>
+        </div>
+        <div class="mb-3 d-none" id="agent-example-details-settings-wrapper">
+          <label class="fw-semibold text-muted small">Additional Settings</label>
+          <pre class="bg-light border rounded p-3" id="agent-example-details-settings"></pre>
+        </div>
+        <div class="small text-muted" id="agent-example-details-meta"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+        <button type="button" class="btn btn-success" id="agent-example-details-use-btn">
+          <i class="bi bi-check-circle"></i> Use Template
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+        <script>
+        (function () {
+          const PAGE_SIZE = 6;
+
+          function initAgentExamplesModal() {
+            if (!window.bootstrap) {
+              return;
+            }
+
+            const modalEl = document.getElementById('agentExamplesModal');
+            if (!modalEl) {
+              return;
+            }
+
+            const detailModalEl = document.getElementById('agentExampleDetailsModal');
+            const grid = document.getElementById('agent-examples-grid');
+            const spinner = document.getElementById('agent-examples-spinner');
+            const emptyState = document.getElementById('agent-examples-empty');
+            const disabledState = document.getElementById('agent-examples-disabled');
+            const errorState = document.getElementById('agent-examples-error');
+            const errorText = document.getElementById('agent-examples-error-text');
+            const paginationWrapper = document.getElementById('agent-examples-pagination-wrapper');
+            const pagination = document.getElementById('agent-examples-pagination');
+            const summary = document.getElementById('agent-examples-summary');
+            const searchInput = document.getElementById('agent-examples-search');
+            const detailHelper = document.getElementById('agent-example-details-helper');
+            const detailDescription = document.getElementById('agent-example-details-description');
+            const detailTags = document.getElementById('agent-example-details-tags');
+            const detailActions = document.getElementById('agent-example-details-actions');
+            const detailInstructions = document.getElementById('agent-example-details-instructions');
+            const detailSettingsWrapper = document.getElementById('agent-example-details-settings-wrapper');
+            const detailSettings = document.getElementById('agent-example-details-settings');
+            const detailMeta = document.getElementById('agent-example-details-meta');
+            const detailUseBtn = document.getElementById('agent-example-details-use-btn');
+            const detailTitle = document.getElementById('agentExampleDetailsModalLabel');
+
+            const modalInstance = bootstrap.Modal.getOrCreateInstance(modalEl);
+            const detailModal = detailModalEl ? bootstrap.Modal.getOrCreateInstance(detailModalEl) : null;
+
+            let templates = [];
+            let currentPage = 1;
+            let searchQuery = '';
+            let activeTriggerButton = null;
+            let pendingExamplePayload = null;
+            let selectedTemplate = null;
+            let isLoading = false;
+
+            modalEl.addEventListener('show.bs.modal', (event) => {
+              activeTriggerButton = event.relatedTarget || null;
+              pendingExamplePayload = null;
+              if (!templates.length && !isLoading) {
+                loadTemplates();
+              }
+            });
+
+            modalEl.addEventListener('hidden.bs.modal', () => {
+              if (!pendingExamplePayload) {
+                activeTriggerButton = null;
+              }
+            });
+
+            if (grid) {
+              grid.addEventListener('click', (event) => {
+                const viewBtn = event.target.closest('.agent-example-view-btn');
+                if (viewBtn) {
+                  const template = findTemplate(viewBtn.dataset.templateId);
+                  if (template) {
+                    openDetailModal(template);
+                  }
+                  return;
+                }
+
+                const useBtn = event.target.closest('.agent-example-use-btn');
+                if (useBtn) {
+                  const template = findTemplate(useBtn.dataset.templateId);
+                  if (template) {
+                    applyTemplateAndLaunch(template);
+                  }
+                }
+              });
+            }
+
+            if (detailUseBtn) {
+              detailUseBtn.addEventListener('click', () => {
+                if (selectedTemplate) {
+                  applyTemplateAndLaunch(selectedTemplate);
+                }
+              });
+            }
+
+            if (searchInput) {
+              searchInput.addEventListener('input', (event) => {
+                searchQuery = (event.target.value || '').trim().toLowerCase();
+                currentPage = 1;
+                renderTemplates();
+              });
+            }
+
+            if (!window.appSettings?.enable_agent_template_gallery) {
+              toggleElement(spinner, false);
+              toggleElement(disabledState, true);
+              return;
+            }
+
+            function loadTemplates() {
+              isLoading = true;
+              toggleElement(spinner, true);
+              toggleElement(emptyState, false);
+              toggleElement(errorState, false);
+              toggleElement(grid, false, true);
+              togglePagination(false);
+
+              fetch('/api/agent-templates')
+                .then(async (response) => {
+                  if (!response.ok) {
+                    throw new Error('Failed to load templates.');
+                  }
+                  const data = await response.json();
+                  templates = data.templates || [];
+                  currentPage = 1;
+                  renderTemplates();
+                })
+                .catch((error) => {
+                  console.error('Failed to load agent templates', error);
+                  toggleElement(errorState, true);
+                  if (errorText) {
+                    errorText.textContent = error.message || 'Unexpected error.';
+                  }
+                })
+                .finally(() => {
+                  isLoading = false;
+                  toggleElement(spinner, false);
+                });
+            }
+
+            function renderTemplates() {
+              if (!grid) {
+                return;
+              }
+
+              grid.innerHTML = '';
+              toggleElement(emptyState, false);
+              toggleElement(errorState, false);
+
+              const filtered = getFilteredTemplates();
+              if (!filtered.length) {
+                toggleElement(grid, false, true);
+                togglePagination(false);
+                toggleElement(emptyState, true);
+                if (summary) {
+                  summary.textContent = searchQuery ? 'No templates match your search.' : '';
+                }
+                return;
+              }
+
+              const totalItems = filtered.length;
+              const totalPages = Math.ceil(totalItems / PAGE_SIZE) || 1;
+              if (currentPage > totalPages) {
+                currentPage = totalPages;
+              }
+              const startIndex = (currentPage - 1) * PAGE_SIZE;
+              const pageItems = filtered.slice(startIndex, startIndex + PAGE_SIZE);
+
+              pageItems.forEach((template) => {
+                grid.appendChild(createTemplateCard(template));
+              });
+
+              toggleElement(grid, true, true);
+              togglePagination(totalPages > 1, totalPages);
+
+              if (summary) {
+                const endIndex = startIndex + pageItems.length;
+                summary.textContent = `Showing ${startIndex + 1}-${endIndex} of ${totalItems}`;
+              }
+            }
+
+            function createTemplateCard(template) {
+              const col = document.createElement('div');
+              col.className = 'col';
+
+              const card = document.createElement('div');
+              card.className = 'card h-100 shadow-sm';
+
+              const body = document.createElement('div');
+              body.className = 'card-body d-flex flex-column';
+
+              const title = document.createElement('h6');
+              title.className = 'card-title fw-semibold mb-1';
+              title.textContent = template.title || template.display_name || 'Agent Template';
+              body.appendChild(title);
+
+              const helper = document.createElement('p');
+              helper.className = 'text-muted small mb-2';
+              helper.textContent = template.helper_text || template.description || 'Reusable agent template';
+              body.appendChild(helper);
+
+              const description = document.createElement('p');
+              description.className = 'card-text small flex-grow-1';
+              description.textContent = truncateText(template.description || template.helper_text || 'No description provided.', 150);
+              body.appendChild(description);
+
+              const footer = document.createElement('div');
+              footer.className = 'd-flex flex-wrap gap-2 mt-3';
+
+              const viewBtn = document.createElement('button');
+              viewBtn.type = 'button';
+              viewBtn.className = 'btn btn-outline-primary btn-sm agent-example-view-btn';
+              viewBtn.dataset.templateId = template.id;
+              viewBtn.textContent = 'View details';
+              footer.appendChild(viewBtn);
+
+              const useBtn = document.createElement('button');
+              useBtn.type = 'button';
+              useBtn.className = 'btn btn-success btn-sm agent-example-use-btn';
+              useBtn.dataset.templateId = template.id;
+              useBtn.innerHTML = '<i class="bi bi-plus-circle me-1"></i>Use template';
+              footer.appendChild(useBtn);
+
+              body.appendChild(footer);
+              card.appendChild(body);
+              col.appendChild(card);
+              return col;
+            }
+
+            function getFilteredTemplates() {
+              if (!searchQuery) {
+                return templates;
+              }
+              return templates.filter((template) => {
+                return [
+                  template.title,
+                  template.display_name,
+                  template.helper_text,
+                  template.description,
+                  template.created_by_name,
+                  template.created_by_email,
+                ].some((value) => value && value.toString().toLowerCase().includes(searchQuery));
+              });
+            }
+
+            function toggleElement(element, show, toggleClassOnly = false) {
+              if (!element) {
+                return;
+              }
+              if (toggleClassOnly) {
+                element.classList.toggle('d-none', !show);
+                return;
+              }
+              element.classList.toggle('d-none', !show);
+            }
+
+            function togglePagination(show, totalPages = 1) {
+              if (!paginationWrapper || !pagination) {
+                return;
+              }
+              paginationWrapper.classList.toggle('d-none', !show);
+              if (!show) {
+                pagination.innerHTML = '';
+                return;
+              }
+
+              pagination.innerHTML = '';
+              const maxButtons = 5;
+              let startPage = Math.max(1, currentPage - Math.floor(maxButtons / 2));
+              let endPage = startPage + maxButtons - 1;
+              if (endPage > totalPages) {
+                endPage = totalPages;
+                startPage = Math.max(1, endPage - maxButtons + 1);
+              }
+
+              pagination.appendChild(createPageItem('Previous', currentPage - 1, currentPage === 1));
+              for (let page = startPage; page <= endPage; page += 1) {
+                pagination.appendChild(createPageItem(page, page, false, page === currentPage));
+              }
+              pagination.appendChild(createPageItem('Next', currentPage + 1, currentPage === totalPages));
+            }
+
+            function createPageItem(label, targetPage, disabled, active = false) {
+              const li = document.createElement('li');
+              li.className = 'page-item';
+              if (disabled) li.classList.add('disabled');
+              if (active) li.classList.add('active');
+
+              const button = document.createElement('button');
+              button.type = 'button';
+              button.className = 'page-link';
+              button.textContent = label.toString();
+              button.disabled = disabled;
+              button.addEventListener('click', () => {
+                if (disabled || targetPage === currentPage) {
+                  return;
+                }
+                const filteredLength = getFilteredTemplates().length;
+                const totalPages = Math.ceil(filteredLength / PAGE_SIZE) || 1;
+                currentPage = Math.min(Math.max(targetPage, 1), totalPages);
+                renderTemplates();
+              });
+
+              li.appendChild(button);
+              return li;
+            }
+
+            function openDetailModal(template) {
+              if (!detailModal || !template) {
+                return;
+              }
+              selectedTemplate = template;
+              if (detailTitle) {
+                detailTitle.textContent = template.title || template.display_name || 'Agent Template';
+              }
+              if (detailHelper) {
+                detailHelper.textContent = template.helper_text || template.description || 'Reusable agent template';
+              }
+              if (detailDescription) {
+                detailDescription.textContent = template.description || template.helper_text || 'No description provided.';
+              }
+              if (detailInstructions) {
+                detailInstructions.textContent = template.instructions || '';
+              }
+              if (detailSettingsWrapper && detailSettings) {
+                if (template.additional_settings) {
+                  detailSettingsWrapper.classList.remove('d-none');
+                  detailSettings.textContent = template.additional_settings;
+                } else {
+                  detailSettingsWrapper.classList.add('d-none');
+                  detailSettings.textContent = '';
+                }
+              }
+              if (detailTags) {
+                detailTags.innerHTML = '';
+                if (Array.isArray(template.tags) && template.tags.length) {
+                  template.tags.slice(0, 8).forEach((tag) => {
+                    const badge = document.createElement('span');
+                    badge.className = 'badge bg-secondary-subtle text-secondary-emphasis';
+                    badge.textContent = tag;
+                    detailTags.appendChild(badge);
+                  });
+                }
+              }
+              if (detailActions) {
+                detailActions.innerHTML = '';
+                if (Array.isArray(template.actions_to_load) && template.actions_to_load.length) {
+                  const label = document.createElement('p');
+                  label.className = 'text-muted small mb-1';
+                  label.textContent = 'Recommended actions';
+                  detailActions.appendChild(label);
+                  const list = document.createElement('div');
+                  list.className = 'd-flex flex-wrap gap-2';
+                  template.actions_to_load.forEach((action) => {
+                    const badge = document.createElement('span');
+                    badge.className = 'badge bg-info text-dark';
+                    badge.textContent = action;
+                    list.appendChild(badge);
+                  });
+                  detailActions.appendChild(list);
+                }
+              }
+              if (detailMeta) {
+                const submittedBy = template.created_by_name || 'Unknown submitter';
+                const submittedByEmail = template.created_by_email ? ` (${template.created_by_email})` : '';
+                const createdLabel = template.created_at ? `Created ${formatDate(template.created_at)}` : '';
+                const updatedLabel = template.updated_at ? `Updated ${formatDate(template.updated_at)}` : '';
+                const metaParts = [`Submitted by ${submittedBy}${submittedByEmail}`, createdLabel, updatedLabel].filter(Boolean);
+                detailMeta.textContent = metaParts.join(' • ');
+              }
+              detailModal.show();
+            }
+
+            function applyTemplateAndLaunch(template) {
+              pendingExamplePayload = buildPayload(template);
+              if (detailModal) {
+                detailModal.hide();
+              }
+              modalInstance.hide();
+              openAgentModalFromTemplate();
+            }
+
+            function buildPayload(template) {
+              return {
+                display_name: template.display_name || template.title || 'Agent Template',
+                description: template.description || template.helper_text || '',
+                instructions: template.instructions || '',
+                additional_settings: template.additional_settings || '',
+                actions_to_load: template.actions_to_load || [],
+              };
+            }
+
+            function findTemplate(templateId) {
+              return templates.find((t) => t.id === templateId);
+            }
+
+            function truncateText(value, maxLength) {
+              if (!value) {
+                return '';
+              }
+              if (value.length <= maxLength) {
+                return value;
+              }
+              return `${value.slice(0, maxLength - 1)}…`;
+            }
+
+            function formatDate(value) {
+              if (!value) return '';
+              const date = new Date(value);
+              if (Number.isNaN(date.getTime())) {
+                return value;
+              }
+              return date.toLocaleString();
+            }
+
+            function openAgentModalFromTemplate() {
+              if (!pendingExamplePayload) {
+                return;
+              }
+
+              const agentModalEl = document.getElementById('agentModal');
+              if (!agentModalEl) {
+                console.warn('Agent modal is not available for template injection.');
+                pendingExamplePayload = null;
+                return;
+              }
+
+              const agentModalInstance = bootstrap.Modal.getOrCreateInstance(agentModalEl);
+              const applyPayloadWhenReady = function () {
+                applyExamplePayload(pendingExamplePayload);
+                pendingExamplePayload = null;
+              };
+
+              if (agentModalEl.classList.contains('show')) {
+                applyPayloadWhenReady();
+                return;
+              }
+
+              const onShown = function () {
+                agentModalEl.removeEventListener('shown.bs.modal', onShown);
+                applyPayloadWhenReady();
+              };
+
+              agentModalEl.addEventListener('shown.bs.modal', onShown);
+
+              if (!launchAgentModal(agentModalInstance)) {
+                agentModalEl.removeEventListener('shown.bs.modal', onShown);
+                pendingExamplePayload = null;
+              }
+            }
+
+            function launchAgentModal(agentModalInstance) {
+              const manualTriggerSelector = getManualTriggerSelector();
+              if (manualTriggerSelector) {
+                const manualTrigger = document.querySelector(manualTriggerSelector);
+                if (manualTrigger) {
+                  manualTrigger.click();
+                  return true;
+                }
+              }
+
+              if (window.agentModalStepper && typeof window.agentModalStepper.showModal === 'function') {
+                window.agentModalStepper.showModal();
+                return true;
+              }
+
+              if (agentModalInstance) {
+                agentModalInstance.show();
+                return true;
+              }
+
+              console.warn('Unable to open agent modal for template application.');
+              return false;
+            }
+
+            function getManualTriggerSelector() {
+              if (!activeTriggerButton) {
+                return '';
+              }
+              return activeTriggerButton.getAttribute('data-trigger-button') || '';
+            }
+
+            function applyExamplePayload(payload) {
+              const displayNameInput = document.getElementById('agent-display-name');
+              const descriptionInput = document.getElementById('agent-description');
+              const instructionsInput = document.getElementById('agent-instructions');
+              const additionalSettingsInput = document.getElementById('agent-additional-settings');
+
+              if (displayNameInput && payload.display_name !== undefined) {
+                displayNameInput.value = payload.display_name;
+                displayNameInput.dispatchEvent(new Event('input', { bubbles: true }));
+                displayNameInput.focus();
+              }
+
+              if (descriptionInput && payload.description !== undefined) {
+                descriptionInput.value = payload.description;
+                descriptionInput.dispatchEvent(new Event('input', { bubbles: true }));
+              }
+
+              if (instructionsInput && payload.instructions !== undefined) {
+                instructionsInput.value = payload.instructions;
+                instructionsInput.dispatchEvent(new Event('input', { bubbles: true }));
+              }
+
+              if (additionalSettingsInput && payload.additional_settings !== undefined) {
+                additionalSettingsInput.value = payload.additional_settings;
+                additionalSettingsInput.dispatchEvent(new Event('input', { bubbles: true }));
+              }
+
+              if (window.agentModalStepper && typeof window.agentModalStepper.goToStep === 'function') {
+                window.agentModalStepper.goToStep(1);
+              }
+            }
+          }
+
+          if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initAgentExamplesModal, { once: true });
+          } else {
+            initAgentExamplesModal();
+          }
+        })();
+        </script>

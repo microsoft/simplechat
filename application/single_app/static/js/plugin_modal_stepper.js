@@ -16,9 +16,11 @@ export class PluginModalStepper {
     this.filteredTypes = [];
     this.originalPlugin = null; // Store original state for change tracking
     this.pluginSchemaCache = null; // Will hold plugin.schema.json
+    this.pluginDefinitionCache = {}; // Cache for per-type definition schemas
     this.additionalSettingsSchemaCache = {}; // Cache for additional settings schemas
     this.lastAdditionalFieldsType = null; // Track last type to avoid unnecessary redraws
-    this.defaultAuthTypes = ["key", "identity", "user", "servicePrincipal", "connection_string", "basic", "username_password"];
+    this.defaultAuthTypes = ["NoAuth", "key", "identity", "user", "servicePrincipal", "connection_string", "basic", "username_password"];
+    this.currentAllowedAuthTypes = null; // Active allowed auth types derived from definition
 
     this._loadPluginSchema().then(() => { // Load schema on initialization
       this._populateGenericAuthTypeDropdown(); // Dynamically populate generic auth type dropdown after schema loads (will be called again after schema loads)
@@ -37,33 +39,58 @@ export class PluginModalStepper {
     }
   }
 
+  getAuthTypeEnumFromSchema() {
+    const authEnum = this.pluginSchemaCache?.definitions?.AuthType?.enum;
+    return Array.isArray(authEnum) && authEnum.length ? authEnum : null;
+  }
+
+  async loadPluginDefinition(type) {
+    const safeType = this.getSafeType(type);
+    if (!safeType) return null;
+
+    if (Object.prototype.hasOwnProperty.call(this.pluginDefinitionCache, safeType)) {
+      return this.pluginDefinitionCache[safeType];
+    }
+
+    try {
+      const res = await fetch(`/api/plugins/${encodeURIComponent(type)}/auth-types`);
+      if (!res.ok) throw new Error(`Auth types fetch failed with status ${res.status}`);
+      const json = await res.json();
+      this.pluginDefinitionCache[safeType] = json;
+      return json;
+    } catch (err) {
+      console.warn(`Failed to load auth types for type '${safeType}':`, err.message || err);
+      this.pluginDefinitionCache[safeType] = null;
+      return null;
+    }
+  }
+
+  async applyDefinitionForSelectedType(type = this.selectedType) {
+    this.currentAllowedAuthTypes = null;
+
+    if (type) {
+      const definition = await this.loadPluginDefinition(type);
+      const allowed = definition?.allowedAuthTypes;
+      if (Array.isArray(allowed) && allowed.length) {
+        this.currentAllowedAuthTypes = allowed;
+      }
+    }
+
+    this._populateGenericAuthTypeDropdown();
+  }
+
   _populateGenericAuthTypeDropdown() {
     // Only run if dropdown exists
     const dropdown = document.getElementById('plugin-auth-type-generic');
     if (!dropdown) return;
-    // If schema not loaded, fallback to static options
-    if (!this.pluginSchemaCache) {
-      dropdown.innerHTML = '';
-      this.defaultAuthTypes.forEach(type => {
-        const option = document.createElement('option');
-        option.value = type;
-        option.textContent = this.formatAuthType(type);
-        dropdown.appendChild(option);
-      });
-      return;
-    }
-    // Find the enum for generic auth type in the schema
-    let authTypeEnum = [];
-    if (this.pluginSchemaCache.properties && this.pluginSchemaCache.properties.authTypeGeneric) {
-      authTypeEnum = this.pluginSchemaCache.properties.authTypeGeneric.enum || [];
-    }
-    // Fallback: if not found, use a default
-    if (!authTypeEnum.length) {
-      authTypeEnum = this.defaultAuthTypes;
-    }
+    const fullAuthEnum = this.getAuthTypeEnumFromSchema() || this.defaultAuthTypes;
+    const allowedList = this.currentAllowedAuthTypes && this.currentAllowedAuthTypes.length
+      ? this.currentAllowedAuthTypes
+      : fullAuthEnum;
+
     // Clear existing options
     dropdown.innerHTML = '';
-    authTypeEnum.forEach(type => {
+    allowedList.forEach(type => {
       const option = document.createElement('option');
       option.value = type;
       option.textContent = this.formatAuthType(type);
@@ -137,6 +164,7 @@ export class PluginModalStepper {
     
     // Load available types and populate
     await this.loadAvailableTypes();
+    await this.applyDefinitionForSelectedType(this.selectedType);
     
     if (this.isEditMode) {
       this.populateFormFromPlugin(plugin);
@@ -301,6 +329,9 @@ export class PluginModalStepper {
         document.getElementById('plugin-description').value = typeData.description;
       }
       
+      // Apply auth definition overrides for this type
+      this.applyDefinitionForSelectedType(typeName).catch(err => console.error('Definition apply failed:', err));
+
       // Pre-configure for step 3 if needed
       this.showConfigSectionForType();
     }
@@ -1841,7 +1872,8 @@ export class PluginModalStepper {
       'user': 'User',
       'servicePrincipal': 'Service Principal',
       'connection_string': 'Connection String',
-      'basic': 'Basic'
+      'basic': 'Basic',
+      'NoAuth': 'No Authentication'
     };
     return authTypeMap[authType] || authType;
   }
@@ -2266,6 +2298,7 @@ export class PluginModalStepper {
     
     // Clear any type selection
     this.selectedType = null;
+    this.currentAllowedAuthTypes = null;
     
     // Hide all auth field sections (with safe calls)
     try {

@@ -1460,6 +1460,8 @@ export function actuallySendMessage(finalMessageToSend) {
 
   // Fallback: if group_id is null/empty, use window.activeGroupId
   const finalGroupId = group_id || window.activeGroupId || null;
+  const webSearchToggle = document.getElementById("search-web-btn");
+  const webSearchEnabled = webSearchToggle ? webSearchToggle.classList.contains("active") : false;
   
   // Prepare message data object
   // Get active public workspace ID from user settings (similar to active_group_id)
@@ -1469,6 +1471,7 @@ export function actuallySendMessage(finalMessageToSend) {
     message: finalMessageToSend,
     conversation_id: currentConversationId,
     hybrid_search: hybridSearchEnabled,
+    web_search_enabled: webSearchEnabled,
     selected_document_id: selectedDocumentId,
     classifications: classificationsToSend,
     image_generation: imageGenEnabled,
