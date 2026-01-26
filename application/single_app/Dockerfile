@@ -28,33 +28,36 @@ RUN set -eux; \
 
 WORKDIR /app
 
-USER ${UID}:${GID}
-
 # Copy requirements and install them to system
-COPY application/single_app/requirements.txt .
-RUN python3 -m pip install --no-cache-dir -r requirements.txt --user
+COPY --chown=${UID}:${GID} application/single_app/requirements.txt .
+RUN python3 -m pip install --no-cache-dir -r requirements.txt
 
 FROM mcr.microsoft.com/azurelinux/distroless/python:3.12
 
-# Setup pip.conf if has content
-#COPY pip.conf /etc/pip.conf
+ARG UID
+ARG GID
 
 COPY --from=builder /etc/pki /etc/pki
 COPY --from=builder /home/nonroot /home/nonroot
 COPY --from=builder /etc/passwd /etc/passwd
 COPY --from=builder /etc/group /etc/group
-COPY --from=builder /home/nonroot/.local /home/nonroot/.local
-COPY --from=builder /app /app
+COPY --from=builder /usr/lib/python3.12 /usr/lib/python3.12
 
-ENV PATH="/.local/bin:$PATH" \
+USER ${UID}:${GID}
+
+# Setup pip.conf if has content
+#COPY pip.conf /etc/pip.conf
+
+COPY --from=builder --chown=${UID}:${GID} /app /app
+
+ENV HOME=/home/nonroot \
+    PATH="/home/nonroot/.local/bin:$PATH" \
     PYTHONIOENCODING=utf-8 \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     PYTHONUNBUFFERED=1
 
 WORKDIR /app
-
-USER ${UID}:${GID}
 
 # Copy application code and set ownership
 COPY --chown=${UID}:${GID} application/single_app ./
