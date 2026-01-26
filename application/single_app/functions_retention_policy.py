@@ -6,8 +6,9 @@ Retention Policy Management
 This module handles automated deletion of aged conversations and documents
 based on configurable retention policies for personal, group, and public workspaces.
 
-Version: 0.234.067
+Version: 0.236.012
 Implemented in: 0.234.067
+Updated in: 0.236.012 - Fixed race condition handling for NotFound errors during deletion
 """
 
 from config import *
@@ -565,10 +566,21 @@ def delete_aged_conversations(retention_days, workspace_type='personal', user_id
             conversation_title = conv.get('title', 'Untitled')
             
             # Read full conversation for archiving/logging
-            conversation_item = container.read_item(
-                item=conversation_id,
-                partition_key=conversation_id
-            )
+            try:
+                conversation_item = container.read_item(
+                    item=conversation_id,
+                    partition_key=conversation_id
+                )
+            except CosmosResourceNotFoundError:
+                # Conversation was already deleted (race condition) - this is fine, skip to next
+                debug_print(f"Conversation {conversation_id} already deleted (not found during read), skipping")
+                deleted_details.append({
+                    'id': conversation_id,
+                    'title': conversation_title,
+                    'last_activity_at': conv.get('last_activity_at'),
+                    'already_deleted': True
+                })
+                continue
             
             # Archive if enabled
             if archiving_enabled:
@@ -613,7 +625,11 @@ def delete_aged_conversations(retention_days, workspace_type='personal', user_id
                     archived_msg["archived_by_retention_policy"] = True
                     cosmos_archived_messages_container.upsert_item(archived_msg)
                 
-                messages_container.delete_item(msg['id'], partition_key=conversation_id)
+                try:
+                    messages_container.delete_item(msg['id'], partition_key=conversation_id)
+                except CosmosResourceNotFoundError:
+                    # Message was already deleted - this is fine, continue
+                    debug_print(f"Message {msg['id']} already deleted (not found), skipping")
             
             # Log deletion
             log_conversation_deletion(
@@ -631,10 +647,14 @@ def delete_aged_conversations(retention_days, workspace_type='personal', user_id
             )
             
             # Delete conversation
-            container.delete_item(
-                item=conversation_id,
-                partition_key=conversation_id
-            )
+            try:
+                container.delete_item(
+                    item=conversation_id,
+                    partition_key=conversation_id
+                )
+            except CosmosResourceNotFoundError:
+                # Conversation was already deleted after we read it (race condition) - this is fine
+                debug_print(f"Conversation {conversation_id} already deleted (not found during delete)")
             
             deleted_details.append({
                 'id': conversation_id,
@@ -730,10 +750,21 @@ def delete_aged_documents(retention_days, workspace_type='personal', user_id=Non
             doc_user_id = doc.get('user_id') or deletion_user_id
             
             # Delete document chunks from search index
-            delete_document_chunks(document_id, group_id, public_workspace_id)
+            try:
+                delete_document_chunks(document_id, group_id, public_workspace_id)
+            except CosmosResourceNotFoundError:
+                # Document chunks already deleted - this is fine
+                debug_print(f"Document chunks for {document_id} already deleted (not found)")
+            except Exception as chunk_error:
+                # Log chunk deletion errors but continue with document deletion
+                debug_print(f"Error deleting chunks for document {document_id}: {chunk_error}")
             
             # Delete document from Cosmos DB and blob storage
-            delete_document(doc_user_id, document_id, group_id, public_workspace_id)
+            try:
+                delete_document(doc_user_id, document_id, group_id, public_workspace_id)
+            except CosmosResourceNotFoundError:
+                # Document was already deleted (race condition) - this is fine
+                debug_print(f"Document {document_id} already deleted (not found)")
             
             deleted_details.append({
                 'id': document_id,
@@ -744,6 +775,17 @@ def delete_aged_documents(retention_days, workspace_type='personal', user_id=Non
             
             debug_print(f"Deleted document {document_id} ({file_name}) due to retention policy")
             
+        except CosmosResourceNotFoundError:
+            # Document was already deleted - count as success
+            doc_id = doc.get('id', 'unknown') if doc else 'unknown'
+            debug_print(f"Document {doc_id} already deleted (not found)")
+            deleted_details.append({
+                'id': doc_id,
+                'file_name': doc.get('file_name', 'Unknown'),
+                'title': doc.get('title', doc.get('file_name', 'Unknown')),
+                'last_updated': doc.get('last_updated'),
+                'already_deleted': True
+            })
         except Exception as e:
             doc_id = doc.get('id', 'unknown') if doc else 'unknown'
             log_event("delete_aged_documents_deletion_error", {"error": str(e), "document_id": doc_id, "workspace_type": workspace_type})
