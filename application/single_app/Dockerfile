@@ -1,11 +1,14 @@
 # Create nonroot user/group with a stable UID/GID (choose values consistent with your org)
-ARG UID=10001
-ARG GID=10001
+ARG UID=65532
+ARG GID=65532
 
 FROM mcr.microsoft.com/azurelinux/base/python:3.12 AS builder
 
 ARG UID
 ARG GID
+
+# Setup pip.conf if has content
+COPY pip.conf.d/ /etc/pip.conf.d
 
 # CA
 # copy certs to /etc/pki/ca-trust/source/anchors
@@ -26,6 +29,9 @@ RUN set -eux; \
     chown ${UID}:${GID} /app; \
     chmod 744 /app
 
+RUN mkdir -p /app/flask_session && chown -R ${UID}:${GID} /app/flask_session
+RUN mkdir /sc-temp-files && chown -R ${UID}:${GID} /sc-temp-files
+
 WORKDIR /app
 
 # Copy requirements and install them to system
@@ -45,10 +51,8 @@ COPY --from=builder /usr/lib/python3.12 /usr/lib/python3.12
 
 USER ${UID}:${GID}
 
-# Setup pip.conf if has content
-#COPY pip.conf /etc/pip.conf
-
 COPY --from=builder --chown=${UID}:${GID} /app /app
+COPY --from=builder --chown=${UID}:${GID} /sc-temp-files /sc-temp-files
 
 ENV HOME=/home/nonroot \
     PATH="/home/nonroot/.local/bin:$PATH" \
