@@ -46,10 +46,11 @@ COPY --from=builder /etc/group /etc/group
 COPY --from=builder /home/nonroot/.local /home/nonroot/.local
 COPY --from=builder /app /app
 
-# RUN mkdir -p /.local/bin && chown -R ${UID}:${GID} /.local
-ENV PATH="/.local/bin:$PATH"
-
-# RUN mkdir -p /app/flask_session && chown -R ${UID}:${GID} /app
+ENV PATH="/.local/bin:$PATH" \
+    PYTHONIOENCODING=utf-8 \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
