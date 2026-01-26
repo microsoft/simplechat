@@ -95,9 +95,9 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
       ftpsState: 'Disabled'
       healthCheckPath: '/external/healthcheck'
       appSettings: [
-        {name: 'AZURE_ENVIRONMENT', value: azurePlatform }
-        {name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'false'}
-        {name: 'AZURE_COSMOS_ENDPOINT', value: cosmosDb.properties.documentEndpoint}
+        { name: 'AZURE_ENVIRONMENT', value: azurePlatform }
+        { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'false' }
+        { name: 'AZURE_COSMOS_ENDPOINT', value: cosmosDb.properties.documentEndpoint }
         { name: 'AZURE_COSMOS_AUTHENTICATION_TYPE', value: toLower(authenticationType) }
         // Only add this setting if authenticationType is 'key'
         ...(authenticationType == 'key'
