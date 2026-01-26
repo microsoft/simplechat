@@ -2,6 +2,7 @@
 
 import re
 import builtins
+import json
 from flask import Blueprint, jsonify, request, current_app
 from semantic_kernel_plugins.plugin_loader import get_all_plugin_metadata
 from semantic_kernel_plugins.plugin_health_checker import PluginHealthChecker, PluginErrorRecovery
@@ -801,6 +802,58 @@ def merge_plugin_settings(plugin_type):
     schema_dir = os.path.join(current_app.root_path, 'static', 'json', 'schemas')
     merged = get_merged_plugin_settings(plugin_type, current_settings, schema_dir)
     return jsonify(merged)
+
+
+@bpap.route('/api/plugins/<plugin_type>/auth-types', methods=['GET'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+def get_plugin_auth_types(plugin_type):
+    """
+    Returns allowed auth types for a plugin type. Uses definition file if present,
+    otherwise falls back to AuthType enum in plugin.schema.json.
+    """
+    schema_dir = os.path.join(current_app.root_path, 'static', 'json', 'schemas')
+    safe_type = re.sub(r'[^a-zA-Z0-9_]', '_', plugin_type).lower()
+
+    definition_path = os.path.join(schema_dir, f'{safe_type}.definition.json')
+    schema_path = os.path.join(schema_dir, 'plugin.schema.json')
+
+    allowed_auth_types = []
+    source = "schema"
+
+    try:
+        with open(schema_path, 'r', encoding='utf-8') as schema_file:
+            schema = json.load(schema_file)
+        allowed_auth_types = (
+            schema
+            .get('definitions', {})
+            .get('AuthType', {})
+            .get('enum', [])
+        )
+    except Exception as exc:
+        debug_print(f"Failed to read plugin.schema.json: {exc}")
+        allowed_auth_types = []
+
+    if os.path.exists(definition_path):
+        try:
+            with open(definition_path, 'r', encoding='utf-8') as definition_file:
+                definition = json.load(definition_file)
+            allowed_from_definition = definition.get('allowedAuthTypes')
+            if isinstance(allowed_from_definition, list) and allowed_from_definition:
+                allowed_auth_types = allowed_from_definition
+                source = "definition"
+        except Exception as exc:
+            debug_print(f"Failed to read {definition_path}: {exc}")
+
+    if not allowed_auth_types:
+        allowed_auth_types = []
+        source = "schema"
+
+    return jsonify({
+        "allowedAuthTypes": allowed_auth_types,
+        "source": source
+    })
 
 ##########################################################################################################
 # Dynamic Plugin Metadata Endpoint

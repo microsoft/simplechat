@@ -75,15 +75,15 @@ document.addEventListener('DOMContentLoaded', ()=>{
   if (btnChangePublic) btnChangePublic.onclick = onChangeActivePublic;
 
   // Upload functionality - handle both button click and drag-and-drop
-  if (uploadBtn) uploadBtn.onclick = onPublicUploadClick;
+  if (uploadBtn) uploadBtn.onclick = () => checkUserAgreementBeforePublicUpload();
   
   // Add upload area functionality (drag-and-drop and click-to-browse)
   const uploadArea = document.getElementById('upload-area');
   if (fileInput && uploadArea) {
-    // Auto-upload on file selection
+    // Auto-upload on file selection (with user agreement check)
     fileInput.addEventListener('change', () => {
       if (fileInput.files && fileInput.files.length > 0) {
-        onPublicUploadClick();
+        checkUserAgreementBeforePublicUpload();
       }
     });
 
@@ -113,9 +113,9 @@ document.addEventListener('DOMContentLoaded', ()=>{
       uploadArea.classList.remove('dragover');
       uploadArea.style.borderColor = '';
       if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-        // Set the files to the file input and trigger upload
+        // Set the files to the file input and trigger upload with user agreement check
         fileInput.files = e.dataTransfer.files;
-        onPublicUploadClick();
+        checkUserAgreementBeforePublicUpload();
       }
     });
   }
@@ -452,6 +452,32 @@ function renderPublicDocsPagination(page, pageSize, totalCount){
   const ul=document.createElement('ul'); ul.className='pagination pagination-sm mb-0';
   function make(p,text,disabled,active){ const li=document.createElement('li'); li.className=`page-item${disabled?' disabled':''}${active?' active':''}`; const a=document.createElement('a'); a.className='page-link'; a.href='#'; a.textContent=text; if(!disabled&&!active) a.onclick=e=>{e.preventDefault();publicDocsCurrentPage=p;fetchPublicDocs();}; li.append(a); return li; }
   ul.append(make(page-1,'«',page<=1,false)); let start=1,end=totalPages; if(totalPages>5){ const mid=2; if(page>mid) start=page-mid; end=start+4; if(end>totalPages){ end=totalPages; start=end-4; } } if(start>1){ ul.append(make(1,'1',false,false)); ul.append(make(0,'...',true,false)); } for(let p=start;p<=end;p++) ul.append(make(p,p,false,p===page)); if(end<totalPages){ ul.append(make(0,'...',true,false)); ul.append(make(totalPages,totalPages,false,false)); } ul.append(make(page+1,'»',page>=totalPages,false)); container.append(ul);
+}
+
+/**
+ * Check for user agreement before public workspace upload
+ * Wraps onPublicUploadClick with user agreement check
+ */
+function checkUserAgreementBeforePublicUpload() {
+  if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+    alert('Select files');
+    return;
+  }
+  
+  // Check for user agreement before uploading
+  if (window.UserAgreementManager && activePublicId) {
+    window.UserAgreementManager.checkBeforeUpload(
+      fileInput.files,
+      'public',
+      activePublicId,
+      function(files) {
+        // Proceed with upload
+        onPublicUploadClick();
+      }
+    );
+  } else {
+    onPublicUploadClick();
+  }
 }
 
 async function onPublicUploadClick() {

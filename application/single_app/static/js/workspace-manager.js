@@ -411,6 +411,9 @@ window.WorkspaceManager = {
             // Load workspace members for ownership transfer dropdown
             await WorkspaceManager.loadWorkspaceMembersForTransfer(workspaceId);
             
+            // Load retention settings if enabled
+            await WorkspaceManager.loadRetentionSettings(workspace);
+            
             // Store current workspace ID for saving changes
             document.getElementById('publicWorkspaceManagementModal').setAttribute('data-workspace-id', workspaceId);
             
@@ -485,6 +488,54 @@ window.WorkspaceManager = {
         }
     },
 
+    // Load retention settings for public workspace
+    loadRetentionSettings: async function(workspace) {
+        const convSelect = document.getElementById('publicConversationRetention');
+        const docSelect = document.getElementById('publicDocumentRetention');
+        
+        // Check if retention policy elements exist (feature might be disabled)
+        if (!convSelect || !docSelect) {
+            return;
+        }
+        
+        try {
+            // Fetch organization defaults for public workspace retention
+            const orgDefaultsResp = await fetch('/api/retention-policy/defaults/public');
+            const orgData = await orgDefaultsResp.json();
+            
+            if (orgData.success) {
+                const convDefaultOption = convSelect.querySelector('option[value="default"]');
+                const docDefaultOption = docSelect.querySelector('option[value="default"]');
+                
+                if (convDefaultOption) {
+                    convDefaultOption.textContent = `Using organization default (${orgData.default_conversation_label})`;
+                }
+                if (docDefaultOption) {
+                    docDefaultOption.textContent = `Using organization default (${orgData.default_document_label})`;
+                }
+            }
+        } catch (error) {
+            console.error('Error loading public retention defaults:', error);
+        }
+        
+        // Set current values from workspace
+        if (workspace.retention_policy) {
+            let convRetention = workspace.retention_policy.conversation_retention_days;
+            let docRetention = workspace.retention_policy.document_retention_days;
+            
+            // If undefined, use 'default'
+            if (convRetention === undefined) convRetention = 'default';
+            if (docRetention === undefined) docRetention = 'default';
+            
+            convSelect.value = convRetention;
+            docSelect.value = docRetention;
+        } else {
+            // Set to organization default if no retention policy set
+            convSelect.value = 'default';
+            docSelect.value = 'default';
+        }
+    },
+
     // Save workspace changes
     saveWorkspaceChanges: async function() {
         const workspaceId = document.getElementById('publicWorkspaceManagementModal').getAttribute('data-workspace-id');
@@ -553,6 +604,26 @@ window.WorkspaceManager = {
                     } else {
                         showToast('Ownership change completed successfully!', 'success');
                     }
+                }
+            }
+            
+            // Save retention policy settings if enabled
+            const convRetentionSelect = document.getElementById('publicConversationRetention');
+            const docRetentionSelect = document.getElementById('publicDocumentRetention');
+            
+            if (convRetentionSelect && docRetentionSelect) {
+                const retentionResponse = await fetch(`/api/retention-policy/public/${workspaceId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        conversation_retention_days: convRetentionSelect.value,
+                        document_retention_days: docRetentionSelect.value
+                    })
+                });
+                
+                if (!retentionResponse.ok) {
+                    console.error('Failed to save retention policy');
+                    // Don't throw - allow other changes to succeed
                 }
             }
             

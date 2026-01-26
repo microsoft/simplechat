@@ -1,6 +1,100 @@
 <!-- BEGIN release_notes.md BLOCK -->
 # Feature Release
 
+### **(v0.236.011)**
+
+#### New Features
+
+*   **Retention Policy Defaults**
+    *   Admin-configurable organization-wide default retention policies for conversations and documents across all workspace types.
+    *   **Organization Defaults**: Set default retention periods (1 day to 10 years, or "Don't delete") separately for personal, group, and public workspaces.
+    *   **User Choice**: Users see "Using organization default (X days)" option and can override with custom settings or revert to org default.
+    *   **Conditional Display**: Default retention settings only appear in Admin Settings when the corresponding workspace type is enabled.
+    *   **Force Push Feature**: Administrators can push organization defaults to all workspaces, overriding any custom retention policies users have set.
+    *   **Settings Auto-Save**: Force push automatically saves pending settings changes before executing to ensure current values are pushed.
+    *   **Activity Logging**: Force push actions are logged to `activity_logs` container for audit purposes with admin info, affected scopes, and results summary.
+    *   **API Endpoints**: New `/api/retention-policy/defaults/<workspace_type>` (GET) and `/api/admin/retention-policy/force-push` (POST) endpoints.
+    *   **Files Modified**: `functions_settings.py`, `admin_settings.html`, `route_frontend_admin_settings.py`, `route_backend_retention_policy.py`, `functions_retention_policy.py`, `functions_activity_logging.py`, `profile.html`, `control_center.html`, `workspace-manager.js`.
+    *   (Ref: Default retention settings, Force Push modal, activity logging, retention policy execution)
+
+*   **Private Networking Support**
+    *   Comprehensive private networking support for SimpleChat deployments via Azure Developer CLI (AZD) and Bicep infrastructure-as-code.
+    *   **Network Isolation**: Private endpoints for all Azure PaaS services (Cosmos DB, Azure OpenAI, AI Search, Storage, Key Vault, Document Intelligence).
+    *   **VNet Integration**: Full virtual network integration for App Service and dependent resources with automated Private DNS zone configuration.
+    *   **AZD Integration**: Seamless deployment via `azd up` with `ENABLE_PRIVATE_NETWORKING=true` environment variable.
+    *   **Post-Deployment Security**: New `postup` hook automatically disables public network access when private networking is enabled.
+    *   **Enhanced Deployment Hooks**: Refactored all deployment hooks in `azure.yaml` with stepwise logging, explicit error handling, and clearer output for troubleshooting.
+    *   **Documentation Updates**: Expanded Bicep README with prerequisites, Azure Government (USGov) considerations, and post-deployment validation steps.
+    *   (Ref: `deployers/azure.yaml`, `deployers/bicep/`, private endpoint configuration, VNet integration)
+
+*   **User Agreement for File Uploads**
+    *   Global admin-configurable agreement that users must accept before uploading files to workspaces.
+    *   **Configuration Options**: Enable/disable toggle, workspace type selection (Personal, Group, Public, Chat), Markdown-formatted agreement text (200-word limit), optional daily acceptance mode.
+    *   **User Experience**: Modal prompt before file uploads with agreement text, "Accept & Upload" or "Cancel" options, daily acceptance tracking to reduce repeat prompts.
+    *   **Activity Logging**: All acceptances logged to activity logs for compliance tracking with timestamp, user, workspace type, and action context.
+    *   **Admin Access**: Settings accessible via Admin Settings → Workspaces tab → User Agreement section, with sidebar navigation link.
+    *   **Files Added**: `user-agreement.js` (frontend module), `route_backend_user_agreement.py` (API endpoints).
+    *   **Files Modified**: `admin_settings.html`, `route_frontend_admin_settings.py`, `base.html`, `_sidebar_nav.html`, `functions_activity_logging.py`, `workspace-documents.js`, `group_workspaces.html`, `public_workspace.js`, `chat-input-actions.js`.
+    *   (Ref: User Agreement modal, file upload workflows, activity logging, admin configuration)
+
+*   **Web Search via Azure AI Foundry Agents**
+    *   Web search capability through Azure AI Foundry agents using Grounding with Bing Search service.
+    *   **Pricing**: $14 per 1,000 transactions (150 transactions/second, 1M transactions/day limit).
+    *   **Admin Consent Flow**: Requires explicit administrator consent before enabling due to data processing considerations outside Azure compliance boundary.
+    *   **Consent Logging**: All consent acceptances are logged to activity logs for compliance and audit purposes.
+    *   **Setup Guide Modal**: Comprehensive in-app configuration guide with step-by-step instructions for creating the agent, configuring Bing grounding, setting result count to 10, and recommended agent instructions.
+    *   **User Data Notice**: Admin-configurable notification banner that appears when users activate web search, informing them that their message will be sent to Microsoft Bing. Customizable notice text, dismissible per session.
+    *   **Graceful Error Handling**: When web search fails, the system informs users rather than answering from outdated training data.
+    *   **Seamless Integration**: Web search results automatically integrated into AI responses when enabled.
+    *   **Settings**: `enable_web_search` toggle, `web_search_consent_accepted` tracking, `enable_web_search_user_notice` toggle, and `web_search_user_notice_text` customization in admin settings.
+    *   **Files Added**: `_web_search_foundry_info.html` (setup guide modal).
+    *   **Files Modified**: `route_frontend_admin_settings.py`, `route_backend_chats.py`, `functions_activity_logging.py`, `admin_settings.html`, `chats.html`, `chat-input-actions.js`, `functions_settings.py`.
+    *   (Ref: Grounding with Bing Search, Azure AI Foundry, consent workflow, activity logging, pricing, user transparency)
+
+*   **Conversation Deep Linking**
+    *   Direct URL links to specific conversations via query parameters for sharing and bookmarking.
+    *   **URL Parameters**: Supports both `conversationId` and `conversation_id` query parameters.
+    *   **Automatic URL Updates**: Current conversation ID automatically added to URL when selecting conversations.
+    *   **Browser Integration**: Uses `history.replaceState()` for seamless URL updates without new history entries.
+    *   **Error Handling**: Graceful handling of invalid or inaccessible conversation IDs with toast notifications.
+    *   **Files Modified**: `chat-onload.js`, `chat-conversations.js`.
+    *   (Ref: deep linking, URL parameters, conversation navigation, shareability)
+
+*   **Plugin Authentication Type Constraints**
+    *   Per-plugin-type authentication method restrictions for better security and API compatibility.
+    *   **Schema-Based Defaults**: Falls back to global `AuthType` enum from `plugin.schema.json`.
+    *   **Definition File Overrides**: Plugin-specific `.definition.json` files can restrict available auth types.
+    *   **API Endpoint**: New `/api/plugins/<plugin_type>/auth-types` endpoint returns allowed auth types and source.
+    *   **Frontend Integration**: UI can query allowed auth types to display only valid options.
+    *   **Files Modified**: `route_backend_plugins.py`.
+    *   (Ref: plugin authentication, auth type constraints, OpenAPI plugins, security)
+    
+#### Bug Fixes
+
+*   **Control Center Chart Date Labels Fix**
+    *   Fixed activity trends chart date labels to parse dates in local time instead of UTC.
+    *   **Root Cause**: JavaScript `new Date()` was parsing date strings as UTC, causing labels to display previous day in western timezones.
+    *   **Solution**: Parse date components explicitly and construct Date objects in local timezone.
+    *   **Impact**: Chart x-axis labels now correctly show the intended dates regardless of user timezone.
+    *   **Files Modified**: `control_center.html` (Chart.js date parsing logic).
+    *   (Ref: Chart.js, date parsing, timezone handling, activity trends)
+
+*   **Sovereign Cloud Cognitive Services Scope Fix**
+    *   Fixed hardcoded commercial Azure cognitive services scope references that prevented authentication in Azure Government (MAG) and custom cloud environments.
+    *   **Root Cause**: `chat_stream_api` and `smart_http_plugin` used hardcoded commercial cognitive services scope URL instead of configurable value from `config.py`.
+    *   **Solution**: Replaced hardcoded scope with `AZURE_OPENAI_TOKEN_SCOPE` environment variable, dynamically resolved based on cloud environment.
+    *   **Impact**: Streaming chat and Smart HTTP Plugin now work correctly in Azure Government, China, and custom cloud deployments.
+    *   **Related Issue**: [#616](https://github.com/microsoft/simplechat/issues/616)
+    *   (Ref: `chat_stream_api`, `smart_http_plugin`, sovereign cloud authentication, MAG support)
+
+*   **User Search Toast and Inline Messages Fix**
+    *   Updated `searchUsers()` function to use inline and toast messages instead of browser alert pop-ups.
+    *   **Improvement**: Search feedback (empty search, no users found, errors) now displays as inline messages in the search results area.
+    *   **Error Handling**: Errors display both inline message and toast notification for visibility.
+    *   **Benefits**: Non-disruptive UX, contextual feedback, consistency with application patterns.
+    *   **Related PR**: [#608](https://github.com/microsoft/simplechat/pull/608#discussion_r2701900020)
+    *   (Ref: group management, user search, toast notifications, UX improvement)
+
 ### **(v0.235.025)**
 
 #### Bug Fixes
@@ -64,6 +158,14 @@
     *   **Group Management**: Approval workflow integration, group status management, member activity monitoring.
     *   **Dashboard**: Real-time statistics, key alerts, activity insights.
     *   (Ref: `route_frontend_control_center.py`, `route_backend_control_center.py`, `control_center.html`)
+
+*   **Control Center Application Roles**
+    *   Added two new application roles for finer-grained Control Center access control.
+    *   **Control Center Admin**: Full administrative access to Control Center functionality including user management, administrative operations, and workflow approvals.
+    *   **Control Center Dashboard Reader**: Read-only access to Control Center dashboards and metrics for monitoring and auditing purposes.
+    *   **Use Cases**: IT operations monitoring, delegated administration, compliance auditing with appropriate access levels.
+    *   **Files Modified**: `appRegistrationRoles.json` (new role definitions).
+    *   (Ref: Entra ID app roles, role-based access control, Control Center permissions)
 
 *   **Message Threading System**
     *   Linked-list threading system establishing proper message relationships throughout conversations.

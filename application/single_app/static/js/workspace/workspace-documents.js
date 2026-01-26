@@ -354,10 +354,22 @@ async function uploadWorkspaceFiles(files) {
 // Upload Button Handler
 const uploadArea = document.getElementById("upload-area");
 if (fileInput && uploadArea && uploadStatusSpan) {
-    // Auto-upload on file selection
+    // Auto-upload on file selection (with user agreement check)
     fileInput.addEventListener("change", () => {
         if (fileInput.files && fileInput.files.length > 0) {
-            uploadWorkspaceFiles(fileInput.files);
+            // Check for user agreement before uploading
+            if (window.UserAgreementManager) {
+                window.UserAgreementManager.checkBeforeUpload(
+                    fileInput.files,
+                    'personal',
+                    'default',
+                    function(files) {
+                        uploadWorkspaceFiles(files);
+                    }
+                );
+            } else {
+                uploadWorkspaceFiles(fileInput.files);
+            }
         }
     });
 
@@ -385,7 +397,19 @@ if (fileInput && uploadArea && uploadStatusSpan) {
         uploadArea.classList.remove("dragover");
         uploadArea.style.borderColor = "";
         if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-            uploadWorkspaceFiles(e.dataTransfer.files);
+            // Check for user agreement before uploading (drag-and-drop)
+            if (window.UserAgreementManager) {
+                window.UserAgreementManager.checkBeforeUpload(
+                    e.dataTransfer.files,
+                    'personal',
+                    'default',
+                    function(files) {
+                        uploadWorkspaceFiles(files);
+                    }
+                );
+            } else {
+                uploadWorkspaceFiles(e.dataTransfer.files);
+            }
         }
     });
 }

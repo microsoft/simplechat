@@ -4,6 +4,7 @@ from config import *
 from functions_documents import *
 from functions_authentication import *
 from functions_settings import *
+from functions_activity_logging import log_web_search_consent_acceptance
 from functions_logging import *
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta
@@ -78,6 +79,9 @@ def register_route_frontend_admin_settings(app):
             settings['per_user_semantic_kernel'] = False
         if 'enable_semantic_kernel' not in settings:
             settings['enable_semantic_kernel'] = False
+
+        if 'web_search_consent_accepted' not in settings:
+            settings['web_search_consent_accepted'] = False
         
         # --- Add default for swagger documentation ---
         if 'enable_swagger' not in settings:
@@ -135,6 +139,9 @@ def register_route_frontend_admin_settings(app):
                     'name': 'default_agent',
                     'is_global': True
                 }
+                log_event("Error retrieving global agents for default selection.", level=logging.ERROR)
+                debug_print("Error retrieving global agents for default selection.")
+                
         if 'allow_user_agents' not in settings:
             settings['allow_user_agents'] = False
         if 'allow_user_custom_agent_endpoints' not in settings:
@@ -147,6 +154,12 @@ def register_route_frontend_admin_settings(app):
             settings['allow_group_custom_agent_endpoints'] = False
         if 'allow_group_plugins' not in settings:
             settings['allow_group_plugins'] = False
+        if 'enable_agent_template_gallery' not in settings:
+            settings['enable_agent_template_gallery'] = True
+        if 'agent_templates_allow_user_submission' not in settings:
+            settings['agent_templates_allow_user_submission'] = True
+        if 'agent_templates_require_approval' not in settings:
+            settings['agent_templates_require_approval'] = True
 
         # --- Add defaults for classification banner ---
         if 'classification_banner_enabled' not in settings:
@@ -157,6 +170,16 @@ def register_route_frontend_admin_settings(app):
             settings['classification_banner_color'] = '#ffc107'  # Bootstrap warning color
         if 'classification_banner_text_color' not in settings:
             settings['classification_banner_text_color'] = '#ffffff'  # White text by default
+        
+        # --- Add defaults for user agreement ---
+        if 'enable_user_agreement' not in settings:
+            settings['enable_user_agreement'] = False
+        if 'user_agreement_text' not in settings:
+            settings['user_agreement_text'] = ''
+        if 'user_agreement_apply_to' not in settings:
+            settings['user_agreement_apply_to'] = []
+        if 'enable_user_agreement_daily' not in settings:
+            settings['enable_user_agreement_daily'] = False
         
         # --- Add defaults for key vault
         if 'enable_key_vault_secret_storage' not in settings:
@@ -190,7 +213,7 @@ def register_route_frontend_admin_settings(app):
                      pass # Replace with actual logic
             except Exception as e:
                  print(f"Error retrieving GPT deployments: {e}")
-            # ... similar try/except for embedding and image models ...
+                 log_event(f"Error retrieving GPT deployments: {e}", level=logging.ERROR)
 
             # Check for application updates
             current_version = app.config['VERSION']
@@ -233,6 +256,7 @@ def register_route_frontend_admin_settings(app):
                         settings.update(new_settings)
                 except Exception as e:
                     print(f"Error checking for updates: {e}")
+                    log_event(f"Error checking for updates: {e}", level=logging.ERROR)
             
             # Get the persisted values for template rendering
             update_available = settings.get('update_available', False)
@@ -258,6 +282,7 @@ def register_route_frontend_admin_settings(app):
 
         if request.method == 'POST':
             form_data = request.form # Use a variable for easier access
+            user_id = get_current_user_id()
 
             # --- Fetch all other form data as before ---
             app_title = form_data.get('app_title', 'AI Chat Application')
@@ -278,6 +303,33 @@ def register_route_frontend_admin_settings(app):
             require_member_of_control_center_admin = form_data.get('require_member_of_control_center_admin') == 'on'
             require_member_of_control_center_dashboard_reader = form_data.get('require_member_of_control_center_dashboard_reader') == 'on'
             require_member_of_feedback_admin = form_data.get('require_member_of_feedback_admin') == 'on'
+
+            web_search_consent_message = (
+                "When you use Grounding with Bing Search, your customer data is transferred "
+                "outside of the Azure compliance boundary to the Grounding with Bing Search service. "
+                "Grounding with Bing Search is not subject to the same data processing terms "
+                "(including location of processing) and does not have the same compliance standards "
+                "and certifications as the Azure AI Agent Service, as described in the "
+                "Grounding with Bing Search TOU (https://www.microsoft.com/en-us/bing/apis/grounding-legal). "
+                "It is your responsibility to assess whether use of Grounding with Bing Search in your agent "
+                "meets your needs and requirements."
+            )
+            web_search_consent_accepted = form_data.get('web_search_consent_accepted') == 'true'
+            requested_enable_web_search = form_data.get('enable_web_search') == 'on'
+            enable_web_search = requested_enable_web_search and web_search_consent_accepted
+
+            if requested_enable_web_search and not web_search_consent_accepted:
+                flash('Web search requires consent before it can be enabled.', 'warning')
+
+            if enable_web_search and web_search_consent_accepted and not settings.get('web_search_consent_accepted'):
+                admin_user = session.get('user', {})
+                admin_email = admin_user.get('preferred_username', admin_user.get('email', 'unknown'))
+                log_web_search_consent_acceptance(
+                    user_id=user_id,
+                    admin_email=admin_email,
+                    consent_text=web_search_consent_message,
+                    source='admin_settings'
+                )
 
             # --- Handle Document Classification Toggle ---
             enable_document_classification = form_data.get('enable_document_classification') == 'on'
@@ -367,19 +419,22 @@ def register_route_frontend_admin_settings(app):
             except Exception as e:
                 print(f"Error parsing gpt_model_json: {e}")
                 flash('Error parsing GPT model data. Changes may not be saved.', 'warning')
+                log_event(f"Error parsing GPT model data: {e}", level=logging.ERROR)
                 gpt_model_obj = settings.get('gpt_model', {'selected': [], 'all': []}) # Fallback
-            # ... similar try/except for embedding and image models ...
+                
             try:
                 embedding_model_obj = json.loads(embedding_model_json) if embedding_model_json else {'selected': [], 'all': []}
             except Exception as e:
                 print(f"Error parsing embedding_model_json: {e}")
                 flash('Error parsing Embedding model data. Changes may not be saved.', 'warning')
+                log_event(f"Error parsing Embedding model data: {e}", level=logging.ERROR)
                 embedding_model_obj = settings.get('embedding_model', {'selected': [], 'all': []}) # Fallback
             try:
                 image_gen_model_obj = json.loads(image_gen_model_json) if image_gen_model_json else {'selected': [], 'all': []}
             except Exception as e:
                 print(f"Error parsing image_gen_model_json: {e}")
                 flash('Error parsing Image Gen model data. Changes may not be saved.', 'warning')
+                log_event(f"Error parsing Image Gen model data: {e}", level=logging.ERROR)
                 image_gen_model_obj = settings.get('image_gen_model', {'selected': [], 'all': []}) # Fallback
 
             # --- Extract banner fields from form_data ---
@@ -520,6 +575,14 @@ def register_route_frontend_admin_settings(app):
             enable_retention_policy_public = form_data.get('enable_retention_policy_public') == 'on'
             retention_policy_execution_hour = int(form_data.get('retention_policy_execution_hour', 2))
             
+            # Default retention policy values for each workspace type
+            default_retention_conversation_personal = form_data.get('default_retention_conversation_personal', 'none')
+            default_retention_document_personal = form_data.get('default_retention_document_personal', 'none')
+            default_retention_conversation_group = form_data.get('default_retention_conversation_group', 'none')
+            default_retention_document_group = form_data.get('default_retention_document_group', 'none')
+            default_retention_conversation_public = form_data.get('default_retention_conversation_public', 'none')
+            default_retention_document_public = form_data.get('default_retention_document_public', 'none')
+            
             # Validate execution hour (0-23)
             if retention_policy_execution_hour < 0 or retention_policy_execution_hour > 23:
                 retention_policy_execution_hour = 2  # Default to 2 AM
@@ -536,6 +599,28 @@ def register_route_frontend_admin_settings(app):
                     next_run = next_run + timedelta(days=1)
                 
                 retention_policy_next_run = next_run.isoformat()
+
+            # --- User Agreement Settings ---
+            enable_user_agreement = form_data.get('enable_user_agreement') == 'on'
+            user_agreement_text = form_data.get('user_agreement_text', '').strip()
+            enable_user_agreement_daily = form_data.get('enable_user_agreement_daily') == 'on'
+            
+            # Build apply_to list from checkboxes
+            user_agreement_apply_to = []
+            if form_data.get('user_agreement_apply_personal') == 'on':
+                user_agreement_apply_to.append('personal')
+            if form_data.get('user_agreement_apply_group') == 'on':
+                user_agreement_apply_to.append('group')
+            if form_data.get('user_agreement_apply_public') == 'on':
+                user_agreement_apply_to.append('public')
+            if form_data.get('user_agreement_apply_chat') == 'on':
+                user_agreement_apply_to.append('chat')
+            
+            # Validate word count (max 200 words)
+            if enable_user_agreement and user_agreement_text:
+                word_count = len(user_agreement_text.split())
+                if word_count > 200:
+                    flash('User Agreement text exceeds 200 word limit. Please shorten the text.', 'warning')
 
             # --- Authentication & Redirect Settings ---
             enable_front_door = form_data.get('enable_front_door') == 'on'
@@ -586,6 +671,9 @@ def register_route_frontend_admin_settings(app):
                 'enable_swagger': form_data.get('enable_swagger') == 'on',
                 'enable_semantic_kernel': form_data.get('enable_semantic_kernel') == 'on',
                 'per_user_semantic_kernel': form_data.get('per_user_semantic_kernel') == 'on',
+                'enable_agent_template_gallery': form_data.get('enable_agent_template_gallery') == 'on',
+                'agent_templates_allow_user_submission': form_data.get('agent_templates_allow_user_submission') == 'on',
+                'agent_templates_require_approval': form_data.get('agent_templates_require_approval') == 'on',
 
                 # GPT (Direct & APIM)
                 'enable_gpt_apim': form_data.get('enable_gpt_apim') == 'on',
@@ -657,6 +745,18 @@ def register_route_frontend_admin_settings(app):
                 'enable_retention_policy_public': enable_retention_policy_public,
                 'retention_policy_execution_hour': retention_policy_execution_hour,
                 'retention_policy_next_run': retention_policy_next_run,
+                'default_retention_conversation_personal': default_retention_conversation_personal,
+                'default_retention_document_personal': default_retention_document_personal,
+                'default_retention_conversation_group': default_retention_conversation_group,
+                'default_retention_document_group': default_retention_document_group,
+                'default_retention_conversation_public': default_retention_conversation_public,
+                'default_retention_document_public': default_retention_document_public,
+
+                # User Agreement
+                'enable_user_agreement': enable_user_agreement,
+                'user_agreement_text': user_agreement_text,
+                'user_agreement_apply_to': user_agreement_apply_to,
+                'enable_user_agreement_daily': enable_user_agreement_daily,
 
                 # Multimedia & Metadata
                 'enable_video_file_support': enable_video_file_support,
@@ -706,11 +806,33 @@ def register_route_frontend_admin_settings(app):
                 'enable_user_feedback': form_data.get('enable_user_feedback') == 'on',
                 'enable_conversation_archiving': form_data.get('enable_conversation_archiving') == 'on',
 
-                # Search (Web Search Direct & APIM)
-                'enable_web_search': form_data.get('enable_web_search') == 'on',
-                'enable_web_search_apim': form_data.get('enable_web_search_apim') == 'on',
-                'azure_apim_web_search_endpoint': form_data.get('azure_apim_web_search_endpoint', '').strip(),
-                'azure_apim_web_search_subscription_key': form_data.get('azure_apim_web_search_subscription_key', '').strip(),
+                # Search (Web Search via Azure AI Foundry agent)
+                'enable_web_search': enable_web_search,
+                'web_search_consent_accepted': web_search_consent_accepted,
+                'enable_web_search_user_notice': form_data.get('enable_web_search_user_notice') == 'on',
+                'web_search_user_notice_text': form_data.get('web_search_user_notice_text', 'Your message will be sent to Microsoft Bing for web search. Only your current message is sent, not your conversation history.').strip(),
+                'web_search_agent': {
+                    'agent_type': 'aifoundry',
+                    'azure_openai_gpt_endpoint': form_data.get('web_search_foundry_endpoint', '').strip(),
+                    'azure_openai_gpt_api_version': form_data.get('web_search_foundry_api_version', '').strip(),
+                    'azure_openai_gpt_deployment': '',
+                    'other_settings': {
+                        'azure_ai_foundry': {
+                            'agent_id': form_data.get('web_search_foundry_agent_id', '').strip(),
+                            'endpoint': form_data.get('web_search_foundry_endpoint', '').strip(),
+                            'api_version': form_data.get('web_search_foundry_api_version', '').strip(),
+                            'authentication_type': form_data.get('web_search_foundry_auth_type', 'managed_identity').strip(),
+                            'managed_identity_type': form_data.get('web_search_foundry_managed_identity_type', 'system_assigned').strip(),
+                            'managed_identity_client_id': form_data.get('web_search_foundry_managed_identity_client_id', '').strip(),
+                            'tenant_id': form_data.get('web_search_foundry_tenant_id', '').strip(),
+                            'client_id': form_data.get('web_search_foundry_client_id', '').strip(),
+                            'client_secret': form_data.get('web_search_foundry_client_secret', '').strip(),
+                            'cloud': form_data.get('web_search_foundry_cloud', '').strip(),
+                            'authority': form_data.get('web_search_foundry_authority', '').strip(),
+                            'notes': form_data.get('web_search_foundry_notes', '').strip()
+                        }
+                    }
+                },
 
                 # Search (AI Search Direct & APIM)
                 'azure_ai_search_endpoint': form_data.get('azure_ai_search_endpoint', '').strip(),
@@ -786,6 +908,16 @@ def register_route_frontend_admin_settings(app):
                 del new_settings['semantic_kernel_agents']
             if 'semantic_kernel_plugins' in new_settings:
                 del new_settings['semantic_kernel_plugins']
+
+            # Remove legacy web search keys if present
+            for legacy_key in [
+                'bing_search_key',
+                'enable_web_search_apim',
+                'azure_apim_web_search_endpoint',
+                'azure_apim_web_search_subscription_key'
+            ]:
+                if legacy_key in new_settings:
+                    del new_settings[legacy_key]
             
             logo_file = request.files.get('logo_file')
             if logo_file and allowed_file(logo_file.filename, ALLOWED_EXTENSIONS_IMG):
@@ -866,7 +998,7 @@ def register_route_frontend_admin_settings(app):
                 except Exception as e:
                     print(f"Error processing logo file: {e}") # Log the error for debugging
                     flash(f"Error processing logo file: {e}. Existing logo preserved.", "danger")
-                    # On error, new_settings['custom_logo_base64'] keeps its initial value (the old logo)
+                    log_event(f"Error processing logo file: {e}", level=logging.ERROR)
 
             # Process dark mode logo file upload
             logo_dark_file = request.files.get('logo_dark_file')
@@ -949,7 +1081,7 @@ def register_route_frontend_admin_settings(app):
                 except Exception as e:
                     print(f"Error processing dark mode logo file: {e}") # Log the error for debugging
                     flash(f"Error processing dark mode logo file: {e}. Existing dark mode logo preserved.", "danger")
-                    # On error, new_settings['custom_logo_dark_base64'] keeps its initial value (the old logo)
+                    log_event(f"Error processing dark mode logo file: {e}", level=logging.ERROR)
 
             # Process favicon file upload
             favicon_file = request.files.get('favicon_file')
@@ -1023,7 +1155,7 @@ def register_route_frontend_admin_settings(app):
                 except Exception as e:
                     print(f"Error processing favicon file: {e}") # Log the error for debugging
                     flash(f"Error processing favicon file: {e}. Existing favicon preserved.", "danger")
-                    # On error, new_settings['custom_favicon_base64'] keeps its initial value (the old favicon)
+                    log_event(f"Error processing favicon file: {e}", level=logging.ERROR)
 
             # --- Update settings in DB ---
             # new_settings now contains either the new logo/favicon base64 or the original ones
