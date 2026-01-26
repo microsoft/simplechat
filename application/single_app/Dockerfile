@@ -12,7 +12,7 @@ COPY pip.conf.d/ /etc/pip.conf.d
 
 # CA
 # copy certs to /etc/pki/ca-trust/source/anchors
-#COPY caroots /etc/ssl/certs
+COPY custom-ca-certificates/ /etc/ssl/certs
 RUN mkdir -p /etc/pki/ca-trust/source/anchors/ \
     && update-ca-trust enable \
     && cp /etc/ssl/certs/*.crt /etc/pki/ca-trust/source/anchors/ \
