@@ -3639,6 +3639,32 @@ async function loadRefreshStatus() {
             lastRefreshElement.textContent = 'Error loading';
         }
     }
+    
+    // Load and display auto-refresh schedule info
+    try {
+        const response = await fetch('/api/admin/control-center/refresh-status');
+        if (response.ok) {
+            const result = await response.json();
+            const autoRefreshInfoElement = document.getElementById('autoRefreshInfo');
+            const autoRefreshStatusElement = document.getElementById('autoRefreshStatus');
+            
+            if (autoRefreshInfoElement && autoRefreshStatusElement) {
+                if (result.auto_refresh_enabled) {
+                    // Build status text
+                    let statusText = `Auto-refresh: daily at ${result.auto_refresh_hour_formatted || result.auto_refresh_hour + ':00 UTC'}`;
+                    if (result.auto_refresh_next_run_formatted) {
+                        statusText += ` (next: ${result.auto_refresh_next_run_formatted})`;
+                    }
+                    autoRefreshStatusElement.textContent = statusText;
+                    autoRefreshInfoElement.classList.remove('d-none');
+                } else {
+                    autoRefreshInfoElement.classList.add('d-none');
+                }
+            }
+        }
+    } catch (autoRefreshError) {
+        console.error('Error loading auto-refresh status:', autoRefreshError);
+    }
 }
 
 async function refreshActiveTabContent() {
