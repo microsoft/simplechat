@@ -1,6 +1,18 @@
 <!-- BEGIN release_notes.md BLOCK -->
 # Feature Release
 
+### **(v0.237.002)**
+
+#### Bug Fixes
+
+*   **Custom Logo Not Displaying Across App Fix**
+    *   Fixed issue where custom logos uploaded via Admin Settings would only display on the admin page but not on other pages (chat, sidebar, landing page).
+    *   **Root Cause**: The `sanitize_settings_for_user()` function was stripping `custom_logo_base64`, `custom_logo_dark_base64`, and `custom_favicon_base64` keys entirely because they contained "base64" (a sensitive term filter), preventing templates from detecting logo existence.
+    *   **Solution**: Modified sanitization to add boolean flags for logo/favicon existence after filtering, allowing templates to check if logos exist without exposing actual base64 data.
+    *   **Security**: Actual base64 data remains hidden from frontend; only True/False boolean values are exposed.
+    *   **Files Modified**: `functions_settings.py` (`sanitize_settings_for_user()` function).
+    *   (Ref: logo display, settings sanitization, template conditionals)
+
 ### **(v0.237.001)**
 
 #### New Features
