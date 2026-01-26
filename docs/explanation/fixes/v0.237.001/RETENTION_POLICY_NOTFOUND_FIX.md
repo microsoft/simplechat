@@ -18,7 +18,7 @@ This is a **race condition** scenario where:
 
 ## Fix Applied
 
-**Version: 0.236.012**
+**Version:v0.237.001**
 
 The fix adds specific handling for `CosmosResourceNotFoundError` in both conversation and document deletion loops:
 

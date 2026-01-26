@@ -1,4 +1,4 @@
-# Agent Template Max Lengths Fix (Version 0.237.010)
+# Agent Template Max Lengths Fix (v0.237.001)
 
 ## Header Information
 - **Fix Title:** Agent template max length validation

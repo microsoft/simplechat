@@ -4,7 +4,7 @@
 
 Added two new application roles for finer-grained access control to the Control Center, enabling organizations to delegate administrative functions while maintaining security boundaries.
 
-**Version Implemented:** 0.236.011
+**Version Implemented:** v0.237.001
 
 ## New Roles
 

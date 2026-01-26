@@ -4,7 +4,7 @@
 
 The User Agreement feature allows administrators to configure a global agreement that users must accept before uploading files to workspaces. This provides organizations with a mechanism to ensure users acknowledge terms, policies, or guidelines before contributing documents to the system.
 
-**Version Implemented:** 0.236.011
+**Version Implemented:** v0.237.001
 
 ## Key Features
 
