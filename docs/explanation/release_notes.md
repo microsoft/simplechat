@@ -1,7 +1,17 @@
 <!-- BEGIN release_notes.md BLOCK -->
 # Feature Release
 
-### **(v0.237.002)**
+### **(v0.237.003)**
+
+#### New Features
+
+*   **Extended Retention Policy Timeline Options**
+    *   Added additional granular retention period options for conversations and documents across all workspace types.
+    *   **New Options**: 2 days, 3 days, 4 days, 6 days, 7 days (1 week), and 14 days (2 weeks).
+    *   **Full Option Set**: 1, 2, 3, 4, 5, 6, 7 (1 week), 10, 14 (2 weeks), 21 (3 weeks), 30, 60, 90 (3 months), 180 (6 months), 365 (1 year), 730 (2 years) days.
+    *   **Scope**: Available in Admin Settings (organization defaults), Profile page (personal settings), and Control Center (group/public workspace management).
+    *   **Files Modified**: `admin_settings.html`, `profile.html`, `control_center.html`.
+    *   (Ref: retention policy configuration, workspace retention settings, granular time periods)
 
 #### Bug Fixes
 
