@@ -1,6 +1,23 @@
 <!-- BEGIN release_notes.md BLOCK -->
 # Feature Release
 
+### **(v0.237.004)**
+
+#### Bug Fixes
+
+*   **Critical Retention Policy Deletion Fix**
+    *   Fixed a critical bug where conversations with null/undefined `last_activity_at` were being deleted regardless of their actual age.
+    *   **Root Cause**: The SQL query logic treated conversations with missing `last_activity_at` field as "old" and deleted them, even if they were created moments ago.
+    *   **Impact**: Brand new conversations that hadn't had their `last_activity_at` field populated were incorrectly deleted when retention policy ran.
+    *   **Solution**: Changed query to only delete conversations that have a valid, non-null `last_activity_at` that is older than the configured retention period. Conversations with null/undefined `last_activity_at` are now skipped.
+    *   (Ref: retention policy execution, conversation deletion, `delete_aged_conversations()`)
+
+*   **Public Workspace Retention Error Fix**
+    *   Fixed error "name 'cosmos_public_conversations_container' is not defined" when executing retention policy for public workspaces.
+    *   **Root Cause**: The code attempted to process conversations for public workspaces, but public workspaces don't have a separate conversations container—only documents and prompts.
+    *   **Solution**: Removed conversation processing for public workspaces since they only support document retention.
+    *   (Ref: public workspace retention, `process_public_retention()`)
+
 ### **(v0.237.003)**
 
 #### New Features

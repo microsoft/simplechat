@@ -443,10 +443,16 @@
             <p class="text-muted mb-1">Manage users and their workspaces, groups and their workspaces, and public workspaces.</p>
         </div>
         <div class="text-end">
-            <div class="mb-2">
+            <div class="mb-1">
                 <small class="text-muted" id="lastRefreshInfo">
                     <i class="bi bi-clock-history me-1"></i>
                     Data last refreshed: <span id="lastRefreshTime">Loading...</span>
+                </small>
+            </div>
+            <div class="mb-2 d-none" id="autoRefreshInfo">
+                <small class="text-info">
+                    <i class="bi bi-calendar-check me-1"></i>
+                    <span id="autoRefreshStatus">Auto-refresh scheduled</span>
                 </small>
             </div>
             <button type="button" class="btn btn-outline-primary btn-sm" id="refreshDataBtn" onclick="refreshControlCenterData()">
