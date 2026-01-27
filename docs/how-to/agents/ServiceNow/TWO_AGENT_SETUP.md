@@ -1,7 +1,7 @@
 # ServiceNow Two-Agent Setup Guide (Advanced KB Management)
 
-**Version:** 0.236.012  
-**Implemented in version:** 0.236.012
+**Version:** 0.237.005 
+**Implemented in version:** 0.237.005
 
 ## Overview
 

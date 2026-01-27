@@ -1,7 +1,7 @@
 # ServiceNow OAuth 2.0 Setup for Simple Chat
 
-**Version:** 0.236.012  
-**Implemented in version:** 0.236.012
+**Version:** 0.237.005  
+**Implemented in version:** 0.237.005
 
 ## Overview
 This guide shows you how to configure OAuth 2.0 bearer token authentication for ServiceNow integration with Simple Chat using the **modern "New Inbound Integration Experience"** method. This is more secure than Basic Auth and recommended for production environments.

@@ -1,6 +1,6 @@
 # OpenAPI Basic Authentication Fix
 
-**Version:** 0.236.012
+**Fixed/Implemented in version:** **0.237.005** (matches `config.py` `app.config['VERSION']`) 
 
 **Issue:** OpenAPI actions with Basic Authentication fail with "session not authenticated" error  
 **Root Cause:** Mismatch between authentication format stored by UI and format expected by OpenAPI plugin  
