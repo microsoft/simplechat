@@ -189,9 +189,9 @@ You have two options to get an access token.
 > 
 > The resulting token will execute API calls **as that integration user** with their specific roles and permissions.
 
-#### **Option A: Using REST Client (Postman/Curl)**
+#### **Option A: Using REST Client (Postman/cURL/PowerShell)**
 
-**Request:**
+**Using cURL:**
 ```bash
 curl -X POST https://devnnnnnn.service-now.com/oauth_token.do \
   -H "Content-Type: application/x-www-form-urlencoded" \
@@ -200,6 +200,23 @@ curl -X POST https://devnnnnnn.service-now.com/oauth_token.do \
   -d "client_secret=YOUR_CLIENT_SECRET" \      # OAuth app Client Secret
   -d "username=YOUR_USERNAME" \                # ServiceNow integration user
   -d "password=YOUR_PASSWORD"                  # Integration user's password
+```
+
+**Using PowerShell (recommended for Windows):**
+```powershell
+$response = Invoke-RestMethod -Uri "https://devnnnnnn.service-now.com/oauth_token.do" `
+  -Method Post `
+  -ContentType "application/x-www-form-urlencoded" `
+  -Body @{
+    grant_type="password"
+    client_id="YOUR_CLIENT_ID"              # OAuth app Client ID
+    client_secret="YOUR_CLIENT_SECRET"      # OAuth app Client Secret
+    username="YOUR_USERNAME"                # ServiceNow integration user
+    password="YOUR_PASSWORD"                # Integration user's password
+  }
+
+# Display the response
+$response | ConvertTo-Json -Depth 10
 ```
 
 **Response:**

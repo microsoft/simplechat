@@ -1,0 +1,260 @@
+openapi: 3.0.1
+info:
+  title: ServiceNow Knowledge Base Create API
+  description: |
+    ServiceNow Knowledge Management REST API for CREATING knowledge articles.
+    
+    USE THIS SPEC FOR: Knowledge contributors who can create draft articles
+    PERMISSIONS REQUIRED: ServiceNow 'knowledge' role
+    
+    This spec contains only POST operation for creating articles in DRAFT state.
+    Articles created with this API require approval before publishing.
+    For publishing articles, use sample_now_knowledge_publish_spec.yaml
+    For searching articles, use sample_now_knowledge_search_spec.yaml
+  version: 1.0.0
+  contact:
+    name: ServiceNow API Support
+    url: https://developer.servicenow.com
+
+servers:
+  - url: https://YOUR-INSTANCE.service-now.com
+    description: ServiceNow instance (replace YOUR-INSTANCE with your instance name)
+
+security:
+  - bearerAuth: []
+
+paths:
+  /api/now/table/kb_knowledge:
+    post:
+      operationId: createKnowledgeArticle
+      summary: Create a new knowledge base article
+      description: |
+        Create a new knowledge base article in ServiceNow.
+        Use this function to add external content, documentation, or support articles to the knowledge base.
+        Articles are created in 'draft' state by default for review before publication.
+        
+        TYPICAL USE CASES:
+        - Import content from external URLs (Microsoft docs, vendor support articles, etc.)
+        - Create KB articles from email conversations or chat transcripts
+        - Document solutions discovered during incident resolution
+        - Add standardized procedures and how-to guides
+        
+        WORKFLOW FOR EXTERNAL URL CONTENT:
+        1. Use SmartHttpPlugin.get_web_content to fetch and extract content from URL
+        2. Clean extracted text (remove ads, navigation, footers - SmartHttpPlugin does this)
+        3. Create article with extracted content using this function
+        4. Always set source_url to attribute the original source
+        5. Create in 'draft' state for review before publishing
+        
+        REQUIRED FIELDS:
+        - short_description: Article title (max 160 characters)
+        - text: Article body content (HTML supported)
+        - kb_knowledge_base: Target knowledge base (e.g., "IT Support")
+        
+        RECOMMENDED FIELDS:
+        - kb_category: Category for organization (e.g., "Email", "Network")
+        - article_type: Type of article ("how-to", "reference", "troubleshooting")
+        - source_url: Original URL for attribution
+        - workflow_state: Publication state (use "draft" for review)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - short_description
+                - text
+                - kb_knowledge_base
+              properties:
+                short_description:
+                  type: string
+                  description: Article title (max 160 characters)
+                  maxLength: 160
+                  example: "How to configure Microsoft 365 email settings"
+                
+                text:
+                  type: string
+                  description: |
+                    Article content/body. HTML is supported.
+                    For external URL content, include cleaned extracted text.
+                    Max recommended length: 75,000 characters.
+                  example: "<h2>Email Configuration Steps</h2>\\n<p>To configure Microsoft 365 email...</p>"
+                
+                kb_knowledge_base:
+                  type: string
+                  description: |
+                    Knowledge base name or sys_id.
+                    Common values: "IT Support", "HR", "Facilities"
+                  example: "IT Support"
+                
+                kb_category:
+                  type: string
+                  description: |
+                    Category for organization and filtering.
+                    Common values: "Email", "Network", "Hardware", "Software"
+                  example: "Email"
+                
+                article_type:
+                  type: string
+                  description: Type of article
+                  enum: ["how-to", "reference", "troubleshooting", "faq", "general"]
+                  example: "how-to"
+                
+                workflow_state:
+                  type: string
+                  description: |
+                    Publication state. Use 'draft' for new articles to allow review.
+                    States: draft, review, published, retired
+                  enum: ["draft", "review", "published", "retired"]
+                  default: "draft"
+                  example: "draft"
+                
+                source_url:
+                  type: string
+                  description: |
+                    Original source URL for attribution.
+                    ALWAYS include this when creating articles from external URLs.
+                  example: "https://support.microsoft.com/en-us/office/configure-email-settings"
+                
+                author:
+                  type: string
+                  description: |
+                    Article author name or sys_id.
+                    If not specified, defaults to the authenticated user.
+                  example: "John Doe"
+                
+                valid_to:
+                  type: string
+                  format: date-time
+                  description: |
+                    Article expiration date (optional).
+                    Use ISO 8601 format: YYYY-MM-DDTHH:MM:SSZ
+                  example: "2027-12-31T23:59:59Z"
+      
+      responses:
+        '201':
+          description: Knowledge article created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    $ref: '#/components/schemas/KnowledgeArticle'
+              example:
+                result:
+                  sys_id: "abc123xyz789"
+                  number: "KB0001234"
+                  short_description: "How to configure Microsoft 365 email settings"
+                  text: "<h2>Email Configuration Steps</h2>..."
+                  kb_category: "Email"
+                  kb_knowledge_base: "IT Support"
+                  workflow_state: "draft"
+                  source_url: "https://support.microsoft.com/en-us/office/configure-email-settings"
+                  article_type: "how-to"
+                  sys_created_on: "2026-01-26T10:30:00Z"
+        
+        '400':
+          description: Bad request - missing required fields or invalid data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      message:
+                        type: string
+                      detail:
+                        type: string
+              example:
+                error:
+                  message: "Missing required field: kb_knowledge_base"
+                  detail: "The kb_knowledge_base field is required for creating knowledge articles"
+        
+        '401':
+          description: Unauthorized - Invalid credentials
+        
+        '403':
+          description: Forbidden - Insufficient permissions to create knowledge articles
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: OAuth 2.0 Bearer Token authentication. Obtain token via ServiceNow OAuth endpoint using Resource Owner Password Credentials grant.
+
+  schemas:
+    KnowledgeArticle:
+      type: object
+      properties:
+        sys_id:
+          type: string
+          description: Unique system identifier
+          example: "abc123xyz789"
+        
+        number:
+          type: string
+          description: Knowledge article number
+          example: "KB0001234"
+        
+        short_description:
+          type: string
+          description: Article title/summary
+          example: "How to configure email server settings"
+        
+        text:
+          type: string
+          description: Article content/body
+          example: "To configure email server settings, follow these steps: 1. Navigate to..."
+        
+        kb_category:
+          type: string
+          description: Knowledge category
+          example: "Email"
+        
+        kb_knowledge_base:
+          type: string
+          description: Knowledge base name
+          example: "IT Support"
+        
+        author:
+          type: string
+          description: Article author
+          example: "John Doe"
+        
+        workflow_state:
+          type: string
+          description: "Publication state: draft, review, published, retired"
+          example: "draft"
+        
+        sys_view_count:
+          type: string
+          description: Number of times article was viewed
+          example: "0"
+        
+        sys_created_on:
+          type: string
+          format: date-time
+          description: Creation timestamp
+          example: "2026-01-26T10:30:00Z"
+        
+        sys_updated_on:
+          type: string
+          format: date-time
+          description: Last update timestamp
+          example: "2026-01-26T10:30:00Z"
+        
+        source_url:
+          type: string
+          description: Original source URL
+          example: "https://support.microsoft.com/article"
+        
+        article_type:
+          type: string
+          description: Type of article (how-to, troubleshooting, reference, etc.)
+          example: "how-to"

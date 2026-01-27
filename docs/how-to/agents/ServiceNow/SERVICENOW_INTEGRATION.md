@@ -5,7 +5,16 @@
 
 ## Overview
 
-This guide documents the integration between Simple Chat and ServiceNow, enabling AI-powered incident management, ticket analysis, and support operations through natural language prompts.
+This guide documents the **single-agent integration** between Simple Chat and ServiceNow, enabling AI-powered incident management and knowledge base search through natural language prompts.
+
+**This guide covers:**
+- ✅ Incident management (create, update, query, statistics)
+- ✅ Knowledge base search (read-only access)
+- ✅ Single ServiceNow agent for standard support operations
+
+**For advanced KB management (create/publish articles), see:**
+- 📘 [TWO_AGENT_SETUP.md](TWO_AGENT_SETUP.md) - Recommended approach with separate KB Management agent
+- 📘 [KB_MULTI_ACTION_SETUP.md](KB_MULTI_ACTION_SETUP.md) - Alternative multi-action approach
 
 > **⚠️ Important - Work in Progress:**  
 > This integration is under active development. **Check back regularly for updates** to the OpenAPI specifications and agent instructions. Unit testing of prompts is still in progress, so further changes to the spec files and agent instruction file are expected.
@@ -14,9 +23,9 @@ This guide documents the integration between Simple Chat and ServiceNow, enablin
 
 ## Integration Architecture
 
-**Approach:** Hybrid Integration
+**Approach:** Single-Agent Hybrid Integration
 - **ServiceNow OpenAPI Actions** - Modular API integration for CRUD operations
-- **ServiceNow Support Agent** - Specialized AI agent using those actions
+- **ServiceNow Support Agent** - Specialized AI agent for incidents + read-only KB search
 
 ---
 
@@ -60,7 +69,7 @@ Admin Password: [provided by ServiceNow]
 2. Navigate to: **User Administration** → **Users**
 3. Click **New** to create integration user:
    ```
-   Username: simplechat6_integration
+   Username: simplechat6_servicenow_support_service
    First Name: Simple
    Last Name: Chat Integration
    Email: [your email]
@@ -71,12 +80,23 @@ Admin Password: [provided by ServiceNow]
    - Navigate to **Roles** tab
    - Add roles:
      - `rest_api_explorer` - For REST API access
-     - `itil` - For incident management
-     - `knowledge` - For knowledge base access (optional)
+     - `itil` - For incident management (basic create/read/update)
+     - `knowledge` - For knowledge base read access
+   
+   **Optional Role for Enhanced Permissions:**
+   - `incident_manager` - Add only if you need to:
+     - Assign incidents to any user/group organization-wide
+     - Close and resolve any incident (not just your own)
+     - View all incidents across the organization
+     - Escalate incidents and modify any incident assignments
+     - Access incident analytics and reporting
+   
+   **Note:** For most AI agent use cases, `itil` + `knowledge` + `rest_api_explorer` is sufficient.
 
 5. Set Password:
    - Click **Set Password**
    - Create secure password
+   - **Password needs reset: ☐ UNCHECK THIS** (important for API access)
    - Save for later use
 
 ### Step 3: Test REST API Access
@@ -132,8 +152,8 @@ The integration uses two OpenAPI specification files that define all ServiceNow 
 
 #### 2. Knowledge Base API
 **Files:**
-- **Bearer Token Auth:** `sample_now_knowledge_latest_spec.yaml` (Recommended for production)
-- **Basic Auth:** `sample_now_knowledge_latest_spec_basicauth.yaml` (For testing only)
+- **Bearer Token Auth:** `sample_now_knowledge_search_spec.yaml` (Recommended for production)
+- **Basic Auth:** `sample_now_knowledge_search_spec_basicauth.yaml` (For testing only)
 
 **Base URL:** `https://devXXXXX.service-now.com`
 
@@ -153,13 +173,13 @@ The integration uses two OpenAPI specification files that define all ServiceNow 
 
 #### Bearer Token Authentication (Production)
 - `sample_servicenow_incident_api.yaml` - Incident management with OAuth 2.0 bearer token
-- `sample_now_knowledge_latest_spec.yaml` - Knowledge base search with OAuth 2.0 bearer token
+- `sample_now_knowledge_search_spec.yaml` - Knowledge base search (read-only) with OAuth 2.0 bearer token
 - **Use these for:** Production deployments, secure enterprise environments
 - **Setup guide:** See `SERVICENOW_OAUTH_SETUP.md` for OAuth configuration
 
 #### Basic Authentication (Testing Only)
 - `sample_servicenow_incident_api_basicauth.yaml` - Incident management with username:password
-- `sample_now_knowledge_latest_spec_basicauth.yaml` - Knowledge base search with username:password
+- `sample_now_knowledge_search_spec_basicauth.yaml` - Knowledge base search (read-only) with username:password
 - **Use these for:** Initial testing, development instances, proof of concept
 - **Security note:** Not recommended for production use
 
@@ -246,7 +266,7 @@ Name: servicenow_search_knowledge_base
 Display Name: ServiceNow - Search Knowledge Base
 Type: OpenAPI
 Description: Search knowledge articles with progressive fallback and retrieve full article content
-OpenAPI Spec: [Upload sample_now_knowledge_latest_spec.yaml or sample_now_knowledge_latest_spec_basicauth.yaml]
+OpenAPI Spec: [Upload sample_now_knowledge_search_spec.yaml or sample_now_knowledge_search_spec_basicauth.yaml]
 Base URL: https://devXXXXX.service-now.com
 
 Operations Included:
@@ -479,7 +499,7 @@ The fix is included in Simple Chat v0.235.026+. The OpenAPI plugin factory now a
 
 #### Issue: "Authentication failed" error
 **Solution:**
-- Verify username (simplechat6_integration) and password are correct
+- Verify username (simplechat6_servicenow_support_service) and password are correct
 - Check integration user is active
 - Confirm user has `rest_api_explorer` role
 - Test credentials in REST API Explorer first

@@ -28,7 +28,7 @@ When a group action was configured with OAuth bearer token authentication:
 [DEBUG] Auth type: bearer
 [DEBUG] Token available: True
 [DEBUG] Added bearer auth: EfP7otqXmV...
-[DEBUG] Making request to https://dev222288.service-now.com/api/now/table/incident
+[DEBUG] Making request to https://YOUR-INSTANCE.service-now.com/api/now/table/incident
 [DEBUG] Request headers: {'Authorization': 'Bearer EfP7otqXmV...', ...}
 [DEBUG] Response status: 401
 [DEBUG] Response text: {"error":{"message":"User is not authenticated",...}}
@@ -83,7 +83,7 @@ The fix revealed the actual data flow for authentication configuration:
      "auth": {"type": "key"},
      "additionalFields": {
        "auth_method": "bearer",
-       "base_url": "https://dev222288.service-now.com/api/now"
+       "base_url": "https://YOUR-INSTANCE.service-now.com/api/now"
      }
    }
    ```
@@ -226,7 +226,7 @@ def get_merged_plugin_settings(plugin_type, current_settings, schema_dir):
 2. Create new group action via UI:
    - Type: OpenAPI
    - Upload ServiceNow spec
-   - Base URL: `https://dev222288.service-now.com/api/now`
+   - Base URL: `https://YOUR-INSTANCE.service-now.com/api/now`
    - Authentication: **Bearer Token** (dropdown selection)
    - Token: `EfP7otqXmVmg06xfB9igagxL6Pjir7ewv99sZyMqYdzImlerPt9rHM1T1_L8cCEeWZAuWUV0GPDP2eZ56XWoEQ`
 3. UI JavaScript sets `additionalFields.auth_method = 'bearer'` (line 1537)
@@ -296,7 +296,7 @@ ServiceNow OAuth access tokens expire after a configured lifespan (e.g., 3,600 s
 
 **Example Failure:**
 ```
-Request: GET https://dev222288.service-now.com/api/now/table/incident
+Request: GET https://YOUR-INSTANCE.service-now.com/api/now/table/incident
 Headers: Authorization: Bearer EfP7otqXmV... (expired token)
 Response: HTTP 401 - {"error":{"message":"User is not authenticated"}}
 ```
@@ -318,7 +318,7 @@ To make OAuth 2.0 authentication production-ready, Simple Chat needs to implemen
      "auth_type": "oauth2_client_credentials",
      "client_id": "565d53a80dfe4cb89b8869fd1d977308",
      "client_secret": "[encrypted_secret]",
-     "token_endpoint": "https://dev222288.service-now.com/oauth_token.do",
+     "token_endpoint": "https://YOUR-INSTANCE.service-now.com/oauth_token.do",
      "scope": "useraccount"
    }
    ```

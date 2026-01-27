@@ -1,7 +1,15 @@
 openapi: 3.0.1
 info:
-  title: ServiceNow Knowledge Base API
-  description: ServiceNow Knowledge Management REST API for searching and retrieving knowledge articles - Optimized for Simple Chat integration
+  title: ServiceNow Knowledge Base Search API (Read-Only)
+  description: |
+    ServiceNow Knowledge Management REST API for SEARCHING and READING knowledge articles only.
+    
+    USE THIS SPEC FOR: All users who need to search and view KB articles
+    PERMISSIONS REQUIRED: ServiceNow 'itil' role (standard user access)
+    
+    This spec contains ONLY GET operations - no create, update, or publish capabilities.
+    For knowledge article creation, use sample_now_knowledge_create_spec.yaml
+    For knowledge article publishing, use sample_now_knowledge_publish_spec.yaml
   version: 1.0.0
   contact:
     name: ServiceNow API Support
