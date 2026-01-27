@@ -178,7 +178,7 @@ Agent: "I'm unable to access your ServiceNow incidents because your
         session is not authenticated..."
         
 # HTTP request (no Authorization header sent):
-GET https://dev222288.service-now.com/api/now/table/incident
+GET https://YOUR-INSTANCE.service-now.com/api/now/table/incident
 # Response: 401 Unauthorized or session expired error
 ```
 
@@ -189,7 +189,7 @@ User: "Show me all incidents in ServiceNow"
 Agent: "Here are your ServiceNow incidents: ..."
 
 # HTTP request (Authorization header correctly added):
-GET https://dev222288.service-now.com/api/now/table/incident
+GET https://YOUR-INSTANCE.service-now.com/api/now/table/incident
 Authorization: Basic <token>
 
 # Response: 200 OK with incident data
