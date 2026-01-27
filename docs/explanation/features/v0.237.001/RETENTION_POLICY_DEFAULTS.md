@@ -1,8 +1,7 @@
 # RETENTION_POLICY_DEFAULTS.md
 
 **Feature**: Admin-Configurable Default Retention Policies  
-**Version**: 0.236.011  
-**Implemented in**: 0.236.011
+**Version**: v0.237.001
 
 ## Overview and Purpose
 

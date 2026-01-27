@@ -4,7 +4,7 @@
 
 SimpleChat now enforces authentication type constraints per plugin type. Different plugin types may support different authentication methods based on their requirements and the APIs they integrate with. This feature provides a structured way to define and retrieve allowed authentication types for each plugin type.
 
-**Version Implemented:** 0.236.011
+**Version Implemented:** v0.237.001
 
 ## Key Features
 
