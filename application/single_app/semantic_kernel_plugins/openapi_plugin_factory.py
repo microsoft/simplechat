@@ -125,15 +125,55 @@ class OpenApiPluginFactory:
     @classmethod
     def _extract_auth_config(cls, config: Dict[str, Any]) -> Dict[str, Any]:
         """Extract authentication configuration from plugin config."""
+        from functions_debug import debug_print
+        
         auth_config = config.get('auth', {})
         if not auth_config:
             return {}
         
         auth_type = auth_config.get('type', 'none')
+        debug_print(f"[Factory] auth_type: {auth_type}")
         
         if auth_type == 'none':
             return {}
         
-        # Return the auth config as-is since the OpenApiPlugin already handles
-        # the different auth types
+        # Check if this is basic auth stored in the 'key' field format
+        # Simple Chat stores basic auth as: auth.type='key', auth.key='username:password', additionalFields.auth_method='basic'
+        additional_fields = config.get('additionalFields', {})
+        auth_method = additional_fields.get('auth_method', '')
+        debug_print(f"[Factory] additionalFields.auth_method: {auth_method}")
+        
+        if auth_type == 'key' and auth_method == 'basic':
+            # Extract username and password from the combined key
+            key = auth_config.get('key', '')
+            debug_print(f"[Factory] Applying basic auth transformation")
+            if ':' in key:
+                username, password = key.split(':', 1)
+                return {
+                    'type': 'basic',
+                    'username': username,
+                    'password': password
+                }
+            else:
+                # Malformed basic auth key
+                return {}
+        
+        # For bearer tokens stored as 'key' type
+        if auth_type == 'key' and auth_method == 'bearer':
+            token = auth_config.get('key', '')
+            debug_print(f"[Factory] Applying bearer auth transformation")
+            return {
+                'type': 'bearer',
+                'token': token
+            }
+        
+        # For OAuth2 stored as 'key' type
+        if auth_type == 'key' and auth_method == 'oauth2':
+            debug_print(f"[Factory] Applying OAuth2 auth transformation")
+            return {
+                'type': 'bearer',  # OAuth2 tokens are typically bearer tokens
+                'token': auth_config.get('key', '')
+            }
+        
+        # Return the auth config as-is for other auth types
         return auth_config
