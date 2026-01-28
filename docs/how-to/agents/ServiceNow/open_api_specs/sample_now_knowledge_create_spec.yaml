@@ -85,7 +85,7 @@ paths:
                   type: string
                   description: |
                     Knowledge base name or sys_id.
-                    Common values: "IT Support", "HR", "Facilities"
+                    Common values: "IT", "HR", "Facilities"
                   example: "IT Support"
                 
                 kb_category:

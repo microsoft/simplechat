@@ -115,9 +115,13 @@ Specialized agent for knowledge base article management.
 - `itil` - Standard ITIL user access
 - `knowledge` - KB article contributor access
 - `knowledge_manager` - Full KB management permissions (create, publish, retire)
+- `knowledge_admin` - Elevated permissions to bypass ACL constraints for approval workflow
 - `rest_api_explorer` - REST API access
 
-**Alternative:** Use `knowledge_admin` instead of `knowledge_manager` for elevated permissions
+**Why Both knowledge_manager AND knowledge_admin?**
+- `knowledge_manager` alone allows KB management but may be blocked by ACL (separation of duties)
+- `knowledge_admin` provides elevated permissions for KB operations
+- **Note:** When approval workflow is enabled, publishing still requires manual portal interaction (see troubleshooting section)
 
 **Permissions:**
 - Read: `kb_knowledge` table (all states: draft, review, published, retired)
@@ -207,8 +211,10 @@ Specialized agent for knowledge base article management.
    - Save the password for OAuth token generation
 7. Open the user record
 8. Go to "Roles" tab
-9. Add roles: knowledge_manager, knowledge, itil, rest_api_explorer
+9. Add roles: knowledge_manager, knowledge_admin, knowledge, itil, rest_api_explorer
 10. Save
+
+**Note:** The `knowledge_admin` role is required in addition to `knowledge_manager` to bypass ACL constraints and enable fully automated approval workflow.
 ```
 
 ---
@@ -365,30 +371,34 @@ Related KB articles have been added to the incident notes.
 
 **User to KB Manager:**
 ```
-"Add this Microsoft article to ServiceNow KB and publish it:
+"Add this Microsoft article to ServiceNow KB:
 https://support.microsoft.com/en-us/office/configure-email-settings"
 ```
 
 **Agent Executes:**
 1. SmartHttpPlugin.get_web_content(url="https://support.microsoft.com...")
 2. createKnowledgeArticle(content=extracted, workflow_state="draft")
-3. User confirms → updateKnowledgeArticle(workflow_state="published")
 
 **Agent Response:**
 ```
-✅ Knowledge article KB0001234 created and published successfully.
+✅ Knowledge article KB0001234 created successfully in draft state.
 
 **Article Details:**
 - Title: Configure email settings in Microsoft 365
-- Category: Email
+- Knowledge Base: IT
+- Category: Operating Systems
 - Type: How-to guide
 - Source: https://support.microsoft.com/en-us/office/configure-email-settings
 - Content: 5,247 characters
 
-**Live Article:**
+**Review & Publish:**
 https://YOUR-INSTANCE.service-now.com/now/knowledge-center/kb_view/kb_knowledge/abc123xyz789
 
-The article is now visible to all users.
+📝 The article is in draft state. To publish:
+1. Click the link above to open the article
+2. Click the "Publish" button in ServiceNow portal
+3. An approval request will be created for the designated approver
+4. Once approved, the article will be published automatically
 ```
 
 ---
@@ -402,19 +412,26 @@ The article is now visible to all users.
 
 **Agent Executes:**
 1. searchKnowledgeFacets(query="number=KB0001234")
-2. updateKnowledgeArticle(sys_id="abc123", workflow_state="published")
+2. getKnowledgeArticle(sys_id="abc123") - verify current state
 
 **Agent Response:**
 ```
-✅ Knowledge article KB0001234 published successfully.
+KB article KB0001234 is ready for publication, but requires manual submission via the ServiceNow portal.
 
-**Publication Details:**
-- Title: Configure email settings in Microsoft 365
-- Status: Draft → Published ✓
-- Published: Jan 26, 2026 at 3:30 PM
+**Why Manual Submission Required:**
+Your ServiceNow instance has the 'Knowledge - Approval Publish' workflow enabled, which requires using the portal's Publish button to trigger the approval process. The API cannot initiate this workflow directly.
 
-**Live Article:**
-https://YOUR-INSTANCE.service-now.com/now/knowledge-center/kb_view/kb_knowledge/abc123xyz789
+**To Submit for Approval:**
+1. Go to the article: https://YOUR-INSTANCE.service-now.com/now/knowledge-center/kb_view/kb_knowledge/abc123xyz789
+2. Click the "Publish" button (top right of the page)
+3. The article will move from Draft → Review and create an approval request
+
+**What Happens Next:**
+- Workflow state changes to "Review"
+- An approval request is created for a designated approver
+- The article waits for manual approval before publication
+
+Once you've clicked Publish, let me know and I can verify the article is in review state.
 ```
 
 ---
@@ -465,6 +482,50 @@ https://YOUR-INSTANCE.service-now.com/now/knowledge-center/kb_view/kb_knowledge/
 1. Verify `simplechat6_servicenow_kb_manager` has `knowledge_manager` role
 2. Check that separate bearer token is configured (not using same token as Support Agent)
 3. Verify article exists and is in valid state for publishing
+
+---
+
+### Problem: KB Article Shows Draft After Agent Reports Published
+
+**Symptoms:** 
+- Agent reports "✅ Knowledge article KB0010004 published successfully"
+- ServiceNow portal still shows workflow_state = "Draft"
+- Article not visible to end users
+
+**Root Cause:** ServiceNow Knowledge Base has approval workflows enabled
+
+**Solution:**
+
+Your ServiceNow instance requires approval workflow: **Draft → Review → Published**
+
+**Check if Approval Workflow is Enabled:**
+1. Go to: Knowledge → Administration → Knowledge Bases
+2. Open your KB (e.g., "IT")
+3. Check fields:
+   - **Publish flow** (e.g., "Knowledge - Approval Publish")
+   - **Retire flow** (e.g., "Knowledge - Approval Retire")
+4. If these are populated, approval workflow is required
+
+**Fix Options:**
+
+**Option 1: Use Portal-Based Publishing (Required when workflow is enabled)**
+- The agent instructions (v0.237.005+) detect approval workflow and guide users accordingly
+- Agent creates article in draft state via API ✓
+- User clicks "Publish" button in ServiceNow portal (workflow requirement)
+- Article moves to "Review" state and creates approval request
+- Designated approver approves in portal
+- Article automatically published once approved
+- This is the ONLY workflow that works when "Knowledge - Approval Publish" workflow is enabled
+
+**Option 2: Disable approval workflow (Non-production only)**
+- Go to: Knowledge → Administration → Knowledge Bases
+- Clear the "Publish flow" and "Retire flow" fields
+- Allows direct API publishing (draft → published)
+- Only recommended for development/testing environments
+
+**Related Files:**
+- Fix documentation: `docs/explanation/fixes/SERVICENOW_KB_APPROVAL_WORKFLOW_FIX.md`
+- Agent instructions: `servicenow_kb_management_agent_instructions.txt`
 
 ---
 
