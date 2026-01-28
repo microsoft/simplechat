@@ -100,10 +100,16 @@ Deploy the necessary Azure services. For a quick estimate of monthly costs based
     *   Review Networking settings.
     *   If using **Managed Identity**, grant the App Service's Managed Identity the `Cognitive Services Contributor` role on this resource.
 8.  **Deploy Azure Video Indexer (Optional)**:
-    *   If using the Video Extraction feature, create an **Azure Video Indexer** resource.
+    *   If using the Video Extraction feature, create an **Azure Video Indexer** resource in the Azure Portal.
     *   You'll need to associate it with an Azure Media Services account (can be created during VI setup) and a Storage Account (used for temporary processing, can be new or existing).
-    *   Managed Identity (System-assigned) is typically enabled by default.
-    *   Note the **Account ID**, **Location**, and an **API Key** (Subscription level or Account level). These will be configured in Admin Settings.
+    *   **Enable System-assigned Managed Identity** on your App Service if not already enabled (Identity > System assigned > Status: On).
+    *   **Grant the App Service's Managed Identity the `Contributor` role** on the Video Indexer resource:
+        - Navigate to your Video Indexer resource > Access control (IAM)
+        - Add role assignment > Select `Contributor` role
+        - Assign access to "Managed Identity"
+        - Select your App Service's managed identity
+    *   Note the **Account ID**, **Account Name**, **Resource Group**, **Subscription ID**, and **Location** (e.g., eastus). These will be configured in Admin Settings.
+    *   See [Azure Video Indexer documentation](https://learn.microsoft.com/azure/azure-video-indexer/connect-to-azure) for detailed setup instructions.
 9.  **Deploy Azure Speech Service (Optional)**:
     *   If using the Audio Extraction feature, create an **Azure AI Speech** resource.
     *   Select the **Standard S0** pricing tier.

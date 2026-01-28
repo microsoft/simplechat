@@ -25,7 +25,7 @@ To run the application in Azure Government cloud:
 
    - This ensures the application uses the correct Azure Government endpoints for authentication (MSAL) and potentially for fetching management plane details when using Managed Identity with direct endpoints.
 
-3. **Endpoint URLs**: Ensure all endpoint URLs configured (in App Settings or via the Admin UI) point to the correct .usgovernment.azure.com (or specific service) domains. Azure OpenAI endpoints in Gov are different from Commercial.
+3. **Endpoint URLs**: Ensure all endpoint URLs configured (in App Settings or via the Admin UI) point to the correct .azure.us (or specific service) domains. Azure OpenAI endpoints in Gov are different from Commercial.
 
 4. **App Registration**: Ensure the App Registration is done within your Azure Government Azure AD tenant. The Redirect URI for the App Service will use the .azurewebsites.us domain.
 
@@ -75,12 +75,12 @@ Using Managed Identity allows the App Service to authenticate to other Azure res
    | Target Service        | Required Role                       | Notes                                                        |
    | --------------------- | ----------------------------------- | ------------------------------------------------------------ |
    | Azure OpenAI          | Cognitive Services OpenAI User      | Allows data plane access (generating completions, embeddings, images). |
-   | Azure AI Search       | Search Index Data Contributor       | Allows reading/writing data to search indexes.               |
+   | Azure AI Search       | Contributor & Search Index Data Contributor       | Allows acquiring authentication token from Search resource manager and reading/writing data to search indexes.               |
    | Azure Cosmos DB       | Cosmos DB Built-in Data Contributor | Allows reading/writing data. Least privilege possible via custom roles. Key auth might be simpler. |
    | Document Intelligence | Cognitive Services User             | Allows using the DI service for analysis.                    |
-   | Content Safety        | Cognitive Services Contributor      | Allows using the CS service for analysis. (Role name might vary slightly, check portal) |
+   | Content Safety        | Azure AI Developer      | Allows using the CS service for analysis. (Role name might vary slightly, check portal) |
    | Azure Storage Account | Storage Blob Data Contributor       | Required for Enhanced Citations if using Managed Identity. Allows reading/writing blobs. |
-   | Azure Speech Service  | Cognitive Services User             | Allows using the Speech service for transcription.           |
+   | Azure Speech Service  | Cognitive Services Speech Contributor             | Allows using the Speech service for transcription.           |
    | Video Indexer         | (Handled via VI resource settings)  | VI typically uses its own Managed Identity to access associated Storage/Media Services. Check VI docs. |
 
 3. **Configure Application to Use Managed Identity**:
