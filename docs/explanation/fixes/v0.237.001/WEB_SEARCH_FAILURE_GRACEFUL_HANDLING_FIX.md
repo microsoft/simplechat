@@ -4,7 +4,7 @@
 
 Fixed an issue where Azure AI Foundry web search agent failures would cause the AI model to answer questions using outdated training data instead of informing the user that the web search failed.
 
-**Version Implemented:** 0.236.014
+**Version Implemented:** v0.237.001
 
 ## Problem
 

@@ -1,7 +1,46 @@
 <!-- BEGIN release_notes.md BLOCK -->
 # Feature Release
 
-### **(v0.236.011)**
+### **(v0.237.004)**
+
+#### Bug Fixes
+
+*   **Critical Retention Policy Deletion Fix**
+    *   Fixed a critical bug where conversations with null/undefined `last_activity_at` were being deleted regardless of their actual age.
+    *   **Root Cause**: The SQL query logic treated conversations with missing `last_activity_at` field as "old" and deleted them, even if they were created moments ago.
+    *   **Impact**: Brand new conversations that hadn't had their `last_activity_at` field populated were incorrectly deleted when retention policy ran.
+    *   **Solution**: Changed query to only delete conversations that have a valid, non-null `last_activity_at` that is older than the configured retention period. Conversations with null/undefined `last_activity_at` are now skipped.
+    *   (Ref: retention policy execution, conversation deletion, `delete_aged_conversations()`)
+
+*   **Public Workspace Retention Error Fix**
+    *   Fixed error "name 'cosmos_public_conversations_container' is not defined" when executing retention policy for public workspaces.
+    *   **Root Cause**: The code attempted to process conversations for public workspaces, but public workspaces don't have a separate conversations container—only documents and prompts.
+    *   **Solution**: Removed conversation processing for public workspaces since they only support document retention.
+    *   (Ref: public workspace retention, `process_public_retention()`)
+
+### **(v0.237.003)**
+
+#### New Features
+
+*   **Extended Retention Policy Timeline Options**
+    *   Added additional granular retention period options for conversations and documents across all workspace types.
+    *   **New Options**: 2 days, 3 days, 4 days, 6 days, 7 days (1 week), and 14 days (2 weeks).
+    *   **Full Option Set**: 1, 2, 3, 4, 5, 6, 7 (1 week), 10, 14 (2 weeks), 21 (3 weeks), 30, 60, 90 (3 months), 180 (6 months), 365 (1 year), 730 (2 years) days.
+    *   **Scope**: Available in Admin Settings (organization defaults), Profile page (personal settings), and Control Center (group/public workspace management).
+    *   **Files Modified**: `admin_settings.html`, `profile.html`, `control_center.html`.
+    *   (Ref: retention policy configuration, workspace retention settings, granular time periods)
+
+#### Bug Fixes
+
+*   **Custom Logo Not Displaying Across App Fix**
+    *   Fixed issue where custom logos uploaded via Admin Settings would only display on the admin page but not on other pages (chat, sidebar, landing page).
+    *   **Root Cause**: The `sanitize_settings_for_user()` function was stripping `custom_logo_base64`, `custom_logo_dark_base64`, and `custom_favicon_base64` keys entirely because they contained "base64" (a sensitive term filter), preventing templates from detecting logo existence.
+    *   **Solution**: Modified sanitization to add boolean flags for logo/favicon existence after filtering, allowing templates to check if logos exist without exposing actual base64 data.
+    *   **Security**: Actual base64 data remains hidden from frontend; only True/False boolean values are exposed.
+    *   **Files Modified**: `functions_settings.py` (`sanitize_settings_for_user()` function).
+    *   (Ref: logo display, settings sanitization, template conditionals)
+
+### **(v0.237.001)**
 
 #### New Features
 

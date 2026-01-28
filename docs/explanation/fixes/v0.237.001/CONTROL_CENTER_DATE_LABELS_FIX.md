@@ -1,4 +1,4 @@
-# Control Center Date Labels Fix (Version 0.235.074)
+# Control Center Date Labels Fix (v0.237.001)
 
 ## Header Information
 - **Fix Title:** Control Center Date Labels Fix
