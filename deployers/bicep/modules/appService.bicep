@@ -27,6 +27,25 @@ param keyVaultUri string
 param enablePrivateNetworking bool
 param appServiceSubnetId string = ''
 
+// --- Custom Azure Environment Parameters (for 'custom' azureEnvironment) ---
+@description('Custom blob storage URL suffix, e.g. blob.core.usgovcloudapi.net')
+param customBlobStorageSuffix string?
+@description('Custom Graph API URL, e.g. https://graph.microsoft.us')
+param customGraphUrl string?
+@description('Custom Identity URL, e.g. https://login.microsoftonline.us')
+param customIdentityUrl string?
+@description('Custom Resource Manager URL, e.g. https://management.usgovcloudapi.net')
+param customResourceManagerUrl string?
+
+@description('Custom Cognitive Services scope ex: https://cognitiveservices.azure.com/.default')
+param customCognitiveServicesScope string?
+
+@description('Custom search resource URL for token audience, e.g. https://search.azure.us')
+param customSearchResourceUrl string?
+
+var tenantId = tenant().tenantId
+var openIdMetadataUrl = '${az.environment().authentication.loginEndpoint}/${tenantId}/v2.0/.well-known/openid-configuration'
+
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
   name: 'diagnosticConfigs'
@@ -47,7 +66,6 @@ resource searchService 'Microsoft.Search/searchServices@2025-05-01' existing = {
 resource openAiService 'Microsoft.CognitiveServices/accounts@2024-10-01' existing = {
   name: openAiServiceName
 }
-
 resource documentIntelligence 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
   name: documentIntelligenceServiceName
 }
@@ -55,7 +73,7 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' existing = {
   name: appInsightsName
 }
 
-var acrDomain = azurePlatform == 'AzureUSGovernment' ? '.azurecr.us' : '.azurecr.io'
+var acrDomain = az.environment().suffixes.acrLoginServer
 
 // add web app
 resource webApp 'Microsoft.Web/sites@2022-03-01' = {
@@ -77,16 +95,14 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
       ftpsState: 'Disabled'
       healthCheckPath: '/external/healthcheck'
       appSettings: [
-        { name: 'AZURE_ENDPOINT', value: azurePlatform == 'AzureUSGovernment' ? 'usgovernment' : 'public' }
+        { name: 'AZURE_ENVIRONMENT', value: azurePlatform }
         { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'false' }
         { name: 'AZURE_COSMOS_ENDPOINT', value: cosmosDb.properties.documentEndpoint }
         { name: 'AZURE_COSMOS_AUTHENTICATION_TYPE', value: toLower(authenticationType) }
-
         // Only add this setting if authenticationType is 'key'
         ...(authenticationType == 'key'
           ? [{ name: 'AZURE_COSMOS_KEY', value: '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/cosmos-db-key)' }]
           : [])
-
         { name: 'TENANT_ID', value: tenant().tenantId }
         { name: 'CLIENT_ID', value: enterpriseAppClientId }
         {
@@ -152,6 +168,16 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
         { name: 'XDT_MicrosoftApplicationInsights_BaseExtensions', value: 'disabled' }
         { name: 'XDT_MicrosoftApplicationInsights_Mode', value: 'recommended' }
         { name: 'XDT_MicrosoftApplicationInsights_PreemptSdk', value: 'disabled' }
+        ...(azurePlatform == 'custom' ? [
+        {name: 'CUSTOM_GRAPH_URL_VALUE', value: customGraphUrl}
+        {name: 'CUSTOM_IDENTITY_URL_VALUE', value: customIdentityUrl}
+        {name: 'CUSTOM_RESOURCE_MANAGER_URL_VALUE', value: customResourceManagerUrl}
+        {name: 'CUSTOM_BLOB_STORAGE_URL_VALUE', value: customBlobStorageSuffix}
+        {name: 'CUSTOM_COGNITIVE_SERVICES_URL_VALUE', value: customCognitiveServicesScope}
+        {name: 'CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE', value: customSearchResourceUrl}
+        {name: 'KEY_VAULT_DOMAIN', value: az.environment().suffixes.keyvaultDns}
+        {name: 'CUSTOM_OIDC_METADATA_URL_VALUE', value: openIdMetadataUrl}]
+        : [])
       ]
     }
     clientAffinityEnabled: false

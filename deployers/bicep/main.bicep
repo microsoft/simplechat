@@ -5,14 +5,12 @@ targetScope = 'subscription'
 - Region must align to the target cloud environment''')
 param location string
 
-@description('''The target Azure Cloud environment.
-- Accepted values are: AzureCloud, AzureUSGovernment
-- Default is AzureCloud''')
 @allowed([
-  'AzureCloud'
-  'AzureUSGovernment'
+  'public'
+  'usgovernment'
+  'custom'
 ])
-param cloudEnvironment string
+param cloudEnvironment string = az.environment().name == 'AzureCloud' ? 'public' : (az.environment().name == 'AzureUSGovernment' ? 'usgovernment' : 'custom')
 
 @description('''The name of the application to be deployed.  
 - Name may only contain letters and numbers
@@ -143,13 +141,27 @@ param deploySpeechService bool
 - Default is false''')
 param deployVideoIndexerService bool
 
+// --- Custom Azure Environment Parameters (for 'custom' azureEnvironment) ---
+@description('Custom blob storage URL suffix, e.g. blob.core.usgovcloudapi.net')
+param customBlobStorageSuffix string = 'blob.${az.environment().suffixes.storage}'
+@description('Custom Graph API URL, e.g. https://graph.microsoft.us')
+param customGraphUrl string = az.environment().graph
+@description('Custom Identity URL, e.g. https://login.microsoftonline.us')
+param customIdentityUrl string = az.environment().authentication.loginEndpoint
+@description('Custom Resource Manager URL, e.g. https://management.usgovcloudapi.net')
+param customResourceManagerUrl string = az.environment().resourceManager
+@description('Custom Cognitive Services scope ex: https://cognitiveservices.azure.com/.default')
+param customCognitiveServicesScope string = 'https://cognitiveservices.azure.com/.default'
+@description('Custom search resource URL for token audience, e.g. https://search.azure.us')
+param customSearchResourceUrl string = 'https://search.azure.com'
+
 //=========================================================
 // variable declarations for the main deployment 
 //=========================================================
 var rgName = '${appName}-${environment}-rg'
 var requiredTags = { application: appName, environment: environment, 'azd-env-name': azdEnvironmentName }
 var tags = union(requiredTags, specialTags)
-var acrCloudSuffix = cloudEnvironment == 'AzureCloud' ? '.azurecr.io' : '.azurecr.us'
+var acrCloudSuffix = az.environment().suffixes.acrLoginServer
 var acrName = toLower('${appName}${environment}acr')
 var containerRegistry = '${acrName}${acrCloudSuffix}'
 var containerImageName = '${containerRegistry}/${imageName}'
@@ -435,6 +447,13 @@ module appService 'modules/appService.bicep' = {
     enterpriseAppClientSecret: enterpriseAppClientSecret
     authenticationType: authenticationType
     keyVaultUri: keyVault.outputs.keyVaultUri
+    // --- Custom Azure Environment Parameters (for 'custom' azureEnvironment) ---
+    customBlobStorageSuffix: customBlobStorageSuffix
+    customGraphUrl: customGraphUrl
+    customIdentityUrl: customIdentityUrl
+    customResourceManagerUrl: customResourceManagerUrl
+    customCognitiveServicesScope: customCognitiveServicesScope
+    customSearchResourceUrl: customSearchResourceUrl
 
     enablePrivateNetworking: enablePrivateNetworking
     #disable-next-line BCP318 // expect one value to be null if private networking is disabled
@@ -540,7 +559,6 @@ module setPermissions 'modules/setPermissions.bicep' = if (configureApplicationP
   name: 'setPermissions'
   scope: rg
   params: {
-
     webAppName: appService.outputs.name
     authenticationType: authenticationType
     enterpriseAppServicePrincipalId: enterpriseAppServicePrincipalId
@@ -603,8 +621,6 @@ module privateNetworking 'modules/privateNetworking.bicep' = if (enablePrivateNe
 //=========================================================
 // output values
 //=========================================================
-
-
 // output values required for postprovision script in azure.yaml
 output var_acrName string = toLower('${appName}${environment}acr')
 output var_authenticationType string = toLower(authenticationType)
@@ -637,7 +653,7 @@ output var_videoIndexerName string = deployVideoIndexerService ? videoIndexerSer
 // output values required for predeploy script in azure.yaml
 output var_containerRegistry string = containerRegistry
 output var_imageName string = contains(imageName, ':') ? split(imageName, ':')[0] : imageName
-output var_imageTag string = split(imageName, ':')[1]
+output var_imageTag string = contains(imageName, ':') ? split(imageName, ':')[1] : 'latest'
 output var_webService string = appService.outputs.name
 
 // output values required for postup script in azure.yaml
