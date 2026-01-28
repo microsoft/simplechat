@@ -124,7 +124,7 @@ When creating each action (query, create, update, delete), use the same authenti
 - `queryAssets` - Search and filter assets with query parameters
 - `getAssetDetails` - Retrieve full details for a specific asset by sys_id
 
-**Endpoint:** `https://dev222288.service-now.com/api/now`
+**Endpoint:** `https://YOUR-INSTANCE.service-now.com/api/now`
 
 **Authentication:**
 - Type: `key`
@@ -150,7 +150,7 @@ When creating each action (query, create, update, delete), use the same authenti
 
 **Optional Fields:** model, serial_number, assigned_to, location, install_status, purchase_date, warranty_expiration, cost, department, managed_by, owned_by, comments
 
-**Endpoint:** `https://dev222288.service-now.com/api/now`
+**Endpoint:** `https://YOUR-INSTANCE.service-now.com/api/now`
 
 ---
 
@@ -170,7 +170,7 @@ When creating each action (query, create, update, delete), use the same authenti
 
 **Updatable Fields:** display_name, assigned_to, assignment_group, location, install_status, substatus, serial_number, warranty_expiration, cost, department, managed_by, owned_by, comments
 
-**Endpoint:** `https://dev222288.service-now.com/api/now`
+**Endpoint:** `https://YOUR-INSTANCE.service-now.com/api/now`
 
 ---
 
@@ -190,7 +190,7 @@ When creating each action (query, create, update, delete), use the same authenti
 
 **⚠️ CRITICAL:** Query for sys_id first using asset_tag, then delete
 
-**Endpoint:** `https://dev222288.service-now.com/api/now`
+**Endpoint:** `https://YOUR-INSTANCE.service-now.com/api/now`
 
 ---
 

@@ -11,7 +11,7 @@
   },
   "servers": [
     {
-      "url": "https://dev222288.service-now.com/api/now",
+      "url": "https://YOUR-INSTANCE.service-now.com/api/now",
       "description": "ServiceNow Instance"
     }
   ],
