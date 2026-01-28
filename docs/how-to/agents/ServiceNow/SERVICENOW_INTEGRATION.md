@@ -295,14 +295,14 @@ Name: servicenow_support_agent
 Display Name: ServiceNow Support Agent
 Description: AI agent for ServiceNow incident management and knowledge base operations
 
-Instructions: [Copy from servicenow_agent_instructions.txt]
+Instructions: [Copy from agent_instructions/servicenow_agent_instructions.txt]
 
 Model: gpt-4o (or your preferred model)
 Scope: Global or Group
 ```
 
 > **📄 Agent Instructions File:** 
-> - **Location:** `docs/how-to/agents/ServiceNow/servicenow_agent_instructions.txt`
+> - **Location:** `docs/how-to/agents/ServiceNow/agent_instructions/servicenow_agent_instructions.txt`
 > - **Purpose:** Comprehensive behavioral instructions for the ServiceNow support agent
 > - **Usage:** Copy the entire content from this file into the "Instructions" field when creating the agent
 > 

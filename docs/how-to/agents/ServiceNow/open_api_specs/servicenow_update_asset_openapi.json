@@ -1,0 +1,224 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "ServiceNow Asset Update API",
+    "description": "ServiceNow REST API for updating existing assets",
+    "version": "1.0.0",
+    "contact": {
+      "name": "ServiceNow API Support",
+      "url": "https://developer.servicenow.com"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://dev222288.service-now.com/api/now",
+      "description": "ServiceNow Instance"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "OAuth 2.0 Bearer Token authentication. Obtain token via ServiceNow OAuth endpoint using Resource Owner Password Credentials grant."
+      }
+    },
+    "schemas": {
+      "AssetUpdateRequest": {
+        "type": "object",
+        "properties": {
+          "display_name": {
+            "type": "string",
+            "description": "Update display name",
+            "example": "Bob's Laptop (Updated)"
+          },
+          "assigned_to": {
+            "type": "string",
+            "description": "Update assigned user (sys_id or name)",
+            "example": "Bob Johnson"
+          },
+          "assignment_group": {
+            "type": "string",
+            "description": "Update assignment group",
+            "example": "IT Support"
+          },
+          "location": {
+            "type": "string",
+            "description": "Update location (sys_id or name)",
+            "example": "Building B, Floor 2"
+          },
+          "install_status": {
+            "type": "string",
+            "description": "Update status: 1=In use, 6=In stock, 7=Retired",
+            "example": "1",
+            "enum": ["1", "6", "7"]
+          },
+          "substatus": {
+            "type": "string",
+            "description": "Update substatus",
+            "example": "in_use"
+          },
+          "serial_number": {
+            "type": "string",
+            "description": "Update serial number",
+            "example": "SN999888777"
+          },
+          "warranty_expiration": {
+            "type": "string",
+            "format": "date",
+            "description": "Update warranty expiration (YYYY-MM-DD)",
+            "example": "2028-01-15"
+          },
+          "cost": {
+            "type": "string",
+            "description": "Update cost",
+            "example": "1800.00"
+          },
+          "department": {
+            "type": "string",
+            "description": "Update department",
+            "example": "Engineering"
+          },
+          "managed_by": {
+            "type": "string",
+            "description": "Update manager",
+            "example": "New Manager"
+          },
+          "owned_by": {
+            "type": "string",
+            "description": "Update owner",
+            "example": "Engineering Department"
+          },
+          "comments": {
+            "type": "string",
+            "description": "Update or add comments",
+            "example": "Reassigned to Engineering team"
+          }
+        }
+      },
+      "AssetUpdateResponse": {
+        "type": "object",
+        "properties": {
+          "result": {
+            "type": "object",
+            "properties": {
+              "sys_id": {
+                "type": "string",
+                "description": "Asset sys_id"
+              },
+              "asset_tag": {
+                "type": "string",
+                "description": "Asset tag"
+              },
+              "display_name": {
+                "type": "string",
+                "description": "Updated display name"
+              },
+              "sys_updated_on": {
+                "type": "string",
+                "format": "date-time",
+                "description": "Last update timestamp"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/table/alm_asset/{sys_id}": {
+      "patch": {
+        "summary": "Update asset",
+        "description": "Update asset fields\n\n⚠️ CRITICAL: YOU MUST QUERY FOR sys_id FIRST - DO NOT USE CACHED VALUES ⚠️\n\nThis operation requires the sys_id (NOT the asset tag).\n- sys_id is a unique identifier like \"32ac0eaec326361067d91a2ed40131a7\"\n- Asset tag is like \"P1000234\"\n\nREQUIRED EXECUTION PATTERN:\n\nWhen user asks to update asset P1000234:\n\nCALL 1 - Query to Get sys_id:\n1. Call queryAssets(sysparm_query=\"asset_tag=P1000234\", sysparm_fields=\"sys_id,asset_tag\")\n2. Extract sys_id from result\n3. Verify you got exactly 1 result\n\nCALL 2 - Update with Retrieved sys_id:\n1. Call updateAsset(sys_id=\"32ac0eaec326361067d91a2ed40131a7\", ...fields)\n2. This will succeed because you have the correct sys_id\n\nUpdatable Fields:\n- display_name: Asset display name\n- assigned_to: User assignment\n- assignment_group: Group assignment\n- location: Physical location\n- install_status: Status (1=In use, 6=In stock, 7=Retired)\n- substatus: Substatus\n- serial_number: Serial number\n- warranty_expiration: Warranty date\n- cost: Asset cost\n- department: Department\n- managed_by: Manager\n- owned_by: Owner\n- comments: Notes",
+        "operationId": "updateAsset",
+        "parameters": [
+          {
+            "name": "sys_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The unique sys_id of the asset to update (obtain via queryAssets first)",
+            "example": "32ac0eaec326361067d91a2ed40131a7"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "Fields to update (only include fields you want to change)",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssetUpdateRequest"
+              },
+              "examples": {
+                "reassign": {
+                  "summary": "Reassign asset to new user",
+                  "value": {
+                    "assigned_to": "Bob Johnson",
+                    "install_status": "1",
+                    "comments": "Reassigned to Bob"
+                  }
+                },
+                "relocate": {
+                  "summary": "Move asset to new location",
+                  "value": {
+                    "location": "Building B, Floor 5",
+                    "comments": "Moved to new office"
+                  }
+                },
+                "retire": {
+                  "summary": "Retire asset",
+                  "value": {
+                    "install_status": "7",
+                    "assigned_to": "",
+                    "comments": "Asset retired - end of life"
+                  }
+                },
+                "update_warranty": {
+                  "summary": "Extend warranty",
+                  "value": {
+                    "warranty_expiration": "2028-12-31",
+                    "comments": "Warranty extended"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Asset updated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetUpdateResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Asset not found - Invalid sys_id"
+          },
+          "400": {
+            "description": "Bad Request - Invalid field values"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing authentication token"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    }
+  }
+}

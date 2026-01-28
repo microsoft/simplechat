@@ -1,0 +1,283 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "ServiceNow Asset Query API",
+    "description": "ServiceNow REST API for querying assets and retrieving asset details",
+    "version": "1.0.0",
+    "contact": {
+      "name": "ServiceNow API Support",
+      "url": "https://developer.servicenow.com"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://dev222288.service-now.com/api/now",
+      "description": "ServiceNow Instance"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "OAuth 2.0 Bearer Token authentication. Obtain token via ServiceNow OAuth endpoint using Resource Owner Password Credentials grant."
+      }
+    },
+    "schemas": {
+      "Asset": {
+        "type": "object",
+        "properties": {
+          "sys_id": {
+            "type": "string",
+            "description": "Unique system identifier",
+            "example": "abc123xyz789"
+          },
+          "asset_tag": {
+            "type": "string",
+            "description": "Asset tag/identifier",
+            "example": "P1000234"
+          },
+          "display_name": {
+            "type": "string",
+            "description": "Display name of the asset",
+            "example": "John Doe's Laptop"
+          },
+          "model": {
+            "type": "string",
+            "description": "Asset model",
+            "example": "Dell Latitude 5420"
+          },
+          "model_category": {
+            "type": "string",
+            "description": "Model category",
+            "example": "Computer"
+          },
+          "serial_number": {
+            "type": "string",
+            "description": "Serial number",
+            "example": "SN123456789"
+          },
+          "assigned_to": {
+            "type": "string",
+            "description": "User assigned to the asset",
+            "example": "John Doe"
+          },
+          "assignment_group": {
+            "type": "string",
+            "description": "Assignment group",
+            "example": "IT Support"
+          },
+          "location": {
+            "type": "string",
+            "description": "Physical location",
+            "example": "Building A, Floor 3"
+          },
+          "install_status": {
+            "type": "string",
+            "description": "Installation status: 1=In use, 6=In stock, 7=Retired",
+            "example": "1"
+          },
+          "substatus": {
+            "type": "string",
+            "description": "Substatus of the asset",
+            "example": "available"
+          },
+          "purchase_date": {
+            "type": "string",
+            "format": "date",
+            "description": "Purchase date",
+            "example": "2023-01-15"
+          },
+          "warranty_expiration": {
+            "type": "string",
+            "format": "date",
+            "description": "Warranty expiration date",
+            "example": "2026-01-15"
+          },
+          "cost": {
+            "type": "string",
+            "description": "Asset cost",
+            "example": "1200.00"
+          },
+          "sys_created_on": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Creation timestamp",
+            "example": "2023-01-15T10:30:00"
+          },
+          "sys_updated_on": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last update timestamp",
+            "example": "2023-06-20T14:22:00"
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/table/alm_asset": {
+      "get": {
+        "summary": "Query assets",
+        "description": "Retrieve assets from ServiceNow based on query parameters and filters\n\nParameters:\n- sysparm_query (optional): Encoded query string for filtering results. Examples:\n  - By asset tag: asset_tag=P1000234\n  - By assigned user: assigned_to.name=John Doe\n  - By model: model.display_name=Dell Latitude\n  - By install status: install_status=1 (1=In use, 6=In stock, 7=Retired)\n  - Combined: install_status=1^assigned_to.name=John Doe\n\n- sysparm_limit (optional): Maximum number of records to return\n- sysparm_offset (optional): Number of records to skip for pagination\n- sysparm_fields (optional): Comma-separated list of fields to return.\n  CRITICAL: Always include sys_id field - it's required for follow-up queries.\n\n- sysparm_display_value (optional): Return display values instead of actual values",
+        "operationId": "queryAssets",
+        "parameters": [
+          {
+            "name": "sysparm_query",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Encoded query string for filtering",
+            "example": "install_status=1"
+          },
+          {
+            "name": "sysparm_limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Maximum number of records to return",
+            "example": 50
+          },
+          {
+            "name": "sysparm_offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Number of records to skip for pagination",
+            "example": 0
+          },
+          {
+            "name": "sysparm_fields",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated list of fields to return",
+            "example": "sys_id,asset_tag,display_name,assigned_to,install_status"
+          },
+          {
+            "name": "sysparm_display_value",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            },
+            "description": "Return display values instead of sys_ids",
+            "example": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Assets retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "result": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Asset"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing authentication token"
+          },
+          "400": {
+            "description": "Bad Request - Invalid query parameters"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/table/alm_asset/{sys_id}": {
+      "get": {
+        "summary": "Get asset details",
+        "description": "Retrieve details of a specific asset.\n\nCRITICAL: This operation requires the sys_id (NOT the asset tag).\n- sys_id is a unique identifier like \"9d385017c611228701d22104cc95c371\"\n- Asset tag is like \"P1000234\"\n\nWhen user asks about an asset by tag:\n1. First use queryAssets with sysparm_query=asset_tag=P1000234\n2. Get the sys_id from the result\n3. Then call getAssetDetails with that sys_id\n\nParameters:\n- sys_id (required): The sys_id of the asset\n- sysparm_fields (optional): Comma-separated list of fields to return\n- sysparm_display_value (optional): Return display values",
+        "operationId": "getAssetDetails",
+        "parameters": [
+          {
+            "name": "sys_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The unique sys_id of the asset",
+            "example": "9d385017c611228701d22104cc95c371"
+          },
+          {
+            "name": "sysparm_fields",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated list of fields to return",
+            "example": "sys_id,asset_tag,display_name,model,serial_number,assigned_to,location,install_status"
+          },
+          {
+            "name": "sysparm_display_value",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            },
+            "description": "Return display values instead of sys_ids",
+            "example": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Asset details retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "result": {
+                      "$ref": "#/components/schemas/Asset"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Asset not found"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    }
+  }
+}

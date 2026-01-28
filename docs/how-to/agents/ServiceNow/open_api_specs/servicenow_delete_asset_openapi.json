@@ -1,0 +1,73 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "ServiceNow Asset Deletion API",
+    "description": "ServiceNow REST API for deleting assets",
+    "version": "1.0.0",
+    "contact": {
+      "name": "ServiceNow API Support",
+      "url": "https://developer.servicenow.com"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://dev222288.service-now.com/api/now",
+      "description": "ServiceNow Instance"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "OAuth 2.0 Bearer Token authentication. Obtain token via ServiceNow OAuth endpoint using Resource Owner Password Credentials grant."
+      }
+    }
+  },
+  "paths": {
+    "/table/alm_asset/{sys_id}": {
+      "delete": {
+        "summary": "Delete asset",
+        "description": "Delete an asset from ServiceNow\n\n⚠️ CRITICAL: This operation requires the sys_id (NOT the asset tag) ⚠️\n\nThis is a DESTRUCTIVE operation that permanently removes the asset record.\n\n- sys_id is a unique identifier like \"32ac0eaec326361067d91a2ed40131a7\"\n- Asset tag is like \"P1000234\"\n\nREQUIRED EXECUTION PATTERN:\n\nWhen user asks to delete asset by tag (e.g., \"Delete asset P1000234\"):\n\nCALL 1 - Query to Get sys_id:\n1. Call queryAssets(sysparm_query=\"asset_tag=P1000234\", sysparm_fields=\"sys_id,asset_tag,display_name,install_status\")\n2. Extract sys_id from result\n3. Verify exactly 1 result returned\n4. OPTIONAL: Display asset details to user for confirmation before deletion\n\nCALL 2 - Delete with Retrieved sys_id:\n1. Call deleteAsset(sys_id=\"32ac0eaec326361067d91a2ed40131a7\")\n2. This will permanently delete the asset\n\nBest Practices:\n- Always confirm with user before deleting\n- Show asset details (tag, name, assigned user) before deletion\n- Consider retiring assets (install_status=7) instead of deleting\n- Deletion is permanent and cannot be undone\n- Check if asset has related records (CIs, contracts) that may be affected\n\nPermissions:\n- User must have delete rights on alm_asset table\n- Some organizations restrict asset deletion for compliance/audit reasons",
+        "operationId": "deleteAsset",
+        "parameters": [
+          {
+            "name": "sys_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The unique sys_id of the asset to delete (obtain via queryAssets first)",
+            "example": "32ac0eaec326361067d91a2ed40131a7"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Asset deleted successfully - No content returned"
+          },
+          "404": {
+            "description": "Asset not found - Invalid sys_id or already deleted"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing authentication token"
+          },
+          "403": {
+            "description": "Forbidden - User lacks delete permissions on alm_asset table"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    }
+  }
+}
