@@ -1,6 +1,535 @@
 <!-- BEGIN release_notes.md BLOCK -->
 # Feature Release
 
+### **(v0.237.005)**
+
+#### Bug Fixes
+
+*   **Retention Policy Field Name Fix**
+    *   Fixed retention policy to use the correct field name `last_updated` instead of the non-existent `last_activity_at` field.
+    *   **Root Cause**: The retention policy query was looking for `last_activity_at` field, but all conversation schemas (legacy and current) use `last_updated` to track the conversation's last modification time.
+    *   **Impact**: After the v0.237.004 fix, NO conversations were being deleted because the query required a field that doesn't exist on any conversation document.
+    *   **Schema Support**: Now correctly supports all 3 conversation schemas:
+        *   Schema 1 (legacy): Messages embedded in conversation document with `last_updated`
+        *   Schema 2 (middle): Messages in separate container with `last_updated`
+        *   Schema 3 (current): Messages with threading metadata with `last_updated`
+    *   **Solution**: Changed SQL query to use `last_updated` field which exists on all conversation documents.
+    *   (Ref: retention policy execution, conversation deletion, `delete_aged_conversations()`, `last_updated` field)
+
+### **(v0.237.004)**
+
+#### Bug Fixes
+
+*   **Critical Retention Policy Deletion Fix**
+    *   Fixed a critical bug where conversations with null/undefined `last_activity_at` were being deleted regardless of their actual age.
+    *   **Root Cause**: The SQL query logic treated conversations with missing `last_activity_at` field as "old" and deleted them, even if they were created moments ago.
+    *   **Impact**: Brand new conversations that hadn't had their `last_activity_at` field populated were incorrectly deleted when retention policy ran.
+    *   **Solution**: Changed query to only delete conversations that have a valid, non-null `last_activity_at` that is older than the configured retention period. Conversations with null/undefined `last_activity_at` are now skipped.
+    *   (Ref: retention policy execution, conversation deletion, `delete_aged_conversations()`)
+
+*   **Public Workspace Retention Error Fix**
+    *   Fixed error "name 'cosmos_public_conversations_container' is not defined" when executing retention policy for public workspaces.
+    *   **Root Cause**: The code attempted to process conversations for public workspaces, but public workspaces don't have a separate conversations container—only documents and prompts.
+    *   **Solution**: Removed conversation processing for public workspaces since they only support document retention.
+    *   (Ref: public workspace retention, `process_public_retention()`)
+
+### **(v0.237.003)**
+
+#### New Features
+
+*   **Extended Retention Policy Timeline Options**
+    *   Added additional granular retention period options for conversations and documents across all workspace types.
+    *   **New Options**: 2 days, 3 days, 4 days, 6 days, 7 days (1 week), and 14 days (2 weeks).
+    *   **Full Option Set**: 1, 2, 3, 4, 5, 6, 7 (1 week), 10, 14 (2 weeks), 21 (3 weeks), 30, 60, 90 (3 months), 180 (6 months), 365 (1 year), 730 (2 years) days.
+    *   **Scope**: Available in Admin Settings (organization defaults), Profile page (personal settings), and Control Center (group/public workspace management).
+    *   **Files Modified**: `admin_settings.html`, `profile.html`, `control_center.html`.
+    *   (Ref: retention policy configuration, workspace retention settings, granular time periods)
+
+#### Bug Fixes
+
+*   **Custom Logo Not Displaying Across App Fix**
+    *   Fixed issue where custom logos uploaded via Admin Settings would only display on the admin page but not on other pages (chat, sidebar, landing page).
+    *   **Root Cause**: The `sanitize_settings_for_user()` function was stripping `custom_logo_base64`, `custom_logo_dark_base64`, and `custom_favicon_base64` keys entirely because they contained "base64" (a sensitive term filter), preventing templates from detecting logo existence.
+    *   **Solution**: Modified sanitization to add boolean flags for logo/favicon existence after filtering, allowing templates to check if logos exist without exposing actual base64 data.
+    *   **Security**: Actual base64 data remains hidden from frontend; only True/False boolean values are exposed.
+    *   **Files Modified**: `functions_settings.py` (`sanitize_settings_for_user()` function).
+    *   (Ref: logo display, settings sanitization, template conditionals)
+
+### **(v0.237.001)**
+
+#### New Features
+
+*   **Retention Policy Defaults**
+    *   Admin-configurable organization-wide default retention policies for conversations and documents across all workspace types.
+    *   **Organization Defaults**: Set default retention periods (1 day to 10 years, or "Don't delete") separately for personal, group, and public workspaces.
+    *   **User Choice**: Users see "Using organization default (X days)" option and can override with custom settings or revert to org default.
+    *   **Conditional Display**: Default retention settings only appear in Admin Settings when the corresponding workspace type is enabled.
+    *   **Force Push Feature**: Administrators can push organization defaults to all workspaces, overriding any custom retention policies users have set.
+    *   **Settings Auto-Save**: Force push automatically saves pending settings changes before executing to ensure current values are pushed.
+    *   **Activity Logging**: Force push actions are logged to `activity_logs` container for audit purposes with admin info, affected scopes, and results summary.
+    *   **API Endpoints**: New `/api/retention-policy/defaults/<workspace_type>` (GET) and `/api/admin/retention-policy/force-push` (POST) endpoints.
+    *   **Files Modified**: `functions_settings.py`, `admin_settings.html`, `route_frontend_admin_settings.py`, `route_backend_retention_policy.py`, `functions_retention_policy.py`, `functions_activity_logging.py`, `profile.html`, `control_center.html`, `workspace-manager.js`.
+    *   (Ref: Default retention settings, Force Push modal, activity logging, retention policy execution)
+
+*   **Private Networking Support**
+    *   Comprehensive private networking support for SimpleChat deployments via Azure Developer CLI (AZD) and Bicep infrastructure-as-code.
+    *   **Network Isolation**: Private endpoints for all Azure PaaS services (Cosmos DB, Azure OpenAI, AI Search, Storage, Key Vault, Document Intelligence).
+    *   **VNet Integration**: Full virtual network integration for App Service and dependent resources with automated Private DNS zone configuration.
+    *   **AZD Integration**: Seamless deployment via `azd up` with `ENABLE_PRIVATE_NETWORKING=true` environment variable.
+    *   **Post-Deployment Security**: New `postup` hook automatically disables public network access when private networking is enabled.
+    *   **Enhanced Deployment Hooks**: Refactored all deployment hooks in `azure.yaml` with stepwise logging, explicit error handling, and clearer output for troubleshooting.
+    *   **Documentation Updates**: Expanded Bicep README with prerequisites, Azure Government (USGov) considerations, and post-deployment validation steps.
+    *   (Ref: `deployers/azure.yaml`, `deployers/bicep/`, private endpoint configuration, VNet integration)
+
+*   **User Agreement for File Uploads**
+    *   Global admin-configurable agreement that users must accept before uploading files to workspaces.
+    *   **Configuration Options**: Enable/disable toggle, workspace type selection (Personal, Group, Public, Chat), Markdown-formatted agreement text (200-word limit), optional daily acceptance mode.
+    *   **User Experience**: Modal prompt before file uploads with agreement text, "Accept & Upload" or "Cancel" options, daily acceptance tracking to reduce repeat prompts.
+    *   **Activity Logging**: All acceptances logged to activity logs for compliance tracking with timestamp, user, workspace type, and action context.
+    *   **Admin Access**: Settings accessible via Admin Settings → Workspaces tab → User Agreement section, with sidebar navigation link.
+    *   **Files Added**: `user-agreement.js` (frontend module), `route_backend_user_agreement.py` (API endpoints).
+    *   **Files Modified**: `admin_settings.html`, `route_frontend_admin_settings.py`, `base.html`, `_sidebar_nav.html`, `functions_activity_logging.py`, `workspace-documents.js`, `group_workspaces.html`, `public_workspace.js`, `chat-input-actions.js`.
+    *   (Ref: User Agreement modal, file upload workflows, activity logging, admin configuration)
+
+*   **Web Search via Azure AI Foundry Agents**
+    *   Web search capability through Azure AI Foundry agents using Grounding with Bing Search service.
+    *   **Pricing**: $14 per 1,000 transactions (150 transactions/second, 1M transactions/day limit).
+    *   **Admin Consent Flow**: Requires explicit administrator consent before enabling due to data processing considerations outside Azure compliance boundary.
+    *   **Consent Logging**: All consent acceptances are logged to activity logs for compliance and audit purposes.
+    *   **Setup Guide Modal**: Comprehensive in-app configuration guide with step-by-step instructions for creating the agent, configuring Bing grounding, setting result count to 10, and recommended agent instructions.
+    *   **User Data Notice**: Admin-configurable notification banner that appears when users activate web search, informing them that their message will be sent to Microsoft Bing. Customizable notice text, dismissible per session.
+    *   **Graceful Error Handling**: When web search fails, the system informs users rather than answering from outdated training data.
+    *   **Seamless Integration**: Web search results automatically integrated into AI responses when enabled.
+    *   **Settings**: `enable_web_search` toggle, `web_search_consent_accepted` tracking, `enable_web_search_user_notice` toggle, and `web_search_user_notice_text` customization in admin settings.
+    *   **Files Added**: `_web_search_foundry_info.html` (setup guide modal).
+    *   **Files Modified**: `route_frontend_admin_settings.py`, `route_backend_chats.py`, `functions_activity_logging.py`, `admin_settings.html`, `chats.html`, `chat-input-actions.js`, `functions_settings.py`.
+    *   (Ref: Grounding with Bing Search, Azure AI Foundry, consent workflow, activity logging, pricing, user transparency)
+
+*   **Conversation Deep Linking**
+    *   Direct URL links to specific conversations via query parameters for sharing and bookmarking.
+    *   **URL Parameters**: Supports both `conversationId` and `conversation_id` query parameters.
+    *   **Automatic URL Updates**: Current conversation ID automatically added to URL when selecting conversations.
+    *   **Browser Integration**: Uses `history.replaceState()` for seamless URL updates without new history entries.
+    *   **Error Handling**: Graceful handling of invalid or inaccessible conversation IDs with toast notifications.
+    *   **Files Modified**: `chat-onload.js`, `chat-conversations.js`.
+    *   (Ref: deep linking, URL parameters, conversation navigation, shareability)
+
+*   **Plugin Authentication Type Constraints**
+    *   Per-plugin-type authentication method restrictions for better security and API compatibility.
+    *   **Schema-Based Defaults**: Falls back to global `AuthType` enum from `plugin.schema.json`.
+    *   **Definition File Overrides**: Plugin-specific `.definition.json` files can restrict available auth types.
+    *   **API Endpoint**: New `/api/plugins/<plugin_type>/auth-types` endpoint returns allowed auth types and source.
+    *   **Frontend Integration**: UI can query allowed auth types to display only valid options.
+    *   **Files Modified**: `route_backend_plugins.py`.
+    *   (Ref: plugin authentication, auth type constraints, OpenAPI plugins, security)
+    
+#### Bug Fixes
+
+*   **Control Center Chart Date Labels Fix**
+    *   Fixed activity trends chart date labels to parse dates in local time instead of UTC.
+    *   **Root Cause**: JavaScript `new Date()` was parsing date strings as UTC, causing labels to display previous day in western timezones.
+    *   **Solution**: Parse date components explicitly and construct Date objects in local timezone.
+    *   **Impact**: Chart x-axis labels now correctly show the intended dates regardless of user timezone.
+    *   **Files Modified**: `control_center.html` (Chart.js date parsing logic).
+    *   (Ref: Chart.js, date parsing, timezone handling, activity trends)
+
+*   **Sovereign Cloud Cognitive Services Scope Fix**
+    *   Fixed hardcoded commercial Azure cognitive services scope references that prevented authentication in Azure Government (MAG) and custom cloud environments.
+    *   **Root Cause**: `chat_stream_api` and `smart_http_plugin` used hardcoded commercial cognitive services scope URL instead of configurable value from `config.py`.
+    *   **Solution**: Replaced hardcoded scope with `AZURE_OPENAI_TOKEN_SCOPE` environment variable, dynamically resolved based on cloud environment.
+    *   **Impact**: Streaming chat and Smart HTTP Plugin now work correctly in Azure Government, China, and custom cloud deployments.
+    *   **Related Issue**: [#616](https://github.com/microsoft/simplechat/issues/616)
+    *   (Ref: `chat_stream_api`, `smart_http_plugin`, sovereign cloud authentication, MAG support)
+
+*   **User Search Toast and Inline Messages Fix**
+    *   Updated `searchUsers()` function to use inline and toast messages instead of browser alert pop-ups.
+    *   **Improvement**: Search feedback (empty search, no users found, errors) now displays as inline messages in the search results area.
+    *   **Error Handling**: Errors display both inline message and toast notification for visibility.
+    *   **Benefits**: Non-disruptive UX, contextual feedback, consistency with application patterns.
+    *   **Related PR**: [#608](https://github.com/microsoft/simplechat/pull/608#discussion_r2701900020)
+    *   (Ref: group management, user search, toast notifications, UX improvement)
+
+### **(v0.235.025)**
+
+#### Bug Fixes
+
+*   **Retention Policy Document Deletion Fix**
+    *   Fixed critical bug where retention policy execution failed when attempting to delete aged documents, while conversation deletion worked correctly.
+    *   **Root Cause 1**: Documents use `last_updated` field, but query was looking for `last_activity_at` (used by conversations).
+    *   **Root Cause 2**: Date format mismatch - documents store `YYYY-MM-DDTHH:MM:SSZ` but query used Python's `.isoformat()` with `+00:00` suffix.
+    *   **Root Cause 3**: Duplicate column in SELECT clause when `partition_field='user_id'` caused query errors.
+    *   **Root Cause 4**: Activity logging called with incorrect `deletion_reason` parameter instead of `additional_context`.
+    *   **Files Modified**: `functions_retention_policy.py` (query field names, date format, SELECT clause, activity logging).
+    *   (Ref: `delete_aged_documents()`, retention policy execution, Cosmos DB queries)
+
+*   **Retention Policy Scheduler Fix**
+    *   Fixed automated retention policy scheduler not executing at the scheduled time.
+    *   **Root Cause 1**: Hour-matching approach was unreliable - only ran if check happened exactly during the execution hour (e.g., 2 AM), but 1-hour sleep intervals could miss the entire window.
+    *   **Root Cause 2**: Check interval too long (1 hour) meant poor responsiveness and high probability of missing scheduled time.
+    *   **Root Cause 3**: Code ignored the stored `retention_policy_next_run` timestamp, instead relying solely on hour matching.
+    *   **Solution**: Now uses `retention_policy_next_run` timestamp for comparison, reduced check interval from 1 hour to 5 minutes, added fallback logic for missed executions.
+    *   **Files Modified**: `app.py` (`check_retention_policy()` background task).
+    *   (Ref: retention policy scheduler, background task, scheduled execution)
+
+### **(v0.235.012)**
+
+#### Bug Fixes
+
+*   **Control Center Access Control Logic Fix**
+    *   Fixed access control discrepancy where users with `ControlCenterAdmin` role were incorrectly granted access when the role requirement setting was disabled.
+    *   **Correct Behavior**: When `require_member_of_control_center_admin` is DISABLED (default), only the regular `Admin` role grants access. The `ControlCenterAdmin` role is only checked when the setting is ENABLED.
+    *   **Files Modified**: `functions_authentication.py` (decorator logic), `route_frontend_control_center.py` (frontend access computation), `_sidebar_nav.html` and `_top_nav.html` (menu visibility).
+    *   (Ref: `control_center_required` decorator, role-based access control)
+
+*   **Disable Group Creation Setting Fix**
+    *   Fixed issue where "Disable Group Creation" setting was not being saved from Admin Settings or Control Center pages.
+    *   **Root Cause 1**: Form field name mismatch - HTML used `disable_group_creation` but backend expected `enable_group_creation`.
+    *   **Root Cause 2**: Missing onclick handler on Control Center's "Save Settings" button.
+    *   **Files Modified**: `route_frontend_admin_settings.py` (form field reading), `control_center.html` (button handler).
+    *   (Ref: group creation permissions, admin settings form handling)
+
+### **(v0.235.003)**
+
+#### New Features
+
+*   **Approval Workflow System**
+    *   Comprehensive approval process for sensitive Control Center operations requiring review and approval before execution.
+    *   **Protected Operations**: Take ownership, transfer ownership, delete documents, and delete group operations now require approval.
+    *   **Approval Features**: Documented justification, review process by group owners/admins, complete audit trail, auto-expiration after 3 days, notification integration.
+    *   **Database**: New `approvals` container with TTL-based expiration.
+    *   (Ref: `route_backend_control_center.py`, `route_frontend_control_center.py`, `control_center.html`, approval workflow UI)
+
+*   **Agent Streaming Support**
+    *   Real-time streaming support for Semantic Kernel agents with incremental response display.
+    *   **Features**: Agent responses stream word-by-word, plugin citation capture during streaming, async generator pattern for efficient streaming, proper async/await handling.
+    *   **User Experience**: Matches existing chat streaming experience, see agent thinking in real-time, immediate visual feedback.
+    *   (Ref: `route_backend_chats.py`, agent streaming implementation, Semantic Kernel integration)
+
+*   **Control Center**
+    *   Comprehensive administrative interface for data and workspace management.
+    *   **User Management**: View all users with search/filtering, grant/deny access with time-based restrictions, manage file upload permissions, monitor user engagement and storage.
+    *   **Activity Trends**: Visual analytics with Chart.js showing daily activity metrics (chats, uploads, logins, document actions) across 7/30/90-day periods.
+    *   **Group Management**: Approval workflow integration, group status management, member activity monitoring.
+    *   **Dashboard**: Real-time statistics, key alerts, activity insights.
+    *   (Ref: `route_frontend_control_center.py`, `route_backend_control_center.py`, `control_center.html`)
+
+*   **Control Center Application Roles**
+    *   Added two new application roles for finer-grained Control Center access control.
+    *   **Control Center Admin**: Full administrative access to Control Center functionality including user management, administrative operations, and workflow approvals.
+    *   **Control Center Dashboard Reader**: Read-only access to Control Center dashboards and metrics for monitoring and auditing purposes.
+    *   **Use Cases**: IT operations monitoring, delegated administration, compliance auditing with appropriate access levels.
+    *   **Files Modified**: `appRegistrationRoles.json` (new role definitions).
+    *   (Ref: Entra ID app roles, role-based access control, Control Center permissions)
+
+*   **Message Threading System**
+    *   Linked-list threading system establishing proper message relationships throughout conversations.
+    *   **Thread Fields**: `thread_id` (unique identifier), `previous_thread_id` (links to previous message), `active_thread` (thread active status), `thread_attempt` (retry tracking).
+    *   **Benefits**: Proper message ordering, file upload tracking, image generation association, legacy message support.
+    *   **Message Flow**: Links user messages to AI responses, system augmentations, file uploads, and image generations.
+    *   (Ref: `route_backend_chats.py`, message schema updates, thread chain implementation)
+
+*   **User Profile Dashboard**
+    *   Complete redesign into modern dashboard with personalized analytics and visualizations.
+    *   **Metrics Display**: Login statistics, chat activity, document usage, storage consumption, token tracking.
+    *   **Visualizations**: Chart.js-powered activity trends, 30-day time-series data, interactive charts.
+    *   **Features**: Cached metrics for performance, real-time data aggregation, responsive design.
+    *   (Ref: `route_frontend_profile.py`, `profile.html`, Chart.js integration)
+
+*   **Speech-to-Text Chat Input**
+    *   Voice recording up to 90 seconds directly in chat interface with Azure Speech Service transcription.
+    *   **Features**: Visual waveform display during recording, 90-second countdown timer, review before send, cancel anytime, responsive design.
+    *   **Browser Support**: Chrome 49+, Edge 79+, Firefox 25+, Safari 14.1+.
+    *   **Integration**: Uses existing Azure Speech Service configuration, MediaRecorder API, Web Audio API.
+    *   (Ref: `route_backend_settings.py`, `chat-speech-to-text.js`, Speech Service integration)
+
+*   **Text-to-Speech AI Responses**
+    *   AI messages read aloud using Azure Speech Service with high-quality DragonHD voices.
+    *   **Features**: 27 DragonHD Latest Neural Voices across languages, voice preview in profile, customizable speech speed (0.5x-2.0x), play/pause/stop controls.
+    *   **Playback**: Inline "Listen" button per message, visual feedback during playback, auto-play mode option, prevents multiple simultaneous playbacks.
+    *   **Integration**: Automatically disables streaming when auto-play enabled, per-user profile settings.
+    *   (Ref: `route_backend_tts.py`, `chat-tts.js`, Azure Speech Service)
+
+*   **Message Edit Functionality**
+    *   Comprehensive message editing system allowing users to modify their sent messages and regenerate AI responses.
+    *   **Features**: Modal interface for editing message text, preserves conversation context and settings, automatically regenerates AI response with edited content, maintains message metadata and threading.
+    *   **User Experience**: Edit button on user messages, inline editing workflow, real-time validation, preserves agent/model selection.
+    *   **Integration**: Works with `/api/message/<id>/edit` endpoint, updates conversation history, maintains thread relationships.
+    *   (Ref: `chat-edit.js`, `route_backend_chats.py`, message edit modal)
+
+*   **Message Delete Capability**
+    *   One-click message deletion with proper conversation thread cleanup and metadata updates.
+    *   **Features**: Delete button on user messages, ownership validation (author-only), updates message threading chains, removes associated metadata.
+    *   **Safety**: Confirmation prompt, author verification, cascading thread updates, preserves conversation integrity.
+    *   **Integration**: API endpoint for message deletion, updates conversation message count, maintains thread consistency.
+    *   (Ref: `chat-messages.js`, message deletion handlers, thread management)
+
+*   **Message Retry/Regenerate System**
+    *   Powerful message regeneration system allowing users to retry AI responses with different models, agents, or settings.
+    *   **Features**: Modal interface with agent/model selection, adjustable reasoning effort for o-series models, preserves original user message, generates new AI response with selected configuration.
+    *   **Configuration Options**: Switch between agents, change model deployments, adjust reasoning effort (low/medium/high), modify generation parameters.
+    *   **User Experience**: Retry button on AI messages, dropdown selection for agents/models, real-time configuration updates.
+    *   (Ref: `chat-retry.js`, retry modal interface, agent/model switching)
+
+*   **Message Masking System**
+    *   Privacy-focused message masking capability for hiding sensitive information with visual overlays and PII protection.
+    *   **Features**: Visual mask overlay on message content, `masked_ranges` metadata tracking character positions, mask/unmask toggle buttons, preserves original content while displaying masked state.
+    *   **Privacy Protection**: Masks sensitive data in UI, tracks masked regions in database, supports partial message masking, reversible masking for authorized users.
+    *   **Integration**: `/api/message/<id>/mask` endpoint, `masked` and `masked_ranges` metadata fields, visual indicators (bi-front/bi-back icons).
+    *   **User Experience**: Mask button on messages, visual overlay showing masked content, toggle between masked and unmasked states.
+    *   (Ref: `chat-messages.js`, `route_backend_chats.py`, masked content handling, `applyMaskedState()` function)
+
+*   **Conversation Pinning**
+    *   Pin important conversations to the top of the conversation list for quick access and improved organization.
+    *   **Features**: Single conversation pinning, bulk pin operations for multiple conversations, persistent pin state in database, visual pin indicators in sidebar.
+    *   **Operations**: Pin/unpin toggle, bulk selection interface, priority sorting (pinned conversations appear first), `is_pinned` metadata field.
+    *   **API Endpoints**: `/api/conversations/<id>/pin` (POST), `/api/conversations/bulk-pin` (POST).
+    *   **User Experience**: Pin icon in conversation list, bulk selection checkboxes, immediate visual feedback.
+    *   (Ref: `chat-conversations.js`, `toggleConversationPin()`, `bulkPinConversations()`, conversation state management)
+
+*   **Conversation Hiding**
+    *   Hide conversations from the main list to declutter the sidebar without permanent deletion.
+    *   **Features**: Single conversation hiding, bulk hide operations, toggle visibility without data loss, `is_hidden` metadata field for state persistence.
+    *   **Benefits**: Declutter conversation list, temporary archiving without deletion, reversible operation, maintains conversation data.
+    *   **API Endpoints**: `/api/conversations/<id>/hide` (POST), `/api/conversations/bulk-hide` (POST).
+    *   **User Experience**: Hide button in conversation list, bulk selection interface, show hidden conversations toggle.
+    *   (Ref: `chat-conversations.js`, `toggleConversationHide()`, `bulkHideConversations()`, visibility management)
+
+*   **Quick Search for Conversations**
+    *   Real-time client-side conversation filtering for instant search results without server roundtrips.
+    *   **Features**: Real-time text filtering, searches conversation titles, client-side performance, keyboard shortcut support (Ctrl+K).
+    *   **Search Scope**: Filters visible conversations in current workspace, highlights matching conversations, instant results as you type.
+    *   **User Experience**: Search input in sidebar header, keyboard shortcut, clear button, responsive filtering.
+    *   (Ref: `chat-conversations.js`, `toggleQuickSearch()`, client-side filtering)
+
+*   **Advanced Search Modal**
+    *   Comprehensive search functionality with filters, pagination, and search history for finding conversations across all workspaces.
+    *   **Features**: Full-text search across conversation content, classification filters, date range selection, pagination support, search history tracking.
+    *   **Search Capabilities**: Search conversation titles and content, filter by workspace scope, filter by date range, view search history, export results.
+    *   **User Experience**: Modal interface with filter controls, results pagination, search history dropdown, results summary display.
+    *   **Integration**: Server-side search API, search history persistence, results caching.
+    *   (Ref: `chat-search-modal.js`, `openAdvancedSearchModal()`, `performAdvancedSearch()`, search history management)
+
+*   **Automated Retention Policy System**
+    *   Scheduled automatic deletion of aged conversations and documents based on configurable retention policies.
+    *   **Features**: User-configurable retention periods, separate policies for conversations and documents, scheduled execution via daemon thread, exemption support for protected conversations/documents.
+    *   **Configuration Options**: Retention periods by workspace scope (personal/group/public), auto-deletion scheduling (daily execution), user opt-in/opt-out controls, admin override capabilities.
+    *   **Scopes**: Personal workspace retention, group workspace retention, public workspace retention, per-user policy settings.
+    *   **Safety Features**: User exemption lists, dry-run mode for testing, deletion audit logging, grace period before deletion.
+    *   **Integration**: Background daemon thread, admin configuration interface, user profile settings, Cosmos DB TTL-based cleanup.
+    *   (Ref: `functions_retention_policy.py`, `execute_retention_policy()`, scheduled execution, user settings integration)
+
+*   **Embedding Token Tracking**
+    *   Comprehensive token tracking for document embedding generation in personal workspaces.
+    *   **Tracking**: Captures token usage per document chunk, accumulates total tokens, stores embedding tokens and model deployment name in document metadata.
+    *   **Benefits**: Embedding cost tracking, usage pattern analysis, document-level token metrics.
+    *   (Ref: `functions_content.py`, `functions_documents.py`, embedding token capture)
+
+*   **Search Result Caching**
+    *   Ensures consistent search results across identical queries with Cosmos DB-based distributed caching.
+    *   **Features**: Document set fingerprinting for cache invalidation, score normalization across indexes, 5-minute TTL, multi-instance deployment support.
+    *   **Architecture**: Cosmos DB `search_cache` container, SHA256 cache keys, automatic expiration, cache sharing across instances.
+    *   **Benefits**: Consistent user experience, reduced Azure AI Search costs, improved performance.
+    *   (Ref: `functions_search.py`, `search_cache` container, fingerprint-based invalidation)
+
+*   **Activity Trends Visualization**
+    *   Interactive Chart.js visualization of daily activity metrics in Control Center.
+    *   **Categories**: Chats, uploads, logins, document actions tracked separately.
+    *   **Time Periods**: 7-day, 30-day, and 90-day views.
+    *   **Data Sources**: Real data from Cosmos DB containers with sample data fallback.
+    *   (Ref: `route_backend_control_center.py`, `control_center.html`, Chart.js implementation)
+
+*   **Group Activity Timeline**
+    *   Comprehensive real-time view of all group workspace activities.
+    *   **Activity Types**: Document creation/deletion/updates, member additions/removals, status changes, conversations.
+    *   **Features**: Icon-based activity display, timestamp tracking, member attribution, detailed metadata.
+    *   **Benefits**: Group usage monitoring, audit trail, compliance tracking.
+    *   (Ref: `route_frontend_groups.py`, activity timeline UI, activity logs integration)
+
+*   **Dynamic OpenAPI Schema Generation**
+    *   Dynamic schema generation reducing hardcoded OpenAPI definitions.
+    *   **Features**: Analyzes Flask routes to generate schemas, maps routes to appropriate references, minimal required schemas for common patterns.
+    *   **Benefits**: Reduced maintenance overhead, automatic schema updates, comprehensive API documentation.
+    *   (Ref: `route_external_openapi_spec.py`, dynamic schema functions)
+
+*   **Enhanced User Management**
+    *   Comprehensive user activity metrics and analytics in Control Center.
+    *   **Profile Features**: Profile image display with Base64 support, chat metrics (conversations, messages, 3-month activity), document metrics (count, storage, AI search size).
+    *   **Analytics**: Last chat activity timestamps, storage estimations, feature status indicators.
+    *   (Ref: `route_backend_control_center.py`, enhanced user metrics)
+
+*   **Group Status Management**
+    *   Fine-grained control over group workspace operations through status-based access controls.
+    *   **Status Types**: Active (full functionality), Locked (read-only), Upload Disabled (no new uploads), Inactive (disabled).
+    *   **Features**: Full audit trail logging, operation-level restrictions, compliance support.
+    *   **Use Cases**: Legal holds, storage management, project lifecycle, risk mitigation.
+    *   (Ref: `functions_groups.py`, `route_backend_groups.py`, status enforcement)
+
+*   **Workflow System**
+    *   Document processing workflows including PII analysis and approval workflows.
+    *   **Features**: PDF document display in modals, workflow summary generation, approval routing, activity logging.
+    *   (Ref: `route_frontend_workflow.py`, workflow templates, CSP configuration)
+
+*   **Full Width Chat Support**
+    *   Option to expand chat interface to full browser width for better screen utilization.
+    *   (Ref: `chats.html`, responsive layout updates)
+
+*   **Enhanced Document Metrics**
+    *   Comprehensive document metadata tracking with enhanced analytics.
+    *   (Ref: document metrics implementation across containers)
+
+*   **Group Member Activity Logging**
+    *   Detailed logging when group members are added or removed.
+    *   (Ref: activity logging system, group member operations)
+
+*   **Enable Group Creation Setting**
+    *   Admin toggle to control whether users can create new groups.
+    *   (Ref: admin settings, group creation permissions)
+
+*   **YAML OpenAPI Specification Support**
+    *   Support for YAML format OpenAPI specifications alongside JSON.
+    *   (Ref: OpenAPI plugin system, YAML parsing)
+
+*   **Inline OpenAPI Schema Generation**
+    *   Generate OpenAPI schemas inline during plugin configuration.
+    *   (Ref: plugin configuration UI, schema generation)
+
+*   **Microphone Permission Management**
+    *   Improved handling of browser microphone permissions for speech-to-text.
+    *   (Ref: speech-to-text implementation, browser permissions)
+
+#### Bug Fixes
+
+*   **Agent Streaming Plugin Execution Fix**
+    *   Fixed agent streaming failure when agents execute plugins during streaming.
+    *   **Root Cause**: Event loop conflicts from `loop.run_until_complete(async_gen.__anext__())` pattern breaking async generator protocol.
+    *   **Solution**: Proper async/await pattern with `asyncio.run()` for complete async context.
+    *   **Impact**: Plugins like SmartHttpPlugin now work correctly in streaming mode.
+    *   (Ref: `route_backend_chats.py`, async generator handling, plugin execution)
+
+*   **Search Cache Cosmos DB Migration**
+    *   Migrated search caching from in-memory to Cosmos DB for multi-instance deployment support.
+    *   **Problem**: In-memory cache didn't share across App Service instances causing inconsistent results.
+    *   **Solution**: Cosmos DB `search_cache` container with 5-minute TTL, partition key on `user_id`.
+    *   **Benefits**: Cache sharing across instances, consistent user experience, distributed invalidation.
+    *   (Ref: `functions_search.py`, `search_cache` container, TTL configuration)
+
+*   **Vision Model Parameter Fix**
+    *   Fixed GPT-5 and o-series model failures in vision analysis with "Unsupported parameter: 'max_tokens'" error.
+    *   **Root Cause**: GPT-5 and o-series models require `max_completion_tokens` instead of `max_tokens`.
+    *   **Solution**: Dynamic parameter selection based on model type.
+    *   **Impact**: Vision analysis now works with all model families.
+    *   (Ref: `route_backend_settings.py`, `functions_documents.py`, model-aware parameters)
+
+*   **Group Plugin Global Merge Fix**
+    *   Fixed group workspaces unable to see globally managed actions when merge setting enabled.
+    *   **Root Cause**: `/api/group/plugins` endpoint didn't append global actions.
+    *   **Solution**: Merge global actions into group plugins response with read-only badges.
+    *   **Impact**: Groups can now select and use global actions while protecting them from modification.
+    *   (Ref: `route_backend_groups.py`, global plugin merging)
+
+*   **Workflow Summary Generation O1 API Fix**
+    *   Fixed o1 model failures in workflow summary generation with "Unsupported parameter: 'temperature'" error.
+    *   **Root Cause**: Unconditional application of `temperature` parameter to all models.
+    *   **Solution**: Conditional parameter logic excluding `temperature` for o1 models.
+    *   (Ref: `route_frontend_workflow.py`, model-aware parameter handling)
+
+*   **Validation Utilities Consolidation**
+    *   Consolidated duplicate validation functions across multiple files into centralized module.
+    *   **Duplicated Functions**: `validateGuid()` in 4 locations, `validateEmail()` in 2 locations.
+    *   **Solution**: Created `validation-utils.js` module with `ValidationUtils` namespace.
+    *   **Benefits**: Single source of truth, easier maintenance, consistency.
+    *   (Ref: `validation-utils.js`, code refactoring across control center and workspace files)
+
+*   **Public Workspace Storage Calculation Fix**
+    *   Fixed public workspaces showing 0 bytes storage despite having documents.
+    *   **Root Cause**: Incorrect folder prefix (`public/{workspace_id}/` instead of `{workspace_id}/`).
+    *   **Solution**: Fixed folder prefix, enhanced fallback logic, improved error handling.
+    *   (Ref: `route_backend_control_center.py`, storage calculation logic)
+
+*   **Public Workspace Metrics Caching Consistency Fix**
+    *   Improved consistency in public workspace metrics caching across Control Center views.
+    *   (Ref: metrics caching implementation)
+
+*   **Activity Timeline All Logs Fix**
+    *   Fixed activity timeline to properly display all log types.
+    *   (Ref: activity log filtering)
+
+*   **Activity Trends Field Mapping Fix**
+    *   Corrected field mappings for activity trends data display.
+    *   (Ref: activity trends API, field mapping)
+
+*   **All File Types Embedding Token Tracking Fix**
+    *   Extended embedding token tracking to all file types beyond just text.
+    *   (Ref: `functions_documents.py`, comprehensive token tracking)
+
+*   **PDF Embedding Token Tracking Fix**
+    *   Fixed token tracking specifically for PDF document embeddings.
+    *   (Ref: PDF processing, token capture)
+
+*   **Create Group Button Visibility Fix**
+    *   Fixed group creation button visibility based on admin settings.
+    *   (Ref: UI conditional rendering, permission checks)
+
+*   **File Message Metadata Loading Fix**
+    *   Fixed metadata loading for file-related messages in conversations.
+    *   (Ref: message metadata display, file associations)
+
+*   **Group Agent Metadata Fix**
+    *   Corrected agent metadata display and management in group contexts.
+    *   (Ref: agent configuration, group agent handling)
+
+*   **Group Document Metrics Date Format Fix**
+    *   Fixed date formatting for group document metrics display.
+    *   (Ref: document metrics, date formatting)
+
+*   **Group Notification Context Enhancement**
+    *   Enhanced notification context for group-related activities.
+    *   (Ref: notification system, group context)
+
+*   **Group Status UI Visibility Fix**
+    *   Fixed UI visibility of group status indicators and controls.
+    *   (Ref: group status display, conditional UI rendering)
+
+*   **Group Table Auto-Refresh Fix**
+    *   Fixed automatic refresh of group tables after operations.
+    *   (Ref: table refresh logic, UI updates)
+
+*   **Groups Tab Refresh Fix**
+    *   Fixed refresh behavior on groups management tab.
+    *   (Ref: tab state management, data refresh)
+
+*   **Hidden Conversations Sidebar Click Fix**
+    *   Fixed sidebar click handling for hidden conversations.
+    *   (Ref: sidebar navigation, conversation visibility)
+
+*   **Sidebar Group Badge Fix**
+    *   Fixed group badge display in conversation sidebar.
+    *   (Ref: sidebar UI, badge rendering)
+
+*   **Top Nav Sidebar Overlap Fix**
+    *   Fixed overlapping issues between top navigation and sidebar in certain layouts.
+    *   (Ref: CSS layout, navigation positioning)
+
+*   **Vision Analysis Debug Logging**
+    *   Added comprehensive debug logging for vision analysis operations.
+    *   (Ref: `functions_documents.py`, debug logging)
+
+*   **Workflow PDF Iframe CSP Fix**
+    *   Fixed Content Security Policy for PDF display in workflow iframes.
+    *   (Ref: CSP headers, iframe configuration)
+
+*   **Workflow PDF Viewer Height Fix**
+    *   Fixed height issues in workflow PDF viewer modals.
+    *   (Ref: modal styling, PDF viewer layout)
+
+*   **Workspace Activity Modal Fix**
+    *   Fixed workspace activity modal display and interaction issues.
+    *   (Ref: modal functionality, workspace activity display)
+
+*   **Search Cache Sharing Fix**
+    *   Improved search cache sharing across user contexts.
+    *   (Ref: cache key generation, sharing logic)
+
 ### **(v0.229.063)**
 
 #### Bug Fixes

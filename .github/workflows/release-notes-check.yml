@@ -1,0 +1,205 @@
+name: Release Notes Check
+
+on:
+  pull_request:
+    branches:
+      - Development
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - edited
+
+jobs:
+  check-release-notes:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
+    - name: Get changed files
+      id: changed-files
+      uses: tj-actions/changed-files@v44
+      with:
+        files_yaml: |
+          code:
+            - 'application/single_app/**/*.py'
+            - 'application/single_app/**/*.js'
+            - 'application/single_app/**/*.html'
+            - 'application/single_app/**/*.css'
+          release_notes:
+            - 'docs/explanation/release_notes.md'
+          config:
+            - 'application/single_app/config.py'
+            
+    - name: Check for feature/fix keywords in PR
+      id: check-keywords
+      env:
+        PR_TITLE: ${{ github.event.pull_request.title }}
+        PR_BODY: ${{ github.event.pull_request.body }}
+      run: |
+        echo "🔍 Analyzing PR title and body for feature/fix indicators..."
+        
+        # Convert to lowercase for case-insensitive matching
+        title_lower=$(echo "$PR_TITLE" | tr '[:upper:]' '[:lower:]')
+        body_lower=$(echo "$PR_BODY" | tr '[:upper:]' '[:lower:]')
+        
+        # Check for feature indicators
+        if echo "$title_lower $body_lower" | grep -qE "(feat|feature|add|new|implement|introduce|enhancement|improve)"; then
+          echo "has_feature=true" >> $GITHUB_OUTPUT
+          echo "📦 Feature-related keywords detected"
+        else
+          echo "has_feature=false" >> $GITHUB_OUTPUT
+        fi
+        
+        # Check for fix indicators
+        if echo "$title_lower $body_lower" | grep -qE "(fix|bug|patch|resolve|correct|repair|hotfix|issue)"; then
+          echo "has_fix=true" >> $GITHUB_OUTPUT
+          echo "🐛 Fix-related keywords detected"
+        else
+          echo "has_fix=false" >> $GITHUB_OUTPUT
+        fi
+        
+    - name: Determine if release notes update is required
+      id: require-notes
+      env:
+        CODE_CHANGED: ${{ steps.changed-files.outputs.code_any_changed }}
+        CONFIG_CHANGED: ${{ steps.changed-files.outputs.config_any_changed }}
+        RELEASE_NOTES_CHANGED: ${{ steps.changed-files.outputs.release_notes_any_changed }}
+        HAS_FEATURE: ${{ steps.check-keywords.outputs.has_feature }}
+        HAS_FIX: ${{ steps.check-keywords.outputs.has_fix }}
+      run: |
+        echo ""
+        echo "================================"
+        echo "📋 PR Analysis Summary"
+        echo "================================"
+        echo "Code files changed: $CODE_CHANGED"
+        echo "Config changed: $CONFIG_CHANGED"
+        echo "Release notes updated: $RELEASE_NOTES_CHANGED"
+        echo "Feature keywords found: $HAS_FEATURE"
+        echo "Fix keywords found: $HAS_FIX"
+        echo "================================"
+        echo ""
+        
+        # Determine if this PR likely needs release notes
+        needs_notes="false"
+        reason=""
+        
+        if [[ "$HAS_FEATURE" == "true" ]]; then
+          needs_notes="true"
+          reason="Feature-related keywords detected in PR title/body"
+        elif [[ "$HAS_FIX" == "true" ]]; then
+          needs_notes="true"
+          reason="Fix-related keywords detected in PR title/body"
+        elif [[ "$CODE_CHANGED" == "true" && "$CONFIG_CHANGED" == "true" ]]; then
+          needs_notes="true"
+          reason="Both code and config.py were modified"
+        fi
+        
+        echo "needs_notes=$needs_notes" >> $GITHUB_OUTPUT
+        echo "reason=$reason" >> $GITHUB_OUTPUT
+        
+    - name: Validate release notes update
+      env:
+        CODE_CHANGED: ${{ steps.changed-files.outputs.code_any_changed }}
+        RELEASE_NOTES_CHANGED: ${{ steps.changed-files.outputs.release_notes_any_changed }}
+        NEEDS_NOTES: ${{ steps.require-notes.outputs.needs_notes }}
+        REASON: ${{ steps.require-notes.outputs.reason }}
+        CODE_FILES: ${{ steps.changed-files.outputs.code_all_changed_files }}
+      run: |
+        echo ""
+        
+        if [[ "$NEEDS_NOTES" == "true" && "$RELEASE_NOTES_CHANGED" != "true" ]]; then
+          echo "⚠️ =============================================="
+          echo "⚠️  RELEASE NOTES UPDATE RECOMMENDED"
+          echo "⚠️ =============================================="
+          echo ""
+          echo "📝 Reason: $REASON"
+          echo ""
+          echo "This PR appears to contain changes that should be documented"
+          echo "in the release notes (docs/explanation/release_notes.md)."
+          echo ""
+          echo "📁 Code files changed:"
+          echo "$CODE_FILES" | tr ' ' '\n' | sed 's/^/   - /'
+          echo ""
+          echo "💡 Please consider adding an entry to release_notes.md describing:"
+          echo "   • New features added"
+          echo "   • Bug fixes implemented"  
+          echo "   • Breaking changes (if any)"
+          echo "   • Files modified"
+          echo ""
+          echo "📖 Follow the existing format in release_notes.md"
+          echo ""
+          # Exit with warning (non-zero) to flag the PR but not block it
+          # Change 'exit 0' to 'exit 1' below to make this a hard requirement
+          exit 0
+        elif [[ "$RELEASE_NOTES_CHANGED" == "true" ]]; then
+          echo "✅ Release notes have been updated - great job!"
+        elif [[ "$CODE_CHANGED" != "true" ]]; then
+          echo "ℹ️  No significant code changes detected - release notes update not required."
+        else
+          echo "ℹ️  Changes appear to be minor - release notes update optional."
+        fi
+        
+        echo ""
+        echo "✅ Release notes check completed successfully."
+
+    - name: Post PR comment (when notes needed but missing)
+      if: steps.require-notes.outputs.needs_notes == 'true' && steps.changed-files.outputs.release_notes_any_changed != 'true'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const reason = '${{ steps.require-notes.outputs.reason }}';
+          
+          // Check if we already commented
+          const { data: comments } = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number
+          });
+          
+          const botComment = comments.find(comment => 
+            comment.user.type === 'Bot' && 
+            comment.body.includes('📋 Release Notes Reminder')
+          );
+          
+          if (!botComment) {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `## 📋 Release Notes Reminder
+          
+          This PR appears to contain changes that should be documented in the release notes.
+          
+          **Reason:** ${reason}
+          
+          ### 📝 Please consider updating:
+          \`docs/explanation/release_notes.md\`
+          
+          ### Template for new features:
+          \`\`\`markdown
+          *   **Feature Name**
+              *   Brief description of the feature.
+              *   **Key Details**: Important implementation notes.
+              *   **Files Modified**: \`file1.py\`, \`file2.js\`.
+              *   (Ref: related components, patterns)
+          \`\`\`
+          
+          ### Template for bug fixes:
+          \`\`\`markdown
+          *   **Bug Fix Title**
+              *   Description of what was fixed.
+              *   **Root Cause**: What caused the issue.
+              *   **Solution**: How it was resolved.
+              *   **Files Modified**: \`file.py\`.
+              *   (Ref: related issue numbers, components)
+          \`\`\`
+          
+          ---
+          *This is an automated reminder. If this PR doesn't require release notes (e.g., internal refactoring, documentation-only changes), you can ignore this message.*`
+            });
+          }

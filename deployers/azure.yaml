@@ -4,68 +4,6 @@ metadata:
 infra:
   provider: bicep
   path: bicep
-hooks:
-  postprovision:
-    posix:
-      shell: sh
-      run: |
-        # Set up variables
-
-        export var_configureApplication=${var_configureApplication}
-        export var_cosmosDb_uri=${var_cosmosDb_uri}
-        export var_subscriptionId=${AZURE_SUBSCRIPTION_ID}
-        export var_rgName=${var_rgName}
-        export var_keyVaultUri=${var_keyVaultUri}
-
-        export var_authenticationType=${var_authenticationType}
-
-        export var_openAIEndpoint=${var_openAIEndpoint}
-        export var_openAIResourceGroup=${var_openAIResourceGroup}
-        export var_openAIGPTModel=${var_openAIGPTModel}
-        export var_openAITextEmbeddingModel=${var_openAITextEmbeddingModel}
-        export var_blobStorageEndpoint=${var_blobStorageEndpoint}
-        export var_contentSafetyEndpoint=${var_contentSafetyEndpoint}
-        export var_searchServiceEndpoint=${var_searchServiceEndpoint}
-        export var_documentIntelligenceServiceEndpoint=${var_documentIntelligenceServiceEndpoint}
-        export var_videoIndexerName=${var_videoIndexerName}
-        export var_deploymentLocation=${var_deploymentLocation}
-        export var_videoIndexerAccountId=${var_videoIndexerAccountId}
-        export var_speechServiceEndpoint=${var_speechServiceEndpoint}
-
-        # Execute post-configuration script if enabled
-        if [ "${var_configureApplication}" = "true" ]; then
-            echo "Grant permissions to CosmosDB for post deployment steps..."
-            bash ./bicep/cosmosDb-postDeployPerms.sh
-            echo "Running post-deployment configuration..."
-            python3 -m pip install --user -r ./bicep/requirements.txt
-            python3 ./bicep/postconfig.py
-            echo "Post-deployment configuration completed."
-            echo "Restarting web service to apply new settings..."
-            az webapp restart --name ${var_webService} --resource-group ${var_rgName}
-            echo "Web service restarted."
-        else
-            echo "Skipping post-deployment configuration (var_configureApplication is not true)"
-        fi
-
-  predeploy:
-    posix:
-      shell: sh
-      run: |
-        # Build and push Docker image to ACR
-        cd ..
-        timestamp="$(date +"%Y%m%d-%H%M%S")"
-        echo "Stopping web service prior to deployment..."
-        az webapp stop --name ${var_webService} --resource-group ${var_rgName}
-        echo "Building Docker image..."
-        docker build -f application/single_app/Dockerfile -t ${var_containerRegistry}/${var_imageName}:${timestamp} .
-        docker tag ${var_containerRegistry}/${var_imageName}:${timestamp} ${var_containerRegistry}/${var_imageName}:latest
-        echo "Logging in to ACR..."
-        az acr login --name ${var_acrName}
-        echo "Pushing image to ACR..."
-        docker push ${var_containerRegistry}/${var_imageName}:latest
-        docker push ${var_containerRegistry}/${var_imageName}:${timestamp}
-        echo "Restarting web service..."
-        az webapp start --name ${var_webService} --resource-group ${var_rgName}
 services:
   web:
     project: ../application/single_app
@@ -74,3 +12,258 @@ services:
     docker:
       context: ../../
       dockerfile: application/single_app/Dockerfile
+hooks:
+  postprovision:
+  # this is run after the infrastructure has been provisioned but before services are deployed.
+  # primary use is to configure application settings and permissions
+    posix:
+      shell: sh
+      run: |
+        set -e
+        
+        echo "========================================"
+        echo "POST-PROVISION: Starting configuration"
+        echo "========================================"
+        
+        # Set up variables
+        export var_acrName=${var_acrname}
+        export var_configureApplication=${var_configureApplication}
+        export var_cosmosDb_uri=${var_cosmosDb_uri}
+        export var_cosmosDb_accountName=${var_cosmosDb_accountName}
+        export var_subscriptionId=${AZURE_SUBSCRIPTION_ID}
+        export var_rgName=${var_rgName}
+        export var_keyVaultUri=${var_keyVaultUri}
+        export var_keyVaultName=${var_keyVaultName}
+        export var_authenticationType=${var_authenticationType}
+        export var_openAIEndpoint=${var_openAIEndpoint}
+        export var_openAIResourceGroup=${var_openAIResourceGroup}
+        export var_openAIGPTModel=${var_openAIGPTModel}
+        export var_openAITextEmbeddingModel=${var_openAITextEmbeddingModel}
+        export var_blobStorageEndpoint=${var_blobStorageEndpoint}
+        export var_contentSafetyEndpoint=${var_contentSafetyEndpoint}
+        export var_searchServiceEndpoint=${var_searchServiceEndpoint}
+        export var_documentIntelligenceServiceEndpoint=${var_documentIntelligenceServiceEndpoint}
+        export var_redisCacheHostName=${var_redisCacheHostName}
+        export var_videoIndexerName=${var_videoIndexerName}
+        export var_deploymentLocation=${var_deploymentLocation}
+        export var_videoIndexerAccountId=${var_videoIndexerAccountId}
+        export var_speechServiceEndpoint=${var_speechServiceEndpoint}
+
+        # Execute post-configuration script if enabled
+        if [ "${var_configureApplication}" = "true" ]; then
+            echo ""
+            echo "[1/4] Granting permissions to CosmosDB..."
+            if bash ./bicep/cosmosDb-postDeployPerms.sh; then
+                echo "✓ CosmosDB permissions granted successfully"
+            else
+                echo "✗ ERROR: Failed to grant CosmosDB permissions" >&2
+                exit 1
+            fi
+            
+            echo ""
+            echo "[2/4] Installing Python dependencies..."
+            if python3 -m pip install --user -r ./bicep/requirements.txt > /dev/null 2>&1; then
+                echo "✓ Dependencies installed successfully"
+            else
+                echo "✗ ERROR: Failed to install Python dependencies" >&2
+                exit 1
+            fi
+            
+            echo ""
+            echo "[3/4] Running post-deployment configuration..."
+            if python3 ./bicep/postconfig.py; then
+                echo "✓ Post-deployment configuration completed"
+            else
+                echo "✗ ERROR: Post-deployment configuration failed" >&2
+                exit 1
+            fi
+            
+            echo ""
+            echo "[4/4] Restarting web service to apply settings..."
+            if az webapp restart --name ${var_webService} --resource-group ${var_rgName}; then
+                echo "✓ Web service restarted successfully"
+            else
+                echo "✗ ERROR: Failed to restart web service" >&2
+                exit 1
+            fi
+            
+            echo ""
+            echo "========================================"
+            echo "POST-PROVISION: Completed successfully"
+            echo "========================================"
+        else
+            echo ""
+            echo "ℹ Skipping post-deployment configuration (var_configureApplication is not true)"
+            echo ""
+            echo "========================================"
+            echo "POST-PROVISION: Completed (skipped)"
+            echo "========================================"
+        fi
+
+  predeploy:
+  # this is run after infrastructure and postprovisioning but before service deployment
+  # primary use is to build and push container images
+    posix:
+      shell: sh
+      run: |
+        set -e
+        
+        # Error handling function
+        cleanup_on_error() {
+            local exit_code=$?
+            echo ""
+            echo "✗ ERROR: Deployment failed at step: $1" >&2
+            echo "Attempting to restart web service..." >&2
+            az webapp start --name ${var_webService} --resource-group ${var_rgName} 2>/dev/null || true
+            exit ${exit_code}
+        }
+        
+        echo "========================================"
+        echo "PRE-DEPLOY: Building and pushing image"
+        echo "========================================"
+        
+        cd ..
+        timestamp="$(date +"%Y%m%d-%H%M%S")"
+        echo ""
+        echo "Deployment timestamp: ${timestamp}"
+        echo "Image: ${var_containerRegistry}/${var_imageName}:${timestamp}"
+        
+        echo ""
+        echo "[1/6] Stopping web service..."
+        if az webapp stop --name ${var_webService} --resource-group ${var_rgName}; then
+            echo "✓ Web service stopped successfully"
+        else
+            echo "✗ ERROR: Failed to stop web service" >&2
+            exit 1
+        fi
+        
+        echo ""
+        echo "[2/6] Building Docker image..."
+        echo "Context: $(pwd)"
+        echo "Dockerfile: application/single_app/Dockerfile"
+        if docker build -f application/single_app/Dockerfile \
+            -t ${var_containerRegistry}/${var_imageName}:${timestamp} . ; then
+            echo "✓ Docker image built successfully"
+        else
+            cleanup_on_error "Docker build"
+        fi
+        
+        echo ""
+        echo "[3/6] Tagging image as latest..."
+        if docker tag ${var_containerRegistry}/${var_imageName}:${timestamp} \
+            ${var_containerRegistry}/${var_imageName}:latest ; then
+            echo "✓ Image tagged successfully"
+        else
+            cleanup_on_error "Docker tag"
+        fi
+        
+        echo ""
+        echo "[4/6] Logging in to ACR (${var_acrName})..."
+        if az acr login --name ${var_acrName}; then
+            echo "✓ ACR login successful"
+        else
+            cleanup_on_error "ACR login"
+        fi
+        
+        echo ""
+        echo "[5/6] Pushing images to ACR..."
+        echo "  → Pushing latest tag..."
+        if docker push ${var_containerRegistry}/${var_imageName}:latest; then
+            echo "  ✓ Latest tag pushed successfully"
+        else
+            cleanup_on_error "Docker push (latest)"
+        fi
+        
+        echo "  → Pushing timestamped tag..."
+        if docker push ${var_containerRegistry}/${var_imageName}:${timestamp}; then
+            echo "  ✓ Timestamped tag pushed successfully"
+        else
+            cleanup_on_error "Docker push (timestamp)"
+        fi
+        
+        echo ""
+        echo "[6/6] Restarting web service..."
+        if az webapp start --name ${var_webService} --resource-group ${var_rgName}; then
+            echo "✓ Web service restarted successfully"
+        else
+            echo "✗ ERROR: Failed to restart web service" >&2
+            exit 1
+        fi
+        
+        echo ""
+        echo "========================================"
+        echo "PRE-DEPLOY: Completed successfully"
+        echo "========================================"
+    
+  postup:
+    # this is the final step to run after everything else is done
+    # primary use is disable public network access if private endpoints are used
+    posix:
+      shell: sh
+      run: |
+        set -e
+        
+        echo "========================================"
+        echo "POST-UP: Final configuration"
+        echo "========================================"
+        
+        if [ "${var_enablePrivateNetworking}" = "true" ]; then
+            echo ""
+            echo "Configuring private networking..."
+            
+            echo ""
+            echo "[1/4] Disabling public network access for CosmosDB..."
+            if az cosmosdb update --name ${var_cosmosDb_accountName} \
+                --resource-group ${var_rgName} \
+                --public-network-access Disabled > /dev/null; then
+                echo "✓ CosmosDB public access disabled"
+            else
+                echo "✗ ERROR: Failed to disable CosmosDB public access" >&2
+                exit 1
+            fi
+            
+            echo ""
+            echo "[2/4] Disabling public network access for Key Vault..."
+            if az keyvault update --name ${var_keyVaultName} \
+                --resource-group ${var_rgName} \
+                --public-network-access Disabled > /dev/null; then
+                echo "✓ Key Vault public access disabled"
+            else
+                echo "✗ ERROR: Failed to disable Key Vault public access" >&2
+                exit 1
+            fi
+
+            echo ""
+            echo "[3/4] Disabling public network access for Azure Container Registry..."
+            if az acr update --name ${var_acrName} \
+                --resource-group ${var_rgName} \
+                --public-network-enabled false > /dev/null; then
+                echo "✓ ACR public access disabled"
+            else
+                echo "✗ ERROR: Failed to disable ACR public access" >&2
+                exit 1
+            fi
+
+            echo ""
+            echo "[4/4] Disabling public network access for Web Application..."
+            if az resource update --name ${var_webService} \
+                --resource-group ${var_rgName} \
+                --resource-type "Microsoft.Web/sites" \
+                --set properties.publicNetworkAccess=Disabled; then
+                echo "✓ Web Application public access disabled"
+            else
+                echo "✗ ERROR: Failed to disable Web Application public access" >&2
+                exit 1
+            fi
+            
+            echo ""
+            echo "✓ Private networking configured successfully"
+        else
+            echo ""
+            echo "ℹ Skipping private networking configuration (var_enablePrivateNetworking is not true)"
+        fi
+
+        echo ""
+        echo "========================================"
+        echo "✓ DEPLOYMENT COMPLETED SUCCESSFULLY"
+        echo "========================================"

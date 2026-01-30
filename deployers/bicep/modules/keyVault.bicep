@@ -27,7 +27,7 @@ resource kv 'Microsoft.KeyVault/vaults@2024-11-01' = {
     enabledForDeployment: false
     enabledForDiskEncryption: false
     enabledForTemplateDeployment: false
-    publicNetworkAccess: 'Enabled'
+    publicNetworkAccess: 'Enabled'  // configuration is set in post provision step in azure.yaml with post deployment script
     enableRbacAuthorization: true
   }
   tags: tags

@@ -7,6 +7,7 @@ from functions_search import *
 from functions_logging import *
 from functions_authentication import *
 from functions_debug import *
+import azure.cognitiveservices.speech as speechsdk
 
 def allowed_file(filename, allowed_extensions=None):
     if not allowed_extensions:
@@ -1635,6 +1636,57 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
     
     # Return token usage information for accumulation
     return token_usage
+
+def get_document_metadata_for_citations(document_id, user_id=None, group_id=None, public_workspace_id=None):
+    """
+    Retrieve keywords and abstract from a document for creating metadata citations.
+    Used to enhance search results with additional context from document metadata.
+    
+    Args:
+        document_id: The document's unique identifier
+        user_id: User ID (for personal documents)
+        group_id: Group ID (for group documents) 
+        public_workspace_id: Public workspace ID (for public documents)
+        
+    Returns:
+        dict: Dictionary with 'keywords' and 'abstract' fields, or None if document not found
+    """
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+    
+    # Determine the correct container
+    if is_public_workspace:
+        cosmos_container = cosmos_public_documents_container
+    elif is_group:
+        cosmos_container = cosmos_group_documents_container
+    else:
+        cosmos_container = cosmos_user_documents_container
+
+    try:
+        # Read the document directly by ID
+        document_item = cosmos_container.read_item(
+            item=document_id,
+            partition_key=document_id
+        )
+        
+        # Extract keywords and abstract
+        keywords = document_item.get('keywords', [])
+        abstract = document_item.get('abstract', '')
+        
+        # Return only if we have actual content
+        if keywords or abstract:
+            return {
+                'keywords': keywords if keywords else [],
+                'abstract': abstract if abstract else '',
+                'file_name': document_item.get('file_name', 'Unknown')
+            }
+        
+        return None
+        
+    except Exception as e:
+        # Document not found or error reading - return None silently
+        # This is expected for documents without metadata
+        return None
 
 def get_document_metadata_for_citations(document_id, user_id=None, group_id=None, public_workspace_id=None):
     """
@@ -3801,6 +3853,355 @@ def process_doc(document_id, user_id, temp_file_path, original_filename, enable_
 
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
+def process_xml(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+    """Processes XML files using RecursiveCharacterTextSplitter for structured content."""
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    update_callback(status="Processing XML file...")
+    total_chunks_saved = 0
+    # Character-based chunking for XML structure preservation
+    max_chunk_size_chars = 4000
+
+    if enable_enhanced_citations:
+        args = {
+            "temp_file_path": temp_file_path,
+            "user_id": user_id,
+            "document_id": document_id,
+            "blob_filename": original_filename,
+            "update_callback": update_callback
+        }
+
+        if is_group:
+            args["group_id"] = group_id
+        elif is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
+
+        upload_to_blob(**args)
+
+    try:
+        # Read XML content
+        try:
+            with open(temp_file_path, 'r', encoding='utf-8') as f:
+                xml_content = f.read()
+        except Exception as e:
+            raise Exception(f"Error reading XML file {original_filename}: {e}")
+
+        # Use RecursiveCharacterTextSplitter with XML-aware separators
+        # This preserves XML structure better than simple word splitting
+        xml_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=max_chunk_size_chars,
+            chunk_overlap=0,
+            length_function=len,
+            separators=["\n\n", "\n", ">", " ", ""],  # XML-friendly separators
+            is_separator_regex=False
+        )
+
+        # Split the XML content
+        final_chunks = xml_splitter.split_text(xml_content)
+
+        initial_chunk_count = len(final_chunks)
+        update_callback(number_of_pages=initial_chunk_count)
+
+        for idx, chunk_content in enumerate(final_chunks, start=1):
+            # Skip empty chunks
+            if not chunk_content or not chunk_content.strip():
+                print(f"Skipping empty XML chunk {idx}/{initial_chunk_count}")
+                continue
+
+            update_callback(
+                current_file_chunk=idx,
+                status=f"Saving chunk {idx}/{initial_chunk_count}..."
+            )
+            args = {
+                "page_text_content": chunk_content,
+                "page_number": total_chunks_saved + 1,
+                "file_name": original_filename,
+                "user_id": user_id,
+                "document_id": document_id
+            }
+
+            if is_public_workspace:
+                args["public_workspace_id"] = public_workspace_id
+            elif is_group:
+                args["group_id"] = group_id
+
+            save_chunks(**args)
+            total_chunks_saved += 1
+
+        # Final update with actual chunks saved
+        if total_chunks_saved != initial_chunk_count:
+            update_callback(number_of_pages=total_chunks_saved)
+            print(f"Adjusted final chunk count from {initial_chunk_count} to {total_chunks_saved} after skipping empty chunks.")
+
+    except Exception as e:
+        print(f"Error during XML processing for {original_filename}: {type(e).__name__}: {e}")
+        raise Exception(f"Failed processing XML file {original_filename}: {e}")
+
+    return total_chunks_saved
+
+def process_yaml(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+    """Processes YAML files using RecursiveCharacterTextSplitter for structured content."""
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    update_callback(status="Processing YAML file...")
+    total_chunks_saved = 0
+    # Character-based chunking for YAML structure preservation
+    max_chunk_size_chars = 4000
+
+    if enable_enhanced_citations:
+        args = {
+            "temp_file_path": temp_file_path,
+            "user_id": user_id,
+            "document_id": document_id,
+            "blob_filename": original_filename,
+            "update_callback": update_callback
+        }
+
+        if is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
+        elif is_group:
+            args["group_id"] = group_id
+
+        upload_to_blob(**args)
+
+    try:
+        # Read YAML content
+        try:
+            with open(temp_file_path, 'r', encoding='utf-8') as f:
+                yaml_content = f.read()
+        except Exception as e:
+            raise Exception(f"Error reading YAML file {original_filename}: {e}")
+
+        # Use RecursiveCharacterTextSplitter with YAML-aware separators
+        # This preserves YAML structure better than simple word splitting
+        yaml_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=max_chunk_size_chars,
+            chunk_overlap=0,
+            length_function=len,
+            separators=["\n\n", "\n", "- ", " ", ""],  # YAML-friendly separators
+            is_separator_regex=False
+        )
+
+        # Split the YAML content
+        final_chunks = yaml_splitter.split_text(yaml_content)
+
+        initial_chunk_count = len(final_chunks)
+        update_callback(number_of_pages=initial_chunk_count)
+
+        for idx, chunk_content in enumerate(final_chunks, start=1):
+            # Skip empty chunks
+            if not chunk_content or not chunk_content.strip():
+                print(f"Skipping empty YAML chunk {idx}/{initial_chunk_count}")
+                continue
+
+            update_callback(
+                current_file_chunk=idx,
+                status=f"Saving chunk {idx}/{initial_chunk_count}..."
+            )
+            args = {
+                "page_text_content": chunk_content,
+                "page_number": total_chunks_saved + 1,
+                "file_name": original_filename,
+                "user_id": user_id,
+                "document_id": document_id
+            }
+
+            if is_public_workspace:
+                args["public_workspace_id"] = public_workspace_id
+            elif is_group:
+                args["group_id"] = group_id
+
+            save_chunks(**args)
+            total_chunks_saved += 1
+
+        # Final update with actual chunks saved
+        if total_chunks_saved != initial_chunk_count:
+            update_callback(number_of_pages=total_chunks_saved)
+            print(f"Adjusted final chunk count from {initial_chunk_count} to {total_chunks_saved} after skipping empty chunks.")
+
+    except Exception as e:
+        print(f"Error during YAML processing for {original_filename}: {type(e).__name__}: {e}")
+        raise Exception(f"Failed processing YAML file {original_filename}: {e}")
+
+    return total_chunks_saved
+
+def process_log(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+    """Processes LOG files using line-based chunking to maintain log record integrity."""
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    update_callback(status="Processing LOG file...")
+    total_chunks_saved = 0
+    target_words_per_chunk = 1000  # Word-based chunking for better semantic grouping
+
+    if enable_enhanced_citations:
+        args = {
+            "temp_file_path": temp_file_path,
+            "user_id": user_id,
+            "document_id": document_id,
+            "blob_filename": original_filename,
+            "update_callback": update_callback
+        }
+
+        if is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
+        elif is_group:
+            args["group_id"] = group_id
+
+        upload_to_blob(**args)
+
+    try:
+        with open(temp_file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        # Split by lines to maintain log record integrity
+        lines = content.splitlines(keepends=True)  # Keep line endings
+        
+        if not lines:
+            raise Exception(f"LOG file {original_filename} is empty")
+
+        # Chunk by accumulating lines until reaching target word count
+        final_chunks = []
+        current_chunk_lines = []
+        current_chunk_word_count = 0
+
+        for line in lines:
+            line_word_count = len(line.split())
+            
+            # If adding this line exceeds target AND we already have content
+            if current_chunk_word_count + line_word_count > target_words_per_chunk and current_chunk_lines:
+                # Finalize current chunk
+                final_chunks.append("".join(current_chunk_lines))
+                # Start new chunk with current line
+                current_chunk_lines = [line]
+                current_chunk_word_count = line_word_count
+            else:
+                # Add line to current chunk
+                current_chunk_lines.append(line)
+                current_chunk_word_count += line_word_count
+
+        # Add the last remaining chunk if it has content
+        if current_chunk_lines:
+            final_chunks.append("".join(current_chunk_lines))
+
+        num_chunks = len(final_chunks)
+        update_callback(number_of_pages=num_chunks)
+
+        for idx, chunk_content in enumerate(final_chunks, start=1):
+            if chunk_content.strip():
+                update_callback(
+                    current_file_chunk=idx,
+                    status=f"Saving chunk {idx}/{num_chunks}..."
+                )
+                args = {
+                    "page_text_content": chunk_content,
+                    "page_number": idx,
+                    "file_name": original_filename,
+                    "user_id": user_id,
+                    "document_id": document_id
+                }
+
+                if is_public_workspace:
+                    args["public_workspace_id"] = public_workspace_id
+                elif is_group:
+                    args["group_id"] = group_id
+
+                save_chunks(**args)
+                total_chunks_saved += 1
+
+    except Exception as e:
+        raise Exception(f"Failed processing LOG file {original_filename}: {e}")
+
+    return total_chunks_saved
+
+def process_doc(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+    """
+    Processes .doc and .docm files using docx2txt library.
+    Note: .docx files still use Document Intelligence for better formatting preservation.
+    """
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    update_callback(status=f"Processing {original_filename.split('.')[-1].upper()} file...")
+    total_chunks_saved = 0
+    target_words_per_chunk = 400  # Consistent with other text-based chunking
+
+    if enable_enhanced_citations:
+        args = {
+            "temp_file_path": temp_file_path,
+            "user_id": user_id,
+            "document_id": document_id,
+            "blob_filename": original_filename,
+            "update_callback": update_callback
+        }
+
+        if is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
+        elif is_group:
+            args["group_id"] = group_id
+
+        upload_to_blob(**args)
+
+    try:
+        # Import docx2txt here to avoid dependency issues if not installed
+        try:
+            import docx2txt
+        except ImportError:
+            raise Exception("docx2txt library is required for .doc and .docm file processing. Install with: pip install docx2txt")
+
+        # Extract text from .doc or .docm file
+        try:
+            text_content = docx2txt.process(temp_file_path)
+        except Exception as e:
+            raise Exception(f"Error extracting text from {original_filename}: {e}")
+
+        if not text_content or not text_content.strip():
+            raise Exception(f"No text content extracted from {original_filename}")
+
+        # Split into words for chunking
+        words = text_content.split()
+        if not words:
+            raise Exception(f"No text content found in {original_filename}")
+
+        # Create chunks of target_words_per_chunk words
+        final_chunks = []
+        for i in range(0, len(words), target_words_per_chunk):
+            chunk_words = words[i:i + target_words_per_chunk]
+            chunk_text = " ".join(chunk_words)
+            final_chunks.append(chunk_text)
+
+        num_chunks = len(final_chunks)
+        update_callback(number_of_pages=num_chunks)
+
+        for idx, chunk_content in enumerate(final_chunks, start=1):
+            if chunk_content.strip():
+                update_callback(
+                    current_file_chunk=idx,
+                    status=f"Saving chunk {idx}/{num_chunks}..."
+                )
+                args = {
+                    "page_text_content": chunk_content,
+                    "page_number": idx,
+                    "file_name": original_filename,
+                    "user_id": user_id,
+                    "document_id": document_id
+                }
+
+                if is_public_workspace:
+                    args["public_workspace_id"] = public_workspace_id
+                elif is_group:
+                    args["group_id"] = group_id
+
+                save_chunks(**args)
+                total_chunks_saved += 1
+
+    except Exception as e:
+        raise Exception(f"Failed processing {original_filename}: {e}")
+
+    return total_chunks_saved
+
 def process_html(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes HTML files."""
     is_group = group_id is not None
@@ -5228,6 +5629,88 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
                 # Don't fail if flag setting fails
                 
         except Exception as log_error:
+            print(f"Error logging document creation transaction: {log_error}")
+            # Don't fail the entire process if logging fails
+        
+        # Create notification for document processing completion
+        try:
+            from functions_notifications import create_notification, create_group_notification, create_public_workspace_notification
+            
+            notification_title = f"Document ready: {original_filename}"
+            notification_message = f"Your document has been processed successfully with {total_chunks_saved} chunks."
+            
+            # Determine workspace type and create appropriate notification
+            if public_workspace_id:
+                # Notification for all public workspace members
+                create_public_workspace_notification(
+                    public_workspace_id=public_workspace_id,
+                    notification_type='document_processing_complete',
+                    title=notification_title,
+                    message=notification_message,
+                    link_url='/public_directory',
+                    link_context={
+                        'workspace_type': 'public',
+                        'public_workspace_id': public_workspace_id,
+                        'document_id': document_id
+                    },
+                    metadata={
+                        'document_id': document_id,
+                        'file_name': original_filename,
+                        'chunks': total_chunks_saved
+                    }
+                )
+                print(f"📢 Created notification for public workspace {public_workspace_id}")
+                
+            elif group_id:
+                # Notification for all group members - get group name
+                from functions_group import find_group_by_id
+                group = find_group_by_id(group_id)
+                group_name = group.get('name', 'Unknown Group') if group else 'Unknown Group'
+                
+                create_group_notification(
+                    group_id=group_id,
+                    notification_type='document_processing_complete',
+                    title=notification_title,
+                    message=f"Document uploaded to {group_name} has been processed successfully with {total_chunks_saved} chunks.",
+                    link_url='/group_workspaces',
+                    link_context={
+                        'workspace_type': 'group',
+                        'group_id': group_id,
+                        'document_id': document_id
+                    },
+                    metadata={
+                        'document_id': document_id,
+                        'file_name': original_filename,
+                        'chunks': total_chunks_saved,
+                        'group_name': group_name,
+                        'group_id': group_id
+                    }
+                )
+                print(f"📢 Created notification for group {group_id} ({group_name})")
+                
+            else:
+                # Personal notification for the uploader
+                create_notification(
+                    user_id=user_id,
+                    notification_type='document_processing_complete',
+                    title=notification_title,
+                    message=notification_message,
+                    link_url='/workspace',
+                    link_context={
+                        'workspace_type': 'personal',
+                        'document_id': document_id
+                    },
+                    metadata={
+                        'document_id': document_id,
+                        'file_name': original_filename,
+                        'chunks': total_chunks_saved
+                    }
+                )
+                print(f"📢 Created notification for user {user_id}")
+                
+        except Exception as notif_error:
+            print(f"⚠️  Warning: Failed to create notification: {notif_error}")
+            # Don't fail the entire process if notification creation fails
             print(f"⚠️  Warning: Failed to log document creation transaction: {log_error}")
             # Don't fail the document processing if logging fails
 

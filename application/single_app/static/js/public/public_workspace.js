@@ -28,7 +28,7 @@ const publicDocMetadataModal = new bootstrap.Modal(document.getElementById('publ
 let publicSimplemde = null;
 const publicPromptContentEl = document.getElementById('public-prompt-content');
 if (publicPromptContentEl && window.SimpleMDE) {
-  publicSimplemde = new SimpleMDE({ element: publicPromptContentEl, spellChecker:false });
+  publicSimplemde = new SimpleMDE({ element: publicPromptContentEl, spellChecker:false, autoDownloadFontAwesome: false });
 }
 
 // DOM elements
@@ -61,12 +61,6 @@ const publicPromptForm = document.getElementById('public-prompt-form');
 const publicPromptIdEl = document.getElementById('public-prompt-id');
 const publicPromptNameEl = document.getElementById('public-prompt-name');
 
-// Helper
-function escapeHtml(unsafe) {
-  if (!unsafe) return '';
-  return unsafe.toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-}
-
 // Initialize
 document.addEventListener('DOMContentLoaded', ()=>{
   fetchUserPublics().then(()=>{
@@ -81,15 +75,15 @@ document.addEventListener('DOMContentLoaded', ()=>{
   if (btnChangePublic) btnChangePublic.onclick = onChangeActivePublic;
 
   // Upload functionality - handle both button click and drag-and-drop
-  if (uploadBtn) uploadBtn.onclick = onPublicUploadClick;
+  if (uploadBtn) uploadBtn.onclick = () => checkUserAgreementBeforePublicUpload();
   
   // Add upload area functionality (drag-and-drop and click-to-browse)
   const uploadArea = document.getElementById('upload-area');
   if (fileInput && uploadArea) {
-    // Auto-upload on file selection
+    // Auto-upload on file selection (with user agreement check)
     fileInput.addEventListener('change', () => {
       if (fileInput.files && fileInput.files.length > 0) {
-        onPublicUploadClick();
+        checkUserAgreementBeforePublicUpload();
       }
     });
 
@@ -119,9 +113,9 @@ document.addEventListener('DOMContentLoaded', ()=>{
       uploadArea.classList.remove('dragover');
       uploadArea.style.borderColor = '';
       if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-        // Set the files to the file input and trigger upload
+        // Set the files to the file input and trigger upload with user agreement check
         fileInput.files = e.dataTransfer.files;
-        onPublicUploadClick();
+        checkUserAgreementBeforePublicUpload();
       }
     });
   }
@@ -206,10 +200,56 @@ function updatePublicRoleDisplay(){
   }
 }
 
+// Update workspace status alert based on status - uses shared utility
+function updateWorkspaceStatusAlert() {
+  if (!activePublicId) return;
+  
+  fetchAndUpdateWorkspaceStatus(activePublicId, (workspace) => {
+    const status = workspace.status || 'active';
+    updateWorkspaceUIBasedOnStatus(status);
+  });
+}
+
+// Update UI elements based on workspace status
+function updateWorkspaceUIBasedOnStatus(status) {
+  const isLocked = status === 'locked';
+  const uploadDisabled = status === 'upload_disabled' || isLocked;
+  const isInactive = status === 'inactive';
+  
+  const uploadSection = document.getElementById('upload-public-section');
+  const fileInput = document.getElementById('file-input');
+  
+  // Hide/disable upload section based on status
+  if (uploadSection) {
+    if (uploadDisabled || isInactive) {
+      uploadSection.style.display = 'none';
+    }
+  }
+  
+  // Disable file input if needed
+  if (fileInput) {
+    fileInput.disabled = uploadDisabled || isInactive;
+  }
+  
+  // Disable document action buttons for locked/inactive workspaces
+  if (isLocked || isInactive) {
+    const actionButtons = document.querySelectorAll('#public-documents-table .btn-danger, #public-documents-table .btn-warning');
+    actionButtons.forEach(btn => {
+      if (isLocked) {
+        btn.disabled = true;
+        btn.title = 'Workspace is locked';
+      } else if (isInactive) {
+        btn.disabled = true;
+        btn.title = 'Workspace is inactive';
+      }
+    });
+  }
+}
+
 function loadActivePublicData(){
   const activeTab = document.querySelector('#publicWorkspaceTab .nav-link.active').dataset.bsTarget;
   if(activeTab==='#public-docs-tab') fetchPublicDocs(); else fetchPublicPrompts();
-  updatePublicRoleDisplay(); updatePublicPromptsRoleUI();
+  updatePublicRoleDisplay(); updatePublicPromptsRoleUI(); updateWorkspaceStatusAlert();
 }
 
 async function fetchPublicDocs(){
@@ -412,6 +452,32 @@ function renderPublicDocsPagination(page, pageSize, totalCount){
   const ul=document.createElement('ul'); ul.className='pagination pagination-sm mb-0';
   function make(p,text,disabled,active){ const li=document.createElement('li'); li.className=`page-item${disabled?' disabled':''}${active?' active':''}`; const a=document.createElement('a'); a.className='page-link'; a.href='#'; a.textContent=text; if(!disabled&&!active) a.onclick=e=>{e.preventDefault();publicDocsCurrentPage=p;fetchPublicDocs();}; li.append(a); return li; }
   ul.append(make(page-1,'«',page<=1,false)); let start=1,end=totalPages; if(totalPages>5){ const mid=2; if(page>mid) start=page-mid; end=start+4; if(end>totalPages){ end=totalPages; start=end-4; } } if(start>1){ ul.append(make(1,'1',false,false)); ul.append(make(0,'...',true,false)); } for(let p=start;p<=end;p++) ul.append(make(p,p,false,p===page)); if(end<totalPages){ ul.append(make(0,'...',true,false)); ul.append(make(totalPages,totalPages,false,false)); } ul.append(make(page+1,'»',page>=totalPages,false)); container.append(ul);
+}
+
+/**
+ * Check for user agreement before public workspace upload
+ * Wraps onPublicUploadClick with user agreement check
+ */
+function checkUserAgreementBeforePublicUpload() {
+  if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+    alert('Select files');
+    return;
+  }
+  
+  // Check for user agreement before uploading
+  if (window.UserAgreementManager && activePublicId) {
+    window.UserAgreementManager.checkBeforeUpload(
+      fileInput.files,
+      'public',
+      activePublicId,
+      function(files) {
+        // Proceed with upload
+        onPublicUploadClick();
+      }
+    );
+  } else {
+    onPublicUploadClick();
+  }
 }
 
 async function onPublicUploadClick() {

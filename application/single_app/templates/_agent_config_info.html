@@ -1,0 +1,299 @@
+{% from '_agent_examples.html' import agent_examples %}
+<!-- Agent Builder Configuration Guide Modal -->
+<div class="modal fade" id="agentConfigInfoModal" tabindex="-1" aria-labelledby="agentConfigInfoModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="agentConfigInfoModalLabel">
+                    <i class="bi bi-robot me-2"></i>
+                    Agent Builder Configuration Guide
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info d-flex align-items-start gap-2">
+                    <i class="bi bi-lightbulb"></i>
+                    <div>
+                        <strong>Build confident agents.</strong>
+                        Use this guide to understand what every step in the wizard controls and how each choice impacts routing, safety, and overall user experience.
+                    </div>
+                </div>
+
+                <!-- Overview -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h6 class="mb-0">
+                            <i class="bi bi-list-ol me-2"></i>
+                            Wizard Overview
+                        </h6>
+                    </div>
+                    <div class="card-body">
+                        <p class="mb-3">The agent builder walks through six steps. Each step captures consistent context so teammates know how and when to launch your custom agent.</p>
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <div class="border rounded p-3 h-100">
+                                    <h6 class="fw-bold mb-2">Discovery</h6>
+                                    <p class="mb-0">Basic Info → Model & Connection → Instructions</p>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="border rounded p-3 h-100">
+                                    <h6 class="fw-bold mb-2">Capabilities</h6>
+                                    <p class="mb-0">Actions → Advanced Settings</p>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="border rounded p-3 h-100">
+                                    <h6 class="fw-bold mb-2">Validation</h6>
+                                    <p class="mb-0">Summary step confirms everything before save.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step Cards -->
+                <div class="card mb-3">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-person-lines-fill me-2"></i>Step 1 · Basic Info</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <h6 class="fw-semibold">Display Name</h6>
+                                <p class="mb-2">Visible label across the UI. Keep it short and action oriented ("HR Knowledge Agent"). Required.</p>
+                                <div class="small text-muted">Character count shows inline validation when users type.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <h6 class="fw-semibold">Description</h6>
+                                <p class="mb-2">Guides your team on when to use this agent. Mention inputs, ideal questions, and clear boundaries.</p>
+                                <div class="badge bg-secondary">Generates routing hints</div>
+                            </div>
+                        </div>
+                        <hr>
+                        <p class="mb-0"><strong>Generated Name:</strong> We auto-slugify the display name to create a unique `agent_name`. You can edit it later via API if needed.</p>
+                    </div>
+                </div>
+
+                <div class="card mb-3">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-cpu me-2"></i>Step 2 · Model & Connection</h6>
+                    </div>
+                    <div class="card-body">
+                        <p>Select one of the globally registered models or enable a custom connection to override per-agent credentials.</p>
+                        <div class="table-responsive">
+                            <table class="table table-sm align-middle">
+                                <thead>
+                                    <tr>
+                                        <th>Field</th>
+                                        <th>Purpose</th>
+                                        <th>Notes</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td>Model Dropdown</td>
+                                        <td>Loads from global settings and enforces base policy (rate limits, content filters).</td>
+                                        <td>Required. Auto refreshes if admins add more models.</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Custom Connection Toggle</td>
+                                        <td>Exposes GPT / APIM sections for per-agent credentials.</td>
+                                        <td>Use only when the agent needs a different deployment or key.</td>
+                                    </tr>
+                                    <tr>
+                                        <td>GPT Fields</td>
+                                        <td>Endpoint, key, deployment, API version.</td>
+                                        <td>Any blank value inherits from the selected model.</td>
+                                    </tr>
+                                    <tr>
+                                        <td>APIM Fields</td>
+                                        <td>Alternate endpoint + subscription key for managed gateways.</td>
+                                        <td>Shown when "Enable APIM Integration" is toggled.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mb-3">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-journal-richtext me-2"></i>Step 3 · Instructions</h6>
+                    </div>
+                    <div class="card-body">
+                        <p>Use the rich textarea to spell out behaviors, tone, inputs, forbidden scenarios, and handoff cues.</p>
+                        <ul class="mb-3">
+                            <li>Lead with the agent's mission statement.</li>
+                            <li>List mandatory tools or context the agent should request before responding.</li>
+                            <li>Document escalation / fallback guidance ("Escalate to human when…").</li>
+                        </ul>
+                        <div class="alert alert-secondary mb-0">
+                            <i class="bi bi-info-circle me-1"></i>
+                            The preview box in Step 6 renders these instructions verbatim, so formatting with bullet lists or numbered steps is encouraged.
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mb-3">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-lightning-charge me-2"></i>Step 4 · Actions</h6>
+                    </div>
+                    <div class="card-body">
+                        <p>Choose which operations the agent can call. Everything here maps to OpenAPI, SQL, or custom actions registered in the workspace.</p>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <h6 class="fw-semibold">Discovery Tools</h6>
+                                <ul class="mb-0">
+                                    <li>Free text search box filters on name, description, tags.</li>
+                                    <li>Dropdown narrows to action types (OpenAPI, SQL, custom).</li>
+                                    <li>Quick buttons support mass select/deselect and "show selected only".</li>
+                                </ul>
+                            </div>
+                            <div class="col-md-6">
+                                <h6 class="fw-semibold">Selection UX</h6>
+                                <ul class="mb-0">
+                                    <li>Cards highlight when selected and surface type badges.</li>
+                                    <li>Summary panel displays removable chips for each action.</li>
+                                    <li>No actions? The wizard shows a friendly empty state reminder.</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mb-3">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-sliders me-2"></i>Step 5 · Advanced Settings</h6>
+                    </div>
+                    <div class="card-body">
+                        <p>Optional JSON block for additional metadata plus a power user section.</p>
+                        <ul>
+                            <li><strong>Additional Settings (JSON):</strong> Ideal for agent-specific knobs consumed by downstream workflows.</li>
+                            <li><strong>Power User Toggle:</strong> Reveals advanced agent settings such as completion token controls.</li>
+                                <ul>
+                                    <li><strong>Max Completion Tokens:</strong> Allows you to specify your max tokens per response so you can cap responses per agent. Every model has a limit. Higher caps only allow the model to use more tokens; they do not force longer answers; so this control is most useful when you want conciseness or need to keep answers short.</li>
+                                </ul>
+                            <li>Use valid JSON. The save operation will surface errors if parsing fails.</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-check2-circle me-2"></i>Step 6 · Summary & Save</h6>
+                    </div>
+                    <div class="card-body">
+                        <p>The final step mirrors everything you've entered:</p>
+                        <ul>
+                            <li><strong>Basic Info:</strong> Shows generated `agent_name` plus the descriptive text.</li>
+                            <li><strong>Model Details:</strong> Indicates whether the agent inherits a global connection or a custom one.</li>
+                            <li><strong>Instructions:</strong> Read-only preview with scrollable container.</li>
+                            <li><strong>Actions:</strong> Grid of cards or empty state call-to-action.</li>
+                            <li><strong>Advanced:</strong> Displays metadata, scope, and timestamps.</li>
+                        </ul>
+                        <div class="alert alert-success mb-0">
+                            <i class="bi bi-shield-check me-1"></i>
+                            Editing an existing agent will light up the "Changes" panel to show what differs from the previous configuration.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Sample instruction sets -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h6 class="mb-0"><i class="bi bi-journal-text me-2"></i>Sample Instruction Sets</h6>
+                            <span class="badge bg-primary">Copy & customize</span>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <p class="mb-3">Use the dropdowns below for ready-made starting points. Each sample highlights structure, escalation language, and scoped capabilities.</p>
+                        {{ agent_examples('agentInstructionExamples', True, False) }}
+                    </div>
+                </div>
+
+                <!-- Troubleshooting Tips -->
+                <div class="card mb-0">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-tools me-2"></i>Troubleshooting & Tips</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="accordion" id="agentGuideTroubleshooting">
+                            <div class="accordion-item">
+                                <h2 class="accordion-header" id="agentGuideIssueOne">
+                                    <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#agentGuideCollapseOne" aria-expanded="true" aria-controls="agentGuideCollapseOne">
+                                        Models or actions are missing
+                                    </button>
+                                </h2>
+                                <div id="agentGuideCollapseOne" class="accordion-collapse collapse show" aria-labelledby="agentGuideIssueOne" data-bs-parent="#agentGuideTroubleshooting">
+                                    <div class="accordion-body">
+                                        <ul class="mb-0">
+                                            <li>Verify the workspace's global models and actions are published to the current scope.</li>
+                                            <li>For actions, ensure you have access to the group/public catalog where they live.</li>
+                                            <li>Use the refresh button next to the model dropdown (appears if an error occurs).</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="accordion-item">
+                                <h2 class="accordion-header" id="agentGuideIssueTwo">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#agentGuideCollapseTwo" aria-expanded="false" aria-controls="agentGuideCollapseTwo">
+                                        Save failed or validation errors
+                                    </button>
+                                </h2>
+                                <div id="agentGuideCollapseTwo" class="accordion-collapse collapse" aria-labelledby="agentGuideIssueTwo" data-bs-parent="#agentGuideTroubleshooting">
+                                    <div class="accordion-body">
+                                        <ul class="mb-0">
+                                            <li>Look for inline error banners in the step where the invalid data lives.</li>
+                                            <li>Ensure your JSON is valid (use quotes for property names, avoid trailing commas).</li>
+                                            <li>Descriptions and instructions cannot be empty; teammates rely on them for routing.</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="accordion-item">
+                                <h2 class="accordion-header" id="agentGuideIssueThree">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#agentGuideCollapseThree" aria-expanded="false" aria-controls="agentGuideCollapseThree">
+                                        Performance or latency issues
+                                    </button>
+                                </h2>
+                                <div id="agentGuideCollapseThree" class="accordion-collapse collapse" aria-labelledby="agentGuideIssueThree" data-bs-parent="#agentGuideTroubleshooting">
+                                    <div class="accordion-body">
+                                        <ul class="mb-0">
+                                            <li>Large instruction blocks increase token usage—consider trimming repeated guidance.</li>
+                                            <li>Limit action selections to only what is necessary; each action may require warm-up calls.</li>
+                                            <li>When using custom connections over private networking, confirm DNS and firewall routes.</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function copyAgentInstructionSample(elementId) {
+    try {
+        var element = document.getElementById(elementId);
+        if (!element) {
+            return;
+        }
+        var text = element.innerText;
+        navigator.clipboard.writeText(text).then(function () {
+            console.debug('Instruction sample copied');
+        }).catch(function (err) {
+            console.error('Could not copy instruction sample:', err);
+        });
+    } catch (error) {
+        console.error('Failed to copy instruction sample:', error);
+    }
+}
+</script>

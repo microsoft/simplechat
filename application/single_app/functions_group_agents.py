@@ -6,7 +6,7 @@ import re
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-
+from functions_debug import debug_print
 from azure.cosmos import exceptions
 from flask import current_app
 
@@ -16,6 +16,7 @@ from functions_keyvault import (
     keyvault_agent_get_helper,
     keyvault_agent_save_helper,
 )
+from functions_agent_payload import sanitize_agent_payload
 
 
 _NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -39,7 +40,7 @@ def get_group_agents(group_id: str) -> List[Dict[str, Any]]:
     except exceptions.CosmosResourceNotFoundError:
         return []
     except Exception as exc:
-        current_app.logger.error(
+        debug_print(
             "Error fetching group agents for %s: %s", group_id, exc
         )
         return []
@@ -56,7 +57,7 @@ def get_group_agent(group_id: str, agent_id: str) -> Optional[Dict[str, Any]]:
     except exceptions.CosmosResourceNotFoundError:
         return None
     except Exception as exc:
-        current_app.logger.error(
+        debug_print(
             "Error fetching group agent %s for %s: %s", agent_id, group_id, exc
         )
         return None
@@ -64,8 +65,8 @@ def get_group_agent(group_id: str, agent_id: str) -> Optional[Dict[str, Any]]:
 
 def save_group_agent(group_id: str, agent_data: Dict[str, Any]) -> Dict[str, Any]:
     """Create or update a group agent entry."""
-    agent_id = agent_data.get("id") or str(uuid.uuid4())
-    payload = dict(agent_data)
+    payload = sanitize_agent_payload(agent_data)
+    agent_id = payload.get("id") or str(uuid.uuid4())
     payload["id"] = agent_id
     payload["group_id"] = group_id
     payload["last_updated"] = datetime.utcnow().isoformat()
@@ -111,7 +112,7 @@ def save_group_agent(group_id: str, agent_data: Dict[str, Any]) -> Dict[str, Any
         stored = cosmos_group_agents_container.upsert_item(body=payload)
         return _clean_agent(stored)
     except Exception as exc:
-        current_app.logger.error(
+        debug_print(
             "Error saving group agent %s for %s: %s", agent_id, group_id, exc
         )
         raise
@@ -135,7 +136,7 @@ def delete_group_agent(group_id: str, agent_id: str) -> bool:
         )
         return True
     except Exception as exc:
-        current_app.logger.error(
+        debug_print(
             "Error deleting group agent %s for %s: %s", agent_id, group_id, exc
         )
         raise

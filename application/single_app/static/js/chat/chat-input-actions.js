@@ -347,8 +347,38 @@ if (imageGenBtn) {
 }
 
 if (webSearchBtn) {
+  const webSearchNoticeContainer = document.getElementById("web-search-notice-container");
+  const webSearchNoticeDismiss = document.getElementById("web-search-notice-dismiss");
+  const webSearchNoticeSessionKey = "webSearchNoticeDismissed";
+  
+  // Check if notice was dismissed this session
+  const isNoticeDismissed = () => sessionStorage.getItem(webSearchNoticeSessionKey) === "true";
+  
+  // Show/hide notice based on web search state
+  const updateWebSearchNotice = (isActive) => {
+    if (webSearchNoticeContainer && window.appSettings?.enable_web_search_user_notice) {
+      if (isActive && !isNoticeDismissed()) {
+        webSearchNoticeContainer.style.display = "block";
+      } else {
+        webSearchNoticeContainer.style.display = "none";
+      }
+    }
+  };
+  
+  // Dismiss button handler
+  if (webSearchNoticeDismiss) {
+    webSearchNoticeDismiss.addEventListener("click", function() {
+      sessionStorage.setItem(webSearchNoticeSessionKey, "true");
+      if (webSearchNoticeContainer) {
+        webSearchNoticeContainer.style.display = "none";
+      }
+    });
+  }
+  
   webSearchBtn.addEventListener("click", function () {
     this.classList.toggle("active");
+    const isActive = this.classList.contains("active");
+    updateWebSearchNotice(isActive);
   });
 }
 
@@ -374,13 +404,29 @@ if (fileInputEl) {
       // Hide the upload button since we're auto-uploading
       uploadBtn.style.display = "none";
       
-      // Automatically upload the file
-      if (!currentConversationId) {
-        createNewConversation(() => {
+      // Check for user agreement before uploading
+      const doUpload = () => {
+        if (!currentConversationId) {
+          createNewConversation(() => {
+            uploadFileToConversation(file);
+          });
+        } else {
           uploadFileToConversation(file);
-        });
+        }
+      };
+      
+      // Check if UserAgreementManager exists and check for agreement
+      if (window.UserAgreementManager) {
+        window.UserAgreementManager.checkBeforeUpload(
+          fileInputEl.files,
+          'chat',
+          'default',
+          function(files) {
+            doUpload();
+          }
+        );
       } else {
-        uploadFileToConversation(file);
+        doUpload();
       }
     } else {
       resetFileButton();
@@ -407,12 +453,29 @@ if (uploadBtn) {
       return;
     }
 
-    if (!currentConversationId) {
-      createNewConversation(() => {
+    // Check for user agreement before uploading
+    const doUpload = () => {
+      if (!currentConversationId) {
+        createNewConversation(() => {
+          uploadFileToConversation(file);
+        });
+      } else {
         uploadFileToConversation(file);
-      });
+      }
+    };
+    
+    // Check if UserAgreementManager exists and check for agreement
+    if (window.UserAgreementManager) {
+      window.UserAgreementManager.checkBeforeUpload(
+        fileInput.files,
+        'chat',
+        'default',
+        function(files) {
+          doUpload();
+        }
+      );
     } else {
-      uploadFileToConversation(file);
+      doUpload();
     }
   });
 }

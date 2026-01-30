@@ -31,16 +31,19 @@
           "type": "string"
         },
         "azure_openai_gpt_endpoint": {
-          "type": "string"
+          "type": "string",
+          "description": "Endpoint for Azure OpenAI (local agents) or Azure AI Foundry (foundry agents)."
         },
         "azure_openai_gpt_key": {
           "type": "string"
         },
         "azure_openai_gpt_deployment": {
-          "type": "string"
+          "type": "string",
+          "description": "Model deployment for local SK agents or Foundry project/workspace identifier for Azure AI agents."
         },
         "azure_openai_gpt_api_version": {
-          "type": "string"
+          "type": "string",
+          "description": "API version for Azure OpenAI (local) or Azure AI Agents (foundry)."
         },
         "azure_agent_apim_gpt_endpoint": {
           "type": "string"
@@ -78,8 +81,8 @@
         },
         "agent_type": {
           "type": "string",
-          "enum": ["local", "aifoundry", "copilot"],
-          "description": "Type of agent that needs to be instantiated."
+          "enum": ["local", "aifoundry"],
+          "description": "Type of agent to instantiate."
         },
         "instructions": {
           "type": "string"
@@ -89,7 +92,7 @@
           "items": { "type": "string" }
         },
         "other_settings": {
-          "type": "object"
+          "$ref": "#/definitions/OtherSettings"
         },
         "max_completion_tokens": {
           "type": "integer",
@@ -111,7 +114,67 @@
         "max_completion_tokens",
         "agent_type"
       ],
-      "title": "Agent"
+      "title": "Agent",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "agent_type": { "const": "aifoundry" }
+            }
+          },
+          "then": {
+            "required": [
+              "azure_openai_gpt_endpoint",
+              "azure_openai_gpt_deployment",
+              "azure_openai_gpt_api_version",
+              "other_settings"
+            ],
+            "properties": {
+              "actions_to_load": {
+                "type": "array",
+                "maxItems": 0,
+                "description": "Azure AI Foundry agents manage tools within Azure and must not specify local plugins."
+              },
+              "other_settings": {
+                "$ref": "#/definitions/FoundrySettingsWrapper"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "OtherSettings": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "azure_ai_foundry": {
+          "$ref": "#/definitions/AzureAIFoundrySettings"
+        }
+      }
+    },
+    "FoundrySettingsWrapper": {
+      "type": "object",
+      "required": ["azure_ai_foundry"],
+      "properties": {
+        "azure_ai_foundry": {
+          "$ref": "#/definitions/AzureAIFoundrySettings"
+        }
+      }
+    },
+    "AzureAIFoundrySettings": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "agent_id": {
+          "type": "string",
+          "description": "Identifier of the Azure AI Foundry agent to invoke."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Optional helper text for administrators managing Foundry agents."
+        }
+      },
+      "required": ["agent_id"]
     }
   }
 }

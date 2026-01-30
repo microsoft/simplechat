@@ -36,6 +36,12 @@ function canManageAgents() {
   return role === "Owner" || role === "Admin";
 }
 
+function groupAllowsModifications() {
+  // Check if group status allows modifications (only active groups)
+  const groupStatus = window.currentGroupStatus || 'active';
+  return groupStatus === 'active';
+}
+
 function truncateName(name, maxLength = 18) {
   if (!name || name.length <= maxLength) return name || "";
   return `${name.substring(0, maxLength)}…`;
@@ -100,7 +106,7 @@ function renderAgentsTable(list) {
     return;
   }
 
-  const canManage = canManageAgents();
+  const canManage = canManageAgents() && groupAllowsModifications();
   tableBody.innerHTML = "";
 
   list.forEach((agent) => {

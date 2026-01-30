@@ -11,6 +11,8 @@ param logAnalyticsId string
 param storageAccount string
 param openAiServiceName string
 
+param enablePrivateNetworking bool
+
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
   name: 'diagnosticConfigs'
@@ -33,7 +35,7 @@ resource videoIndexerService 'Microsoft.VideoIndexer/accounts@2025-04-01' = {
     type: 'SystemAssigned'
   }
   properties: {
-    publicNetworkAccess: 'Enabled'
+    publicNetworkAccess: enablePrivateNetworking ? 'Disabled' : 'Enabled'
     storageServices: {
       resourceId: storage.id
     }
