@@ -9,18 +9,21 @@ const sidebarNewChatBtn = document.getElementById("sidebar-new-chat-btn");
 let currentActiveConversationId = null;
 let sidebarShowHiddenConversations = false; // Track if hidden conversations should be shown in sidebar
 let isLoadingSidebarConversations = false; // Prevent concurrent sidebar loads
+let pendingSidebarReload = false; // Track if a reload is pending
 
 // Load conversations for the sidebar
 export function loadSidebarConversations() {
   if (!sidebarConversationsList) return;
   
-  // Prevent concurrent loads
+  // If already loading, mark that we need to reload again after current load finishes
   if (isLoadingSidebarConversations) {
-    console.log('Sidebar load already in progress, skipping...');
+    console.log('Sidebar load already in progress, marking pending reload...');
+    pendingSidebarReload = true;
     return;
   }
   
   isLoadingSidebarConversations = true;
+  pendingSidebarReload = false; // Clear any pending reload flag
   sidebarConversationsList.innerHTML = '<div class="text-center p-2 text-muted small">Loading conversations...</div>';
 
   fetch("/api/get_conversations")
@@ -29,6 +32,15 @@ export function loadSidebarConversations() {
       sidebarConversationsList.innerHTML = "";
       if (!data.conversations || data.conversations.length === 0) {
         sidebarConversationsList.innerHTML = '<div class="text-center p-2 text-muted small">No conversations yet.</div>';
+        
+        // Reset loading flag even when no conversations
+        isLoadingSidebarConversations = false;
+        
+        // Check for pending reload even when no conversations
+        if (pendingSidebarReload) {
+          console.log('Pending reload detected (no conversations), reloading sidebar...');
+          setTimeout(() => loadSidebarConversations(), 100);
+        }
         return;
       }
       
@@ -87,11 +99,23 @@ export function loadSidebarConversations() {
       
       // Reset loading flag
       isLoadingSidebarConversations = false;
+      
+      // If a reload was requested while we were loading, reload now
+      if (pendingSidebarReload) {
+        console.log('Pending reload detected, reloading sidebar conversations...');
+        setTimeout(() => loadSidebarConversations(), 100); // Small delay to prevent rapid reloads
+      }
     })
     .catch(error => {
       console.error("Error loading sidebar conversations:", error);
       sidebarConversationsList.innerHTML = `<div class="text-center p-2 text-danger small">Error loading conversations: ${error.error || 'Unknown error'}</div>`;
       isLoadingSidebarConversations = false; // Reset flag on error too
+      
+      // If a reload was requested while we were loading, reload now even after error
+      if (pendingSidebarReload) {
+        console.log('Pending reload detected after error, retrying...');
+        setTimeout(() => loadSidebarConversations(), 500); // Longer delay after error
+      }
     });
 }
 
@@ -143,12 +167,6 @@ function createSidebarConversationItem(convo) {
   const originalTitleElement = headerRow ? headerRow.querySelector('.sidebar-conversation-title') : null;
 
   if (headerRow && dropdownElement && originalTitleElement) {
-    // Verify the dropdown is actually a child of headerRow before attempting manipulation
-    if (!headerRow.contains(dropdownElement)) {
-      console.error('Dropdown element is not a child of headerRow', { headerRow, dropdownElement });
-      return convoItem;
-    }
-    
     const titleWrapper = document.createElement('div');
     titleWrapper.classList.add('sidebar-conversation-header', 'd-flex', 'align-items-center', 'flex-grow-1', 'overflow-hidden', 'gap-2');
 
@@ -171,8 +189,25 @@ function createSidebarConversationItem(convo) {
       titleWrapper.appendChild(badge);
     }
     
-    // Insert the wrapper before the dropdown
-    headerRow.insertBefore(titleWrapper, dropdownElement);
+    // Verify dropdown is still a valid child right before insertion
+    try {
+      if (headerRow.contains(dropdownElement) && dropdownElement.parentNode === headerRow) {
+        // Insert the wrapper before the dropdown
+        headerRow.insertBefore(titleWrapper, dropdownElement);
+      } else {
+        // Fallback: just append to headerRow if dropdown reference is invalid
+        console.warn('Dropdown element became invalid, appending wrapper instead', { convo: convo.id });
+        headerRow.appendChild(titleWrapper);
+      }
+    } catch (err) {
+      // Final fallback: append wrapper if insertBefore fails
+      console.error('Error inserting titleWrapper, using appendChild fallback:', err, { convo: convo.id });
+      try {
+        headerRow.appendChild(titleWrapper);
+      } catch (appendErr) {
+        console.error('Critical error: Could not append titleWrapper:', appendErr, { convo: convo.id });
+      }
+    }
   }
   
   // Add double-click editing to title
