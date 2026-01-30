@@ -143,15 +143,23 @@ function createSidebarConversationItem(convo) {
   const originalTitleElement = headerRow ? headerRow.querySelector('.sidebar-conversation-title') : null;
 
   if (headerRow && dropdownElement && originalTitleElement) {
+    // Verify the dropdown is actually a child of headerRow before attempting manipulation
+    if (!headerRow.contains(dropdownElement)) {
+      console.error('Dropdown element is not a child of headerRow', { headerRow, dropdownElement });
+      return convoItem;
+    }
+    
     const titleWrapper = document.createElement('div');
     titleWrapper.classList.add('sidebar-conversation-header', 'd-flex', 'align-items-center', 'flex-grow-1', 'overflow-hidden', 'gap-2');
 
-    // Insert the wrapper before the dropdown first
-    headerRow.insertBefore(titleWrapper, dropdownElement);
+    // Remove the original title from headerRow
+    originalTitleElement.remove();
     
-    // Now move the title element into the wrapper
+    // Add styling to title
     originalTitleElement.classList.add('flex-grow-1', 'text-truncate');
     originalTitleElement.style.minWidth = '0';
+    
+    // Add title to wrapper
     titleWrapper.appendChild(originalTitleElement);
 
     const isGroupConversation = (convo.chat_type && convo.chat_type.startsWith('group')) || groupName;
@@ -162,6 +170,9 @@ function createSidebarConversationItem(convo) {
       badge.title = groupName ? `Group conversation: ${groupName}` : 'Group conversation';
       titleWrapper.appendChild(badge);
     }
+    
+    // Insert the wrapper before the dropdown
+    headerRow.insertBefore(titleWrapper, dropdownElement);
   }
   
   // Add double-click editing to title

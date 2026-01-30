@@ -1,6 +1,47 @@
 <!-- BEGIN release_notes.md BLOCK -->
 # Feature Release
 
+### **(v0.237.006)**
+
+#### Bug Fixes
+
+*   **Windows Unicode Encoding Issue Fix**
+    *   Fixed critical cross-platform compatibility issue where the application crashes on Windows when processing or displaying Unicode characters beyond the Western European character set.
+    *   **Root Cause**: Python on Windows uses cp1252 encoding for stdout/stderr (limited to 256 Western European characters), while Azure services and web applications use UTF-8 encoding universally (1.1M+ characters). This mismatch caused `UnicodeEncodeError: 'charmap' codec can't encode character '\uXXXX'` when logging or displaying emojis, international characters, IPA symbols, or special formatting.
+    *   **Impact**: Application crashes affecting:
+        *   Video transcripts with phonetic symbols
+        *   Chat messages containing emojis or international text
+        *   Agent responses with Unicode formatting
+        *   Debug logging across the entire application
+        *   Error messages and stack traces
+    *   **Solution**: Configured UTF-8 encoding globally at application startup for Windows platforms by reconfiguring `sys.stdout` and `sys.stderr` to UTF-8 at the top of `app.py` before any imports or print statements. Includes fallback for older Python versions (<3.7). Platform-specific fix only applies on Windows.
+    *   **Testing**: Verified with video processing (IPA phonetic symbols), chat messages (emojis/international characters), debug logging (Unicode content), and confirmed no impact on Linux/macOS deployments.
+    *   **Issue**: Fixes [#644](https://github.com/microsoft/simplechat/issues/644)
+    *   (Ref: `app.py`, UTF-8 encoding configuration, cross-platform compatibility)
+
+*   **Azure Speech Service Managed Identity Authentication Fix**
+    *   Fixed Azure Speech Service managed identity authentication requiring resource-specific endpoints with custom subdomains instead of regional endpoints.
+    *   **Root Cause**: Managed identity (AAD token) authentication fails with regional endpoints (e.g., `https://eastus2.api.cognitive.microsoft.com`) because the Bearer token doesn't specify which Speech resource to access. The regional gateway cannot determine resource authorization, resulting in 400 BadRequest errors. Key-based authentication works with regional endpoints because the subscription key identifies the specific resource.
+    *   **Impact**: Users could not use managed identity authentication with Speech Service for audio transcription. Setup appeared successful but failed at runtime with authentication errors.
+    *   **Solution**: Comprehensive setup guide for managed identity requiring:
+        *   **Custom Subdomain**: Enable custom subdomain on Speech resource using `az cognitiveservices account update --custom-domain <resource-name>`
+        *   **Resource-Specific Endpoint**: Configure endpoint as `https://<resource-name>.cognitiveservices.azure.com` (not regional endpoint)
+        *   **RBAC Roles**: Assign `Cognitive Services Speech User` and `Cognitive Services Speech Contributor` roles to App Service managed identity
+        *   **Admin Settings**: Update Speech Service Endpoint to resource-specific URL, set Authentication Type to "Managed Identity", leave Speech Service Key empty
+    *   **Key Differences**:
+        *   Key auth ✅ works with both regional and resource-specific endpoints
+        *   Managed Identity ❌ fails with regional endpoints (400 BadRequest)
+        *   Managed Identity ✅ works with resource-specific endpoints (requires custom subdomain)
+    *   **Troubleshooting Guide**: Added comprehensive troubleshooting for `NameResolutionError` (custom subdomain not enabled), 400 BadRequest (wrong endpoint type), 401 Authentication errors (missing RBAC roles).
+    *   (Ref: Azure Speech Service, managed identity authentication, custom subdomain, RBAC configuration, endpoint types)
+
+*   **Sidebar Conversations DOM Manipulation Fix**
+    *   Fixed JavaScript error "Failed to execute 'insertBefore' on 'Node': The node before which the new node is to be inserted is not a child of this node" that prevented sidebar conversations from loading.
+    *   **Root Cause**: In `createSidebarConversationItem()`, the code was attempting DOM manipulation in the wrong order. When `originalTitleElement` was appended to `titleWrapper`, it was removed from `headerRow`, making the subsequent `insertBefore(titleWrapper, dropdownElement)` fail because `dropdownElement` was no longer a valid child reference in the expected DOM position.
+    *   **Impact**: Users experienced a complete failure loading the sidebar conversation list, with the error appearing in browser console and preventing any conversations from displaying in the sidebar. This affected all users attempting to view their conversation history.
+    *   **Solution**: Reordered DOM manipulation to remove `originalTitleElement` from DOM first, style it, add it to `titleWrapper`, then insert the complete `titleWrapper` before `dropdownElement`. Added validation to check if `dropdownElement` is a valid child before attempting insertion.
+    *   (Ref: `chat-sidebar-conversations.js`, `createSidebarConversationItem()`, DOM manipulation order, line 150)
+
 ### **(v0.237.005)**
 
 #### Bug Fixes
