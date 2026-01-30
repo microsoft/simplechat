@@ -167,6 +167,12 @@ function createSidebarConversationItem(convo) {
   const originalTitleElement = headerRow ? headerRow.querySelector('.sidebar-conversation-title') : null;
 
   if (headerRow && dropdownElement && originalTitleElement) {
+    // Verify the dropdown is actually a child of headerRow before attempting manipulation
+    if (!headerRow.contains(dropdownElement)) {
+      console.error('Dropdown element is not a child of headerRow', { headerRow, dropdownElement });
+      return convoItem;
+    }
+    
     const titleWrapper = document.createElement('div');
     titleWrapper.classList.add('sidebar-conversation-header', 'd-flex', 'align-items-center', 'flex-grow-1', 'overflow-hidden', 'gap-2');
 
