@@ -12,6 +12,7 @@ import os
 import tempfile
 from typing import Dict, Any, Optional
 from .openapi_plugin import OpenApiPlugin
+from functions_debug import debug_print
 
 
 class OpenApiPluginFactory:
@@ -125,8 +126,6 @@ class OpenApiPluginFactory:
     @classmethod
     def _extract_auth_config(cls, config: Dict[str, Any]) -> Dict[str, Any]:
         """Extract authentication configuration from plugin config."""
-        from functions_debug import debug_print
-        
         auth_config = config.get('auth', {})
         if not auth_config:
             return {}
