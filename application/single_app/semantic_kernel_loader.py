@@ -1191,6 +1191,7 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
     selected_agent_is_group = selected_agent_data.get('is_group', False)
     if selected_agent_is_group:
         resolved_group_id = selected_agent_data.get('group_id')
+        active_group_id = None
         try:
             active_group_id = require_active_group(user_id)
             if not resolved_group_id:
@@ -1211,10 +1212,10 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
             agent_identifier = selected_agent_data.get('id') or selected_agent_data.get('name')
             group_agent_cfg = None
             if agent_identifier:
-                group_agent_cfg = get_group_agent(resolved_group_id, agent_identifier)
+                group_agent_cfg = get_group_agent(active_group_id, agent_identifier)
             if not group_agent_cfg:
                 # Fallback: search by name across group agents if ID lookup failed
-                for candidate in get_group_agents(resolved_group_id):
+                for candidate in get_group_agents(active_group_id):
                     if candidate.get('name') == selected_agent_data.get('name'):
                         group_agent_cfg = candidate
                         break
