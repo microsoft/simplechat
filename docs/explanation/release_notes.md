@@ -1,6 +1,21 @@
 <!-- BEGIN release_notes.md BLOCK -->
 # Feature Release
 
+### **(v0.237.005)**
+
+#### Bug Fixes
+
+*   **Retention Policy Field Name Fix**
+    *   Fixed retention policy to use the correct field name `last_updated` instead of the non-existent `last_activity_at` field.
+    *   **Root Cause**: The retention policy query was looking for `last_activity_at` field, but all conversation schemas (legacy and current) use `last_updated` to track the conversation's last modification time.
+    *   **Impact**: After the v0.237.004 fix, NO conversations were being deleted because the query required a field that doesn't exist on any conversation document.
+    *   **Schema Support**: Now correctly supports all 3 conversation schemas:
+        *   Schema 1 (legacy): Messages embedded in conversation document with `last_updated`
+        *   Schema 2 (middle): Messages in separate container with `last_updated`
+        *   Schema 3 (current): Messages with threading metadata with `last_updated`
+    *   **Solution**: Changed SQL query to use `last_updated` field which exists on all conversation documents.
+    *   (Ref: retention policy execution, conversation deletion, `delete_aged_conversations()`, `last_updated` field)
+
 ### **(v0.237.004)**
 
 #### Bug Fixes
