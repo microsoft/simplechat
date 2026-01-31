@@ -3,10 +3,10 @@
 ## Header Information
 
 **Fix Title:** Group Agents Not Loading in Per-User Semantic Kernel Mode  
-**Issue Description:** Group agents and their associated actions were not being loaded when per-user semantic kernel mode was enabled, causing group agents to fall back to global agents and resulting in zero plugins/actions available.  
-**Root Cause:** The `load_user_semantic_kernel()` function only loaded personal agents and global agents (when merge enabled), but completely omitted group agents from groups the user is a member of.  
-**Fixed/Implemented in version:** **0.237.005** (matches `config.py` `app.config['VERSION']`)  
-**Date:** January 22, 2026  
+**Issue Description:** Group agents were not being loaded when per-user semantic kernel mode was enabled, causing group agents to fall back to global agents and resulting in zero plugins/actions available.  
+**Root Cause:** The `load_user_semantic_kernel()` function only loaded personal agents and global agents (when merge enabled), but completely omitted group agents from the user's active group.  
+**Fixed/Implemented in version:** **0.237.008** (matches `config.py` `app.config['VERSION']`)  
+**Date:** January 31, 2026  
 
 ## Problem Statement
 
@@ -43,30 +43,29 @@ The `load_user_semantic_kernel()` function in `semantic_kernel_loader.py` had th
 
 1. ✅ Load personal agents via `get_personal_agents(user_id)`
 2. ✅ Conditionally merge global agents if `merge_global_semantic_kernel_with_workspace` enabled
-3. ❌ **MISSING:** Load group agents from user's group memberships
+3. ❌ **MISSING:** Load group agents from user's active group
 4. ✅ Load personal actions via `get_personal_actions(user_id)`
 5. ✅ Conditionally merge global actions if merge enabled
-6. ❌ **MISSING:** Load group actions from user's group memberships
 
 ### Why It Was Missed
-The code had logic to load a **single selected group agent** if explicitly requested, but this was:
-- Only triggered when a specific group agent was pre-selected
-- Required explicit group ID resolution
-- Did not load **all** group agents from user's memberships
-- Failed to load group agents proactively for selection
+The code did not load group agents from the user's active group in per-user semantic kernel mode. This meant:
+- Group agents were never available for selection
+- Users in groups could not use group-level agent configurations
+- The system would fall back to global or personal agents even when a group agent was requested
 
-This created a chicken-and-egg problem: the agent couldn't be selected because it wasn't loaded, and it wasn't loaded unless it was selected.
+**Note:** Group actions (plugins) are loaded separately by the agent itself based on the selected agent's configuration, not in the `load_user_semantic_kernel()` function. This fix specifically addresses group agent loading.
 
 ## Technical Details
 
 ### Files Modified
-1. **`semantic_kernel_loader.py`** (Lines ~1155-1250)
-   - Added group agent loading after personal agents
-   - Added group action loading after personal actions
-   - Removed redundant single-agent loading logic
+1. **`semantic_kernel_loader.py`** (Lines ~1180-1280)
+   - Changed import from `get_user_groups` to `require_active_group`
+   - Added group agent loading from active group only
+   - Added security validation to ensure selected group agents match the user's active group
+   - Simplified error handling for cases where no active group is selected
 
-2. **`config.py`** (Line 91)
-   - Updated VERSION from "0.236.011" to "0.236.012"
+2. **`config.py`**
+   - Updated VERSION to "0.237.008"
 
 ### Code Changes
 
@@ -77,9 +76,7 @@ agents_cfg = get_personal_agents(user_id)
 for agent in agents_cfg:
     agent['is_global'] = False
 
-# Only try to load ONE selected group agent if explicitly requested
-if selected_agent_is_group:
-    # Complex logic to find and add single group agent
+# No group agent loading at all
     
 # Merge global agents if enabled
 if merge_global:
@@ -87,6 +84,8 @@ if merge_global:
 
 # Load personal actions only
 plugin_manifests = get_personal_actions(user_id)
+
+# No group action loading at all
 ```
 
 #### After (Pseudocode)
@@ -95,19 +94,28 @@ agents_cfg = get_personal_agents(user_id)
 # Mark personal agents
 for agent in agents_cfg:
     agent['is_global'] = False
-    agent['is_group'] = False
 
-# Load ALL group agents from user's group memberships
-user_groups = get_user_groups(user_id)
-for group in user_groups:
-    group_agents = get_group_agents(group_id)
+# Load group agents from active group only
+try:
+    active_group_id = require_active_group(user_id)
+    group_agents = get_group_agents(active_group_id)
     for group_agent in group_agents:
-        # Mark and add to agents_cfg
         group_agent['is_global'] = False
         group_agent['is_group'] = True
-        group_agent['group_id'] = group_id
-        group_agent['group_name'] = group_name
+        group_agent['group_id'] = active_group_id
         agents_cfg.append(group_agent)
+except ValueError:
+    # No active group - normal case
+    pass
+
+# Security check: If a group agent is selected, validate it matches active group
+if selected_agent_is_group:
+    resolved_group_id = selected_agent_data.get('group_id')
+    active_group_id = require_active_group(user_id)
+    if resolved_group_id != active_group_id:
+        # Reject - security violation
+        load_core_plugins_only(kernel, settings)
+        return kernel, None
 
 # Merge global agents if enabled (unchanged)
 if merge_global:
@@ -115,83 +123,91 @@ if merge_global:
 
 # Load personal actions
 plugin_manifests = get_personal_actions(user_id)
-
-# Load ALL group actions from user's group memberships
-for group in user_groups:
-    group_actions = get_group_actions(group_id)
-    plugin_manifests.extend(group_actions)
 ```
 
 ### Key Implementation Details
 
 **Group Agent Loading:**
 ```python
-from functions_group import get_user_groups
+from functions_group import require_active_group
 from functions_group_agents import get_group_agents
 
-user_groups = []  # Initialize to empty list
+# Load group agents for user's active group (if any)
 try:
-    user_groups = get_user_groups(user_id)
-    print(f"[SK Loader] User '{user_id}' is a member of {len(user_groups)} groups")
-    
-    group_agent_count = 0
-    for group in user_groups:
-        group_id = group.get('id')
-        group_name = group.get('name', 'Unknown')
-        if group_id:
-            group_agents = get_group_agents(group_id)
-            for group_agent in group_agents:
-                group_agent['is_global'] = False
-                group_agent['is_group'] = True
-                group_agent['group_id'] = group_id
-                group_agent['group_name'] = group_name
-                agents_cfg.append(group_agent)
-                group_agent_count += 1
-            print(f"[SK Loader] Loaded {len(group_agents)} agents from group '{group_name}' (id: {group_id})")
-    
-    if group_agent_count > 0:
-        log_event(f"[SK Loader] Loaded {group_agent_count} group agents from {len(user_groups)} groups for user '{user_id}'", level=logging.INFO)
-except Exception as e:
-    log_event(f"[SK Loader] Error loading group agents for user '{user_id}': {e}", {"error": str(e)}, level=logging.ERROR, exceptionTraceback=True)
-    user_groups = []  # Reset to empty on error
+    active_group_id = require_active_group(user_id)
+    group_agents = get_group_agents(active_group_id)
+    if group_agents:
+        print(f"[SK Loader] Found {len(group_agents)} group agents for active group '{active_group_id}'")
+        # Badge group agents with group metadata
+        for group_agent in group_agents:
+            group_agent['is_global'] = False
+            group_agent['is_group'] = True
+        agents_cfg.extend(group_agents)
+        print(f"[SK Loader] After merging group agents: {len(agents_cfg)} total agents")
+    else:
+        print(f"[SK Loader] No group agents found for active group '{active_group_id}'")
+except ValueError:
+    # No active group set - this is fine, just means no group agents available
+    print(f"[SK Loader] User '{user_id}' has no active group - skipping group agent loading")
 ```
 
-**Group Action Loading:**
+**Security Validation for Selected Group Agents:**
 ```python
-# Load group actions from all groups the user is a member of
-try:
-    group_action_count = 0
-    for group in user_groups:
-        group_id = group.get('id')
-        group_name = group.get('name', 'Unknown')
-        if group_id:
-            group_actions = get_group_actions(group_id, return_type=SecretReturnType.NAME)
-            plugin_manifests.extend(group_actions)
-            group_action_count += len(group_actions)
-            print(f"[SK Loader] Loaded {len(group_actions)} actions from group '{group_name}' (id: {group_id})")
+# Append selected group agent (if any) to the candidate list so downstream selection logic can resolve it
+selected_agent_data = selected_agent if isinstance(selected_agent, dict) else {}
+selected_agent_is_group = selected_agent_data.get('is_group', False)
+if selected_agent_is_group:
+    resolved_group_id = selected_agent_data.get('group_id')
+    active_group_id = None
     
-    if group_action_count > 0:
-        log_event(f"[SK Loader] Loaded {group_action_count} group actions from {len(user_groups)} groups for user '{user_id}'", level=logging.INFO)
-except Exception as e:
-    log_event(f"[SK Loader] Error loading group actions for user '{user_id}': {e}", {"error": str(e)}, level=logging.ERROR, exceptionTraceback=True)
+    # Group agent MUST have a group_id
+    if not resolved_group_id:
+        log_event(
+            "[SK Loader] Group agent selected but no group_id provided in selection data.",
+            level=logging.ERROR
+        )
+        load_core_plugins_only(kernel, settings)
+        return kernel, None
+    
+    try:
+        active_group_id = require_active_group(user_id)
+        if resolved_group_id != active_group_id:
+            debug_print(
+                f"[SK Loader] Selected group agent references group {resolved_group_id}, active group is {active_group_id}."
+            )
+            log_event(
+                "[SK Loader] Group agent selected from the non-active group.",
+                level=logging.ERROR
+            )
+            load_core_plugins_only(kernel, settings)
+            return kernel, None
+    except ValueError as err:
+        debug_print(f"[SK Loader] No active group available while loading group agent: {err}")
+        log_event(
+            "[SK Loader] Group agent selected but no active group in settings.",
+            level=logging.ERROR
+        )
+        load_core_plugins_only(kernel, settings)
+        return kernel, None
 ```
 
 ### Functions Used
-- **`get_user_groups(user_id)`** - Returns all groups where user is a member (from `functions_group.py`)
+- **`require_active_group(user_id)`** - Returns the active group ID or raises ValueError if none selected (from `functions_group.py`)
 - **`get_group_agents(group_id)`** - Returns all agents for a specific group (from `functions_group_agents.py`)
-- **`get_group_actions(group_id, return_type)`** - Returns all actions/plugins for a specific group (from `functions_group_actions.py`)
+- **`get_group_agent(group_id, agent_identifier)`** - Returns a specific agent from a group by ID or name (from `functions_group_agents.py`)
 
-### Error Handling
-- Both group agent and group action loading are wrapped in try-except blocks
-- Errors are logged with full exception tracebacks
-- On error, `user_groups` is reset to empty list to prevent downstream issues
+### Error Handling and Security
+- Group agent loading wrapped in try-except with ValueError handling for no active group (normal case)
+- Security validation ensures selected group agents match the user's active group
+- If a user attempts to select a group agent from a non-active group, the system loads core plugins only and returns None
+- All errors logged with descriptive messages for debugging
 - System gracefully degrades to personal + global agents if group loading fails
 
 ## Validation
 
 ### Test Scenario
 1. **Setup:**
-   - User `f016493e-9395-4120-91b5-bac4276b6b6c` is member of group `cio6` (ID: `72254e24-4bc6-4680-bc2e-c56d5214d8e8`)
+   - User `f016493e-9395-4120-91b5-bac4276b6b6c` has active group `cio6` (ID: `72254e24-4bc6-4680-bc2e-c56d5214d8e8`)
    - Group has agent `cio6_servicenow_test_agent` with action `cio6_servicenow_query_incidents`
    - Per-user semantic kernel mode enabled
    - Global agent merging enabled
@@ -215,27 +231,37 @@ except Exception as e:
 
 ### After Fix - Success Behavior
 ```
-[SK Loader] User settings found 1 personal agents for user 'f016493e-9395-4120-91b5-bac4276b6b6c'
-[SK Loader] User 'f016493e-9395-4120-91b5-bac4276b6b6c' is a member of 1 groups  # ✅ Groups detected
-[SK Loader] Loaded 1 agents from group 'cio6' (id: 72254e24-4bc6-4680-bc2e-c56d5214d8e8)  # ✅ Group agent loaded
-[SK Loader] Loaded 1 group agents from 1 groups for user 'f016493e-9395-4120-91b5-bac4276b6b6c'  # ✅ Success
-[SK Loader] Total agents loaded: 2 (personal + group) for user 'f016493e-9395-4120-91b5-bac4276b6b6c'
-[SK Loader] After merging: 4 total agents  # ✅ Includes group agent
+[SK Loader] User settings found 1 agents for user 'f016493e-9395-4120-91b5-bac4276b6b6c'
+[SK Loader] Found 1 group agents for active group '72254e24-4bc6-4680-bc2e-c56d5214d8e8'  # ✅ Group agent loaded
+[SK Loader] After merging group agents: 2 total agents  # ✅ Personal + Group
+[SK Loader] After merging: 4 total agents  # ✅ Includes global agents
 [SK Loader] Merged agents: [('researcher', True), ('servicenow_test_agent', True), ('researcher', False), ('cio6_servicenow_test_agent', False)]  # ✅ Group agent present
-[SK Loader] Loaded 1 actions from group 'cio6' (id: 72254e24-4bc6-4680-bc2e-c56d5214d8e8)  # ✅ Group action loaded
-[SK Loader] Loaded 1 group actions from 1 groups for user 'f016493e-9395-4120-91b5-bac4276b6b6c'  # ✅ Success
 [SK Loader] User f016493e-9395-4120-91b5-bac4276b6b6c Found EXACT match for agent: cio6_servicenow_test_agent (is_global=False)  # ✅ Agent found
 [SK Loader] Plugin cio6_servicenow_query_incidents: SUCCESS  # ✅ Plugin loaded
 ```
 
-**Result:** Correct group agent selected with its action available for execution.
+**Result:** Correct group agent selected with its actions available for execution.
 
 ### Verification Checklist
 - [x] Personal agents still load correctly
 - [x] Global agents still merge correctly when enabled
-- [x] Group agents load for all user's group memberships
-- [x] Group actions load for all user's group memberships
+- [x] Group agents load from active group when one is selected
+- [x] No errors when user has no active group selected
 - [x] Agents properly marked with `is_group` and `group_id` flags
 - [x] Agent selection finds group agents by name
+- [x] Security validation prevents users from accessing agents outside their active group
 - [x] Error handling prevents crashes if group loading fails
 - [x] Logging provides visibility into group loading process
+
+## Security Enhancement
+
+This fix includes a critical security validation that was added as part of the implementation:
+
+**Security Check:** When a user selects a group agent, the system now validates that the agent's `group_id` matches the user's currently active group. This prevents users from potentially accessing group agents from groups they are members of but have not set as active, ensuring proper access control.
+
+**Implementation:** If a mismatch is detected between the selected agent's group and the user's active group, the system:
+1. Logs an error with details about the mismatch
+2. Loads only core plugins (no sensitive group-specific plugins)
+3. Returns None for the agent, preventing unauthorized access
+
+This security layer ensures that group agent access is strictly controlled through the active group mechanism.
