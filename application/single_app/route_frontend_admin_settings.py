@@ -862,6 +862,7 @@ def register_route_frontend_admin_settings(app):
                 'max_file_size_mb': max_file_size_mb,
                 'conversation_history_limit': conversation_history_limit,
                 'default_system_prompt': form_data.get('default_system_prompt', '').strip(),
+                'access_denied_message': form_data.get('access_denied_message', '').strip(),
 
                 # Video file settings with Azure Video Indexer Settings
                 'video_indexer_endpoint': form_data.get('video_indexer_endpoint', video_indexer_endpoint).strip(),

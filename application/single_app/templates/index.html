@@ -62,8 +62,7 @@
     {% else %}
         {% if session.get('user') %}
             <p class="lead">
-                You are logged in but do not have the required permissions to access this application.
-                Please submit a ticket to request access.
+                {{ (app_settings.access_denied_message or 'You are logged in but do not have the required permissions to access this application. Please submit a ticket to request access.') | e | replace('\n','<br>') | safe }}
             </p>
         {% else %}
             <div>
