@@ -646,20 +646,13 @@ function renderUserSearchResults(users) {
   let html = "";
   if (!users || !users.length) {
     html = `<tr><td colspan="3" class="text-center text-muted">No results.</td></tr>`;
-  if (!users || !users.length) {
-    html = `<tr><td colspan="3" class="text-center text-muted">No results.</td></tr>`;
   } else {
-    users.forEach(u => {
     users.forEach(u => {
       html += `
         <tr>
           <td>${u.displayName || "(no name)"}</td>
           <td>${u.email || ""}</td>
           <td>
-            <button class="btn btn-sm btn-primary select-user-btn"
-                    data-user-id="${u.id}"
-                    data-user-name="${u.displayName}"
-                    data-user-email="${u.email}">
             <button class="btn btn-sm btn-primary select-user-btn"
                     data-user-id="${u.id}"
                     data-user-name="${u.displayName}"
@@ -674,10 +667,6 @@ function renderUserSearchResults(users) {
   $("#userSearchResultsTable tbody").html(html);
 }
 
-// Populate manual-add fields from search result
-function selectUserForAdd(id, name, email) {
-  $("#newUserId").val(id);
-  $("#newUserDisplayName").val(name);
 // Populate manual-add fields from search result
 function selectUserForAdd(id, name, email) {
   $("#newUserId").val(id);
