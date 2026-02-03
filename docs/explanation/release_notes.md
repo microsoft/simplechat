@@ -37,6 +37,11 @@
     *   **Files Modified**: `semantic_kernel_loader.py`.
     *   (Ref: Group agents, per-user semantic kernel, agent loading, `GROUP_AGENT_LOADING_FIX.md`)
 
+*   **Manage Group Page Syntax Error Fix**
+    *   Fixed critical JavaScript syntax error preventing the manage group page from loading. Removed duplicate code blocks including duplicate conditional checks, forEach loops, button tags, and function definitions.
+    *   The page was stuck on "Loading..." indefinitely with console error "Uncaught SyntaxError: missing ) after argument list" at line 673.
+    *   (Ref: `manage_group.js`, duplicate code removal, syntax error resolution)
+
 ### **(v0.237.007)**
 
 #### Bug Fixes
