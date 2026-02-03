@@ -258,6 +258,18 @@
                 <!-- Chat messages will be dynamically loaded here -->
             </div>
 
+            {% if multi_endpoint_notice.enabled %}
+            <div id="multi-endpoint-notice" class="alert alert-warning d-none mx-3 mb-0" data-message="{{ multi_endpoint_notice.message }}">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div class="me-3">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        <span id="multi-endpoint-notice-text">{{ multi_endpoint_notice.message }}</span>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-dark" id="dismiss-multi-endpoint-notice">Dismiss</button>
+                </div>
+            </div>
+            {% endif %}
+
             <div class="p-3 border-top flex-shrink-0">
                 
                  <div class="d-flex align-items-center mb-2 justify-content-between">
@@ -373,26 +385,41 @@
                         <div id="model-select-container" class="flex-shrink-0">
                             <label for="model-select" class="visually-hidden">Model</label>
                             <select id="model-select" class="form-select">
-                            {% if settings.enable_gpt_apim %}
-                                {# when using APIM, azure_apim_gpt_deployment may be "dep1" or "dep1,dep2,…" #}
-                                {% set raw = settings.azure_apim_gpt_deployment or "" %}
-                                {% set apim_list = raw.split(',') %}
-                                {% for dep in apim_list %}
-                                {% set d = dep.strip() %}
-                                <option value="{{ d }}" {% if loop.first %}selected{% endif %}>
-                                    {{ d }}
+                            {% if enable_multi_model_endpoints %}
+                                {% for model in multi_endpoint_models %}
+                                <option
+                                    value="{{ model.id }}"
+                                    data-endpoint-id="{{ model.endpoint_id }}"
+                                    data-provider="{{ model.provider }}"
+                                    data-deployment-name="{{ model.deployment_name }}"
+                                    title="{{ model.description or model.display_name }}"
+                                    {% if loop.first %}selected{% endif %}
+                                >
+                                    {{ model.display_name }}
                                 </option>
                                 {% endfor %}
                             {% else %}
-                                {# normal direct-Azure OpenAI flow: show whatever you fetched into settings.gpt_model.selected #}
-                                {% for model in settings.gpt_model.selected %}
-                                <option
-                                    value="{{ model.deploymentName }}"
-                                    {% if loop.first %}selected{% endif %}
-                                >
-                                    {{ model.modelName }}
-                                </option>
-                                {% endfor %}
+                                {% if settings.enable_gpt_apim %}
+                                    {# when using APIM, azure_apim_gpt_deployment may be "dep1" or "dep1,dep2,…" #}
+                                    {% set raw = settings.azure_apim_gpt_deployment or "" %}
+                                    {% set apim_list = raw.split(',') %}
+                                    {% for dep in apim_list %}
+                                    {% set d = dep.strip() %}
+                                    <option value="{{ d }}" {% if loop.first %}selected{% endif %}>
+                                        {{ d }}
+                                    </option>
+                                    {% endfor %}
+                                {% else %}
+                                    {# normal direct-Azure OpenAI flow: show whatever you fetched into settings.gpt_model.selected #}
+                                    {% for model in settings.gpt_model.selected %}
+                                    <option
+                                        value="{{ model.deploymentName }}"
+                                        {% if loop.first %}selected{% endif %}
+                                    >
+                                        {{ model.modelName }}
+                                    </option>
+                                    {% endfor %}
+                                {% endif %}
                             {% endif %}
                             </select>
                         </div>
@@ -921,8 +948,11 @@
     window.appSettings = {
         enable_text_to_speech: {{ 'true' if app_settings.enable_text_to_speech else 'false' }},
         enable_speech_to_text_input: {{ 'true' if app_settings.enable_speech_to_text_input else 'false' }},
-        enable_web_search_user_notice: {{ 'true' if settings.enable_web_search_user_notice else 'false' }}
+        enable_web_search_user_notice: {{ 'true' if settings.enable_web_search_user_notice else 'false' }},
+        enable_multi_model_endpoints: {{ 'true' if enable_multi_model_endpoints else 'false' }}
     };
+
+    window.multiEndpointNotice = {{ multi_endpoint_notice|tojson()|safe }};
 
     // Layout related globals (can stay here or move entirely into chat-layout.js if preferred)
     let splitInstance = null;

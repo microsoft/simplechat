@@ -75,7 +75,7 @@ export async function showConversationDetails(conversationId) {
  * @returns {string} HTML string
  */
 function renderConversationMetadata(metadata, conversationId) {
-  const { context = [], tags = [], strict = false, classification = [], last_updated, chat_type = 'personal', is_pinned = false, is_hidden = false } = metadata;
+  const { context = [], tags = [], strict = false, classification = [], last_updated, chat_type = 'personal_single_user', is_pinned = false, is_hidden = false } = metadata;
   
   // Organize tags by category
   const tagsByCategory = {
@@ -499,8 +499,10 @@ function formatClassifications(classifications) {
 
 function formatChatType(chatType, context = []) {
   // Use the actual chat_type value from the metadata
-  if (chatType === 'personal') {
+  if (chatType === 'personal' || chatType === 'personal_single_user') {
     return '<span class="badge bg-primary">personal</span>';
+  } else if (chatType === 'new') {
+    return '<span class="badge bg-secondary">new</span>';
   } else if (chatType === 'group' || chatType.startsWith('group')) {
     // For group chats, try to find the group name from context
     const primaryContext = context.find(c => c.type === 'primary' && c.scope === 'group');

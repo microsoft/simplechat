@@ -13,6 +13,47 @@ const enableAgentsBtn = document.getElementById("enable-agents-btn");
 const agentSelectContainer = document.getElementById("agent-select-container");
 const modelSelectContainer = document.getElementById("model-select-container");
 
+function sanitizeGroupId(groupId) {
+    if (!groupId && groupId !== 0) return null;
+    const normalized = String(groupId).trim();
+    if (!normalized) return null;
+    const lower = normalized.toLowerCase();
+    if (lower === 'none' || lower === 'null' || lower === 'undefined') return null;
+    return normalized;
+}
+
+function getActiveConversationContext() {
+    const activeItem = document.querySelector('.conversation-item.active');
+    const chatType = activeItem?.getAttribute('data-chat-type') || '';
+    const chatState = activeItem?.getAttribute('data-chat-state') || '';
+    const itemGroupId = sanitizeGroupId(activeItem?.getAttribute('data-group-id'));
+
+    return {
+        chatType,
+        chatState,
+        groupId: itemGroupId
+    };
+}
+
+function getActiveConversationScope() {
+    const activeItem = document.querySelector('.conversation-item.active');
+    const chatType = activeItem?.getAttribute('data-chat-type') || '';
+    const chatState = activeItem?.getAttribute('data-chat-state') || '';
+    if (chatType === 'new') {
+        return null;
+    }
+    if (chatState === 'new') {
+        return null;
+    }
+    if (!chatType) {
+        return 'personal';
+    }
+    if (chatType.startsWith('group')) {
+        return 'group';
+    }
+    return 'personal';
+}
+
 /**
  * Check if agents are currently enabled
  * @returns {boolean} True if agents are active
@@ -60,16 +101,32 @@ export async function initializeAgentInteractions() {
 export async function populateAgentDropdown() {
     const agentSelect = agentSelectContainer.querySelector('select');
     try {
+        const conversationScope = getActiveConversationScope();
+        const { chatType, chatState, groupId: conversationGroupId } = getActiveConversationContext();
+        const userActiveGroupId = sanitizeGroupId(await getUserSetting('activeGroupOid'));
+        const workspaceGroupId = sanitizeGroupId(window.groupWorkspaceContext?.activeGroupId || window.activeGroupId);
+        const isNewConversation = chatType === 'new' || chatState === 'new';
+        const isGroupSingleUser = chatType === 'group-single-user' || chatType === 'group_single_user';
+
+        let activeGroupId = conversationGroupId;
+        if (!activeGroupId && (isNewConversation || isGroupSingleUser)) {
+            activeGroupId = userActiveGroupId || workspaceGroupId || null;
+        }
         const [userAgents, selectedAgent] = await Promise.all([
             fetchUserAgents(),
             fetchSelectedAgent()
         ]);
-        const groupAgents = await fetchGroupAgentsForActiveGroup();
-        const combinedAgents = [...userAgents, ...groupAgents];
-        const personalAgents = combinedAgents.filter(agent => !agent.is_global && !agent.is_group);
-        const activeGroupAgents = combinedAgents.filter(agent => agent.is_group);
-        const globalAgents = combinedAgents.filter(agent => agent.is_global);
-        const orderedAgents = [...personalAgents, ...activeGroupAgents, ...globalAgents];
+        const groupAgents = activeGroupId ? await fetchGroupAgentsForActiveGroup(activeGroupId) : [];
+        const personalAgents = userAgents.filter(agent => !agent.is_global && !agent.is_group);
+        const globalAgents = userAgents.filter(agent => agent.is_global);
+        let orderedAgents = [];
+        if (!conversationScope) {
+            orderedAgents = [...personalAgents, ...groupAgents, ...globalAgents];
+        } else if (conversationScope === 'group') {
+            orderedAgents = [...groupAgents, ...globalAgents];
+        } else {
+            orderedAgents = [...personalAgents, ...globalAgents];
+        }
         populateAgentSelect(agentSelect, orderedAgents, selectedAgent);
         agentSelect.onchange = async function () {
             const selectedOption = agentSelect.options[agentSelect.selectedIndex];

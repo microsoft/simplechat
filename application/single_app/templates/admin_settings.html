@@ -719,14 +719,14 @@
                                     <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage group-level agents that can be shared within workgroups and teams."></i>
                                 </div>
                                 <div class="form-check form-switch mb-2">
-                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-custom-agent-endpoints" name="allow_user_custom_agent_endpoints" {% if settings.allow_user_custom_agent_endpoints %}checked{% endif %}>
-                                    <label class="form-check-label ms-2" for="toggle-allow-user-custom-agent-endpoints">Allow User Custom Agent Endpoints</label>
-                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to configure custom API endpoints for their personal agents to connect to external services and models."></i>
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-custom-endpoints" name="allow_user_custom_endpoints" {% if settings.allow_user_custom_endpoints %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-user-custom-endpoints">Allow User Custom Endpoints</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to configure custom endpoints for their personal workspace agents and model endpoints."></i>
                                 </div>
                                 <div class="form-check form-switch mb-2">
-                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-custom-agent-endpoints" name="allow_group_custom_agent_endpoints" {% if settings.allow_group_custom_agent_endpoints %}checked{% endif %}>
-                                    <label class="form-check-label ms-2" for="toggle-allow-group-custom-agent-endpoints">Allow Group Custom Agent Endpoints</label>
-                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to configure custom API endpoints for group-level agents to connect to shared external services and models."></i>
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-custom-endpoints" name="allow_group_custom_endpoints" {% if settings.allow_group_custom_endpoints %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-group-custom-endpoints">Allow Group Custom Endpoints</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to configure custom endpoints for group workspace agents and model endpoints."></i>
                                 </div>
                                 <div class="form-check form-switch mb-2">
                                     <input class="form-check-input" type="checkbox" role="switch" id="toggle-merge-global-sk" name="merge_global_semantic_kernel_with_workspace" {% if settings.merge_global_semantic_kernel_with_workspace %}checked{% endif %}>
@@ -1438,146 +1438,64 @@
                     Configure all AI model settings including GPT for text generation, embeddings for semantic search, and image generation capabilities.
                 </p>
 
-                <!-- GPT Configuration Section -->
-                <div class="card p-3 mb-4" id="gpt-configuration">
+                <div class="card p-3 mb-4" id="multi-endpoint-configuration">
                     <h5 class="card-title">
-                        <i class="bi bi-chat-text me-2"></i>GPT Configuration
+                        <i class="bi bi-hdd-network me-2"></i>Model Endpoints
                     </h5>
                     <p class="text-muted small">
-                        Configure your GPT model settings. These are used for generating AI text responses.
+                        Manage multiple AI model endpoints (Azure OpenAI and Azure AI Foundry). When enabled, model selection in chat is driven by these endpoints.
                     </p>
 
-                <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
-                    <input type="checkbox" class="form-check-input me-2" id="enable_gpt_apim" name="enable_gpt_apim" {%
-                        if settings.enable_gpt_apim %}checked{% endif %}>
-                    <label class="form-check-label" for="enable_gpt_apim">Use APIM instead of direct to Azure OpenAI
-                        endpoint</label>
-                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Route GPT model requests through Azure API Management instead of directly to Azure OpenAI service for additional governance and monitoring."></i>
-                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="APIM provides an additional layer for security, monitoring, and rate limiting. When using APIM, you'll need to manually specify your model names and will not be able to fetch models automatically."></i>
-                </div>
+                    <div class="form-check form-switch mb-3 d-flex align-items-center">
+                        <input type="checkbox" class="form-check-input me-2" id="enable_multi_model_endpoints" name="enable_multi_model_endpoints" {% if settings.enable_multi_model_endpoints %}checked{% endif %}>
+                        <label class="form-check-label" for="enable_multi_model_endpoints">Enable multi-endpoint model management</label>
+                    </div>
 
-                <div id="non_apim_gpt_settings" {% if settings.enable_gpt_apim %}style="display: none;" {% endif %}>
-                    <div class="card p-3 mb-3">
-                        <div class="mb-3">
-                            <label for="azure_openai_gpt_endpoint" class="form-label">
-                                Azure OpenAI GPT Endpoint
-                            </label>
-                            <input type="text" class="form-control" id="azure_openai_gpt_endpoint"
-                                name="azure_openai_gpt_endpoint" value="{{ settings.azure_openai_gpt_endpoint or '' }}">
-                        </div>
-                        <div class="mb-3">
-                            <label for="azure_openai_gpt_authentication_type" class="form-label">
-                                Authentication Type
-                            </label>
-                            <select class="form-select" id="azure_openai_gpt_authentication_type"
-                                name="azure_openai_gpt_authentication_type">
-                                <option value="key" {% if settings.azure_openai_gpt_authentication_type=='key'
-                                    %}selected{% endif %}>
-                                    Key
-                                </option>
-                                <option value="managed_identity" {% if
-                                    settings.azure_openai_gpt_authentication_type=='managed_identity' %}selected{% endif
-                                    %}>
-                                    Managed Identity
-                                </option>
-                            </select>
-                        </div>
-                        <div class="mb-3">
-                            <label for="azure_openai_gpt_subscription_id" class="form-label">Subscription ID</label>
-                            <input type="text" class="form-control" id="azure_openai_gpt_subscription_id"
-                                name="azure_openai_gpt_subscription_id"
-                                value="{{ settings.azure_openai_gpt_subscription_id or '' }}">
-                        </div>
-                        <div class="mb-3">
-                            <label for="azure_openai_gpt_resource_group" class="form-label">Resource Group</label>
-                            <input type="text" class="form-control" id="azure_openai_gpt_resource_group"
-                                name="azure_openai_gpt_resource_group"
-                                value="{{ settings.azure_openai_gpt_resource_group or '' }}">
-                        </div>
-                        <div class="mb-3" id="gpt_key_container" {% if settings.azure_openai_gpt_authentication_type
-                            !='key' %}style="display: none;" {% endif %}>
-                            <label for="azure_openai_gpt_key" class="form-label">Azure OpenAI GPT Key</label>
-                            <div class="input-group">
-                                <input type="password" class="form-control" id="azure_openai_gpt_key"
-                                    name="azure_openai_gpt_key" value="{{ settings.azure_openai_gpt_key or '' }}">
-                                <button type="button" class="btn btn-outline-secondary"
-                                    id="toggle_gpt_key">Show</button>
-                            </div>
-                        </div>
-                        <div class="mb-3">
-                            <label for="gpt_model" class="form-label">Azure OpenAI GPT Model Selection</label>
-                            <br><small>Each selected model will be available in the Chat UI as an option for the User. You can select multiple models.</small>
-                            <br><small>Save Pending Changes to settings before clicking Fetch Models</small>
-                            <div id="gpt_models_list" class="mt-2 mb-3">
-                                
-                            </div>
-                            
-                            <small>Save pending changes to settings before clicking Fetch Embedding Models</small><br>
+                    <div id="multi-endpoint-warning" class="alert alert-warning {% if not settings.multi_endpoint_migration_notice.enabled %}d-none{% endif %}">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        <span>{{ settings.multi_endpoint_migration_notice.message }}</span>
+                    </div>
 
-                            <input type="hidden" name="gpt_model_json" id="gpt_model_json" />
+                    <div id="default-model-selection-wrapper" class="mt-3">
+                        <label for="default-model-selection" class="form-label">Default model for fallbacks</label>
+                        <select class="form-select" id="default-model-selection" aria-label="Default model for fallback selection"></select>
+                        <div class="form-text">
+                            Used for tasks such as conversation summarization, fallback, and other operations when an agent is selected.
+                        </div>
+                    </div>
 
-                            
-                            <input type="hidden" id="gpt_model" value="{{ settings.gpt_model.selected[0].deploymentName if settings.gpt_model.selected else '' }}" />
-
-                            <button type="button" class="btn btn-secondary" id="fetch_gpt_models_btn">
-                                Fetch GPT Models
+                    <input type="hidden" name="model_endpoints_json" id="model_endpoints_json" />
+                    <input type="hidden" name="default_model_selection_json" id="default_model_selection_json" />
+                    
+                    <div id="model-endpoints-wrapper" class="{% if not settings.enable_multi_model_endpoints %}d-none{% endif %}">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h6 class="mb-0">Configured Endpoints</h6>
+                            <button type="button" class="btn btn-sm btn-outline-primary" id="add-model-endpoint-btn">
+                                <i class="bi bi-plus-circle me-1"></i>Add Endpoint
                             </button>
                         </div>
-                        <a href="#" class="fw-bold text-decoration-none mb-2" data-bs-toggle="collapse"
-                            data-bs-target="#advancedGptFields" aria-expanded="false" aria-controls="advancedGptFields">
-                            Show Advanced
-                        </a>
-                        <div class="collapse" id="advancedGptFields">
-                            <div class="card card-body mt-2">
-                                <div class="mb-3">
-                                    <label for="azure_openai_gpt_api_version" class="form-label">
-                                        Azure OpenAI GPT API Version
-                                    </label>
-                                    <input type="text" class="form-control" id="azure_openai_gpt_api_version"
-                                        name="azure_openai_gpt_api_version"
-                                        value="{{ settings.azure_openai_gpt_api_version or '' }}">
-                                </div>
-                            </div>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Provider</th>
+                                        <th>Selected Models</th>
+                                        <th>Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="model-endpoints-tbody">
+                                    <!-- Populated by JavaScript -->
+                                </tbody>
+                            </table>
                         </div>
                     </div>
-                </div>
-
-                <div id="apim_gpt_settings" class="card p-3 mb-3" {% if not settings.enable_gpt_apim
-                    %}style="display: none;" {% endif %}>
-                    <div class="mb-3">
-                        <label for="azure_apim_gpt_endpoint" class="form-label">Azure APIM Endpoint</label>
-                        <input type="text" class="form-control" id="azure_apim_gpt_endpoint"
-                            name="azure_apim_gpt_endpoint" value="{{ settings.azure_apim_gpt_endpoint or '' }}">
-                    </div>
-                    <div class="mb-3">
-                        <label for="azure_apim_gpt_api_version" class="form-label">Azure APIM API Version</label>
-                        <input type="text" class="form-control" id="azure_apim_gpt_api_version"
-                            name="azure_apim_gpt_api_version" value="{{ settings.azure_apim_gpt_api_version or '' }}">
-                    </div>
-                    <div class="mb-3">
-                        <label for="azure_apim_gpt_deployment" class="form-label">Azure APIM Deployment</label>
-                        <br><small class="text-muted">Each model defined here will be available in the Chat UI as an option for the User. You can include multiple models seperated by a comma (example: gpt-4o, o-1, o-3).</small>
-                        <br><small class="text-muted">NOTE: The APIM GPT Test is against the first model in the list.</small>
-                        <input type="text" class="form-control" id="azure_apim_gpt_deployment"
-                            name="azure_apim_gpt_deployment" value="{{ settings.azure_apim_gpt_deployment or '' }}">
-                    </div>
-                    <div class="mb-3">
-                        <label for="azure_apim_gpt_subscription_key" class="form-label">Azure APIM Subscription
-                            Key</label>
-                        <div class="input-group">
-                            <input type="password" class="form-control" id="azure_apim_gpt_subscription_key"
-                                name="azure_apim_gpt_subscription_key"
-                                value="{{ settings.azure_apim_gpt_subscription_key or '' }}">
-                            <button type="button" class="btn btn-outline-secondary"
-                                id="toggle_azure_apim_gpt_subscription_key">Show</button>
-                        </div>
-                    </div>
-                </div>
-
-                <button type="button" class="btn btn-secondary mt-3" id="test_gpt_button">
-                    Test GPT Connection
-                </button>
-                <div id="test_gpt_result" class="mt-2"></div>
+                    {% if not settings.enable_multi_model_endpoints %}
+                        <button type="button" class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#legacyModelSettingsModal">
+                            <i class="bi bi-sliders me-1"></i>Open Legacy Model Configuration
+                        </button>
+                    {% endif %}
                 </div>
 
                 <!-- Embeddings Configuration Section -->
@@ -1885,6 +1803,167 @@
                     Test Image Connection
                 </button>
                 <div id="test_image_result" class="mt-2"></div>
+                </div>
+
+                {% include '_multiendpoint_modal.html' %}
+
+                <!-- Legacy AI Models Modal -->
+                <div class="modal fade" id="legacyModelSettingsModal" tabindex="-1" aria-labelledby="legacyModelSettingsModalLabel" aria-hidden="true">
+                    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="legacyModelSettingsModalLabel">Legacy AI Model Configuration</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <!-- GPT Configuration Section -->
+                                <div class="card p-3 mb-4" id="gpt-configuration">
+                                    <h5 class="card-title">
+                                        <i class="bi bi-chat-text me-2"></i>GPT Configuration
+                                    </h5>
+                                    <p class="text-muted small">
+                                        Configure your GPT model settings. These are used for generating AI text responses.
+                                    </p>
+
+                                <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
+                                    <input type="checkbox" class="form-check-input me-2" id="enable_gpt_apim" name="enable_gpt_apim" {%
+                                        if settings.enable_gpt_apim %}checked{% endif %}>
+                                    <label class="form-check-label" for="enable_gpt_apim">Use APIM instead of direct to Azure OpenAI
+                                        endpoint</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Route GPT model requests through Azure API Management instead of directly to Azure OpenAI service for additional governance and monitoring."></i>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="APIM provides an additional layer for security, monitoring, and rate limiting. When using APIM, you'll need to manually specify your model names and will not be able to fetch models automatically."></i>
+                                </div>
+
+                                <div id="non_apim_gpt_settings" {% if settings.enable_gpt_apim %}style="display: none;" {% endif %}>
+                                    <div class="card p-3 mb-3">
+                                        <div class="mb-3">
+                                            <label for="azure_openai_gpt_endpoint" class="form-label">
+                                                Azure OpenAI GPT Endpoint
+                                            </label>
+                                            <input type="text" class="form-control" id="azure_openai_gpt_endpoint"
+                                                name="azure_openai_gpt_endpoint" value="{{ settings.azure_openai_gpt_endpoint or '' }}">
+                                        </div>
+                                        <div class="mb-3">
+                                            <label for="azure_openai_gpt_authentication_type" class="form-label">
+                                                Authentication Type
+                                            </label>
+                                            <select class="form-select" id="azure_openai_gpt_authentication_type"
+                                                name="azure_openai_gpt_authentication_type">
+                                                <option value="key" {% if settings.azure_openai_gpt_authentication_type=='key'
+                                                    %}selected{% endif %}>
+                                                    Key
+                                                </option>
+                                                <option value="managed_identity" {% if
+                                                    settings.azure_openai_gpt_authentication_type=='managed_identity' %}selected{% endif
+                                                    %}>
+                                                    Managed Identity
+                                                </option>
+                                            </select>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label for="azure_openai_gpt_subscription_id" class="form-label">Subscription ID</label>
+                                            <input type="text" class="form-control" id="azure_openai_gpt_subscription_id"
+                                                name="azure_openai_gpt_subscription_id"
+                                                value="{{ settings.azure_openai_gpt_subscription_id or '' }}">
+                                        </div>
+                                        <div class="mb-3">
+                                            <label for="azure_openai_gpt_resource_group" class="form-label">Resource Group</label>
+                                            <input type="text" class="form-control" id="azure_openai_gpt_resource_group"
+                                                name="azure_openai_gpt_resource_group"
+                                                value="{{ settings.azure_openai_gpt_resource_group or '' }}">
+                                        </div>
+                                        <div class="mb-3" id="gpt_key_container" {% if settings.azure_openai_gpt_authentication_type
+                                            !='key' %}style="display: none;" {% endif %}>
+                                            <label for="azure_openai_gpt_key" class="form-label">Azure OpenAI GPT Key</label>
+                                            <div class="input-group">
+                                                <input type="password" class="form-control" id="azure_openai_gpt_key"
+                                                    name="azure_openai_gpt_key" value="{{ settings.azure_openai_gpt_key or '' }}">
+                                                <button type="button" class="btn btn-outline-secondary"
+                                                    id="toggle_gpt_key">Show</button>
+                                            </div>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label for="gpt_model" class="form-label">Azure OpenAI GPT Model Selection</label>
+                                            <br><small>Each selected model will be available in the Chat UI as an option for the User. You can select multiple models.</small>
+                                            <br><small>Save Pending Changes to settings before clicking Fetch Models</small>
+                                            <div id="gpt_models_list" class="mt-2 mb-3">
+                                                
+                                            </div>
+                                            
+                                            <small>Save pending changes to settings before clicking Fetch Embedding Models</small><br>
+
+                                            <input type="hidden" name="gpt_model_json" id="gpt_model_json" />
+
+                                            
+                                            <input type="hidden" id="gpt_model" value="{{ settings.gpt_model.selected[0].deploymentName if settings.gpt_model.selected else '' }}" />
+
+                                            <button type="button" class="btn btn-secondary" id="fetch_gpt_models_btn">
+                                                Fetch GPT Models
+                                            </button>
+                                        </div>
+                                        <a href="#" class="fw-bold text-decoration-none mb-2" data-bs-toggle="collapse"
+                                            data-bs-target="#advancedGptFields" aria-expanded="false" aria-controls="advancedGptFields">
+                                            Show Advanced
+                                        </a>
+                                        <div class="collapse" id="advancedGptFields">
+                                            <div class="card card-body mt-2">
+                                                <div class="mb-3">
+                                                    <label for="azure_openai_gpt_api_version" class="form-label">
+                                                        Azure OpenAI GPT API Version
+                                                    </label>
+                                                    <input type="text" class="form-control" id="azure_openai_gpt_api_version"
+                                                        name="azure_openai_gpt_api_version"
+                                                        value="{{ settings.azure_openai_gpt_api_version or '' }}">
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div id="apim_gpt_settings" class="card p-3 mb-3" {% if not settings.enable_gpt_apim
+                                    %}style="display: none;" {% endif %}>
+                                    <div class="mb-3">
+                                        <label for="azure_apim_gpt_endpoint" class="form-label">Azure APIM Endpoint</label>
+                                        <input type="text" class="form-control" id="azure_apim_gpt_endpoint"
+                                            name="azure_apim_gpt_endpoint" value="{{ settings.azure_apim_gpt_endpoint or '' }}">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="azure_apim_gpt_api_version" class="form-label">Azure APIM API Version</label>
+                                        <input type="text" class="form-control" id="azure_apim_gpt_api_version"
+                                            name="azure_apim_gpt_api_version" value="{{ settings.azure_apim_gpt_api_version or '' }}">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="azure_apim_gpt_deployment" class="form-label">Azure APIM Deployment</label>
+                                        <br><small class="text-muted">Each model defined here will be available in the Chat UI as an option for the User. You can include multiple models seperated by a comma (example: gpt-4o, o-1, o-3).</small>
+                                        <br><small class="text-muted">NOTE: The APIM GPT Test is against the first model in the list.</small>
+                                        <input type="text" class="form-control" id="azure_apim_gpt_deployment"
+                                            name="azure_apim_gpt_deployment" value="{{ settings.azure_apim_gpt_deployment or '' }}">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="azure_apim_gpt_subscription_key" class="form-label">Azure APIM Subscription
+                                            Key</label>
+                                        <div class="input-group">
+                                            <input type="password" class="form-control" id="azure_apim_gpt_subscription_key"
+                                                name="azure_apim_gpt_subscription_key"
+                                                value="{{ settings.azure_apim_gpt_subscription_key or '' }}">
+                                            <button type="button" class="btn btn-outline-secondary"
+                                                id="toggle_azure_apim_gpt_subscription_key">Show</button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <button type="button" class="btn btn-secondary mt-3" id="test_gpt_button">
+                                    Test GPT Connection
+                                </button>
+                                <div id="test_gpt_result" class="mt-2"></div>
+                                </div>
+
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -3212,7 +3291,7 @@
                             </div>
                             <div class="col-md-6">
                                 <label for="web_search_foundry_agent_id" class="form-label">Foundry Agent ID</label>
-                                <input type="text" class="form-control" id="web_search_foundry_agent_id" name="web_search_foundry_agent_id" value="{{ settings.web_search_agent.other_settings.azure_ai_foundry.agent_id if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else '' }}" placeholder="GUID from Azure AI Foundry">
+                                <input type="text" class="form-control" id="web_search_foundry_agent_id" name="web_search_foundry_agent_id" value="{{ settings.web_search_agent.other_settings.azure_ai_foundry.agent_id if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else '' }}" placeholder="ID from Azure AI Foundry. Typically starts with asst_">
                             </div>
                             <div class="col-md-4">
                                 <label for="web_search_foundry_auth_type" class="form-label">Authentication Type</label>
@@ -4209,6 +4288,11 @@
     window.imageSelected = JSON.parse('{{ settings.image_gen_model.selected|tojson()|safe }}' || '[]');
     window.imageAll      = JSON.parse('{{ settings.image_gen_model.all|tojson()|safe }}' || '[]');
 
+    window.enableMultiModelEndpoints = {{ 'true' if settings.enable_multi_model_endpoints else 'false' }};
+    window.modelEndpoints = JSON.parse('{{ settings.model_endpoints|tojson()|safe }}' || '[]');
+    window.defaultModelSelection = JSON.parse('{{ settings.default_model_selection|tojson()|safe }}' || '{}');
+    window.multiEndpointMigrationNotice = JSON.parse('{{ settings.multi_endpoint_migration_notice|tojson()|safe }}' || '{}');
+
     // *** NEW: Classification Data ***
     try {
         let categoriesStr = '{{ settings.document_classification_categories|tojson(indent=None)|safe }}';
@@ -4247,6 +4331,7 @@
 
 </script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_settings.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/admin/admin_model_endpoints.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_sidebar_nav.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/plugin_modal_stepper.js') }}"></script>
 {% if settings.enable_semantic_kernel %}

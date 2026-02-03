@@ -1339,3 +1339,66 @@ def log_retention_policy_force_push(
             level=logging.ERROR
         )
         debug_print(f"⚠️  Warning: Failed to log retention policy force push: {str(e)}")
+
+
+def log_general_admin_action(
+    admin_user_id: str,
+    admin_email: str,
+    action: str,
+    description: Optional[str] = None,
+    additional_context: Optional[dict] = None
+) -> None:
+    """
+    Log a general admin action to the activity_logs container.
+
+    Args:
+        admin_user_id (str): User ID of the admin performing the action
+        admin_email (str): Email of the admin performing the action
+        action (str): Action name or identifier
+        description (str, optional): Human-readable description for display
+        additional_context (dict, optional): Additional context to store
+    """
+
+    try:
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': admin_user_id,
+            'activity_type': 'admin_action',
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'admin': {
+                'user_id': admin_user_id,
+                'email': admin_email
+            },
+            'action': action,
+            'description': description or action,
+            'workspace_type': 'admin',
+            'workspace_context': {
+                'action': action
+            }
+        }
+
+        if additional_context:
+            activity_record['additional_context'] = additional_context
+
+        cosmos_activity_logs_container.create_item(body=activity_record)
+
+        log_event(
+            message=f"Admin action logged: {action} by {admin_email}",
+            extra=activity_record,
+            level=logging.INFO
+        )
+        debug_print(f"✅ Admin action logged: {action} by {admin_email}")
+
+    except Exception as e:
+        log_event(
+            message=f"Error logging admin action: {str(e)}",
+            extra={
+                'admin_user_id': admin_user_id,
+                'admin_email': admin_email,
+                'action': action,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+        debug_print(f"⚠️  Warning: Failed to log admin action: {str(e)}")

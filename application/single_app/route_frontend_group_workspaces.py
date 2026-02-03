@@ -2,6 +2,7 @@
 
 from config import *
 from functions_authentication import *
+from functions_group import get_group_model_endpoints
 from functions_settings import *
 from swagger_wrapper import swagger_route, get_auth_security
 
@@ -15,8 +16,9 @@ def register_route_frontend_group_workspaces(app):
         """Render the Group workspaces page for the current active group."""
         user_id = get_current_user_id()
         settings = get_settings()
+        user_settings = get_user_settings(user_id)
         public_settings = sanitize_settings_for_user(settings)
-        active_group_id = settings.get("activeGroupOid")
+        active_group_id = user_settings.get("settings", {}).get("activeGroupOid")
         enable_document_classification = settings.get('enable_document_classification', False)
         enable_file_sharing = settings.get('enable_file_sharing', False)
         enable_extract_meta_data = settings.get('enable_extract_meta_data', False)
@@ -57,6 +59,13 @@ def register_route_frontend_group_workspaces(app):
             allowed_extensions += ["mp3", "wav", "ogg", "aac", "flac", "m4a"]
         allowed_extensions_str = "Allowed: " + ", ".join(allowed_extensions)
 
+        group_model_endpoints = sanitize_model_endpoints_for_frontend(
+            get_group_model_endpoints(active_group_id) if active_group_id else []
+        )
+        global_model_endpoints = sanitize_model_endpoints_for_frontend(
+            settings.get("model_endpoints", [])
+        )
+
         # Build allowed extensions string
         allowed_extensions = [
             "txt", "pdf", "doc", "docm", "docx", "xlsx", "xls", "xlsm","csv", "pptx", "html",
@@ -78,7 +87,9 @@ def register_route_frontend_group_workspaces(app):
             enable_audio_file_support=enable_audio_file_support,
             enable_file_sharing=enable_file_sharing,
             legacy_docs_count=legacy_count,
-            allowed_extensions=allowed_extensions_str
+            allowed_extensions=allowed_extensions_str,
+            group_model_endpoints=group_model_endpoints,
+            global_model_endpoints=global_model_endpoints
         )
 
     @app.route('/set_active_group', methods=['POST'])

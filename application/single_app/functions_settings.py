@@ -36,9 +36,11 @@ def get_settings(use_cosmos=False):
             'is_global': True
         },
         'allow_user_agents': False,
+        'allow_user_custom_endpoints': False,
         'allow_user_custom_agent_endpoints': False,
         'allow_user_plugins': False,
         'allow_group_agents': False,
+        'allow_group_custom_endpoints': False,
         'allow_group_custom_agent_endpoints': False,
         'allow_ai_foundry_agents': False,
         'allow_group_ai_foundry_agents': False,
@@ -77,6 +79,22 @@ def get_settings(use_cosmos=False):
         'gpt_model': {
             "selected": [],
             "all": []
+        },
+        'enable_multi_model_endpoints': False,
+        'model_endpoints': [],
+        'default_model_selection': {
+            'endpoint_id': '',
+            'model_id': '',
+            'provider': ''
+        },
+        'multi_endpoint_migrated_at': None,
+        'multi_endpoint_migration_notice': {
+            'enabled': False,
+            'message': (
+                'Multi-endpoint has been enabled and your existing AI endpoint was migrated. '
+                'Agents using the default connection may need to be updated to select a new model endpoint.'
+            ),
+            'created_at': None
         },
         'azure_apim_gpt_endpoint': '',
         'azure_apim_gpt_subscription_key': '',
@@ -365,9 +383,10 @@ def get_settings(use_cosmos=False):
 
         # Merge default_settings in, to fill in any missing or nested keys
         merged = deep_merge_dicts(default_settings, settings_item)
+        migration_updated = apply_custom_endpoint_setting_migration(merged)
 
         # If merging added anything new, upsert back to Cosmos so future reads remain up to date
-        if merged != settings_item:
+        if merged != settings_item or migration_updated:
             cosmos_settings_container.upsert_item(merged)
             print("App Settings had missing keys and was updated in Cosmos DB.")
             return merged
@@ -529,6 +548,98 @@ def deep_merge_dicts(default_dict, existing_dict):
             # For lists or other types, we skip overwriting.
     return existing_dict
 
+def apply_custom_endpoint_setting_migration(settings_item):
+    updated = False
+    if "allow_user_custom_endpoints" not in settings_item:
+        settings_item["allow_user_custom_endpoints"] = settings_item.get("allow_user_custom_agent_endpoints", False)
+        updated = True
+    if "allow_group_custom_endpoints" not in settings_item:
+        settings_item["allow_group_custom_endpoints"] = settings_item.get("allow_group_custom_agent_endpoints", False)
+        updated = True
+
+    if settings_item.get("allow_user_custom_agent_endpoints") != settings_item.get("allow_user_custom_endpoints"):
+        settings_item["allow_user_custom_agent_endpoints"] = settings_item.get("allow_user_custom_endpoints", False)
+        updated = True
+    if settings_item.get("allow_group_custom_agent_endpoints") != settings_item.get("allow_group_custom_endpoints"):
+        settings_item["allow_group_custom_agent_endpoints"] = settings_item.get("allow_group_custom_endpoints", False)
+        updated = True
+
+    return updated
+
+def normalize_model_endpoints(endpoints):
+    """Normalize model endpoints with stable IDs and enabled flags."""
+    if not isinstance(endpoints, list):
+        return [], False
+
+    normalized = []
+    changed = False
+
+    for endpoint in endpoints:
+        if not isinstance(endpoint, dict):
+            continue
+        endpoint_copy = json.loads(json.dumps(endpoint))
+        connection = endpoint_copy.get("connection") or {}
+
+        if not endpoint_copy.get("id"):
+            fallback_id = endpoint_copy.get("name") or connection.get("endpoint")
+            if fallback_id:
+                endpoint_copy["id"] = fallback_id
+                changed = True
+
+        if endpoint_copy.get("enabled") is None:
+            endpoint_copy["enabled"] = True
+            changed = True
+
+        models = endpoint_copy.get("models") or []
+        normalized_models = []
+        for model in models:
+            if not isinstance(model, dict):
+                continue
+            model_copy = json.loads(json.dumps(model))
+            if not model_copy.get("id"):
+                model_id = (
+                    model_copy.get("deploymentName")
+                    or model_copy.get("deployment")
+                    or model_copy.get("modelName")
+                    or model_copy.get("name")
+                )
+                if model_id:
+                    model_copy["id"] = model_id
+                    changed = True
+            if model_copy.get("enabled") is None:
+                model_copy["enabled"] = True
+                changed = True
+            normalized_models.append(model_copy)
+
+        endpoint_copy["models"] = normalized_models
+        normalized.append(endpoint_copy)
+
+    return normalized, changed
+
+
+def sanitize_model_endpoints_for_frontend(endpoints):
+    """Return model endpoint configs with secrets stripped for frontend use."""
+    normalized, _ = normalize_model_endpoints(endpoints)
+    if not isinstance(normalized, list):
+        return []
+
+    sanitized = []
+    for endpoint in normalized:
+        if not isinstance(endpoint, dict):
+            continue
+        endpoint_copy = json.loads(json.dumps(endpoint))
+        auth = endpoint_copy.get("auth") or {}
+        has_api_key = bool(auth.get("api_key"))
+        has_client_secret = bool(auth.get("client_secret"))
+        auth.pop("api_key", None)
+        auth.pop("client_secret", None)
+        endpoint_copy["auth"] = auth
+        endpoint_copy["has_api_key"] = has_api_key
+        endpoint_copy["has_client_secret"] = has_client_secret
+        sanitized.append(endpoint_copy)
+
+    return sanitized
+
 def encrypt_key(key):
     cipher_suite = Fernet(app.config['SECRET_KEY'])
     encrypted_key = cipher_suite.encrypt(key.encode())
@@ -552,6 +663,8 @@ def get_user_settings(user_id):
         # Ensure the settings key exists for consistency downstream
         if 'settings' not in doc:
             doc['settings'] = {}
+        if 'personal_model_endpoints' not in doc['settings']:
+            doc['settings']['personal_model_endpoints'] = []
         
         # Try to update email/display_name if missing and available in session
         user = session.get("user", {})
@@ -586,6 +699,7 @@ def get_user_settings(user_id):
         email = user.get("preferred_username") or user.get("email")
         display_name = user.get("name")
         doc = {"id": user_id, "settings": {}}
+        doc["settings"]["personal_model_endpoints"] = []
         if email:
             doc["email"] = email
         if display_name:
@@ -806,7 +920,7 @@ def sanitize_settings_for_logging(full_settings: dict) -> dict:
         return full_settings
     
     sanitized = {}
-    sensitive_key_terms = ["key", "base64", "image", "storage_account_url"]
+    sensitive_key_terms = ["key", "base64", "image", "storage_account_url", "_secret"]
     
     for k, v in full_settings.items():
         # Skip keys with sensitive terms

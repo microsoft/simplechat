@@ -255,7 +255,7 @@ function overrideAgentStepper(stepper) {
 
 function getAgentStepper() {
   if (!agentStepper) {
-    agentStepper = overrideAgentStepper(new AgentModalStepper(false));
+    agentStepper = overrideAgentStepper(new AgentModalStepper(false, { settingsEndpoint: '/api/group/agent/settings', workspaceScope: 'group' }));
     window.agentModalStepper = agentStepper;
   }
   return agentStepper;
@@ -275,7 +275,7 @@ async function openAgentModal(agent = null) {
       document.getElementById("agent-apim-fields"),
       document.getElementById("agent-gpt-fields"),
       () => agentsCommon.loadGlobalModelsForModal({
-        endpoint: "/api/user/agent/settings",
+        endpoint: "/api/group/agent/settings",
         agent,
         globalModelSelect: document.getElementById("agent-global-model-select"),
         isGlobal: false,

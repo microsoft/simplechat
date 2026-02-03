@@ -351,7 +351,7 @@ async function deleteAgent(name) {
 // --- Execution: Event Wiring & Initial Load ---
 
 function initializeWorkspaceAgentUI() {
-  window.agentModalStepper = new AgentModalStepper(false);
+  window.agentModalStepper = new AgentModalStepper(false, { settingsEndpoint: '/api/user/agent/settings' });
   attachAgentTableEvents();
   fetchAgents();
 }

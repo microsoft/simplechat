@@ -14,6 +14,7 @@ def register_route_frontend_workspace(app):
     def workspace():
         user_id = get_current_user_id()
         settings = get_settings()
+        user_settings = get_user_settings(user_id)
         public_settings = sanitize_settings_for_user(settings)
         enable_document_classification = settings.get('enable_document_classification', False)
         enable_file_sharing = settings.get('enable_file_sharing', False)
@@ -54,6 +55,12 @@ def register_route_frontend_workspace(app):
         if enable_audio_file_support in [True, 'True', 'true']:
             allowed_extensions += ["mp3", "wav", "ogg", "aac", "flac", "m4a"]
         allowed_extensions_str = "Allowed: " + ", ".join(allowed_extensions)
+
+        personal_endpoints = user_settings.get("settings", {}).get("personal_model_endpoints", [])
+        personal_model_endpoints = sanitize_model_endpoints_for_frontend(personal_endpoints)
+        global_model_endpoints = sanitize_model_endpoints_for_frontend(
+            settings.get("model_endpoints", [])
+        )
                 
         return render_template(
             'workspace.html', 
@@ -64,7 +71,9 @@ def register_route_frontend_workspace(app):
             enable_audio_file_support=enable_audio_file_support,
             enable_file_sharing=enable_file_sharing,
             legacy_docs_count=legacy_count,
-            allowed_extensions=allowed_extensions_str
+            allowed_extensions=allowed_extensions_str,
+            personal_model_endpoints=personal_model_endpoints,
+            global_model_endpoints=global_model_endpoints
         )
 
     

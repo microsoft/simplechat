@@ -220,34 +220,55 @@
         </button>
       </li>
       {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
-      <li class="nav-item" role="presentation">
-        <button
-          class="nav-link"
-          id="agents-tab-btn"
-          data-bs-toggle="tab"
-          data-bs-target="#agents-tab"
-          type="button"
-          role="tab"
-          aria-controls="agents-tab"
-          aria-selected="false"
-        >
-          Your Agents
-        </button>
-      </li>
-      <li class="nav-item" role="presentation">
-        <button
-          class="nav-link"
-          id="plugins-tab-btn"
-          data-bs-toggle="tab"
-          data-bs-target="#plugins-tab"
-          type="button"
-          role="tab"
-          aria-controls="plugins-tab"
-          aria-selected="false"
-        >
-          Your Actions
-        </button>
-      </li>
+        {% if settings.allow_user_agents %}
+          <li class="nav-item" role="presentation">
+            <button
+              class="nav-link"
+              id="agents-tab-btn"
+              data-bs-toggle="tab"
+              data-bs-target="#agents-tab"
+              type="button"
+              role="tab"
+              aria-controls="agents-tab"
+              aria-selected="false"
+            >
+              Your Agents
+            </button>
+          </li>
+      
+          {% if settings.allow_user_plugins %}
+            <li class="nav-item" role="presentation">
+              <button
+                class="nav-link"
+                id="plugins-tab-btn"
+                data-bs-toggle="tab"
+                data-bs-target="#plugins-tab"
+                type="button"
+                role="tab"
+                aria-controls="plugins-tab"
+                aria-selected="false"
+              >
+                Your Actions
+              </button>
+            </li>
+          {% endif %}
+        {% endif %}
+      {% endif %}
+      {% if settings.allow_user_custom_endpoints %}
+        <li class="nav-item" role="presentation">
+          <button
+            class="nav-link"
+            id="endpoints-tab-btn"
+            data-bs-toggle="tab"
+            data-bs-target="#endpoints-tab"
+            type="button"
+            role="tab"
+            aria-controls="endpoints-tab"
+            aria-selected="false"
+          >
+            Your Endpoints
+          </button>
+        </li>
       {% endif %}
     </ul>
 
@@ -489,7 +510,6 @@
         </div> <!-- End Card -->
       </div>
       <!-- End PROMPTS TAB -->
-      {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
       <!-- ============= AGENTS TAB ============= -->
       <div
         class="tab-pane fade"
@@ -536,7 +556,7 @@
         {% endif %}
       </div>
       <!-- End AGENTS TAB -->
-      {% endif %}
+      
 
       {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
       <!-- ============= ACTIONS TAB ============= -->
@@ -568,17 +588,68 @@
               </table>
             </div>
           </template>
-          </div>
         {% else %}
           <div class="alert alert-warning text-center my-4">
             Custom User Actions are currently disabled. Please ask your admin to enable actions for your workspace.
           </div>
         {% endif %}
+      </div>
+      <!-- End ACTIONS TAB -->
+
+      {% if settings.allow_user_custom_endpoints and settings.enable_multi_model_endpoints %}
+      <!-- ============= ENDPOINTS TAB ============= -->
+      <div
+        class="tab-pane fade"
+        id="endpoints-tab"
+        role="tabpanel"
+        aria-labelledby="endpoints-tab-btn"
+      >
+        <div class="tab-pane-inner">
+          <!-- Workspace Model Endpoints -->
+          <div class="card p-3 my-3" id="workspace-multi-endpoint-configuration">
+            <h6 class="mb-2"><i class="bi bi-hdd-network me-2"></i>Workspace Model Endpoints</h6>
+            <p class="text-muted small mb-2">Manage personal model endpoints used by your workspace agents. Global endpoints are managed by admins.</p>
+            <div class="form-check form-switch mb-3 d-flex align-items-center">
+              <input type="checkbox" class="form-check-input me-2" id="enable_multi_model_endpoints" name="enable_multi_model_endpoints" {% if settings.enable_multi_model_endpoints %}checked{% endif %} disabled />
+              <label class="form-check-label" for="enable_multi_model_endpoints">Multi-endpoint management is controlled by your admin</label>
+            </div>
+            <div id="model-endpoints-wrapper" class="{% if not settings.enable_multi_model_endpoints %}d-none{% endif %}">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="mb-0">Your Endpoints</h6>
+                <button type="button" class="btn btn-sm btn-outline-primary" id="add-model-endpoint-btn">
+                  <i class="bi bi-plus-circle me-1"></i>Add Endpoint
+                </button>
+              </div>
+              <div class="table-responsive">
+                <table class="table table-sm table-bordered">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Provider</th>
+                      <th>Selected Models</th>
+                      <th>Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="model-endpoints-tbody">
+                    <!-- Populated by JS -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <input type="hidden" id="model_endpoints_json" />
+          </div>
+        </div>
+      </div>
+      <!-- End ENDPOINTS TAB -->
+      {% endif %}
       {% endif %}
     </div>
     <!-- End Tab Content -->
   </div>
   <!--</div>-->
+
+  {% include '_multiendpoint_modal.html' %}
 
   <!-- Modal for Creating/Editing Prompts (Keep As Is) -->
   <div
@@ -886,6 +957,13 @@
     <script type="module" src="/static/js/workspace/workspace_agents.js"></script>
     <script type="module" src="/static/js/workspace/workspace_plugins.js"></script>
   {% endif %}
+  <script>
+    window.enableMultiModelEndpoints = {{ 'true' if settings.enable_multi_model_endpoints else 'false' }};
+    window.modelEndpointScope = 'user';
+    window.workspaceModelEndpoints = JSON.parse('{{ personal_model_endpoints|default([])|tojson|safe }}' || '[]');
+    window.globalModelEndpoints = JSON.parse('{{ global_model_endpoints|default([])|tojson|safe }}' || '[]');
+  </script>
+  <script type="module" src="{{ url_for('static', filename='js/workspace/workspace_model_endpoints.js') }}"></script>
   <!-- <script src="https://cdn.jsdelivr.net/npm/simplemde/dist/simplemde.min.js"></script>
    LOCAL VERSION BELOW -->
    <script src="/static/js/simplemde/simplemde.min.js"></script>

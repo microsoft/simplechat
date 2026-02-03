@@ -9,6 +9,31 @@ from functions_debug import debug_print
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_activity_logging import log_conversation_creation, log_conversation_deletion, log_conversation_archival
 
+def normalize_chat_type(conversation_item):
+    chat_type = conversation_item.get('chat_type')
+    if chat_type:
+        if chat_type == 'personal':
+            conversation_item['chat_type'] = 'personal_single_user'
+            return conversation_item['chat_type'], True
+        return chat_type, False
+
+    primary_context = next(
+        (ctx for ctx in conversation_item.get('context', []) if ctx.get('type') == 'primary'),
+        None
+    )
+    if primary_context:
+        if primary_context.get('scope') == 'group':
+            chat_type = 'group-single-user'
+        elif primary_context.get('scope') == 'public':
+            chat_type = 'public'
+        else:
+            chat_type = 'personal_single_user'
+    else:
+        chat_type = 'personal_single_user'
+
+    conversation_item['chat_type'] = chat_type
+    return chat_type, True
+
 def register_route_backend_conversations(app):
 
     @app.route('/api/get_messages', methods=['GET'])
@@ -287,6 +312,10 @@ def register_route_backend_conversations(app):
             return jsonify({'error': 'User not authenticated'}), 401
         query = f"SELECT * FROM c WHERE c.user_id = '{user_id}' ORDER BY c.last_updated DESC"
         items = list(cosmos_conversations_container.query_items(query=query, enable_cross_partition_query=True))
+        for item in items:
+            _, updated = normalize_chat_type(item)
+            if updated:
+                cosmos_conversations_container.upsert_item(item)
         return jsonify({
             'conversations': items
         }), 200
@@ -311,7 +340,8 @@ def register_route_backend_conversations(app):
             'tags': [],
             'strict': False,
             'is_pinned': False,
-            'is_hidden': False
+            'is_hidden': False,
+            'chat_type': 'new'
         }
         cosmos_conversations_container.upsert_item(conversation_item)
         
@@ -784,6 +814,10 @@ def register_route_backend_conversations(app):
             if conversation_item.get('user_id') != user_id:
                 return jsonify({'error': 'Forbidden'}), 403
             
+            _, updated = normalize_chat_type(conversation_item)
+            if updated:
+                cosmos_conversations_container.upsert_item(conversation_item)
+
             # Return the full conversation metadata
             return jsonify({
                 "conversation_id": conversation_id,
@@ -795,7 +829,8 @@ def register_route_backend_conversations(app):
                 "tags": conversation_item.get('tags', []),
                 "strict": conversation_item.get('strict', False),
                 "is_pinned": conversation_item.get('is_pinned', False),
-                "is_hidden": conversation_item.get('is_hidden', False)
+                "is_hidden": conversation_item.get('is_hidden', False),
+                "chat_type": conversation_item.get('chat_type')
             }), 200
             
         except CosmosResourceNotFoundError:
@@ -924,8 +959,8 @@ def register_route_backend_conversations(app):
                 filtered_in = []
                 
                 for c in conversations:
-                    # Default to 'personal' if chat_type is not defined (legacy conversations)
-                    chat_type = c.get('chat_type', 'personal')
+                    # Default to 'personal_single_user' if chat_type is not defined (legacy conversations)
+                    chat_type = c.get('chat_type', 'personal_single_user')
                     if chat_type in chat_types:
                         filtered_in.append(c)
                     else:
@@ -936,7 +971,7 @@ def register_route_backend_conversations(app):
                 
                 # Show some examples of filtered out chat types
                 if filtered_out:
-                    unique_types = set(c.get('chat_type', 'None/personal') for c in filtered_out[:10])
+                    unique_types = set(c.get('chat_type', 'None/personal_single_user') for c in filtered_out[:10])
                     debug_print(f"   Filtered out chat_types (sample): {unique_types}")
             
             # Filter by classifications if specified
@@ -1047,7 +1082,7 @@ def register_route_backend_conversations(app):
                             'title': conversation.get('title', 'Untitled'),
                             'last_updated': conversation.get('last_updated', ''),
                             'classification': conversation.get('classification', []),
-                            'chat_type': conversation.get('chat_type', 'personal'),
+                            'chat_type': conversation.get('chat_type', 'personal_single_user'),
                             'is_pinned': conversation.get('is_pinned', False),
                             'is_hidden': conversation.get('is_hidden', False)
                         },

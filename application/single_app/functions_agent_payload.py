@@ -34,6 +34,9 @@ _TEXT_FIELDS = [
     "azure_agent_apim_gpt_endpoint",
     "azure_agent_apim_gpt_deployment",
     "azure_agent_apim_gpt_api_version",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
 ]
 _STRING_DEFAULT_FIELDS = [
     "azure_openai_gpt_endpoint",
@@ -44,6 +47,9 @@ _STRING_DEFAULT_FIELDS = [
     "azure_agent_apim_gpt_subscription_key",
     "azure_agent_apim_gpt_deployment",
     "azure_agent_apim_gpt_api_version",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
 ]
 
 _MAX_FIELD_LENGTHS = {
@@ -59,6 +65,9 @@ _MAX_FIELD_LENGTHS = {
     "azure_agent_apim_gpt_subscription_key": 1024,
     "azure_agent_apim_gpt_deployment": 256,
     "azure_agent_apim_gpt_api_version": 64,
+    "model_endpoint_id": 128,
+    "model_id": 128,
+    "model_provider": 32,
 }
 _FOUNDRY_FIELD_LENGTHS = {
     "agent_id": 128,

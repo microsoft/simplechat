@@ -276,11 +276,10 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
         elif existing_primary.get('scope') == 'public':
             conversation_item['chat_type'] = 'public'
         elif existing_primary.get('scope') == 'personal':
-            conversation_item['chat_type'] = 'personal'
+            conversation_item['chat_type'] = 'personal_single_user'
     else:
-        # No documents used - model-only conversation, don't set chat_type
-        # This will result in no badges being shown
-        pass
+        # No documents used - model-only conversation, default to personal_single_user
+        conversation_item['chat_type'] = 'personal_single_user'
     
     # Collect and update tags with proper deduplication
     current_tags = {}

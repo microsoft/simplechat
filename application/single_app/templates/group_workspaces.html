@@ -246,37 +246,55 @@ app_settings.app_title }} {% endblock %} {% block head %}
         Group Prompts
       </button>
     </li>
-    {% if settings.enable_semantic_kernel and settings.allow_group_agents %}
-    <li class="nav-item" role="presentation">
-      <button
-        class="nav-link"
-        id="group-agents-tab-btn"
-        data-bs-toggle="tab"
-        data-bs-target="#group-agents-tab"
-        type="button"
-        role="tab"
-        aria-controls="group-agents-tab"
-        aria-selected="false"
-      >
-        Group Agents
-      </button>
-    </li>
+    {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
+      {% if settings.allow_group_agents %}
+        <li class="nav-item" role="presentation">
+          <button
+            class="nav-link"
+            id="group-agents-tab-btn"
+            data-bs-toggle="tab"
+            data-bs-target="#group-agents-tab"
+            type="button"
+            role="tab"
+            aria-controls="group-agents-tab"
+            aria-selected="false"
+          >
+            Group Agents
+          </button>
+        </li>
+    
+        {% if settings.enable_semantic_kernel and settings.allow_group_plugins %}
+          <li class="nav-item" role="presentation">
+            <button
+              class="nav-link"
+              id="group-plugins-tab-btn"
+              data-bs-toggle="tab"
+              data-bs-target="#group-plugins-tab"
+              type="button"
+              role="tab"
+              aria-controls="group-plugins-tab"
+              aria-selected="false"
+            >
+              Group Actions
+            </button>
+          </li>
+      {% endif %}
     {% endif %}
-    {% if settings.enable_semantic_kernel and settings.allow_group_plugins %}
-    <li class="nav-item" role="presentation">
-      <button
-        class="nav-link"
-        id="group-plugins-tab-btn"
-        data-bs-toggle="tab"
-        data-bs-target="#group-plugins-tab"
-        type="button"
-        role="tab"
-        aria-controls="group-plugins-tab"
-        aria-selected="false"
-      >
-        Group Actions
-      </button>
-    </li>
+    {% if settings.allow_group_custom_endpoints %}
+      <li class="nav-item" role="presentation">
+        <button
+          class="nav-link"
+          id="group-endpoints-tab-btn"
+          data-bs-toggle="tab"
+          data-bs-target="#group-endpoints-tab"
+          type="button"
+          role="tab"
+          aria-controls="group-endpoints-tab"
+          aria-selected="false"
+        >
+          Group Endpoints
+        </button>
+      </li>
     {% endif %}
   </ul>
 
@@ -630,7 +648,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
     </div>
     <!-- End GROUP PROMPTS TAB -->
 
-    {% if settings.enable_semantic_kernel and settings.allow_group_agents %}
     <!-- ============= GROUP AGENTS TAB ============= -->
     <div
       class="tab-pane fade"
@@ -735,10 +752,58 @@ app_settings.app_title }} {% endblock %} {% block head %}
     </div>
     <!-- End GROUP ACTIONS TAB -->
     {% endif %}
+
+    {% if settings.enable_semantic_kernel and settings.allow_group_custom_endpoints and settings.enable_multi_model_endpoints %}
+    <!-- ============= GROUP ENDPOINTS TAB ============= -->
+    <div
+      class="tab-pane fade"
+      id="group-endpoints-tab"
+      role="tabpanel"
+      aria-labelledby="group-endpoints-tab-btn"
+    >
+      <!-- Group Model Endpoints -->
+      <div class="card p-3 my-3" id="group-multi-endpoint-configuration">
+        <h6 class="mb-2"><i class="bi bi-hdd-network me-2"></i>Group Model Endpoints</h6>
+        <p class="text-muted small mb-2">Manage model endpoints for this group. Global endpoints are managed by admins.</p>
+        <div class="form-check form-switch mb-3 d-flex align-items-center">
+          <input type="checkbox" class="form-check-input me-2" id="enable_multi_model_endpoints" name="enable_multi_model_endpoints" {% if settings.enable_multi_model_endpoints %}checked{% endif %} disabled />
+          <label class="form-check-label" for="enable_multi_model_endpoints">Multi-endpoint management is controlled by your admin</label>
+        </div>
+        <div id="model-endpoints-wrapper" class="{% if not settings.enable_multi_model_endpoints %}d-none{% endif %}">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <h6 class="mb-0">Group Endpoints</h6>
+            <button type="button" class="btn btn-sm btn-outline-primary" id="add-model-endpoint-btn">
+              <i class="bi bi-plus-circle me-1"></i>Add Endpoint
+            </button>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm table-bordered">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Provider</th>
+                  <th>Selected Models</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="model-endpoints-tbody">
+                <!-- Populated by JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <input type="hidden" id="model_endpoints_json" />
+      </div>
+    </div>
+    <!-- End GROUP ENDPOINTS TAB -->
+    {% endif %}
   </div>
   <!-- End Tab Content -->
 </div>
 <!-- End Container -->
+
+{% include '_multiendpoint_modal.html' %}
 
 <!-- Loading Modal (Keep As Is - Used by Upload) -->
 <div
@@ -996,7 +1061,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
     </form>
   </div>
 </div>
-{% endblock %} {% block scripts %}
+{% endblock %}
+
+{% block scripts %}
 <!-- SimpleMDE CSS/JS (Keep As Is) -->
 <!-- <script src="https://cdn.jsdelivr.net/npm/simplemde/dist/simplemde.min.js"></script>
  LOCAL VERSION BELOW -->
@@ -1005,6 +1072,14 @@ app_settings.app_title }} {% endblock %} {% block head %}
 <!-- Include group document sharing JS -->
 <script src="/static/js/workspace/group-documents-sharing.js"></script>
 <script src="/static/js/workspace_sidebar_nav.js"></script>
+
+<script>
+    window.enableMultiModelEndpoints = {{ 'true' if settings.enable_multi_model_endpoints else 'false' }};
+    window.modelEndpointScope = 'group';
+    window.workspaceModelEndpoints = JSON.parse('{{ group_model_endpoints|default([])|tojson|safe }}' || '[]');
+    window.globalModelEndpoints = JSON.parse('{{ global_model_endpoints|default([])|tojson|safe }}' || '[]');
+</script>
+<script type="module" src="{{ url_for('static', filename='js/workspace/workspace_model_endpoints.js') }}"></script>
 
 <!-- Pass backend flags to JS -->
 <script>
@@ -3601,4 +3676,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
 <script type="module" src="/static/js/workspace/group_plugins.js"></script>
 {% endif %}
 {% endblock %}
+
+
 

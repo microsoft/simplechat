@@ -57,6 +57,18 @@
         "azure_agent_apim_gpt_api_version": {
           "type": "string"
         },
+        "model_endpoint_id": {
+          "type": "string",
+          "description": "Selected model endpoint ID when using multi-endpoint routing."
+        },
+        "model_id": {
+          "type": "string",
+          "description": "Selected model ID from the multi-endpoint catalog."
+        },
+        "model_provider": {
+          "type": "string",
+          "description": "Model provider for the selected multi-endpoint model (aoai or aifoundry)."
+        },
         "enable_agent_gpt_apim": {
           "type": "boolean"
         },

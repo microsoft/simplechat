@@ -14,6 +14,7 @@ import asyncio, types
 import ast
 import json
 import re
+from urllib.parse import urlparse
 from typing import Any, Dict, List, Mapping, Optional
 from config import *
 from flask import g
@@ -28,6 +29,7 @@ from functions_debug import debug_print
 from functions_activity_logging import log_chat_activity, log_conversation_creation, log_token_usage
 from flask import current_app
 from swagger_wrapper import swagger_route, get_auth_security
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
 
 def get_kernel():
@@ -38,6 +40,250 @@ def get_kernel_agents():
     builtins_agents = getattr(builtins, 'kernel_agents', None)
     log_event(f"[SKChat] get_kernel_agents - g.kernel_agents: {type(g_agents)} ({len(g_agents) if g_agents else 0} agents), builtins.kernel_agents: {type(builtins_agents)} ({len(builtins_agents) if builtins_agents else 0} agents)", level=logging.INFO)
     return g_agents or builtins_agents
+
+def resolve_authority(auth_settings):
+    management_cloud = (auth_settings.get('management_cloud') or 'public').lower()
+    if management_cloud == 'government':
+        return "https://login.microsoftonline.us"
+    if management_cloud == 'custom':
+        custom_authority = auth_settings.get('custom_authority') or ""
+        return custom_authority.strip() or None
+    return None
+
+def infer_foundry_scope_from_endpoint(endpoint):
+    if not endpoint:
+        return "https://ai.azure.com/.default"
+    host = urlparse(endpoint).hostname or endpoint
+    host = host.lower()
+    if "azure.us" in host:
+        return "https://ai.azure.us/.default"
+    if "azure.cn" in host:
+        return "https://ai.azure.cn/.default"
+    if "azure.de" in host:
+        return "https://ai.azure.de/.default"
+    return "https://ai.azure.com/.default"
+
+def resolve_foundry_scope_for_auth(auth_settings, endpoint=None):
+    auth_type = (auth_settings.get('type') or 'managed_identity').lower()
+    if auth_type == 'service_principal':
+        management_cloud = (auth_settings.get('management_cloud') or 'public').lower()
+        if management_cloud == 'government':
+            return "https://ai.azure.us/.default"
+        if management_cloud == 'custom':
+            custom_scope = (auth_settings.get('foundry_scope') or '').strip()
+            if not custom_scope:
+                raise ValueError("Foundry scope is required for custom cloud configurations.")
+            return custom_scope
+        return "https://ai.azure.com/.default"
+
+    custom_scope = (auth_settings.get('foundry_scope') or '').strip()
+    if custom_scope:
+        return custom_scope
+    return infer_foundry_scope_from_endpoint(endpoint)
+
+def resolve_foundry_inference_api_version(connection, settings):
+    api_version = (connection.get('openai_api_version') or connection.get('api_version') or '').strip()
+    if api_version and api_version != 'v1':
+        return api_version
+    fallback = settings.get('azure_openai_gpt_api_version') or '2024-05-01-preview'
+    return fallback
+
+def build_multi_endpoint_client(auth, provider, endpoint, api_version):
+    auth_type = (auth.get('type') or 'managed_identity').lower()
+    if auth_type == 'api_key':
+        api_key = auth.get('api_key')
+        if not api_key:
+            raise ValueError("API key is required for the selected endpoint.")
+        return AzureOpenAI(
+            api_version=api_version,
+            azure_endpoint=endpoint,
+            api_key=api_key
+        )
+
+    if auth_type == 'service_principal':
+        authority_override = resolve_authority(auth)
+        credential = ClientSecretCredential(
+            tenant_id=auth.get('tenant_id'),
+            client_id=auth.get('client_id'),
+            client_secret=auth.get('client_secret'),
+            authority=authority_override
+        )
+        scope = cognitive_services_scope
+        if provider == 'aifoundry':
+            scope = resolve_foundry_scope_for_auth(auth, endpoint)
+        debug_print(f"[SKChat] Multi-endpoint SP scope={scope} provider={provider}")
+        token_provider = get_bearer_token_provider(credential, scope)
+    else:
+        managed_identity_client_id = auth.get('managed_identity_client_id') or None
+        credential = DefaultAzureCredential(managed_identity_client_id=managed_identity_client_id)
+        scope = cognitive_services_scope
+        if provider == 'aifoundry':
+            scope = resolve_foundry_scope_for_auth(auth, endpoint)
+        debug_print(f"[SKChat] Multi-endpoint MI scope={scope} provider={provider}")
+        token_provider = get_bearer_token_provider(credential, scope)
+
+    return AzureOpenAI(
+        api_version=api_version,
+        azure_endpoint=endpoint,
+        azure_ad_token_provider=token_provider
+    )
+
+
+def get_foundry_api_version_candidates(primary_version, settings):
+    candidates = [primary_version]
+    fallback = (settings.get('azure_openai_gpt_api_version') or '').strip()
+    if fallback:
+        candidates.append(fallback)
+    candidates.extend([
+        '2024-10-01-preview',
+        '2024-07-01-preview',
+        '2024-05-01-preview',
+        '2024-02-01'
+    ])
+    seen = set()
+    unique = []
+    for item in candidates:
+        if not item:
+            continue
+        if item in seen:
+            continue
+        seen.add(item)
+        unique.append(item)
+    return unique
+
+
+def resolve_endpoint_by_identifier(endpoints, endpoint_id):
+    if not endpoint_id:
+        return None
+    return next((
+        endpoint for endpoint in endpoints
+        if endpoint.get('id') == endpoint_id
+        or endpoint.get('name') == endpoint_id
+        or (endpoint.get('connection') or {}).get('endpoint') == endpoint_id
+    ), None)
+
+
+def resolve_model_by_identifier(models, model_id):
+    if not model_id:
+        return None
+    return next((
+        model for model in models
+        if model.get('id') == model_id
+        or model.get('deploymentName') == model_id
+        or model.get('deployment') == model_id
+        or model.get('modelName') == model_id
+        or model.get('name') == model_id
+    ), None)
+
+
+def resolve_multi_endpoint_gpt_config(settings, data, enable_gpt_apim):
+    enable_multi_model_endpoints = settings.get('enable_multi_model_endpoints', False)
+    requested_model_id = data.get('model_id')
+    requested_endpoint_id = data.get('model_endpoint_id')
+    requested_provider = data.get('model_provider')
+    debug_print(f"[GPTClient] resolve_multi_endpoint_gpt_config - enable_multi_model_endpoints={enable_multi_model_endpoints}, enable_gpt_apim={enable_gpt_apim}, requested_model_id={requested_model_id}, requested_endpoint_id={requested_endpoint_id}, requested_provider={requested_provider}")
+
+    if not enable_multi_model_endpoints or enable_gpt_apim or not requested_model_id:
+        debug_print(f"[GPTClient] Multi-endpoint GPT config not used.")
+        return None
+
+    endpoints = settings.get('model_endpoints', []) or []
+    endpoint_cfg = resolve_endpoint_by_identifier(endpoints, requested_endpoint_id)
+    debug_print(f"[GPTClient] Resolved endpoint_cfg: {sanitize_settings_for_logging(endpoint_cfg)}")
+    if not endpoint_cfg or not endpoint_cfg.get('enabled', True):
+        raise ValueError("Selected model endpoint is not available.")
+
+    models = endpoint_cfg.get('models', []) or []
+    model_cfg = resolve_model_by_identifier(models, requested_model_id)
+    debug_print(f"[GPTClient] Resolved model_cfg: {sanitize_settings_for_logging(model_cfg)}")
+    if not model_cfg or not model_cfg.get('enabled', True):
+        raise ValueError("Selected model is not available.")
+
+    if requested_provider and endpoint_cfg.get('provider') and requested_provider != endpoint_cfg.get('provider'):
+        raise ValueError("Selected model provider mismatch.")
+
+    gpt_model = model_cfg.get('deploymentName') or model_cfg.get('deployment') or ""
+    if not gpt_model:
+        raise ValueError("Selected model is missing deployment name.")
+
+    connection = endpoint_cfg.get('connection', {}) or {}
+    auth = endpoint_cfg.get('auth', {}) or {}
+    auth_type = (auth.get('type') or 'managed_identity').lower()
+    api_version = connection.get('openai_api_version') or connection.get('api_version')
+    endpoint = connection.get('endpoint')
+    provider = (endpoint_cfg.get('provider') or 'aoai').lower()
+    if provider == 'aifoundry':
+        api_version = resolve_foundry_inference_api_version(connection, settings)
+        debug_print(f"[SKChat] Foundry inference api_version={api_version}")
+    debug_print(f"[GPTClient] Multi-endpoint config - provider={provider}, auth_type={auth_type}, endpoint={endpoint}, api_version={api_version}, gpt_model={gpt_model}")
+
+    if auth_type == 'api_key':
+        debug_print(f"[GPTClient] Using api key authentication for multi-endpoint.")
+
+    gpt_client = build_multi_endpoint_client(auth, provider, endpoint, api_version)
+
+    if not gpt_client or not gpt_model:
+        raise ValueError("GPT Client or Model could not be initialized.")
+
+    return gpt_client, gpt_model, provider, endpoint, auth, api_version
+
+
+def resolve_default_model_gpt_config(settings):
+    default_selection = settings.get('default_model_selection') or {}
+    endpoint_id = (default_selection.get('endpoint_id') or '').strip()
+    model_id = (default_selection.get('model_id') or '').strip()
+    provider_override = (default_selection.get('provider') or '').strip().lower()
+    debug_print(
+        "[GPTClient] resolve_default_model_gpt_config "
+        f"endpoint_id={endpoint_id}, model_id={model_id}, provider={provider_override}"
+    )
+
+    if not endpoint_id or not model_id:
+        return None
+
+    endpoints = settings.get('model_endpoints', []) or []
+    endpoint_cfg = resolve_endpoint_by_identifier(endpoints, endpoint_id)
+    debug_print(f"[GPTClient] Resolved default endpoint_cfg: {sanitize_settings_for_logging(endpoint_cfg)}")
+    if not endpoint_cfg or not endpoint_cfg.get('enabled', True):
+        raise ValueError("Default model endpoint is not available.")
+
+    models = endpoint_cfg.get('models', []) or []
+    model_cfg = resolve_model_by_identifier(models, model_id)
+    debug_print(f"[GPTClient] Resolved default model_cfg: {sanitize_settings_for_logging(model_cfg)}")
+    if not model_cfg or not model_cfg.get('enabled', True):
+        raise ValueError("Default model is not available.")
+
+    provider = (endpoint_cfg.get('provider') or 'aoai').lower()
+    if provider_override and provider_override != provider:
+        raise ValueError("Default model provider mismatch.")
+
+    gpt_model = model_cfg.get('deploymentName') or model_cfg.get('deployment') or ""
+    if not gpt_model:
+        raise ValueError("Default model is missing deployment name.")
+
+    connection = endpoint_cfg.get('connection', {}) or {}
+    auth = endpoint_cfg.get('auth', {}) or {}
+    auth_type = (auth.get('type') or 'managed_identity').lower()
+    api_version = connection.get('openai_api_version') or connection.get('api_version')
+    endpoint = connection.get('endpoint')
+
+    if provider == 'aifoundry':
+        api_version = resolve_foundry_inference_api_version(connection, settings)
+        debug_print(f"[SKChat] Default Foundry inference api_version={api_version}")
+    debug_print(
+        "[GPTClient] Default multi-endpoint config "
+        f"provider={provider}, auth_type={auth_type}, endpoint={endpoint}, api_version={api_version}, gpt_model={gpt_model}"
+    )
+
+    if auth_type == 'api_key':
+        debug_print("[GPTClient] Using api key authentication for default multi-endpoint.")
+
+    gpt_client = build_multi_endpoint_client(auth, provider, endpoint, api_version)
+
+    if not gpt_client or not gpt_model:
+        raise ValueError("Default GPT Client or Model could not be initialized.")
+
+    return gpt_client, gpt_model, provider, endpoint, auth, api_version
 
 def register_route_backend_chats(app):
     @app.route('/api/chat', methods=['POST'])
@@ -53,6 +299,9 @@ def register_route_backend_chats(app):
                 return jsonify({
                     'error': 'User not authenticated'
                 }), 401
+
+            # Extract agent_info early to guide GPT initialization decisions
+            request_agent_info = data.get('agent_info')
 
             # Extract from request
             user_message = data.get('message', '')
@@ -74,7 +323,7 @@ def register_route_backend_chats(app):
                 except Exception as exc:
                     log_event(
                         f"[result_requires_message_reload] Failed to parse JSON: {str(exc)} | candidate: {trimmed[:200]}",
-                        level=logging.DEBUG
+                        level=logging.WARNING
                     )
                     return None
 
@@ -122,6 +371,7 @@ def register_route_backend_chats(app):
                 if isinstance(result, dict):
                     return dict_requires_reload(result)
                 return False
+
             active_group_id = data.get('active_group_id')
             active_public_workspace_id = data.get('active_public_workspace_id')  # Extract active public workspace ID
             frontend_gpt_model = data.get('model_deployment')
@@ -185,11 +435,38 @@ def register_route_backend_chats(app):
             # GPT & Image generation APIM or direct
             gpt_model = ""
             gpt_client = None
+            gpt_provider = None
+            gpt_endpoint = None
+            gpt_auth = None
+            gpt_api_version = None
             enable_gpt_apim = settings.get('enable_gpt_apim', False)
             enable_image_gen_apim = settings.get('enable_image_gen_apim', False)
-
+            should_use_default_model = (
+                bool(request_agent_info)
+                and settings.get('enable_multi_model_endpoints', False)
+                and not data.get('model_id')
+                and not data.get('model_endpoint_id')
+            )
             try:
-                if enable_gpt_apim:
+                multi_endpoint_config = None
+                if should_use_default_model:
+                    try:
+                        multi_endpoint_config = resolve_default_model_gpt_config(settings)
+                        if multi_endpoint_config:
+                            debug_print("[GPTClient] Using default multi-endpoint model for agent request.")
+                    except Exception as default_exc:
+                        log_event(
+                            f"[GPTClient] Default model selection unavailable: {default_exc}",
+                            level=logging.WARNING,
+                            exceptionTraceback=True
+                        )
+                if multi_endpoint_config is None and request_agent_info:
+                    debug_print("[GPTClient] Skipping multi-endpoint resolution because agent_info is provided.")
+                elif multi_endpoint_config is None:
+                    multi_endpoint_config = resolve_multi_endpoint_gpt_config(settings, data, enable_gpt_apim)
+                if multi_endpoint_config:
+                    gpt_client, gpt_model, gpt_provider, gpt_endpoint, gpt_auth, gpt_api_version = multi_endpoint_config
+                elif enable_gpt_apim:
                     # read raw comma-delimited deployments
                     raw = settings.get('azure_apim_gpt_deployment', '')
                     if not raw:
@@ -214,10 +491,16 @@ def register_route_backend_chats(app):
 
                     # otherwise you must pass model_deployment in the request
                     else:
-                        raise ValueError(
-                            "Multiple APIM GPT deployments configured; please include "
-                            "'model_deployment' in your request."
-                        )
+                        if request_agent_info:
+                            gpt_model = apim_models[0]
+                            debug_print(
+                                "[GPTClient] Agent request without model_deployment; defaulting to first APIM deployment."
+                            )
+                        else:
+                            raise ValueError(
+                                "Multiple APIM GPT deployments configured; please include "
+                                "'model_deployment' in your request."
+                            )
 
                     # initialize the APIM client
                     gpt_client = AzureOpenAI(
@@ -282,7 +565,8 @@ def register_route_backend_chats(app):
                     'title': 'New Conversation',
                     'context': [],
                     'tags': [],
-                    'strict': False
+                    'strict': False,
+                    'chat_type': 'new'
                 }
                 cosmos_conversations_container.upsert_item(conversation_item)
                 
@@ -310,7 +594,8 @@ def register_route_backend_chats(app):
                         'title': 'New Conversation', # Or maybe fetch title differently?
                         'context': [],
                         'tags': [],
-                        'strict': False
+                        'strict': False,
+                        'chat_type': 'new'
                     }
                     # Optionally log that a conversation was expected but not found
                     debug_print(f"Warning: Conversation ID {conversation_id} not found, creating new.")
@@ -334,12 +619,12 @@ def register_route_backend_chats(app):
             # Determine the actual chat context based on existing conversation or document usage
             # For existing conversations, use the chat_type from conversation metadata
             # For new conversations, it will be determined during metadata collection
-            actual_chat_type = 'personal'  # Default
+            actual_chat_type = 'personal_single_user'  # Default
             
             if conversation_item.get('chat_type'):
                 # Use existing chat_type from conversation metadata
                 actual_chat_type = conversation_item['chat_type']
-                debug_print(f"Using existing chat_type from conversation: {actual_chat_type}")
+                debug_print(f"[ChatType] Using existing chat_type from conversation: {actual_chat_type}")
             elif conversation_item.get('context'):
                 # Fallback: determine from existing context
                 primary_context = next((ctx for ctx in conversation_item['context'] if ctx.get('type') == 'primary'), None)
@@ -349,20 +634,30 @@ def register_route_backend_chats(app):
                     elif primary_context.get('scope') == 'public':
                         actual_chat_type = 'public'
                     elif primary_context.get('scope') == 'personal':
-                        actual_chat_type = 'personal'
-                    debug_print(f"Determined chat_type from existing primary context: {actual_chat_type}")
+                        actual_chat_type = 'personal_single_user'
+                    debug_print(f"[ChatType] Determined chat_type from existing primary context: {actual_chat_type}")
                 else:
-                    # No primary context exists - model-only conversation
-                    actual_chat_type = None  # This will result in no badges
-                    debug_print(f"No primary context found - model-only conversation")
+                    # No primary context exists - default to personal_single_user
+                    actual_chat_type = 'personal_single_user'
+                    debug_print(f"[ChatType] No primary context found - defaulted to personal_single_user")
             else:
                 # New conversation - will be determined by document usage during metadata collection
                 # For now, use the legacy logic as fallback
                 if document_scope == 'group' or (active_group_id and chat_type == 'group'):
-                    actual_chat_type = 'group'
+                    actual_chat_type = 'group-single-user'
                 elif document_scope == 'public':
                     actual_chat_type = 'public'
-                debug_print(f"New conversation - using legacy logic: {actual_chat_type}")
+                else:
+                    actual_chat_type = 'personal_single_user'
+                debug_print(f"[ChatType] New conversation - using legacy logic: {actual_chat_type}")
+
+            # Capture conversation-level group context for downstream agent/model resolution
+            conversation_primary_context = next((ctx for ctx in conversation_item.get('context', []) if ctx.get('type') == 'primary'), None)
+            conversation_group_id = None
+            if conversation_primary_context and conversation_primary_context.get('scope') == 'group':
+                conversation_group_id = conversation_primary_context.get('id')
+            if conversation_group_id:
+                g.conversation_group_id = conversation_group_id
         # region 2 - Append User Message
             # ---------------------------------------------------------------------
             # 2) Append the user message to conversation immediately (or use existing for retry)
@@ -1126,7 +1421,7 @@ def register_route_backend_chats(app):
                 elif document_scope == 'public':
                     message_chat_type = 'public'  
                 else:
-                    message_chat_type = 'personal'
+                        message_chat_type = 'personal_single_user'
             else:
                 # No documents used for this message - only model knowledge
                 message_chat_type = 'Model'
@@ -1917,7 +2212,6 @@ def register_route_backend_chats(app):
             enable_semantic_kernel = settings.get('enable_semantic_kernel', False)
             
             # Check if agent_info is provided in request (e.g., from retry with agent selection)
-            request_agent_info = data.get('agent_info')
             force_enable_agents = bool(request_agent_info)  # Force enable agents if agent_info provided
             
             user_enable_agents = user_settings.get('enable_agents', True)  # Default to True for backward compatibility
@@ -1925,7 +2219,12 @@ def register_route_backend_chats(app):
             if force_enable_agents:
                 user_enable_agents = True
                 g.force_enable_agents = True  # Store in Flask g for SK loader to check
-                g.request_agent_name = request_agent_info.get('name') if isinstance(request_agent_info, dict) else request_agent_info
+                if isinstance(request_agent_info, dict):
+                    g.request_agent_info = request_agent_info
+                    g.request_agent_name = request_agent_info.get('name')
+                else:
+                    g.request_agent_info = {'name': request_agent_info}
+                    g.request_agent_name = request_agent_info
                 log_event(f"[SKChat] agent_info provided in request - forcing agent enablement for this request", level=logging.INFO)
             
             enable_key_vault_secret_storage = settings.get('enable_key_vault_secret_storage', False)
@@ -2351,7 +2650,6 @@ def register_route_backend_chats(app):
                 try:
                     response = gpt_client.chat.completions.create(**api_params)
                 except Exception as e:
-                    # Check if error is related to reasoning_effort parameter
                     error_str = str(e).lower()
                     if reasoning_effort and reasoning_effort != 'none' and (
                         'reasoning_effort' in error_str or 
@@ -2359,9 +2657,27 @@ def register_route_backend_chats(app):
                         'invalid_request_error' in error_str
                     ):
                         debug_print(f"Reasoning effort not supported by {gpt_model}, retrying without reasoning_effort...")
-                        # Retry without reasoning_effort
                         api_params.pop('reasoning_effort', None)
                         response = gpt_client.chat.completions.create(**api_params)
+                    elif gpt_provider == 'aifoundry' and 'api version not supported' in error_str:
+                        debug_print("Foundry API version not supported. Retrying with fallback versions...")
+                        api_params.pop('reasoning_effort', None)
+                        fallback_versions = get_foundry_api_version_candidates(gpt_api_version, settings)
+                        response = None
+                        last_error = None
+                        for candidate in fallback_versions:
+                            if candidate == gpt_api_version:
+                                continue
+                            try:
+                                debug_print(f"[SKChat] Foundry retry api_version={candidate}")
+                                retry_client = build_multi_endpoint_client(gpt_auth or {}, 'aifoundry', gpt_endpoint, candidate)
+                                response = retry_client.chat.completions.create(**api_params)
+                                break
+                            except Exception as retry_exc:
+                                last_error = retry_exc
+                                debug_print(f"[SKChat] Foundry retry failed for api_version={candidate}: {retry_exc}")
+                        if response is None and last_error is not None:
+                            raise last_error
                     else:
                         raise
                 
@@ -2708,6 +3024,7 @@ def register_route_backend_chats(app):
                 classifications_to_send = data.get('classifications')
                 chat_type = data.get('chat_type', 'user')
                 reasoning_effort = data.get('reasoning_effort')  # Extract reasoning effort for reasoning models
+                request_agent_info = data.get('agent_info')
                 
                 # Check if agents are enabled
                 enable_semantic_kernel = settings.get('enable_semantic_kernel', False)
@@ -2797,9 +3114,26 @@ def register_route_backend_chats(app):
                 gpt_model = ""
                 gpt_client = None
                 enable_gpt_apim = settings.get('enable_gpt_apim', False)
+                should_use_default_model = (
+                    bool(request_agent_info)
+                    and settings.get('enable_multi_model_endpoints', False)
+                    and not data.get('model_id')
+                    and not data.get('model_endpoint_id')
+                )
                 
                 try:
-                    if enable_gpt_apim:
+                    default_model_config = None
+                    if should_use_default_model:
+                        try:
+                            default_model_config = resolve_default_model_gpt_config(settings)
+                            if default_model_config:
+                                debug_print("[GPTClient] Using default multi-endpoint model for agent streaming request.")
+                        except Exception as default_exc:
+                            debug_print(f"[GPTClient] Default model selection unavailable: {default_exc}")
+
+                    if default_model_config:
+                        gpt_client, gpt_model, _, _, _, _ = default_model_config
+                    elif enable_gpt_apim:
                         raw = settings.get('azure_apim_gpt_deployment', '')
                         if not raw:
                             yield f"data: {json.dumps({'error': 'APIM deployment not configured'})}\n\n"
@@ -2870,7 +3204,8 @@ def register_route_backend_chats(app):
                         'title': 'New Conversation',
                         'context': [],
                         'tags': [],
-                        'strict': False
+                        'strict': False,
+                        'chat_type': 'new'
                     }
                     cosmos_conversations_container.upsert_item(conversation_item)
                 else:
@@ -2886,14 +3221,25 @@ def register_route_backend_chats(app):
                             'title': 'New Conversation',
                             'context': [],
                             'tags': [],
-                            'strict': False
+                            'strict': False,
+                            'chat_type': 'new'
                         }
                         cosmos_conversations_container.upsert_item(conversation_item)
                 
                 # Determine chat type
-                actual_chat_type = 'personal'
+                actual_chat_type = 'personal_single_user'
                 if conversation_item.get('chat_type'):
                     actual_chat_type = conversation_item['chat_type']
+                    if actual_chat_type == 'personal':
+                        actual_chat_type = 'personal_single_user'
+
+                # Capture conversation-level group context for downstream agent/model resolution
+                conversation_primary_context = next((ctx for ctx in conversation_item.get('context', []) if ctx.get('type') == 'primary'), None)
+                conversation_group_id = None
+                if conversation_primary_context and conversation_primary_context.get('scope') == 'group':
+                    conversation_group_id = conversation_primary_context.get('id')
+                if conversation_group_id:
+                    g.conversation_group_id = conversation_group_id
                 
                 # Save user message
                 user_message_id = f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
@@ -3293,7 +3639,7 @@ def register_route_backend_chats(app):
                     elif document_scope == 'public':
                         message_chat_type = 'public'
                     else:
-                        message_chat_type = 'personal'
+                        message_chat_type = 'personal_single_user'
                 else:
                     message_chat_type = 'Model'
                 

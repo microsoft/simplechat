@@ -33,21 +33,40 @@ export function attachAdvancedToggleHandler(toggleEl, modalElements) {
  */
 export function setAgentModalFields(agent, opts = {}) {
 	const root = opts.modalRoot || document;
-	root.getElementById('agent-name').value = agent.name || '';
-	root.getElementById('agent-display-name').value = agent.display_name || '';
-	root.getElementById('agent-description').value = agent.description || '';
-	root.getElementById('agent-gpt-endpoint').value = agent.azure_openai_gpt_endpoint || '';
-	root.getElementById('agent-gpt-key').value = agent.azure_openai_gpt_key || '';
-	root.getElementById('agent-gpt-deployment').value = agent.azure_openai_gpt_deployment || '';
-	root.getElementById('agent-gpt-api-version').value = agent.azure_openai_gpt_api_version || '';
-	root.getElementById('agent-apim-endpoint').value = agent.azure_agent_apim_gpt_endpoint || '';
-	root.getElementById('agent-apim-subscription-key').value = agent.azure_agent_apim_gpt_subscription_key || '';
-	root.getElementById('agent-apim-deployment').value = agent.azure_agent_apim_gpt_deployment || '';
-	root.getElementById('agent-apim-api-version').value = agent.azure_agent_apim_gpt_api_version || '';
-	root.getElementById('agent-enable-apim').checked = !!agent.enable_agent_gpt_apim;
-	root.getElementById('agent-instructions').value = agent.instructions || '';
-	root.getElementById('agent-additional-settings').value = agent.other_settings ? JSON.stringify(agent.other_settings, null, 2) : '{}';
-	root.getElementById('agent-max-completion-tokens').value = agent.max_completion_tokens || '';
+	const setValue = (id, value) => {
+		const el = root.getElementById(id);
+		if (el) {
+			el.value = value ?? '';
+		}
+	};
+	const setChecked = (id, value) => {
+		const el = root.getElementById(id);
+		if (el) {
+			el.checked = !!value;
+		}
+	};
+
+	setValue('agent-name', agent.name || '');
+	setValue('agent-display-name', agent.display_name || '');
+	setValue('agent-description', agent.description || '');
+	setValue('agent-gpt-endpoint', agent.azure_openai_gpt_endpoint || '');
+	setValue('agent-gpt-key', agent.azure_openai_gpt_key || '');
+	setValue('agent-gpt-deployment', agent.azure_openai_gpt_deployment || '');
+	setValue('agent-gpt-api-version', agent.azure_openai_gpt_api_version || '');
+	setValue('agent-apim-endpoint', agent.azure_agent_apim_gpt_endpoint || '');
+	setValue('agent-apim-subscription-key', agent.azure_agent_apim_gpt_subscription_key || '');
+	setValue('agent-apim-deployment', agent.azure_agent_apim_gpt_deployment || '');
+	setValue('agent-apim-api-version', agent.azure_agent_apim_gpt_api_version || '');
+	setChecked('agent-enable-apim', agent.enable_agent_gpt_apim);
+	setValue('agent-model-endpoint-id', agent.model_endpoint_id || '');
+	setValue('agent-model-id', agent.model_id || '');
+	setValue('agent-model-provider', agent.model_provider || '');
+	setValue('agent-instructions', agent.instructions || '');
+	setValue(
+		'agent-additional-settings',
+		agent.other_settings ? JSON.stringify(agent.other_settings, null, 2) : '{}'
+	);
+	setValue('agent-max-completion-tokens', agent.max_completion_tokens || '');
 	
 	// Set reasoning effort if available
 	const reasoningEffortSelect = root.getElementById('agent-reasoning-effort');
@@ -64,9 +83,17 @@ export function setAgentModalFields(agent, opts = {}) {
  */
 export function getAgentModalFields(opts = {}) {
 	const root = opts.modalRoot || document;
+	const getValue = (id) => {
+		const el = root.getElementById(id);
+		return el ? el.value.trim() : '';
+	};
+	const getChecked = (id) => {
+		const el = root.getElementById(id);
+		return el ? el.checked : false;
+	};
 	let additionalSettings = {};
 	try {
-		const settingsRaw = root.getElementById('agent-additional-settings').value.trim();
+		const settingsRaw = getValue('agent-additional-settings');
 		if (settingsRaw) additionalSettings = JSON.parse(settingsRaw);
 	} catch (e) {
 		showToast('error', 'Additional Settings must be a valid JSON object.');
@@ -89,20 +116,23 @@ export function getAgentModalFields(opts = {}) {
 	}
 
 	return {
-		name: root.getElementById('agent-name').value.trim(),
-		display_name: root.getElementById('agent-display-name').value.trim(),
-		description: root.getElementById('agent-description').value.trim(),
-		azure_openai_gpt_endpoint: root.getElementById('agent-gpt-endpoint').value.trim(),
-		azure_openai_gpt_key: root.getElementById('agent-gpt-key').value.trim(),
-		azure_openai_gpt_deployment: root.getElementById('agent-gpt-deployment').value.trim(),
-		azure_openai_gpt_api_version: root.getElementById('agent-gpt-api-version').value.trim(),
-		azure_agent_apim_gpt_endpoint: root.getElementById('agent-apim-endpoint').value.trim(),
-		azure_agent_apim_gpt_subscription_key: root.getElementById('agent-apim-subscription-key').value.trim(),
-		azure_agent_apim_gpt_deployment: root.getElementById('agent-apim-deployment').value.trim(),
-		azure_agent_apim_gpt_api_version: root.getElementById('agent-apim-api-version').value.trim(),
-		enable_agent_gpt_apim: root.getElementById('agent-enable-apim').checked,
-		instructions: root.getElementById('agent-instructions').value.trim(),
-		max_completion_tokens: parseInt(root.getElementById('agent-max-completion-tokens').value.trim()) || null,
+		name: getValue('agent-name'),
+		display_name: getValue('agent-display-name'),
+		description: getValue('agent-description'),
+		azure_openai_gpt_endpoint: getValue('agent-gpt-endpoint'),
+		azure_openai_gpt_key: getValue('agent-gpt-key'),
+		azure_openai_gpt_deployment: getValue('agent-gpt-deployment'),
+		azure_openai_gpt_api_version: getValue('agent-gpt-api-version'),
+		azure_agent_apim_gpt_endpoint: getValue('agent-apim-endpoint'),
+		azure_agent_apim_gpt_subscription_key: getValue('agent-apim-subscription-key'),
+		azure_agent_apim_gpt_deployment: getValue('agent-apim-deployment'),
+		azure_agent_apim_gpt_api_version: getValue('agent-apim-api-version'),
+		model_endpoint_id: getValue('agent-model-endpoint-id'),
+		model_id: getValue('agent-model-id'),
+		model_provider: getValue('agent-model-provider'),
+		enable_agent_gpt_apim: getChecked('agent-enable-apim'),
+		instructions: getValue('agent-instructions'),
+		max_completion_tokens: parseInt(getValue('agent-max-completion-tokens')) || null,
 		actions_to_load: actions_to_load,
 		other_settings: additionalSettings,
 		agent_type: (opts.agent && opts.agent.agent_type) || 'local'
@@ -366,6 +396,37 @@ export function shouldEnableCustomConnection(agent) {
 export function getAvailableModels({ apimEnabled, settings, agent }) {
 	let models = [];
 	let selectedModel = null;
+	const multiEndpointEnabled = settings && settings.enable_multi_model_endpoints;
+	if (multiEndpointEnabled && Array.isArray(settings.model_endpoints)) {
+		const agentType = (agent && agent.agent_type) ? agent.agent_type : 'local';
+		settings.model_endpoints.forEach(endpoint => {
+			if (!endpoint || endpoint.enabled === false) return;
+			const provider = (endpoint.provider || 'aoai').toLowerCase();
+			if (agentType === 'aifoundry' && provider !== 'aifoundry') {
+				return;
+			}
+			const endpointId = endpoint.id || '';
+			const endpointModels = endpoint.models || [];
+			endpointModels.forEach(model => {
+				if (!model || model.enabled === false) return;
+				const modelId = model.id || model.deploymentName || model.deployment || model.modelName || model.name || '';
+				const deploymentName = model.deploymentName || model.deployment || '';
+				const modelName = model.modelName || model.name || '';
+				const displayName = model.displayName || deploymentName || modelName || modelId;
+				if (!displayName) return;
+				models.push({
+					id: modelId,
+					deployment: deploymentName,
+					name: modelName,
+					display_name: displayName,
+					endpoint_id: endpointId,
+					provider
+				});
+			});
+		});
+		selectedModel = agent && (agent.model_id || agent.azure_openai_gpt_deployment) ? (agent.model_id || agent.azure_openai_gpt_deployment) : null;
+		return { models, selectedModel };
+	}
 	if (apimEnabled) {
 		// azure_apim_gpt_deployment is a string, could be comma separated
 		let apimDeployments = (settings && settings.azure_apim_gpt_deployment) || '';
@@ -395,7 +456,7 @@ export function getAvailableModels({ apimEnabled, settings, agent }) {
  * Fetches settings from endpoint and returns available models, selected model, and apimEnabled
  * @param {string} endpoint - API endpoint to fetch settings
  * @param {Object} agent - Current agent object
- * @returns {Promise<{models: Array, selectedModel: string, apimEnabled: boolean}>}
+ * @returns {Promise<{models: Array, selectedModel: string, apimEnabled: boolean, enableMultiModelEndpoints: boolean}>}
  */
 export async function fetchAndGetAvailableModels(endpoint, agent) {
 	try {
@@ -404,10 +465,11 @@ export async function fetchAndGetAvailableModels(endpoint, agent) {
 		const settings = await resp.json();
 		// Check APIM enabled (support both enable_gpt_apim and enable_apim)
 		const apimEnabled = settings.enable_gpt_apim || false;
+		const enableMultiModelEndpoints = settings.enable_multi_model_endpoints || false;
 		const { models, selectedModel } = getAvailableModels({ apimEnabled, settings, agent });
-		return { models, selectedModel, apimEnabled };
+		return { models, selectedModel, apimEnabled, enableMultiModelEndpoints };
 	} catch (e) {
-		return { models: [], selectedModel: null, apimEnabled: false };
+		return { models: [], selectedModel: null, apimEnabled: false, enableMultiModelEndpoints: false };
 	}
 }
 
@@ -460,8 +522,17 @@ export function populateGlobalModelDropdown(selectEl, models, selectedModel) {
 	}
 	models.forEach(model => {
 		let opt = document.createElement('option');
-		opt.value = model.name || model.deployment || model.id || '';
+		opt.value = model.id || model.name || model.deployment || '';
 		opt.textContent = model.display_name || model.name || model.deployment || model.id || '';
+		if (model.endpoint_id) {
+			opt.dataset.endpointId = model.endpoint_id;
+		}
+		if (model.provider) {
+			opt.dataset.provider = model.provider;
+		}
+		if (model.deployment) {
+			opt.dataset.deploymentName = model.deployment;
+		}
 		if (selectedModel && (model.name === selectedModel || model.deployment === selectedModel || model.id === selectedModel)) {
 			opt.selected = true;
 		}
@@ -480,8 +551,9 @@ export async function fetchUserAgents() {
 	return await res.json();
 }
 
-export async function fetchGroupAgentsForActiveGroup() {
-	if (typeof window === 'undefined' || !window.activeGroupId) {
+export async function fetchGroupAgentsForActiveGroup(activeGroupId = null, activeGroupName = null) {
+	const resolvedGroupId = activeGroupId || (typeof window !== 'undefined' ? window.activeGroupId : null);
+	if (!resolvedGroupId) {
 		return [];
 	}
 	try {
@@ -492,12 +564,12 @@ export async function fetchGroupAgentsForActiveGroup() {
 		}
 		const payload = await res.json().catch(() => ({ agents: [] }));
 		const agents = Array.isArray(payload.agents) ? payload.agents : [];
-		const activeGroupName = (typeof window !== 'undefined' && window.activeGroupName) ? window.activeGroupName : '';
+		const resolvedGroupName = activeGroupName || ((typeof window !== 'undefined' && window.activeGroupName) ? window.activeGroupName : '');
 		return agents.map(agent => ({
 			...agent,
 			is_group: true,
-			group_id: agent.group_id || window.activeGroupId,
-			group_name: agent.group_name || activeGroupName || null
+			group_id: agent.group_id || resolvedGroupId,
+			group_name: agent.group_name || resolvedGroupName || null
 		}));
 	} catch (error) {
 		console.error('Failed to fetch group agents:', error);

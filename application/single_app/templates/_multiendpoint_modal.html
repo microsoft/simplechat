@@ -1,0 +1,129 @@
+<!-- Model Endpoint Modal -->
+<div class="modal fade" id="modelEndpointModal" tabindex="-1" aria-labelledby="modelEndpointModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="modelEndpointModalLabel">Model Endpoint</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="model-endpoint-id" />
+
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label for="model-endpoint-name" class="form-label">Endpoint Name</label>
+                        <input type="text" class="form-control" id="model-endpoint-name" />
+                    </div>
+                    <div class="col-md-6">
+                        <label for="model-endpoint-provider" class="form-label">Provider</label>
+                        <select class="form-select" id="model-endpoint-provider">
+                            <option value="aoai">Azure OpenAI</option>
+                            <option value="aifoundry">Azure AI Foundry</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label for="model-endpoint-endpoint" class="form-label">Endpoint Fully Qualified Domain Name (FQDN)</label>
+                        <input type="text" class="form-control" id="model-endpoint-endpoint" />
+                    </div>
+                    <div class="col-md-3" id="model-endpoint-project-api-version-group">
+                        <label for="model-endpoint-project-api-version" class="form-label">Project API Version</label>
+                        <input type="text" class="form-control" id="model-endpoint-project-api-version" />
+                        <div class="form-text">Project API versions use the v1 format (for example, v1).</div>
+                    </div>
+                    <div class="col-md-3" id="model-endpoint-openai-api-version-group">
+                        <label for="model-endpoint-openai-api-version" class="form-label">OpenAI API Version</label>
+                        <input type="text" class="form-control" id="model-endpoint-openai-api-version" />
+                        <div class="form-text">OpenAI API versions use a dated format (for example, 2024-05-01-preview).</div>
+                    </div>
+                    <div class="col-md-6" id="model-endpoint-project-group">
+                        <label for="model-endpoint-project-name" class="form-label">Foundry Project Name</label>
+                        <input type="text" class="form-control" id="model-endpoint-project-name" />
+                    </div>
+                    <div class="col-md-6" id="model-endpoint-subscription-group">
+                        <label for="model-endpoint-subscription-id" class="form-label">Subscription ID</label>
+                        <input type="text" class="form-control" id="model-endpoint-subscription-id" />
+                    </div>
+                    <div class="col-md-6" id="model-endpoint-resource-group-group">
+                        <label for="model-endpoint-resource-group" class="form-label">Resource Group</label>
+                        <input type="text" class="form-control" id="model-endpoint-resource-group" />
+                    </div>
+                    <div class="col-md-6">
+                        <label for="model-endpoint-auth-type" class="form-label">Authentication Type</label>
+                        <select class="form-select" id="model-endpoint-auth-type">
+                            <option value="managed_identity">Managed Identity</option>
+                            <option value="service_principal">Service Principal</option>
+                            <option value="api_key">API Key</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6" id="model-endpoint-management-cloud-group">
+                        <label for="model-endpoint-management-cloud" class="form-label">Management Cloud</label>
+                        <select class="form-select" id="model-endpoint-management-cloud">
+                            <option value="public">Public</option>
+                            <option value="government">Azure Government</option>
+                            <option value="custom">Custom</option>
+                        </select>
+                    </div>
+                    <div class="col-md-12" id="model-endpoint-custom-authority-group">
+                        <label for="model-endpoint-custom-authority" class="form-label">Custom Authority</label>
+                        <input type="text" class="form-control" id="model-endpoint-custom-authority" placeholder="https://login.microsoftonline.us or custom authority" />
+                    </div>
+                    <div class="col-md-12" id="model-endpoint-foundry-scope-group">
+                        <label for="model-endpoint-foundry-scope" class="form-label">Foundry Scope</label>
+                        <input type="text" class="form-control" id="model-endpoint-foundry-scope" placeholder="https://ai.azure.com/.default" />
+                    </div>
+                </div>
+
+                <div class="row g-3 mt-1">
+                    <div class="col-md-6" id="model-endpoint-mi-type-group">
+                        <label for="model-endpoint-mi-type" class="form-label">Managed Identity Type</label>
+                        <select class="form-select" id="model-endpoint-mi-type">
+                            <option value="system_assigned">System Assigned</option>
+                            <option value="user_assigned">User Assigned</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6" id="model-endpoint-mi-client-group">
+                        <label for="model-endpoint-mi-client-id" class="form-label">Managed Identity Client ID</label>
+                        <input type="text" class="form-control" id="model-endpoint-mi-client-id" />
+                    </div>
+                    <div class="col-md-4" id="model-endpoint-tenant-group">
+                        <label for="model-endpoint-tenant-id" class="form-label">Tenant ID</label>
+                        <input type="text" class="form-control" id="model-endpoint-tenant-id" />
+                    </div>
+                    <div class="col-md-4" id="model-endpoint-client-group">
+                        <label for="model-endpoint-client-id" class="form-label">Client ID</label>
+                        <input type="text" class="form-control" id="model-endpoint-client-id" />
+                    </div>
+                    <div class="col-md-4" id="model-endpoint-secret-group">
+                        <label for="model-endpoint-client-secret" class="form-label">Client Secret</label>
+                        <input type="password" class="form-control" id="model-endpoint-client-secret" />
+                    </div>
+                    <div class="col-md-6" id="model-endpoint-key-group">
+                        <label for="model-endpoint-api-key" class="form-label">API Key</label>
+                        <input type="password" class="form-control" id="model-endpoint-api-key" />
+                    </div>
+                </div>
+
+                <div id="model-endpoint-api-key-note" class="alert alert-info mt-3 d-none">
+                    <i class="bi bi-info-circle me-2"></i>
+                    API key authentication is for inference only. Use a managed identity or service principal for model discovery.
+                </div>
+
+                <div class="d-flex gap-2 mt-4">
+                    <button type="button" class="btn btn-outline-primary" id="model-endpoint-fetch-btn">Fetch Models</button>
+                </div>
+
+                <div class="mt-3">
+                    <h6>Available Models</h6>
+                    <button type="button" class="btn btn-sm btn-outline-primary mt-2 d-none" id="model-endpoint-add-model-btn">
+                        <i class="bi bi-plus-circle me-1"></i>Add Model
+                    </button>
+                    <div id="model-endpoint-models-list" class="mt-2"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="model-endpoint-save-btn">Save Endpoint</button>
+            </div>
+        </div>
+    </div>
+</div>

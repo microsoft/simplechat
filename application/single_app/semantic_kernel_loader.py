@@ -7,6 +7,8 @@ Loader for Semantic Kernel plugins/actions from app settings.
 
 import logging
 import builtins
+import os
+from azure.identity import AzureAuthorityHosts, ClientSecretCredential, DefaultAzureCredential, get_bearer_token_provider
 from agent_orchestrator_groupchat import OrchestratorAgent, SCGroupChatManager
 from semantic_kernel import Kernel
 from semantic_kernel.agents import Agent
@@ -34,7 +36,7 @@ from functions_global_actions import get_global_actions
 from functions_global_agents import get_global_agents
 from functions_group_agents import get_group_agent, get_group_agents
 from functions_group_actions import get_group_actions
-from functions_group import require_active_group
+from functions_group import get_group_model_endpoints, require_active_group
 from functions_personal_actions import get_personal_actions, ensure_migration_complete as ensure_actions_migration_complete
 from functions_personal_agents import get_personal_agents, ensure_migration_complete as ensure_agents_migration_complete
 from semantic_kernel_plugins.plugin_loader import discover_plugins
@@ -100,6 +102,41 @@ def first_if_comma(val):
             return val.split(",")[0].strip()
         return val
 
+def find_agent_by_scope(agents_cfg, selected_agent_data):
+    if not isinstance(selected_agent_data, dict) or not agents_cfg:
+        return None
+
+    selected_agent_name = selected_agent_data.get("name")
+    selected_agent_id = selected_agent_data.get("id")
+    is_global_flag = selected_agent_data.get("is_global", False)
+    is_group_flag = selected_agent_data.get("is_group", False)
+    selected_agent_group_id = selected_agent_data.get("group_id")
+
+    def scope_matches(candidate):
+        if is_group_flag:
+            if not candidate.get("is_group", False):
+                return False
+            return selected_agent_group_id is None or candidate.get("group_id") == selected_agent_group_id
+        if is_global_flag:
+            return candidate.get("is_global", False) and not candidate.get("is_group", False)
+        return not candidate.get("is_global", False) and not candidate.get("is_group", False)
+
+    if selected_agent_id:
+        found = next((a for a in agents_cfg if a.get("id") == selected_agent_id and scope_matches(a)), None)
+        if found:
+            return found
+
+    if selected_agent_name:
+        return next((a for a in agents_cfg if a.get("name") == selected_agent_name and scope_matches(a)), None)
+
+    return None
+
+def resolve_foundry_endpoint_from_settings(foundry_settings, settings):
+    endpoint = (foundry_settings or {}).get("endpoint")
+    if endpoint:
+        return endpoint
+    return settings.get("azure_ai_foundry_endpoint") or os.getenv("AZURE_AI_AGENT_ENDPOINT")
+
 def resolve_agent_config(agent, settings):
     debug_print(f"[SK Loader] resolve_agent_config called for agent: {agent.get('name')}")
     debug_print(f"[SK Loader] Agent config: {agent}")
@@ -118,20 +155,20 @@ def resolve_agent_config(agent, settings):
     user_apim_enabled = agent.get("enable_agent_gpt_apim") in [True, 1, "true", "True"]
     global_apim_enabled = settings.get("enable_gpt_apim", False)
     per_user_enabled = settings.get('per_user_semantic_kernel', False)
-    allow_user_custom_agent_endpoints = settings.get('allow_user_custom_agent_endpoints', False)
-    allow_group_custom_agent_endpoints = settings.get('allow_group_custom_agent_endpoints', False)
+    allow_user_custom_endpoints = settings.get('allow_user_custom_endpoints', False) or settings.get('allow_user_custom_agent_endpoints', False)
+    allow_group_custom_endpoints = settings.get('allow_group_custom_endpoints', False) or settings.get('allow_user_custom_agent_endpoints', False)
     is_group_agent = agent.get("is_group", False)
     is_global_agent = agent.get("is_global", False)
 
     if is_group_agent:
-        allow_custom_agent_endpoints = allow_group_custom_agent_endpoints
+        allow_custom_agent_endpoints = allow_group_custom_endpoints
     elif is_global_agent:
         allow_custom_agent_endpoints = False
     else:
-        allow_custom_agent_endpoints = allow_user_custom_agent_endpoints
+        allow_custom_agent_endpoints = allow_user_custom_endpoints
 
     debug_print(f"[SK Loader] user_apim_enabled: {user_apim_enabled}, global_apim_enabled: {global_apim_enabled}, per_user_enabled: {per_user_enabled}")
-    debug_print(f"[SK Loader] allow_user_custom_agent_endpoints: {allow_user_custom_agent_endpoints}, allow_group_custom_agent_endpoints: {allow_group_custom_agent_endpoints}, allow_custom_agent_endpoints_resolved: {allow_custom_agent_endpoints}")
+    debug_print(f"[SK Loader] allow_user_custom_endpoints: {allow_user_custom_endpoints}, allow_group_custom_endpoints: {allow_group_custom_endpoints}, allow_custom_agent_endpoints_resolved: {allow_custom_agent_endpoints}")
     debug_print(f"[SK Loader] Max completion tokens from agent: {agent.get('max_completion_tokens')}")
 
     def resolve_secret_value_if_needed(value, scope_value, source, scope):
@@ -232,8 +269,133 @@ def resolve_agent_config(agent, settings):
     def merge_fields(primary, fallback):
         return tuple(p if p not in [None, ""] else f for p, f in zip(primary, fallback))
 
+    def resolve_authority(auth_settings):
+        management_cloud = (auth_settings.get("management_cloud") or "public").lower()
+        if management_cloud in ("government", "usgovernment", "usgov"):
+            return AzureAuthorityHosts.AZURE_GOVERNMENT
+        custom_authority = auth_settings.get("custom_authority") or ""
+        if custom_authority:
+            return custom_authority
+        return AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
+
+    def build_token_provider(auth_settings):
+        auth_type = (auth_settings.get("type") or "managed_identity").lower()
+        authority = resolve_authority(auth_settings)
+        if auth_type == "service_principal":
+            credential = ClientSecretCredential(
+                tenant_id=auth_settings.get("tenant_id"),
+                client_id=auth_settings.get("client_id"),
+                client_secret=auth_settings.get("client_secret"),
+                authority=authority,
+            )
+        else:
+            managed_identity_client_id = auth_settings.get("managed_identity_client_id") or None
+            credential = DefaultAzureCredential(
+                managed_identity_client_id=managed_identity_client_id,
+                authority=authority,
+            )
+        return get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default")
+
+    def resolve_multi_endpoint_agent_config():
+        endpoint_id = (agent.get("model_endpoint_id") or "").strip()
+        model_id = (agent.get("model_id") or "").strip()
+        if not endpoint_id or not model_id:
+            return None
+
+        endpoints = []
+        if is_group_agent:
+            if allow_custom_agent_endpoints:
+                group_id = require_active_group(get_current_user_id())
+                endpoints.extend(get_group_model_endpoints(group_id))
+        elif not is_global_agent:
+            if allow_custom_agent_endpoints:
+                user_settings = get_user_settings(get_current_user_id())
+                endpoints.extend(user_settings.get("settings", {}).get("personal_model_endpoints", []))
+        endpoints.extend(settings.get("model_endpoints", []) or [])
+
+        endpoint_cfg = next((e for e in endpoints if e.get("id") == endpoint_id), None)
+        if not endpoint_cfg or not endpoint_cfg.get("enabled", True):
+            return None
+
+        models = endpoint_cfg.get("models", []) or []
+        model_cfg = next((m for m in models if m.get("id") == model_id), None)
+        if not model_cfg or not model_cfg.get("enabled", True):
+            return None
+
+        provider = (endpoint_cfg.get("provider") or "aoai").lower()
+        connection = endpoint_cfg.get("connection", {}) or {}
+        auth = endpoint_cfg.get("auth", {}) or {}
+        deployment = model_cfg.get("deploymentName") or model_cfg.get("deployment") or ""
+        api_version = connection.get("openai_api_version") or connection.get("api_version")
+        endpoint = connection.get("endpoint")
+        return {
+            "provider": provider,
+            "endpoint": endpoint,
+            "api_version": api_version,
+            "deployment": deployment,
+            "auth": auth,
+            "model": model_cfg,
+        }
+
+    def resolve_foundry_endpoint_config():
+        endpoint_id = (agent.get("model_endpoint_id") or "").strip()
+        if not endpoint_id:
+            foundry_settings = other_settings.get("azure_ai_foundry", {}) or {}
+            endpoint_id = (foundry_settings.get("endpoint_id") or "").strip()
+        if not endpoint_id:
+            return None
+
+        endpoints = []
+        if is_group_agent:
+            if allow_custom_agent_endpoints:
+                group_id = require_active_group(get_current_user_id())
+                endpoints.extend(get_group_model_endpoints(group_id))
+        elif not is_global_agent:
+            if allow_custom_agent_endpoints:
+                user_settings = get_user_settings(get_current_user_id())
+                endpoints.extend(user_settings.get("settings", {}).get("personal_model_endpoints", []))
+        endpoints.extend(settings.get("model_endpoints", []) or [])
+
+        endpoint_cfg = next((e for e in endpoints if e.get("id") == endpoint_id), None)
+        if not endpoint_cfg or not endpoint_cfg.get("enabled", True):
+            return None
+        if (endpoint_cfg.get("provider") or "aoai").lower() != "aifoundry":
+            return None
+        return endpoint_cfg
+
+    def enrich_foundry_settings(foundry_settings, endpoint_cfg):
+        if not endpoint_cfg or endpoint_cfg.get("provider") != "aifoundry":
+            return foundry_settings
+        connection = endpoint_cfg.get("connection", {}) or {}
+        auth = endpoint_cfg.get("auth", {}) or {}
+        foundry_settings["endpoint_id"] = endpoint_cfg.get("id") or foundry_settings.get("endpoint_id")
+        foundry_settings["endpoint"] = connection.get("endpoint") or foundry_settings.get("endpoint")
+        foundry_settings["api_version"] = (
+            connection.get("project_api_version")
+            or connection.get("api_version")
+            or foundry_settings.get("api_version")
+        )
+        foundry_settings["project_name"] = connection.get("project_name") or foundry_settings.get("project_name")
+        foundry_settings["authentication_type"] = auth.get("type") or foundry_settings.get("authentication_type")
+        foundry_settings["managed_identity_type"] = auth.get("managed_identity_type") or foundry_settings.get("managed_identity_type")
+        foundry_settings["managed_identity_client_id"] = auth.get("managed_identity_client_id") or foundry_settings.get("managed_identity_client_id")
+        foundry_settings["tenant_id"] = auth.get("tenant_id") or foundry_settings.get("tenant_id")
+        foundry_settings["client_id"] = auth.get("client_id") or foundry_settings.get("client_id")
+        if auth.get("client_secret"):
+            foundry_settings["client_secret"] = auth.get("client_secret")
+        foundry_settings["cloud"] = auth.get("management_cloud") or foundry_settings.get("cloud")
+        foundry_settings["authority"] = auth.get("custom_authority") or foundry_settings.get("authority")
+        return foundry_settings
+
     # If per-user mode is not enabled, ignore all user/agent-specific config fields
     if agent_type == "aifoundry":
+        foundry_settings = other_settings.get("azure_ai_foundry", {}) or {}
+        endpoint_cfg = resolve_foundry_endpoint_config()
+        if endpoint_cfg:
+            foundry_settings = enrich_foundry_settings(foundry_settings, endpoint_cfg)
+            other_settings["azure_ai_foundry"] = foundry_settings
+            agent["azure_openai_gpt_endpoint"] = foundry_settings.get("endpoint", "")
+            agent["azure_openai_gpt_api_version"] = foundry_settings.get("api_version", "")
         return {
             "name": agent.get("name"),
             "display_name": agent.get("display_name", agent.get("name")),
@@ -249,8 +411,46 @@ def resolve_agent_config(agent, settings):
             "max_completion_tokens": agent.get("max_completion_tokens", -1),
         }
 
+    multi_endpoint_config = resolve_multi_endpoint_agent_config()
+
     if not per_user_enabled:
         try:
+            token_provider = None
+            if multi_endpoint_config and multi_endpoint_config.get("provider") == "aoai":
+                auth = multi_endpoint_config.get("auth", {}) or {}
+                auth_type = (auth.get("type") or "managed_identity").lower()
+                endpoint = multi_endpoint_config.get("endpoint")
+                deployment = multi_endpoint_config.get("deployment")
+                api_version = multi_endpoint_config.get("api_version")
+                key = auth.get("api_key") or ""
+                if auth_type != "api_key":
+                    token_provider = build_token_provider(auth)
+                return {
+                    "endpoint": endpoint,
+                    "key": key,
+                    "deployment": deployment,
+                    "api_version": api_version,
+                    "instructions": agent.get("instructions", ""),
+                    "actions_to_load": agent.get("actions_to_load", []),
+                    "additional_settings": agent.get("additional_settings", {}),
+                    "name": agent.get("name"),
+                    "display_name": agent.get("display_name", agent.get("name")),
+                    "description": agent.get("description", ""),
+                    "id": agent.get("id", ""),
+                    "default_agent": agent.get("default_agent", False),
+                    "is_global": agent.get("is_global", False),
+                    "is_group": agent.get("is_group", False),
+                    "group_id": agent.get("group_id"),
+                    "group_name": agent.get("group_name"),
+                    "enable_agent_gpt_apim": False,
+                    "max_completion_tokens": agent.get("max_completion_tokens", -1),
+                    "agent_type": agent_type or "local",
+                    "other_settings": other_settings,
+                    "token_provider": token_provider,
+                    "model_endpoint_id": agent.get("model_endpoint_id", ""),
+                    "model_id": agent.get("model_id", ""),
+                    "model_provider": agent.get("model_provider", ""),
+                }
             if global_apim_enabled:
                 g_apim = get_global_apim()
                 endpoint, key, deployment, api_version = g_apim
@@ -289,6 +489,44 @@ def resolve_agent_config(agent, settings):
     g_gpt = get_global_gpt()
     can_use_agent_endpoints = allow_custom_agent_endpoints
     user_apim_allowed = user_apim_enabled and can_use_agent_endpoints
+
+    if multi_endpoint_config and multi_endpoint_config.get("provider") == "aoai":
+        auth = multi_endpoint_config.get("auth", {}) or {}
+        auth_type = (auth.get("type") or "managed_identity").lower()
+        endpoint = multi_endpoint_config.get("endpoint")
+        deployment = multi_endpoint_config.get("deployment")
+        api_version = multi_endpoint_config.get("api_version")
+        key = auth.get("api_key") or ""
+        token_provider = None
+        if auth_type != "api_key":
+            token_provider = build_token_provider(auth)
+        result = {
+            "endpoint": endpoint,
+            "key": key,
+            "deployment": deployment,
+            "api_version": api_version,
+            "instructions": agent.get("instructions", ""),
+            "actions_to_load": agent.get("actions_to_load", []),
+            "additional_settings": agent.get("additional_settings", {}),
+            "name": agent.get("name"),
+            "display_name": agent.get("display_name", agent.get("name")),
+            "description": agent.get("description", ""),
+            "id": agent.get("id", ""),
+            "default_agent": agent.get("default_agent", False),
+            "is_global": agent.get("is_global", False),
+            "is_group": agent.get("is_group", False),
+            "group_id": agent.get("group_id"),
+            "group_name": agent.get("group_name"),
+            "enable_agent_gpt_apim": False,
+            "max_completion_tokens": agent.get("max_completion_tokens", -1),
+            "agent_type": agent_type or "local",
+            "other_settings": other_settings,
+            "token_provider": token_provider,
+            "model_endpoint_id": agent.get("model_endpoint_id", ""),
+            "model_id": agent.get("model_id", ""),
+            "model_provider": agent.get("model_provider", ""),
+        }
+        return result
 
     # 1. User APIM enabled and any user APIM values set: use user APIM (merge with global APIM if needed)
     if user_apim_allowed and any_filled(*u_apim):
@@ -742,7 +980,60 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
     chat_service = None
     apim_enabled = settings.get("enable_gpt_apim", False)
 
+    def create_chat_completion_service():
+        token_provider = agent_config.get("token_provider")
+        if token_provider:
+            try:
+                return AzureChatCompletion(
+                    service_id=service_id,
+                    deployment_name=agent_config["deployment"],
+                    endpoint=agent_config["endpoint"],
+                    api_key=agent_config["key"],
+                    api_version=agent_config["api_version"],
+                    azure_ad_token_provider=token_provider,
+                )
+            except TypeError:
+                try:
+                    return AzureChatCompletion(
+                        service_id=service_id,
+                        deployment_name=agent_config["deployment"],
+                        endpoint=agent_config["endpoint"],
+                        api_key=agent_config["key"],
+                        api_version=agent_config["api_version"],
+                        ad_token_provider=token_provider,
+                    )
+                except TypeError as exc:
+                    log_event(
+                        f"[SK Loader] Token provider not supported by AzureChatCompletion: {exc}",
+                        level=logging.ERROR,
+                        exceptionTraceback=True,
+                    )
+                    return None
+        return AzureChatCompletion(
+            service_id=service_id,
+            deployment_name=agent_config["deployment"],
+            endpoint=agent_config["endpoint"],
+            api_key=agent_config["key"],
+            api_version=agent_config["api_version"],
+        )
+
     if agent_type == "aifoundry":
+        foundry_settings = (agent_config.get("other_settings") or {}).get("azure_ai_foundry") or {}
+        endpoint = resolve_foundry_endpoint_from_settings(foundry_settings, settings)
+        if not endpoint:
+            log_event(
+                f"[SK Loader] Foundry endpoint missing for agent: {agent_config.get('name')} ({mode_label})",
+                {
+                    "agent_name": agent_config.get("name"),
+                    "agent_id": agent_config.get("id"),
+                    "is_global": agent_config.get("is_global", False),
+                    "is_group": agent_config.get("is_group", False),
+                    "group_id": agent_config.get("group_id"),
+                },
+                level=logging.WARNING,
+            )
+            return kernel, None
+
         foundry_agent = AzureAIFoundryChatCompletionAgent(agent_config, settings)
         agent_objs[agent_config["name"]] = foundry_agent
         log_event(
@@ -771,14 +1062,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 },
                 level=logging.INFO
             )
-            chat_service = AzureChatCompletion(
-                service_id=service_id,
-                deployment_name=agent_config["deployment"],
-                endpoint=agent_config["endpoint"],
-                api_key=agent_config["key"],
-                api_version=agent_config["api_version"],
-                # default_headers={"Ocp-Apim-Subscription-Key": agent_config["key"]}
-            )
+            chat_service = create_chat_completion_service()
         else:
             log_event(
                 f"[SK Loader] Initializing GPT Direct AzureChatCompletion for agent: {agent_config['name']} ({mode_label})",
@@ -790,14 +1074,19 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 },
                 level=logging.INFO
             )
-            chat_service = AzureChatCompletion(
-                service_id=service_id,
-                deployment_name=agent_config["deployment"],
-                endpoint=agent_config["endpoint"],
-                api_key=agent_config["key"],
-                api_version=agent_config["api_version"],
-                # default_headers={"Ocp-Apim-Subscription-Key": agent_config["key"]}
+            chat_service = create_chat_completion_service()
+        if not chat_service:
+            log_event(
+                f"[SK Loader] AzureChatCompletion could not be created for agent: {agent_config['name']} ({mode_label})",
+                {
+                    "agent_name": agent_config["name"],
+                    "aoai_endpoint": agent_config.get("endpoint"),
+                    "aoai_deployment": agent_config.get("deployment"),
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True,
             )
+            return None, None
         if agent_config.get('max_completion_tokens', -1) > 0:
             print(f"[SK Loader] Using {agent_config['max_completion_tokens']} max_completion_tokens for {agent_config['name']}")
             chat_service = set_prompt_settings_for_agent(chat_service, agent_config)
@@ -1146,8 +1435,10 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
     enable_agents = user_settings.get('enable_agents', True)  # Default to True for backward compatibility
     
     # Check if request has forced agent enablement (e.g., retry with specific agent)
+    # import g here as it is not used in global mode
     from flask import g
     force_enable_agents = getattr(g, 'force_enable_agents', False)
+    request_agent_info = getattr(g, 'request_agent_info', None)
     request_agent_name = getattr(g, 'request_agent_name', None)
     
     if force_enable_agents:
@@ -1157,9 +1448,11 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
     selected_agent = user_settings.get('selected_agent')
     
     # Override selected_agent if request specifies one
-    if request_agent_name:
-        selected_agent = request_agent_name
-        log_event(f"[SK Loader] Using agent from request: {request_agent_name}", level=logging.INFO)
+    if request_agent_info:
+        if not isinstance(request_agent_info, dict):
+            request_agent_info = {"name": request_agent_info}
+        selected_agent = request_agent_info
+        log_event(f"[SK Loader] Using agent from request: {request_agent_info}", level=logging.INFO)
     
     # If agents are disabled or no agent is selected, skip agent loading entirely
     if not enable_agents:
@@ -1176,46 +1469,92 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
         load_core_plugins_only(kernel, settings)
         return kernel, None
     
-    # Ensure migration is complete (will migrate any remaining legacy data)
-    ensure_agents_migration_complete(user_id)
-    agents_cfg = get_personal_agents(user_id)
-
-    print(f"[SK Loader] User settings found {len(agents_cfg)} agents for user '{user_id}'")
-
-    # Always mark user agents as is_global: False
-    for agent in agents_cfg:
-        agent['is_global'] = False
-
-    # Append selected group agent (if any) to the candidate list so downstream selection logic can resolve it
     selected_agent_data = selected_agent if isinstance(selected_agent, dict) else {}
     selected_agent_is_group = selected_agent_data.get('is_group', False)
+    selected_agent_group_id = selected_agent_data.get('group_id')
+    conversation_group_id = getattr(g, "conversation_group_id", None)
+    allow_user_agents = settings.get('allow_user_agents', False)
+    allow_group_agents = settings.get('allow_group_agents', False)
+
+    if selected_agent_is_group and not allow_group_agents:
+        log_event(
+            "[SK Loader] Group agents are disabled; skipping group agent load.",
+            level=logging.WARNING
+        )
+        load_core_plugins_only(kernel, settings)
+        return kernel, None
+    if not selected_agent_is_group and not allow_user_agents:
+        log_event(
+            "[SK Loader] User agents are disabled; skipping personal agent load.",
+            level=logging.WARNING
+        )
+        load_core_plugins_only(kernel, settings)
+        return kernel, None
+
+    # Ensure migration is complete (will migrate any remaining legacy data)
+    ensure_agents_migration_complete(user_id)
+
+    agents_cfg = []
+    active_group_id = None
     if selected_agent_is_group:
-        resolved_group_id = selected_agent_data.get('group_id')
-        active_group_id = None
         try:
             active_group_id = require_active_group(user_id)
-            if not resolved_group_id:
-                resolved_group_id = active_group_id
-            elif resolved_group_id != active_group_id:
-                debug_print(
-                    f"[SK Loader] Selected group agent references group {resolved_group_id}, active group is {active_group_id}."
-                )
         except ValueError as err:
+            active_group_id = None
             debug_print(f"[SK Loader] No active group available while loading group agent: {err}")
-            if not resolved_group_id:
-                log_event(
-                    "[SK Loader] Group agent selected but no active group in settings.",
-                    level=logging.WARNING
-                )
+
+        allowed_group_ids = {gid for gid in [conversation_group_id, active_group_id] if gid}
+        if selected_agent_group_id and allowed_group_ids and str(selected_agent_group_id) not in {str(gid) for gid in allowed_group_ids}:
+            log_event(
+                "[SK Loader] Selected group agent does not match active or conversation group context.",
+                level=logging.ERROR,
+                extra={
+                    "selected_agent_group_id": selected_agent_group_id,
+                    "conversation_group_id": conversation_group_id,
+                    "active_group_id": active_group_id
+                }
+            )
+            load_core_plugins_only(kernel, settings)
+            return kernel, None
+
+        effective_group_id = selected_agent_group_id or conversation_group_id or active_group_id
+        if not effective_group_id:
+            log_event(
+                "[SK Loader] Group agent selected but no group context available.",
+                level=logging.WARNING
+            )
+            load_core_plugins_only(kernel, settings)
+            return kernel, None
+
+        group_agents = get_group_agents(effective_group_id)
+        if group_agents:
+            print(f"[SK Loader] Found {len(group_agents)} group agents for group '{effective_group_id}'")
+            for group_agent in group_agents:
+                group_agent['is_global'] = False
+                group_agent['is_group'] = True
+                group_agent.setdefault('group_id', effective_group_id)
+            agents_cfg = group_agents
+        else:
+            print(f"[SK Loader] No group agents found for group '{effective_group_id}'")
+    else:
+        agents_cfg = get_personal_agents(user_id)
+        print(f"[SK Loader] User settings found {len(agents_cfg)} agents for user '{user_id}'")
+        for agent in agents_cfg:
+            agent['is_global'] = False
+            agent['is_group'] = False
+
+    # Append selected group agent (if any) to the candidate list so downstream selection logic can resolve it
+    if selected_agent_is_group:
+        resolved_group_id = selected_agent_group_id or conversation_group_id or active_group_id
 
         if resolved_group_id:
             agent_identifier = selected_agent_data.get('id') or selected_agent_data.get('name')
             group_agent_cfg = None
             if agent_identifier:
-                group_agent_cfg = get_group_agent(active_group_id, agent_identifier)
+                group_agent_cfg = get_group_agent(resolved_group_id, agent_identifier)
             if not group_agent_cfg:
                 # Fallback: search by name across group agents if ID lookup failed
-                for candidate in get_group_agents(active_group_id):
+                for candidate in get_group_agents(resolved_group_id):
                     if candidate.get('name') == selected_agent_data.get('name'):
                         group_agent_cfg = candidate
                         break
@@ -1225,7 +1564,8 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
                 group_agent_cfg['is_group'] = True
                 group_agent_cfg.setdefault('group_id', resolved_group_id)
                 group_agent_cfg['group_name'] = selected_agent_data.get('group_name')
-                agents_cfg.append(group_agent_cfg)
+                if not any(agent.get('id') == group_agent_cfg.get('id') for agent in agents_cfg):
+                    agents_cfg.append(group_agent_cfg)
                 log_event(
                     f"[SK Loader] Added group agent '{group_agent_cfg.get('name')}' from group {resolved_group_id} to candidate list.",
                     level=logging.INFO
@@ -1260,7 +1600,7 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
             key = f"global_{agent['name']}"
             all_agents[key] = agent
             
-        # Add personal and group agents with scoped prefixes
+        # Add workspace agents with scoped prefixes
         for agent in agents_cfg:
             prefix = "group" if agent.get('is_group') else "personal"
             scoped_name = agent.get('name') or agent.get('id') or 'unnamed'
@@ -1333,13 +1673,20 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
     # Get selected agent from user settings (this still needs to be in user settings for UI state)
     user_settings = get_user_settings(user_id).get('settings', {})
     selected_agent = user_settings.get('selected_agent')
+    if request_agent_info:
+        selected_agent = request_agent_info if isinstance(request_agent_info, dict) else {"name": request_agent_info}
     debug_print(f"[SK Loader] User settings selected_agent: {selected_agent}")
     debug_print(f"[SK Loader] Type of selected_agent: {type(selected_agent)}")
     if isinstance(selected_agent, dict):
         selected_agent_name = selected_agent.get('name')
+        selected_agent_id = selected_agent.get('id')
         is_global_flag = selected_agent.get('is_global', False)
+        is_group_flag = selected_agent.get('is_group', False)
+        selected_agent_group_id = selected_agent.get('group_id')
         debug_print(f"[SK Loader] Selected agent name: {selected_agent_name}")
         debug_print(f"[SK Loader] Selected agent is_global flag: {is_global_flag}")
+        debug_print(f"[SK Loader] Selected agent is_group flag: {is_group_flag}")
+        debug_print(f"[SK Loader] Selected agent group_id: {selected_agent_group_id}")
     else:
         debug_print(f"[SK Loader] User {user_id} selected_agent is not a dict: {selected_agent}. Using None.")
         log_event(
@@ -1347,29 +1694,36 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
             level=logging.ERROR
         )
         selected_agent_name = None
+        selected_agent_id = None
         is_global_flag = False
+        is_group_flag = False
+        selected_agent_group_id = None
     debug_print(f"[SK Loader] Selected agent name: {selected_agent_name}")
     debug_print(f"[SK Loader] Selected agent global flag: {is_global_flag}")
     agent_cfg = None
     # Try user-selected agent
     if selected_agent_name:
-        debug_print(f"[SK Loader] Looking for agent named '{selected_agent_name}' with is_global={is_global_flag}")
-        debug_print(f"[SK Loader] Available agents: {[{a.get('name'): a.get('is_global', False)} for a in agents_cfg]}")
-        
-        # First try to find exact match including is_global flag
-        found = next((a for a in agents_cfg if a.get('name') == selected_agent_name and a.get('is_global', False) == is_global_flag), None)
+        debug_print(
+            f"[SK Loader] Looking for agent named '{selected_agent_name}' with is_global={is_global_flag}, is_group={is_group_flag}"
+        )
+        debug_print(
+            f"[SK Loader] Available agents: [{', '.join([str({'name': a.get('name'), 'is_global': a.get('is_global', False), 'is_group': a.get('is_group', False), 'group_id': a.get('group_id')}) for a in agents_cfg])}]"
+        )
+
+        found = find_agent_by_scope(agents_cfg, {
+            "name": selected_agent_name,
+            "id": selected_agent_id,
+            "is_global": is_global_flag,
+            "is_group": is_group_flag,
+            "group_id": selected_agent_group_id
+        })
         if found:
-            debug_print(f"[SK Loader] User {user_id} Found EXACT match for agent: {selected_agent_name} (is_global={is_global_flag})")
+            debug_print(f"[SK Loader] User {user_id} Found scoped match for agent: {selected_agent_name}")
             agent_cfg = found
         else:
-            # Fallback: try to find by name only
-            found = next((a for a in agents_cfg if a.get('name') == selected_agent_name), None)
-            if found:
-                debug_print(f"[SK Loader] User {user_id} Found NAME-ONLY match for agent: {selected_agent_name} (requested is_global={is_global_flag}, found is_global={found.get('is_global', False)})")
-                agent_cfg = found
-            else:
-                debug_print(f"[SK Loader] User {user_id} NO agent found matching user-selected agent: {selected_agent_name}")
+            debug_print(f"[SK Loader] User {user_id} NO agent found matching user-selected agent: {selected_agent_name}")
         
+        #TODO: Fix this logging
         if found:
             print(f"[SK Loader] User {user_id} Found user-selected agent: {selected_agent_name}")
             logging.debug(f"[SK Loader] User {user_id} Found user-selected agent: {selected_agent_name}")
@@ -1426,6 +1780,8 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
     agent_type = (agent_cfg.get('agent_type') or 'local').lower()
     agent_cfg['agent_type'] = agent_type
     if agent_type == 'local':
+        kernel, agent_objs = load_single_agent_for_kernel(kernel, agent_cfg, settings, g, redis_client=redis_client, mode_label="per-user")
+    elif agent_type == 'aifoundry':
         kernel, agent_objs = load_single_agent_for_kernel(kernel, agent_cfg, settings, g, redis_client=redis_client, mode_label="per-user")
     else:
         log_event(

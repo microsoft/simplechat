@@ -51,6 +51,9 @@ def get_personal_agents(user_id):
             cleaned_agent.setdefault('is_global', False)
             cleaned_agent.setdefault('is_group', False)
             cleaned_agent.setdefault('agent_type', 'local')
+            cleaned_agent.setdefault('model_endpoint_id', '')
+            cleaned_agent.setdefault('model_id', '')
+            cleaned_agent.setdefault('model_provider', '')
             # Remove empty reasoning_effort to prevent validation errors
             if cleaned_agent.get('reasoning_effort') == '':
                 cleaned_agent.pop('reasoning_effort', None)
@@ -89,6 +92,9 @@ def get_personal_agent(user_id, agent_id):
         cleaned_agent.setdefault('is_global', False)
         cleaned_agent.setdefault('is_group', False)
         cleaned_agent.setdefault('agent_type', 'local')
+        cleaned_agent.setdefault('model_endpoint_id', '')
+        cleaned_agent.setdefault('model_id', '')
+        cleaned_agent.setdefault('model_provider', '')
         # Remove empty reasoning_effort to prevent validation errors
         if cleaned_agent.get('reasoning_effort') == '':
             cleaned_agent.pop('reasoning_effort', None)
@@ -126,6 +132,9 @@ def save_personal_agent(user_id, agent_data):
             'azure_agent_apim_gpt_api_version'
         ]:
             cleaned_agent.setdefault(field, '')
+        cleaned_agent.setdefault('model_endpoint_id', '')
+        cleaned_agent.setdefault('model_id', '')
+        cleaned_agent.setdefault('model_provider', '')
         if 'id' not in cleaned_agent:
             cleaned_agent['id'] = str(f"{user_id}_{cleaned_agent.get('name', 'default')}")
             
@@ -145,6 +154,9 @@ def save_personal_agent(user_id, agent_data):
         agent_data.setdefault('azure_openai_gpt_api_version', '')
         agent_data.setdefault('azure_agent_apim_gpt_deployment', '')
         agent_data.setdefault('azure_agent_apim_gpt_api_version', '')
+        agent_data.setdefault('model_endpoint_id', '')
+        agent_data.setdefault('model_id', '')
+        agent_data.setdefault('model_provider', '')
         agent_data.setdefault('enable_agent_gpt_apim', False)
         agent_data.setdefault('reasoning_effort', '')
         agent_data.setdefault('actions_to_load', [])
@@ -153,9 +165,13 @@ def save_personal_agent(user_id, agent_data):
         # Remove empty reasoning_effort to avoid schema validation errors
         if agent_data.get('reasoning_effort') == '':
             agent_data.pop('reasoning_effort', None)
+        if 'id' not in agent_data:
+            agent_data['id'] = cleaned_agent.get('id')
+        agent_data['user_id'] = user_id
+        agent_data['last_updated'] = cleaned_agent['last_updated']
         agent_data['is_global'] = False
         agent_data['is_group'] = False
-        agent_data.setdefault('agent_type', 'local')
+        agent_data.setdefault('agent_type', cleaned_agent.get('agent_type', 'local'))
         
         # Store sensitive keys in Key Vault if enabled
         agent_data = keyvault_agent_save_helper(agent_data, agent_data.get('id', ''), scope="user")

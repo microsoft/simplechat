@@ -5,17 +5,21 @@ import * as agentsCommon from "./agents_common.js";
 import { getModelSupportedLevels } from "./chat/chat-reasoning.js";
 
 export class AgentModalStepper {
-  constructor(isAdmin = false) {
+  constructor(isAdmin = false, options = {}) {
     this.currentStep = 1;
     this.maxSteps = 6;
     this.isEditMode = false;
     this.isAdmin = isAdmin; // Track if this is admin context
+    this.workspaceScope = options.workspaceScope || (isAdmin ? 'admin' : 'user');
+    this.settingsEndpoint = options.settingsEndpoint || (isAdmin ? '/api/admin/agent/settings' : '/api/user/agent/settings');
     this.currentAgentType = 'local';
     this.originalAgent = null;  // Track original state for change detection
     this.actionsToSelect = null; // Store actions to select when they're loaded
     this.updateStepIndicatorTimeout = null; // For debouncing step indicator updates
     this.templateSubmitButton = document.getElementById('agent-modal-submit-template-btn');
     this.foundryPlaceholderInstructions = 'Placeholder instructions: Azure AI Foundry agent manages its own prompt.';
+    this.foundryEndpoints = [];
+    this.foundryAgents = [];
     
     this.bindEvents();
 
@@ -54,6 +58,19 @@ export class AgentModalStepper {
         r.addEventListener('change', (e) => this.handleAgentTypeChange(e.target.value));
       });
     }
+
+    const foundryEndpointSelect = document.getElementById('agent-foundry-endpoint-select');
+    const foundryFetchBtn = document.getElementById('agent-foundry-fetch-btn');
+    const foundryAgentSelect = document.getElementById('agent-foundry-agent-select');
+    if (foundryEndpointSelect) {
+      foundryEndpointSelect.addEventListener('change', () => this.applyFoundryEndpointSelection());
+    }
+    if (foundryFetchBtn) {
+      foundryFetchBtn.addEventListener('click', () => this.fetchFoundryAgents());
+    }
+    if (foundryAgentSelect) {
+      foundryAgentSelect.addEventListener('change', () => this.applyFoundryAgentSelection());
+    }
     
     // Set up display name to generated name conversion
     this.setupNameGeneration();
@@ -79,8 +96,30 @@ export class AgentModalStepper {
     const globalModelSelect = document.getElementById('agent-global-model-select');
     if (globalModelSelect) {
       globalModelSelect.addEventListener('change', () => {
+        this.updateModelEndpointSelection();
         this.updateReasoningEffortForModel();
       });
+    }
+  }
+
+  updateModelEndpointSelection() {
+    const globalModelSelect = document.getElementById('agent-global-model-select');
+    const modelEndpointInput = document.getElementById('agent-model-endpoint-id');
+    const modelIdInput = document.getElementById('agent-model-id');
+    const modelProviderInput = document.getElementById('agent-model-provider');
+    if (!globalModelSelect) {
+      return;
+    }
+
+    const selectedOption = globalModelSelect.options[globalModelSelect.selectedIndex];
+    if (modelEndpointInput) {
+      modelEndpointInput.value = selectedOption?.dataset?.endpointId || '';
+    }
+    if (modelIdInput) {
+      modelIdInput.value = selectedOption?.value || '';
+    }
+    if (modelProviderInput) {
+      modelProviderInput.value = selectedOption?.dataset?.provider || '';
     }
   }
 
@@ -90,6 +129,7 @@ export class AgentModalStepper {
     // Clear actions if switching to foundry
     if (this.currentAgentType === 'aifoundry') {
       this.clearSelectedActions();
+      this.loadFoundryEndpoints();
     }
     this.populateSummary();
   }
@@ -108,6 +148,8 @@ export class AgentModalStepper {
     const instructionsContainer = document.getElementById('agent-instructions-container');
     const instructionsFoundryNote = document.getElementById('agent-instructions-foundry-note');
     const instructionsInput = document.getElementById('agent-instructions');
+    const advancedFoundryNote = document.getElementById('agent-advanced-foundry-note');
+    const localAgentAdvancedSettings = document.getElementById('local-agent-advanced-settings');
 
     if (foundryFields) foundryFields.classList.toggle('d-none', !isFoundry);
     if (modelGroup) modelGroup.classList.toggle('d-none', isFoundry);
@@ -135,6 +177,13 @@ export class AgentModalStepper {
 
     if (summaryActionsSection) {
       summaryActionsSection.classList.toggle('d-none', isFoundry);
+    }
+
+    if (advancedFoundryNote) {
+      advancedFoundryNote.classList.toggle('d-none', !isFoundry);
+    }
+    if (localAgentAdvancedSettings) {
+      localAgentAdvancedSettings.classList.toggle('d-none', isFoundry);
     }
 
     // Update helper text
@@ -284,6 +333,8 @@ export class AgentModalStepper {
     
     // Load models for the modal
     this.loadModelsForModal();
+    this.loadFoundryEndpoints();
+    this.updateModelEndpointSelection();
     
     // Show the Bootstrap modal
     const modalEl = document.getElementById('agentModal');
@@ -344,6 +395,15 @@ export class AgentModalStepper {
     const instructions = document.getElementById('agent-instructions');
     const modelSelect = document.getElementById('agent-global-model-select');
     const customConnection = document.getElementById('agent-custom-connection');
+    const modelEndpointId = document.getElementById('agent-model-endpoint-id');
+    const modelId = document.getElementById('agent-model-id');
+    const modelProvider = document.getElementById('agent-model-provider');
+    const foundryEndpointSelect = document.getElementById('agent-foundry-endpoint-select');
+    const foundryAgentSelect = document.getElementById('agent-foundry-agent-select');
+    const foundryEndpointInput = document.getElementById('agent-foundry-endpoint');
+    const foundryApiVersionInput = document.getElementById('agent-foundry-api-version');
+    const foundryDeploymentInput = document.getElementById('agent-foundry-deployment');
+    const foundryAgentIdInput = document.getElementById('agent-foundry-agent-id');
     
     if (displayName) displayName.value = '';
     if (generatedName) generatedName.value = '';
@@ -351,6 +411,15 @@ export class AgentModalStepper {
     if (instructions) instructions.value = '';
     if (modelSelect) modelSelect.selectedIndex = 0;
     if (customConnection) customConnection.checked = false;
+    if (modelEndpointId) modelEndpointId.value = '';
+    if (modelId) modelId.value = '';
+    if (modelProvider) modelProvider.value = '';
+    if (foundryEndpointSelect) foundryEndpointSelect.selectedIndex = 0;
+    if (foundryAgentSelect) foundryAgentSelect.selectedIndex = 0;
+    if (foundryEndpointInput) foundryEndpointInput.value = '';
+    if (foundryApiVersionInput) foundryApiVersionInput.value = '';
+    if (foundryDeploymentInput) foundryDeploymentInput.value = '';
+    if (foundryAgentIdInput) foundryAgentIdInput.value = '';
     
     // Clear any selected actions
     this.clearSelectedActions();
@@ -365,12 +434,12 @@ export class AgentModalStepper {
 
   async loadModelsForModal() {
     try {
-      const endpoint = '/api/user/agent/settings';
-      const { models, selectedModel } = await agentsCommon.fetchAndGetAvailableModels(endpoint, this.currentAgent);
+      const { models, selectedModel } = await agentsCommon.fetchAndGetAvailableModels(this.settingsEndpoint, this.currentAgent);
       const globalModelSelect = document.getElementById('agent-global-model-select');
       
       if (globalModelSelect) {
         agentsCommon.populateGlobalModelDropdown(globalModelSelect, models, selectedModel);
+        this.updateModelEndpointSelection();
         
         // Update reasoning effort options based on selected model
         this.updateReasoningEffortForModel();
@@ -382,6 +451,155 @@ export class AgentModalStepper {
       if (globalModelSelect) {
         globalModelSelect.innerHTML = '<option value="">Error loading models</option>';
       }
+    }
+  }
+
+  async loadFoundryEndpoints() {
+    const endpointSelect = document.getElementById('agent-foundry-endpoint-select');
+    if (!endpointSelect) {
+      return;
+    }
+
+    try {
+      const resp = await fetch(this.settingsEndpoint);
+      if (!resp.ok) {
+        throw new Error('Failed to load Foundry endpoints');
+      }
+      const settings = await resp.json();
+      const endpoints = Array.isArray(settings.model_endpoints) ? settings.model_endpoints : [];
+      this.foundryEndpoints = endpoints.filter(endpoint => (endpoint.provider || '').toLowerCase() === 'aifoundry');
+
+      endpointSelect.innerHTML = '<option value="">Select a configured endpoint...</option>';
+      this.foundryEndpoints.forEach(endpoint => {
+        const opt = document.createElement('option');
+        opt.value = endpoint.id || '';
+        opt.textContent = endpoint.name || endpoint.connection?.endpoint || 'Foundry Endpoint';
+        if (endpoint.scope) {
+          opt.dataset.scope = endpoint.scope;
+        }
+        endpointSelect.appendChild(opt);
+      });
+
+      const existingEndpointId =
+        (this.currentAgent && (this.currentAgent.model_endpoint_id || this.currentAgent.other_settings?.azure_ai_foundry?.endpoint_id)) || '';
+      if (existingEndpointId) {
+        endpointSelect.value = existingEndpointId;
+      }
+      this.applyFoundryEndpointSelection();
+    } catch (error) {
+      console.error('Failed to load Foundry endpoints:', error);
+    }
+  }
+
+  applyFoundryEndpointSelection() {
+    const endpointSelect = document.getElementById('agent-foundry-endpoint-select');
+    const endpointInput = document.getElementById('agent-foundry-endpoint');
+    const apiVersionInput = document.getElementById('agent-foundry-api-version');
+    const deploymentInput = document.getElementById('agent-foundry-deployment');
+    const endpointIdInput = document.getElementById('agent-model-endpoint-id');
+    const providerInput = document.getElementById('agent-model-provider');
+    const statusEl = document.getElementById('agent-foundry-fetch-status');
+
+    if (!endpointSelect) {
+      return;
+    }
+
+    const endpointId = endpointSelect.value || '';
+    if (endpointIdInput) endpointIdInput.value = endpointId;
+    if (providerInput) providerInput.value = endpointId ? 'aifoundry' : '';
+
+    const selected = this.foundryEndpoints.find(endpoint => endpoint.id === endpointId);
+    if (selected) {
+      if (endpointInput) {
+        endpointInput.value = selected.connection?.endpoint || '';
+      }
+      if (apiVersionInput) {
+        apiVersionInput.value = selected.connection?.project_api_version || selected.connection?.api_version || 'v1';
+      }
+      if (deploymentInput) {
+        deploymentInput.value = selected.connection?.project_name || '';
+      }
+      const agentSelect = document.getElementById('agent-foundry-agent-select');
+      if (agentSelect) {
+        agentSelect.innerHTML = '<option value="">Select an agent...</option>';
+      }
+      this.foundryAgents = [];
+      if (statusEl) {
+        statusEl.textContent = '';
+      }
+    }
+  }
+
+  async fetchFoundryAgents() {
+    const endpointSelect = document.getElementById('agent-foundry-endpoint-select');
+    const agentSelect = document.getElementById('agent-foundry-agent-select');
+    const statusEl = document.getElementById('agent-foundry-fetch-status');
+    if (!endpointSelect || !agentSelect) {
+      return;
+    }
+
+    const endpointId = endpointSelect.value || '';
+    const scope = endpointSelect.options[endpointSelect.selectedIndex]?.dataset?.scope || 'global';
+    if (!endpointId) {
+      showToast('Select a Foundry endpoint before fetching agents.', 'warning');
+      return;
+    }
+
+    try {
+      if (statusEl) {
+        statusEl.textContent = 'Fetching agents...';
+      }
+      const response = await fetch('/api/models/foundry/agents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ endpoint_id: endpointId, scope })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to fetch Foundry agents');
+      }
+      this.foundryAgents = Array.isArray(payload.agents) ? payload.agents : [];
+      agentSelect.innerHTML = '<option value="">Select an agent...</option>';
+      this.foundryAgents.forEach(agent => {
+        const opt = document.createElement('option');
+        opt.value = agent.id || '';
+        opt.textContent = agent.display_name || agent.name || agent.id || '';
+        agentSelect.appendChild(opt);
+      });
+      if (statusEl) {
+        statusEl.textContent = `${this.foundryAgents.length} agent(s) found.`;
+      }
+    } catch (error) {
+      console.error('Failed to fetch Foundry agents:', error);
+      if (statusEl) {
+        statusEl.textContent = '';
+      }
+      showToast(error.message || 'Failed to fetch Foundry agents.', 'danger');
+    }
+  }
+
+  applyFoundryAgentSelection() {
+    const agentSelect = document.getElementById('agent-foundry-agent-select');
+    const agentIdInput = document.getElementById('agent-foundry-agent-id');
+    if (!agentSelect || !agentIdInput) {
+      return;
+    }
+
+    const agentId = agentSelect.value || '';
+    agentIdInput.value = agentId;
+    const selected = this.foundryAgents.find(agent => agent.id === agentId);
+    if (!selected) {
+      return;
+    }
+
+    const displayNameInput = document.getElementById('agent-display-name');
+    const descriptionInput = document.getElementById('agent-description');
+    if (displayNameInput && !displayNameInput.value.trim()) {
+      displayNameInput.value = selected.display_name || selected.name || '';
+      this.updateGeneratedName();
+    }
+    if (descriptionInput && !descriptionInput.value.trim()) {
+      descriptionInput.value = selected.description || '';
     }
   }
 
@@ -544,8 +762,10 @@ export class AgentModalStepper {
         if (isFoundry) {
           customConnectionToggle.classList.add('d-none');
         } else if (!this.isAdmin) {
-          const allowUserCustom = appSettings?.allow_user_custom_agent_endpoints;
-          customConnectionToggle.classList.toggle('d-none', !allowUserCustom);
+          const allowCustomEndpoints = this.workspaceScope === 'group'
+            ? appSettings?.allow_group_custom_endpoints
+            : appSettings?.allow_user_custom_endpoints;
+          customConnectionToggle.classList.toggle('d-none', !allowCustomEndpoints);
         } else {
           customConnectionToggle.classList.remove('d-none');
         }
@@ -1531,17 +1751,29 @@ export class AgentModalStepper {
     const agentTypeInput = document.querySelector('input[name="agent-type"]:checked');
     const selectedAgentType = agentTypeInput ? agentTypeInput.value : 'local';
 
+    const modelSelect = document.getElementById('agent-global-model-select');
+    const selectedModelOption = modelSelect ? modelSelect.options[modelSelect.selectedIndex] : null;
+    const modelEndpointInput = document.getElementById('agent-model-endpoint-id');
+    const modelIdInput = document.getElementById('agent-model-id');
+    const modelProviderInput = document.getElementById('agent-model-provider');
+    const modelEndpointId = modelEndpointInput?.value || selectedModelOption?.dataset?.endpointId || '';
+    const modelId = modelIdInput?.value || selectedModelOption?.value || '';
+    const modelProvider = modelProviderInput?.value || selectedModelOption?.dataset?.provider || '';
+
     const formData = {
       display_name: document.getElementById('agent-display-name')?.value || '',
       name: document.getElementById('agent-name')?.value || '',
       description: document.getElementById('agent-description')?.value || '',
       instructions: document.getElementById('agent-instructions')?.value || '',
-      model: document.getElementById('agent-global-model-select')?.value || '',
+      model: modelSelect?.value || '',
       custom_connection: document.getElementById('agent-custom-connection')?.checked || false,
       other_settings: document.getElementById('agent-additional-settings')?.value || '{}',
       max_completion_tokens: parseInt(document.getElementById('agent-max-completion-tokens')?.value.trim()) || null,
       reasoning_effort: document.getElementById('agent-reasoning-effort')?.value || '',
-      agent_type: selectedAgentType
+      agent_type: selectedAgentType,
+      model_endpoint_id: modelEndpointId,
+      model_id: modelId,
+      model_provider: modelProvider
     };
 
     if (selectedAgentType === 'aifoundry') {
@@ -1563,6 +1795,7 @@ export class AgentModalStepper {
       otherSettingsObj.azure_ai_foundry = {
         ...(otherSettingsObj.azure_ai_foundry || {}),
         agent_id: document.getElementById('agent-foundry-agent-id')?.value?.trim() || '',
+        endpoint_id: modelEndpointId || '',
         ...(notesVal ? { notes: notesVal } : {})
       };
       formData.other_settings = JSON.stringify(otherSettingsObj);
@@ -1570,6 +1803,9 @@ export class AgentModalStepper {
       // Foundry agents cannot have actions
       formData.actions_to_load = [];
       formData.enable_agent_gpt_apim = false;
+      formData.model_endpoint_id = modelEndpointId;
+      formData.model_id = '';
+      formData.model_provider = 'aifoundry';
       return formData;
     }
     
@@ -1603,11 +1839,15 @@ export class AgentModalStepper {
         if (gptApiVersion) formData.azure_openai_gpt_api_version = gptApiVersion;
         formData.enable_agent_gpt_apim = false;
       }
+      formData.model_endpoint_id = '';
+      formData.model_id = '';
+      formData.model_provider = '';
     } else {
       // Using global model - need to set at least one deployment field
       // We'll use the selected model as the deployment name for now
       if (formData.model) {
-        formData.azure_openai_gpt_deployment = formData.model;
+        const deploymentName = selectedModelOption?.dataset?.deploymentName || formData.model;
+        formData.azure_openai_gpt_deployment = deploymentName;
       }
     }
     

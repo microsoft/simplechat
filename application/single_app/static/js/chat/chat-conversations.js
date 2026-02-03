@@ -5,6 +5,8 @@ import { loadMessages } from "./chat-messages.js";
 import { isColorLight, toBoolean } from "./chat-utils.js";
 import { loadSidebarConversations, setActiveConversation as setSidebarActiveConversation } from "./chat-sidebar-conversations.js";
 import { toggleConversationInfoButton } from "./chat-conversation-info-button.js";
+import { loadUserSettings } from "./chat-layout.js";
+import { setUserSetting } from "../agents_common.js";
 
 const newConversationBtn = document.getElementById("new-conversation-btn");
 const deleteSelectedBtn = document.getElementById("delete-selected-btn");
@@ -19,6 +21,71 @@ const chatbox = document.getElementById("chatbox");
 let selectedConversations = new Set();
 
 let currentlyEditingId = null; // Track which item is being edited
+
+async function ensureActiveGroupForConversation() {
+  const activeItem = document.querySelector('.conversation-item.active');
+  if (!activeItem) return null;
+
+  const chatType = activeItem.getAttribute('data-chat-type') || '';
+  if (!chatType.startsWith('group')) return null;
+
+  const convoGroupId = activeItem.getAttribute('data-group-id') || null;
+  if (!convoGroupId) return null;
+
+  try {
+    const settings = await loadUserSettings();
+    const currentActiveGroupId = settings?.activeGroupOid || null;
+    if (currentActiveGroupId && String(currentActiveGroupId) === String(convoGroupId)) {
+      return convoGroupId;
+    }
+
+    await setUserSetting('activeGroupOid', convoGroupId);
+    return convoGroupId;
+  } catch (error) {
+    console.warn('Failed to align active group with conversation context:', error);
+    return convoGroupId;
+  }
+}
+
+async function refreshAgentsForActiveConversation() {
+  try {
+    await ensureActiveGroupForConversation();
+    const agentsModule = await import('./chat-agents.js');
+    const enableAgentsBtn = document.getElementById("enable-agents-btn");
+    if (enableAgentsBtn && enableAgentsBtn.classList.contains('active')) {
+      await agentsModule.populateAgentDropdown();
+    }
+  } catch (error) {
+    console.warn('Failed to refresh agent dropdown:', error);
+  }
+}
+
+async function refreshModelSelection() {
+  const modelSelect = document.getElementById("model-select");
+  if (!modelSelect) return;
+
+  try {
+    const settings = await loadUserSettings();
+    const preferredModelId = settings?.preferredModelId;
+    const preferredModelDeployment = settings?.preferredModelDeployment;
+    const optionValues = new Set(Array.from(modelSelect.options).map(option => option.value));
+
+    if (preferredModelId && optionValues.has(preferredModelId)) {
+      modelSelect.value = preferredModelId;
+    } else if (preferredModelDeployment && optionValues.has(preferredModelDeployment)) {
+      modelSelect.value = preferredModelDeployment;
+    }
+
+    modelSelect.dispatchEvent(new Event('change'));
+  } catch (error) {
+    console.warn('Failed to refresh model selection:', error);
+  }
+}
+
+async function refreshAgentsAndModelsForActiveConversation() {
+  await refreshAgentsForActiveConversation();
+  await refreshModelSelection();
+}
 let selectionModeActive = false; // Track if selection mode is active
 let selectionModeTimer = null; // Timer for auto-hiding checkboxes
 let showHiddenConversations = false; // Track if hidden conversations should be shown
@@ -75,6 +142,8 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
+
+  void refreshAgentsAndModelsForActiveConversation();
 });
 
 // Function to enter selection mode
@@ -365,23 +434,30 @@ export function createConversationItem(convo) {
   // Use the actual chat_type from conversation metadata if available
   console.log(`createConversationItem: Processing conversation ${convo.id}, chat_type="${convo.chat_type}"`);
   
-  if (convo.chat_type) {
-    convoItem.setAttribute("data-chat-type", convo.chat_type);
-    console.log(`createConversationItem: Set data-chat-type to "${convo.chat_type}"`);
+  const normalizedChatType = convo.chat_type === 'personal' ? 'personal_single_user' : convo.chat_type;
+  if (normalizedChatType) {
+    convoItem.setAttribute("data-chat-type", normalizedChatType);
+    console.log(`createConversationItem: Set data-chat-type to "${normalizedChatType}"`);
     
     // For group chats, try to find group name from context
-    if (convo.chat_type.startsWith('group') && convo.context && convo.context.length > 0) {
+    if (normalizedChatType.startsWith('group') && convo.context && convo.context.length > 0) {
       const primaryContext = convo.context.find(c => c.type === 'primary' && c.scope === 'group');
       if (primaryContext) {
         convoItem.setAttribute("data-group-name", primaryContext.name || 'Group');
+        if (primaryContext.id) {
+          convoItem.setAttribute("data-group-id", primaryContext.id);
+        }
         console.log(`createConversationItem: Set data-group-name to "${primaryContext.name || 'Group'}"`);
       }
-    } else if (convo.chat_type.startsWith('public') && convo.context && convo.context.length > 0) {
+    } else if (normalizedChatType.startsWith('public') && convo.context && convo.context.length > 0) {
       const primaryContext = convo.context.find(c => c.type === 'primary' && c.scope === 'public');
       if (primaryContext) {
         convoItem.setAttribute("data-group-name", primaryContext.name || 'Workspace');
+        convoItem.removeAttribute("data-group-id");
         console.log(`createConversationItem: Set data-group-name to "${primaryContext.name || 'Workspace'}"`);
       }
+    } else {
+      convoItem.removeAttribute("data-group-id");
     }
   } else {
     console.log(`createConversationItem: No chat_type found, determining from context`);
@@ -393,23 +469,31 @@ export function createConversationItem(convo) {
         if (primaryContext.scope === 'group') {
           convoItem.setAttribute("data-group-name", primaryContext.name || 'Group');
           convoItem.setAttribute("data-chat-type", "group-single-user"); // Default to single-user for now
+          if (primaryContext.id) {
+            convoItem.setAttribute("data-group-id", primaryContext.id);
+          }
           console.log(`createConversationItem: Set to group-single-user with name "${primaryContext.name || 'Group'}"`);
         } else if (primaryContext.scope === 'public') {
           convoItem.setAttribute("data-group-name", primaryContext.name || 'Workspace');
           convoItem.setAttribute("data-chat-type", "public");
+          convoItem.removeAttribute("data-group-id");
           console.log(`createConversationItem: Set to public with name "${primaryContext.name || 'Workspace'}"`);
         } else if (primaryContext.scope === 'personal') {
-          convoItem.setAttribute("data-chat-type", "personal");
-          console.log(`createConversationItem: Set to personal`);
+          convoItem.setAttribute("data-chat-type", "personal_single_user");
+          convoItem.removeAttribute("data-group-id");
+          console.log(`createConversationItem: Set to personal_single_user`);
         }
       } else {
-        // No primary context - this is a model-only conversation
-        // Don't set data-chat-type so no badges will be shown
-        console.log(`createConversationItem: No primary context - model-only conversation (no badges)`);
+        // No primary context - default to personal_single_user
+        convoItem.setAttribute("data-chat-type", "personal_single_user");
+        convoItem.removeAttribute("data-group-id");
+        console.log(`createConversationItem: No primary context - defaulted to personal_single_user`);
       }
     } else {
-      // No context at all - model-only conversation
-      console.log(`createConversationItem: No context - model-only conversation (no badges)`);
+      // No context at all - default to personal_single_user
+      convoItem.setAttribute("data-chat-type", "personal_single_user");
+      convoItem.removeAttribute("data-group-id");
+      console.log(`createConversationItem: No context - defaulted to personal_single_user`);
     }
   }
 
@@ -771,10 +855,19 @@ export function addConversationToList(conversationId, title = null, classificati
     id: conversationId,
     title: title || "New Conversation", // Default title
     last_updated: new Date().toISOString(),
-    classification: classifications // Include classifications
+    classification: classifications, // Include classifications
+    chat_type: "new"
   };
 
   const convoItem = createConversationItem(convo);
+  convoItem.dataset.chatState = "new";
+  const rawGroupId = window.groupWorkspaceContext?.activeGroupId || window.activeGroupId || null;
+  const normalizedGroupId = rawGroupId && !['none', 'null', 'undefined'].includes(String(rawGroupId).toLowerCase())
+    ? rawGroupId
+    : null;
+  if (normalizedGroupId) {
+    convoItem.setAttribute("data-group-id", normalizedGroupId);
+  }
   convoItem.classList.add("active"); // Mark the new one as active
   conversationsList.prepend(convoItem); // Add to the top
   
@@ -782,6 +875,8 @@ export function addConversationToList(conversationId, title = null, classificati
   if (document.getElementById("sidebar-conversations-list")) {
     loadSidebarConversations();
   }
+
+  void refreshAgentsAndModelsForActiveConversation();
 }
 
 // Select a conversation, load messages, update UI
@@ -836,20 +931,27 @@ export async function selectConversation(conversationId) {
       
       // Update conversation item with accurate chat_type from metadata
       if (metadata.chat_type) {
-        convoItem.setAttribute("data-chat-type", metadata.chat_type);
-        console.log(`selectConversation: Updated data-chat-type to "${metadata.chat_type}"`);
+        const normalizedChatType = metadata.chat_type === 'personal' ? 'personal_single_user' : metadata.chat_type;
+        convoItem.setAttribute("data-chat-type", normalizedChatType);
+        console.log(`selectConversation: Updated data-chat-type to "${normalizedChatType}"`);
+
+        convoItem.removeAttribute("data-chat-state");
         
         // Clear any existing group name first
         convoItem.removeAttribute("data-group-name");
+        convoItem.removeAttribute("data-group-id");
         
         // If it's a group chat, also update group name
-        if (metadata.chat_type.startsWith('group') && metadata.context && metadata.context.length > 0) {
+        if (normalizedChatType.startsWith('group') && metadata.context && metadata.context.length > 0) {
           const primaryContext = metadata.context.find(c => c.type === 'primary' && c.scope === 'group');
           if (primaryContext) {
             convoItem.setAttribute("data-group-name", primaryContext.name || 'Group');
+            if (primaryContext.id) {
+              convoItem.setAttribute("data-group-id", primaryContext.id);
+            }
             console.log(`selectConversation: Set data-group-name to "${primaryContext.name || 'Group'}"`);
           }
-        } else if (metadata.chat_type.startsWith('public') && metadata.context && metadata.context.length > 0) {
+        } else if (normalizedChatType.startsWith('public') && metadata.context && metadata.context.length > 0) {
           const primaryContext = metadata.context.find(c => c.type === 'primary' && c.scope === 'public');
           if (primaryContext) {
             convoItem.setAttribute("data-group-name", primaryContext.name || 'Workspace');
@@ -864,6 +966,8 @@ export async function selectConversation(conversationId) {
         // Clear any existing attributes first
         convoItem.removeAttribute("data-chat-type");
         convoItem.removeAttribute("data-group-name");
+        convoItem.removeAttribute("data-group-id");
+        convoItem.removeAttribute("data-chat-state");
         
         if (metadata.context && metadata.context.length > 0) {
           const primaryContext = metadata.context.find(c => c.type === 'primary');
@@ -872,23 +976,27 @@ export async function selectConversation(conversationId) {
             if (primaryContext.scope === 'group') {
               convoItem.setAttribute("data-group-name", primaryContext.name || 'Group');
               convoItem.setAttribute("data-chat-type", "group-single-user"); // Default to single-user for now
+              if (primaryContext.id) {
+                convoItem.setAttribute("data-group-id", primaryContext.id);
+              }
               console.log(`selectConversation: Set to group-single-user with name "${primaryContext.name || 'Group'}"`);
             } else if (primaryContext.scope === 'public') {
               convoItem.setAttribute("data-group-name", primaryContext.name || 'Workspace');
               convoItem.setAttribute("data-chat-type", "public");
               console.log(`selectConversation: Set to public with name "${primaryContext.name || 'Workspace'}"`);
             } else if (primaryContext.scope === 'personal') {
-              convoItem.setAttribute("data-chat-type", "personal");
-              console.log(`selectConversation: Set to personal`);
+              convoItem.setAttribute("data-chat-type", "personal_single_user");
+              console.log(`selectConversation: Set to personal_single_user`);
             }
           } else {
-            // No primary context - this is a model-only conversation
-            // Don't set data-chat-type so no badges will be shown
-            console.log(`selectConversation: No primary context - model-only conversation (no badges)`);
+            // No primary context - default to personal_single_user
+            convoItem.setAttribute("data-chat-type", "personal_single_user");
+            console.log(`selectConversation: No primary context - defaulted to personal_single_user`);
           }
         } else {
-          // No context at all - model-only conversation
-          console.log(`selectConversation: No context - model-only conversation (no badges)`);
+          // No context at all - default to personal_single_user
+          convoItem.setAttribute("data-chat-type", "personal_single_user");
+          console.log(`selectConversation: No context - defaulted to personal_single_user`);
         }
       }
     }
@@ -962,6 +1070,12 @@ export async function selectConversation(conversationId) {
   // Update sidebar active conversation if sidebar exists
   if (setSidebarActiveConversation) {
     setSidebarActiveConversation(conversationId);
+  }
+
+  try {
+    await refreshAgentsAndModelsForActiveConversation();
+  } catch (error) {
+    console.warn('Failed to refresh agent or model dropdown:', error);
   }
 
   updateConversationUrl(conversationId);
@@ -1561,7 +1675,7 @@ function addChatTypeBadges(convoItem, classificationsEl) {
   
   // Only show badges if there's a valid chat type (meaning documents were used for primary context)
   // Don't show badges for Model-only conversations
-  if (chatType === 'personal') {
+  if (chatType === 'personal' || chatType === 'personal_single_user') {
     // Personal workspace was used
     const personalBadge = document.createElement("span");
     personalBadge.classList.add("badge", "bg-primary");
@@ -1609,8 +1723,8 @@ function addChatTypeBadges(convoItem, classificationsEl) {
     
     classificationsEl.appendChild(publicBadge);
   } else {
-    // If chatType is unknown/null or model-only, don't add any workspace badges
-    console.log(`addChatTypeBadges: No badges added for chatType="${chatType}" (likely model-only conversation)`);
+    // If chatType is unknown/null/new or model-only, don't add any workspace badges
+    console.log(`addChatTypeBadges: No badges added for chatType="${chatType}" (likely model-only or new conversation)`);
   }
 }
 

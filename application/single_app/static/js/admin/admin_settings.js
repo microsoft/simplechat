@@ -1385,9 +1385,9 @@ function setupToggles() {
 
     // --- Agent Settings Toggles (corrected) ---
     const allowUserAgentsToggle = document.getElementById('toggle-allow-user-agents');
-    const allowUserCustomAgentEndpointsToggle = document.getElementById('toggle-allow-user-custom-agent-endpoints');
+    const allowUserCustomAgentEndpointsToggle = document.getElementById('toggle-allow-user-custom-endpoints');
     const allowGroupAgentsToggle = document.getElementById('toggle-allow-group-agents');
-    const allowGroupCustomAgentEndpointsToggle = document.getElementById('toggle-allow-group-custom-agent-endpoints');
+    const allowGroupCustomAgentEndpointsToggle = document.getElementById('toggle-allow-group-custom-endpoints');
     let agentSettingsFeedbackDiv = document.getElementById('agent-settings-feedback');
     if (!agentSettingsFeedbackDiv) {
         agentSettingsFeedbackDiv = document.createElement('div');
@@ -1414,9 +1414,9 @@ function setupToggles() {
             if (!resp.ok) throw new Error('Failed to fetch agent settings');
             const settings = await resp.json();
             if (allowUserAgentsToggle) allowUserAgentsToggle.checked = !!settings.allow_user_agents;
-            if (allowUserCustomAgentEndpointsToggle) allowUserCustomAgentEndpointsToggle.checked = !!settings.allow_user_custom_agent_endpoints;
+            if (allowUserCustomAgentEndpointsToggle) allowUserCustomAgentEndpointsToggle.checked = !!settings.allow_user_custom_endpoints;
             if (allowGroupAgentsToggle) allowGroupAgentsToggle.checked = !!settings.allow_group_agents;
-            if (allowGroupCustomAgentEndpointsToggle) allowGroupCustomAgentEndpointsToggle.checked = !!settings.allow_group_custom_agent_endpoints;
+            if (allowGroupCustomAgentEndpointsToggle) allowGroupCustomAgentEndpointsToggle.checked = !!settings.allow_group_custom_endpoints;
         } catch (err) {
             showAgentSettingsFeedback('Error loading agent settings: ' + err.message, 'danger');
         }
@@ -1430,9 +1430,9 @@ function setupToggles() {
     function saveAgentSetting(settingName, value) {
         const toggleMap = {
             'allow_user_agents': allowUserAgentsToggle,
-            'allow_user_custom_agent_endpoints': allowUserCustomAgentEndpointsToggle,
+            'allow_user_custom_endpoints': allowUserCustomAgentEndpointsToggle,
             'allow_group_agents': allowGroupAgentsToggle,
-            'allow_group_custom_agent_endpoints': allowGroupCustomAgentEndpointsToggle
+            'allow_group_custom_endpoints': allowGroupCustomAgentEndpointsToggle
         };
         const toggle = toggleMap[settingName];
         if (toggle) toggle.disabled = true;
@@ -1464,7 +1464,7 @@ function setupToggles() {
     }
     if (allowUserCustomAgentEndpointsToggle) {
         allowUserCustomAgentEndpointsToggle.addEventListener('change', () => {
-            saveAgentSetting('allow_user_custom_agent_endpoints', allowUserCustomAgentEndpointsToggle.checked);
+            saveAgentSetting('allow_user_custom_endpoints', allowUserCustomAgentEndpointsToggle.checked);
         });
     }
     if (allowGroupAgentsToggle) {
@@ -1474,7 +1474,7 @@ function setupToggles() {
     }
     if (allowGroupCustomAgentEndpointsToggle) {
         allowGroupCustomAgentEndpointsToggle.addEventListener('change', () => {
-            saveAgentSetting('allow_group_custom_agent_endpoints', allowGroupCustomAgentEndpointsToggle.checked);
+            saveAgentSetting('allow_group_custom_endpoints', allowGroupCustomAgentEndpointsToggle.checked);
         });
     }
 
@@ -3917,6 +3917,8 @@ function markFormAsModified() {
     formModified = true;
     updateSaveButtonState();
 }
+
+window.markFormAsModified = markFormAsModified;
 
 /**
  * Update the save button appearance based on form state

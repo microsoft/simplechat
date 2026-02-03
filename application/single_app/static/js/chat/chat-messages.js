@@ -1356,7 +1356,17 @@ export function actuallySendMessage(finalMessageToSend) {
     showLoadingIndicatorInChatbox();
   }
 
-  const modelDeployment = modelSelect?.value;
+  let modelDeployment = modelSelect?.value;
+  let modelId = null;
+  let modelEndpointId = null;
+  let modelProvider = null;
+  if (window.appSettings?.enable_multi_model_endpoints && modelSelect) {
+    const selectedOption = modelSelect.options[modelSelect.selectedIndex];
+    modelId = selectedOption?.value || null;
+    modelEndpointId = selectedOption?.dataset?.endpointId || null;
+    modelProvider = selectedOption?.dataset?.provider || null;
+    modelDeployment = selectedOption?.dataset?.deploymentName || null;
+  }
 
   // ... (keep existing logic for hybridSearchEnabled, selectedDocumentId, classificationsToSend, imageGenEnabled)
   let hybridSearchEnabled = false;
@@ -1480,6 +1490,9 @@ export function actuallySendMessage(finalMessageToSend) {
     active_group_id: finalGroupId,
     active_public_workspace_id: finalPublicWorkspaceId,
     model_deployment: modelDeployment,
+    model_id: modelId,
+    model_endpoint_id: modelEndpointId,
+    model_provider: modelProvider,
     prompt_info: promptInfo,
     agent_info: agentInfo,
     reasoning_effort: getCurrentReasoningEffort()
@@ -2473,8 +2486,13 @@ document.addEventListener('DOMContentLoaded', function() {
 if (modelSelect) {
   modelSelect.addEventListener("change", function() {
     const selectedModel = modelSelect.value;
-    console.log(`Saving preferred model: ${selectedModel}`);
-    saveUserSetting({ 'preferredModelDeployment': selectedModel });
+    if (window.appSettings?.enable_multi_model_endpoints) {
+      console.log(`Saving preferred model ID: ${selectedModel}`);
+      saveUserSetting({ preferredModelId: selectedModel });
+    } else {
+      console.log(`Saving preferred model deployment: ${selectedModel}`);
+      saveUserSetting({ preferredModelDeployment: selectedModel });
+    }
   });
 }
 

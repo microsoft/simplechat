@@ -24,6 +24,8 @@ def register_route_frontend_chats(app):
         enable_enhanced_citations = public_settings.get("enable_enhanced_citations", False)
         enable_document_classification = public_settings.get("enable_document_classification", False)
         enable_extract_meta_data = public_settings.get("enable_extract_meta_data", False)
+        enable_multi_model_endpoints = public_settings.get("enable_multi_model_endpoints", False)
+        multi_endpoint_notice = public_settings.get("multi_endpoint_migration_notice", {})
         active_group_id = user_settings["settings"].get("activeGroupOid", "")
         active_group_name = ""
         if active_group_id:
@@ -35,6 +37,23 @@ def register_route_frontend_chats(app):
         active_public_workspace_id = user_settings["settings"].get("activePublicWorkspaceOid", "")
         
         categories_list = public_settings.get("document_classification_categories","")
+
+        multi_endpoint_models = []
+        if enable_multi_model_endpoints:
+            endpoints = public_settings.get("model_endpoints", []) or []
+            for endpoint in endpoints:
+                if not endpoint.get("enabled", True):
+                    continue
+                for model in endpoint.get("models", []) or []:
+                    if not model.get("enabled", True):
+                        continue
+                    multi_endpoint_models.append({
+                        "id": model.get("id"),
+                        "display_name": model.get("displayName") or model.get("deploymentName") or model.get("modelName") or "",
+                        "deployment_name": model.get("deploymentName") or "",
+                        "endpoint_id": endpoint.get("id"),
+                        "provider": endpoint.get("provider")
+                    })
 
         if not user_id:
             return redirect(url_for('login'))
@@ -53,6 +72,9 @@ def register_route_frontend_chats(app):
             enable_document_classification=enable_document_classification,
             document_classification_categories=categories_list,
             enable_extract_meta_data=enable_extract_meta_data,
+            enable_multi_model_endpoints=enable_multi_model_endpoints,
+            multi_endpoint_notice=multi_endpoint_notice,
+            multi_endpoint_models=multi_endpoint_models,
             user_id=user_id,
             user_display_name=user_display_name,
         )

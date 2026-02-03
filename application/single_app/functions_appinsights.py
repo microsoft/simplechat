@@ -67,7 +67,7 @@ def log_event(
         if level >= logging.ERROR and exceptionTraceback:
             if logger and hasattr(logger, 'exception'):
                 if cache and cache.get('enable_debug_logging', False):
-                    print(f"DEBUG: [ERROR][Log] {message} -- {extra if extra else 'No Extra Dimensions'}")
+                    print(f"[DEBUG][ERROR][Log] {message} -- {extra if extra else 'No Extra Dimensions'}")
                 # Use logger.exception() for better exception capture in Application Insights
                 logger.exception(message, extra=extra, stacklevel=stacklevel, stack_info=includeStack, exc_info=True)
                 return
@@ -79,7 +79,7 @@ def log_event(
 
         #TODO: Find a way to cache get_settings() globally (and update it when changed) to enable debug printing. Cannot use debug_print due to circular import
         if cache and cache.get('enable_debug_logging', False):
-            print(f"DEBUG: [Log] {message} -- {extra if extra else 'No Extra Dimensions'}")  # Debug print to console
+            print(f"[DEBUG][Log] {message} -- {extra if extra else 'No Extra Dimensions'}")  # Debug print to console
         if extra:
             # For modern Azure Monitor, extra properties are automatically captured
             logger.log(
@@ -102,7 +102,7 @@ def log_event(
         # For Azure Monitor, ensure exception-level logs are properly categorized
         if level >= logging.ERROR and _azure_monitor_configured:
             # Add a debug print to verify exception logging is working
-            print(f"[Azure Monitor] Exception logged: {message[:100]}...")
+            print(f"[Azure Monitor][ERROR] Exception logged: {message[:100]}...")
 
     except Exception as e:
         # Fallback to basic logging if anything fails

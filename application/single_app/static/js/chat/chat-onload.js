@@ -88,14 +88,33 @@ window.addEventListener('DOMContentLoaded', async () => {
       ]);
       console.log("Initial data (Docs, Prompts, Settings) loaded successfully."); // Log success
       
-      // Set the preferred model if available
-      if (userSettings && userSettings.preferredModelDeployment) {
-          const modelSelect = document.getElementById("model-select");
-          if (modelSelect) {
-              console.log(`Setting preferred model: ${userSettings.preferredModelDeployment}`);
-              modelSelect.value = userSettings.preferredModelDeployment;
+        // Set the preferred model if available
+        const preferredModelId = userSettings?.preferredModelId;
+        const preferredModelDeployment = userSettings?.preferredModelDeployment;
+        const modelSelect = document.getElementById("model-select");
+        if (modelSelect) {
+          if (preferredModelId) {
+            console.log(`Setting preferred model ID: ${preferredModelId}`);
+            modelSelect.value = preferredModelId;
+          } else if (preferredModelDeployment) {
+            console.log(`Setting preferred model deployment: ${preferredModelDeployment}`);
+            modelSelect.value = preferredModelDeployment;
           }
-      }
+        }
+
+        // Multi-endpoint migration notice
+        const notice = window.multiEndpointNotice || {};
+        const noticeEl = document.getElementById("multi-endpoint-notice");
+        const dismissBtn = document.getElementById("dismiss-multi-endpoint-notice");
+        if (notice?.enabled && noticeEl && !userSettings?.dismissedMultiEndpointNotice) {
+          noticeEl.classList.remove("d-none");
+          if (dismissBtn) {
+            dismissBtn.addEventListener("click", async () => {
+              noticeEl.classList.add("d-none");
+              await saveUserSetting({ dismissedMultiEndpointNotice: true });
+            });
+          }
+        }
 
       // --- Initialize Document-related UI ---
       // This part handles URL params for documents - KEEP IT

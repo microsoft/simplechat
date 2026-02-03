@@ -21,6 +21,7 @@ from functions_group_agents import (
 from functions_debug import debug_print
 from functions_authentication import *
 from functions_appinsights import log_event
+from functions_group import get_group_model_endpoints, require_active_group
 from json_schema_validation import validate_agent
 from swagger_wrapper import swagger_route, get_auth_security
 
@@ -43,6 +44,9 @@ def generate_agent_id():
 )
 @login_required
 def get_user_agents():
+    settings = get_settings()
+    if not settings.get('allow_user_agents', False):
+        return jsonify([])
     user_id = get_current_user_id()
     # Ensure migration is complete (will migrate any remaining legacy data)
     ensure_migration_complete(user_id)
@@ -57,7 +61,6 @@ def get_user_agents():
         agent.setdefault('agent_type', 'local')
 
     # Check global/merge toggles
-    settings = get_settings()
     per_user = settings.get('per_user_semantic_kernel', False)
     merge_global = settings.get('merge_global_semantic_kernel_with_workspace', False)
     if per_user and merge_global:
@@ -98,7 +101,7 @@ def set_user_agents():
     agents = request.json if isinstance(request.json, list) else []
     settings = get_settings()
     # If custom endpoints are not allowed, strip deployment settings for endpoint, key, and api-revision
-    if not settings.get('allow_user_custom_agent_endpoints', False):
+    if not settings.get('allow_user_custom_endpoints', False):
         for agent in agents:
             # APIM fields
             for k in ['azure_agent_apim_gpt_endpoint', 'azure_agent_apim_gpt_subscription_key', 'azure_agent_apim_gpt_api_revision']:
@@ -193,6 +196,7 @@ def delete_user_agent(agent_name):
 @login_required
 @user_required
 @enabled_required('enable_group_workspaces')
+@enabled_required('allow_group_agents')
 def get_group_agents_route():
     user_id = get_current_user_id()
     try:
@@ -218,6 +222,7 @@ def get_group_agents_route():
 @login_required
 @user_required
 @enabled_required('enable_group_workspaces')
+@enabled_required('allow_group_agents')
 def get_group_agent_route(agent_id):
     user_id = get_current_user_id()
     try:
@@ -245,6 +250,7 @@ def get_group_agent_route(agent_id):
 @login_required
 @user_required
 @enabled_required('enable_group_workspaces')
+@enabled_required('allow_group_agents')
 def create_group_agent_route():
     user_id = get_current_user_id()
     try:
@@ -264,6 +270,18 @@ def create_group_agent_route():
     except (ValueError, AgentPayloadError) as exc:
         return jsonify({'error': str(exc)}), 400
 
+    settings = get_settings()
+    if not settings.get('allow_group_custom_endpoints', False):
+        for key in [
+            'azure_agent_apim_gpt_endpoint',
+            'azure_agent_apim_gpt_subscription_key',
+            'azure_agent_apim_gpt_api_revision',
+            'azure_openai_gpt_endpoint',
+            'azure_openai_gpt_key',
+            'azure_openai_gpt_api_revision'
+        ]:
+            cleaned_payload.pop(key, None)
+
     for key in ('group_id', 'last_updated', 'is_global', 'is_group'):
         cleaned_payload.pop(key, None)
 
@@ -281,6 +299,7 @@ def create_group_agent_route():
 @login_required
 @user_required
 @enabled_required('enable_group_workspaces')
+@enabled_required('allow_group_agents')
 def update_group_agent_route(agent_id):
     user_id = get_current_user_id()
     try:
@@ -320,6 +339,18 @@ def update_group_agent_route(agent_id):
     except AgentPayloadError as exc:
         return jsonify({'error': str(exc)}), 400
 
+    settings = get_settings()
+    if not settings.get('allow_group_custom_endpoints', False):
+        for key in [
+            'azure_agent_apim_gpt_endpoint',
+            'azure_agent_apim_gpt_subscription_key',
+            'azure_agent_apim_gpt_api_revision',
+            'azure_openai_gpt_endpoint',
+            'azure_openai_gpt_key',
+            'azure_openai_gpt_api_revision'
+        ]:
+            cleaned_payload.pop(key, None)
+
     try:
         saved = save_group_agent(active_group, cleaned_payload)
     except Exception as exc:
@@ -334,6 +365,7 @@ def update_group_agent_route(agent_id):
 @login_required
 @user_required
 @enabled_required('enable_group_workspaces')
+@enabled_required('allow_group_agents')
 def delete_group_agent_route(agent_id):
     user_id = get_current_user_id()
     try:
@@ -393,7 +425,23 @@ def set_user_selected_agent():
 )
 @login_required
 def get_global_agent_settings_for_users():
-    return get_global_agent_settings(include_admin_extras=False)
+    user_id = get_current_user_id()
+    return get_global_agent_settings(include_admin_extras=False, user_id=user_id)
+
+@bpa.route('/api/group/agent/settings', methods=['GET'])
+@swagger_route(
+    security=get_auth_security()
+)
+@login_required
+@user_required
+@enabled_required('enable_group_workspaces')
+def get_group_agent_settings():
+    user_id = get_current_user_id()
+    try:
+        group_id = require_active_group(user_id)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    return get_global_agent_settings(include_admin_extras=False, user_id=user_id, group_id=group_id)
 
 # === ADMIN AGENTS ENDPOINTS ===
 @bpa.route('/api/admin/agent/settings', methods=['GET'])
@@ -739,9 +787,43 @@ def orchestration_settings():
             log_event(f"Error updating orchestration settings: {e}", level=logging.ERROR, exceptionTraceback=True)
             return jsonify({'error': 'Failed to update orchestration settings.'}), 500
 
-def get_global_agent_settings(include_admin_extras=False):    
+def build_combined_model_endpoints(settings, user_id=None, group_id=None):
+    endpoints = []
+    global_endpoints = settings.get("model_endpoints", []) or []
+    for endpoint in global_endpoints:
+        enriched = dict(endpoint)
+        enriched["scope"] = "global"
+        endpoints.append(enriched)
+
+    allow_user_custom_endpoints = settings.get("allow_user_custom_endpoints", False)
+    allow_group_custom_endpoints = settings.get("allow_group_custom_endpoints", False)
+
+    if group_id:
+        if allow_group_custom_endpoints:
+            group_endpoints = get_group_model_endpoints(group_id)
+            for endpoint in group_endpoints:
+                enriched = dict(endpoint)
+                enriched["scope"] = "group"
+                enriched["group_id"] = group_id
+                endpoints.append(enriched)
+    elif user_id:
+        if allow_user_custom_endpoints:
+            user_settings = get_user_settings(user_id)
+            personal = user_settings.get("settings", {}).get("personal_model_endpoints", [])
+            for endpoint in personal:
+                enriched = dict(endpoint)
+                enriched["scope"] = "user"
+                endpoints.append(enriched)
+
+    return sanitize_model_endpoints_for_frontend(endpoints)
+
+
+def get_global_agent_settings(include_admin_extras=False, user_id=None, group_id=None):    
     settings = get_settings()
     agents = get_global_agents()
+    combined_endpoints = []
+    if settings.get("enable_multi_model_endpoints", False):
+        combined_endpoints = build_combined_model_endpoints(settings, user_id=user_id, group_id=group_id)
     
     # Return selected_agent and any other relevant settings for admin UI
     return jsonify({
@@ -763,8 +845,10 @@ def get_global_agent_settings(include_admin_extras=False):
         "azure_apim_gpt_deployment": settings.get("azure_apim_gpt_deployment", ""),
         "gpt_model": settings.get("gpt_model", {}),
         "allow_user_agents": settings.get("allow_user_agents", False),
-        "allow_user_custom_agent_endpoints": settings.get("allow_user_custom_agent_endpoints", False),
+        "allow_user_custom_endpoints": settings.get("allow_user_custom_endpoints", False),
         "allow_group_agents": settings.get("allow_group_agents", False),
-        "allow_group_custom_agent_endpoints": settings.get("allow_group_custom_agent_endpoints", False),
+        "allow_group_custom_endpoints": settings.get("allow_group_custom_endpoints", False),
+        "enable_multi_model_endpoints": settings.get("enable_multi_model_endpoints", False),
+        "model_endpoints": combined_endpoints,
     })
     

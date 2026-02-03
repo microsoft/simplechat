@@ -209,8 +209,12 @@ def _resolve_endpoint(foundry_settings: Dict[str, Any], global_settings: Dict[st
         or global_settings.get("azure_ai_foundry_endpoint")
         or os.getenv("AZURE_AI_AGENT_ENDPOINT")
     )
+    project_name = (foundry_settings.get("project_name") or "").strip()
     if endpoint:
-        return endpoint.rstrip("/")
+        endpoint = endpoint.rstrip("/")
+        if "/api/projects/" not in endpoint and project_name:
+            endpoint = f"{endpoint}/api/projects/{project_name}"
+        return endpoint
 
     raise FoundryAgentInvocationError(
         "Azure AI Foundry endpoint is not configured. Provide an endpoint in the agent's other_settings.azure_ai_foundry or global settings."
@@ -353,3 +357,76 @@ def _extract_citations(message: ChatMessageContent) -> List[Dict[str, Any]]:
         if extracted:
             return extracted
     return []
+
+
+async def _list_foundry_agents_async(
+    *,
+    foundry_settings: Dict[str, Any],
+    global_settings: Dict[str, Any]
+) -> List[Dict[str, Any]]:
+    endpoint = _resolve_endpoint(foundry_settings, global_settings)
+    api_version = foundry_settings.get("api_version") or global_settings.get(
+        "azure_ai_foundry_api_version"
+    )
+    credential = _build_async_credential(foundry_settings, global_settings)
+    client = AzureAIAgent.create_client(
+        credential=credential,
+        endpoint=endpoint,
+        api_version=api_version,
+    )
+
+    async def resolve_agent_list():
+        agents_client = getattr(client, "agents", None)
+        if not agents_client:
+            raise FoundryAgentInvocationError("Foundry agents client not available.")
+        if hasattr(agents_client, "list_agents"):
+            return agents_client.list_agents()
+        if hasattr(agents_client, "list"):
+            return agents_client.list()
+        raise FoundryAgentInvocationError("Foundry agent list API not available.")
+
+    try:
+        result = await resolve_agent_list()
+        if hasattr(result, "__aiter__"):
+            items = []
+            async for item in result:
+                items.append(item)
+        elif isinstance(result, dict):
+            items = result.get("value") or result.get("data") or []
+        elif isinstance(result, list):
+            items = result
+        else:
+            items = getattr(result, "value", None) or getattr(result, "data", None) or []
+
+        normalized: List[Dict[str, Any]] = []
+        for item in items:
+            if isinstance(item, dict):
+                normalized.append({
+                    "id": item.get("id"),
+                    "name": item.get("name"),
+                    "display_name": item.get("display_name") or item.get("name"),
+                    "description": item.get("description") or "",
+                })
+                continue
+            normalized.append({
+                "id": getattr(item, "id", None),
+                "name": getattr(item, "name", None),
+                "display_name": getattr(item, "display_name", None) or getattr(item, "name", None),
+                "description": getattr(item, "description", None) or "",
+            })
+        return normalized
+    finally:
+        try:
+            await client.close()
+        finally:
+            await credential.close()
+
+
+def list_foundry_agents_from_endpoint(foundry_settings: Dict[str, Any], global_settings: Dict[str, Any]):
+    """Synchronously list Foundry agents using the provided endpoint configuration."""
+    return asyncio.run(
+        _list_foundry_agents_async(
+            foundry_settings=foundry_settings,
+            global_settings=global_settings,
+        )
+    )
