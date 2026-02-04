@@ -138,7 +138,7 @@ CUSTOM_BLOB_STORAGE_URL_VALUE = os.getenv("CUSTOM_BLOB_STORAGE_URL_VALUE", "")
 CUSTOM_COGNITIVE_SERVICES_URL_VALUE = os.getenv("CUSTOM_COGNITIVE_SERVICES_URL_VALUE", "")
 CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE = os.getenv("CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE", "")
 CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE = os.getenv("CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE", "")
-
+CUSTOM_OIDC_METADATA_URL_VALUE = os.getenv("CUSTOM_OIDC_METADATA_URL_VALUE", "")
 
 # Azure AD Configuration
 CLIENT_ID = os.getenv("CLIENT_ID")
@@ -173,12 +173,14 @@ if AZURE_ENVIRONMENT == "usgovernment":
     KEY_VAULT_DOMAIN = ".vault.usgovcloudapi.net"
 
 elif AZURE_ENVIRONMENT == "custom":
+    OIDC_METADATA_URL = CUSTOM_OIDC_METADATA_URL_VALUE
     resource_manager = CUSTOM_RESOURCE_MANAGER_URL_VALUE
     authority = CUSTOM_IDENTITY_URL_VALUE
     credential_scopes=[resource_manager + "/.default"]
     cognitive_services_scope = CUSTOM_COGNITIVE_SERVICES_URL_VALUE  
     search_resource_manager = CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE
     KEY_VAULT_DOMAIN = os.getenv("KEY_VAULT_DOMAIN", ".vault.azure.net")
+    video_indexer_endpoint = os.getenv("VIDEO_INDEXER_ENDPOINT", "https://api.videoindexer.ai")
 else:
     OIDC_METADATA_URL = f"https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration"
     resource_manager = "https://management.azure.com"
