@@ -6377,7 +6377,7 @@ def get_workspace_tags(user_id, group_id=None, public_workspace_id=None):
         tag_definitions = user_settings.get('tag_definitions', {})
         workspace_tag_defs = tag_definitions.get(workspace_type, {})
         
-        # Build result with colors
+        # Build result with colors from used tags
         results = []
         for tag_name, count in tag_counts.items():
             tag_def = workspace_tag_defs.get(tag_name, {})
@@ -6386,6 +6386,15 @@ def get_workspace_tags(user_id, group_id=None, public_workspace_id=None):
                 'count': count,
                 'color': tag_def.get('color', get_default_tag_color(tag_name))
             })
+        
+        # Add defined tags that haven't been used yet (count = 0)
+        for tag_name, tag_def in workspace_tag_defs.items():
+            if tag_name not in tag_counts:
+                results.append({
+                    'name': tag_name,
+                    'count': 0,
+                    'color': tag_def.get('color', get_default_tag_color(tag_name))
+                })
         
         # Sort by count descending, then name ascending
         results.sort(key=lambda x: (-x['count'], x['name']))
