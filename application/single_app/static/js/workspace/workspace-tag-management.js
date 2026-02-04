@@ -15,6 +15,7 @@ export function initializeTagManagement() {
     setupTagSelectionModal();
     setupDocumentTagButton();
     setupBulkTagButton();
+    setupWorkspaceManageTagsButton();
 }
 
 // ============= Setup Modal Event Listeners =============
@@ -66,6 +67,16 @@ function setupBulkTagButton() {
         bulkManageBtn.addEventListener('click', () => {
             managementContext = 'bulk';
             showTagSelectionModal();
+        });
+    }
+}
+
+function setupWorkspaceManageTagsButton() {
+    const workspaceManageBtn = document.getElementById('workspace-manage-tags-btn');
+    
+    if (workspaceManageBtn) {
+        workspaceManageBtn.addEventListener('click', () => {
+            showTagManagementModal();
         });
     }
 }

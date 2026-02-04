@@ -752,6 +752,74 @@ def register_route_backend_documents(app):
         except Exception as e:
             return jsonify({'error': str(e)}), 500
     
+    @app.route('/api/documents/tags', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_user_workspace")
+    def api_create_tag():
+        """
+        Create a new tag in the workspace.
+        
+        Request body:
+        {
+            "tag_name": "new-tag",
+            "color": "#3b82f6"  // optional
+        }
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        data = request.get_json()
+        tag_name = data.get('tag_name')
+        color = data.get('color', '#0d6efd')  # Default blue color
+        
+        if not tag_name:
+            return jsonify({'error': 'tag_name is required'}), 400
+        
+        from functions_documents import normalize_tag, validate_tags
+        from functions_settings import get_user_settings, update_user_settings
+        from datetime import datetime, timezone
+        
+        try:
+            # Validate and normalize tag name
+            is_valid, error_msg, normalized_tags = validate_tags([tag_name])
+            if not is_valid:
+                return jsonify({'error': error_msg}), 400
+            
+            normalized_tag = normalized_tags[0]
+            
+            # Get or create tag definition
+            user_settings = get_user_settings(user_id)
+            tag_defs = user_settings.get('tag_definitions', {})
+            personal_tags = tag_defs.get('personal', {})
+            
+            # Check if tag already exists
+            if normalized_tag in personal_tags:
+                return jsonify({'error': 'Tag already exists'}), 409
+            
+            # Create new tag definition
+            personal_tags[normalized_tag] = {
+                'color': color,
+                'created_at': datetime.now(timezone.utc).isoformat()
+            }
+            
+            tag_defs['personal'] = personal_tags
+            user_settings['tag_definitions'] = tag_defs
+            update_user_settings(user_id, user_settings)
+            
+            return jsonify({
+                'message': f'Tag "{normalized_tag}" created successfully',
+                'tag': {
+                    'name': normalized_tag,
+                    'color': color
+                }
+            }), 201
+            
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+    
     @app.route('/api/documents/bulk-tag', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
