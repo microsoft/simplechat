@@ -159,6 +159,96 @@
         margin-top: 0.75rem; /* Add space above the second filter row */
     }
 
+    /* === Tag Display Styles === */
+    .tag-badge {
+        display: inline-block;
+        padding: 0.25em 0.5em;
+        margin: 0.1rem;
+        font-size: 0.8rem;
+        font-weight: 500;
+        border-radius: 0.25rem;
+        cursor: pointer;
+        transition: opacity 0.2s;
+    }
+    
+    .tag-badge:hover {
+        opacity: 0.8;
+    }
+    
+    .tag-badge.text-light {
+        color: #fff !important;
+    }
+    
+    .tag-badge.text-dark {
+        color: #212529 !important;
+    }
+
+    /* === Grid View (Tag Folders) Styles === */
+    .tag-folder-card {
+        border: 1px solid #dee2e6;
+        border-radius: 0.5rem;
+        padding: 1.5rem;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        background: #fff;
+        position: relative;
+    }
+    
+    .tag-folder-card:hover {
+        box-shadow: 0 0.5rem 1rem rgba(0,0,0,0.15);
+        transform: translateY(-2px);
+    }
+    
+    .tag-folder-icon {
+        font-size: 3rem;
+        margin-bottom: 0.5rem;
+    }
+    
+    .tag-folder-name {
+        font-weight: 600;
+        font-size: 1.1rem;
+        margin-bottom: 0.25rem;
+    }
+    
+    .tag-folder-count {
+        color: #6c757d;
+        font-size: 0.9rem;
+    }
+    
+    .tag-folder-actions {
+        position: absolute;
+        top: 0.5rem;
+        right: 0.5rem;
+        opacity: 0;
+        transition: opacity 0.2s;
+    }
+    
+    .tag-folder-card:hover .tag-folder-actions {
+        opacity: 1;
+    }
+    
+    .tag-folder-menu-btn {
+        background: rgba(255,255,255,0.9);
+        border: 1px solid #dee2e6;
+        border-radius: 0.25rem;
+        padding: 0.25rem 0.5rem;
+        cursor: pointer;
+    }
+    
+    .tag-folder-menu-btn:hover {
+        background: #fff;
+    }
+
+    /* === Multi-select dropdown styles === */
+    #docs-tags-filter,
+    #doc-tags,
+    #bulk-tag-select {
+        min-height: 38px;
+        max-height: 200px;
+        overflow-y: auto;
+    }
+
   </style>
 {% endblock %}
 
@@ -348,12 +438,33 @@
                     <label for="docs-abstract-filter" class="form-label mb-1 small">Search Abstract:</label>
                     <input type="search" id="docs-abstract-filter" class="form-control form-control-sm" placeholder="Abstract content...">
                 </div>
-                <div class="col-md-3 filter-buttons-col mt-2 mt-md-0">
-                    <!-- Buttons removed from metadata row -->
+                <div class="col-md-3">
+                    <label for="docs-tags-filter" class="form-label mb-1 small">Filter by Tags:</label>
+                    <select id="docs-tags-filter" class="form-select form-select-sm" multiple size="1">
+                        <!-- Populated dynamically -->
+                    </select>
                 </div>
             </div>
           </div>
           <!-- End Metadata Filters -->
+
+          <!-- View Controls (List/Grid Toggle) -->
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <div class="btn-group btn-group-sm" role="group" aria-label="View mode">
+              <input type="radio" class="btn-check" name="docs-view-mode" id="docs-view-list" autocomplete="off" checked>
+              <label class="btn btn-outline-secondary" for="docs-view-list">
+                <i class="bi bi-list-ul"></i> List
+              </label>
+              
+              <input type="radio" class="btn-check" name="docs-view-mode" id="docs-view-grid" autocomplete="off">
+              <label class="btn btn-outline-secondary" for="docs-view-grid">
+                <i class="bi bi-grid-3x3-gap"></i> Folders
+              </label>
+            </div>
+            <div class="text-muted small" id="docs-view-info">
+              <!-- Dynamic info about current view -->
+            </div>
+          </div>
 
           <!-- Bulk Actions Bar (shown when documents are selected) -->
           <div id="bulkActionsBar" class="alert alert-info py-2 mb-2" style="display: none;">
@@ -362,7 +473,10 @@
                 <strong><span id="selectedCount">0</span> document(s) selected</strong>
               </div>
               <div>
-                <button type="button" class="btn btn-sm btn-danger" id="delete-selected-btn">
+                <button type="button" class="btn btn-sm btn-primary" id="manage-tags-btn">
+                  <i class="bi bi-tags me-1"></i>Manage Tags
+                </button>
+                <button type="button" class="btn btn-sm btn-danger ms-2" id="delete-selected-btn">
                   <i class="bi bi-trash me-1"></i>Delete Selected
                 </button>
                 <button type="button" class="btn btn-sm btn-secondary ms-2" id="clear-selection-btn">
@@ -372,28 +486,41 @@
             </div>
           </div>
 
-          <!-- Documents List -->
-          <table class="table table-striped" id="documents-table">
-            <thead>
-              <tr>
-                <th>
-                  <!-- Expand/Collapse Column -->
-                </th>
-                <th>File Name</th>
-                <th>Title</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
+          <!-- Documents List View -->
+          <div id="documents-list-view" style="display: block;">
+            <table class="table table-striped" id="documents-table">
+              <thead>
+                <tr>
+                  <th>
+                    <!-- Expand/Collapse Column -->
+                  </th>
+                  <th>File Name</th>
+                  <th>Title</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <!-- Populated by JavaScript -->
+                <tr class="table-loading-row">
+                  <td colspan="5">
+                      <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
+                      Loading documents...
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Documents Grid View (Tag Folders) -->
+          <div id="documents-grid-view" style="display: none;">
+            <div id="tag-folders-container" class="row g-3">
               <!-- Populated by JavaScript -->
-              <tr class="table-loading-row">
-                <td colspan="5">
-                    <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
-                    Loading documents...
-                </td>
-              </tr>
-            </tbody>
-          </table>
+              <div class="col-12 text-center text-muted py-5">
+                <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
+                Loading tag folders...
+              </div>
+            </div>
+          </div>
 
           <!-- Documents Pagination & Page Size -->
           <div class="d-flex align-items-center gap-3 mb-3 mt-3">
@@ -702,6 +829,24 @@
               <input type="text" class="form-control" id="doc-keywords" />
             </div>
 
+            <!-- Tags -->
+            <div class="mb-3">
+              <label class="form-label d-flex justify-content-between align-items-center">
+                <span>Tags</span>
+                <button type="button" class="btn btn-sm btn-outline-primary" id="doc-manage-tags-btn">
+                  <i class="bi bi-tags"></i> Manage Tags
+                </button>
+              </label>
+              <div id="doc-selected-tags-display" class="border rounded p-2 mb-2" style="min-height: 40px;">
+                <div class="d-flex flex-wrap gap-1" id="doc-selected-tags-container">
+                  <span class="text-muted small">No tags selected</span>
+                </div>
+              </div>
+              <div class="form-text">
+                Click "Manage Tags" to select tags, create new ones, or edit existing tags.
+              </div>
+            </div>
+
             <!-- Publication Date -->
             <div class="mb-3">
               <label for="doc-publication-date" class="form-label"
@@ -734,6 +879,137 @@
       </form>
     </div>
   </div>
+
+<!-- Bulk Tag Management Modal -->
+<div class="modal fade" id="bulkTagModal" tabindex="-1" aria-labelledby="bulkTagModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="bulkTagModalLabel">Manage Tags for Selected Documents</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label for="bulk-tag-action" class="form-label">Action</label>
+          <select class="form-select" id="bulk-tag-action">
+            <option value="add_tags">Add Tags</option>
+            <option value="remove_tags">Remove Tags</option>
+            <option value="set_tags">Replace All Tags</option>
+          </select>
+        </div>
+        
+        <!-- Tag Selection/Management Section -->
+        <div class="mb-3">
+          <label class="form-label d-flex justify-content-between align-items-center">
+            <span>Select Tags</span>
+            <button type="button" class="btn btn-sm btn-outline-primary" id="bulk-manage-tags-btn">
+              <i class="bi bi-gear"></i> Manage Tags
+            </button>
+          </label>
+          <div class="border rounded p-2" style="max-height: 200px; overflow-y: auto;">
+            <div id="bulk-tags-list">
+              <div class="text-muted">No tags available. Click "Manage Tags" to create some.</div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="alert alert-info small mb-0">
+          <strong>Selected:</strong> <span id="bulk-tag-doc-count">0</span> document(s)
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="bulk-tag-apply-btn">Apply Changes</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Tag Management Modal (Shared by both bulk and individual) -->
+<div class="modal fade" id="tagManagementModal" tabindex="-1" aria-labelledby="tagManagementModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="tagManagementModalLabel">Manage Workspace Tags</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <!-- Add New Tag Form -->
+        <div class="card mb-3">
+          <div class="card-body">
+            <h6 class="card-title">Add New Tag</h6>
+            <div class="row g-2">
+              <div class="col-md-6">
+                <input type="text" class="form-control" id="new-tag-name" placeholder="Tag name (lowercase, alphanumeric)" maxlength="50">
+                <div class="form-text">Use lowercase letters, numbers, hyphens, underscores</div>
+              </div>
+              <div class="col-md-4">
+                <div class="input-group">
+                  <span class="input-group-text">Color</span>
+                  <input type="color" class="form-control form-control-color" id="new-tag-color" value="#0d6efd">
+                </div>
+              </div>
+              <div class="col-md-2">
+                <button type="button" class="btn btn-primary w-100" id="add-tag-btn">
+                  <i class="bi bi-plus-circle"></i> Add
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Existing Tags Table -->
+        <div class="card">
+          <div class="card-body">
+            <h6 class="card-title">Existing Tags</h6>
+            <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+              <table class="table table-sm table-hover">
+                <thead class="table-light sticky-top">
+                  <tr>
+                    <th style="width: 50px;">Color</th>
+                    <th>Tag Name</th>
+                    <th style="width: 80px;">Count</th>
+                    <th style="width: 100px;">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="existing-tags-tbody">
+                  <tr>
+                    <td colspan="4" class="text-center text-muted">No tags yet. Add one above.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Tag Selection Modal (for selecting from existing tags) -->
+<div class="modal fade" id="tagSelectionModal" tabindex="-1" aria-labelledby="tagSelectionModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="tagSelectionModalLabel">Select Tags</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div id="tag-selection-list" class="list-group" style="max-height: 400px; overflow-y: auto;">
+          <div class="text-muted text-center p-3">No tags available</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="tag-selection-done-btn">Done</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div>
   <!-- Modal for Creating/Editing Agent -->
 

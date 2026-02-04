@@ -5,7 +5,7 @@ import {
   showLoadingIndicatorInChatbox,
   hideLoadingIndicatorInChatbox,
 } from "./chat-loading-indicator.js";
-import { docScopeSelect, getDocumentMetadata, personalDocs, groupDocs, publicDocs } from "./chat-documents.js";
+import { docScopeSelect, getDocumentMetadata, personalDocs, groupDocs, publicDocs, getSelectedTags } from "./chat-documents.js";
 import { promptSelect } from "./chat-prompts.js";
 import {
   createNewConversation,
@@ -1467,6 +1467,9 @@ export function actuallySendMessage(finalMessageToSend) {
   // Get active public workspace ID from user settings (similar to active_group_id)
   const finalPublicWorkspaceId = window.activePublicWorkspaceId || null;
   
+  // Get selected tags from chat-documents module
+  const selectedTags = getSelectedTags();
+  
   const messageData = {
     message: finalMessageToSend,
     conversation_id: currentConversationId,
@@ -1474,6 +1477,7 @@ export function actuallySendMessage(finalMessageToSend) {
     web_search_enabled: webSearchEnabled,
     selected_document_id: selectedDocumentId,
     classifications: classificationsToSend,
+    tags: selectedTags,  // Add tags to message data
     image_generation: imageGenEnabled,
     doc_scope: effectiveDocScope,
     chat_type: chat_type,

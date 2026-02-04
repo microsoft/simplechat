@@ -281,14 +281,16 @@ def generate_search_cache_key(
     active_group_id: Optional[str] = None,
     active_public_workspace_id: Optional[str] = None,
     top_n: int = 12,
-    enable_file_sharing: bool = True
+    enable_file_sharing: bool = True,
+    tags_filter: Optional[List[str]] = None
 ) -> str:
     """
-    Generate a cache key that includes document set fingerprints.
+    Generate a cache key that includes document set fingerprints and tags filter.
     
     The cache key ensures that:
     - Same query + same document set = cache hit
     - Same query + different document set = cache miss
+    - Same query + different tags filter = cache miss
     - Personal scope: User-specific cache
     - Group/Public scope: Shared cache across users with access
     
@@ -301,12 +303,19 @@ def generate_search_cache_key(
         active_public_workspace_id: Active public workspace ID (for public scope)
         top_n: Number of results
         enable_file_sharing: Whether file sharing is enabled
+        tags_filter: Optional list of tags to filter by
         
     Returns:
         SHA256 hash string to use as cache key
     """
     # Normalize query (case-insensitive, whitespace-normalized)
     normalized_query = ' '.join(query.lower().strip().split())
+    
+    # Normalize and sort tags filter for consistent cache keys
+    tags_str = ''
+    if tags_filter and isinstance(tags_filter, list):
+        sorted_tags = sorted([t.lower() for t in tags_filter])
+        tags_str = ','.join(sorted_tags)
     
     # Build fingerprint based on scope
     fingerprints = []
@@ -334,6 +343,7 @@ def generate_search_cache_key(
             doc_scope,
             str(top_n),
             str(enable_file_sharing),
+            tags_str,
             '|'.join(fingerprints)
         ]
     else:
@@ -346,6 +356,7 @@ def generate_search_cache_key(
             active_public_workspace_id or '',
             str(top_n),
             str(enable_file_sharing),
+            tags_str,
             '|'.join(fingerprints)
         ]
     

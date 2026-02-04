@@ -62,6 +62,7 @@ def register_route_backend_chats(app):
             selected_document_id = data.get('selected_document_id')
             image_gen_enabled = data.get('image_generation')
             document_scope = data.get('doc_scope')
+            tags_filter = data.get('tags', [])  # Extract tags filter
             reload_messages_required = False
 
             def parse_json_string(candidate: str) -> Any:
@@ -853,6 +854,10 @@ def register_route_backend_chats(app):
                         
                     if selected_document_id:
                         search_args["document_id"] = selected_document_id
+                    
+                    # Add tags filter if provided
+                    if tags_filter and isinstance(tags_filter, list) and len(tags_filter) > 0:
+                        search_args["tags_filter"] = tags_filter
                     
                     # Log if a non-default top_n value is being used
                     if top_n != default_top_n:
@@ -2702,6 +2707,7 @@ def register_route_backend_chats(app):
                 selected_document_id = data.get('selected_document_id')
                 image_gen_enabled = data.get('image_generation')
                 document_scope = data.get('doc_scope')
+                tags_filter = data.get('tags', [])  # Extract tags filter
                 active_group_id = data.get('active_group_id')
                 active_public_workspace_id = data.get('active_public_workspace_id')  # Extract active public workspace ID
                 frontend_gpt_model = data.get('model_deployment')
@@ -3085,6 +3091,10 @@ def register_route_backend_chats(app):
                         
                         if selected_document_id:
                             search_args['document_id'] = selected_document_id
+                        
+                        # Add tags filter if provided
+                        if tags_filter and isinstance(tags_filter, list) and len(tags_filter) > 0:
+                            search_args['tags_filter'] = tags_filter
                         
                         search_results = hybrid_search(**search_args)
                     except Exception as e:

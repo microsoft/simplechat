@@ -14,6 +14,9 @@ const docDropdownItems = document.getElementById("document-dropdown-items");
 const docDropdownMenu = document.getElementById("document-dropdown-menu");
 const docSearchInput = document.getElementById("document-search-input");
 
+// Tags filter elements
+const chatTagsFilter = document.getElementById("chat-tags-filter");
+
 // Classification elements
 const classificationContainer = document.querySelector(".classification-container"); // Main container div
 const classificationSelectInput = document.getElementById("classification-select"); // The input field (now dual purpose)
@@ -538,10 +541,76 @@ function initializeDocumentDropdown() {
   }
 }
 /* ---------------------------------------------------------------------------
+   Load Tags for Selected Scope
+--------------------------------------------------------------------------- */
+async function loadTagsForScope(scope) {
+  if (!chatTagsFilter) return;
+  
+  // Clear existing options
+  chatTagsFilter.innerHTML = '';
+  
+  // Don't load tags for 'all' scope
+  if (scope === 'all' || !scope) {
+    chatTagsFilter.style.display = 'none';
+    return;
+  }
+  
+  try {
+    let endpoint = '';
+    if (scope === 'personal') {
+      endpoint = '/api/documents/tags';
+    } else if (scope === 'group') {
+      endpoint = '/api/group_documents/tags';
+    } else if (scope === 'public') {
+      endpoint = '/api/public_workspace_documents/tags';
+    }
+    
+    if (!endpoint) {
+      chatTagsFilter.style.display = 'none';
+      return;
+    }
+    
+    const response = await fetch(endpoint);
+    const data = await response.json();
+    
+    if (data.tags && data.tags.length > 0) {
+      // Show the tags filter
+      chatTagsFilter.style.display = 'block';
+      
+      // Populate with tags
+      data.tags.forEach(tag => {
+        const option = document.createElement('option');
+        option.value = tag.name;
+        option.textContent = `${tag.name} (${tag.count})`;
+        chatTagsFilter.appendChild(option);
+      });
+    } else {
+      chatTagsFilter.style.display = 'none';
+    }
+  } catch (error) {
+    console.error('Error loading tags:', error);
+    chatTagsFilter.style.display = 'none';
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Get Selected Tags
+--------------------------------------------------------------------------- */
+export function getSelectedTags() {
+  if (!chatTagsFilter || chatTagsFilter.style.display === 'none') {
+    return [];
+  }
+  return Array.from(chatTagsFilter.selectedOptions).map(opt => opt.value);
+}
+
+/* ---------------------------------------------------------------------------
    UI Event Listeners
 --------------------------------------------------------------------------- */
 if (docScopeSelect) {
-  docScopeSelect.addEventListener("change", populateDocumentSelectScope);
+  docScopeSelect.addEventListener("change", () => {
+    populateDocumentSelectScope();
+    loadTagsForScope(docScopeSelect.value);
+  });
 }
 
 if (searchDocumentsBtn) {
@@ -554,6 +623,10 @@ if (searchDocumentsBtn) {
       searchDocumentsContainer.style.display = "block";
       // Ensure initial population and state is correct when opening
       loadAllDocs().then(() => {
+        // Load tags for the currently selected scope
+        if (docScopeSelect) {
+          loadTagsForScope(docScopeSelect.value);
+        }
         // Force Bootstrap to update the Popper positioning
         try {
           const dropdownInstance = bootstrap.Dropdown.getInstance(docDropdownButton);

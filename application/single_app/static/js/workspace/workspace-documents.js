@@ -1,6 +1,8 @@
 // static/js/workspace/workspace-documents.js
 
 import { escapeHtml } from "./workspace-utils.js";
+import { initializeTags, renderTagBadges, loadWorkspaceTags } from "./workspace-tags.js";
+import { getSelectedTagsArray, setSelectedTags, clearSelectedTags } from './workspace-tag-management.js';
 
 // ------------- State Variables -------------
 let docsCurrentPage = 1;
@@ -10,6 +12,7 @@ let docsClassificationFilter = '';
 let docsAuthorFilter = ''; // Added for Author filter
 let docsKeywordsFilter = ''; // Added for Keywords filter
 let docsAbstractFilter = ''; // Added for Abstract filter
+let docsTagsFilter = ''; // Added for Tags filter
 const activePolls = new Set();
 
 // ------------- DOM Elements (Documents Tab) -------------
@@ -38,9 +41,16 @@ const docsClassificationFilterSelect = (window.enable_document_classification ==
 const docsAuthorFilterInput = document.getElementById('docs-author-filter');
 const docsKeywordsFilterInput = document.getElementById('docs-keywords-filter');
 const docsAbstractFilterInput = document.getElementById('docs-abstract-filter');
+const docsTagsFilterSelect = document.getElementById('docs-tags-filter');
 // Buttons (get them regardless, they might be rendered in different places)
 const docsApplyFiltersBtn = document.getElementById('docs-apply-filters-btn');
 const docsClearFiltersBtn = document.getElementById('docs-clear-filters-btn');
+
+// Expose state variables globally for workspace-tags.js
+window.docsCurrentPage = docsCurrentPage;
+window.docsTagsFilter = docsTagsFilter;
+window.selectedDocuments = selectedDocuments;
+window.fetchUserDocuments = fetchUserDocuments;
 
 // ------------- Helper Functions -------------
 function isColorLight(hexColor) {
@@ -92,6 +102,14 @@ if (docsApplyFiltersBtn) {
         docsAuthorFilter = docsAuthorFilterInput ? docsAuthorFilterInput.value.trim() : '';
         docsKeywordsFilter = docsKeywordsFilterInput ? docsKeywordsFilterInput.value.trim() : '';
         docsAbstractFilter = docsAbstractFilterInput ? docsAbstractFilterInput.value.trim() : '';
+        
+        // Get selected tags
+        if (docsTagsFilterSelect) {
+            const selectedOptions = Array.from(docsTagsFilterSelect.selectedOptions);
+            docsTagsFilter = selectedOptions.map(opt => opt.value).join(',');
+        } else {
+            docsTagsFilter = '';
+        }
 
         docsCurrentPage = 1; // Reset to first page
         fetchUserDocuments();
@@ -120,12 +138,16 @@ if (docsClearFiltersBtn) {
         if (docsAuthorFilterInput) docsAuthorFilterInput.value = '';
         if (docsKeywordsFilterInput) docsKeywordsFilterInput.value = '';
         if (docsAbstractFilterInput) docsAbstractFilterInput.value = '';
+        if (docsTagsFilterSelect) {
+            Array.from(docsTagsFilterSelect.options).forEach(opt => opt.selected = false);
+        }
 
         docsSearchTerm = '';
         docsClassificationFilter = '';
         docsAuthorFilter = '';
         docsKeywordsFilter = '';
         docsAbstractFilter = '';
+        docsTagsFilter = '';
 
         docsCurrentPage = 1; // Reset to first page
         fetchUserDocuments();
@@ -184,6 +206,9 @@ if (docMetadataForm && docMetadataModalEl) { // Check both exist
         if (payload.authors) {
             payload.authors = payload.authors.split(",").map(a => a.trim()).filter(Boolean);
         } else { payload.authors = []; }
+        
+        // Get selected tags from the tag management system
+        payload.tags = getSelectedTagsArray();
 
         // Add classification if enabled AND selected (handle 'none' value)
         // Use the window flag to check if classification is enabled
@@ -450,6 +475,10 @@ function fetchUserDocuments() {
     if (docsAbstractFilter) {
         params.append('abstract', docsAbstractFilter); // Assumes backend uses 'abstract'
     }
+    // Add tags filter if selected
+    if (docsTagsFilter) {
+        params.append('tags', docsTagsFilter); // Comma-separated tags
+    }
     // Add shared only filter
     if (docsSharedOnlyFilter && docsSharedOnlyFilter.checked) {
         params.append('shared_only', 'true');
@@ -467,7 +496,7 @@ function fetchUserDocuments() {
             documentsTableBody.innerHTML = ""; // Clear loading/existing rows
             if (!data.documents || data.documents.length === 0) {
                 // Check if any filters are active
-                const filtersActive = docsSearchTerm || docsClassificationFilter || docsAuthorFilter || docsKeywordsFilter || docsAbstractFilter;
+                const filtersActive = docsSearchTerm || docsClassificationFilter || docsAuthorFilter || docsKeywordsFilter || docsAbstractFilter || docsTagsFilter;
                 documentsTableBody.innerHTML = `
                     <tr>
                         <td colspan="4" class="text-center p-4 text-muted">
@@ -724,6 +753,7 @@ function renderDocumentRow(doc) {
                     <p class="mb-1"><strong>Citations:</strong> ${doc.enhanced_citations ? '<span class="badge bg-success">Enhanced</span>' : '<span class="badge bg-secondary">Standard</span>'}</p>
                     <p class="mb-1"><strong>Publication Date:</strong> ${escapeHtml(doc.publication_date || "N/A")}</p>
                     <p class="mb-1"><strong>Keywords:</strong> ${escapeHtml(Array.isArray(doc.keywords) ? doc.keywords.join(", ") : doc.keywords || "N/A")}</p>
+                    <p class="mb-1"><strong>Tags:</strong> ${renderTagBadges(doc.tags || [])}</p>
                     <p class="mb-0"><strong>Abstract:</strong> ${escapeHtml(doc.abstract || "N/A")}</p>
                     <hr class="my-2">
                     <div class="d-flex flex-wrap gap-2">
@@ -1084,7 +1114,7 @@ window.onEditDocument = function(docId) {
             const docKeywordsInput = document.getElementById("doc-keywords");
             const docPubDateInput = document.getElementById("doc-publication-date");
             const docAuthorsInput = document.getElementById("doc-authors");
-            const classificationSelect = document.getElementById("doc-classification"); // Use the correct ID
+            const classificationSelect = document.getElementById("doc-classification");
 
             if (docIdInput) docIdInput.value = doc.id;
             if (docTitleInput) docTitleInput.value = doc.title || "";
@@ -1092,6 +1122,23 @@ window.onEditDocument = function(docId) {
             if (docKeywordsInput) docKeywordsInput.value = Array.isArray(doc.keywords) ? doc.keywords.join(", ") : (doc.keywords || "");
             if (docPubDateInput) docPubDateInput.value = doc.publication_date || "";
             if (docAuthorsInput) docAuthorsInput.value = Array.isArray(doc.authors) ? doc.authors.join(", ") : (doc.authors || "");
+            
+            // Set selected tags in the new tag management system
+            const docTags = doc.tags || [];
+            setSelectedTags(docTags);
+            
+            // Update the display
+            const container = document.getElementById('doc-selected-tags-container');
+            if (container && docTags.length > 0) {
+                loadWorkspaceTags().then(() => {
+                    // The tags are now loaded, update display via the tag management module
+                    // This will be handled automatically when the modal shows
+                    container.querySelector('.text-muted')?.remove();
+                    docTags.forEach(tagName => {
+                        // Display logic is handled by workspace-tag-management.js
+                    });
+                });
+            }
 
             // Handle classification dropdown visibility and value based on the window flag - CORRECTED CHECK
             if ((window.enable_document_classification === true || window.enable_document_classification === "true") && classificationSelect) {

@@ -88,7 +88,8 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 "document_classification": "None",
                 "type": "document_metadata",
                 "public_workspace_id": public_workspace_id,
-                "user_id": user_id
+                "user_id": user_id,
+                "tags": []
             }
         elif is_group:
             document_metadata = {
@@ -106,7 +107,8 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 "document_classification": "None",
                 "type": "document_metadata",
                 "group_id": group_id,
-                "shared_group_ids": []
+                "shared_group_ids": [],
+                "tags": []
             }
         else:
             document_metadata = {
@@ -126,7 +128,8 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 "user_id": user_id,
                 "shared_user_ids": [],
                 "embedding_tokens": 0,
-                "embedding_model_deployment_name": None
+                "embedding_model_deployment_name": None,
+                "tags": []
             }
 
         cosmos_container.upsert_item(document_metadata)
@@ -283,6 +286,7 @@ def save_video_chunk(
                 "chunk_sequence":       seconds,
                 "upload_date":          current_time,
                 "version":              version,
+                "document_tags":        meta.get('tags', []) if meta else []
             }
 
             if is_group:
@@ -1326,7 +1330,7 @@ def update_document(**kwargs):
                     continue # Skip direct assignment if increment was used
                 existing_document[key] = value
                 update_occurred = True
-                if key in ['title', 'authors', 'file_name', 'document_classification']:
+                if key in ['title', 'authors', 'file_name', 'document_classification', 'tags']:
                     updated_fields_requiring_chunk_sync.add(key)
                 # Propagate shared_group_ids to group chunks if changed
                 if is_group and key == 'shared_group_ids':
@@ -1380,6 +1384,8 @@ def update_document(**kwargs):
                         chunk_updates['file_name'] = existing_document.get('file_name')
                     if 'document_classification' in updated_fields_requiring_chunk_sync:
                         chunk_updates['document_classification'] = existing_document.get('document_classification')
+                    if 'tags' in updated_fields_requiring_chunk_sync:
+                        chunk_updates['document_tags'] = existing_document.get('tags', [])
 
                     if chunk_updates: # Only call update if there's something to change
                         # Build the call parameters
@@ -1562,6 +1568,7 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
                 "author": author,
                 "title": title,
                 "document_classification": "None",
+                "document_tags": metadata.get('tags', []),
                 "chunk_sequence": page_number,  # or you can keep an incremental idx
                 "upload_date": current_time,
                 "version": version,
@@ -1583,6 +1590,7 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
                 "author": author,
                 "title": title,
                 "document_classification": "None",
+                "document_tags": metadata.get('tags', []),
                 "chunk_sequence": page_number,  # or you can keep an incremental idx
                 "upload_date": current_time,
                 "version": version,
@@ -1606,6 +1614,7 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
                 "author": author,
                 "title": title,
                 "document_classification": "None",
+                "document_tags": metadata.get('tags', []),
                 "chunk_sequence": page_number,  # or you can keep an incremental idx
                 "upload_date": current_time,
                 "version": version,
@@ -1819,6 +1828,7 @@ def update_chunk_metadata(chunk_id, user_id, group_id=None, public_workspace_id=
             'author',
             'title',
             'document_classification',
+            'document_tags',
             'shared_user_ids'
         ]
         
@@ -6235,3 +6245,258 @@ def get_documents_shared_with_group(group_id):
     except Exception as e:
         print(f"Error getting documents shared with group {group_id}: {e}")
         return []
+
+
+# ============= TAG MANAGEMENT FUNCTIONS =============
+
+def normalize_tag(tag):
+    """
+    Normalize a tag by trimming whitespace and converting to lowercase.
+    Returns normalized tag string.
+    """
+    if not isinstance(tag, str):
+        return ""
+    return tag.strip().lower()
+
+
+def validate_tags(tags):
+    """
+    Validate an array of tags.
+    Returns (is_valid, error_message, normalized_tags)
+    
+    Rules:
+    - Max 50 characters per tag
+    - Alphanumeric + hyphens/underscores only
+    - No empty tags
+    - Case-insensitive uniqueness
+    """
+    if not isinstance(tags, list):
+        return False, "Tags must be an array", []
+    
+    normalized = []
+    seen = set()
+    
+    for tag in tags:
+        if not isinstance(tag, str):
+            return False, "All tags must be strings", []
+        
+        normalized_tag = normalize_tag(tag)
+        
+        if not normalized_tag:
+            continue  # Skip empty tags
+        
+        if len(normalized_tag) > 50:
+            return False, f"Tag '{normalized_tag}' exceeds 50 characters", []
+        
+        # Check alphanumeric + hyphens/underscores
+        import re
+        if not re.match(r'^[a-z0-9_-]+$', normalized_tag):
+            return False, f"Tag '{normalized_tag}' contains invalid characters (only alphanumeric, hyphens, and underscores allowed)", []
+        
+        # Check for duplicates
+        if normalized_tag in seen:
+            continue  # Skip duplicate
+        
+        seen.add(normalized_tag)
+        normalized.append(normalized_tag)
+    
+    return True, None, normalized
+
+
+def get_workspace_tags(user_id, group_id=None, public_workspace_id=None):
+    """
+    Get all unique tags used in a workspace with document counts.
+    Returns: [{'name': 'tag1', 'count': 5, 'color': '#3b82f6'}, ...]
+    """
+    from functions_settings import get_user_settings
+    
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+    
+    # Choose the correct container
+    if is_public_workspace:
+        cosmos_container = cosmos_public_documents_container
+        partition_key = public_workspace_id
+        workspace_type = 'public'
+    elif is_group:
+        cosmos_container = cosmos_group_documents_container
+        partition_key = group_id
+        workspace_type = 'group'
+    else:
+        cosmos_container = cosmos_user_documents_container
+        partition_key = user_id
+        workspace_type = 'personal'
+    
+    try:
+        # Query all documents with tags
+        if is_public_workspace:
+            query = """
+                SELECT c.tags
+                FROM c
+                WHERE c.public_workspace_id = @partition_key
+                    AND IS_DEFINED(c.tags)
+                    AND ARRAY_LENGTH(c.tags) > 0
+            """
+        elif is_group:
+            query = """
+                SELECT c.tags
+                FROM c
+                WHERE c.group_id = @partition_key
+                    AND IS_DEFINED(c.tags)
+                    AND ARRAY_LENGTH(c.tags) > 0
+            """
+        else:
+            query = """
+                SELECT c.tags
+                FROM c
+                WHERE c.user_id = @partition_key
+                    AND IS_DEFINED(c.tags)
+                    AND ARRAY_LENGTH(c.tags) > 0
+            """
+        
+        parameters = [{"name": "@partition_key", "value": partition_key}]
+        
+        documents = list(
+            cosmos_container.query_items(
+                query=query,
+                parameters=parameters,
+                enable_cross_partition_query=True
+            )
+        )
+        
+        # Count tag occurrences
+        tag_counts = {}
+        for doc in documents:
+            for tag in doc.get('tags', []):
+                normalized_tag = normalize_tag(tag)
+                if normalized_tag:
+                    tag_counts[normalized_tag] = tag_counts.get(normalized_tag, 0) + 1
+        
+        # Get tag definitions (colors) from user settings
+        user_settings = get_user_settings(user_id)
+        tag_definitions = user_settings.get('tag_definitions', {})
+        workspace_tag_defs = tag_definitions.get(workspace_type, {})
+        
+        # Build result with colors
+        results = []
+        for tag_name, count in tag_counts.items():
+            tag_def = workspace_tag_defs.get(tag_name, {})
+            results.append({
+                'name': tag_name,
+                'count': count,
+                'color': tag_def.get('color', get_default_tag_color(tag_name))
+            })
+        
+        # Sort by count descending, then name ascending
+        results.sort(key=lambda x: (-x['count'], x['name']))
+        
+        return results
+        
+    except Exception as e:
+        print(f"Error getting workspace tags: {e}")
+        return []
+
+
+def get_default_tag_color(tag_name):
+    """
+    Generate a consistent color for a tag based on its name.
+    Uses a predefined color palette and hashes the tag name.
+    """
+    color_palette = [
+        '#3b82f6',  # blue
+        '#10b981',  # green
+        '#f59e0b',  # amber
+        '#ef4444',  # red
+        '#8b5cf6',  # purple
+        '#ec4899',  # pink
+        '#06b6d4',  # cyan
+        '#84cc16',  # lime
+        '#f97316',  # orange
+        '#6366f1',  # indigo
+    ]
+    
+    # Simple hash function to pick color consistently
+    hash_val = sum(ord(c) for c in tag_name)
+    color_index = hash_val % len(color_palette)
+    return color_palette[color_index]
+
+
+def get_or_create_tag_definition(user_id, tag_name, workspace_type='personal', color=None):
+    """
+    Get or create a tag definition in user settings.
+    Assigns default color if new tag.
+    
+    Args:
+        user_id: User ID
+        tag_name: Normalized tag name
+        workspace_type: 'personal', 'group', or 'public'
+        color: Optional hex color code
+        
+    Returns:
+        Tag definition dict with color
+    """
+    from functions_settings import get_user_settings, update_user_settings
+    from datetime import datetime, timezone
+    
+    user_settings = get_user_settings(user_id)
+    tag_definitions = user_settings.get('tag_definitions', {})
+    
+    if workspace_type not in tag_definitions:
+        tag_definitions[workspace_type] = {}
+    
+    workspace_tags = tag_definitions[workspace_type]
+    
+    if tag_name not in workspace_tags:
+        # Create new tag definition
+        workspace_tags[tag_name] = {
+            'color': color if color else get_default_tag_color(tag_name),
+            'created_at': datetime.now(timezone.utc).isoformat()
+        }
+        
+        # Save updated settings
+        user_settings['tag_definitions'] = tag_definitions
+        update_user_settings(user_id, user_settings)
+    
+    return workspace_tags[tag_name]
+
+
+def propagate_tags_to_chunks(document_id, tags, user_id, group_id=None, public_workspace_id=None):
+    """
+    Update all chunks for a document with new tags.
+    This is called immediately after tag updates.
+    
+    Args:
+        document_id: Document ID
+        tags: Array of normalized tag names
+        user_id: User ID
+        group_id: Optional group ID
+        public_workspace_id: Optional public workspace ID
+    """
+    try:
+        # Get all chunks for this document
+        chunks = get_all_chunks(document_id, user_id, group_id, public_workspace_id)
+        
+        if not chunks:
+            print(f"No chunks found for document {document_id}")
+            return
+        
+        # Update each chunk with new tags
+        for chunk in chunks:
+            try:
+                update_chunk_metadata(
+                    chunk_id=chunk['id'],
+                    user_id=user_id,
+                    group_id=group_id,
+                    public_workspace_id=public_workspace_id,
+                    document_id=document_id,
+                    document_tags=tags
+                )
+            except Exception as chunk_error:
+                print(f"Error updating chunk {chunk['id']} with tags: {chunk_error}")
+                # Continue with other chunks
+        
+        print(f"Successfully propagated tags to {len(chunks)} chunks for document {document_id}")
+        
+    except Exception as e:
+        print(f"Error propagating tags to chunks for document {document_id}: {e}")
+        raise

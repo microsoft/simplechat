@@ -475,15 +475,10 @@ function renderMemberActions(member) {
         <button
           class="btn btn-sm btn-danger me-1 remove-member-btn"
           data-user-id="${member.userId}">
-          class="btn btn-sm btn-danger me-1 remove-member-btn"
-          data-user-id="${member.userId}">
           Remove
         </button>
         <button
           type="button"
-          class="btn btn-sm btn-outline-secondary change-role-btn"
-          data-user-id="${member.userId}"
-          data-user-role="${member.role}">
           class="btn btn-sm btn-outline-secondary change-role-btn"
           data-user-id="${member.userId}"
           data-user-role="${member.role}">
@@ -546,10 +541,6 @@ function loadPendingRequests() {
                     data-request-id="${u.userId}">Approve</button>
             <button class="btn btn-sm btn-danger reject-request-btn" 
                     data-request-id="${u.userId}">Reject</button>
-            <button class="btn btn-sm btn-success approve-request-btn" 
-                    data-request-id="${u.userId}">Approve</button>
-            <button class="btn btn-sm btn-danger reject-request-btn" 
-                    data-request-id="${u.userId}">Reject</button>
           </td>
         </tr>
       `;
@@ -598,7 +589,6 @@ function rejectRequest(requestId) {
 }
 
 // Search users for manual add
-// Search users for manual add
 function searchUsers() {
   const term = $("#userSearchTerm").val().trim();
   if (!term) {
@@ -640,7 +630,6 @@ function searchUsers() {
     });
 }
 
-// Render user-search results in add-member modal
 // Render user-search results in add-member modal
 function renderUserSearchResults(users) {
   let html = "";
