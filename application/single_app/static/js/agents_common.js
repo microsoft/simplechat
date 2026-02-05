@@ -396,10 +396,11 @@ export function shouldEnableCustomConnection(agent) {
 export function getAvailableModels({ apimEnabled, settings, agent }) {
 	let models = [];
 	let selectedModel = null;
-	const multiEndpointEnabled = settings && settings.enable_multi_model_endpoints;
-	if (multiEndpointEnabled && Array.isArray(settings.model_endpoints)) {
+	const endpoints = Array.isArray(settings?.model_endpoints) ? settings.model_endpoints : [];
+	const multiEndpointEnabled = (settings && settings.enable_multi_model_endpoints) || endpoints.length > 0;
+	if (multiEndpointEnabled && endpoints.length) {
 		const agentType = (agent && agent.agent_type) ? agent.agent_type : 'local';
-		settings.model_endpoints.forEach(endpoint => {
+		endpoints.forEach(endpoint => {
 			if (!endpoint || endpoint.enabled === false) return;
 			const provider = (endpoint.provider || 'aoai').toLowerCase();
 			if (agentType === 'aifoundry' && provider !== 'aifoundry') {
@@ -465,7 +466,8 @@ export async function fetchAndGetAvailableModels(endpoint, agent) {
 		const settings = await resp.json();
 		// Check APIM enabled (support both enable_gpt_apim and enable_apim)
 		const apimEnabled = settings.enable_gpt_apim || false;
-		const enableMultiModelEndpoints = settings.enable_multi_model_endpoints || false;
+		const endpoints = Array.isArray(settings.model_endpoints) ? settings.model_endpoints : [];
+		const enableMultiModelEndpoints = (settings.enable_multi_model_endpoints || false) || endpoints.length > 0;
 		const { models, selectedModel } = getAvailableModels({ apimEnabled, settings, agent });
 		return { models, selectedModel, apimEnabled, enableMultiModelEndpoints };
 	} catch (e) {

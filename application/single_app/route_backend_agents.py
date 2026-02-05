@@ -822,8 +822,15 @@ def get_global_agent_settings(include_admin_extras=False, user_id=None, group_id
     settings = get_settings()
     agents = get_global_agents()
     combined_endpoints = []
-    if settings.get("enable_multi_model_endpoints", False):
+    base_endpoints = settings.get("model_endpoints", []) or []
+    multi_flag = settings.get("enable_multi_model_endpoints", False)
+    allow_custom = settings.get("allow_user_custom_endpoints", False) or settings.get("allow_group_custom_endpoints", False)
+    should_include_endpoints = multi_flag or base_endpoints or allow_custom
+
+    if should_include_endpoints:
         combined_endpoints = build_combined_model_endpoints(settings, user_id=user_id, group_id=group_id)
+
+    effective_multi_flag = bool(multi_flag or combined_endpoints)
     
     # Return selected_agent and any other relevant settings for admin UI
     return jsonify({
@@ -848,7 +855,7 @@ def get_global_agent_settings(include_admin_extras=False, user_id=None, group_id
         "allow_user_custom_endpoints": settings.get("allow_user_custom_endpoints", False),
         "allow_group_agents": settings.get("allow_group_agents", False),
         "allow_group_custom_endpoints": settings.get("allow_group_custom_endpoints", False),
-        "enable_multi_model_endpoints": settings.get("enable_multi_model_endpoints", False),
+        "enable_multi_model_endpoints": effective_multi_flag,
         "model_endpoints": combined_endpoints,
     })
     

@@ -153,11 +153,22 @@ function createSidebarConversationItem(convo) {
     titleWrapper.appendChild(originalTitleElement);
 
     const isGroupConversation = (convo.chat_type && convo.chat_type.startsWith('group')) || groupName;
+    const isPersonalConversation = !isGroupConversation && (
+      (convo.chat_type && convo.chat_type.startsWith('personal')) ||
+      (Array.isArray(convo.context) && convo.context.some(ctx => ctx.type === "primary" && ctx.scope === "personal"))
+    );
+
     if (isGroupConversation) {
       const badge = document.createElement('span');
       badge.classList.add('badge', 'bg-info', 'sidebar-conversation-group-badge');
       badge.textContent = 'group';
       badge.title = groupName ? `Group conversation: ${groupName}` : 'Group conversation';
+      titleWrapper.appendChild(badge);
+    } else if (isPersonalConversation) {
+      const badge = document.createElement('span');
+      badge.classList.add('badge', 'bg-primary', 'sidebar-conversation-personal-badge');
+      badge.textContent = 'personal';
+      badge.title = 'Personal conversation';
       titleWrapper.appendChild(badge);
     }
 

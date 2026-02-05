@@ -103,15 +103,20 @@ export async function populateAgentDropdown() {
     try {
         const conversationScope = getActiveConversationScope();
         const { chatType, chatState, groupId: conversationGroupId } = getActiveConversationContext();
+        const activeConversation = document.querySelector('.conversation-item.active');
         const userActiveGroupId = sanitizeGroupId(await getUserSetting('activeGroupOid'));
         const workspaceGroupId = sanitizeGroupId(window.groupWorkspaceContext?.activeGroupId || window.activeGroupId);
-        const isNewConversation = chatType === 'new' || chatState === 'new';
-        const isGroupSingleUser = chatType === 'group-single-user' || chatType === 'group_single_user';
 
-        let activeGroupId = conversationGroupId;
-        if (!activeGroupId && (isNewConversation || isGroupSingleUser)) {
-            activeGroupId = userActiveGroupId || workspaceGroupId || null;
-        }
+        // Only allow group agents when a group context exists or no conversation is selected.
+        const allowGroupAgents = !activeConversation
+            || conversationScope === 'group'
+            || !!conversationGroupId
+            || chatState === 'new'
+            || chatType === 'new';
+
+        const activeGroupId = allowGroupAgents
+            ? (conversationGroupId || userActiveGroupId || workspaceGroupId || null)
+            : null;
         const [userAgents, selectedAgent] = await Promise.all([
             fetchUserAgents(),
             fetchSelectedAgent()
@@ -120,12 +125,21 @@ export async function populateAgentDropdown() {
         const personalAgents = userAgents.filter(agent => !agent.is_global && !agent.is_group);
         const globalAgents = userAgents.filter(agent => agent.is_global);
         let orderedAgents = [];
+        const includeGroupAgents = allowGroupAgents && groupAgents.length > 0;
+
         if (!conversationScope) {
-            orderedAgents = [...personalAgents, ...groupAgents, ...globalAgents];
+            orderedAgents = includeGroupAgents
+                ? [...personalAgents, ...groupAgents, ...globalAgents]
+                : [...personalAgents, ...globalAgents];
         } else if (conversationScope === 'group') {
-            orderedAgents = [...groupAgents, ...globalAgents];
+            orderedAgents = includeGroupAgents
+                ? [...groupAgents, ...globalAgents]
+                : [...globalAgents];
         } else {
-            orderedAgents = [...personalAgents, ...globalAgents];
+            // Personal scope: show personal first; only add group agents when explicitly allowed
+            orderedAgents = includeGroupAgents
+                ? [...personalAgents, ...groupAgents, ...globalAgents]
+                : [...personalAgents, ...globalAgents];
         }
         populateAgentSelect(agentSelect, orderedAgents, selectedAgent);
         agentSelect.onchange = async function () {

@@ -514,7 +514,11 @@ export function createConversationItem(convo) {
   leftDiv.style.overflow = "hidden"; // Prevent overflow issues
 
   const titleSpan = document.createElement("span");
-  titleSpan.classList.add("conversation-title", "text-truncate"); // Bold and truncate
+  titleSpan.classList.add("conversation-title", "text-truncate", "flex-grow-1"); // Bold and truncate
+  titleSpan.style.minWidth = "0";
+  
+  const titleRow = document.createElement("div");
+  titleRow.classList.add("d-flex", "align-items-center", "gap-2");
   
   // Add pin icon if conversation is pinned
   const isPinned = convo.is_pinned || false;
@@ -527,12 +531,35 @@ export function createConversationItem(convo) {
   titleSpan.appendChild(document.createTextNode(convo.title));
   titleSpan.title = convo.title; // Tooltip for full title
 
+  titleRow.appendChild(titleSpan);
+
+  const isGroupConversation = (normalizedChatType && normalizedChatType.startsWith('group')) ||
+    (convo.context && convo.context.some(ctx => ctx.type === 'primary' && ctx.scope === 'group'));
+  const isPersonalConversation = !isGroupConversation && (
+    (normalizedChatType && normalizedChatType.startsWith('personal')) ||
+    (convo.context && convo.context.some(ctx => ctx.type === 'primary' && ctx.scope === 'personal'))
+  );
+
+  if (isGroupConversation) {
+    const groupBadge = document.createElement('span');
+    groupBadge.classList.add('badge', 'bg-info', 'conversation-badge-group');
+    groupBadge.textContent = 'group';
+    groupBadge.title = 'Group conversation';
+    titleRow.appendChild(groupBadge);
+  } else if (isPersonalConversation) {
+    const personalBadge = document.createElement('span');
+    personalBadge.classList.add('badge', 'bg-primary', 'conversation-badge-personal');
+    personalBadge.textContent = 'personal';
+    personalBadge.title = 'Personal conversation';
+    titleRow.appendChild(personalBadge);
+  }
+
   const dateSpan = document.createElement("small");
   dateSpan.classList.add("text-muted");
   const date = new Date(convo.last_updated);
   dateSpan.textContent = date.toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }); // Shorter format
 
-  leftDiv.appendChild(titleSpan);
+  leftDiv.appendChild(titleRow);
   leftDiv.appendChild(dateSpan);
 
   // Right part: three dots dropdown
