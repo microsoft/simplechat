@@ -236,7 +236,7 @@ def register_route_backend_documents(app):
                     )
                 except Exception as log_error:
                     # Don't let activity logging errors interrupt upload flow
-                    print(f"Activity logging error for document upload: {log_error}")
+                    debug_print(f"Activity logging error for document upload: {log_error}")
 
             except Exception as e:
                 upload_errors.append(f"Failed to queue processing for {original_filename}: {e}")
@@ -381,7 +381,7 @@ def register_route_backend_documents(app):
             total_count = count_items[0] if count_items else 0
 
         except Exception as e:
-            print(f"Error executing count query: {e}") # Log the error
+            debug_print(f"Error executing count query: {e}") # Log the error
             return jsonify({"error": f"Error counting documents: {str(e)}"}), 500
 
 
@@ -418,7 +418,7 @@ def register_route_backend_documents(app):
                             break
                     doc["shared_approval_status"] = status or "none"
         except Exception as e:
-            print(f"Error executing data query: {e}") # Log the error
+            debug_print(f"Error executing data query: {e}") # Log the error
             return jsonify({"error": f"Error fetching documents: {str(e)}"}), 500
 
         
@@ -439,7 +439,7 @@ def register_route_backend_documents(app):
             )
             legacy_count = legacy_docs[0] if legacy_docs else 0
         except Exception as e:
-            print(f"Error executing legacy query: {e}")
+            debug_print(f"Error executing legacy query: {e}")
 
         # --- 5) Return results ---
         return jsonify({
@@ -572,7 +572,7 @@ def register_route_backend_documents(app):
             try:
                 propagate_tags_to_chunks(document_id, normalized_tags, user_id)
             except Exception as propagate_error:
-                print(f"Warning: Failed to propagate tags to chunks: {propagate_error}")
+                debug_print(f"Warning: Failed to propagate tags to chunks: {propagate_error}")
                 # Continue - document tags are updated, chunk sync will be retried later
 
         # Save updates back to Cosmos
@@ -790,24 +790,38 @@ def register_route_backend_documents(app):
             
             normalized_tag = normalized_tags[0]
             
-            # Get or create tag definition
+            # Get existing tag definitions from settings
             user_settings = get_user_settings(user_id)
-            tag_defs = user_settings.get('tag_definitions', {})
+            settings_dict = user_settings.get('settings', {})
+            tag_defs = settings_dict.get('tag_definitions', {})
             personal_tags = tag_defs.get('personal', {})
+            
+            debug_print(f"[CREATE TAG] Retrieved user_settings keys: {list(user_settings.keys())}")
+            debug_print(f"[CREATE TAG] Retrieved settings_dict keys: {list(settings_dict.keys())}")
+            debug_print(f"[CREATE TAG] Retrieved tag_defs keys: {list(tag_defs.keys())}")
+            debug_print(f"[CREATE TAG] Retrieved personal_tags: {personal_tags}")
+            debug_print(f"[CREATE TAG] Existing personal tag count: {len(personal_tags)}")
             
             # Check if tag already exists
             if normalized_tag in personal_tags:
                 return jsonify({'error': 'Tag already exists'}), 409
             
-            # Create new tag definition
+            # Add new tag to existing tags (don't replace)
             personal_tags[normalized_tag] = {
                 'color': color,
                 'created_at': datetime.now(timezone.utc).isoformat()
             }
             
+            debug_print(f"[CREATE TAG] After adding new tag, personal_tags: {personal_tags}")
+            debug_print(f"[CREATE TAG] New personal tag count: {len(personal_tags)}")
+            
             tag_defs['personal'] = personal_tags
-            user_settings['tag_definitions'] = tag_defs
-            update_user_settings(user_id, user_settings)
+            
+            debug_print(f"[CREATE TAG] Final tag_defs to save: {tag_defs}")
+            debug_print(f"[CREATE TAG] Calling update_user_settings with: {{'tag_definitions': tag_defs}}")
+            
+            # Only update the tag_definitions field, not the entire settings object
+            update_user_settings(user_id, {'tag_definitions': tag_defs})
             
             return jsonify({
                 'message': f'Tag "{normalized_tag}" created successfully',
@@ -845,6 +859,8 @@ def register_route_backend_documents(app):
         action = data.get('action')
         tags_input = data.get('tags', [])
         
+        debug_print(f"[Bulk Tag] Received request: user_id={user_id}, action={action}, tags={tags_input}, doc_count={len(document_ids)}")
+        
         if not document_ids or not isinstance(document_ids, list):
             return jsonify({'error': 'document_ids must be a non-empty array'}), 400
         
@@ -873,14 +889,43 @@ def register_route_backend_documents(app):
         try:
             for doc_id in document_ids:
                 try:
-                    # Get current document
-                    doc = get_document(user_id, doc_id)
-                    if not doc:
+                    # Query Cosmos DB directly (get_document returns Flask response tuple)
+                    query = """
+                        SELECT TOP 1 *
+                        FROM c
+                        WHERE c.id = @document_id
+                            AND (
+                                c.user_id = @user_id
+                                OR ARRAY_CONTAINS(c.shared_user_ids, @user_id)
+                                OR EXISTS(SELECT VALUE s FROM s IN c.shared_user_ids WHERE STARTSWITH(s, @user_id_prefix))
+                            )
+                        ORDER BY c.version DESC
+                    """
+                    parameters = [
+                        {"name": "@document_id", "value": doc_id},
+                        {"name": "@user_id", "value": user_id},
+                        {"name": "@user_id_prefix", "value": f"{user_id},"}
+                    ]
+                    
+                    document_results = list(
+                        cosmos_user_documents_container.query_items(
+                            query=query,
+                            parameters=parameters,
+                            enable_cross_partition_query=True
+                        )
+                    )
+                    
+                    if not document_results:
+                        error_msg = 'Document not found or access denied'
+                        debug_print(f"[Bulk Tag] Error for doc {doc_id}: {error_msg}")
                         results['errors'].append({
                             'document_id': doc_id,
-                            'error': 'Document not found or access denied'
+                            'error': error_msg
                         })
                         continue
+                    
+                    doc = document_results[0]
+                    debug_print(f"[Bulk Tag] Processing doc {doc_id}, current tags: {doc.get('tags', [])}")
                     
                     current_tags = doc.get('tags', [])
                     new_tags = []
@@ -895,6 +940,8 @@ def register_route_backend_documents(app):
                         # Replace all tags
                         new_tags = normalized_tags
                     
+                    debug_print(f"[Bulk Tag] New tags for doc {doc_id}: {new_tags}")
+                    
                     # Update document
                     update_document(
                         document_id=doc_id,
@@ -906,17 +953,22 @@ def register_route_backend_documents(app):
                     try:
                         propagate_tags_to_chunks(doc_id, new_tags, user_id)
                     except Exception as propagate_error:
-                        print(f"Warning: Failed to propagate tags for doc {doc_id}: {propagate_error}")
+                        debug_print(f"Warning: Failed to propagate tags for doc {doc_id}: {propagate_error}")
                     
                     results['success'].append({
                         'document_id': doc_id,
                         'tags': new_tags
                     })
+                    debug_print(f"[Bulk Tag] Successfully updated doc {doc_id}")
                     
                 except Exception as doc_error:
+                    error_msg = str(doc_error)
+                    debug_print(f"[Bulk Tag] Exception for doc {doc_id}: {error_msg}")
+                    import traceback
+                    traceback.print_exc()
                     results['errors'].append({
                         'document_id': doc_id,
-                        'error': str(doc_error)
+                        'error': error_msg
                     })
             
             # Invalidate cache
@@ -944,34 +996,74 @@ def register_route_backend_documents(app):
             "color": "#3b82f6"            // optional
         }
         """
+        debug_print(f"[UPDATE TAG] Starting update for tag: {tag_name}")
+        
         user_id = get_current_user_id()
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
         
+        debug_print(f"[UPDATE TAG] User ID: {user_id}")
+        
         data = request.get_json()
         new_name = data.get('new_name')
         new_color = data.get('color')
+        
+        debug_print(f"[UPDATE TAG] Request data - new_name: {new_name}, new_color: {new_color}")
         
         from functions_documents import (
             normalize_tag, validate_tags, get_documents,
             update_document, propagate_tags_to_chunks
         )
         from functions_settings import get_user_settings, update_user_settings
+        from utils_cache import invalidate_personal_search_cache
         
         try:
+            debug_print(f"[UPDATE TAG] Normalizing tag name...")
             normalized_old_tag = normalize_tag(tag_name)
+            debug_print(f"[UPDATE TAG] Normalized old tag: {normalized_old_tag}")
             
             # Handle rename
             if new_name:
+                debug_print(f"[UPDATE TAG] Handling rename operation...")
                 # Validate new name
                 is_valid, error_msg, normalized_new = validate_tags([new_name])
                 if not is_valid:
+                    debug_print(f"[UPDATE TAG] Validation failed: {error_msg}")
                     return jsonify({'error': error_msg}), 400
                 
                 normalized_new_tag = normalized_new[0]
+                debug_print(f"[UPDATE TAG] Normalized new tag: {normalized_new_tag}")
                 
-                # Get all documents with this tag
-                all_docs = get_documents(user_id)
+                # Query documents directly from Cosmos DB
+                debug_print(f"[UPDATE TAG] Querying documents from database...")
+                
+                query = """
+                    SELECT *
+                    FROM c
+                    WHERE c.user_id = @user_id OR ARRAY_CONTAINS(c.shared_user_ids, @user_id)
+                """
+                parameters = [{"name": "@user_id", "value": user_id}]
+                
+                documents = list(
+                    cosmos_user_documents_container.query_items(
+                        query=query,
+                        parameters=parameters,
+                        enable_cross_partition_query=True
+                    )
+                )
+                
+                debug_print(f"[UPDATE TAG] Found {len(documents)} total documents")
+                
+                # Get latest version of each document
+                latest_documents = {}
+                for doc in documents:
+                    file_name = doc['file_name']
+                    if file_name not in latest_documents or doc['version'] > latest_documents[file_name]['version']:
+                        latest_documents[file_name] = doc
+                
+                all_docs = list(latest_documents.values())
+                debug_print(f"[UPDATE TAG] Processing {len(all_docs)} unique documents")
+                
                 updated_count = 0
                 
                 for doc in all_docs:
@@ -990,26 +1082,37 @@ def register_route_backend_documents(app):
                         try:
                             propagate_tags_to_chunks(doc['id'], new_tags, user_id)
                         except Exception as propagate_error:
-                            print(f"Warning: Failed to propagate tags for doc {doc['id']}: {propagate_error}")
+                            debug_print(f"Warning: Failed to propagate tags for doc {doc['id']}: {propagate_error}")
                         
                         updated_count += 1
                 
+                debug_print(f"[UPDATE TAG] Updated {updated_count} documents")
+                
                 # Update tag definition
+                debug_print(f"[UPDATE TAG] Updating tag definition in settings...")
                 user_settings = get_user_settings(user_id)
-                tag_defs = user_settings.get('tag_definitions', {})
+                settings_dict = user_settings.get('settings', {})
+                tag_defs = settings_dict.get('tag_definitions', {})
                 personal_tags = tag_defs.get('personal', {})
+                
+                debug_print(f"[UPDATE TAG] Current personal_tags keys: {list(personal_tags.keys())}")
                 
                 if normalized_old_tag in personal_tags:
                     old_def = personal_tags.pop(normalized_old_tag)
                     personal_tags[normalized_new_tag] = old_def
+                    debug_print(f"[UPDATE TAG] Renamed tag in definitions")
+                else:
+                    debug_print(f"[UPDATE TAG] WARNING: Old tag not found in personal_tags!")
                     
                 tag_defs['personal'] = personal_tags
-                user_settings['tag_definitions'] = tag_defs
-                update_user_settings(user_id, user_settings)
+                debug_print(f"[UPDATE TAG] Calling update_user_settings...")
+                update_user_settings(user_id, {'tag_definitions': tag_defs})
                 
                 # Invalidate cache
+                debug_print(f"[UPDATE TAG] Invalidating search cache...")
                 invalidate_personal_search_cache(user_id)
                 
+                debug_print(f"[UPDATE TAG] Rename completed successfully")
                 return jsonify({
                     'message': f'Tag renamed from "{normalized_old_tag}" to "{normalized_new_tag}"',
                     'documents_updated': updated_count
@@ -1017,13 +1120,20 @@ def register_route_backend_documents(app):
             
             # Handle color change only
             if new_color:
+                debug_print(f"[UPDATE TAG] Handling color change operation...")
                 user_settings = get_user_settings(user_id)
-                tag_defs = user_settings.get('tag_definitions', {})
+                settings_dict = user_settings.get('settings', {})
+                tag_defs = settings_dict.get('tag_definitions', {})
                 personal_tags = tag_defs.get('personal', {})
                 
+                debug_print(f"[UPDATE TAG] Current personal_tags keys: {list(personal_tags.keys())}")
+                debug_print(f"[UPDATE TAG] Looking for tag: {normalized_old_tag}")
+                
                 if normalized_old_tag in personal_tags:
+                    debug_print(f"[UPDATE TAG] Found tag, updating color to: {new_color}")
                     personal_tags[normalized_old_tag]['color'] = new_color
                 else:
+                    debug_print(f"[UPDATE TAG] Tag not found, creating new entry with color: {new_color}")
                     from datetime import datetime, timezone
                     personal_tags[normalized_old_tag] = {
                         'color': new_color,
@@ -1031,16 +1141,22 @@ def register_route_backend_documents(app):
                     }
                 
                 tag_defs['personal'] = personal_tags
-                user_settings['tag_definitions'] = tag_defs
-                update_user_settings(user_id, user_settings)
+                debug_print(f"[UPDATE TAG] Final tag_defs to save: {tag_defs}")
+                debug_print(f"[UPDATE TAG] Calling update_user_settings...")
+                update_user_settings(user_id, {'tag_definitions': tag_defs})
                 
+                debug_print(f"[UPDATE TAG] Color change completed successfully")
                 return jsonify({
                     'message': f'Tag color updated for "{normalized_old_tag}"'
                 }), 200
             
+            debug_print(f"[UPDATE TAG] No updates specified!")
             return jsonify({'error': 'No updates specified'}), 400
             
         except Exception as e:
+            debug_print(f"[UPDATE TAG] ERROR: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return jsonify({'error': str(e)}), 500
     
     @app.route('/api/documents/tags/<tag_name>', methods=['DELETE'])
@@ -1055,7 +1171,7 @@ def register_route_backend_documents(app):
             return jsonify({'error': 'User not authenticated'}), 401
         
         from functions_documents import (
-            normalize_tag, get_documents, update_document, 
+            normalize_tag, update_document, 
             propagate_tags_to_chunks
         )
         from functions_settings import get_user_settings, update_user_settings
@@ -1063,8 +1179,36 @@ def register_route_backend_documents(app):
         try:
             normalized_tag = normalize_tag(tag_name)
             
-            # Get all documents with this tag
-            all_docs = get_documents(user_id)
+            # Query documents directly from Cosmos DB
+            debug_print(f"[DELETE TAG] Querying documents from database...")
+            
+            query = """
+                SELECT *
+                FROM c
+                WHERE c.user_id = @user_id OR ARRAY_CONTAINS(c.shared_user_ids, @user_id)
+            """
+            parameters = [{"name": "@user_id", "value": user_id}]
+            
+            documents = list(
+                cosmos_user_documents_container.query_items(
+                    query=query,
+                    parameters=parameters,
+                    enable_cross_partition_query=True
+                )
+            )
+            
+            debug_print(f"[DELETE TAG] Found {len(documents)} total documents")
+            
+            # Get latest version of each document
+            latest_documents = {}
+            for doc in documents:
+                file_name = doc['file_name']
+                if file_name not in latest_documents or doc['version'] > latest_documents[file_name]['version']:
+                    latest_documents[file_name] = doc
+            
+            all_docs = list(latest_documents.values())
+            debug_print(f"[DELETE TAG] Processing {len(all_docs)} unique documents")
+            
             updated_count = 0
             
             for doc in all_docs:
@@ -1082,20 +1226,20 @@ def register_route_backend_documents(app):
                     try:
                         propagate_tags_to_chunks(doc['id'], new_tags, user_id)
                     except Exception as propagate_error:
-                        print(f"Warning: Failed to propagate tags for doc {doc['id']}: {propagate_error}")
+                        debug_print(f"Warning: Failed to propagate tags for doc {doc['id']}: {propagate_error}")
                     
                     updated_count += 1
             
             # Remove tag definition
             user_settings = get_user_settings(user_id)
-            tag_defs = user_settings.get('tag_definitions', {})
+            settings_dict = user_settings.get('settings', {})
+            tag_defs = settings_dict.get('tag_definitions', {})
             personal_tags = tag_defs.get('personal', {})
             
             if normalized_tag in personal_tags:
                 personal_tags.pop(normalized_tag)
                 tag_defs['personal'] = personal_tags
-                user_settings['tag_definitions'] = tag_defs
-                update_user_settings(user_id, user_settings)
+                update_user_settings(user_id, {'tag_definitions': tag_defs})
             
             # Invalidate cache
             if updated_count > 0:
@@ -1237,7 +1381,7 @@ def register_route_backend_documents(app):
                                     'email': ''
                                 })
                         except Exception as e:
-                            print(f"Error fetching user details for {oid}: {e}")
+                            debug_print(f"Error fetching user details for {oid}: {e}")
                             shared_users.append({
                                 'id': oid,
                                 'approval_status': approval_status,
@@ -1299,7 +1443,7 @@ def register_route_backend_documents(app):
                 return jsonify({'error': 'Failed to remove from shared document'}), 500
     
         except Exception as e:
-            print(f"[ERROR] /api/documents/{document_id}/remove-self: {e}", flush=True)
+            debug_print(f"[ERROR] /api/documents/{document_id}/remove-self: {e}", flush=True)
             return jsonify({'error': f'Error removing from shared document: {str(e)}'}), 500
 
     @app.route('/api/documents/<document_id>/approve-share', methods=['POST'])
@@ -1351,9 +1495,9 @@ def register_route_backend_documents(app):
                                     shared_user_ids=new_shared_user_ids
                                 )
                             except Exception as chunk_e:
-                                print(f"Warning: Failed to update chunk {chunk_id}: {chunk_e}")
+                                debug_print(f"Warning: Failed to update chunk {chunk_id}: {chunk_e}")
                 except Exception as e:
-                    print(f"Warning: Failed to update chunks for document {document_id}: {e}")
+                    debug_print(f"Warning: Failed to update chunks for document {document_id}: {e}")
             
             # Invalidate cache for user who approved (their search results changed)
             if updated:

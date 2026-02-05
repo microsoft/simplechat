@@ -6374,8 +6374,21 @@ def get_workspace_tags(user_id, group_id=None, public_workspace_id=None):
         
         # Get tag definitions (colors) from user settings
         user_settings = get_user_settings(user_id)
-        tag_definitions = user_settings.get('tag_definitions', {})
+        
+        # Debug: Check structure of user_settings
+        print(f"DEBUG [get_workspace_tags]: user_settings keys: {list(user_settings.keys())}")
+        print(f"DEBUG [get_workspace_tags]: Has 'settings' key: {'settings' in user_settings}")
+        
+        # tag_definitions is inside the 'settings' sub-object
+        settings_dict = user_settings.get('settings', {})
+        tag_definitions = settings_dict.get('tag_definitions', {})
         workspace_tag_defs = tag_definitions.get(workspace_type, {})
+        
+        # Debug logging
+        print(f"DEBUG [get_workspace_tags]: user_id={user_id}, workspace_type={workspace_type}")
+        print(f"DEBUG [get_workspace_tags]: tag_definitions keys: {list(tag_definitions.keys())}")
+        print(f"DEBUG [get_workspace_tags]: workspace_tag_defs ({workspace_type}): {workspace_tag_defs}")
+        print(f"DEBUG [get_workspace_tags]: tag_counts: {tag_counts}")
         
         # Build result with colors from used tags
         results = []
@@ -6390,11 +6403,15 @@ def get_workspace_tags(user_id, group_id=None, public_workspace_id=None):
         # Add defined tags that haven't been used yet (count = 0)
         for tag_name, tag_def in workspace_tag_defs.items():
             if tag_name not in tag_counts:
+                print(f"DEBUG [get_workspace_tags]: Adding unused tag: {tag_name} with color {tag_def.get('color')}")
                 results.append({
                     'name': tag_name,
                     'count': 0,
                     'color': tag_def.get('color', get_default_tag_color(tag_name))
                 })
+        
+        print(f"DEBUG [get_workspace_tags]: Final results count: {len(results)}")
+        print(f"DEBUG [get_workspace_tags]: Final results: {results}")
         
         # Sort by count descending, then name ascending
         results.sort(key=lambda x: (-x['count'], x['name']))
@@ -6462,9 +6479,8 @@ def get_or_create_tag_definition(user_id, tag_name, workspace_type='personal', c
             'created_at': datetime.now(timezone.utc).isoformat()
         }
         
-        # Save updated settings
-        user_settings['tag_definitions'] = tag_definitions
-        update_user_settings(user_id, user_settings)
+        # Save updated settings - only pass the changed field to avoid nested structure
+        update_user_settings(user_id, {'tag_definitions': tag_definitions})
     
     return workspace_tags[tag_name]
 

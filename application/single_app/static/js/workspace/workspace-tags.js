@@ -96,7 +96,6 @@ function switchView(view) {
     } else {
         listView.style.display = 'none';
         gridView.style.display = 'block';
-        if (viewInfo) viewInfo.textContent = 'Click a folder to view its documents';
         renderGridView();
     }
 }
@@ -304,6 +303,9 @@ function updateDocTagsSelect() {
 
 // ============= Bulk Tag Management =============
 
+// Track selected tags for bulk operations
+let bulkSelectedTags = new Set();
+
 function setupBulkTagManagement() {
     const manageTagsBtn = document.getElementById('manage-tags-btn');
     const bulkTagModal = document.getElementById('bulkTagModal');
@@ -315,6 +317,11 @@ function setupBulkTagManagement() {
         manageTagsBtn.addEventListener('click', () => {
             const count = window.selectedDocuments?.size || 0;
             document.getElementById('bulk-tag-doc-count').textContent = count;
+            
+            // Clear selection and populate tags list
+            bulkSelectedTags.clear();
+            updateBulkTagsList();
+            
             modalInstance.show();
         });
         
@@ -327,35 +334,102 @@ function setupBulkTagManagement() {
     }
 }
 
-function updateBulkTagSelect() {
-    const select = document.getElementById('bulk-tag-select');
-    if (!select) return;
+function updateBulkTagsList() {
+    const listContainer = document.getElementById('bulk-tags-list');
+    if (!listContainer) return;
     
-    select.innerHTML = workspaceTags.map(tag => {
-        const textColor = isColorLight(tag.color) ? 'color: #212529' : 'color: #fff';
-        return `<option value="${escapeHtml(tag.name)}" style="background-color: ${tag.color}; ${textColor};">
-            ${escapeHtml(tag.name)}
-        </option>`;
-    }).join('');
+    if (workspaceTags.length === 0) {
+        listContainer.innerHTML = '<div class="text-muted w-100 text-center py-3">No tags available. Click "Create New Tag" to add some.</div>';
+        return;
+    }
+    
+    let html = '';
+    workspaceTags.forEach(tag => {
+        const textColor = isColorLight(tag.color) ? '#000' : '#fff';
+        const isSelected = bulkSelectedTags.has(tag.name);
+        const selectedClass = isSelected ? 'selected border-dark' : '';
+        const opacity = isSelected ? '1' : '0.7';
+        
+        html += `
+            <span class="badge tag-badge ${selectedClass}" 
+                  style="background-color: ${tag.color}; color: ${textColor}; opacity: ${opacity}; cursor: pointer; border: 2px solid transparent;"
+                  onclick="window.toggleBulkTag('${escapeHtml(tag.name)}', '${tag.color}', this)">
+                ${escapeHtml(tag.name)}
+                ${isSelected ? '<i class="bi bi-check-circle-fill ms-1"></i>' : ''}
+            </span>
+        `;
+    });
+    
+    listContainer.innerHTML = html;
+}
+
+// Make toggle function global so onclick can access it
+window.toggleBulkTag = function(tagName, color, element) {
+    if (bulkSelectedTags.has(tagName)) {
+        bulkSelectedTags.delete(tagName);
+        element.classList.remove('selected', 'border-dark');
+        element.style.opacity = '0.7';
+        // Remove checkmark
+        const icon = element.querySelector('.bi-check-circle-fill');
+        if (icon) icon.remove();
+    } else {
+        bulkSelectedTags.add(tagName);
+        element.classList.add('selected', 'border-dark');
+        element.style.opacity = '1';
+        // Add checkmark
+        element.innerHTML = `${escapeHtml(tagName)} <i class="bi bi-check-circle-fill ms-1"></i>`;
+    }
+};
+
+function updateBulkTagSelect() {
+    // This function is deprecated - now using updateBulkTagsList()
+    updateBulkTagsList();
 }
 
 async function applyBulkTagChanges() {
+    console.log('[Bulk Tag] Starting applyBulkTagChanges...');
+    
     const action = document.getElementById('bulk-tag-action').value;
-    const select = document.getElementById('bulk-tag-select');
-    const selectedTags = Array.from(select.selectedOptions).map(opt => opt.value);
+    console.log('[Bulk Tag] Action:', action);
+    
+    // Get selected tags from the bulkSelectedTags Set
+    const selectedTags = Array.from(bulkSelectedTags);
+    console.log('[Bulk Tag] Selected tags:', selectedTags);
+    console.log('[Bulk Tag] bulkSelectedTags Set:', bulkSelectedTags);
+    
     const documentIds = Array.from(window.selectedDocuments || []);
+    console.log('[Bulk Tag] Document IDs:', documentIds);
+    console.log('[Bulk Tag] window.selectedDocuments:', window.selectedDocuments);
     
     if (documentIds.length === 0) {
+        console.log('[Bulk Tag] ERROR: No documents selected');
         alert('No documents selected');
         return;
     }
     
     if (selectedTags.length === 0) {
-        alert('Please select at least one tag');
+        console.log('[Bulk Tag] ERROR: No tags selected');
+        alert('Please select at least one tag by clicking on it');
         return;
     }
     
+    // Show loading state
+    const applyBtn = document.getElementById('bulk-tag-apply-btn');
+    const buttonText = applyBtn.querySelector('.button-text');
+    const buttonLoading = applyBtn.querySelector('.button-loading');
+    
+    applyBtn.disabled = true;
+    buttonText.classList.add('d-none');
+    buttonLoading.classList.remove('d-none');
+    
+    console.log('[Bulk Tag] Preparing request with:', {
+        document_ids: documentIds,
+        action: action,
+        tags: selectedTags
+    });
+    
     try {
+        console.log('[Bulk Tag] Sending POST to /api/documents/bulk-tag...');
         const response = await fetch('/api/documents/bulk-tag', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -366,11 +440,25 @@ async function applyBulkTagChanges() {
             })
         });
         
+        console.log('[Bulk Tag] Response status:', response.status);
+        
         const result = await response.json();
+        console.log('[Bulk Tag] Response data:', result);
+        
+        // Log error details if any
+        if (result.errors && result.errors.length > 0) {
+            console.error('[Bulk Tag] Error details:', result.errors);
+            result.errors.forEach((err, idx) => {
+                console.error(`[Bulk Tag] Error ${idx + 1}:`, err);
+            });
+        }
         
         if (response.ok) {
             const successCount = result.success?.length || 0;
             const errorCount = result.errors?.length || 0;
+            
+            console.log('[Bulk Tag] Success count:', successCount);
+            console.log('[Bulk Tag] Error count:', errorCount);
             
             let message = `Tags updated for ${successCount} document(s)`;
             if (errorCount > 0) {
@@ -379,6 +467,7 @@ async function applyBulkTagChanges() {
             alert(message);
             
             // Reload workspace tags and documents
+            console.log('[Bulk Tag] Reloading tags and documents...');
             await loadWorkspaceTags();
             window.fetchUserDocuments?.();
             
@@ -391,6 +480,11 @@ async function applyBulkTagChanges() {
     } catch (error) {
         console.error('Error applying bulk tag changes:', error);
         alert('Error updating tags');
+    } finally {
+        // Reset button state
+        applyBtn.disabled = false;
+        buttonText.classList.remove('d-none');
+        buttonLoading.classList.add('d-none');
     }
 }
 

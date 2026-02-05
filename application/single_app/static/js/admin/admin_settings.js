@@ -2751,8 +2751,34 @@ document.addEventListener('DOMContentLoaded', () => {
         return r.json();
       })
       .then(response => {
-        if (response.missingFields && response.missingFields.length > 0) {
+        if (response.autoFixed) {
+          // Fields were automatically fixed
+          console.log(`✅ Auto-fixed ${type} index: added ${response.fieldsAdded.length} field(s):`, response.fieldsAdded.join(', '));
+          if (warnDiv) {
+            warnDiv.className = 'alert alert-success';
+            missingSpan.textContent = `Automatically added ${response.fieldsAdded.length} field(s): ${response.fieldsAdded.join(', ')}`;
+            warnDiv.style.display = 'block';
+            if (fixBtn) fixBtn.style.display = 'none';
+            
+            // Hide success message after 5 seconds
+            setTimeout(() => {
+              warnDiv.style.display = 'none';
+            }, 5000);
+          }
+        } else if (response.autoFixFailed) {
+          // Auto-fix failed, show manual button
+          console.warn(`Auto-fix failed for ${type} index:`, response.error);
+          missingSpan.textContent = response.missingFields.join(', ') + ' (Auto-fix failed - please fix manually)';
+          warnDiv.className = 'alert alert-warning';
+          warnDiv.style.display = 'block';
+          if (fixBtn) {
+            fixBtn.textContent = `Fix ${type} Index Fields`;
+            fixBtn.style.display = 'inline-block';
+          }
+        } else if (response.missingFields && response.missingFields.length > 0) {
+          // Missing fields but auto-fix was disabled
           missingSpan.textContent = response.missingFields.join(', ');
+          warnDiv.className = 'alert alert-warning';
           warnDiv.style.display = 'block';
           if (fixBtn) {
             fixBtn.textContent = `Fix ${type} Index Fields`;

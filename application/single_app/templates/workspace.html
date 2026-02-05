@@ -352,8 +352,6 @@
       >
         <div class="card p-3 my-3">
           <div id="legacy-update-prompt-placeholder"></div> 
-          <h5>Your Documents</h5>
-          <p class="text-muted small">Only you can see documents you upload.</p>
 
           <!-- Document Upload Form -->
           <div class="mb-3">
@@ -458,7 +456,7 @@
               
               <input type="radio" class="btn-check" name="docs-view-mode" id="docs-view-grid" autocomplete="off">
               <label class="btn btn-outline-secondary" for="docs-view-grid">
-                <i class="bi bi-grid-3x3-gap"></i> Folders
+                <i class="bi bi-grid-3x3-gap"></i> Grid
               </label>
             </div>
             <div class="d-flex align-items-center gap-2">
@@ -479,7 +477,7 @@
               </div>
               <div>
                 <button type="button" class="btn btn-sm btn-primary" id="manage-tags-btn">
-                  <i class="bi bi-tags me-1"></i>Manage Tags
+                  <i class="bi bi-tags me-1"></i>Tag Assignment
                 </button>
                 <button type="button" class="btn btn-sm btn-danger ms-2" id="delete-selected-btn">
                   <i class="bi bi-trash me-1"></i>Delete Selected
@@ -558,10 +556,8 @@
         aria-labelledby="prompts-tab-btn"
       >
         <div class="card p-3 my-3">
-          <h5>Your Prompts</h5>
-          <p class="text-muted">Create and manage personal prompts here.</p>
           <div class="mb-3">
-            <button id="create-prompt-btn" class="btn btn-success">
+            <button id="create-prompt-btn" class="btn btn-success btn-sm">
               New Prompt
             </button>
           </div>
@@ -633,9 +629,6 @@
           <div class="tab-pane-inner">
             <div class="card p-3 my-3">
               <div class="d-flex justify-content-between align-items-center mb-2">
-                <h5 class="mb-0 d-flex align-items-center gap-2">
-                  Your Agents
-                </h5>
                 <div class="d-flex align-items-center gap-2">
                   <button type="button" class="btn btn-outline-info btn-sm agent-examples-trigger" data-bs-toggle="modal" data-bs-target="#agentExamplesModal" data-trigger-button="#create-agent-btn">
                     <i class="bi bi-magic"></i>
@@ -684,9 +677,6 @@
           <template id="plugins-table-template">
             <div class="card p-3 my-3">
               <div class="d-flex justify-content-between align-items-center mb-2">
-                <h5 class="mb-0 d-flex align-items-center gap-2">
-                  Your Actions
-                </h5>
                 <button class="btn btn-success btn-sm" id="create-plugin-btn">New Action</button>
               </div>
               <div class="mb-3">
@@ -885,46 +875,61 @@
     </div>
   </div>
 
-<!-- Bulk Tag Management Modal -->
+<!-- Bulk Tag Assignment Modal -->
 <div class="modal fade" id="bulkTagModal" tabindex="-1" aria-labelledby="bulkTagModalLabel" aria-hidden="true">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title" id="bulkTagModalLabel">Manage Tags for Selected Documents</h5>
+        <h5 class="modal-title" id="bulkTagModalLabel">
+          <i class="bi bi-tags me-2"></i>Tag Assignment for Selected Documents
+        </h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
+        <!-- Document Count Info -->
+        <div class="alert alert-info mb-3">
+          <i class="bi bi-info-circle me-2"></i>
+          <strong>Selected:</strong> <span id="bulk-tag-doc-count">0</span> document(s)
+        </div>
+
+        <!-- Action Selection -->
         <div class="mb-3">
-          <label for="bulk-tag-action" class="form-label">Action</label>
+          <label for="bulk-tag-action" class="form-label fw-bold">Action</label>
           <select class="form-select" id="bulk-tag-action">
-            <option value="add_tags">Add Tags</option>
-            <option value="remove_tags">Remove Tags</option>
-            <option value="set_tags">Replace All Tags</option>
+            <option value="add_tags">Add Tags (append to existing)</option>
+            <option value="remove_tags">Remove Tags (remove specific tags)</option>
+            <option value="set_tags">Replace All Tags (overwrite existing)</option>
           </select>
         </div>
         
-        <!-- Tag Selection/Management Section -->
+        <!-- Tag Selection Section -->
         <div class="mb-3">
-          <label class="form-label d-flex justify-content-between align-items-center">
-            <span>Select Tags</span>
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <label class="form-label fw-bold mb-0">Select Tags to Apply</label>
             <button type="button" class="btn btn-sm btn-outline-primary" id="bulk-manage-tags-btn">
-              <i class="bi bi-gear"></i> Manage Tags
+              <i class="bi bi-plus-circle me-1"></i>Assign Tag
             </button>
-          </label>
-          <div class="border rounded p-2" style="max-height: 200px; overflow-y: auto;">
-            <div id="bulk-tags-list">
-              <div class="text-muted">No tags available. Click "Manage Tags" to create some.</div>
+          </div>
+          <div class="border rounded p-3 bg-light" style="min-height: 120px; max-height: 300px; overflow-y: auto;">
+            <div id="bulk-tags-list" class="d-flex flex-wrap gap-2">
+              <div class="text-muted w-100 text-center py-3">No tags available. Click "Assign Tag" to add some.</div>
             </div>
           </div>
-        </div>
-        
-        <div class="alert alert-info small mb-0">
-          <strong>Selected:</strong> <span id="bulk-tag-doc-count">0</span> document(s)
+          <div class="form-text mt-2">
+            Click tags to select/deselect them. Selected tags will be highlighted.
+          </div>
         </div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button type="button" class="btn btn-primary" id="bulk-tag-apply-btn">Apply Changes</button>
+        <button type="button" class="btn btn-primary" id="bulk-tag-apply-btn">
+          <span class="button-text">
+            <i class="bi bi-check-circle me-1"></i>Apply to Selected Documents
+          </span>
+          <span class="button-loading d-none">
+            <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Applying...
+          </span>
+        </button>
       </div>
     </div>
   </div>
@@ -941,8 +946,11 @@
       <div class="modal-body">
         <!-- Add New Tag Form -->
         <div class="card mb-3">
-          <div class="card-body">
-            <h6 class="card-title">Add New Tag</h6>
+          <div class="card-body position-relative">
+            <h6 class="card-title d-inline-block" id="tag-form-title">Add New Tag</h6>
+            <button type="button" class="btn btn-sm btn-link text-danger position-absolute top-0 end-0 mt-2 me-2 d-none" id="cancel-edit-btn" title="Cancel editing">
+              <i class="bi bi-x-circle"></i>
+            </button>
             <div class="row g-2">
               <div class="col-md-6">
                 <input type="text" class="form-control" id="new-tag-name" placeholder="Tag name (lowercase, alphanumeric)" maxlength="50">
@@ -989,6 +997,32 @@
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Delete Tag Confirmation Modal -->
+<div class="modal fade" id="deleteTagConfirmModal" tabindex="-1" aria-labelledby="deleteTagConfirmModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header bg-danger text-white">
+        <h5 class="modal-title" id="deleteTagConfirmModalLabel">
+          <i class="bi bi-exclamation-triangle-fill me-2"></i>Confirm Delete Tag
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="mb-2">Are you sure you want to delete the tag <strong id="delete-tag-name-display"></strong>?</p>
+        <p class="text-muted small mb-0">
+          <i class="bi bi-info-circle me-1"></i>This will remove it from all documents in your workspace.
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-danger" id="confirm-delete-tag-btn">
+          <i class="bi bi-trash"></i> Delete Tag
+        </button>
       </div>
     </div>
   </div>

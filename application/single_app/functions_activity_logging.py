@@ -170,6 +170,60 @@ def log_web_search_consent_acceptance(
         debug_print(f"Error logging web search consent acceptance for user {user_id}: {str(e)}")
 
 
+def log_index_auto_fix(
+    index_type: str,
+    missing_fields: list,
+    user_id: str = 'system',
+    admin_email: Optional[str] = None
+) -> None:
+    """
+    Log automatic Azure AI Search index field fixes to activity_logs and App Insights.
+
+    Args:
+        index_type (str): Type of index fixed ('user', 'group', or 'public').
+        missing_fields (list): List of field names that were added.
+        user_id (str, optional): User ID triggering the fix. Defaults to 'system'.
+        admin_email (str, optional): Admin email if triggered by admin.
+    """
+    try:
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'activity_type': 'index_auto_fix',
+            'user_id': user_id,
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'index_type': index_type,
+            'missing_fields': missing_fields,
+            'fields_added': len(missing_fields),
+            'trigger': 'automatic',
+            'description': f"Automatically added {len(missing_fields)} missing field(s) to {index_type} index: {', '.join(missing_fields)}"
+        }
+
+        if admin_email:
+            activity_record['admin_email'] = admin_email
+
+        cosmos_activity_logs_container.create_item(body=activity_record)
+
+        log_event(
+            message=f"Auto-fixed {index_type} index: added {len(missing_fields)} field(s)",
+            extra=activity_record,
+            level=logging.INFO
+        )
+        debug_print(f"Logged index auto-fix for {index_type} index: {', '.join(missing_fields)}")
+
+    except Exception as e:
+        log_event(
+            message=f"Error logging index auto-fix: {str(e)}",
+            extra={
+                'user_id': user_id,
+                'index_type': index_type,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+        debug_print(f"Error logging index auto-fix for {index_type}: {str(e)}")
+
+
 def log_document_upload(
     user_id: str,
     container_type: str,
