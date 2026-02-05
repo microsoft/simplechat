@@ -637,7 +637,11 @@ output var_videoIndexerName string = deployVideoIndexerService ? videoIndexerSer
 // output values required for predeploy script in azure.yaml
 output var_containerRegistry string = containerRegistry
 output var_imageName string = contains(imageName, ':') ? split(imageName, ':')[0] : imageName
-output var_imageTag string = split(imageName, ':')[1]
+//output var_imageTag string = split(imageName, ':')[1]
+output var_imageTag string = contains(imageName, ':')
+  ? split(imageName, ':')[1]
+  : 'latest'
+
 output var_webService string = appService.outputs.name
 
 // output values required for postup script in azure.yaml
