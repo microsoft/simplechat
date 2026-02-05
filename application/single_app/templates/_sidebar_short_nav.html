@@ -1,5 +1,9 @@
 {# Sidebar Navigation Partial - Short version without brand/logo #}
-<div id="sidebar-nav" class="d-flex flex-column bg-light border-end sidebar-expanded" style="width: 260px; min-width: 220px; position: fixed; left: 0; top: {% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}102px{% else %}58px{% endif %}; height: calc(100vh - {% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}102px{% else %}62px{% endif %}); z-index: 1040; transition: transform 0.3s ease;">
+<div id="sidebar-nav" class="d-flex flex-column bg-light border-end sidebar-expanded" style="width: var(--sidebar-width, 260px); min-width: var(--sidebar-min-width, 220px); position: fixed; left: 0; top: {% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}102px{% else %}58px{% endif %}; height: calc(100vh - {% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}102px{% else %}62px{% endif %}); z-index: 1040; transition: transform 0.3s ease;">
+
+  <div id="sidebar-resize-handle" class="sidebar-resize-handle" aria-label="Resize sidebar" role="separator" tabindex="0">
+    <i class="bi bi-grip-vertical"></i>
+  </div>
   
   <div id="sidebar-content" class="flex-grow-1 d-flex flex-column" style="padding-bottom: 80px; overflow-y: auto;">
     <ul class="nav flex-column">
@@ -249,8 +253,8 @@
       
       /* Fixed user account section */
       #sidebar-user-account {
-        width: 260px;
-        min-width: 220px;
+        width: var(--sidebar-width, 260px);
+        min-width: var(--sidebar-min-width, 220px);
         transition: inherit;
         backdrop-filter: blur(10px);
         -webkit-backdrop-filter: blur(10px);

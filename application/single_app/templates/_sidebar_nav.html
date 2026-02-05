@@ -1,5 +1,9 @@
 {# Sidebar Navigation Partial #}
-<div id="sidebar-nav" class="d-flex flex-column vh-100 bg-light border-end sidebar-expanded" style="width: 260px; min-width: 220px; position: fixed; left: 0; top: 0; z-index: 1040; transition: transform 0.3s ease;">
+<div id="sidebar-nav" class="d-flex flex-column vh-100 bg-light border-end sidebar-expanded" style="width: var(--sidebar-width, 260px); min-width: var(--sidebar-min-width, 220px); position: fixed; left: 0; top: 0; z-index: 1040; transition: transform 0.3s ease;">
+
+  <div id="sidebar-resize-handle" class="sidebar-resize-handle" aria-label="Resize sidebar" role="separator" tabindex="0">
+    <i class="bi bi-grip-vertical"></i>
+  </div>
   
   <!-- Collapse/Expand button -->
   <button type="button" id="sidebar-toggle-btn" class="btn btn-sm btn-outline-secondary position-absolute d-none d-sm-block"
@@ -847,8 +851,8 @@
       
       /* Fixed user account section */
       #sidebar-user-account {
-        width: 260px;
-        min-width: 220px;
+        width: var(--sidebar-width, 260px);
+        min-width: var(--sidebar-min-width, 220px);
         transition: inherit;
         backdrop-filter: blur(10px);
         -webkit-backdrop-filter: blur(10px);
