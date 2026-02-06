@@ -43,18 +43,13 @@ def register_route_frontend_workspace(app):
         )
         legacy_count = legacy_docs_from_cosmos[0] if legacy_docs_from_cosmos else 0
         
-        # Build allowed extensions string
-        allowed_extensions = [
-            "txt", "pdf", "doc", "docm", "docx", "xlsx", "xls", "xlsm","csv", "pptx", "html",
-            "jpg", "jpeg", "png", "bmp", "tiff", "tif", "heif", "md", "json",
-            "xml", "yaml", "yml", "log"
-        ]
-        if enable_video_file_support in [True, 'True', 'true']:
-            allowed_extensions += ["mp4", "mov", "avi", "wmv", "mkv", "webm"]
-        if enable_audio_file_support in [True, 'True', 'true']:
-            allowed_extensions += ["mp3", "wav", "ogg", "aac", "flac", "m4a"]
+        # Get allowed extensions from central function and build allowed extensions string
+        allowed_extensions = sorted(get_allowed_extensions(
+            enable_video=enable_video_file_support in [True, 'True', 'true'],
+            enable_audio=enable_audio_file_support in [True, 'True', 'true']
+        ))
         allowed_extensions_str = "Allowed: " + ", ".join(allowed_extensions)
-                
+        
         return render_template(
             'workspace.html', 
             settings=public_settings, 
