@@ -15,8 +15,8 @@ export function getFileType(fileName) {
     
     const ext = fileName.toLowerCase().split('.').pop();
     
-    const imageExtensions = ['jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'heif', 'heic'];
-    const videoExtensions = ['flv', 'mxf', 'ts', '3gp', 'mpg', 'mpeg', 'wmv', 'asf', 'avi', 'mp4', 'm4v', 'dvr-ms', 'mkv', 'mov', 'webm'];
+    const imageExtensions = ['jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif'];
+    const videoExtensions = ['mp4', 'mov', 'avi', 'mkv', 'flv', 'webm', 'wmv', 'm4v', '3gp'];
     const audioExtensions = ['mp3', 'wav', 'ogg', 'aac', 'flac', 'm4a'];
     
     if (imageExtensions.includes(ext)) return 'image';

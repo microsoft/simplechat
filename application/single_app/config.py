@@ -127,13 +127,13 @@ BASE_ALLOWED_EXTENSIONS = {'txt', 'doc', 'docm', 'html', 'md', 'json', 'xml', 'y
 DOCUMENT_EXTENSIONS = {'pdf', 'docx', 'pptx', 'ppt'}
 TABULAR_EXTENSIONS = {'csv', 'xlsx', 'xls', 'xlsm'}
 
-# Updates to image, video, or audio extensions should also be made in static/js/chat/chat-enhanced-citations.js
+# Updates to image, video, or audio extensions should also be made in static/js/chat/chat-enhanced-citations.js if the new file types can be natively rendered in the browser.
 IMAGE_EXTENSIONS = {'jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'heif', 'heic'}
 
 # Optional extensions by feature
 VIDEO_EXTENSIONS = {
-    'flv', 'mxf', 'ts', '3gp', 'mpg', 'mpeg', 'wmv', 'asf', 
-    'avi', 'mp4', 'm4v', 'dvr-ms', 'mkv', 'mov', 'webm'
+    'mp4', 'mov', 'avi', 'mkv', 'flv', 'mxf', 'gxf', 'ts', 'ps', '3gp', '3gpp',
+    'mpg', 'wmv', 'asf', 'm4v', 'isma', 'ismv', 'dvr-ms', 'webm', 'mpeg'
 }
 
 AUDIO_EXTENSIONS = {'mp3', 'wav', 'ogg', 'aac', 'flac', 'm4a'}
