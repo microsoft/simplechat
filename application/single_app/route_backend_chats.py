@@ -1,5 +1,4 @@
 # route_backend_chats.py
-
 from semantic_kernel import Kernel
 from semantic_kernel.agents.runtime import InProcessRuntime
 from semantic_kernel.contents.chat_history import ChatHistory
@@ -64,7 +63,7 @@ def register_route_backend_chats(app):
             image_gen_enabled = data.get('image_generation')
             document_scope = data.get('doc_scope')
             reload_messages_required = False
-    
+
             def parse_json_string(candidate: str) -> Any:
                 """Parse JSON content when strings look like serialized structures."""
                 trimmed = candidate.strip()
@@ -78,39 +77,39 @@ def register_route_backend_chats(app):
                         level=logging.DEBUG
                     )
                     return None
-    
+
             def dict_requires_reload(payload: Dict[str, Any]) -> bool:
                 """Inspect dictionary payloads for any signal that messages were persisted."""
                 if payload.get('reload_messages') or payload.get('requires_message_reload'):
                     return True
-    
+
                 metadata = payload.get('metadata')
                 if isinstance(metadata, dict) and metadata.get('requires_message_reload'):
                     return True
-    
+
                 image_url = payload.get('image_url')
                 if isinstance(image_url, dict) and image_url.get('url'):
                     return True
                 if isinstance(image_url, str) and image_url.strip():
                     return True
-    
+
                 result_type = payload.get('type')
                 if isinstance(result_type, str) and result_type.lower() == 'image_url':
                     return True
-    
+
                 mime = payload.get('mime')
                 if isinstance(mime, str) and mime.startswith('image/'):
                     return True
-    
+
                 for value in payload.values():
                     if result_requires_message_reload(value):
                         return True
                 return False
-    
+
             def list_requires_reload(items: List[Any]) -> bool:
                 """Evaluate list items for reload requirements."""
                 return any(result_requires_message_reload(item) for item in items)
-    
+
             def result_requires_message_reload(result: Any) -> bool:
                 """Heuristically detect plugin outputs that inject new Cosmos messages (e.g., chart images)."""
                 if result is None:
@@ -172,9 +171,9 @@ def register_route_backend_chats(app):
             enable_summarize_content_history_beyond_conversation_history_limit = settings.get('enable_summarize_content_history_beyond_conversation_history_limit', True) # Use a dedicated setting if possible
             enable_summarize_content_history_for_search = settings.get('enable_summarize_content_history_for_search', False) # Use a dedicated setting if possible
             number_of_historical_messages_to_summarize = settings.get('number_of_historical_messages_to_summarize', 10) # Number of messages to summarize for search context
-    
+
             max_file_content_length = 50000 # 50KB
-    
+
             # Convert toggles from string -> bool if needed
             if isinstance(hybrid_search_enabled, str):
                 hybrid_search_enabled = hybrid_search_enabled.lower() == 'true'
@@ -182,25 +181,25 @@ def register_route_backend_chats(app):
                 web_search_enabled = web_search_enabled.lower() == 'true'
             if isinstance(image_gen_enabled, str):
                 image_gen_enabled = image_gen_enabled.lower() == 'true'
-    
+
             # GPT & Image generation APIM or direct
             gpt_model = ""
             gpt_client = None
             enable_gpt_apim = settings.get('enable_gpt_apim', False)
             enable_image_gen_apim = settings.get('enable_image_gen_apim', False)
-    
+
             try:
                 if enable_gpt_apim:
                     # read raw comma-delimited deployments
                     raw = settings.get('azure_apim_gpt_deployment', '')
                     if not raw:
                         raise ValueError("APIM GPT deployment name not configured.")
-    
+
                     # split, strip, and filter out empty entries
                     apim_models = [m.strip() for m in raw.split(',') if m.strip()]
                     if not apim_models:
                         raise ValueError("No valid APIM GPT deployment names found.")
-    
+
                     # if frontend specified one, use it (must be in the configured list)
                     if frontend_gpt_model:
                         if frontend_gpt_model not in apim_models:
@@ -208,18 +207,18 @@ def register_route_backend_chats(app):
                                 f"Requested model '{frontend_gpt_model}' is not configured for APIM."
                             )
                         gpt_model = frontend_gpt_model
-    
+
                     # otherwise if there's exactly one deployment, default to it
                     elif len(apim_models) == 1:
                         gpt_model = apim_models[0]
-    
+
                     # otherwise you must pass model_deployment in the request
                     else:
                         raise ValueError(
                             "Multiple APIM GPT deployments configured; please include "
                             "'model_deployment' in your request."
                         )
-    
+
                     # initialize the APIM client
                     gpt_client = AzureOpenAI(
                         api_version=settings.get('azure_apim_gpt_api_version'),
@@ -231,14 +230,14 @@ def register_route_backend_chats(app):
                     endpoint = settings.get('azure_openai_gpt_endpoint')
                     api_version = settings.get('azure_openai_gpt_api_version')
                     gpt_model_obj = settings.get('gpt_model', {})
-    
+
                     if gpt_model_obj and gpt_model_obj.get('selected'):
                         selected_gpt_model = gpt_model_obj['selected'][0]
                         gpt_model = selected_gpt_model['deploymentName']
                     else:
                         # Fallback or raise error if no model selected/configured
                         raise ValueError("No GPT model selected or configured.")
-    
+
                     if frontend_gpt_model:
                         gpt_model = frontend_gpt_model
                     elif gpt_model_obj and gpt_model_obj.get('selected'):
@@ -246,7 +245,7 @@ def register_route_backend_chats(app):
                         gpt_model = selected_gpt_model['deploymentName']
                     else:
                         raise ValueError("No GPT model selected or configured.")
-    
+
                     if auth_type == 'managed_identity':
                         token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
                         gpt_client = AzureOpenAI(
@@ -262,10 +261,10 @@ def register_route_backend_chats(app):
                             azure_endpoint=endpoint,
                             api_key=api_key
                         )
-    
+
                 if not gpt_client or not gpt_model:
                     raise ValueError("GPT Client or Model could not be initialized.")
-    
+
             except Exception as e:
                 debug_print(f"Error initializing GPT client/model: {e}")
                 # Handle error appropriately - maybe return 500 or default behavior
@@ -331,7 +330,7 @@ def register_route_backend_chats(app):
                 except Exception as e:
                     debug_print(f"Error reading conversation {conversation_id}: {e}")
                     return jsonify({'error': f'Error reading conversation: {str(e)}'}), 500
-    
+
             # Determine the actual chat context based on existing conversation or document usage
             # For existing conversations, use the chat_type from conversation metadata
             # For new conversations, it will be determined during metadata collection
@@ -443,7 +442,7 @@ def register_route_backend_chats(app):
                         doc_results = list(cosmos_container.query_items(
                             query=doc_query, parameters=doc_params, enable_cross_partition_query=True
                         ))
-                        if doc_results:
+                        if doc_results and 'workspace_search' in user_metadata:
                             doc_info = doc_results[0]
                             user_metadata['workspace_search']['document_name'] = doc_info.get('title') or doc_info.get('file_name')
                             user_metadata['workspace_search']['document_filename'] = doc_info.get('file_name')
@@ -464,30 +463,24 @@ def register_route_backend_chats(app):
                             if not allowed:
                                 return jsonify({'error': reason}), 403
                             
-                            # Ensure workspace_search exists before accessing
-                            if 'workspace_search' not in user_metadata:
-                                user_metadata['workspace_search'] = {'search_enabled': False}
-                            
                             if group_doc.get('name'):
                                 group_name = group_doc.get('name')
-                                user_metadata['workspace_search']['group_name'] = group_name
-                                debug_print(f"Workspace search - set group_name to: {group_name}")
+                                if 'workspace_search' in user_metadata:
+                                    user_metadata['workspace_search']['group_name'] = group_name
+                                    debug_print(f"Workspace search - set group_name to: {group_name}")
                             else:
                                 debug_print(f"Workspace search - no name for group: {active_group_id}")
-                                user_metadata['workspace_search']['group_name'] = None
+                                if 'workspace_search' in user_metadata:
+                                    user_metadata['workspace_search']['group_name'] = None
                         else:
                             debug_print(f"Workspace search - no group found for id: {active_group_id}")
-                            # Ensure workspace_search exists before accessing
-                            if 'workspace_search' not in user_metadata:
-                                user_metadata['workspace_search'] = {'search_enabled': False}
-                            user_metadata['workspace_search']['group_name'] = None
+                            if 'workspace_search' in user_metadata:
+                                user_metadata['workspace_search']['group_name'] = None
                             
                     except Exception as e:
                         debug_print(f"Error retrieving group details: {e}")
-                        # Ensure workspace_search exists before accessing
-                        if 'workspace_search' not in user_metadata:
-                            user_metadata['workspace_search'] = {'search_enabled': False}
-                        user_metadata['workspace_search']['group_name'] = None
+                        if 'workspace_search' in user_metadata:
+                            user_metadata['workspace_search']['group_name'] = None
                         import traceback
                         traceback.print_exc()
                 
@@ -503,16 +496,14 @@ def register_route_backend_chats(app):
                     except Exception as e:
                         debug_print(f"Error checking public workspace status: {e}")
                     
-                    # Ensure workspace_search exists before accessing
-                    if 'workspace_search' not in user_metadata:
-                        user_metadata['workspace_search'] = {'search_enabled': False}
-                    user_metadata['workspace_search']['active_public_workspace_id'] = active_public_workspace_id
-                else:
-                    # Only set if not already set above
-                    if 'workspace_search' not in user_metadata:
-                        user_metadata['workspace_search'] = {
-                            'search_enabled': False
-                        }
+                    if 'workspace_search' in user_metadata:
+                        user_metadata['workspace_search']['active_public_workspace_id'] = active_public_workspace_id
+                
+                # Ensure workspace_search key always exists for consistency
+                if 'workspace_search' not in user_metadata:
+                    user_metadata['workspace_search'] = {
+                        'search_enabled': False
+                    }
             
                 # Agent selection (if available)
                 if hasattr(g, 'kernel_agents') and g.kernel_agents:
@@ -602,7 +593,7 @@ def register_route_backend_chats(app):
                         previous_thread_id = last_msgs[0].get('thread_id')
                 except Exception as e:
                     debug_print(f"Error fetching last message for threading: {e}")
-    
+
                 # Generate thread_id for the user message
                 # We track the 'tip' of the thread in latest_thread_id
                 import uuid
@@ -656,7 +647,7 @@ def register_route_backend_chats(app):
                 if conversation_item.get('title', 'New Conversation') == 'New Conversation' and user_message:
                     new_title = (user_message[:30] + '...') if len(user_message) > 30 else user_message
                     conversation_item['title'] = new_title
-    
+
                 conversation_item['last_updated'] = datetime.utcnow().isoformat()
                 cosmos_conversations_container.upsert_item(conversation_item) # Update timestamp and potentially title
         # region 3 - Content Safety
@@ -668,13 +659,13 @@ def register_route_backend_chats(app):
             block_reasons = []
             triggered_categories = []
             blocklist_matches = []
-    
+
             if settings.get('enable_content_safety') and "content_safety_client" in CLIENTS:
                 try:
                     content_safety_client = CLIENTS["content_safety_client"]
                     request_obj = AnalyzeTextOptions(text=user_message)
                     cs_response = content_safety_client.analyze_text(request_obj)
-    
+
                     max_severity = 0
                     for cat_result in cs_response.categories_analysis:
                         triggered_categories.append({
@@ -683,7 +674,7 @@ def register_route_backend_chats(app):
                         })
                         if cat_result.severity > max_severity:
                             max_severity = cat_result.severity
-    
+
                     if cs_response.blocklists_match:
                         for match in cs_response.blocklists_match:
                             blocklist_matches.append({
@@ -691,7 +682,7 @@ def register_route_backend_chats(app):
                                 "blocklistItemId": match.blocklist_item_id,
                                 "blocklistItemText": match.blocklist_item_text
                             })
-    
+
                     # Example: If severity >=4 or blocklist, we call it "blocked"
                     if max_severity >= 4:
                         blocked = True
@@ -714,7 +705,7 @@ def register_route_backend_chats(app):
                             'metadata': {}
                         }
                         cosmos_safety_container.upsert_item(safety_item)
-    
+
                         # Instead of 403, we'll add a "safety" message
                         blocked_msg_content = (
                             "Your message was blocked by Content Safety.\n\n"
@@ -731,10 +722,10 @@ def register_route_backend_chats(app):
                                 "\n".join([f" - {m['blocklistItemText']} (in {m['blocklistName']})"
                                         for m in blocklist_matches])
                             )
-    
+
                         # Insert a special "role": "safety" or "blocked"
                         safety_message_id = f"{conversation_id}_safety_{int(time.time())}_{random.randint(1000,9999)}"
-    
+
                         safety_doc = {
                             'id': safety_message_id,
                             'conversation_id': conversation_id,
@@ -745,11 +736,11 @@ def register_route_backend_chats(app):
                             'metadata': {},  # No metadata needed for safety messages
                         }
                         cosmos_messages_container.upsert_item(safety_doc)
-    
+
                         # Update conversation's last_updated
                         conversation_item['last_updated'] = datetime.utcnow().isoformat()
                         cosmos_conversations_container.upsert_item(conversation_item)
-    
+
                         # Return a normal 200 with a special field: blocked=True
                         return jsonify({
                             'reply': blocked_msg_content.strip(),
@@ -760,7 +751,7 @@ def register_route_backend_chats(app):
                             'conversation_title': conversation_item['title'],
                             'message_id': safety_message_id
                         }), 200
-    
+
                 except HttpResponseError as e:
                     debug_print(f"[Content Safety Error] {e}")
                 except Exception as ex:
@@ -779,15 +770,13 @@ def register_route_backend_chats(app):
                     limit_n_search = number_of_historical_messages_to_summarize * 2
                     query_search = f"SELECT TOP {limit_n_search} * FROM c WHERE c.conversation_id = @conv_id ORDER BY c.timestamp DESC"
                     params_search = [{"name": "@conv_id", "value": conversation_id}]
-
-
-​                    
-​                    try:
-​                        last_messages_desc = list(cosmos_messages_container.query_items(
-​                            query=query_search, parameters=params_search, partition_key=conversation_id, enable_cross_partition_query=True
-​                        ))
-​                        last_messages_asc = list(reversed(last_messages_desc))
-​    
+                    
+                    
+                    try:
+                        last_messages_desc = list(cosmos_messages_container.query_items(
+                            query=query_search, parameters=params_search, partition_key=conversation_id, enable_cross_partition_query=True
+                        ))
+                        last_messages_asc = list(reversed(last_messages_desc))
 
                         if last_messages_asc and len(last_messages_asc) >= conversation_history_limit:
                             summary_prompt_search = "Please summarize the key topics or questions from this recent conversation history in 50 words or less:\n\n"
@@ -810,7 +799,7 @@ def register_route_backend_chats(app):
                                 debug_print("[THREAD] No active thread messages available for search summary")
                             else:
                                 summary_prompt_search += "\n".join(message_texts_search)
-    
+
                                 try:
                                     # Use the already initialized gpt_client and gpt_model
                                     summary_response_search = gpt_client.chat.completions.create(
@@ -884,12 +873,12 @@ def register_route_backend_chats(app):
                     return jsonify({
                         'error': 'There was an issue with the embedding process. Please check with an admin on embedding configuration.'
                     }), 500
-    
+
                 if search_results:
                     retrieved_texts = []
                     combined_documents = []
                     classifications_found = set(conversation_item.get('classification', [])) # Load existing
-    
+
                     for doc in search_results:
                         # ... (your existing doc processing logic) ...
                         chunk_text = doc.get('chunk_text', '')
@@ -902,7 +891,7 @@ def register_route_backend_chats(app):
                         chunk_id = doc.get('chunk_id', str(uuid.uuid4())) # Ensure ID exists
                         score = doc.get('score', 0.0) # Add default score
                         group_id = doc.get('group_id', None) # Add default group ID
-    
+
                         citation = f"(Source: {file_name}, Page: {page_number}) [#{citation_id}]"
                         retrieved_texts.append(f"{chunk_text}\n{citation}")
                         combined_documents.append({
@@ -919,16 +908,16 @@ def register_route_backend_chats(app):
                         })
                         if classification:
                             classifications_found.add(classification)
-    
+
                     retrieved_content = "\n\n".join(retrieved_texts)
                     # Construct system prompt for search results
                     system_prompt_search = f"""You are an AI assistant. Use the following retrieved document excerpts to answer the user's question. Cite sources using the format (Source: filename, Page: page number).
-    
+
                         Retrieved Excerpts:
                         {retrieved_content}
-    
+
                         Based *only* on the information provided above, answer the user's query. If the answer isn't in the excerpts, say so.
-    
+
                         Example
                         User: What is the policy on double dipping?
                         Assistant: The policy prohibits entities from using federal funds received through one program to apply for additional funds through another program, commonly known as 'double dipping' (Source: PolicyDocument.pdf, Page: 12)
@@ -939,7 +928,7 @@ def register_route_backend_chats(app):
                         'content': system_prompt_search,
                         'documents': combined_documents # Keep track of docs used
                     })
-    
+
                     # Loop through each source document/chunk used for this message
                     for source_doc in combined_documents:
                         # 4. Create a citation dictionary, selecting the desired fields
@@ -959,92 +948,85 @@ def register_route_backend_chats(app):
                         }
                         # Using .get() provides None if a key is missing, preventing KeyErrors
                         hybrid_citations_list.append(citation_data)
-    
+
                     # Reorder hybrid citations list in descending order based on page_number
                     hybrid_citations_list.sort(key=lambda x: x.get('page_number', 0), reverse=True)
-    
+
                     # --- NEW: Extract metadata (keywords/abstract) for additional citations ---
                     # Only if extract_metadata is enabled
                     if settings.get('enable_extract_meta_data', False):
                         from functions_documents import get_document_metadata_for_citations
-    
+
                         # Track which documents we've already processed to avoid duplicates
                         processed_doc_ids = set()
-    
+
                         for doc in search_results:
                             # Get document ID (from the chunk's document reference)
                             # AI Search chunks contain references to their parent document
                             doc_id = doc.get('id', '').split('_')[0] if doc.get('id') else None
-    
+
                             # Skip if we've already processed this document
                             if not doc_id or doc_id in processed_doc_ids:
                                 continue
-    
+
                             processed_doc_ids.add(doc_id)
                             # Determine workspace type from the search result fields
                             doc_user_id = doc.get('user_id')
                             doc_group_id = doc.get('group_id')
                             doc_public_workspace_id = doc.get('public_workspace_id')
 
+                            
+                            # Query Cosmos for this document's metadata
+                            metadata = get_document_metadata_for_citations(
+                                document_id=doc_id,
+                                user_id=doc_user_id if doc_user_id else None,
+                                group_id=doc_group_id if doc_group_id else None,
+                                public_workspace_id=doc_public_workspace_id if doc_public_workspace_id else None
+                            )
 
-​                            
-​                            # Query Cosmos for this document's metadata
-​                            metadata = get_document_metadata_for_citations(
-​                                document_id=doc_id,
-​                                user_id=doc_user_id if doc_user_id else None,
-​                                group_id=doc_group_id if doc_group_id else None,
-​                                public_workspace_id=doc_public_workspace_id if doc_public_workspace_id else None
-​                            )
+                            
+                            # If we have metadata with content, create additional citations
+                            if metadata:
+                                file_name = metadata.get('file_name', 'Unknown')
+                                keywords = metadata.get('keywords', [])
+                                abstract = metadata.get('abstract', '')
 
+                                
+                                # Create citation for keywords if they exist
+                                if keywords and len(keywords) > 0:
+                                    keywords_text = ', '.join(keywords) if isinstance(keywords, list) else str(keywords)
+                                    keywords_citation_id = f"{doc_id}_keywords"
 
-​                            
-​                            # If we have metadata with content, create additional citations
-​                            if metadata:
-​                                file_name = metadata.get('file_name', 'Unknown')
-​                                keywords = metadata.get('keywords', [])
-​                                abstract = metadata.get('abstract', '')
-
-
-​                                
-​                                # Create citation for keywords if they exist
-​                                if keywords and len(keywords) > 0:
-​                                    keywords_text = ', '.join(keywords) if isinstance(keywords, list) else str(keywords)
-​                                    keywords_citation_id = f"{doc_id}_keywords"
-
-
-​                                    
-​                                    keywords_citation = {
-​                                        "file_name": file_name,
-​                                        "citation_id": keywords_citation_id,
-​                                        "page_number": "Metadata",  # Special page identifier
-​                                        "chunk_id": keywords_citation_id,
-​                                        "chunk_sequence": 9999,  # High number to sort to end
-​                                        "score": 0.0,  # No relevance score for metadata
-​                                        "group_id": doc_group_id,
-​                                        "version": doc.get('version', 'N/A'),
-​                                        "classification": doc.get('document_classification'),
-​                                        "metadata_type": "keywords",  # Flag this as metadata citation
-​                                        "metadata_content": keywords_text
-​                                    }
-​                                    hybrid_citations_list.append(keywords_citation)
-​                                    combined_documents.append(keywords_citation)  # Add to combined_documents too
-​    
+                                    
+                                    keywords_citation = {
+                                        "file_name": file_name,
+                                        "citation_id": keywords_citation_id,
+                                        "page_number": "Metadata",  # Special page identifier
+                                        "chunk_id": keywords_citation_id,
+                                        "chunk_sequence": 9999,  # High number to sort to end
+                                        "score": 0.0,  # No relevance score for metadata
+                                        "group_id": doc_group_id,
+                                        "version": doc.get('version', 'N/A'),
+                                        "classification": doc.get('document_classification'),
+                                        "metadata_type": "keywords",  # Flag this as metadata citation
+                                        "metadata_content": keywords_text
+                                    }
+                                    hybrid_citations_list.append(keywords_citation)
+                                    combined_documents.append(keywords_citation)  # Add to combined_documents too
 
                                     # Add keywords to retrieved content for the model
                                     keywords_context = f"Document Keywords ({file_name}): {keywords_text}"
                                     retrieved_texts.append(keywords_context)
-    
+
                                 # Create citation for abstract if it exists
                                 if abstract and len(abstract.strip()) > 0:
                                     abstract_citation_id = f"{doc_id}_abstract"
 
-
-​                                    
-​                                    # Add keywords to retrieved content for the model
-​                                    keywords_context = f"Document Keywords ({file_name}): {keywords_text}"
-​                                    retrieved_texts.append(keywords_context)
-​                                
-
+                                    
+                                    # Add keywords to retrieved content for the model
+                                    keywords_context = f"Document Keywords ({file_name}): {keywords_text}"
+                                    retrieved_texts.append(keywords_context)
+                                
                                 # Create citation for abstract if it exists
                                 if abstract and len(abstract.strip()) > 0:
                                     abstract_citation_id = f"{doc_id}_abstract"
@@ -1064,18 +1046,16 @@ def register_route_backend_chats(app):
                                     }
                                     hybrid_citations_list.append(abstract_citation)
                                     combined_documents.append(abstract_citation)  # Add to combined_documents too
-    
+
                                     # Add abstract to retrieved content for the model
                                     abstract_context = f"Document Abstract ({file_name}): {abstract}"
                                     retrieved_texts.append(abstract_context)
 
-
-​                                    
-​                                    # Add abstract to retrieved content for the model
-​                                    abstract_context = f"Document Abstract ({file_name}): {abstract}"
-​                                    retrieved_texts.append(abstract_context)
-​                                
-
+                                    
+                                    # Add abstract to retrieved content for the model
+                                    abstract_context = f"Document Abstract ({file_name}): {abstract}"
+                                    retrieved_texts.append(abstract_context)
+                                
                                 # Create citation for vision analysis if it exists
                                 vision_analysis = metadata.get('vision_analysis')
                                 if vision_analysis:
@@ -1114,22 +1094,20 @@ def register_route_backend_chats(app):
                                     vision_context = f"AI Vision Analysis ({file_name}): {vision_content}"
                                     retrieved_texts.append(vision_context)
 
-
-​                        
-​                        # Update the system prompt with the enhanced content including metadata
-​                        if retrieved_texts:
-​                            retrieved_content = "\n\n".join(retrieved_texts)
-​                            system_prompt_search = f"""You are an AI assistant. Use the following retrieved document excerpts to answer the user's question. Cite sources using the format (Source: filename, Page: page number).
-​                                Retrieved Excerpts:
-​                                {retrieved_content}
-​                                Based *only* on the information provided above, answer the user's query. If the answer isn't in the excerpts, say so.
-​    
+                        
+                        # Update the system prompt with the enhanced content including metadata
+                        if retrieved_texts:
+                            retrieved_content = "\n\n".join(retrieved_texts)
+                            system_prompt_search = f"""You are an AI assistant. Use the following retrieved document excerpts to answer the user's question. Cite sources using the format (Source: filename, Page: page number).
+                                Retrieved Excerpts:
+                                {retrieved_content}
+                                Based *only* on the information provided above, answer the user's query. If the answer isn't in the excerpts, say so.
 
                                 Retrieved Excerpts:
                                 {retrieved_content}
-    
+
                                 Based *only* on the information provided above, answer the user's query. If the answer isn't in the excerpts, say so.
-    
+
                                 Example
                                 User: What is the policy on double dipping?
                                 Assistant: The policy prohibits entities from using federal funds received through one program to apply for additional funds through another program, commonly known as 'double dipping' (Source: PolicyDocument.pdf, Page: 12)
@@ -1139,12 +1117,12 @@ def register_route_backend_chats(app):
                                 system_messages_for_augmentation[-1]['content'] = system_prompt_search
                                 system_messages_for_augmentation[-1]['documents'] = combined_documents
                     # --- END NEW METADATA CITATIONS ---
-    
+
                     # Update conversation classifications if new ones were found
                     if list(classifications_found) != conversation_item.get('classification', []):
                         conversation_item['classification'] = list(classifications_found)
                         # No need to upsert item here, will be updated later
-    
+
             # Update message-level chat_type based on actual document usage for this message
             # This must happen after document search is completed so search_results is populated
             message_chat_type = None
@@ -1208,7 +1186,7 @@ def register_route_backend_chats(app):
             # Update the user message in Cosmos DB with the final chat_type information
             cosmos_messages_container.upsert_item(user_message_doc)
             debug_print(f"User message re-saved to Cosmos DB with updated chat_context")
-    
+
             # Image Generation
             if image_gen_enabled:
                 if enable_image_gen_apim:
@@ -1227,7 +1205,7 @@ def register_route_backend_chats(app):
                             azure_ad_token_provider=token_provider
                         )
                         image_gen_model_obj = settings.get('image_gen_model', {})
-    
+
                         if image_gen_model_obj and image_gen_model_obj.get('selected'):
                             selected_image_gen_model = image_gen_model_obj['selected'][0]
                             image_gen_model = selected_image_gen_model['deploymentName']
@@ -1241,7 +1219,7 @@ def register_route_backend_chats(app):
                         if image_gen_obj and image_gen_obj.get('selected'):
                             selected_image_gen_model = image_gen_obj['selected'][0]
                             image_gen_model = selected_image_gen_model['deploymentName']
-    
+
                 try:
                     debug_print(f"Generating image with model: {image_gen_model}")
                     debug_print(f"Using prompt: {user_message}")
@@ -1292,7 +1270,7 @@ def register_route_backend_chats(app):
                     # Validate we have a valid image source
                     if not generated_image_url or generated_image_url == 'null':
                         raise ValueError("Generated image URL is null or empty")
-    
+
                     image_message_id = f"{conversation_id}_image_{int(time.time())}_{random.randint(1000,9999)}"
                     
                     # Check if image data is too large for a single Cosmos document (2MB limit)
@@ -1328,12 +1306,10 @@ def register_route_backend_chats(app):
                             debug_print(f"✅ Chunking verification passed - can reassemble to original size")
                         else:
                             debug_print(f"❌ Chunking verification failed - {len(reassembled_test)} vs {len(generated_image_url)}")
-
-
-​                        
-​                        # Create main image document with metadata
-​                        
-
+                        
+                        
+                        # Create main image document with metadata
+                        
                         # Get user_info and thread_id from the user message for ownership tracking and threading
                         user_info_for_chunked_image = None
                         user_thread_id = None
@@ -1452,10 +1428,10 @@ def register_route_backend_chats(app):
                         cosmos_messages_container.upsert_item(image_doc)
                         response_image_url = generated_image_url
                         # Image message shares the same thread as user message
-    
+
                     conversation_item['last_updated'] = datetime.utcnow().isoformat()
                     cosmos_conversations_container.upsert_item(conversation_item)
-    
+
                     return jsonify({
                         'reply': "Image loading...",
                         'image_url': response_image_url,
@@ -1487,7 +1463,7 @@ def register_route_backend_chats(app):
                     return jsonify({
                         'error': user_friendly_message
                     }), status_code
-    
+
             if web_search_enabled:
                 perform_web_search(
                     settings=settings,
@@ -1520,20 +1496,20 @@ def register_route_backend_chats(app):
                 all_messages = list(cosmos_messages_container.query_items(
                     query=all_messages_query, parameters=params_all, partition_key=conversation_id, enable_cross_partition_query=True
                 ))
-    
+
                 # Sort messages using threading logic
                 all_messages = sort_messages_by_thread(all_messages)
-    
+
                 total_messages = len(all_messages)
-    
+
                 # Determine which messages are "recent" and which are "older"
                 # `conversation_history_limit` includes the *current* user message
                 num_recent_messages = min(total_messages, conversation_history_limit)
                 num_older_messages = total_messages - num_recent_messages
-    
+
                 recent_messages = all_messages[-num_recent_messages:] # Last N messages
                 older_messages_to_summarize = all_messages[:num_older_messages] # Messages before the recent ones
-    
+
                 # Summarize older messages if needed and present
                 if enable_summarize_content_history_beyond_conversation_history_limit and older_messages_to_summarize:
                     debug_print(f"Summarizing {len(older_messages_to_summarize)} older messages for conversation {conversation_id}")
@@ -1561,7 +1537,7 @@ def register_route_backend_chats(app):
                         if role in ['system', 'safety', 'blocked', 'image', 'file']: continue
                         content = msg.get('content', '')
                         message_texts_older.append(f"{role.upper()}: {content}")
-    
+
                     if message_texts_older: # Only summarize if there's content to summarize
                         summary_prompt_older += "\n".join(message_texts_older)
                         try:
@@ -1588,14 +1564,14 @@ def register_route_backend_chats(app):
                         "role": "system",
                         "content": f"<Summary of previous conversation context>\n{summary_of_older}\n</Summary of previous conversation context>"
                     })
-    
+
                 # Add augmentation system messages (search, agents) next
                 # **Important**: Decide if you want these saved. If so, you need to upsert them now.
                 # For simplicity here, we're just adding them to the API call context.
                 for aug_msg in system_messages_for_augmentation:
                     # 1. Extract the source documents list for this specific system message
                     # Use .get with a default empty list [] for safety in case 'documents' is missing
-    
+
                     # 5. Create the final system_doc dictionary for Cosmos DB upsert
                     system_message_id = f"{conversation_id}_system_aug_{int(time.time())}_{random.randint(1000,9999)}"
                     
@@ -1636,7 +1612,7 @@ def register_route_backend_chats(app):
                     cosmos_messages_container.upsert_item(system_doc)
                     conversation_history_for_api.append(aug_msg) # Add to API context
                     # System message shares the same thread as user message, no thread update needed
-    
+
                     # --- NEW: Save plugin output as agent citation ---
                     agent_citations_list.append({
                         "tool_name": str(selected_agent.name) if selected_agent else "All Citations",
@@ -1650,7 +1626,7 @@ def register_route_backend_chats(app):
                 allowed_roles_in_history = ['user', 'assistant'] # Add 'system' if you PERSIST general system messages not related to augmentation
                 max_file_content_length_in_history = 50000 # Increased limit for all file content in history
                 max_tabular_content_length_in_history = 50000 # Same limit for tabular data consistency
-    
+
                 for message in recent_messages:
                     role = message.get('role')
                     content = message.get('content')
@@ -1678,7 +1654,7 @@ def register_route_backend_chats(app):
                         # Remove masked portions from content
                         content = remove_masked_content(content, masked_ranges)
                         debug_print(f"[MASK] Applied {len(masked_ranges)} masked ranges to message {message.get('id')}")
-    
+
                     if role in allowed_roles_in_history:
                         conversation_history_for_api.append({"role": role, "content": content})
                     elif role == 'file': # Handle file content inclusion (simplified)
@@ -1764,9 +1740,9 @@ def register_route_backend_chats(app):
                                 'role': 'system',
                                 'content': f"[Assistant generated an image based on the prompt: '{prompt}']"
                             })
-    
+
                     # Ignored roles: 'safety', 'blocked', 'system' (if they are only for augmentation/summary)
-    
+
                 # Ensure the very last message is the current user's message (it should be if fetched correctly)
                 if not conversation_history_for_api or conversation_history_for_api[-1]['role'] != 'user':
                     debug_print("Warning: Last message in history is not the user's current message. Appending.")
@@ -1780,11 +1756,11 @@ def register_route_backend_chats(app):
                             break
                     if not user_msg_found: # Still not found? Append the original input as fallback
                         conversation_history_for_api.append({"role": "user", "content": user_message})
-    
+
             except Exception as e:
                 debug_print(f"Error preparing conversation history: {e}")
                 return jsonify({'error': f'Error preparing conversation history: {str(e)}'}), 500
-    
+
         # region 6 - Final GPT Call
             # ---------------------------------------------------------------------
             # 6) Final GPT Call
@@ -1809,7 +1785,7 @@ def register_route_backend_chats(app):
                         "role": "system",
                         "content": default_system_prompt
                     })
-    
+
             # --- DRY Fallback Chain Helper ---
             def try_fallback_chain(steps):
                 """
@@ -1834,7 +1810,7 @@ def register_route_backend_chats(app):
                         continue
                 # If all fail, return default error
                 return ("Sorry, I encountered an error.", gpt_model, None, None)
-    
+
             # --- Inject facts as a system message at the top of conversation_history_for_api ---
             def get_facts_for_context(scope_id, scope_type, conversation_id: str = None, agent_id: str = None):
                 settings = get_settings()
@@ -1866,7 +1842,7 @@ def register_route_backend_chats(app):
                 fact_lines.append(f"- scope_id: {scope_id}")
                 fact_lines.append(f"- conversation_id: {conversation_id}")
                 return "\n".join(fact_lines)
-    
+
             async def run_sk_call(callable_obj, *args, **kwargs):
                 log_event(
                     f"Running Semantic Kernel callable: {callable_obj.__name__}",
@@ -1932,7 +1908,7 @@ def register_route_backend_chats(app):
                             extra={"runtime": runtime}
                         )
                         await runtime.stop_when_idle()
-    
+
             ai_message = "Sorry, I encountered an error." # Default error message
             final_model_used = gpt_model # Track model used for the response
             kernel_fallback_notice = None
@@ -2051,9 +2027,9 @@ def register_route_backend_chats(app):
                     "selected_agent_id": agent_id or None,
                     "kernel": bool(kernel is not None),
                 }
-    
-                # Use the orchestrator agent as the default agent
 
+                # Use the orchestrator agent as the default agent
+                
 
                 # Add additional metadata here to scope the facts to be returned
                 # Allows for additional per agent and per conversation scoping.
@@ -2070,7 +2046,7 @@ def register_route_backend_chats(app):
                     "role": "system",
                     "content": f"""<Conversation Metadata>\n<Scope ID: {scope_id}>\n<Scope Type: {scope_type}>\n<Conversation ID: {conversation_id}>\n<Agent ID: {agent_id}>\n</Conversation Metadata>"""
                 })
-    
+
                 agent_message_history = [
                     ChatMessageContent(
                         role=msg["role"],
@@ -2079,7 +2055,7 @@ def register_route_backend_chats(app):
                     )
                     for msg in conversation_history_for_api
                 ]
-    
+
                 # --- Fallback Chain Steps ---
                 if enable_multi_agent_orchestration and all_agents and "orchestrator" in all_agents and not per_user_semantic_kernel:
                     def invoke_orchestrator():
@@ -2108,7 +2084,7 @@ def register_route_backend_chats(app):
                         'on_success': orchestrator_success,
                         'on_error': orchestrator_error
                     })
-    
+
                 if selected_agent:
                     def invoke_selected_agent():
                         return asyncio.run(run_sk_call(
@@ -2177,7 +2153,7 @@ def register_route_backend_chats(app):
                                 "total_duration_ms": sum(inv.duration_ms for inv in plugin_invocations if inv.duration_ms)
                             }
                         )
-    
+
                         # debug_print(f"[Enhanced Agent Citations] Agent used: {agent_used}")
                         # debug_print(f"[Enhanced Agent Citations] Extracted {len(detailed_citations)} detailed plugin invocations")
                         # for citation in detailed_citations:
@@ -2185,10 +2161,10 @@ def register_route_backend_chats(app):
                         #     debug_print(f"  Parameters: {citation['function_arguments']}")
                         #     debug_print(f"  Result: {citation['function_result']}")
                         #     debug_print(f"  Duration: {citation['duration_ms']}ms, Success: {citation['success']}")
-    
+
                         # Store detailed citations globally to be accessed by the calling function
                         agent_citations_list.extend(detailed_citations)
-    
+
                         if not reload_messages_required:
                             for citation in detailed_citations:
                                 if result_requires_message_reload(citation.get('function_result')):
@@ -2211,11 +2187,11 @@ def register_route_backend_chats(app):
                             level=logging.ERROR,
                             exceptionTraceback=True
                         )
-    
+
                     selected_agent_type = getattr(selected_agent, 'agent_type', 'local') or 'local'
                     if isinstance(selected_agent_type, str):
                         selected_agent_type = selected_agent_type.lower()
-    
+
                     if selected_agent_type == 'aifoundry':
                         def invoke_foundry_agent():
                             foundry_metadata = {
@@ -2233,7 +2209,7 @@ def register_route_backend_chats(app):
                                 agent_message_history,
                                 metadata={k: v for k, v in foundry_metadata.items() if v is not None}
                             )
-    
+
                         def foundry_agent_success(result):
                             msg = str(result)
                             notice = None
@@ -2243,7 +2219,7 @@ def register_route_backend_chats(app):
                                 or getattr(selected_agent, 'deployment_name', None)
                                 or agent_used
                             )
-    
+
                             foundry_citations = getattr(selected_agent, 'last_run_citations', []) or []
                             if foundry_citations:
                                 for citation in foundry_citations:
@@ -2260,14 +2236,14 @@ def register_route_backend_chats(app):
                                         'timestamp': datetime.utcnow().isoformat(),
                                         'success': True
                                     })
-    
+
                             if enable_multi_agent_orchestration and not per_user_semantic_kernel:
                                 notice = (
                                     "[SK Fallback]: The AI assistant is running in single agent fallback mode. "
                                     "Some advanced features may not be available. "
                                     "Please contact your administrator to configure Semantic Kernel for richer responses."
                                 )
-    
+
                             log_event(
                                 f"[Foundry Agent] Invocation complete for {agent_used}",
                                 extra={
@@ -2278,9 +2254,9 @@ def register_route_backend_chats(app):
                                     'citation_count': len(foundry_citations),
                                 }
                             )
-    
+
                             return (msg, actual_model_deployment, 'agent', notice)
-    
+
                         def foundry_agent_error(e):
                             log_event(
                                 f"Error during Azure AI Foundry agent invocation: {str(e)}",
@@ -2292,7 +2268,7 @@ def register_route_backend_chats(app):
                                 level=logging.ERROR,
                                 exceptionTraceback=True
                             )
-    
+
                         fallback_steps.append({
                             'name': 'foundry_agent',
                             'func': invoke_foundry_agent,
@@ -2306,7 +2282,7 @@ def register_route_backend_chats(app):
                             'on_success': agent_success,
                             'on_error': agent_error
                         })
-    
+
                 if kernel:
                     def invoke_kernel():
                         chat_history = "\n".join([
@@ -2359,7 +2335,7 @@ def register_route_backend_chats(app):
                         'on_success': kernel_success,
                         'on_error': kernel_error
                     })
-    
+
             def invoke_gpt_fallback():
                 if not conversation_history_for_api:
                     raise Exception('Cannot generate response: No conversation history available.')
@@ -2441,7 +2417,7 @@ def register_route_backend_chats(app):
                 'on_success': gpt_success,
                 'on_error': gpt_error
             })
-    
+
             fallback_result = try_fallback_chain(fallback_steps)
             # Unpack result - handle both 4-tuple (SK) and 5-tuple (GPT with tokens)
             if len(fallback_result) == 5:
@@ -2488,7 +2464,7 @@ def register_route_backend_chats(app):
                         level=logging.ERROR,
                         exceptionTraceback=True
                     )
-    
+
         # region 7 - Save GPT Response
             # ---------------------------------------------------------------------
             # 7) Save GPT response (or error message)
@@ -2598,7 +2574,7 @@ def register_route_backend_chats(app):
                 except Exception as log_error:
                     debug_print(f"⚠️  Warning: Failed to log chat token usage: {log_error}")
                     # Don't fail the chat flow if logging fails
-    
+
             # Update the user message metadata with the actual model used
             # This ensures the UI shows the correct model in the metadata panel
             try:
@@ -2614,7 +2590,7 @@ def register_route_backend_chats(app):
                     
             except Exception as e:
                 debug_print(f"Warning: Could not update user message metadata: {e}")
-    
+
             # Update conversation's last_updated timestamp one last time
             conversation_item['last_updated'] = datetime.utcnow().isoformat()
             
@@ -2648,7 +2624,7 @@ def register_route_backend_chats(app):
             
             # Add any other final updates to conversation_item if needed (like classifications if not done earlier)
             cosmos_conversations_container.upsert_item(conversation_item)
-    
+
             # ---------------------------------------------------------------------
             # 8) Return final success (even if AI generated an error message)
             # ---------------------------------------------------------------------
@@ -2694,7 +2670,7 @@ def register_route_backend_chats(app):
                 'error': f'Internal server error: {str(e)}',
                 'details': error_traceback if app.debug else None
             }), 500
-    
+
     @app.route('/api/chat/stream', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -3047,7 +3023,7 @@ def register_route_backend_chats(app):
                         previous_thread_id = last_msgs[0].get('thread_id')
                 except Exception as e:
                     debug_print(f"Error fetching last message for threading: {e}")
-    
+
                 current_user_thread_id = str(uuid.uuid4())
                 latest_thread_id = current_user_thread_id
                 
@@ -3282,9 +3258,9 @@ def register_route_backend_chats(app):
                         system_prompt_search = f"""You are an AI assistant. Use the following retrieved document excerpts to answer the user's question. Cite sources using the format (Source: filename, Page: page number).
                                                 Retrieved Excerpts:
                                                 {retrieved_content}
-    
+
                                                 Based *only* on the information provided above, answer the user's query. If the answer isn't in the excerpts, say so.
-    
+
                                                 Example
                                                 User: What is the policy on double dipping?
                                                 Assistant: The policy prohibits entities from using federal funds received through one program to apply for additional funds through another program, commonly known as 'double dipping' (Source: PolicyDocument.pdf, Page: 12)
@@ -3315,7 +3291,7 @@ def register_route_backend_chats(app):
                         agent_citations_list=agent_citations_list,
                         web_search_citations_list=web_search_citations_list,
                     )
-    
+
                 # Update message chat type
                 message_chat_type = None
                 if hybrid_search_enabled and search_results and len(search_results) > 0:
@@ -3856,7 +3832,7 @@ def register_route_backend_chats(app):
                 'Connection': 'keep-alive'
             }
         )
-    
+
     @app.route('/api/message/<message_id>/mask', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -4009,7 +3985,6 @@ def merge_masked_ranges(ranges):
     if not ranges:
         return []
     
-
     # Sort by start position
     sorted_ranges = sorted(ranges, key=lambda x: x['start'])
     merged = [sorted_ranges[0]]
@@ -4042,7 +4017,6 @@ def remove_masked_content(content, masked_ranges):
     if not masked_ranges or not content:
         return content
     
-
     # Sort ranges by start position (descending) to work backwards
     sorted_ranges = sorted(masked_ranges, key=lambda x: x['start'], reverse=True)
     
@@ -4073,7 +4047,7 @@ def _extract_web_search_citations_from_content(content: str) -> List[Dict[str, s
     debug_print(f"[Citation Extraction] Extracting citations from:\n{content}\n")
 
     citations: List[Dict[str, str]] = []
-    
+
     markdown_pattern = re.compile(r"\[([^\]]+)\]\((https?://[^\s\)]+)(?:\s+\"([^\"]+)\")?\)")
     html_pattern = re.compile(
         r"<a[^>]+href=\"(https?://[^\"]+)\"([^>]*)>(.*?)</a>",
@@ -4081,9 +4055,9 @@ def _extract_web_search_citations_from_content(content: str) -> List[Dict[str, s
     )
     title_pattern = re.compile(r"title=\"([^\"]+)\"", re.IGNORECASE)
     url_pattern = re.compile(r"https?://[^\s\)\]\">]+")
-    
+
     occupied_spans: List[range] = []
-    
+
     for match in markdown_pattern.finditer(content):
         text, url, title = match.groups()
         url = (url or "").strip().rstrip(".,)")
@@ -4092,7 +4066,7 @@ def _extract_web_search_citations_from_content(content: str) -> List[Dict[str, s
         display_title = (title or text or url).strip()
         citations.append({"url": url, "title": display_title})
         occupied_spans.append(range(match.start(), match.end()))
-    
+
     for match in html_pattern.finditer(content):
         url, attrs, inner = match.groups()
         url = (url or "").strip().rstrip(".,)")
@@ -4104,7 +4078,7 @@ def _extract_web_search_citations_from_content(content: str) -> List[Dict[str, s
         display_title = (title or inner_text or url).strip()
         citations.append({"url": url, "title": display_title})
         occupied_spans.append(range(match.start(), match.end()))
-    
+
     for match in url_pattern.finditer(content):
         if any(match.start() in span for span in occupied_spans):
             continue
@@ -4113,7 +4087,7 @@ def _extract_web_search_citations_from_content(content: str) -> List[Dict[str, s
             continue
         citations.append({"url": url, "title": url})
     debug_print(f"[Citation Extraction] Extracted {len(citations)} citations. - {citations}\n")
-    
+
     return citations
 
 
@@ -4129,7 +4103,7 @@ def _extract_token_usage_from_metadata(metadata: Dict[str, Any]) -> Dict[str, in
     if not usage:
         debug_print("[Web Search][Token Usage Extraction] No usage field found in metadata.")
         return {}
-    
+
     if isinstance(usage, str):
         raw_usage = usage.strip()
         if not raw_usage:
@@ -4145,20 +4119,20 @@ def _extract_token_usage_from_metadata(metadata: Dict[str, Any]) -> Dict[str, in
                     "[Web Search][Token Usage Extraction] Failed to parse usage string."
                 )
                 return {}
-    
+
     if not isinstance(usage, Mapping):
         debug_print(
             "[Web Search][Token Usage Extraction] Usage is not a mapping. "
             f"type={type(usage)}"
         )
         return {}
-    
+
     def to_int(value: Any) -> Optional[int]:
         try:
             return int(float(value))
         except (TypeError, ValueError):
             return None
-    
+
     total_tokens = to_int(usage.get("total_tokens"))
     if total_tokens is None:
         debug_print(
@@ -4166,14 +4140,14 @@ def _extract_token_usage_from_metadata(metadata: Dict[str, Any]) -> Dict[str, in
             f"usage={usage}"
         )
         return {}
-    
+
     prompt_tokens = to_int(usage.get("prompt_tokens")) or 0
     completion_tokens = to_int(usage.get("completion_tokens")) or 0
     debug_print(
         "[Web Search][Token Usage Extraction] Extracted token usage - "
         f"prompt: {prompt_tokens}, completion: {completion_tokens}, total: {total_tokens}"
     )
-    
+
     return {
         "total_tokens": int(total_tokens),
         "prompt_tokens": int(prompt_tokens),
@@ -4208,14 +4182,13 @@ def perform_web_search(
     debug_print(f"[WebSearch]   active_public_workspace_id: {active_public_workspace_id}")
     debug_print(f"[WebSearch]   search_query: {search_query[:100] if search_query else None}...")
     
-
     enable_web_search = settings.get("enable_web_search")
     debug_print(f"[WebSearch] enable_web_search setting: {enable_web_search}")
     
     if not enable_web_search:
         debug_print("[WebSearch] Web search is DISABLED in settings, returning early")
         return True  # Not an error, just disabled
-    
+
     debug_print("[WebSearch] Web search is ENABLED, proceeding...")
     
     web_search_agent = settings.get("web_search_agent") or {}
@@ -4234,7 +4207,7 @@ def perform_web_search(
         safe_keys = ['agent_id', 'project_id', 'endpoint']
         safe_info = {k: foundry_settings.get(k, '<not set>') for k in safe_keys}
         debug_print(f"[WebSearch]   foundry_settings (safe keys): {safe_info}")
-    
+
     agent_id = (foundry_settings.get("agent_id") or "").strip()
     debug_print(f"[WebSearch] Extracted agent_id: '{agent_id}'")
     
@@ -4254,7 +4227,7 @@ def perform_web_search(
             "content": "Web search was requested but is not properly configured. Please inform the user that web search is currently unavailable and you cannot provide real-time information. Do not attempt to answer questions requiring current information from your training data.",
         })
         return False  # Configuration error
-    
+
     debug_print(f"[WebSearch] Agent ID is configured: {agent_id}")
     
     query_text = None
@@ -4264,7 +4237,7 @@ def perform_web_search(
     except NameError:
         query_text = None
         debug_print("[WebSearch] search_query not defined, query_text is None")
-    
+
     query_text = (query_text or user_message or "").strip()
     debug_print(f"[WebSearch] Final query_text after fallback: '{query_text[:100] if query_text else ''}'")
     
@@ -4279,13 +4252,13 @@ def perform_web_search(
             level=logging.WARNING,
         )
         return True  # Not an error, just empty query
-    
+
     debug_print(f"[WebSearch] Building message history with query: {query_text[:100]}...")
     message_history = [
         ChatMessageContent(role="user", content=query_text)
     ]
     debug_print(f"[WebSearch] Message history created with {len(message_history)} message(s)")
-    
+
     try:
         foundry_metadata = {
             "conversation_id": conversation_id,
@@ -4345,7 +4318,7 @@ def perform_web_search(
             "content": f"Web search failed with an unexpected error: {exc}. Please inform the user that the web search encountered an error and you cannot provide real-time information for this query. Do not attempt to answer questions requiring current information from your training data - instead, acknowledge the search failure and suggest the user try again.",
         })
         return False  # Search failed
-    
+
     debug_print("[WebSearch] ========== FOUNDRY AGENT RESULT ==========")
     debug_print(f"[WebSearch] Result type: {type(result)}")
     debug_print(f"[WebSearch] Result has message: {bool(result.message)}")
@@ -4374,7 +4347,7 @@ def perform_web_search(
         debug_print(f"[WebSearch] Foundry metadata: {metadata_payload}")
     else:
         debug_print("[WebSearch] Foundry metadata: <empty>")
-    
+
     if result.message:
         debug_print("[WebSearch] Adding result message to system_messages_for_augmentation")
         system_messages_for_augmentation.append({
@@ -4382,7 +4355,7 @@ def perform_web_search(
             "content": f"Web search results:\n{result.message}",
         })
         debug_print(f"[WebSearch] Added system message to augmentation list. Total augmentation messages: {len(system_messages_for_augmentation)}")
-    
+
         debug_print("[WebSearch] Extracting web citations from result message...")
         web_citations = _extract_web_search_citations_from_content(result.message)
         debug_print(f"[WebSearch] Extracted {len(web_citations)} web citations from message content")
@@ -4393,7 +4366,7 @@ def perform_web_search(
             debug_print("[WebSearch] No web citations extracted from message content")
     else:
         debug_print("[WebSearch] No result.message to process for augmentation")
-    
+
     citations = result.citations or []
     debug_print(f"[WebSearch] Processing {len(citations)} citations from result.citations")
     if citations:
@@ -4417,7 +4390,7 @@ def perform_web_search(
         debug_print(f"[WebSearch] Total agent_citations_list now has {len(agent_citations_list)} citations")
     else:
         debug_print("[WebSearch] No citations in result.citations to process")
-    
+
     debug_print(f"[WebSearch] Starting token usage extraction from Foundry metadata. Metadata: {result.metadata}")
     token_usage = _extract_token_usage_from_metadata(result.metadata or {})
     if token_usage.get("total_tokens"):
@@ -4427,7 +4400,7 @@ def perform_web_search(
                 workspace_type = 'public'
             elif active_group_id:
                 workspace_type = 'group'
-    
+
             log_token_usage(
                 user_id=user_id,
                 token_type='web_search',
@@ -4456,7 +4429,7 @@ def perform_web_search(
                 },
                 level=logging.WARNING,
             )
-    
+
     debug_print("[WebSearch] ========== FINAL SUMMARY ==========")
     debug_print(f"[WebSearch] system_messages_for_augmentation count: {len(system_messages_for_augmentation)}")
     debug_print(f"[WebSearch] agent_citations_list count: {len(agent_citations_list)}")
