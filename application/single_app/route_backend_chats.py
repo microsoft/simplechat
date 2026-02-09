@@ -442,7 +442,7 @@ def register_route_backend_chats(app):
                         doc_results = list(cosmos_container.query_items(
                             query=doc_query, parameters=doc_params, enable_cross_partition_query=True
                         ))
-                        if doc_results:
+                        if doc_results and 'workspace_search' in user_metadata:
                             doc_info = doc_results[0]
                             user_metadata['workspace_search']['document_name'] = doc_info.get('title') or doc_info.get('file_name')
                             user_metadata['workspace_search']['document_filename'] = doc_info.get('file_name')
@@ -465,18 +465,22 @@ def register_route_backend_chats(app):
                             
                             if group_doc.get('name'):
                                 group_name = group_doc.get('name')
-                                user_metadata['workspace_search']['group_name'] = group_name
-                                debug_print(f"Workspace search - set group_name to: {group_name}")
+                                if 'workspace_search' in user_metadata:
+                                    user_metadata['workspace_search']['group_name'] = group_name
+                                    debug_print(f"Workspace search - set group_name to: {group_name}")
                             else:
                                 debug_print(f"Workspace search - no name for group: {active_group_id}")
-                                user_metadata['workspace_search']['group_name'] = None
+                                if 'workspace_search' in user_metadata:
+                                    user_metadata['workspace_search']['group_name'] = None
                         else:
                             debug_print(f"Workspace search - no group found for id: {active_group_id}")
-                            user_metadata['workspace_search']['group_name'] = None
+                            if 'workspace_search' in user_metadata:
+                                user_metadata['workspace_search']['group_name'] = None
                             
                     except Exception as e:
                         debug_print(f"Error retrieving group details: {e}")
-                        user_metadata['workspace_search']['group_name'] = None
+                        if 'workspace_search' in user_metadata:
+                            user_metadata['workspace_search']['group_name'] = None
                         import traceback
                         traceback.print_exc()
                 
@@ -492,8 +496,11 @@ def register_route_backend_chats(app):
                     except Exception as e:
                         debug_print(f"Error checking public workspace status: {e}")
                     
-                    user_metadata['workspace_search']['active_public_workspace_id'] = active_public_workspace_id
-                else:
+                    if 'workspace_search' in user_metadata:
+                        user_metadata['workspace_search']['active_public_workspace_id'] = active_public_workspace_id
+                
+                # Ensure workspace_search key always exists for consistency
+                if 'workspace_search' not in user_metadata:
                     user_metadata['workspace_search'] = {
                         'search_enabled': False
                     }

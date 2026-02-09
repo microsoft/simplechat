@@ -1,5 +1,77 @@
 <!-- BEGIN release_notes.md BLOCK -->
+
 # Feature Release
+
+### **(v0.237.009)**
+
+#### New Features
+
+*   **ServiceNow Integration Documentation**
+    *   Comprehensive documentation for integrating ServiceNow with Simple Chat, including step-by-step guides for both Basic Authentication and OAuth 2.0.
+    *   **OAuth 2.0 Setup**: Detailed guide for Resource Owner Password Credential grant type with production security considerations.
+    *   **OpenAPI Specifications**: 7 OpenAPI YAML files for ServiceNow Incident Management and Knowledge Base APIs (both bearer token and basic auth versions).
+    *   **Agent Instructions**: Behavioral instructions optimized for ServiceNow operations (263 lines).
+    *   **Key Features**: Integration user creation, role assignment guidance, token management strategies, troubleshooting guide, and production deployment considerations.
+    *   **Documentation Files**: `SERVICENOW_INTEGRATION.md` (760 lines), `SERVICENOW_OAUTH_SETUP.md` (480+ lines), `servicenow_agent_instructions.txt`, and 7 OpenAPI specs in `docs/how-to/agents/ServiceNow/`.
+    *   (Ref: ServiceNow integration, OAuth 2.0, OpenAPI specifications, enterprise integrations)
+
+#### Bug Fixes
+
+*   **Workspace Search Deselection KeyError Fix**
+    *   Fixed HTTP 500 error when deselecting the workspace search button after having a document selected. Users would get "Could not get a response. HTTP error! status: 500" in the chat interface.
+    *   **Root Cause**: When workspace search was deselected (`hybrid_search_enabled = False`), the `user_metadata['workspace_search']` dictionary was never initialized. However, subsequent code for handling group scope or public workspace context attempted to access `user_metadata['workspace_search']['group_name']` or other properties, causing a KeyError.
+    *   **Error**: `KeyError: 'workspace_search'` at lines 468, 479 in `route_backend_chats.py` when trying to set group_name or active_public_workspace_id.
+    *   **Solution**: Added defensive checks before accessing `user_metadata['workspace_search']`. If the key doesn't exist, initialize it with `{'search_enabled': False}` before attempting to set additional properties like group_name or workspace IDs.
+    *   **Workaround**: Clicking Home and then back to Chat worked because it triggered a page reload that reset the state properly.
+    *   (Ref: `route_backend_chats.py`, workspace search, metadata initialization, KeyError handling)
+
+*   **OpenAPI Basic Authentication Fix**
+    *   Fixed "session not authenticated" errors when using Basic Authentication with OpenAPI actions, even when credentials were correct.
+    *   **Root Cause**: Mismatch between how the UI stored Basic Auth credentials (as `username:password` string in `auth.key`) and how the OpenAPI plugin factory expected them (as separate `username` and `password` properties in `additionalFields`).
+    *   **Solution**: Modified `OpenApiPluginFactory` to detect and parse `username:password` format from `auth.key`, splitting credentials into separate properties that the authentication middleware expects.
+    *   **Files Modified**: `semantic_kernel_plugins/openapi_plugin_factory.py`.
+    *   (Ref: OpenAPI actions, Basic Authentication, credential parsing, `OPENAPI_BASIC_AUTH_FIX.md`)
+
+*   **Group Action OAuth Schema Merging Fix**
+    *   Fixed HTTP 401 Unauthorized errors when using OAuth bearer token authentication with group actions. When editing group actions, `additionalFields` was empty, missing all authentication configuration.
+    *   **Root Cause**: Group action backend routes did not call `get_merged_plugin_settings()` to merge UI form data with OpenAPI schema defaults, while global action routes did. This caused group actions to be saved without authentication configuration fields like `auth_method`, `base_url`, and authentication credentials.
+    *   **Solution**: Updated group action save/update routes in `route_backend_plugins.py` to call `get_merged_plugin_settings()`, ensuring authentication configuration is properly merged and persisted.
+    *   **Files Modified**: `route_backend_plugins.py`.
+    *   (Ref: Group actions, OAuth authentication, schema merging, `GROUP_ACTION_OAUTH_SCHEMA_MERGING_FIX.md`)
+
+*   **Group Agent Loading Fix**
+    *   Fixed issue where group agents were not appearing in the agent list when per-user semantic kernel mode was enabled. Users selecting group agents would fall back to the global "researcher" agent with zero plugins/actions available.
+    *   **Root Cause**: The `load_user_semantic_kernel()` function only loaded personal agents and global agents (when merge enabled), but completely omitted group agents from groups the user is a member of.
+    *   **Solution**: Updated `load_user_semantic_kernel()` to fetch and load group agents for all groups the user is a member of, ensuring proper agent availability in per-user kernel mode.
+    *   **Files Modified**: `semantic_kernel_loader.py`.
+    *   (Ref: Group agents, per-user semantic kernel, agent loading, `GROUP_AGENT_LOADING_FIX.md`)
+
+*   **Manage Group Page Syntax Error Fix**
+    *   Fixed critical JavaScript syntax error preventing the manage group page from loading. Removed duplicate code blocks including duplicate conditional checks, forEach loops, button tags, and function definitions.
+    *   The page was stuck on "Loading..." indefinitely with console error "Uncaught SyntaxError: missing ) after argument list" at line 673.
+    *   (Ref: `manage_group.js`, duplicate code removal, syntax error resolution)
+
+*   **File Extension Handling Improvements**
+    *   Fixed multiple issues related to file extension handling and audio transcription across the application.
+    *   **Missing MP3 Extension**: Fixed issue where .mp3 files were missing from the list of allowed extensions. Users attempting to upload mp3 files to workspaces saw "Uploaded 0/1, Failed: 1" with no error logging to activity_logs or documents containers.
+    *   **Centralized Extension Definitions**: Resolved file extension variable duplications throughout codebase by centralizing all allowed file extension definitions in `config.py` and importing them in downstream function and route files. This prevents extension lists from going out of sync during updates.
+    *   **Additional Supported Extensions**: Added missing file types supported by Document Intelligence and Video Indexer services: .heic (image), .mpg, .mpeg, .webm (video).
+    *   **Browser-Compatible Extensions**: Adjusted file extensions in `chat-enhanced-citations.js` for proper browser rendering. Removed incompatible formats like .heif and added compatible formats like .3gp after thorough testing.
+    *   (Ref: `config.py`, file extension centralization, enhanced citations rendering)
+
+*   **Audio Transcription Continuous Recognition Fix (MAG)**
+    *   Fixed incomplete audio transcriptions in Azure Government (MAG) environments where transcription stopped at first silence or after 30 seconds of audio.
+    *   **Root Cause**: Previous implementation used `recognize_once()` method which stops transcription at the first silence (end of sentence, speaker pauses) and has a maximum 30-second transcription limit.
+    *   **Solution**: Implemented continuous recognition using `start_continuous_recognition()` method instead of `recognize_once()`, enabling full-length audio file transcription without interruption at natural speech pauses.
+    *   **Impact**: Audio files now transcribe completely regardless of length or natural pauses in speech, improving transcription quality and completeness in MAG regions where Fast Transcription API is unavailable.
+    *   (Ref: Azure Speech Service, continuous recognition, MAG support, audio transcription)
+
+*   **Workspace File Metadata Edit Error Fix**
+    *   Fixed "'tuple' object has no attribute 'get'" error when clicking Save after editing workspace file metadata in personal, group, or public workspaces.
+    *   **Root Cause**: Missing checks and error handling in route backend documents code when processing metadata updates.
+    *   **Solution**: Added additional validation checks and proper handling to `route_backend_documents.py` for all workspace types (personal, group, public).
+    *   **Impact**: Users can now successfully edit and save file metadata without encountering errors.
+    *   (Ref: `route_backend_documents.py`, metadata updates, error handling)
 
 ### **(v0.237.007)**
 
@@ -58,6 +130,10 @@
 ### **(v0.237.005)**
 
 #### Bug Fixes
+
+*   **Azure AI Search Test Connection Fix**
+    *   Fixed test connection functionality for Azure AI Search configuration validation.
+    *   (Ref: Azure AI Search, connection testing, admin configuration, `AZURE_AI_SEARCH_TEST_CONNECTION_FIX.md`)
 
 *   **Retention Policy Field Name Fix**
     *   Fixed retention policy to use the correct field name `last_updated` instead of the non-existent `last_activity_at` field.
@@ -176,7 +252,7 @@
     *   **Frontend Integration**: UI can query allowed auth types to display only valid options.
     *   **Files Modified**: `route_backend_plugins.py`.
     *   (Ref: plugin authentication, auth type constraints, OpenAPI plugins, security)
-    
+
 #### Bug Fixes
 
 *   **Control Center Chart Date Labels Fix**
@@ -735,9 +811,11 @@
     *   (Ref: `functions_authentication.py`, `functions_documents.py`, Video Indexer workflow logging)
 
 ### **(v0.229.014)**
+
 #### Bug Fixes
 
 ##### Public Workspace Management Fixes
+
 *   **Public Workspace Management Permission Fix**
     *   Fixed incorrect permission checking for public workspace management operations when "Require Membership to Create Public Workspaces" setting was enabled.
     *   **Issue**: Users with legitimate access to manage workspaces (Owner/Admin/DocumentManager) were incorrectly shown "Forbidden" errors when accessing management functionality.
@@ -756,7 +834,9 @@
     *   (Ref: `chat-documents.js`, scope label updates, dynamic workspace display)
 
 =======
+
 ##### User Interface and Content Rendering Fixes
+
 *   **Unicode Table Rendering Fix**
     *   Fixed issue where AI-generated tables using Unicode box-drawing characters were not rendering as proper HTML tables in the chat interface.
     *   **Problem**: AI agents (particularly ESAM Agent) generated Unicode tables that appeared as plain text instead of formatted tables.
@@ -1088,7 +1168,7 @@
         *   (Ref: `artifacts/architecture.vsdx`)
 *   **Health Check**
     *   Provide admins ability to enable a healthcheck api.
-    *  (Ref: `route_external_health.py`)
+    *   (Ref: `route_external_health.py`)
 
 #### Bug Fixes
 
@@ -1564,9 +1644,9 @@ We introduced a robust user feedback system, expanded content-safety features fo
 5. **Inline File Previews in Chat**  
    - Files attached to a conversation can be previewed directly from the chat, with text or data displayed in a pop-up.
 
-7. **Optional Image Generation**  
+6. **Optional Image Generation**  
    - Users can toggle an “Image” button to create images via Azure OpenAI (e.g., DALL·E) when configured in Admin Settings.
 
-8. **App Roles & Enterprise Application**  
+7. **App Roles & Enterprise Application**  
    - Provides a robust way to control user access at scale.  
    - Admins can assign roles to new users or entire Azure AD groups.

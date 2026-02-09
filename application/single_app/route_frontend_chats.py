@@ -131,9 +131,9 @@ def register_route_frontend_chats(app):
 
         try:
             # Check if this is an image file
-            is_image_file = file_ext in ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.heif']
+            is_image_file = file_ext in IMAGE_EXTENSIONS
             
-            if file_ext in ['.pdf', '.docx', '.pptx', '.html', '.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.heif']:
+            if file_ext in ['.pdf', '.docx', '.pptx', '.ppt', '.html'] or is_image_file:
                 extracted_content_raw  = extract_content_with_azure_di(temp_file_path)
                 
                 # Convert pages_data list to string
@@ -209,7 +209,7 @@ def register_route_frontend_chats(app):
             elif file_ext in ['.xml', '.yaml', '.yml', '.log']:
                 # Handle XML, YAML, and LOG files as text for inline chat
                 extracted_content  = extract_text_file(temp_file_path)
-            elif file_ext in ['.csv', '.xls', '.xlsx', '.xlsm']:
+            elif file_ext in TABULAR_EXTENSIONS:
                 extracted_content = extract_table_file(temp_file_path, file_ext)
                 is_table = True
             else:
@@ -685,8 +685,8 @@ def register_route_frontend_chats(app):
         is_pdf = file_ext == '.pdf'
         is_word = file_ext in ('.docx', '.doc', '.docm')
         is_ppt = file_ext in ('.pptx', '.ppt')
-        is_image = file_ext in ('.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.gif', '.webp') # Added more image types
-        is_text = file_ext in ('.txt', '.md', '.csv', '.json', '.log', '.xml', '.yaml', '.yml', '.html', '.htm') # Common text-based types
+        is_image = file_ext.lstrip('.') in (IMAGE_EXTENSIONS | {'gif', 'webp'}) # Added more image types
+        is_text = file_ext.lstrip('.') in (BASE_ALLOWED_EXTENSIONS - {'doc', 'docm'}) # Common text-based types
 
         try:
             # Download the file to the specified location

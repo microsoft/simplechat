@@ -416,24 +416,43 @@ def register_route_backend_group_documents(app):
                     )
                     updated_fields['authors'] = authors_list
 
-            # Log the metadata update transaction if any fields were updated
-            if updated_fields:
+            # Save updates back to Cosmos
+            try:
+                # Log the metadata update transaction if any fields were updated
+                if updated_fields:
+                    # Get document details for logging - handle tuple return
                 # Get document details for logging
-                from functions_documents import get_document
-                doc = get_document(user_id, document_id, group_id=active_group_id)
-                if doc:
-                    from functions_activity_logging import log_document_metadata_update_transaction
-                    log_document_metadata_update_transaction(
-                        user_id=user_id,
-                        document_id=document_id,
-                        workspace_type='group',
-                        file_name=doc.get('file_name', 'Unknown'),
-                        updated_fields=updated_fields,
-                        file_type=doc.get('file_type'),
-                        group_id=active_group_id
-                    )
-
-            return jsonify({'message': 'Group document metadata updated successfully'}), 200
+                    from functions_documents import get_document
+                    doc_response = get_document(user_id, document_id, group_id=active_group_id)
+                    doc = None
+                    
+                    # Handle tuple return (response, status_code)
+                    if isinstance(doc_response, tuple):
+                        resp, status_code = doc_response
+                        if hasattr(resp, "get_json"):
+                            doc = resp.get_json()
+                        else:
+                            doc = resp
+                    elif hasattr(doc_response, "get_json"):
+                        doc = doc_response.get_json()
+                    else:
+                        doc = doc_response
+                    
+                    if doc and isinstance(doc, dict):
+                        from functions_activity_logging import log_document_metadata_update_transaction
+                        log_document_metadata_update_transaction(
+                            user_id=user_id,
+                            document_id=document_id,
+                            workspace_type='group',
+                            file_name=doc.get('file_name', 'Unknown'),
+                            updated_fields=updated_fields,
+                            file_type=doc.get('file_type'),
+                            group_id=active_group_id
+                        )
+                
+                return jsonify({'message': 'Group document metadata updated successfully'}), 200
+            except Exception as e:
+                return jsonify({'Error updating Group document metadata': str(e)}), 500
         except Exception as e:
             return jsonify({'error': str(e)}), 500
    
