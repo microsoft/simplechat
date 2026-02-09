@@ -475,15 +475,10 @@ function renderMemberActions(member) {
         <button
           class="btn btn-sm btn-danger me-1 remove-member-btn"
           data-user-id="${member.userId}">
-          class="btn btn-sm btn-danger me-1 remove-member-btn"
-          data-user-id="${member.userId}">
           Remove
         </button>
         <button
           type="button"
-          class="btn btn-sm btn-outline-secondary change-role-btn"
-          data-user-id="${member.userId}"
-          data-user-role="${member.role}">
           class="btn btn-sm btn-outline-secondary change-role-btn"
           data-user-id="${member.userId}"
           data-user-role="${member.role}">
@@ -542,10 +537,6 @@ function loadPendingRequests() {
           <td>${u.displayName}</td>
           <td>${u.email}</td>
           <td>
-            <button class="btn btn-sm btn-success approve-request-btn" 
-                    data-request-id="${u.userId}">Approve</button>
-            <button class="btn btn-sm btn-danger reject-request-btn" 
-                    data-request-id="${u.userId}">Reject</button>
             <button class="btn btn-sm btn-success approve-request-btn" 
                     data-request-id="${u.userId}">Approve</button>
             <button class="btn btn-sm btn-danger reject-request-btn" 

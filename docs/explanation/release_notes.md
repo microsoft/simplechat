@@ -1,7 +1,8 @@
 <!-- BEGIN release_notes.md BLOCK -->
+
 # Feature Release
 
-### **(v0.237.008)**
+### **(v0.237.009)**
 
 #### New Features
 
@@ -15,6 +16,14 @@
     *   (Ref: ServiceNow integration, OAuth 2.0, OpenAPI specifications, enterprise integrations)
 
 #### Bug Fixes
+
+*   **Workspace Search Deselection KeyError Fix**
+    *   Fixed HTTP 500 error when deselecting the workspace search button after having a document selected. Users would get "Could not get a response. HTTP error! status: 500" in the chat interface.
+    *   **Root Cause**: When workspace search was deselected (`hybrid_search_enabled = False`), the `user_metadata['workspace_search']` dictionary was never initialized. However, subsequent code for handling group scope or public workspace context attempted to access `user_metadata['workspace_search']['group_name']` or other properties, causing a KeyError.
+    *   **Error**: `KeyError: 'workspace_search'` at lines 468, 479 in `route_backend_chats.py` when trying to set group_name or active_public_workspace_id.
+    *   **Solution**: Added defensive checks before accessing `user_metadata['workspace_search']`. If the key doesn't exist, initialize it with `{'search_enabled': False}` before attempting to set additional properties like group_name or workspace IDs.
+    *   **Workaround**: Clicking Home and then back to Chat worked because it triggered a page reload that reset the state properly.
+    *   (Ref: `route_backend_chats.py`, workspace search, metadata initialization, KeyError handling)
 
 *   **OpenAPI Basic Authentication Fix**
     *   Fixed "session not authenticated" errors when using Basic Authentication with OpenAPI actions, even when credentials were correct.
@@ -221,7 +230,7 @@
     *   **Frontend Integration**: UI can query allowed auth types to display only valid options.
     *   **Files Modified**: `route_backend_plugins.py`.
     *   (Ref: plugin authentication, auth type constraints, OpenAPI plugins, security)
-    
+
 #### Bug Fixes
 
 *   **Control Center Chart Date Labels Fix**
@@ -780,9 +789,11 @@
     *   (Ref: `functions_authentication.py`, `functions_documents.py`, Video Indexer workflow logging)
 
 ### **(v0.229.014)**
+
 #### Bug Fixes
 
 ##### Public Workspace Management Fixes
+
 *   **Public Workspace Management Permission Fix**
     *   Fixed incorrect permission checking for public workspace management operations when "Require Membership to Create Public Workspaces" setting was enabled.
     *   **Issue**: Users with legitimate access to manage workspaces (Owner/Admin/DocumentManager) were incorrectly shown "Forbidden" errors when accessing management functionality.
@@ -801,7 +812,9 @@
     *   (Ref: `chat-documents.js`, scope label updates, dynamic workspace display)
 
 =======
+
 ##### User Interface and Content Rendering Fixes
+
 *   **Unicode Table Rendering Fix**
     *   Fixed issue where AI-generated tables using Unicode box-drawing characters were not rendering as proper HTML tables in the chat interface.
     *   **Problem**: AI agents (particularly ESAM Agent) generated Unicode tables that appeared as plain text instead of formatted tables.
@@ -1133,7 +1146,7 @@
         *   (Ref: `artifacts/architecture.vsdx`)
 *   **Health Check**
     *   Provide admins ability to enable a healthcheck api.
-    *  (Ref: `route_external_health.py`)
+    *   (Ref: `route_external_health.py`)
 
 #### Bug Fixes
 
@@ -1609,9 +1622,9 @@ We introduced a robust user feedback system, expanded content-safety features fo
 5. **Inline File Previews in Chat**  
    - Files attached to a conversation can be previewed directly from the chat, with text or data displayed in a pop-up.
 
-7. **Optional Image Generation**  
+6. **Optional Image Generation**  
    - Users can toggle an “Image” button to create images via Azure OpenAI (e.g., DALL·E) when configured in Admin Settings.
 
-8. **App Roles & Enterprise Application**  
+7. **App Roles & Enterprise Application**  
    - Provides a robust way to control user access at scale.  
    - Admins can assign roles to new users or entire Azure AD groups.
