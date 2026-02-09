@@ -92,39 +92,6 @@ $(document).ready(function () {
     rejectRequest(requestId);
   });
 
-  // Add event delegation for select user button in search results
-  $(document).on("click", ".select-user-btn", function () {
-    const id = $(this).data("user-id");
-    const name = $(this).data("user-name");
-    const email = $(this).data("user-email");
-    selectUserForAdd(id, name, email);
-  });
-
-  // Add event delegation for remove member button
-  $(document).on("click", ".remove-member-btn", function () {
-    const userId = $(this).data("user-id");
-    removeMember(userId);
-  });
-
-  // Add event delegation for change role button
-  $(document).on("click", ".change-role-btn", function () {
-    const userId = $(this).data("user-id");
-    const currentRole = $(this).data("user-role");
-    openChangeRoleModal(userId, currentRole);
-    $("#changeRoleModal").modal("show");
-  });
-
-  // Add event delegation for approve/reject request buttons
-  $(document).on("click", ".approve-request-btn", function () {
-    const requestId = $(this).data("request-id");
-    approveRequest(requestId);
-  });
-
-  $(document).on("click", ".reject-request-btn", function () {
-    const requestId = $(this).data("request-id");
-    rejectRequest(requestId);
-  });
-
   // CSV Bulk Upload Events
   $("#addBulkMemberBtn").on("click", function () {
     $("#csvBulkUploadModal").modal("show");
@@ -504,11 +471,21 @@ function setRole(userId, newRole) {
     data: JSON.stringify({ role: newRole }),
     success: function () {
       $("#changeRoleModal").modal("hide");
+      showToast("success", "Role updated successfully");
       loadMembers();
     },
     error: function (err) {
-      console.error(err);
-      alert("Failed to update role.");
+      console.error("Error updating role:", err);
+      let errorMsg = "Failed to update role.";
+      if (err.status === 404) {
+        errorMsg = "Member not found. They may have been removed.";
+        loadMembers(); // Refresh the member list
+      } else if (err.status === 403) {
+        errorMsg = "You don't have permission to change this member's role.";
+      } else if (err.responseJSON && err.responseJSON.message) {
+        errorMsg = err.responseJSON.message;
+      }
+      showToast("error", errorMsg);
     },
   });
 }
@@ -519,11 +496,21 @@ function removeMember(userId) {
     url: `/api/groups/${groupId}/members/${userId}`,
     method: "DELETE",
     success: function () {
+      showToast("success", "Member removed successfully");
       loadMembers();
     },
     error: function (err) {
-      console.error(err);
-      alert("Failed to remove member.");
+      console.error("Error removing member:", err);
+      let errorMsg = "Failed to remove member.";
+      if (err.status === 404) {
+        errorMsg = "Member not found. They may have already been removed.";
+        loadMembers(); // Refresh the member list
+      } else if (err.status === 403) {
+        errorMsg = "You don't have permission to remove this member.";
+      } else if (err.responseJSON && err.responseJSON.message) {
+        errorMsg = err.responseJSON.message;
+      }
+      showToast("error", errorMsg);
     },
   });
 }
@@ -631,7 +618,6 @@ function searchUsers() {
     });
 }
 
-// Render user-search results in add-member modal
 // Render user-search results in add-member modal
 function renderUserSearchResults(users) {
   let html = "";

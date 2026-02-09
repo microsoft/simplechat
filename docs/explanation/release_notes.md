@@ -2,6 +2,20 @@
 
 # Feature Release
 
+### **(v0.237.010)**
+
+#### Bug Fixes
+
+*   **Manage Group Page Duplicate Code and Error Handling Fix**
+    *   Fixed multiple code quality and user experience issues in the Manage Group page JavaScript.
+    *   **Duplicate Event Handlers**: Removed duplicate event handler registrations (lines 96-127) for `.select-user-btn`, `.remove-member-btn`, `.change-role-btn`, `.approve-request-btn`, and `.reject-request-btn` that were causing multiple event firings.
+    *   **Duplicate HTML in Actions Column**: Fixed member action buttons rendering duplicate attributes as visible text instead of functional buttons, causing raw HTML/CSS class names to display in the Actions column.
+    *   **Duplicate Pending Request Buttons**: Removed duplicate Approve and Reject buttons in pending requests table that were appearing twice per request.
+    *   **Enhanced Error Handling**: Improved `setRole()` and `removeMember()` functions with specific error messages for 404 (member not found) and 403 (permission denied) errors, automatic member list refresh on 404, and user-friendly toast notifications instead of generic alerts.
+    *   **Removed Duplicate Comment**: Cleaned up duplicate "Render user-search results" comment.
+    *   **Impact**: Member management buttons now render and function correctly, provide better error feedback, and auto-recover from stale member data.
+    *   (Ref: `manage_group.js`, event handler deduplication, error handling improvements, toast notifications)
+    
 ### **(v0.237.009)**
 
 #### New Features
