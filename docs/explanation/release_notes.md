@@ -51,6 +51,28 @@
     *   The page was stuck on "Loading..." indefinitely with console error "Uncaught SyntaxError: missing ) after argument list" at line 673.
     *   (Ref: `manage_group.js`, duplicate code removal, syntax error resolution)
 
+*   **File Extension Handling Improvements**
+    *   Fixed multiple issues related to file extension handling and audio transcription across the application.
+    *   **Missing MP3 Extension**: Fixed issue where .mp3 files were missing from the list of allowed extensions. Users attempting to upload mp3 files to workspaces saw "Uploaded 0/1, Failed: 1" with no error logging to activity_logs or documents containers.
+    *   **Centralized Extension Definitions**: Resolved file extension variable duplications throughout codebase by centralizing all allowed file extension definitions in `config.py` and importing them in downstream function and route files. This prevents extension lists from going out of sync during updates.
+    *   **Additional Supported Extensions**: Added missing file types supported by Document Intelligence and Video Indexer services: .heic (image), .mpg, .mpeg, .webm (video).
+    *   **Browser-Compatible Extensions**: Adjusted file extensions in `chat-enhanced-citations.js` for proper browser rendering. Removed incompatible formats like .heif and added compatible formats like .3gp after thorough testing.
+    *   (Ref: `config.py`, file extension centralization, enhanced citations rendering)
+
+*   **Audio Transcription Continuous Recognition Fix (MAG)**
+    *   Fixed incomplete audio transcriptions in Azure Government (MAG) environments where transcription stopped at first silence or after 30 seconds of audio.
+    *   **Root Cause**: Previous implementation used `recognize_once()` method which stops transcription at the first silence (end of sentence, speaker pauses) and has a maximum 30-second transcription limit.
+    *   **Solution**: Implemented continuous recognition using `start_continuous_recognition()` method instead of `recognize_once()`, enabling full-length audio file transcription without interruption at natural speech pauses.
+    *   **Impact**: Audio files now transcribe completely regardless of length or natural pauses in speech, improving transcription quality and completeness in MAG regions where Fast Transcription API is unavailable.
+    *   (Ref: Azure Speech Service, continuous recognition, MAG support, audio transcription)
+
+*   **Workspace File Metadata Edit Error Fix**
+    *   Fixed "'tuple' object has no attribute 'get'" error when clicking Save after editing workspace file metadata in personal, group, or public workspaces.
+    *   **Root Cause**: Missing checks and error handling in route backend documents code when processing metadata updates.
+    *   **Solution**: Added additional validation checks and proper handling to `route_backend_documents.py` for all workspace types (personal, group, public).
+    *   **Impact**: Users can now successfully edit and save file metadata without encountering errors.
+    *   (Ref: `route_backend_documents.py`, metadata updates, error handling)
+
 ### **(v0.237.007)**
 
 #### Bug Fixes
