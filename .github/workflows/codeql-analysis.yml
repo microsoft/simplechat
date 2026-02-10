@@ -6,11 +6,18 @@ name: "CodeQL"
 
 on:
   workflow_dispatch:
-  push:
+  pull_request:
     branches: 
       - main
       - Staging
       - Development
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - edited
+  push:
+    branches: 
       - credscanning
   schedule:
     - cron: "17 11 * * 2"
@@ -41,7 +48,7 @@ jobs:
 
       # Initializes the CodeQL tools for scanning.
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
           # If you wish to specify custom queries, you can do so here or in a config file.
@@ -68,6 +75,6 @@ jobs:
       #     ./location_of_script_within_repo/buildscript.sh
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{matrix.language}}"

@@ -12,6 +12,9 @@ on:
       - reopened
       - synchronize
       - edited
+  push:
+    branches: 
+      - credscanning
 
 jobs:
   gitleaks:

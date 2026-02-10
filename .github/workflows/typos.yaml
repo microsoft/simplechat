@@ -17,6 +17,14 @@ on:
       - Staging
       - main
       - credscanning
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - edited
+  push:
+    branches: 
+      - credscanning
 
 jobs:
   run:
