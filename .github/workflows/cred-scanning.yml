@@ -1,0 +1,27 @@
+name: Gitleaks Credential Scan
+
+on:
+  pull_request:
+    branches:
+      - main
+      - Staging
+      - Development
+      - credscanning
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - edited
+
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Scan for secrets with Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        with:
+          args: --source . --no-git --gitleaks-ignore-path .gitleaksignore --redact --verbose
