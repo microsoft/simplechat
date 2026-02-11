@@ -12,10 +12,6 @@
     *   **Solution**: Added `file_ext_nodot = file_ext.lstrip('.')` and used the dot-stripped extension for set comparisons against `IMAGE_EXTENSIONS` and `TABULAR_EXTENSIONS`, matching the pattern already used in `functions_documents.py`.
     *   (Ref: `route_frontend_chats.py`, file extension comparison, `IMAGE_EXTENSIONS`, `TABULAR_EXTENSIONS`)
 
-### **(v0.237.010)**
-
-#### Bug Fixes
-
 *   **Manage Group Page Duplicate Code and Error Handling Fix**
     *   Fixed multiple code quality and user experience issues in the Manage Group page JavaScript.
     *   **Duplicate Event Handlers**: Removed duplicate event handler registrations (lines 96-127) for `.select-user-btn`, `.remove-member-btn`, `.change-role-btn`, `.approve-request-btn`, and `.reject-request-btn` that were causing multiple event firings.
