@@ -2,6 +2,16 @@
 
 # Feature Release
 
+### **(v0.237.011)**
+
+#### Bug Fixes
+
+*   **Chat File Upload "Unsupported File Type" Fix**
+    *   Fixed issue where uploading xlsx, png, jpg, csv, and other image/tabular files in the chat interface returned a 400 "Unsupported file type" error.
+    *   **Root Cause**: `os.path.splitext()` returns extensions with a leading dot (e.g., `.png`), but the `IMAGE_EXTENSIONS` and `TABULAR_EXTENSIONS` sets in `config.py` store extensions without dots (e.g., `png`). The comparison `'.png' in {'png', ...}` was always `False`, causing all image and tabular uploads to fall through to the unsupported file type error.
+    *   **Solution**: Added `file_ext_nodot = file_ext.lstrip('.')` and used the dot-stripped extension for set comparisons against `IMAGE_EXTENSIONS` and `TABULAR_EXTENSIONS`, matching the pattern already used in `functions_documents.py`.
+    *   (Ref: `route_frontend_chats.py`, file extension comparison, `IMAGE_EXTENSIONS`, `TABULAR_EXTENSIONS`)
+
 ### **(v0.237.010)**
 
 #### Bug Fixes
