@@ -2,6 +2,26 @@
 
 # Feature Release
 
+### **(v0.237.011)**
+
+#### Bug Fixes
+
+*   **Chat File Upload "Unsupported File Type" Fix**
+    *   Fixed issue where uploading xlsx, png, jpg, csv, and other image/tabular files in the chat interface returned a 400 "Unsupported file type" error.
+    *   **Root Cause**: `os.path.splitext()` returns extensions with a leading dot (e.g., `.png`), but the `IMAGE_EXTENSIONS` and `TABULAR_EXTENSIONS` sets in `config.py` store extensions without dots (e.g., `png`). The comparison `'.png' in {'png', ...}` was always `False`, causing all image and tabular uploads to fall through to the unsupported file type error.
+    *   **Solution**: Added `file_ext_nodot = file_ext.lstrip('.')` and used the dot-stripped extension for set comparisons against `IMAGE_EXTENSIONS` and `TABULAR_EXTENSIONS`, matching the pattern already used in `functions_documents.py`.
+    *   (Ref: `route_frontend_chats.py`, file extension comparison, `IMAGE_EXTENSIONS`, `TABULAR_EXTENSIONS`)
+
+*   **Manage Group Page Duplicate Code and Error Handling Fix**
+    *   Fixed multiple code quality and user experience issues in the Manage Group page JavaScript.
+    *   **Duplicate Event Handlers**: Removed duplicate event handler registrations (lines 96-127) for `.select-user-btn`, `.remove-member-btn`, `.change-role-btn`, `.approve-request-btn`, and `.reject-request-btn` that were causing multiple event firings.
+    *   **Duplicate HTML in Actions Column**: Fixed member action buttons rendering duplicate attributes as visible text instead of functional buttons, causing raw HTML/CSS class names to display in the Actions column.
+    *   **Duplicate Pending Request Buttons**: Removed duplicate Approve and Reject buttons in pending requests table that were appearing twice per request.
+    *   **Enhanced Error Handling**: Improved `setRole()` and `removeMember()` functions with specific error messages for 404 (member not found) and 403 (permission denied) errors, automatic member list refresh on 404, and user-friendly toast notifications instead of generic alerts.
+    *   **Removed Duplicate Comment**: Cleaned up duplicate "Render user-search results" comment.
+    *   **Impact**: Member management buttons now render and function correctly, provide better error feedback, and auto-recover from stale member data.
+    *   (Ref: `manage_group.js`, event handler deduplication, error handling improvements, toast notifications)
+    
 ### **(v0.237.009)**
 
 #### New Features
