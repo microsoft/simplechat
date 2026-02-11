@@ -118,7 +118,8 @@ def register_route_frontend_chats(app):
         file.seek(0)
 
         filename = secure_filename(file.filename)
-        file_ext = os.path.splitext(filename)[1].lower()
+        file_ext = os.path.splitext(filename)[1].lower()  # e.g., '.png'
+        file_ext_nodot = file_ext.lstrip('.')              # e.g., 'png'
 
         with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
             file.save(tmp_file.name)
@@ -131,9 +132,9 @@ def register_route_frontend_chats(app):
 
         try:
             # Check if this is an image file
-            is_image_file = file_ext in IMAGE_EXTENSIONS
+            is_image_file = file_ext_nodot in IMAGE_EXTENSIONS
             
-            if file_ext in ['.pdf', '.docx', '.pptx', '.ppt', '.html'] or is_image_file:
+            if file_ext_nodot in (DOCUMENT_EXTENSIONS | {'html'}) or is_image_file:
                 extracted_content_raw  = extract_content_with_azure_di(temp_file_path)
                 
                 # Convert pages_data list to string
@@ -191,25 +192,25 @@ def register_route_frontend_chats(app):
                         print(f"Warning: Vision analysis failed for chat upload: {vision_error}")
                         # Continue without vision analysis
                 
-            elif file_ext in ['.doc', '.docm']:
+            elif file_ext_nodot in {'doc', 'docm'}:
                 # Use docx2txt for .doc and .docm files
                 try:
                     import docx2txt
                     extracted_content = docx2txt.process(temp_file_path)
                 except ImportError:
                     return jsonify({'error': 'docx2txt library required for .doc/.docm files'}), 500
-            elif file_ext == '.txt':
+            elif file_ext_nodot == 'txt':
                 extracted_content  = extract_text_file(temp_file_path)
-            elif file_ext == '.md':
+            elif file_ext_nodot == 'md':
                 extracted_content  = extract_markdown_file(temp_file_path)
-            elif file_ext == '.json':
+            elif file_ext_nodot == 'json':
                 with open(temp_file_path, 'r', encoding='utf-8') as f:
                     parsed_json = json.load(f)
                     extracted_content  = json.dumps(parsed_json, indent=2)
-            elif file_ext in ['.xml', '.yaml', '.yml', '.log']:
+            elif file_ext_nodot in {'xml', 'yaml', 'yml', 'log'}:
                 # Handle XML, YAML, and LOG files as text for inline chat
                 extracted_content  = extract_text_file(temp_file_path)
-            elif file_ext in TABULAR_EXTENSIONS:
+            elif file_ext_nodot in TABULAR_EXTENSIONS:
                 extracted_content = extract_table_file(temp_file_path, file_ext)
                 is_table = True
             else:
