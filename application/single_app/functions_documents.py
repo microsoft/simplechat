@@ -3410,7 +3410,8 @@ def process_txt(document_id, user_id, temp_file_path, original_filename, enable_
     total_chunks_saved = 0
     total_embedding_tokens = 0
     embedding_model_name = None
-    target_words_per_chunk = 400
+    chunk_config = get_chunk_size_config(get_settings())
+    target_words_per_chunk = chunk_config.get('txt', {}).get('value', 400)
 
     if enable_enhanced_citations:
         args = {
@@ -3484,7 +3485,8 @@ def process_xml(document_id, user_id, temp_file_path, original_filename, enable_
     total_embedding_tokens = 0
     embedding_model_name = None
     # Character-based chunking for XML structure preservation
-    max_chunk_size_chars = 4000
+    chunk_config = get_chunk_size_config(get_settings())
+    max_chunk_size_chars = chunk_config.get('xml', {}).get('value', 4000)
 
     if enable_enhanced_citations:
         args = {
@@ -3579,7 +3581,8 @@ def process_yaml(document_id, user_id, temp_file_path, original_filename, enable
     total_embedding_tokens = 0
     embedding_model_name = None
     # Character-based chunking for YAML structure preservation
-    max_chunk_size_chars = 4000
+    chunk_config = get_chunk_size_config(get_settings())
+    max_chunk_size_chars = chunk_config.get('yaml', {}).get('value', 4000)
 
     if enable_enhanced_citations:
         args = {
@@ -3673,7 +3676,8 @@ def process_log(document_id, user_id, temp_file_path, original_filename, enable_
     total_chunks_saved = 0
     total_embedding_tokens = 0
     embedding_model_name = None
-    target_words_per_chunk = 1000  # Word-based chunking for better semantic grouping
+    chunk_config = get_chunk_size_config(get_settings())
+    target_words_per_chunk = chunk_config.get('log', {}).get('value', 1000)  # Word-based chunking for better semantic grouping
 
     if enable_enhanced_citations:
         args = {
@@ -3771,7 +3775,8 @@ def process_doc(document_id, user_id, temp_file_path, original_filename, enable_
 
     update_callback(status=f"Processing {original_filename.split('.')[-1].upper()} file...")
     total_chunks_saved = 0
-    target_words_per_chunk = 400  # Consistent with other text-based chunking
+    chunk_config = get_chunk_size_config(get_settings())
+    target_words_per_chunk = chunk_config.get('doc', {}).get('value', 400)  # Consistent with other text-based chunking
 
     if enable_enhanced_citations:
         args = {
@@ -3860,8 +3865,9 @@ def process_xml(document_id, user_id, temp_file_path, original_filename, enable_
 
     update_callback(status="Processing XML file...")
     total_chunks_saved = 0
-    # Character-based chunking for XML structure preservation
-    max_chunk_size_chars = 4000
+    # Character-based chunking for XML structure preservation, capped by embedding context
+    chunk_config = get_chunk_size_config(get_settings())
+    max_chunk_size_chars = chunk_config.get('xml', {}).get('value', 4000)
 
     if enable_enhanced_citations:
         args = {
@@ -3947,8 +3953,9 @@ def process_yaml(document_id, user_id, temp_file_path, original_filename, enable
 
     update_callback(status="Processing YAML file...")
     total_chunks_saved = 0
-    # Character-based chunking for YAML structure preservation
-    max_chunk_size_chars = 4000
+    # Character-based chunking for YAML structure preservation, capped by embedding context
+    chunk_config = get_chunk_size_config(get_settings())
+    max_chunk_size_chars = chunk_config.get('yaml', {}).get('value', 4000)
 
     if enable_enhanced_citations:
         args = {
@@ -4211,8 +4218,9 @@ def process_html(document_id, user_id, temp_file_path, original_filename, enable
     total_chunks_saved = 0
     total_embedding_tokens = 0
     embedding_model_name = None
-    target_chunk_words = 1200 # Target size based on requirement
-    min_chunk_words = 600 # Minimum size based on requirement
+    chunk_config = get_chunk_size_config(get_settings())
+    target_chunk_words = chunk_config.get('html', {}).get('value', 1200) # Target size based on requirement
+    min_chunk_words = max(1, int(target_chunk_words * 0.5)) # Minimum size based on requirement
 
     if enable_enhanced_citations:
         args = {
@@ -4341,8 +4349,9 @@ def process_md(document_id, user_id, temp_file_path, original_filename, enable_e
     total_chunks_saved = 0
     total_embedding_tokens = 0
     embedding_model_name = None
-    target_chunk_words = 1200 # Target size based on requirement
-    min_chunk_words = 600 # Minimum size based on requirement
+    chunk_config = get_chunk_size_config(get_settings())
+    target_chunk_words = chunk_config.get('md', {}).get('value', 1200) # Target size based on requirement
+    min_chunk_words = max(1, int(target_chunk_words * 0.5)) # Minimum size based on requirement
 
     if enable_enhanced_citations:
         args = {
@@ -4477,8 +4486,9 @@ def process_json(document_id, user_id, temp_file_path, original_filename, enable
     total_chunks_saved = 0
     total_embedding_tokens = 0
     embedding_model_name = None
+    chunk_config = get_chunk_size_config(get_settings())
     # Reflects character count limit for the splitter
-    max_chunk_size_chars = 4000 # As per original requirement
+    max_chunk_size_chars = chunk_config.get('json', {}).get('value', 4000)
 
     if enable_enhanced_citations:
         args = {
@@ -4613,7 +4623,10 @@ def process_single_tabular_sheet(df, document_id, user_id, file_name, update_cal
     total_chunks_saved = 0
     total_embedding_tokens = 0
     embedding_model_name = None
-    target_chunk_size_chars = 800 # Requirement: "800 size chunk" (assuming characters)
+    chunk_config = get_chunk_size_config(get_settings())
+    _, ext = os.path.splitext(file_name.lower())
+    config_key = 'csv' if ext == '.csv' else 'excel'
+    target_chunk_size_chars = chunk_config.get(config_key, {}).get('value', 800) # Requirement: "800 size chunk" (assuming characters)
 
     if df.empty:
         print(f"Skipping empty sheet/file: {file_name}")
@@ -4877,6 +4890,7 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
 
     # --- DI Processing Logic ---
     settings = get_settings() # Assuming get_settings is accessible
+    chunk_config = get_chunk_size_config(settings)
     di_limit_bytes = 500 * 1024 * 1024
     di_page_limit = 2000
     file_size = os.path.getsize(temp_file_path)
@@ -5003,14 +5017,44 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
         if is_word:
             update_callback(status=f"Chunking Word content from {chunk_effective_filename}...")
             try:
-                final_chunks_to_save = chunk_word_file_into_pages(di_pages=di_extracted_pages)
+                word_key = 'docx' if file_ext == '.docx' else 'doc'
+                target_word_chunk = chunk_config.get(word_key, {}).get('value', WORD_CHUNK_SIZE)
+                final_chunks_to_save = chunk_word_file_into_pages(
+                    di_pages=di_extracted_pages,
+                    chunk_size=target_word_chunk
+                )
                 num_final_chunks = len(final_chunks_to_save)
                 # Update number_of_pages again for Word to reflect final chunk count
                 update_callback(number_of_pages=num_final_chunks, status=f"Created {num_final_chunks} content chunks for {chunk_effective_filename}.")
             except Exception as e:
                  raise Exception(f"Error chunking Word content for {chunk_effective_filename}: {str(e)}")
         elif is_pdf or is_ppt:
-            final_chunks_to_save = di_extracted_pages # Use DI pages/slides directly
+            target_key = 'pdf' if is_pdf else 'pptx'
+            try:
+                target_size = int(chunk_config.get(target_key, {}).get('value', 1))
+            except Exception:
+                target_size = 1
+            target_size = max(1, target_size)
+
+            if target_size == 1:
+                final_chunks_to_save = di_extracted_pages # Use DI pages/slides directly
+            else:
+                final_chunks_to_save = []
+                for start in range(0, len(di_extracted_pages), target_size):
+                    slice_pages = di_extracted_pages[start:start + target_size]
+                    combined_content = "\n\n".join([page.get('content', '') or '' for page in slice_pages]).strip()
+                    if not combined_content:
+                        continue
+                    first_page_number = slice_pages[0].get('page_number', start + 1)
+                    final_chunks_to_save.append({
+                        "page_number": first_page_number,
+                        "content": combined_content
+                    })
+
+                update_callback(
+                    number_of_pages=len(final_chunks_to_save),
+                    status=f"Grouped {len(final_chunks_to_save)} chunk(s) for {chunk_effective_filename} using {target_size} page(s)/slide(s) per chunk."
+                )
         elif is_image:
             if di_extracted_pages:
                  if 'page_number' not in di_extracted_pages[0]: di_extracted_pages[0]['page_number'] = 1
@@ -5294,7 +5338,8 @@ def process_audio_document(
     # 5) stitch and save transcript chunks
     full_text = ' '.join(all_phrases).strip()
     words = full_text.split()
-    chunk_size = 400
+    chunk_settings = get_chunk_size_config(settings)
+    chunk_size = chunk_settings.get('transcript', {}).get('value', 400)
     total_pages = max(1, math.ceil(len(words) / chunk_size))
     print(f"Creating {total_pages} transcript pages")
 

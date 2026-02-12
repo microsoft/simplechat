@@ -3609,6 +3609,108 @@
                     </div>
                 </div>
 
+                <div class="card p-3 mb-3" id="chunk-size-section">
+                    <div class="d-flex align-items-center justify-content-between mb-2">
+                        <h5 class="mb-0"><i class="bi bi-collection me-2"></i>Chunk Sizes</h5>
+                        <span class="badge bg-primary-subtle text-primary-emphasis">Cap: {{ chunk_size_cap }}</span>
+                    </div>
+                    <p class="text-muted mb-2 small">Custom chunk sizes apply to new uploads only. Existing documents keep their current chunks.</p>
+                    <div class="alert alert-warning small mb-3">
+                        <strong>Heads up:</strong> Overrides are capped at {{ chunk_size_cap }} (2x embedding context window, fallback 16,384).
+                    </div>
+                    <div class="form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_chunk_size_override"
+                            name="enable_chunk_size_override"
+                            {% if settings.enable_chunk_size_override %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_chunk_size_override">
+                            Enable custom chunk sizes by file type
+                        </label>
+                    </div>
+
+                    <div id="chunk-size-fields" class="{% if not settings.enable_chunk_size_override %}d-none{% endif %}">
+                        <div id="chunk-size-cap-warning" class="alert alert-warning d-none" role="alert">
+                            <span id="chunk-size-cap-warning-text">Chunk sizes above the cap will be reduced automatically.</span>
+                        </div>
+                        <input type="hidden" id="chunk_size_cap" value="{{ chunk_size_cap }}" />
+                        {% set chunk_settings = chunk_size_settings or {} %}
+                        {% set chunk_defaults = chunk_size_defaults or {} %}
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label for="chunk_size_txt" class="form-label">TXT (words)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="TXT" id="chunk_size_txt" name="chunk_size_txt" value="{{ chunk_settings.get('txt', {}).get('value', chunk_defaults.get('txt', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_log" class="form-label">LOG (words)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="LOG" id="chunk_size_log" name="chunk_size_log" value="{{ chunk_settings.get('log', {}).get('value', chunk_defaults.get('log', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="chunk_size_doc" class="form-label">DOC (words)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="DOC" id="chunk_size_doc" name="chunk_size_doc" value="{{ chunk_settings.get('doc', {}).get('value', chunk_defaults.get('doc', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="chunk_size_docm" class="form-label">DOCM (words)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="DOCM" id="chunk_size_docm" name="chunk_size_docm" value="{{ chunk_settings.get('docm', {}).get('value', chunk_defaults.get('docm', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="chunk_size_docx" class="form-label">DOCX (words)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="DOCX" id="chunk_size_docx" name="chunk_size_docx" value="{{ chunk_settings.get('docx', {}).get('value', chunk_defaults.get('docx', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_html" class="form-label">HTML (words)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="HTML" id="chunk_size_html" name="chunk_size_html" value="{{ chunk_settings.get('html', {}).get('value', chunk_defaults.get('html', {}).get('value')) }}">
+                                <div class="form-text">Minimum enforced at 50% of target on merge.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_md" class="form-label">Markdown (words)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="MD" id="chunk_size_md" name="chunk_size_md" value="{{ chunk_settings.get('md', {}).get('value', chunk_defaults.get('md', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_xml" class="form-label">XML (characters)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="XML" id="chunk_size_xml" name="chunk_size_xml" value="{{ chunk_settings.get('xml', {}).get('value', chunk_defaults.get('xml', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_yaml" class="form-label">YAML (characters)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="YAML" id="chunk_size_yaml" name="chunk_size_yaml" value="{{ chunk_settings.get('yaml', {}).get('value', chunk_defaults.get('yaml', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_yml" class="form-label">YML (characters)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="YML" id="chunk_size_yml" name="chunk_size_yml" value="{{ chunk_settings.get('yml', {}).get('value', chunk_defaults.get('yml', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_json" class="form-label">JSON (characters)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="JSON" id="chunk_size_json" name="chunk_size_json" value="{{ chunk_settings.get('json', {}).get('value', chunk_defaults.get('json', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_csv" class="form-label">CSV (characters)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="CSV" id="chunk_size_csv" name="chunk_size_csv" value="{{ chunk_settings.get('csv', {}).get('value', chunk_defaults.get('csv', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_excel" class="form-label">Excel (characters)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="EXCEL" id="chunk_size_excel" name="chunk_size_excel" value="{{ chunk_settings.get('excel', {}).get('value', chunk_defaults.get('excel', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_transcript" class="form-label">Transcripts (words)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="TRANSCRIPT" id="chunk_size_transcript" name="chunk_size_transcript" value="{{ chunk_settings.get('transcript', {}).get('value', chunk_defaults.get('transcript', {}).get('value')) }}">
+                                <div class="form-text">Applies to new audio transcripts.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_pdf" class="form-label">PDF (pages)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="PDF" id="chunk_size_pdf" name="chunk_size_pdf" value="{{ chunk_settings.get('pdf', {}).get('value', chunk_defaults.get('pdf', {}).get('value')) }}">
+                                <div class="form-text">Pages per chunk after extraction.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_pptx" class="form-label">PPT/PPTX (slides)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="PPT/PPTX" id="chunk_size_pptx" name="chunk_size_pptx" value="{{ chunk_settings.get('pptx', {}).get('value', chunk_defaults.get('pptx', {}).get('value')) }}">
+                                <div class="form-text">Slides per chunk after extraction.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- AI Video Intelligence Card -->
                 <div class="card p-4 mb-4 border-info shadow-sm" id="video-intelligence-section">
                     <div class="d-flex align-items-center justify-content-between mb-3">

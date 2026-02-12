@@ -153,6 +153,17 @@ def create_notification(
         return None
 
 
+def broadcast_system_notification(title, message, metadata=None):
+    """Create a system announcement visible to all users regardless of role."""
+    return create_notification(
+        notification_type='system_announcement',
+        title=title,
+        message=message,
+        metadata=metadata or {},
+        assignment={'all_users': True}
+    )
+
+
 def create_group_notification(group_id, notification_type, title, message, link_url='', link_context=None, metadata=None):
     """
     Create a notification for all members of a group.
@@ -301,9 +312,13 @@ def get_user_notifications(user_id, page=1, per_page=20, include_read=True, incl
             
             # Check if user matches assignment criteria
             user_matches = False
+
+            # Broadcast to all users regardless of role/ownership
+            if assignment.get('all_users'):
+                user_matches = True
             
             # Check roles
-            if user_roles and assignment.get('roles'):
+            if not user_matches and user_roles and assignment.get('roles'):
                 for role in assignment.get('roles', []):
                     if role in user_roles:
                         user_matches = True

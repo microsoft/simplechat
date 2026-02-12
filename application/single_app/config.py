@@ -88,8 +88,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.236.072"
-
+VERSION = "0.237.010"
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
@@ -123,11 +122,49 @@ HSTS_MAX_AGE = int(os.getenv('HSTS_MAX_AGE', '31536000'))  # 1 year default
 CLIENTS = {}
 CLIENTS_LOCK = threading.Lock()
 
-ALLOWED_EXTENSIONS = {
-    'txt', 'pdf', 'doc', 'docm', 'docx', 'xlsx', 'xlsm', 'xls', 'csv', 'pptx', 'html', 'jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'heif', 'md', 'json', 
-    'mp4', 'mov', 'avi', 'mkv', 'flv', 'mxf', 'gxf', 'ts', 'ps', '3gp', '3gpp', 'mpg', 'wmv', 'asf', 'm4a', 'm4v', 'isma', 'ismv', 
-    'dvr-ms', 'wav', 'xml', 'yaml', 'yml', 'log'
+# Base allowed extensions (always available)
+BASE_ALLOWED_EXTENSIONS = {'txt', 'doc', 'docm', 'html', 'md', 'json', 'xml', 'yaml', 'yml', 'log'}
+DOCUMENT_EXTENSIONS = {'pdf', 'docx', 'pptx', 'ppt'}
+TABULAR_EXTENSIONS = {'csv', 'xlsx', 'xls', 'xlsm'}
+
+# Updates to image, video, or audio extensions should also be made in static/js/chat/chat-enhanced-citations.js if the new file types can be natively rendered in the browser.
+IMAGE_EXTENSIONS = {'jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'heif', 'heic'}
+
+# Optional extensions by feature
+VIDEO_EXTENSIONS = {
+    'mp4', 'mov', 'avi', 'mkv', 'flv', 'mxf', 'gxf', 'ts', 'ps', '3gp', '3gpp',
+    'mpg', 'wmv', 'asf', 'm4v', 'isma', 'ismv', 'dvr-ms', 'webm', 'mpeg'
 }
+
+AUDIO_EXTENSIONS = {'mp3', 'wav', 'ogg', 'aac', 'flac', 'm4a'}
+
+def get_allowed_extensions(enable_video=False, enable_audio=False):
+    """
+    Get allowed file extensions based on feature flags.
+    
+    Args:
+        enable_video: Whether video file support is enabled
+        enable_audio: Whether audio file support is enabled
+        
+    Returns:
+        set: Allowed file extensions
+    """
+    extensions = BASE_ALLOWED_EXTENSIONS.copy()
+    extensions.update(DOCUMENT_EXTENSIONS)
+    extensions.update(IMAGE_EXTENSIONS)
+    extensions.update(TABULAR_EXTENSIONS)
+
+    if enable_video:
+        extensions.update(VIDEO_EXTENSIONS)
+
+    if enable_audio:
+        extensions.update(AUDIO_EXTENSIONS)
+
+    return extensions
+
+ALLOWED_EXTENSIONS = get_allowed_extensions(enable_video=True, enable_audio=True)
+
+# Admin UI specific extensions (for logo/favicon uploads)
 ALLOWED_EXTENSIONS_IMG = {'png', 'jpg', 'jpeg'}
 MAX_CONTENT_LENGTH = 5000 * 1024 * 1024  # 5000 MB AKA 5 GB
 

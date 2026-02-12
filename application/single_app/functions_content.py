@@ -252,20 +252,16 @@ def chunk_text(text, chunk_size=2000, overlap=200):
         print(f"Error in chunk_text: {e}")
         raise e  # Re-raise the exception to propagate it
     
-def chunk_word_file_into_pages(di_pages):
+def chunk_word_file_into_pages(di_pages, chunk_size=WORD_CHUNK_SIZE):
     """
-    Chunks the content extracted from a Word document by Azure DI into smaller
-    chunks based on a target word count.
+    Chunk Azure DI Word pages into smaller word-based segments.
 
     Args:
-        di_pages (list): A list of dictionaries, where each dictionary represents
-                         a page extracted by Azure DI and contains at least a
-                         'page_number' and 'content' key.
+        di_pages (list): Pages returned from DI with page_number/content keys.
+        chunk_size (int): Target number of words per chunk (defaults to config).
 
     Returns:
-        list: A new list of dictionaries, where each dictionary represents a
-              smaller chunk with 'page_number' (representing the chunk sequence)
-              and 'content' (the chunked text).
+        list: A list of dicts with chunked content and sequence numbers.
     """
     new_pages = []
     current_chunk_content = []
@@ -282,7 +278,7 @@ def chunk_word_file_into_pages(di_pages):
             current_word_count += 1
 
             # If the chunk reaches the desired size, finalize it
-            if current_word_count >= WORD_CHUNK_SIZE:
+            if current_word_count >= chunk_size:
                 chunk_text = " ".join(current_chunk_content)
                 new_pages.append({
                     "page_number": new_page_number,

@@ -228,6 +228,25 @@ def get_settings(use_cosmos=False):
         'enable_ai_search_apim': False,
         'azure_apim_ai_search_endpoint': '',
         'azure_apim_ai_search_subscription_key': '',
+        'enable_chunk_size_override': False,
+        'chunk_size': {
+            'txt': {'value': 400, 'unit': 'words'},
+            'log': {'value': 1000, 'unit': 'words'},
+            'doc': {'value': 400, 'unit': 'words'},
+            'docm': {'value': 400, 'unit': 'words'},
+            'docx': {'value': WORD_CHUNK_SIZE, 'unit': 'words'},
+            'html': {'value': 1200, 'unit': 'words'},
+            'md': {'value': 1200, 'unit': 'words'},
+            'xml': {'value': 4000, 'unit': 'characters'},
+            'yaml': {'value': 4000, 'unit': 'characters'},
+            'yml': {'value': 4000, 'unit': 'characters'},
+            'json': {'value': 4000, 'unit': 'characters'},
+            'csv': {'value': 800, 'unit': 'characters'},
+            'excel': {'value': 800, 'unit': 'characters'},
+            'transcript': {'value': 400, 'unit': 'words'},
+            'pdf': {'value': 1, 'unit': 'pages'},
+            'pptx': {'value': 1, 'unit': 'slides'}
+        },
         
         # Search Result Caching
         'enable_search_result_caching': True,
@@ -417,6 +436,92 @@ def update_settings(new_settings):
     except Exception as e:
         print(f"Error updating settings: {str(e)}")
         return False
+
+
+def get_chunk_size_defaults():
+    """Return the baseline chunk size configuration used when overrides are disabled."""
+    return {
+        'txt': {'value': 400, 'unit': 'words'},
+        'log': {'value': 1000, 'unit': 'words'},
+        'doc': {'value': 400, 'unit': 'words'},
+        'docm': {'value': 400, 'unit': 'words'},
+        'docx': {'value': WORD_CHUNK_SIZE, 'unit': 'words'},
+        'html': {'value': 1200, 'unit': 'words'},
+        'md': {'value': 1200, 'unit': 'words'},
+        'xml': {'value': 4000, 'unit': 'characters'},
+        'yaml': {'value': 4000, 'unit': 'characters'},
+        'yml': {'value': 4000, 'unit': 'characters'},
+        'json': {'value': 4000, 'unit': 'characters'},
+        'csv': {'value': 800, 'unit': 'characters'},
+        'excel': {'value': 800, 'unit': 'characters'},
+        'transcript': {'value': 400, 'unit': 'words'},
+        'pdf': {'value': 1, 'unit': 'pages'},
+        'pptx': {'value': 1, 'unit': 'slides'}
+    }
+
+
+def get_chunk_size_cap(settings=None):
+    """Return the maximum allowed chunk size (2x embedding context window, fallback 16,384)."""
+    fallback_cap = 16384
+    try:
+        settings = settings or get_settings()
+        embedding_model = settings.get('embedding_model', {}) if isinstance(settings, dict) else {}
+        selected_models = embedding_model.get('selected') or []
+
+        base_context = None
+        for model in selected_models:
+            if not isinstance(model, dict):
+                continue
+            for key in ['context_window', 'contextWindow', 'maxContextTokens', 'context_length', 'contextLength', 'maxTokens']:
+                value = model.get(key)
+                if value is not None:
+                    try:
+                        parsed_value = int(value)
+                        if parsed_value > 0:
+                            base_context = parsed_value
+                            break
+                    except Exception:
+                        continue
+            if base_context:
+                break
+
+        if base_context and base_context > 0:
+            return base_context * 2
+    except Exception:
+        pass
+
+    return fallback_cap
+
+
+def get_chunk_size_config(settings=None):
+    """
+    Compute the effective chunk size configuration, respecting defaults, caps, and the override toggle.
+    When overrides are disabled, defaults are returned regardless of stored values.
+    """
+    settings = settings or get_settings()
+    defaults = get_chunk_size_defaults()
+    use_custom = isinstance(settings, dict) and settings.get('enable_chunk_size_override', False)
+    stored = settings.get('chunk_size', {}) if isinstance(settings, dict) else {}
+    cap = get_chunk_size_cap(settings)
+
+    normalized = {}
+    for key, default_meta in defaults.items():
+        incoming_meta = stored.get(key, {}) if use_custom and isinstance(stored, dict) else {}
+        unit = incoming_meta.get('unit', default_meta['unit']) if isinstance(incoming_meta, dict) else default_meta['unit']
+        try:
+            raw_value = int(incoming_meta.get('value', default_meta['value'])) if isinstance(incoming_meta, dict) else int(default_meta['value'])
+        except Exception:
+            raw_value = default_meta['value']
+
+        value = max(1, raw_value)
+        value = min(value, cap)
+
+        normalized[key] = {
+            'value': value,
+            'unit': unit
+        }
+
+    return normalized
 
 def compare_versions(v1_str, v2_str):
     """

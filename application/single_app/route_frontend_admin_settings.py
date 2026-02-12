@@ -5,6 +5,7 @@ from functions_documents import *
 from functions_authentication import *
 from functions_settings import *
 from functions_activity_logging import log_web_search_consent_acceptance, log_general_admin_action
+from functions_notifications import broadcast_system_notification
 from functions_logging import *
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta, timezone
@@ -300,7 +301,11 @@ def register_route_frontend_admin_settings(app):
                 user_settings=user_settings,
                 update_available=update_available,
                 latest_version=latest_version,
-                download_url=download_url
+                download_url=download_url,
+                chunk_size_defaults=get_chunk_size_defaults(),
+                chunk_size_settings=settings.get('chunk_size', {}),
+                chunk_size_cap=get_chunk_size_cap(settings),
+                chunk_size_effective=get_chunk_size_config(settings)
                 # You don't need to pass deployments separately if they are added to settings['..._model']['all']
                 # gpt_deployments=gpt_deployments,
                 # embedding_deployments=embedding_deployments,
@@ -821,6 +826,45 @@ def register_route_frontend_admin_settings(app):
                 flash('Invalid Front Door URL format. Please provide a valid HTTP/HTTPS URL.', 'danger')
                 front_door_url = ''
 
+            # --- Chunk Size Overrides ---
+            chunk_size_defaults = get_chunk_size_defaults()
+            existing_chunk_sizes = settings.get('chunk_size', {}) if isinstance(settings, dict) else {}
+            chunk_size_cap = get_chunk_size_cap(settings)
+            enable_chunk_size_override = form_data.get('enable_chunk_size_override') == 'on'
+            normalized_chunk_sizes = {}
+            chunk_size_warning_keys = []
+
+            for key, meta in chunk_size_defaults.items():
+                field_name = f"chunk_size_{key}"
+                incoming_raw = form_data.get(field_name, '')
+                stored_meta = existing_chunk_sizes.get(key, {}) if isinstance(existing_chunk_sizes, dict) else {}
+
+                try:
+                    parsed_value = int(incoming_raw) if incoming_raw not in [None, ''] else int(stored_meta.get('value', meta.get('value', 1)))
+                except Exception:
+                    parsed_value = meta.get('value', 1)
+
+                sanitized_value = max(1, parsed_value)
+                if sanitized_value > chunk_size_cap:
+                    chunk_size_warning_keys.append(key.upper())
+                sanitized_value = min(sanitized_value, chunk_size_cap)
+
+                normalized_chunk_sizes[key] = {
+                    'value': sanitized_value,
+                    'unit': stored_meta.get('unit', meta.get('unit', 'words'))
+                }
+
+            chunk_size_changed = (
+                enable_chunk_size_override != settings.get('enable_chunk_size_override', False)
+                or normalized_chunk_sizes != existing_chunk_sizes
+            )
+
+            if chunk_size_warning_keys:
+                flash(
+                    f"Chunk sizes capped at {chunk_size_cap} for: {', '.join(chunk_size_warning_keys)}.",
+                    'warning'
+                )
+
             # --- Construct new_settings Dictionary ---
             new_settings = {
                 # Logging
@@ -1023,6 +1067,8 @@ def register_route_frontend_admin_settings(app):
                 'enable_ai_search_apim': form_data.get('enable_ai_search_apim') == 'on',
                 'azure_apim_ai_search_endpoint': form_data.get('azure_apim_ai_search_endpoint', '').strip(),
                 'azure_apim_ai_search_subscription_key': form_data.get('azure_apim_ai_search_subscription_key', '').strip(),
+                'enable_chunk_size_override': enable_chunk_size_override,
+                'chunk_size': normalized_chunk_sizes,
 
                 # Extract (Doc Intelligence Direct & APIM)
                 'azure_document_intelligence_endpoint': form_data.get('azure_document_intelligence_endpoint', '').strip(),
@@ -1355,6 +1401,34 @@ def register_route_frontend_admin_settings(app):
                     initialize_clients(updated_settings_for_file) # Important - reinitialize clients with new settings
                 else:
                     print("ERROR: Could not fetch settings after update to ensure logo/favicon files.")
+
+                if chunk_size_changed:
+                    try:
+                        log_general_admin_action(
+                            admin_user_id=user_id,
+                            admin_email=admin_email,
+                            action='chunk_size_settings_updated',
+                            description='Updated chunk size overrides for document processing.',
+                            additional_context={
+                                'override_enabled': enable_chunk_size_override,
+                                'chunk_size_cap': chunk_size_cap,
+                                'chunk_sizes': normalized_chunk_sizes
+                            }
+                        )
+                    except Exception as e:
+                        print(f"Warning logging chunk size admin action: {e}")
+
+                    try:
+                        broadcast_system_notification(
+                            title="Document chunk sizes updated",
+                            message="Admins updated chunk size defaults. New uploads will use the latest limits.",
+                            metadata={
+                                'override_enabled': enable_chunk_size_override,
+                                'chunk_size_cap': chunk_size_cap
+                            }
+                        )
+                    except Exception as e:
+                        print(f"Warning sending chunk size notification: {e}")
 
             else:
                 flash("Failed to update admin settings.", "danger")

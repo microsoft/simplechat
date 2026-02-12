@@ -69,6 +69,9 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // --- NEW: External Links Setup ---
     setupExternalLinks(); // Initialize external links section
+
+    // --- NEW: Chunk size controls ---
+    setupChunkSizeControls();
     
     // --- Setup form change tracking ---
     setupFormChangeTracking();
@@ -1209,6 +1212,69 @@ function updateExternalLinksJsonInput() {
         }
     }
     return "[]";
+}
+
+function setupChunkSizeControls() {
+    const overrideToggle = document.getElementById('enable_chunk_size_override');
+    const fieldsContainer = document.getElementById('chunk-size-fields');
+    const capWarning = document.getElementById('chunk-size-cap-warning');
+    const capWarningText = document.getElementById('chunk-size-cap-warning-text');
+    const capInput = document.getElementById('chunk_size_cap');
+    const chunkInputs = document.querySelectorAll('.chunk-size-input');
+
+    if (!overrideToggle || !fieldsContainer || !chunkInputs || chunkInputs.length === 0) {
+        return;
+    }
+
+    const capValue = capInput ? parseInt(capInput.value, 10) : null;
+
+    const updateCapWarning = () => {
+        if (!capValue || Number.isNaN(capValue)) {
+            if (capWarning) capWarning.classList.add('d-none');
+            return;
+        }
+
+        const exceeding = [];
+        chunkInputs.forEach(input => {
+            const raw = parseInt(input.value || '0', 10);
+            if (!Number.isNaN(raw) && raw > capValue) {
+                exceeding.push(input.dataset.label || input.name || 'A chunk size');
+            }
+        });
+
+        if (capWarning && capWarningText) {
+            if (exceeding.length > 0 && overrideToggle.checked) {
+                capWarningText.textContent = `${exceeding.join(', ')} will be reduced to ${capValue} because of the cap.`;
+                capWarning.classList.remove('d-none');
+            } else {
+                capWarning.classList.add('d-none');
+            }
+        }
+    };
+
+    const updateVisibility = (suppressChange = false) => {
+        const enabled = overrideToggle.checked;
+        fieldsContainer.classList.toggle('d-none', !enabled);
+        if (!enabled && capWarning) {
+            capWarning.classList.add('d-none');
+        } else {
+            updateCapWarning();
+        }
+        if (!suppressChange) {
+            markFormAsModified();
+        }
+    };
+
+    overrideToggle.addEventListener('change', updateVisibility);
+    chunkInputs.forEach(input => {
+        input.addEventListener('input', () => {
+            updateCapWarning();
+            markFormAsModified();
+        });
+    });
+
+    // Initial state
+    updateVisibility(true);
 }
 
 function setupToggles() {
