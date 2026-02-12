@@ -241,6 +241,52 @@
   background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAeCAYAAADkftS9AAAAIklEQVQoU2M4c+bMfxAGAgYYmwGrIIiDjrELjpo5aiZeAPTBAPAXJmw1AAAAAElFTkSuQmCC');
   cursor: col-resize;
 }
+
+  /* Tutorial button positioning */
+  #chat-tutorial-launch {
+    z-index: 1099;
+    pointer-events: none; /* allow toast clicks; inner button restores events */
+    top: 80px;
+  }
+
+  #chat-tutorial-btn {
+    pointer-events: auto;
+  }
+
+  .conversation-dropdown.tutorial-force-visible {
+    opacity: 1 !important;
+  }
+
+  /* Tutorial overlay styles */
+  .chat-tutorial-layer {
+    position: fixed;
+    z-index: 1100;
+    pointer-events: auto;
+    overflow: visible;
+  }
+
+  .chat-tutorial-highlight {
+    position: absolute;
+    border-radius: 12px;
+    box-shadow: 0 0 0 3px var(--bs-primary), 0 0 0 9999px rgba(0, 0, 0, 0.55);
+    transition: all 0.2s ease;
+    pointer-events: none;
+  }
+
+  .chat-tutorial-card {
+    position: absolute;
+    max-width: 360px;
+    z-index: 1101;
+    pointer-events: auto;
+  }
+
+  .chat-tutorial-card .tutorial-actions .btn {
+    min-width: 80px;
+  }
+
+  .chat-tutorial-card .badge-step {
+    font-size: 0.75rem;
+  }
 /* Style when docked - CLEAN SIMPLE IMPLEMENTATION */
 body.layout-docked #left-pane {
   position: fixed !important;

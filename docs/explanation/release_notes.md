@@ -2,6 +2,15 @@
 
 # Feature Release
 
+### **(v0.237.012)**
+
+#### New Features
+
+*   **Chat Guided Tutorial Launcher**
+    *   Added a floating top-right tutorial button that opens a step-by-step walkthrough highlighting key chat controls (new chat, workspace search, file upload, web search, prompt library, agents, TTS/streaming, reasoning effort, model selection, and input area).
+    *   Overlay uses a highlight ring plus modal-style card with keyboard navigation, skip/finish controls, and localStorage-backed dismissal to avoid repeat prompts.
+    *   (Ref: chat template button, tutorial overlay styles, walkthrough controller, onload wiring)
+
 ### **(v0.237.011)**
 
 #### Bug Fixes

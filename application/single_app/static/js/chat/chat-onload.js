@@ -11,6 +11,7 @@ import { initConversationInfoButton } from "./chat-conversation-info-button.js";
 import { initializeStreamingToggle } from "./chat-streaming.js";
 import { initializeReasoningToggle } from "./chat-reasoning.js";
 import { initializeSpeechInput } from "./chat-speech-input.js";
+import { initChatTutorial } from "./chat-tutorial.js";
 
 window.addEventListener('DOMContentLoaded', async () => {
   console.log("DOM Content Loaded. Starting initializations."); // Log start
@@ -219,5 +220,7 @@ window.addEventListener('DOMContentLoaded', async () => {
       // Maybe try to initialize prompts even if doc loading fails? Depends on requirements.
       // console.log("Attempting to initialize prompts despite data load error...");
       // initializePromptInteractions();
+  } finally {
+      initChatTutorial();
   }
 });
