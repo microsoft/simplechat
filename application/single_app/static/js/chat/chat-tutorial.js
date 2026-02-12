@@ -37,10 +37,45 @@ function buildSteps() {
             phase: "nav"
         },
         {
+            id: "conversation-search",
+            selector: "#sidebar-search-btn",
+            title: "Find conversations",
+            body: "Open quick search to filter conversations by title; advanced search is available from the expand icon.",
+            phase: "nav"
+        },
+        {
+            id: "conversation-hidden-toggle",
+            selector: "#sidebar-conversations-settings-btn",
+            title: "Show hidden conversations",
+            body: "Toggle visibility of hidden chats so you can unhide or manage them.",
+            phase: "nav"
+        },
+        {
             id: "conversation-info",
             selector: "#conversation-info-btn",
             title: "Conversation details",
             body: "View metadata, shared files, and classifications for the current chat.",
+            phase: "chat"
+        },
+        {
+            id: "message-actions",
+            selector: ".message-actions .dropdown > button",
+            title: "Message actions",
+            body: "Open the message menu to delete, retry, or leave feedback on a response.",
+            phase: "chat"
+        },
+        {
+            id: "message-copy",
+            selector: ".message-actions .copy-btn",
+            title: "Copy message",
+            body: "Copy the AI response as Markdown for sharing elsewhere.",
+            phase: "chat"
+        },
+        {
+            id: "message-mask",
+            selector: ".message-actions .mask-btn",
+            title: "Mask or unmask",
+            body: "Toggle masking to hide content from the conversation. This prevents it from being used in future responses and can be unmasked later if needed.",
             phase: "chat"
         },
         {
@@ -69,6 +104,13 @@ function buildSteps() {
             selector: "#search-prompts-btn",
             title: "Prompt library",
             body: "Pick a saved prompt or template to shape the assistant's response.",
+            phase: "chat"
+        },
+        {
+            id: "prompt-select",
+            selector: "#prompt-select",
+            title: "Prompt dropdown",
+            body: "Choose a specific saved prompt to preload into your message.",
             phase: "chat"
         },
         {
@@ -107,6 +149,27 @@ function buildSteps() {
             phase: "chat"
         },
         {
+            id: "workspace-scope",
+            selector: "#doc-scope-select",
+            title: "Workspace scope",
+            body: "Pick which workspace set to search: all, personal, group, or public.",
+            phase: "chat"
+        },
+        {
+            id: "workspace-document",
+            selector: "#document-dropdown-button",
+            title: "Document picker",
+            body: "Choose a specific document to ground responses or leave on All Documents to search everything in scope.",
+            phase: "chat"
+        },
+        {
+            id: "workspace-classification",
+            selector: "#classification-dropdown-btn",
+            title: "Classification filter",
+            body: "Filter documents by classification to respect data handling rules.",
+            phase: "chat"
+        },
+        {
             id: "chat-input",
             selector: "#user-input",
             title: "Type or dictate",
@@ -117,6 +180,28 @@ function buildSteps() {
 }
 
 function getTarget(step) {
+    if (!step) {
+        return null;
+    }
+
+    if (["workspace-scope", "workspace-document", "workspace-classification"].includes(step.id)) {
+        const docContainer = document.getElementById("search-documents-container");
+        const docBtn = document.getElementById("search-documents-btn");
+        if (docContainer && docContainer.style.display === "none") {
+            if (docBtn) {
+                docBtn.click();
+            }
+            docContainer.style.display = "block";
+        }
+    }
+
+    if (step.id === "prompt-select") {
+        const promptContainer = document.getElementById("prompt-selection-container");
+        if (promptContainer && promptContainer.style.display === "none") {
+            promptContainer.style.display = "block";
+        }
+    }
+
     const selectors = step?.selectorList || (step?.selector ? [step.selector] : []);
     let el = null;
     for (const sel of selectors) {
@@ -144,6 +229,31 @@ function ensureTargetIsReady(step, target) {
 
     if (typeof target.scrollIntoView === "function") {
         target.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+    }
+
+    if (step.id === "conversation-search") {
+        const searchBtn = document.getElementById("sidebar-search-btn");
+        if (searchBtn) {
+            searchBtn.click();
+        }
+    }
+
+    if (["workspace-scope", "workspace-document", "workspace-classification"].includes(step.id)) {
+        const docContainer = document.getElementById("search-documents-container");
+        const docBtn = document.getElementById("search-documents-btn");
+        if (docContainer && docContainer.style.display === "none") {
+            if (docBtn) {
+                docBtn.click();
+            }
+            docContainer.style.display = "block";
+        }
+    }
+
+    if (step.id === "prompt-select") {
+        const promptContainer = document.getElementById("prompt-selection-container");
+        if (promptContainer && promptContainer.style.display === "none") {
+            promptContainer.style.display = "block";
+        }
     }
 
     if (step.id === "conversation-actions") {
