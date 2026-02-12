@@ -121,6 +121,8 @@ Using the bash terminal in Visual Studio Code
 
 `azd config set cloud.name AzureCloud` - If you work with other Azure clouds, you may need to update your cloud like `azd config set cloud.name AzureUSGovernment` - more information here - [Use Azure Developer CLI in sovereign clouds | Microsoft Learn](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/sovereign-clouds)
 
+`az login` - this will open a browser window shta the user with Owner level permissions to the target subscription will need to authenticate with.
+
 `azd auth login` - this will open a browser window that the user with Owner level permissions to the target subscription will need to authenticate with.
 
 `azd env new <environment>` - Use the same value for the \<environment\> that was used in the application registration.
