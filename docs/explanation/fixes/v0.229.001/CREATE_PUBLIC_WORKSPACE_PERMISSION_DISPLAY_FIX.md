@@ -56,9 +56,9 @@ The issue was in multiple places:
 
 1. **JavaScript Permission Variable**:
    ```html
-   <script>
+   {% raw %}<script>
      window.canCreatePublicWorkspaces = {{ can_create_public_workspaces|tojson }};
-   </script>
+   </script>{% endraw %}
    ```
 
 #### JavaScript Changes (`my_public_workspaces.js`)

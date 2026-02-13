@@ -252,7 +252,7 @@ azd up
 
 **GitHub Actions workflow:**
 ```yaml
-- name: Azure Dev CLI Deploy
+{% raw %}- name: Azure Dev CLI Deploy
   uses: Azure/azure-dev-cli@v1
   with:
     azure-credentials: ${{ secrets.AZURE_CREDENTIALS }}
@@ -260,7 +260,7 @@ azd up
     azd auth login --client-id "${{ secrets.AZURE_CLIENT_ID }}" \
                    --client-secret "${{ secrets.AZURE_CLIENT_SECRET }}" \
                    --tenant-id "${{ secrets.AZURE_TENANT_ID }}"
-    azd deploy
+    azd deploy{% endraw %}
 ```
 
 ## Management Commands

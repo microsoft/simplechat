@@ -6,7 +6,7 @@
 The Public Workspace scope selector in the chat interface displayed only a generic "Public" label, making it difficult for users to identify which specific public workspaces they were accessing when multiple public workspaces were visible to them.
 
 ## Root Cause Analysis
-The scope selector was using a static label "Public" defined in the HTML template, without any dynamic updates based on the user's visible public workspace selections. While the Group scope already showed the group name dynamically (`Group: {{ active_group_name }}`), the Public scope lacked similar functionality.
+The scope selector was using a static label "Public" defined in the HTML template, without any dynamic updates based on the user's visible public workspace selections. While the Group scope already showed the group name dynamically (`Group: {% raw %}{{ active_group_name }}{% endraw %}`), the Public scope lacked similar functionality.
 
 ## Technical Details
 
@@ -123,7 +123,7 @@ The enhancement provides different display formats based on the number of visibl
 ## Related Enhancements
 
 This fix complements other workspace-related features:
-- Group workspace scope display (`Group: {{ active_group_name }}`)
+- Group workspace scope display (`Group: {% raw %}{{ active_group_name }}{% endraw %}`)
 - Public workspace management interface
 - Workspace document filtering and search
 - Personal workspace organization

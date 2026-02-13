@@ -30,11 +30,11 @@ Because these keys contain `base64`, they were being **completely removed** from
 ### Template Logic Impact
 Templates check for custom logos using conditions like:
 ```jinja2
-{% if app_settings.custom_logo_base64 %}
+{% raw %}{% if app_settings.custom_logo_base64 %}
     <img src="{{ url_for('static', filename='images/custom_logo.png') }}" />
 {% else %}
     <img src="{{ url_for('static', filename='images/logo-lightmode.png') }}" />
-{% endif %}
+{% endif %}{% endraw %}
 ```
 
 When `custom_logo_base64` was stripped entirely, this condition always evaluated to `False`, causing the default logo to display instead of the custom uploaded logo.
@@ -64,7 +64,7 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
 2. After sanitization, boolean flags are added:
    - `True` if the logo exists (base64 string is non-empty)
    - `False` if no logo is set (base64 string is empty)
-3. Templates can still use `{% if app_settings.custom_logo_base64 %}` and it will correctly evaluate to `True` or `False`
+3. Templates can still use `{% raw %}{% if app_settings.custom_logo_base64 %}{% endraw %}` and it will correctly evaluate to `True` or `False`
 4. The actual base64 data is never exposed to the frontend
 
 ## Files Modified

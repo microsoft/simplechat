@@ -53,10 +53,10 @@ def set_active_public_workspace():
 
 **Button Added:**
 ```html
-<form method="POST" action="/set_active_public_workspace" style="display:inline;">
+{% raw %}<form method="POST" action="/set_active_public_workspace" style="display:inline;">
   <input type="hidden" name="workspace_id" value="{{ workspace_id }}">
   <button type="submit" class="btn btn-outline-primary btn-sm mb-3">Go to Public Workspace</button>
-</form>
+</form>{% endraw %}
 ```
 
 ## Feature Specifications

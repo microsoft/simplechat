@@ -292,14 +292,14 @@ Swagger documentation can be controlled through the admin settings interface:
 
 ### Admin Interface Features
 ```html
-<!-- Admin Settings UI -->
+{% raw %}<!-- Admin Settings UI -->
 <div class="form-check form-switch">
     <input type="checkbox" id="enable_swagger" name="enable_swagger" 
            {% if settings.enable_swagger %}checked{% endif %}>
     <label for="enable_swagger">
         Enable Swagger/OpenAPI Documentation (/swagger)
     </label>
-</div>
+</div>{% endraw %}
 
 <div class="btn-group">
     <button data-bs-toggle="modal" data-bs-target="#swaggerInfoModal">
