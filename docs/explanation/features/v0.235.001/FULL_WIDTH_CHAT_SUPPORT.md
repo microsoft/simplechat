@@ -75,7 +75,7 @@ body.sidebar-collapsed #right-pane {
 
 #### Top Navigation Layout
 ```css
-{% if nav_layout != 'sidebar' and not (not nav_layout and app_settings.enable_left_nav_default) %}
+{% raw %}{% if nav_layout != 'sidebar' and not (not nav_layout and app_settings.enable_left_nav_default) %}{% endraw %}
 /* Top navigation layout - hide left pane and expand right pane */
 #left-pane {
     display: none !important;
@@ -88,12 +88,12 @@ body.sidebar-collapsed #right-pane {
     flex-direction: column !important;
     align-items: center !important;
 }
-{% endif %}
+{% raw %}{% endif %}{% endraw %}
 ```
 
 #### Sidebar Navigation Layout
 ```css
-{% else %}
+{% raw %}{% else %}{% endraw %}
 /* Sidebar navigation layout - similar behavior with full width support */
 #left-pane {
     display: none !important;
@@ -106,7 +106,7 @@ body.sidebar-collapsed #right-pane {
     flex-direction: column !important;
     align-items: center !important;
 }
-{% endif %}
+{% raw %}{% endif %}{% endraw %}
 ```
 
 ### File Structure
