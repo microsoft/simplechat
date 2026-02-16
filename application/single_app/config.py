@@ -110,7 +110,7 @@ SECURITY_HEADERS = {
         "connect-src 'self' https: wss: ws:; "
         "media-src 'self' blob:; "
         "object-src 'none'; "
-        "frame-ancestors 'self'; "
+        "frame-ancestors 'self' https://teams.microsoft.com https://*.teams.microsoft.com https://*.cloud.microsoft; "
         "base-uri 'self';"
     )
 }
