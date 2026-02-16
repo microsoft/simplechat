@@ -44,7 +44,7 @@ param customCognitiveServicesScope string?
 param customSearchResourceUrl string?
 
 var tenantId = tenant().tenantId
-var openIdMetadataUrl = '${az.environment().authentication.loginEndpoint}/${tenantId}/v2.0/.well-known/openid-configuration'
+var openIdMetadataUrl = '${az.environment().authentication.loginEndpoint}${tenantId}/v2.0/.well-known/openid-configuration'
 
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
