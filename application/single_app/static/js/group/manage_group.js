@@ -92,39 +92,6 @@ $(document).ready(function () {
     rejectRequest(requestId);
   });
 
-  // Add event delegation for select user button in search results
-  $(document).on("click", ".select-user-btn", function () {
-    const id = $(this).data("user-id");
-    const name = $(this).data("user-name");
-    const email = $(this).data("user-email");
-    selectUserForAdd(id, name, email);
-  });
-
-  // Add event delegation for remove member button
-  $(document).on("click", ".remove-member-btn", function () {
-    const userId = $(this).data("user-id");
-    removeMember(userId);
-  });
-
-  // Add event delegation for change role button
-  $(document).on("click", ".change-role-btn", function () {
-    const userId = $(this).data("user-id");
-    const currentRole = $(this).data("user-role");
-    openChangeRoleModal(userId, currentRole);
-    $("#changeRoleModal").modal("show");
-  });
-
-  // Add event delegation for approve/reject request buttons
-  $(document).on("click", ".approve-request-btn", function () {
-    const requestId = $(this).data("request-id");
-    approveRequest(requestId);
-  });
-
-  $(document).on("click", ".reject-request-btn", function () {
-    const requestId = $(this).data("request-id");
-    rejectRequest(requestId);
-  });
-
   // CSV Bulk Upload Events
   $("#addBulkMemberBtn").on("click", function () {
     $("#csvBulkUploadModal").modal("show");
@@ -475,15 +442,10 @@ function renderMemberActions(member) {
         <button
           class="btn btn-sm btn-danger me-1 remove-member-btn"
           data-user-id="${member.userId}">
-          class="btn btn-sm btn-danger me-1 remove-member-btn"
-          data-user-id="${member.userId}">
           Remove
         </button>
         <button
           type="button"
-          class="btn btn-sm btn-outline-secondary change-role-btn"
-          data-user-id="${member.userId}"
-          data-user-role="${member.role}">
           class="btn btn-sm btn-outline-secondary change-role-btn"
           data-user-id="${member.userId}"
           data-user-role="${member.role}">
@@ -509,11 +471,21 @@ function setRole(userId, newRole) {
     data: JSON.stringify({ role: newRole }),
     success: function () {
       $("#changeRoleModal").modal("hide");
+      showToast("success", "Role updated successfully");
       loadMembers();
     },
     error: function (err) {
-      console.error(err);
-      alert("Failed to update role.");
+      console.error("Error updating role:", err);
+      let errorMsg = "Failed to update role.";
+      if (err.status === 404) {
+        errorMsg = "Member not found. They may have been removed.";
+        loadMembers(); // Refresh the member list
+      } else if (err.status === 403) {
+        errorMsg = "You don't have permission to change this member's role.";
+      } else if (err.responseJSON && err.responseJSON.message) {
+        errorMsg = err.responseJSON.message;
+      }
+      showToast("error", errorMsg);
     },
   });
 }
@@ -524,11 +496,21 @@ function removeMember(userId) {
     url: `/api/groups/${groupId}/members/${userId}`,
     method: "DELETE",
     success: function () {
+      showToast("success", "Member removed successfully");
       loadMembers();
     },
     error: function (err) {
-      console.error(err);
-      alert("Failed to remove member.");
+      console.error("Error removing member:", err);
+      let errorMsg = "Failed to remove member.";
+      if (err.status === 404) {
+        errorMsg = "Member not found. They may have already been removed.";
+        loadMembers(); // Refresh the member list
+      } else if (err.status === 403) {
+        errorMsg = "You don't have permission to remove this member.";
+      } else if (err.responseJSON && err.responseJSON.message) {
+        errorMsg = err.responseJSON.message;
+      }
+      showToast("error", errorMsg);
     },
   });
 }
@@ -542,10 +524,6 @@ function loadPendingRequests() {
           <td>${u.displayName}</td>
           <td>${u.email}</td>
           <td>
-            <button class="btn btn-sm btn-success approve-request-btn" 
-                    data-request-id="${u.userId}">Approve</button>
-            <button class="btn btn-sm btn-danger reject-request-btn" 
-                    data-request-id="${u.userId}">Reject</button>
             <button class="btn btn-sm btn-success approve-request-btn" 
                     data-request-id="${u.userId}">Approve</button>
             <button class="btn btn-sm btn-danger reject-request-btn" 
@@ -641,25 +619,17 @@ function searchUsers() {
 }
 
 // Render user-search results in add-member modal
-// Render user-search results in add-member modal
 function renderUserSearchResults(users) {
   let html = "";
   if (!users || !users.length) {
     html = `<tr><td colspan="3" class="text-center text-muted">No results.</td></tr>`;
-  if (!users || !users.length) {
-    html = `<tr><td colspan="3" class="text-center text-muted">No results.</td></tr>`;
   } else {
-    users.forEach(u => {
     users.forEach(u => {
       html += `
         <tr>
           <td>${u.displayName || "(no name)"}</td>
           <td>${u.email || ""}</td>
           <td>
-            <button class="btn btn-sm btn-primary select-user-btn"
-                    data-user-id="${u.id}"
-                    data-user-name="${u.displayName}"
-                    data-user-email="${u.email}">
             <button class="btn btn-sm btn-primary select-user-btn"
                     data-user-id="${u.id}"
                     data-user-name="${u.displayName}"
@@ -674,10 +644,6 @@ function renderUserSearchResults(users) {
   $("#userSearchResultsTable tbody").html(html);
 }
 
-// Populate manual-add fields from search result
-function selectUserForAdd(id, name, email) {
-  $("#newUserId").val(id);
-  $("#newUserDisplayName").val(name);
 // Populate manual-add fields from search result
 function selectUserForAdd(id, name, email) {
   $("#newUserId").val(id);

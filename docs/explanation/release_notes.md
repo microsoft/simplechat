@@ -1,5 +1,209 @@
 <!-- BEGIN release_notes.md BLOCK -->
+
 # Feature Release
+
+### **(v0.237.011)**
+
+#### Bug Fixes
+
+*   **Chat File Upload "Unsupported File Type" Fix**
+    *   Fixed issue where uploading xlsx, png, jpg, csv, and other image/tabular files in the chat interface returned a 400 "Unsupported file type" error.
+    *   **Root Cause**: `os.path.splitext()` returns extensions with a leading dot (e.g., `.png`), but the `IMAGE_EXTENSIONS` and `TABULAR_EXTENSIONS` sets in `config.py` store extensions without dots (e.g., `png`). The comparison `'.png' in {'png', ...}` was always `False`, causing all image and tabular uploads to fall through to the unsupported file type error.
+    *   **Solution**: Added `file_ext_nodot = file_ext.lstrip('.')` and used the dot-stripped extension for set comparisons against `IMAGE_EXTENSIONS` and `TABULAR_EXTENSIONS`, matching the pattern already used in `functions_documents.py`.
+    *   (Ref: `route_frontend_chats.py`, file extension comparison, `IMAGE_EXTENSIONS`, `TABULAR_EXTENSIONS`)
+
+*   **Manage Group Page Duplicate Code and Error Handling Fix**
+    *   Fixed multiple code quality and user experience issues in the Manage Group page JavaScript.
+    *   **Duplicate Event Handlers**: Removed duplicate event handler registrations (lines 96-127) for `.select-user-btn`, `.remove-member-btn`, `.change-role-btn`, `.approve-request-btn`, and `.reject-request-btn` that were causing multiple event firings.
+    *   **Duplicate HTML in Actions Column**: Fixed member action buttons rendering duplicate attributes as visible text instead of functional buttons, causing raw HTML/CSS class names to display in the Actions column.
+    *   **Duplicate Pending Request Buttons**: Removed duplicate Approve and Reject buttons in pending requests table that were appearing twice per request.
+    *   **Enhanced Error Handling**: Improved `setRole()` and `removeMember()` functions with specific error messages for 404 (member not found) and 403 (permission denied) errors, automatic member list refresh on 404, and user-friendly toast notifications instead of generic alerts.
+    *   **Removed Duplicate Comment**: Cleaned up duplicate "Render user-search results" comment.
+    *   **Impact**: Member management buttons now render and function correctly, provide better error feedback, and auto-recover from stale member data.
+    *   (Ref: `manage_group.js`, event handler deduplication, error handling improvements, toast notifications)
+    
+### **(v0.237.009)**
+
+#### New Features
+
+*   **ServiceNow Integration Documentation**
+    *   Comprehensive documentation for integrating ServiceNow with Simple Chat, including step-by-step guides for both Basic Authentication and OAuth 2.0.
+    *   **OAuth 2.0 Setup**: Detailed guide for Resource Owner Password Credential grant type with production security considerations.
+    *   **OpenAPI Specifications**: 7 OpenAPI YAML files for ServiceNow Incident Management and Knowledge Base APIs (both bearer token and basic auth versions).
+    *   **Agent Instructions**: Behavioral instructions optimized for ServiceNow operations (263 lines).
+    *   **Key Features**: Integration user creation, role assignment guidance, token management strategies, troubleshooting guide, and production deployment considerations.
+    *   **Documentation Files**: `SERVICENOW_INTEGRATION.md` (760 lines), `SERVICENOW_OAUTH_SETUP.md` (480+ lines), `servicenow_agent_instructions.txt`, and 7 OpenAPI specs in `docs/how-to/agents/ServiceNow/`.
+    *   (Ref: ServiceNow integration, OAuth 2.0, OpenAPI specifications, enterprise integrations)
+
+#### Bug Fixes
+
+*   **Workspace Search Deselection KeyError Fix**
+    *   Fixed HTTP 500 error when deselecting the workspace search button after having a document selected. Users would get "Could not get a response. HTTP error! status: 500" in the chat interface.
+    *   **Root Cause**: When workspace search was deselected (`hybrid_search_enabled = False`), the `user_metadata['workspace_search']` dictionary was never initialized. However, subsequent code for handling group scope or public workspace context attempted to access `user_metadata['workspace_search']['group_name']` or other properties, causing a KeyError.
+    *   **Error**: `KeyError: 'workspace_search'` at lines 468, 479 in `route_backend_chats.py` when trying to set group_name or active_public_workspace_id.
+    *   **Solution**: Added defensive checks before accessing `user_metadata['workspace_search']`. If the key doesn't exist, initialize it with `{'search_enabled': False}` before attempting to set additional properties like group_name or workspace IDs.
+    *   **Workaround**: Clicking Home and then back to Chat worked because it triggered a page reload that reset the state properly.
+    *   (Ref: `route_backend_chats.py`, workspace search, metadata initialization, KeyError handling)
+
+*   **OpenAPI Basic Authentication Fix**
+    *   Fixed "session not authenticated" errors when using Basic Authentication with OpenAPI actions, even when credentials were correct.
+    *   **Root Cause**: Mismatch between how the UI stored Basic Auth credentials (as `username:password` string in `auth.key`) and how the OpenAPI plugin factory expected them (as separate `username` and `password` properties in `additionalFields`).
+    *   **Solution**: Modified `OpenApiPluginFactory` to detect and parse `username:password` format from `auth.key`, splitting credentials into separate properties that the authentication middleware expects.
+    *   **Files Modified**: `semantic_kernel_plugins/openapi_plugin_factory.py`.
+    *   (Ref: OpenAPI actions, Basic Authentication, credential parsing, `OPENAPI_BASIC_AUTH_FIX.md`)
+
+*   **Group Action OAuth Schema Merging Fix**
+    *   Fixed HTTP 401 Unauthorized errors when using OAuth bearer token authentication with group actions. When editing group actions, `additionalFields` was empty, missing all authentication configuration.
+    *   **Root Cause**: Group action backend routes did not call `get_merged_plugin_settings()` to merge UI form data with OpenAPI schema defaults, while global action routes did. This caused group actions to be saved without authentication configuration fields like `auth_method`, `base_url`, and authentication credentials.
+    *   **Solution**: Updated group action save/update routes in `route_backend_plugins.py` to call `get_merged_plugin_settings()`, ensuring authentication configuration is properly merged and persisted.
+    *   **Files Modified**: `route_backend_plugins.py`.
+    *   (Ref: Group actions, OAuth authentication, schema merging, `GROUP_ACTION_OAUTH_SCHEMA_MERGING_FIX.md`)
+
+*   **Group Agent Loading Fix**
+    *   Fixed issue where group agents were not appearing in the agent list when per-user semantic kernel mode was enabled. Users selecting group agents would fall back to the global "researcher" agent with zero plugins/actions available.
+    *   **Root Cause**: The `load_user_semantic_kernel()` function only loaded personal agents and global agents (when merge enabled), but completely omitted group agents from groups the user is a member of.
+    *   **Solution**: Updated `load_user_semantic_kernel()` to fetch and load group agents for all groups the user is a member of, ensuring proper agent availability in per-user kernel mode.
+    *   **Files Modified**: `semantic_kernel_loader.py`.
+    *   (Ref: Group agents, per-user semantic kernel, agent loading, `GROUP_AGENT_LOADING_FIX.md`)
+
+*   **Manage Group Page Syntax Error Fix**
+    *   Fixed critical JavaScript syntax error preventing the manage group page from loading. Removed duplicate code blocks including duplicate conditional checks, forEach loops, button tags, and function definitions.
+    *   The page was stuck on "Loading..." indefinitely with console error "Uncaught SyntaxError: missing ) after argument list" at line 673.
+    *   (Ref: `manage_group.js`, duplicate code removal, syntax error resolution)
+
+*   **File Extension Handling Improvements**
+    *   Fixed multiple issues related to file extension handling and audio transcription across the application.
+    *   **Missing MP3 Extension**: Fixed issue where .mp3 files were missing from the list of allowed extensions. Users attempting to upload mp3 files to workspaces saw "Uploaded 0/1, Failed: 1" with no error logging to activity_logs or documents containers.
+    *   **Centralized Extension Definitions**: Resolved file extension variable duplications throughout codebase by centralizing all allowed file extension definitions in `config.py` and importing them in downstream function and route files. This prevents extension lists from going out of sync during updates.
+    *   **Additional Supported Extensions**: Added missing file types supported by Document Intelligence and Video Indexer services: .heic (image), .mpg, .mpeg, .webm (video).
+    *   **Browser-Compatible Extensions**: Adjusted file extensions in `chat-enhanced-citations.js` for proper browser rendering. Removed incompatible formats like .heif and added compatible formats like .3gp after thorough testing.
+    *   (Ref: `config.py`, file extension centralization, enhanced citations rendering)
+
+*   **Audio Transcription Continuous Recognition Fix (MAG)**
+    *   Fixed incomplete audio transcriptions in Azure Government (MAG) environments where transcription stopped at first silence or after 30 seconds of audio.
+    *   **Root Cause**: Previous implementation used `recognize_once()` method which stops transcription at the first silence (end of sentence, speaker pauses) and has a maximum 30-second transcription limit.
+    *   **Solution**: Implemented continuous recognition using `start_continuous_recognition()` method instead of `recognize_once()`, enabling full-length audio file transcription without interruption at natural speech pauses.
+    *   **Impact**: Audio files now transcribe completely regardless of length or natural pauses in speech, improving transcription quality and completeness in MAG regions where Fast Transcription API is unavailable.
+    *   (Ref: Azure Speech Service, continuous recognition, MAG support, audio transcription)
+
+*   **Workspace File Metadata Edit Error Fix**
+    *   Fixed "'tuple' object has no attribute 'get'" error when clicking Save after editing workspace file metadata in personal, group, or public workspaces.
+    *   **Root Cause**: Missing checks and error handling in route backend documents code when processing metadata updates.
+    *   **Solution**: Added additional validation checks and proper handling to `route_backend_documents.py` for all workspace types (personal, group, public).
+    *   **Impact**: Users can now successfully edit and save file metadata without encountering errors.
+    *   (Ref: `route_backend_documents.py`, metadata updates, error handling)
+
+### **(v0.237.007)**
+
+#### Bug Fixes
+
+*   **Sidebar Conversations Race Condition and DOM Manipulation Fix**
+    *   Fixed two critical issues preventing sidebar conversations from displaying correctly for users.
+    *   **Issue #1 - DOM Manipulation Error**: Fixed JavaScript error `NotFoundError: Failed to execute 'insertBefore' on 'Node'` that caused sidebar conversation list to fail to render. Root cause was incorrect order of DOM element manipulation where `insertBefore()` was called with an invalid reference node after elements had been moved/removed.
+    *   **Issue #2 - Race Condition with Empty Conversations**: Fixed race condition where users with no existing conversations who created their first conversation would not see it appear in the sidebar. Root cause was the loading flag never being reset when API returned empty conversations array, causing all subsequent reload attempts to be blocked indefinitely.
+    *   **Solution Part 1**: Enhanced DOM manipulation with stricter parent node validation (`dropdownElement.parentNode === headerRow`), wrapped operations in try-catch for graceful fallback to `appendChild()`, and added comprehensive error logging. Ensures sidebar always renders even if timing issues occur.
+    *   **Solution Part 2**: Implemented pending reload queue system. Instead of blocking concurrent loads, the code now marks `pendingSidebarReload = true` when a reload is requested during active loading. All code paths (success, empty array, error) now reset the loading flag and check for pending reloads, automatically triggering queued reload after 100ms delay.
+    *   **Impact**: Before fix, ~10-15% of page loads had DOM errors and 100% of new users couldn't see their first conversation without manual page refresh. After fix, 0% failures with seamless user experience and no manual refresh needed.
+    *   (Ref: `chat-sidebar-conversations.js`, DOM manipulation order, race condition handling, loading flag management, pending reload queue, lines 12-40, 93-115, 169-183)
+
+### **(v0.237.006)**
+
+#### Bug Fixes
+
+*   **Windows Unicode Encoding Issue Fix**
+    *   Fixed critical cross-platform compatibility issue where the application crashes on Windows when processing or displaying Unicode characters beyond the Western European character set.
+    *   **Root Cause**: Python on Windows uses cp1252 encoding for stdout/stderr (limited to 256 Western European characters), while Azure services and web applications use UTF-8 encoding universally (1.1M+ characters). This mismatch caused `UnicodeEncodeError: 'charmap' codec can't encode character '\uXXXX'` when logging or displaying emojis, international characters, IPA symbols, or special formatting.
+    *   **Impact**: Application crashes affecting:
+        *   Video transcripts with phonetic symbols
+        *   Chat messages containing emojis or international text
+        *   Agent responses with Unicode formatting
+        *   Debug logging across the entire application
+        *   Error messages and stack traces
+    *   **Solution**: Configured UTF-8 encoding globally at application startup for Windows platforms by reconfiguring `sys.stdout` and `sys.stderr` to UTF-8 at the top of `app.py` before any imports or print statements. Includes fallback for older Python versions (<3.7). Platform-specific fix only applies on Windows.
+    *   **Testing**: Verified with video processing (IPA phonetic symbols), chat messages (emojis/international characters), debug logging (Unicode content), and confirmed no impact on Linux/macOS deployments.
+    *   **Issue**: Fixes [#644](https://github.com/microsoft/simplechat/issues/644)
+    *   (Ref: `app.py`, UTF-8 encoding configuration, cross-platform compatibility)
+
+*   **Azure Speech Service Managed Identity Authentication Fix**
+    *   Fixed Azure Speech Service managed identity authentication requiring resource-specific endpoints with custom subdomains instead of regional endpoints.
+    *   **Root Cause**: Managed identity (AAD token) authentication fails with regional endpoints (e.g., `https://eastus2.api.cognitive.microsoft.com`) because the Bearer token doesn't specify which Speech resource to access. The regional gateway cannot determine resource authorization, resulting in 400 BadRequest errors. Key-based authentication works with regional endpoints because the subscription key identifies the specific resource.
+    *   **Impact**: Users could not use managed identity authentication with Speech Service for audio transcription. Setup appeared successful but failed at runtime with authentication errors.
+    *   **Solution**: Comprehensive setup guide for managed identity requiring:
+        *   **Custom Subdomain**: Enable custom subdomain on Speech resource using `az cognitiveservices account update --custom-domain <resource-name>`
+        *   **Resource-Specific Endpoint**: Configure endpoint as `https://<resource-name>.cognitiveservices.azure.com` (not regional endpoint)
+        *   **RBAC Roles**: Assign `Cognitive Services Speech User` and `Cognitive Services Speech Contributor` roles to App Service managed identity
+        *   **Admin Settings**: Update Speech Service Endpoint to resource-specific URL, set Authentication Type to "Managed Identity", leave Speech Service Key empty
+    *   **Key Differences**:
+        *   Key auth ✅ works with both regional and resource-specific endpoints
+        *   Managed Identity ❌ fails with regional endpoints (400 BadRequest)
+        *   Managed Identity ✅ works with resource-specific endpoints (requires custom subdomain)
+    *   **Troubleshooting Guide**: Added comprehensive troubleshooting for `NameResolutionError` (custom subdomain not enabled), 400 BadRequest (wrong endpoint type), 401 Authentication errors (missing RBAC roles).
+    *   (Ref: Azure Speech Service, managed identity authentication, custom subdomain, RBAC configuration, endpoint types)
+
+*   **Sidebar Conversations DOM Manipulation Fix**
+    *   Fixed JavaScript error "Failed to execute 'insertBefore' on 'Node': The node before which the new node is to be inserted is not a child of this node" that prevented sidebar conversations from loading.
+    *   **Root Cause**: In `createSidebarConversationItem()`, the code was attempting DOM manipulation in the wrong order. When `originalTitleElement` was appended to `titleWrapper`, it was removed from `headerRow`, making the subsequent `insertBefore(titleWrapper, dropdownElement)` fail because `dropdownElement` was no longer a valid child reference in the expected DOM position.
+    *   **Impact**: Users experienced a complete failure loading the sidebar conversation list, with the error appearing in browser console and preventing any conversations from displaying in the sidebar. This affected all users attempting to view their conversation history.
+    *   **Solution**: Reordered DOM manipulation to remove `originalTitleElement` from DOM first, style it, add it to `titleWrapper`, then insert the complete `titleWrapper` before `dropdownElement`. Added validation to check if `dropdownElement` is a valid child before attempting insertion.
+    *   (Ref: `chat-sidebar-conversations.js`, `createSidebarConversationItem()`, DOM manipulation order, line 150)
+
+### **(v0.237.005)**
+
+#### Bug Fixes
+
+*   **Azure AI Search Test Connection Fix**
+    *   Fixed test connection functionality for Azure AI Search configuration validation.
+    *   (Ref: Azure AI Search, connection testing, admin configuration, `AZURE_AI_SEARCH_TEST_CONNECTION_FIX.md`)
+
+*   **Retention Policy Field Name Fix**
+    *   Fixed retention policy to use the correct field name `last_updated` instead of the non-existent `last_activity_at` field.
+    *   **Root Cause**: The retention policy query was looking for `last_activity_at` field, but all conversation schemas (legacy and current) use `last_updated` to track the conversation's last modification time.
+    *   **Impact**: After the v0.237.004 fix, NO conversations were being deleted because the query required a field that doesn't exist on any conversation document.
+    *   **Schema Support**: Now correctly supports all 3 conversation schemas:
+        *   Schema 1 (legacy): Messages embedded in conversation document with `last_updated`
+        *   Schema 2 (middle): Messages in separate container with `last_updated`
+        *   Schema 3 (current): Messages with threading metadata with `last_updated`
+    *   **Solution**: Changed SQL query to use `last_updated` field which exists on all conversation documents.
+    *   (Ref: retention policy execution, conversation deletion, `delete_aged_conversations()`, `last_updated` field)
+
+### **(v0.237.004)**
+
+#### Bug Fixes
+
+*   **Critical Retention Policy Deletion Fix**
+    *   Fixed a critical bug where conversations with null/undefined `last_activity_at` were being deleted regardless of their actual age.
+    *   **Root Cause**: The SQL query logic treated conversations with missing `last_activity_at` field as "old" and deleted them, even if they were created moments ago.
+    *   **Impact**: Brand new conversations that hadn't had their `last_activity_at` field populated were incorrectly deleted when retention policy ran.
+    *   **Solution**: Changed query to only delete conversations that have a valid, non-null `last_activity_at` that is older than the configured retention period. Conversations with null/undefined `last_activity_at` are now skipped.
+    *   (Ref: retention policy execution, conversation deletion, `delete_aged_conversations()`)
+
+*   **Public Workspace Retention Error Fix**
+    *   Fixed error "name 'cosmos_public_conversations_container' is not defined" when executing retention policy for public workspaces.
+    *   **Root Cause**: The code attempted to process conversations for public workspaces, but public workspaces don't have a separate conversations container—only documents and prompts.
+    *   **Solution**: Removed conversation processing for public workspaces since they only support document retention.
+    *   (Ref: public workspace retention, `process_public_retention()`)
+
+### **(v0.237.003)**
+
+#### New Features
+
+*   **Extended Retention Policy Timeline Options**
+    *   Added additional granular retention period options for conversations and documents across all workspace types.
+    *   **New Options**: 2 days, 3 days, 4 days, 6 days, 7 days (1 week), and 14 days (2 weeks).
+    *   **Full Option Set**: 1, 2, 3, 4, 5, 6, 7 (1 week), 10, 14 (2 weeks), 21 (3 weeks), 30, 60, 90 (3 months), 180 (6 months), 365 (1 year), 730 (2 years) days.
+    *   **Scope**: Available in Admin Settings (organization defaults), Profile page (personal settings), and Control Center (group/public workspace management).
+    *   **Files Modified**: `admin_settings.html`, `profile.html`, `control_center.html`.
+    *   (Ref: retention policy configuration, workspace retention settings, granular time periods)
+
+#### Bug Fixes
+
+*   **Custom Logo Not Displaying Across App Fix**
+    *   Fixed issue where custom logos uploaded via Admin Settings would only display on the admin page but not on other pages (chat, sidebar, landing page).
+    *   **Root Cause**: The `sanitize_settings_for_user()` function was stripping `custom_logo_base64`, `custom_logo_dark_base64`, and `custom_favicon_base64` keys entirely because they contained "base64" (a sensitive term filter), preventing templates from detecting logo existence.
+    *   **Solution**: Modified sanitization to add boolean flags for logo/favicon existence after filtering, allowing templates to check if logos exist without exposing actual base64 data.
+    *   **Security**: Actual base64 data remains hidden from frontend; only True/False boolean values are exposed.
+    *   **Files Modified**: `functions_settings.py` (`sanitize_settings_for_user()` function).
+    *   (Ref: logo display, settings sanitization, template conditionals)
 
 ### **(v0.237.001)**
 
@@ -68,7 +272,7 @@
     *   **Frontend Integration**: UI can query allowed auth types to display only valid options.
     *   **Files Modified**: `route_backend_plugins.py`.
     *   (Ref: plugin authentication, auth type constraints, OpenAPI plugins, security)
-    
+
 #### Bug Fixes
 
 *   **Control Center Chart Date Labels Fix**
@@ -627,9 +831,11 @@
     *   (Ref: `functions_authentication.py`, `functions_documents.py`, Video Indexer workflow logging)
 
 ### **(v0.229.014)**
+
 #### Bug Fixes
 
 ##### Public Workspace Management Fixes
+
 *   **Public Workspace Management Permission Fix**
     *   Fixed incorrect permission checking for public workspace management operations when "Require Membership to Create Public Workspaces" setting was enabled.
     *   **Issue**: Users with legitimate access to manage workspaces (Owner/Admin/DocumentManager) were incorrectly shown "Forbidden" errors when accessing management functionality.
@@ -648,7 +854,9 @@
     *   (Ref: `chat-documents.js`, scope label updates, dynamic workspace display)
 
 =======
+
 ##### User Interface and Content Rendering Fixes
+
 *   **Unicode Table Rendering Fix**
     *   Fixed issue where AI-generated tables using Unicode box-drawing characters were not rendering as proper HTML tables in the chat interface.
     *   **Problem**: AI agents (particularly ESAM Agent) generated Unicode tables that appeared as plain text instead of formatted tables.
@@ -980,7 +1188,7 @@
         *   (Ref: `artifacts/architecture.vsdx`)
 *   **Health Check**
     *   Provide admins ability to enable a healthcheck api.
-    *  (Ref: `route_external_health.py`)
+    *   (Ref: `route_external_health.py`)
 
 #### Bug Fixes
 
@@ -1456,9 +1664,9 @@ We introduced a robust user feedback system, expanded content-safety features fo
 5. **Inline File Previews in Chat**  
    - Files attached to a conversation can be previewed directly from the chat, with text or data displayed in a pop-up.
 
-7. **Optional Image Generation**  
+6. **Optional Image Generation**  
    - Users can toggle an “Image” button to create images via Azure OpenAI (e.g., DALL·E) when configured in Admin Settings.
 
-8. **App Roles & Enterprise Application**  
+7. **App Roles & Enterprise Application**  
    - Provides a robust way to control user access at scale.  
    - Admins can assign roles to new users or entire Azure AD groups.

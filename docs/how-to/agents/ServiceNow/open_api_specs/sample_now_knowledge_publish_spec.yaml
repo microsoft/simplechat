@@ -1,0 +1,264 @@
+openapi: 3.0.1
+info:
+  title: ServiceNow Knowledge Base Publish API
+  description: |
+    ServiceNow Knowledge Management REST API for UPDATING and PUBLISHING knowledge articles.
+    
+    USE THIS SPEC FOR: Knowledge managers who can publish and update articles
+    PERMISSIONS REQUIRED: ServiceNow 'knowledge_manager' or 'knowledge_admin' role
+    
+    This spec contains PATCH operation for updating articles and changing workflow states.
+    Use this to publish draft articles, update content, or retire outdated articles.
+    For creating articles, use sample_now_knowledge_create_spec.yaml
+    For searching articles, use sample_now_knowledge_search_spec.yaml
+  version: 1.0.0
+  contact:
+    name: ServiceNow API Support
+    url: https://developer.servicenow.com
+
+servers:
+  - url: https://YOUR-INSTANCE.service-now.com
+    description: ServiceNow instance (replace YOUR-INSTANCE with your instance name)
+
+security:
+  - bearerAuth: []
+
+paths:
+  /api/now/table/kb_knowledge/{sys_id}:
+    patch:
+      operationId: updateKnowledgeArticle
+      summary: Update existing knowledge article (including publish)
+      description: |
+        Update an existing knowledge base article in ServiceNow.
+        Use this function to modify article content, change workflow state, or publish draft articles.
+        
+        COMMON USE CASES:
+        - Publish draft articles (workflow_state: "draft" → "published")
+        - Update article content or title
+        - Change category or knowledge base
+        - Retire outdated articles (workflow_state: "published" → "retired")
+        - Move to review state (workflow_state: "draft" → "review")
+        
+        WORKFLOW STATE TRANSITIONS:
+        - draft → review (submit for approval)
+        - review → published (approve and publish)
+        - draft → published (direct publish - requires elevated permissions)
+        - published → retired (retire outdated content)
+        - retired → published (restore retired article)
+        
+        PERMISSIONS:
+        - Updating draft articles: Requires 'knowledge' role
+        - Publishing articles: Requires 'knowledge_manager' or 'knowledge_admin' role
+        - Retiring articles: Requires 'knowledge_manager' or 'knowledge_admin' role
+      parameters:
+        - name: sys_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The sys_id of the knowledge article to update
+          example: "abc123xyz789"
+      
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                workflow_state:
+                  type: string
+                  description: |
+                    Update publication state.
+                    Common transitions: draft→review, review→published, draft→published, published→retired
+                  enum: ["draft", "review", "published", "retired"]
+                  example: "published"
+                
+                short_description:
+                  type: string
+                  description: Update article title
+                  maxLength: 160
+                  example: "Updated: How to configure Microsoft 365 email settings"
+                
+                text:
+                  type: string
+                  description: Update article content/body (HTML supported)
+                  example: "<h2>Updated Email Configuration Steps</h2>\\n<p>Updated content...</p>"
+                
+                kb_category:
+                  type: string
+                  description: Change article category
+                  example: "Email"
+                
+                kb_knowledge_base:
+                  type: string
+                  description: Move to different knowledge base
+                  example: "IT Support"
+                
+                article_type:
+                  type: string
+                  description: Update article type
+                  enum: ["how-to", "reference", "troubleshooting", "faq", "general"]
+                  example: "how-to"
+                
+                valid_to:
+                  type: string
+                  format: date-time
+                  description: Set or update expiration date
+                  example: "2027-12-31T23:59:59Z"
+            examples:
+              publishArticle:
+                summary: Publish a draft article
+                value:
+                  workflow_state: "published"
+              updateContent:
+                summary: Update article content and title
+                value:
+                  short_description: "Updated: Email configuration guide"
+                  text: "<h2>Updated content</h2><p>New instructions...</p>"
+              retireArticle:
+                summary: Retire outdated article
+                value:
+                  workflow_state: "retired"
+      
+      responses:
+        '200':
+          description: Article updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    $ref: '#/components/schemas/KnowledgeArticle'
+              example:
+                result:
+                  sys_id: "abc123xyz789"
+                  number: "KB0001234"
+                  short_description: "How to configure Microsoft 365 email settings"
+                  workflow_state: "published"
+                  sys_updated_on: "2026-01-26T15:30:00Z"
+        
+        '400':
+          description: Bad request - invalid workflow transition or data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      message:
+                        type: string
+                      detail:
+                        type: string
+              example:
+                error:
+                  message: "Invalid workflow state transition"
+                  detail: "Cannot transition from 'retired' to 'draft' directly"
+        
+        '401':
+          description: Unauthorized - Invalid credentials
+        
+        '403':
+          description: Forbidden - Insufficient permissions to publish/update articles
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      message:
+                        type: string
+                      detail:
+                        type: string
+              example:
+                error:
+                  message: "Access Denied"
+                  detail: "Publishing articles requires 'knowledge_manager' role"
+        
+        '404':
+          description: Article not found
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: OAuth 2.0 Bearer Token authentication. Obtain token via ServiceNow OAuth endpoint using Resource Owner Password Credentials grant.
+
+  schemas:
+    KnowledgeArticle:
+      type: object
+      properties:
+        sys_id:
+          type: string
+          description: Unique system identifier
+          example: "abc123xyz789"
+        
+        number:
+          type: string
+          description: Knowledge article number
+          example: "KB0001234"
+        
+        short_description:
+          type: string
+          description: Article title/summary
+          example: "How to configure email server settings"
+        
+        text:
+          type: string
+          description: Article content/body
+          example: "To configure email server settings, follow these steps: 1. Navigate to..."
+        
+        kb_category:
+          type: string
+          description: Knowledge category
+          example: "Email"
+        
+        kb_knowledge_base:
+          type: string
+          description: Knowledge base name
+          example: "IT Support"
+        
+        author:
+          type: string
+          description: Article author
+          example: "John Doe"
+        
+        workflow_state:
+          type: string
+          description: "Publication state: draft, review, published, retired"
+          example: "published"
+        
+        sys_view_count:
+          type: string
+          description: Number of times article was viewed
+          example: "145"
+        
+        sys_created_on:
+          type: string
+          format: date-time
+          description: Creation timestamp
+          example: "2025-06-15T10:30:00Z"
+        
+        sys_updated_on:
+          type: string
+          format: date-time
+          description: Last update timestamp
+          example: "2026-01-26T14:22:00Z"
+        
+        valid_to:
+          type: string
+          format: date-time
+          description: Article expiration date
+          example: "2027-12-31T23:59:59Z"
+        
+        article_type:
+          type: string
+          description: Type of article (how-to, troubleshooting, reference, etc.)
+          example: "how-to"

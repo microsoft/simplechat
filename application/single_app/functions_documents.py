@@ -4851,7 +4851,7 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
     is_pdf = file_ext == '.pdf'
     is_word = file_ext in ('.docx', '.doc')
     is_ppt = file_ext in ('.pptx', '.ppt')
-    is_image = file_ext in ('.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.heif')
+    is_image = file_ext in tuple('.' + ext for ext in IMAGE_EXTENSIONS)
 
     try:
         if is_pdf:
@@ -5233,23 +5233,138 @@ def process_audio_document(
             print(f"[Debug] Transcribing chunk {idx}: {chunk_path}")
 
             # Get fresh config (tokens expire after ~1 hour)
-            speech_config = _get_speech_config(settings, endpoint, locale)
+            try:
+                speech_config = _get_speech_config(settings, endpoint, locale)
+            except Exception as e:
+                print(f"[Error] Failed to get speech config for chunk {idx}: {e}")
+                raise RuntimeError(f"Speech configuration failed for chunk {idx}: {e}")
 
-            audio_config = speechsdk.AudioConfig(filename=chunk_path)
-            speech_recognizer = speechsdk.SpeechRecognizer(
-                speech_config=speech_config,
-                audio_config=audio_config
-            )
+            try:
+                audio_config = speechsdk.AudioConfig(filename=chunk_path)
+            except Exception as e:
+                print(f"[Error] Failed to load audio file {chunk_path}: {e}")
+                raise RuntimeError(f"Audio file loading failed: {e}")
 
-            result = speech_recognizer.recognize_once()
-            if result.reason == speechsdk.ResultReason.RecognizedSpeech:
-                print(f"[Debug] Recognized: {result.text}")
-                all_phrases.append(result.text)
-            elif result.reason == speechsdk.ResultReason.NoMatch:
-                print(f"[Warning] No speech in {chunk_path}")
-            elif result.reason == speechsdk.ResultReason.Canceled:
-                print(f"[Error] {result.cancellation_details.reason}: {result.cancellation_details.error_details}")
-                raise RuntimeError(f"Transcription canceled for {chunk_path}: {result.cancellation_details.error_details}")
+            try:
+                speech_recognizer = speechsdk.SpeechRecognizer(
+                    speech_config=speech_config,
+                    audio_config=audio_config
+                )
+            except Exception as e:
+                print(f"[Error] Failed to create speech recognizer for chunk {idx}: {e}")
+                raise RuntimeError(f"Speech recognizer creation failed: {e}")
+
+            # Use continuous recognition instead of recognize_once
+            all_results = []
+            done = False
+            error_occurred = False
+            error_message = None
+            
+            def stop_cb(evt):
+                nonlocal done
+                print(f"[Debug] Session stopped for chunk {idx}")
+                done = True
+            
+            def recognized_cb(evt):
+                try:
+                    if evt.result.reason == speechsdk.ResultReason.RecognizedSpeech:
+                        all_results.append(evt.result.text)
+                        print(f"[Debug] Recognized: {evt.result.text}")
+                    elif evt.result.reason == speechsdk.ResultReason.NoMatch:
+                        print(f"[Debug] No speech recognized in segment")
+                except Exception as e:
+                    print(f"[Error] Error in recognized callback: {e}")
+                    # Don't fail on individual recognition errors
+            
+            def canceled_cb(evt):
+                nonlocal done, error_occurred, error_message
+                print(f"[Debug] Recognition canceled for chunk {idx}: {evt.cancellation_details.reason}")
+                
+                if evt.cancellation_details.reason == speechsdk.CancellationReason.Error:
+                    error_occurred = True
+                    error_message = evt.cancellation_details.error_details
+                    print(f"[Error] Recognition error: {error_message}")
+                elif evt.cancellation_details.reason == speechsdk.CancellationReason.EndOfStream:
+                    print(f"[Debug] End of audio stream reached")
+                
+                done = True
+            
+            try:
+                # Connect callbacks
+                speech_recognizer.recognized.connect(recognized_cb)
+                speech_recognizer.session_stopped.connect(stop_cb)
+                speech_recognizer.canceled.connect(canceled_cb)
+                
+                # Start continuous recognition
+                print(f"[Debug] Starting continuous recognition for chunk {idx}")
+                speech_recognizer.start_continuous_recognition()
+                
+                # Wait for completion with timeout
+                import time
+                timeout_seconds = 600  # 10 minutes max per chunk
+                start_time = time.time()
+                
+                while not done:
+                    if time.time() - start_time > timeout_seconds:
+                        print(f"[Error] Recognition timeout for chunk {idx}")
+                        error_occurred = True
+                        error_message = f"Recognition timed out after {timeout_seconds} seconds"
+                        break
+                    time.sleep(0.5)
+                
+                # Stop recognition
+                try:
+                    speech_recognizer.stop_continuous_recognition()
+                    print(f"[Debug] Stopped continuous recognition for chunk {idx}")
+                except Exception as e:
+                    print(f"[Warning] Error stopping recognition for chunk {idx}: {e}")
+                    # Continue even if stop fails
+                
+                # Check for errors after completion
+                if error_occurred:
+                    raise RuntimeError(f"Recognition failed for chunk {idx}: {error_message}")
+                
+                # Add all recognized phrases to the overall list
+                if all_results:
+                    all_phrases.extend(all_results)
+                    print(f"[Debug] Total phrases from chunk {idx}: {len(all_results)}")
+                else:
+                    print(f"[Warning] No speech recognized in {chunk_path}")
+                    # Continue to next chunk - empty result is not necessarily an error
+                    
+            except RuntimeError as e:
+                # Re-raise runtime errors (these are our custom errors)
+                raise
+            except Exception as e:
+                print(f"[Error] Unexpected error during recognition for chunk {idx}: {e}")
+                raise RuntimeError(f"Recognition failed unexpectedly for chunk {idx}: {e}")
+            finally:
+                # Cleanup: disconnect callbacks and dispose recognizer
+                try:
+                    speech_recognizer.recognized.disconnect_all()
+                    speech_recognizer.session_stopped.disconnect_all()
+                    speech_recognizer.canceled.disconnect_all()
+                except Exception as e:
+                    print(f"[Warning] Error disconnecting callbacks for chunk {idx}: {e}")
+
+            # # Get fresh config (tokens expire after ~1 hour)
+            # speech_config = _get_speech_config(settings, endpoint, locale)
+
+            # audio_config = speechsdk.AudioConfig(filename=chunk_path)
+            # speech_recognizer = speechsdk.SpeechRecognizer(
+            #     speech_config=speech_config,
+            #     audio_config=audio_config
+            # )
+
+            # result = speech_recognizer.recognize_once()
+            # if result.reason == speechsdk.ResultReason.RecognizedSpeech:
+            #     print(f"[Debug] Recognized: {result.text}")
+            #     all_phrases.append(result.text)
+            # elif result.reason == speechsdk.ResultReason.NoMatch:
+            #     print(f"[Warning] No speech in {chunk_path}")
+            # elif result.reason == speechsdk.ResultReason.Canceled:
+            #     print(f"[Error] {result.cancellation_details.reason}: {result.cancellation_details.error_details}")
+            #     raise RuntimeError(f"Transcription canceled for {chunk_path}: {result.cancellation_details.error_details}")
 
     else:
         # Use the fast-transcription API if not in sovereign or custom cloud
@@ -5357,8 +5472,12 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
     enable_extract_meta_data = settings.get('enable_extract_meta_data', False) # Used by DI flow
     max_file_size_bytes = settings.get('max_file_size_mb', 16) * 1024 * 1024
 
-    video_extensions = ('.mp4', '.mov', '.avi', '.mkv', '.flv')
-    audio_extensions = ('.mp3', '.wav', '.ogg', '.aac', '.flac', '.m4a')
+    # Get allowed extensions from config.py to determine which processing function to call
+    tabular_extensions = tuple('.' + ext for ext in TABULAR_EXTENSIONS)
+    image_extensions = tuple('.' + ext for ext in IMAGE_EXTENSIONS)
+    di_supported_extensions = tuple('.' + ext for ext in DOCUMENT_EXTENSIONS | IMAGE_EXTENSIONS)
+    video_extensions = tuple('.' + ext for ext in VIDEO_EXTENSIONS)
+    audio_extensions = tuple('.' + ext for ext in AUDIO_EXTENSIONS)
 
     # --- Define update_document callback wrapper ---
     # This makes it easier to pass the update function to helpers without repeating args
@@ -5402,8 +5521,6 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
 
         # --- 1. Dispatch to appropriate handler based on file type ---
         # Note: .doc and .docm are handled separately by process_doc() using docx2txt
-        di_supported_extensions = ('.pdf', '.docx', '.pptx', '.ppt', '.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.heif')
-        tabular_extensions = ('.csv', '.xlsx', '.xls', '.xlsm')
 
         is_group = group_id is not None
 
@@ -5512,7 +5629,7 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
         final_status = "Processing complete"
         if total_chunks_saved == 0:
              # Provide more specific status if no chunks were saved
-             if file_ext in ('.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.heif'):
+             if file_ext in image_extensions:
                  final_status = "Processing complete - no text found in image"
              elif file_ext in tabular_extensions:
                  final_status = "Processing complete - no data rows found or file empty"

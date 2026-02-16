@@ -4,6 +4,20 @@ import logging
 import pickle
 import json
 import os
+import sys
+
+# Fix Windows encoding issue with Unicode characters (emojis, IPA symbols, etc.)
+# Must be done before any print statements that might contain Unicode
+if sys.platform == 'win32':
+    try:
+        # Reconfigure stdout and stderr to use UTF-8 encoding
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except AttributeError:
+        # Python < 3.7 doesn't have reconfigure, try alternative
+        import codecs
+        sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'strict')
+        sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'strict')
 
 import app_settings_cache
 from config import *

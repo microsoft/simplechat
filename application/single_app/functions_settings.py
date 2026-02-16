@@ -794,6 +794,15 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
         else:
             sanitized[k] = v
 
+    # Add boolean flags for logo/favicon existence so templates can check without exposing base64 data
+    # These fields are stripped by the base64 filter above, but templates need to know if logos exist
+    if 'custom_logo_base64' in full_settings:
+        sanitized['custom_logo_base64'] = bool(full_settings.get('custom_logo_base64'))
+    if 'custom_logo_dark_base64' in full_settings:
+        sanitized['custom_logo_dark_base64'] = bool(full_settings.get('custom_logo_dark_base64'))
+    if 'custom_favicon_base64' in full_settings:
+        sanitized['custom_favicon_base64'] = bool(full_settings.get('custom_favicon_base64'))
+
     return sanitized
 
 def sanitize_settings_for_logging(full_settings: dict) -> dict:

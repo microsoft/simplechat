@@ -6,9 +6,11 @@ Retention Policy Management
 This module handles automated deletion of aged conversations and documents
 based on configurable retention policies for personal, group, and public workspaces.
 
-Version: 0.236.012
+Version: 0.237.005
 Implemented in: 0.234.067
 Updated in: 0.236.012 - Fixed race condition handling for NotFound errors during deletion
+Updated in: 0.237.004 - Fixed critical bug where conversations with null/undefined last_activity_at were deleted regardless of age
+Updated in: 0.237.005 - Fixed field name: use last_updated (actual field) instead of last_activity_at (non-existent)
 """
 
 from config import *
@@ -449,20 +451,11 @@ def process_public_retention():
                 'document_details': []
             }
             
-            # Process conversations
-            if conversation_retention_days != 'none':
-                try:
-                    conv_results = delete_aged_conversations(
-                        public_workspace_id=workspace_id,
-                        retention_days=int(conversation_retention_days),
-                        workspace_type='public'
-                    )
-                    workspace_deletion_summary['conversations_deleted'] = conv_results['count']
-                    workspace_deletion_summary['conversation_details'] = conv_results['details']
-                    results['conversations'] += conv_results['count']
-                except Exception as e:
-                    log_event("process_public_retention_conversations_error", {"error": str(e), "public_workspace_id": workspace_id})
-                    debug_print(f"Error processing conversations for public workspace {workspace_id}: {e}")
+            # Note: Public workspaces do not have a separate conversations container.
+            # Conversations are only stored in personal (cosmos_conversations_container) or 
+            # group (cosmos_group_conversations_container) workspaces.
+            # Therefore, we skip conversation processing for public workspaces.
+            # Only documents are processed for public workspace retention.
             
             # Process documents
             if document_retention_days != 'none':
@@ -495,7 +488,7 @@ def process_public_retention():
 
 def delete_aged_conversations(retention_days, workspace_type='personal', user_id=None, group_id=None, public_workspace_id=None):
     """
-    Delete conversations that exceed the retention period based on last_activity_at.
+    Delete conversations that exceed the retention period based on last_updated.
     
     Args:
         retention_days (int): Number of days to retain conversations
@@ -529,14 +522,16 @@ def delete_aged_conversations(retention_days, workspace_type='personal', user_id
     cutoff_iso = cutoff_date.isoformat()
     
     # Query for aged conversations
-    # Check for null/undefined FIRST to avoid comparing null values with dates
+    # ONLY delete conversations that have a valid last_updated that is older than the cutoff
+    # Conversations with null/undefined last_updated should be SKIPPED (not deleted)
+    # This prevents accidentally deleting new conversations that haven't had their timestamp set
     query = f"""
-        SELECT c.id, c.title, c.last_activity_at, c.{partition_field}
+        SELECT c.id, c.title, c.last_updated, c.{partition_field}
         FROM c
         WHERE c.{partition_field} = @partition_value
-        AND (NOT IS_DEFINED(c.last_activity_at) 
-             OR IS_NULL(c.last_activity_at)
-             OR (IS_DEFINED(c.last_activity_at) AND NOT IS_NULL(c.last_activity_at) AND c.last_activity_at < @cutoff_date))
+        AND IS_DEFINED(c.last_updated) 
+        AND NOT IS_NULL(c.last_updated)
+        AND c.last_updated < @cutoff_date
     """
     
     parameters = [
@@ -577,7 +572,7 @@ def delete_aged_conversations(retention_days, workspace_type='personal', user_id
                 deleted_details.append({
                     'id': conversation_id,
                     'title': conversation_title,
-                    'last_activity_at': conv.get('last_activity_at'),
+                    'last_updated': conv.get('last_updated'),
                     'already_deleted': True
                 })
                 continue
@@ -659,7 +654,7 @@ def delete_aged_conversations(retention_days, workspace_type='personal', user_id
             deleted_details.append({
                 'id': conversation_id,
                 'title': conversation_title,
-                'last_activity_at': conv.get('last_activity_at')
+                'last_updated': conv.get('last_updated')
             })
             
             debug_print(f"Deleted conversation {conversation_id} ({conversation_title}) due to retention policy")
@@ -850,7 +845,7 @@ def send_retention_notification(workspace_id, deletion_summary, workspace_type):
             notification_type='system_announcement',
             title='Retention Policy Cleanup',
             message=full_message,
-            link_url='/chat',
+            link_url='/chats',
             metadata={
                 'conversations_deleted': conversations_deleted,
                 'documents_deleted': documents_deleted,
@@ -863,7 +858,7 @@ def send_retention_notification(workspace_id, deletion_summary, workspace_type):
             notification_type='system_announcement',
             title='Retention Policy Cleanup',
             message=full_message,
-            link_url='/chat',
+            link_url='/chats',
             metadata={
                 'conversations_deleted': conversations_deleted,
                 'documents_deleted': documents_deleted,
@@ -876,7 +871,7 @@ def send_retention_notification(workspace_id, deletion_summary, workspace_type):
             notification_type='system_announcement',
             title='Retention Policy Cleanup',
             message=full_message,
-            link_url='/chat',
+            link_url='/chats',
             metadata={
                 'conversations_deleted': conversations_deleted,
                 'documents_deleted': documents_deleted,
