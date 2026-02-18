@@ -6506,6 +6506,7 @@ def propagate_tags_to_chunks(document_id, tags, user_id, group_id=None, public_w
             return
         
         # Update each chunk with new tags
+        chunk_count = 0
         for chunk in chunks:
             try:
                 update_chunk_metadata(
@@ -6516,11 +6517,12 @@ def propagate_tags_to_chunks(document_id, tags, user_id, group_id=None, public_w
                     document_id=document_id,
                     document_tags=tags
                 )
+                chunk_count += 1
             except Exception as chunk_error:
                 print(f"Error updating chunk {chunk['id']} with tags: {chunk_error}")
                 # Continue with other chunks
-        
-        print(f"Successfully propagated tags to {len(chunks)} chunks for document {document_id}")
+
+        print(f"Successfully propagated tags to {chunk_count} chunks for document {document_id}")
         
     except Exception as e:
         print(f"Error propagating tags to chunks for document {document_id}: {e}")

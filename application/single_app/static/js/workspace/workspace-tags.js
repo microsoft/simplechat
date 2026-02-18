@@ -2,11 +2,15 @@
 // Handles tag management for workspace documents
 
 import { escapeHtml } from "./workspace-utils.js";
+import { showTagManagementModal } from "./workspace-tag-management.js";
 
 // ============= State Variables =============
 let workspaceTags = []; // All available workspace tags with colors
 let currentView = 'list'; // 'list' or 'grid'
 let selectedTagFilter = [];
+let currentFolder = null;    // null = folder overview, string = tag name being viewed
+let folderCurrentPage = 1;
+let folderPageSize = 10;
 
 // ============= Initialization =============
 
@@ -32,6 +36,9 @@ export function initializeTags() {
 }
 
 // ============= Load Workspace Tags =============
+
+// Expose for cross-module refresh (avoids circular imports)
+window.refreshWorkspaceTags = () => loadWorkspaceTags();
 
 export async function loadWorkspaceTags() {
     try {
@@ -82,12 +89,18 @@ function setupViewSwitcher() {
 function switchView(view) {
     currentView = view;
     localStorage.setItem('personalWorkspaceViewPreference', view);
-    
+
     const listView = document.getElementById('documents-list-view');
     const gridView = document.getElementById('documents-grid-view');
     const viewInfo = document.getElementById('docs-view-info');
-    
+
     if (view === 'list') {
+        // Reset folder drill-down state
+        currentFolder = null;
+        folderCurrentPage = 1;
+        const tagContainer = document.getElementById('tag-folders-container');
+        if (tagContainer) tagContainer.className = 'row g-2';
+
         listView.style.display = 'block';
         gridView.style.display = 'none';
         if (viewInfo) viewInfo.textContent = '';
@@ -105,7 +118,29 @@ function switchView(view) {
 async function renderGridView() {
     const container = document.getElementById('tag-folders-container');
     if (!container) return;
-    
+
+    // If inside a folder, check that the folder still exists
+    if (currentFolder && currentFolder !== '__untagged__') {
+        const folderStillExists = workspaceTags.some(t => t.name === currentFolder);
+        if (!folderStillExists) {
+            currentFolder = null;
+            folderCurrentPage = 1;
+        }
+    }
+
+    // If inside a folder, render folder contents instead
+    if (currentFolder) {
+        renderFolderContents(currentFolder);
+        return;
+    }
+
+    // Clear view info
+    const viewInfo = document.getElementById('docs-view-info');
+    if (viewInfo) viewInfo.textContent = '';
+
+    // Ensure container has grid layout
+    container.className = 'row g-2';
+
     // Show loading
     container.innerHTML = `
         <div class="col-12 text-center text-muted py-5">
@@ -115,38 +150,36 @@ async function renderGridView() {
             Loading tag folders...
         </div>
     `;
-    
+
     // Get all documents to count untagged
     try {
         const docsResponse = await fetch('/api/documents?page_size=1000');
         const docsData = await docsResponse.json();
         const allDocs = docsData.documents || [];
-        
+
         const untaggedCount = allDocs.filter(doc => !doc.tags || doc.tags.length === 0).length;
-        
+
         // Build folder cards
         let html = '';
-        
+
         // Untagged folder (always show if there are untagged documents)
         if (untaggedCount > 0) {
             html += `
-                <div class="col-md-3">
-                    <div class="tag-folder-card" data-tag="__untagged__" style="border-left: 4px solid #6c757d;">
-                        <div class="tag-folder-icon">📂</div>
-                        <div class="tag-folder-name text-muted">Untagged Documents</div>
+                <div class="col-6 col-sm-4 col-md-3 col-lg-2">
+                    <div class="tag-folder-card" data-tag="__untagged__" title="Untagged Documents (${untaggedCount} files)">
+                        <div class="tag-folder-icon"><i class="bi bi-folder2-open" style="color: #6c757d;"></i></div>
+                        <div class="tag-folder-name text-muted">Untagged</div>
                         <div class="tag-folder-count">${untaggedCount} file${untaggedCount !== 1 ? 's' : ''}</div>
                     </div>
                 </div>
             `;
         }
-        
+
         // Tag folders
         workspaceTags.forEach(tag => {
-            const textColor = isColorLight(tag.color) ? 'text-dark' : 'text-light';
-            
             html += `
-                <div class="col-md-3">
-                    <div class="tag-folder-card" data-tag="${escapeHtml(tag.name)}" style="border-left: 4px solid ${tag.color};">
+                <div class="col-6 col-sm-4 col-md-3 col-lg-2">
+                    <div class="tag-folder-card" data-tag="${escapeHtml(tag.name)}" title="${escapeHtml(tag.name)} (${tag.count} files)">
                         <div class="tag-folder-actions">
                             <div class="dropdown">
                                 <button class="tag-folder-menu-btn" type="button" data-bs-toggle="dropdown" onclick="event.stopPropagation();">
@@ -166,14 +199,14 @@ async function renderGridView() {
                                 </ul>
                             </div>
                         </div>
-                        <div class="tag-folder-icon" style="color: ${tag.color};">📁</div>
+                        <div class="tag-folder-icon"><i class="bi bi-folder-fill" style="color: ${tag.color};"></i></div>
                         <div class="tag-folder-name">${escapeHtml(tag.name)}</div>
                         <div class="tag-folder-count">${tag.count} file${tag.count !== 1 ? 's' : ''}</div>
                     </div>
                 </div>
             `;
         });
-        
+
         if (html === '') {
             html = `
                 <div class="col-12 text-center text-muted py-5">
@@ -182,17 +215,21 @@ async function renderGridView() {
                 </div>
             `;
         }
-        
+
         container.innerHTML = html;
-        
+
         // Add click handlers to folder cards
         container.querySelectorAll('.tag-folder-card').forEach(card => {
             card.addEventListener('click', (e) => {
+                // Don't drill down if user clicked the dropdown menu
+                if (e.target.closest('.tag-folder-actions')) return;
                 const tagName = card.getAttribute('data-tag');
-                filterByTag(tagName);
+                currentFolder = tagName;
+                folderCurrentPage = 1;
+                renderFolderContents(tagName);
             });
         });
-        
+
     } catch (error) {
         console.error('Error rendering grid view:', error);
         container.innerHTML = `
@@ -204,35 +241,340 @@ async function renderGridView() {
     }
 }
 
-function filterByTag(tagName) {
-    // Switch to list view and apply tag filter
-    document.getElementById('docs-view-list').checked = true;
-    switchView('list');
-    
-    // Set tag filter
-    if (tagName === '__untagged__') {
-        // Clear tag filter to show untagged
-        selectedTagFilter = [];
-        const filterSelect = document.getElementById('docs-tags-filter');
-        if (filterSelect) {
-            Array.from(filterSelect.options).forEach(opt => opt.selected = false);
+// ============= Folder Drill-Down =============
+
+function buildBreadcrumbHtml(displayName, tagColor) {
+    return `
+        <div class="folder-breadcrumb d-flex align-items-center">
+            <a href="#" class="grid-back-btn d-flex align-items-center">
+                <i class="bi bi-arrow-left me-1"></i> All Tags
+            </a>
+            <span class="mx-2 text-muted">/</span>
+            <span>
+                <i class="bi bi-folder-fill me-1" style="color: ${tagColor};"></i>
+                <strong>${escapeHtml(displayName)}</strong>
+            </span>
+        </div>`;
+}
+
+function wireBackButton(container) {
+    container.querySelectorAll('.grid-back-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            currentFolder = null;
+            folderCurrentPage = 1;
+            container.className = 'row g-2';
+            renderGridView();
+        });
+    });
+}
+
+function buildFolderDocumentsTable(docs) {
+    let html = `
+        <table class="table table-striped table-sm">
+            <thead>
+                <tr>
+                    <th style="width: 50px;"></th>
+                    <th>File Name</th>
+                    <th>Title</th>
+                    <th style="width: 240px;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>`;
+
+    docs.forEach(doc => {
+        const docId = doc.id;
+        const pctStr = String(doc.percentage_complete);
+        const pct = /^\d+(\.\d+)?$/.test(pctStr) ? parseFloat(pctStr) : 0;
+        const docStatus = doc.status || '';
+        const isComplete = pct >= 100
+            || docStatus.toLowerCase().includes('complete')
+            || docStatus.toLowerCase().includes('error');
+        const hasError = docStatus.toLowerCase().includes('error');
+
+        const currentUserId = window.current_user_id;
+        const isOwner = doc.user_id === currentUserId;
+
+        // First column: expand/collapse or status indicator
+        let firstColHtml = '';
+        if (isComplete && !hasError) {
+            firstColHtml = `
+                <button class="btn btn-link p-0" onclick="window.onEditDocument('${docId}')" title="View Metadata">
+                    <span class="bi bi-chevron-right"></span>
+                </button>`;
+        } else if (hasError) {
+            firstColHtml = `<span class="text-danger" title="Processing Error: ${escapeHtml(docStatus)}"><i class="bi bi-exclamation-triangle-fill"></i></span>`;
+        } else {
+            firstColHtml = `<span class="text-muted" title="Processing: ${escapeHtml(docStatus)} (${pct.toFixed(0)}%)"><i class="bi bi-hourglass-split"></i></span>`;
         }
-        // Need to implement untagged filter in backend
-        window.docsTagsFilter = '__untagged__';
-    } else {
-        selectedTagFilter = [tagName];
-        const filterSelect = document.getElementById('docs-tags-filter');
-        if (filterSelect) {
-            Array.from(filterSelect.options).forEach(opt => {
-                opt.selected = opt.value === tagName;
-            });
+
+        // Chat button
+        let chatButton = '';
+        if (isComplete && !hasError) {
+            chatButton = `
+                <button class="btn btn-sm btn-primary me-1 action-btn-wide text-start"
+                    onclick="window.redirectToChat('${docId}')"
+                    title="Open Chat for Document"
+                    aria-label="Open Chat for Document: ${escapeHtml(doc.file_name || 'Untitled')}"
+                >
+                    <i class="bi bi-chat-dots-fill me-1" aria-hidden="true"></i>
+                    Chat
+                </button>`;
         }
-        window.docsTagsFilter = tagName;
+
+        // Ellipsis dropdown menu
+        let actionsDropdown = '';
+        if (isComplete && !hasError) {
+            actionsDropdown = `
+                <div class="dropdown action-dropdown d-inline-block">
+                    <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                        <i class="bi bi-three-dots-vertical"></i>
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end">
+                        <li><a class="dropdown-item" href="#" onclick="window.onEditDocument('${docId}'); return false;">
+                            <i class="bi bi-pencil-fill me-2"></i>Edit Metadata
+                        </a></li>`;
+
+            if (window.enable_extract_meta_data === true || window.enable_extract_meta_data === "true") {
+                actionsDropdown += `
+                        <li><a class="dropdown-item" href="#" onclick="window.onExtractMetadata('${docId}', event); return false;">
+                            <i class="bi bi-magic me-2"></i>Extract Metadata
+                        </a></li>`;
+            }
+
+            actionsDropdown += `
+                        <li><a class="dropdown-item" href="#" onclick="window.redirectToChat('${docId}'); return false;">
+                            <i class="bi bi-chat-dots-fill me-2"></i>Search in Chat
+                        </a></li>`;
+
+            if (isOwner) {
+                if (window.enable_file_sharing === true || window.enable_file_sharing === "true") {
+                    const shareCount = doc.shared_user_ids && doc.shared_user_ids.length > 0 ? doc.shared_user_ids.length : 0;
+                    actionsDropdown += `
+                        <li><hr class="dropdown-divider"></li>
+                        <li><a class="dropdown-item" href="#" onclick="window.shareDocument('${docId}', '${escapeHtml(doc.file_name || '')}'); return false;">
+                            <i class="bi bi-share-fill me-2"></i>Share
+                            <span class="badge bg-secondary ms-1">${shareCount}</span>
+                        </a></li>`;
+                }
+
+                actionsDropdown += `
+                        <li><hr class="dropdown-divider"></li>
+                        <li><a class="dropdown-item text-danger" href="#" onclick="window.deleteDocument('${docId}', event); return false;">
+                            <i class="bi bi-trash-fill me-2"></i>Delete
+                        </a></li>`;
+            }
+
+            actionsDropdown += `
+                    </ul>
+                </div>`;
+        } else if (isOwner) {
+            actionsDropdown = `
+                <div class="dropdown action-dropdown d-inline-block">
+                    <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                        <i class="bi bi-three-dots-vertical"></i>
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end">
+                        <li><a class="dropdown-item text-danger" href="#" onclick="window.deleteDocument('${docId}', event); return false;">
+                            <i class="bi bi-trash-fill me-2"></i>Delete
+                        </a></li>
+                    </ul>
+                </div>`;
+        }
+
+        html += `
+            <tr>
+                <td class="align-middle">${firstColHtml}</td>
+                <td class="align-middle" title="${escapeHtml(doc.file_name || '')}">${escapeHtml(doc.file_name || '')}</td>
+                <td class="align-middle" title="${escapeHtml(doc.title || '')}">${escapeHtml(doc.title || 'N/A')}</td>
+                <td class="align-middle">${chatButton}${actionsDropdown}</td>
+            </tr>`;
+    });
+
+    html += '</tbody></table>';
+    return html;
+}
+
+function renderFolderPagination(page, pageSize, totalCount) {
+    const paginationContainer = document.getElementById('folder-pagination');
+    if (!paginationContainer) return;
+    paginationContainer.innerHTML = '';
+
+    const totalPages = Math.ceil(totalCount / pageSize);
+    if (totalPages <= 1) return;
+
+    const ul = document.createElement('ul');
+    ul.classList.add('pagination', 'pagination-sm', 'mb-0');
+
+    // Previous button
+    const prevLi = document.createElement('li');
+    prevLi.classList.add('page-item');
+    if (page <= 1) prevLi.classList.add('disabled');
+    const prevA = document.createElement('a');
+    prevA.classList.add('page-link');
+    prevA.href = '#';
+    prevA.innerHTML = '&laquo;';
+    prevA.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (folderCurrentPage > 1) {
+            folderCurrentPage -= 1;
+            renderFolderContents(currentFolder);
+        }
+    });
+    prevLi.appendChild(prevA);
+    ul.appendChild(prevLi);
+
+    // Page numbers
+    const maxPages = 5;
+    let startPage = 1;
+    let endPage = totalPages;
+    if (totalPages > maxPages) {
+        const before = Math.floor(maxPages / 2);
+        const after = Math.ceil(maxPages / 2) - 1;
+        if (page <= before) { startPage = 1; endPage = maxPages; }
+        else if (page + after >= totalPages) { startPage = totalPages - maxPages + 1; endPage = totalPages; }
+        else { startPage = page - before; endPage = page + after; }
     }
-    
-    // Trigger filter application
-    window.docsCurrentPage = 1;
-    window.fetchUserDocuments?.();
+
+    if (startPage > 1) {
+        const firstLi = document.createElement('li'); firstLi.classList.add('page-item');
+        const firstA = document.createElement('a'); firstA.classList.add('page-link'); firstA.href = '#'; firstA.textContent = '1';
+        firstA.addEventListener('click', (e) => { e.preventDefault(); folderCurrentPage = 1; renderFolderContents(currentFolder); });
+        firstLi.appendChild(firstA); ul.appendChild(firstLi);
+        if (startPage > 2) {
+            const ellipsis = document.createElement('li'); ellipsis.classList.add('page-item', 'disabled');
+            ellipsis.innerHTML = '<span class="page-link">...</span>'; ul.appendChild(ellipsis);
+        }
+    }
+
+    for (let p = startPage; p <= endPage; p++) {
+        const li = document.createElement('li'); li.classList.add('page-item');
+        if (p === page) { li.classList.add('active'); li.setAttribute('aria-current', 'page'); }
+        const a = document.createElement('a'); a.classList.add('page-link'); a.href = '#'; a.textContent = p;
+        a.addEventListener('click', ((pageNum) => (e) => {
+            e.preventDefault();
+            if (folderCurrentPage !== pageNum) {
+                folderCurrentPage = pageNum;
+                renderFolderContents(currentFolder);
+            }
+        })(p));
+        li.appendChild(a); ul.appendChild(li);
+    }
+
+    if (endPage < totalPages) {
+        if (endPage < totalPages - 1) {
+            const ellipsis = document.createElement('li'); ellipsis.classList.add('page-item', 'disabled');
+            ellipsis.innerHTML = '<span class="page-link">...</span>'; ul.appendChild(ellipsis);
+        }
+        const lastLi = document.createElement('li'); lastLi.classList.add('page-item');
+        const lastA = document.createElement('a'); lastA.classList.add('page-link'); lastA.href = '#'; lastA.textContent = totalPages;
+        lastA.addEventListener('click', (e) => { e.preventDefault(); folderCurrentPage = totalPages; renderFolderContents(currentFolder); });
+        lastLi.appendChild(lastA); ul.appendChild(lastLi);
+    }
+
+    // Next button
+    const nextLi = document.createElement('li');
+    nextLi.classList.add('page-item');
+    if (page >= totalPages) nextLi.classList.add('disabled');
+    const nextA = document.createElement('a');
+    nextA.classList.add('page-link');
+    nextA.href = '#';
+    nextA.innerHTML = '&raquo;';
+    nextA.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (folderCurrentPage < totalPages) {
+            folderCurrentPage += 1;
+            renderFolderContents(currentFolder);
+        }
+    });
+    nextLi.appendChild(nextA);
+    ul.appendChild(nextLi);
+
+    paginationContainer.appendChild(ul);
+}
+
+async function renderFolderContents(tagName) {
+    const container = document.getElementById('tag-folders-container');
+    if (!container) return;
+
+    // Switch container from grid layout to single-column
+    container.className = '';
+
+    // Resolve display values
+    const tagInfo = workspaceTags.find(t => t.name === tagName);
+    const displayName = tagName === '__untagged__' ? 'Untagged Documents' : tagName;
+    const tagColor = tagInfo?.color || '#6c757d';
+
+    // Update view info
+    const viewInfo = document.getElementById('docs-view-info');
+    if (viewInfo) viewInfo.textContent = `Viewing: ${displayName}`;
+
+    // Show breadcrumb + loading spinner
+    container.innerHTML = buildBreadcrumbHtml(displayName, tagColor) +
+        `<div class="text-center text-muted py-4">
+            <div class="spinner-border spinner-border-sm me-2" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            Loading documents...
+        </div>`;
+    wireBackButton(container);
+
+    try {
+        let docs, totalCount;
+
+        if (tagName === '__untagged__') {
+            // Fetch all and filter client-side for untagged
+            const allResponse = await fetch('/api/documents?page_size=1000');
+            const allData = await allResponse.json();
+            const allUntagged = (allData.documents || []).filter(
+                doc => !doc.tags || doc.tags.length === 0
+            );
+            totalCount = allUntagged.length;
+            const start = (folderCurrentPage - 1) * folderPageSize;
+            docs = allUntagged.slice(start, start + folderPageSize);
+        } else {
+            // Use server-side tag filtering with pagination
+            const params = new URLSearchParams({
+                page: folderCurrentPage,
+                page_size: folderPageSize,
+                tags: tagName
+            });
+            const response = await fetch(`/api/documents?${params.toString()}`);
+            const data = await response.json();
+            docs = data.documents || [];
+            totalCount = data.total_count || docs.length;
+        }
+
+        // Build the full view
+        let html = buildBreadcrumbHtml(displayName, tagColor);
+        html += `<div class="text-muted small mb-2">${totalCount} document(s)</div>`;
+
+        if (docs.length === 0) {
+            html += `
+                <div class="text-center text-muted py-4">
+                    <i class="bi bi-folder2-open display-4 d-block mb-2"></i>
+                    <p>No documents found in this folder.</p>
+                </div>`;
+        } else {
+            html += buildFolderDocumentsTable(docs);
+            html += '<div id="folder-pagination" class="d-flex justify-content-center mt-3"></div>';
+        }
+
+        container.innerHTML = html;
+        wireBackButton(container);
+
+        if (docs.length > 0) {
+            renderFolderPagination(folderCurrentPage, folderPageSize, totalCount);
+        }
+    } catch (error) {
+        console.error('Error loading folder contents:', error);
+        container.innerHTML = buildBreadcrumbHtml(displayName, tagColor) +
+            `<div class="text-center text-danger py-4">
+                <i class="bi bi-exclamation-triangle display-4 d-block mb-2"></i>
+                <p>Error loading documents.</p>
+            </div>`;
+        wireBackButton(container);
+    }
 }
 
 // ============= Color Utility =============
@@ -533,64 +875,13 @@ export function renderTagBadges(tags, maxDisplay = 3) {
 
 // ============= Tag Management Actions (exposed globally) =============
 
-window.renameTag = async function(tagName) {
-    const newName = prompt(`Rename tag "${tagName}" to:`, tagName);
-    if (!newName || newName === tagName) return;
-    
-    try {
-        const response = await fetch(`/api/documents/tags/${encodeURIComponent(tagName)}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ new_name: newName })
-        });
-        
-        const result = await response.json();
-        
-        if (response.ok) {
-            alert(result.message);
-            await loadWorkspaceTags();
-            if (currentView === 'grid') {
-                renderGridView();
-            } else {
-                window.fetchUserDocuments?.();
-            }
-        } else {
-            alert('Error: ' + (result.error || 'Failed to rename tag'));
-        }
-    } catch (error) {
-        console.error('Error renaming tag:', error);
-        alert('Error renaming tag');
-    }
+window.renameTag = function(tagName) {
+    const tag = workspaceTags.find(t => t.name === tagName);
+    showTagManagementModal(tagName, tag?.color);
 };
 
-window.changeTagColor = async function(tagName, currentColor) {
-    const newColor = prompt(`Enter new color for tag "${tagName}" (hex code):`, currentColor);
-    if (!newColor || newColor === currentColor) return;
-    
-    try {
-        const response = await fetch(`/api/documents/tags/${encodeURIComponent(tagName)}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ color: newColor })
-        });
-        
-        const result = await response.json();
-        
-        if (response.ok) {
-            alert(result.message);
-            await loadWorkspaceTags();
-            if (currentView === 'grid') {
-                renderGridView();
-            } else {
-                window.fetchUserDocuments?.();
-            }
-        } else {
-            alert('Error: ' + (result.error || 'Failed to change color'));
-        }
-    } catch (error) {
-        console.error('Error changing tag color:', error);
-        alert('Error changing tag color');
-    }
+window.changeTagColor = function(tagName, currentColor) {
+    showTagManagementModal(tagName, currentColor);
 };
 
 window.deleteTag = async function(tagName) {

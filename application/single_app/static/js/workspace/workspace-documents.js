@@ -2,7 +2,7 @@
 
 import { escapeHtml } from "./workspace-utils.js";
 import { initializeTags, renderTagBadges, loadWorkspaceTags } from "./workspace-tags.js";
-import { getSelectedTagsArray, setSelectedTags, clearSelectedTags } from './workspace-tag-management.js';
+import { getSelectedTagsArray, setSelectedTags, clearSelectedTags, updateDocumentTagsDisplay, loadWorkspaceTags as loadTagManagementTags } from './workspace-tag-management.js';
 
 // ------------- State Variables -------------
 let docsCurrentPage = 1;
@@ -231,6 +231,7 @@ if (docMetadataForm && docMetadataModalEl) { // Check both exist
             .then(updatedDoc => {
                 if (docMetadataModalEl) docMetadataModalEl.hide();
                 fetchUserDocuments(); // Refresh the table
+                loadWorkspaceTags(); // Refresh tag counts and grid view
             })
             .catch(err => {
                 console.error("Error updating document:", err);
@@ -1126,19 +1127,11 @@ window.onEditDocument = function(docId) {
             // Set selected tags in the new tag management system
             const docTags = doc.tags || [];
             setSelectedTags(docTags);
-            
-            // Update the display
-            const container = document.getElementById('doc-selected-tags-container');
-            if (container && docTags.length > 0) {
-                loadWorkspaceTags().then(() => {
-                    // The tags are now loaded, update display via the tag management module
-                    // This will be handled automatically when the modal shows
-                    container.querySelector('.text-muted')?.remove();
-                    docTags.forEach(tagName => {
-                        // Display logic is handled by workspace-tag-management.js
-                    });
-                });
-            }
+
+            // Load workspace tags (for color info) then update the display
+            loadTagManagementTags().then(() => {
+                updateDocumentTagsDisplay();
+            });
 
             // Handle classification dropdown visibility and value based on the window flag - CORRECTED CHECK
             if ((window.enable_document_classification === true || window.enable_document_classification === "true") && classificationSelect) {

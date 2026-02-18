@@ -185,59 +185,81 @@
 
     /* === Grid View (Tag Folders) Styles === */
     .tag-folder-card {
-        border: 1px solid #dee2e6;
-        border-radius: 0.5rem;
-        padding: 1.5rem;
+        border: none;
+        border-radius: 0.375rem;
+        padding: 0.75rem 0.5rem;
         text-align: center;
         cursor: pointer;
-        transition: all 0.3s ease;
-        background: #fff;
+        transition: all 0.2s ease;
+        background: transparent;
         position: relative;
     }
-    
+
     .tag-folder-card:hover {
-        box-shadow: 0 0.5rem 1rem rgba(0,0,0,0.15);
-        transform: translateY(-2px);
+        background: rgba(0,0,0,0.04);
     }
-    
+
     .tag-folder-icon {
-        font-size: 3rem;
-        margin-bottom: 0.5rem;
-    }
-    
-    .tag-folder-name {
-        font-weight: 600;
-        font-size: 1.1rem;
+        font-size: 2.5rem;
         margin-bottom: 0.25rem;
     }
-    
+
+    .tag-folder-name {
+        font-weight: 500;
+        font-size: 0.8rem;
+        margin-bottom: 0.15rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-width: 120px;
+        margin-left: auto;
+        margin-right: auto;
+    }
+
     .tag-folder-count {
         color: #6c757d;
-        font-size: 0.9rem;
+        font-size: 0.75rem;
     }
-    
+
     .tag-folder-actions {
         position: absolute;
-        top: 0.5rem;
-        right: 0.5rem;
+        top: 0.25rem;
+        right: 0.25rem;
         opacity: 0;
         transition: opacity 0.2s;
     }
-    
+
     .tag-folder-card:hover .tag-folder-actions {
         opacity: 1;
     }
-    
+
     .tag-folder-menu-btn {
         background: rgba(255,255,255,0.9);
         border: 1px solid #dee2e6;
         border-radius: 0.25rem;
-        padding: 0.25rem 0.5rem;
+        padding: 0.1rem 0.3rem;
+        font-size: 0.75rem;
         cursor: pointer;
     }
-    
+
     .tag-folder-menu-btn:hover {
         background: #fff;
+    }
+
+    /* === Folder Contents (Drill-down) Styles === */
+    .folder-breadcrumb {
+        padding: 0.5rem 0;
+        margin-bottom: 0.75rem;
+        border-bottom: 1px solid #dee2e6;
+    }
+
+    .folder-breadcrumb a {
+        text-decoration: none;
+        color: #0d6efd;
+    }
+
+    .folder-breadcrumb a:hover {
+        text-decoration: underline;
     }
 
     /* === Multi-select dropdown styles === */
@@ -516,7 +538,7 @@
 
           <!-- Documents Grid View (Tag Folders) -->
           <div id="documents-grid-view" style="display: none;">
-            <div id="tag-folders-container" class="row g-3">
+            <div id="tag-folders-container" class="row g-2">
               <!-- Populated by JavaScript -->
               <div class="col-12 text-center text-muted py-5">
                 <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>

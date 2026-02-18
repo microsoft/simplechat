@@ -202,10 +202,17 @@ function renderTagSelectionList() {
 
 // ============= Show Tag Management Modal =============
 
-function showTagManagementModal() {
+export function showTagManagementModal(editTagName, editTagColor) {
     loadWorkspaceTags().then(() => {
         refreshTagManagementTable();
-        
+
+        // If a tag name/color was provided, auto-enter edit mode for that tag
+        if (editTagName) {
+            const tag = allWorkspaceTags.find(t => t.name === editTagName);
+            const color = editTagColor || tag?.color || '#0d6efd';
+            window.editTag(editTagName, color);
+        }
+
         const modal = new bootstrap.Modal(document.getElementById('tagManagementModal'));
         modal.show();
     });
@@ -328,7 +335,10 @@ async function createNewTag(tagName, tagColor) {
             debugLog('Reloading workspace tags after creation...');
             await loadWorkspaceTags();
             debugLog('Tags reloaded, current count:', allWorkspaceTags.length);
-            
+
+            // Refresh grid view tags (cross-module)
+            window.refreshWorkspaceTags?.();
+
             // Show success message
             showToast('Tag created successfully', 'success');
         } else {
@@ -445,13 +455,16 @@ async function saveTagEdit(newName, newColor) {
         
         if (response.ok) {
             debugLog('Tag updated successfully');
-            
+
             // Exit edit mode
             cancelEditMode();
-            
+
             // Reload tags
             await loadWorkspaceTags();
-            
+
+            // Refresh grid view tags (cross-module)
+            window.refreshWorkspaceTags?.();
+
             // Show success message
             showToast('Tag updated successfully', 'success');
         } else {
@@ -561,7 +574,10 @@ function setupDeleteConfirmation() {
                     
                     // Reload tags
                     await loadWorkspaceTags();
-                    
+
+                    // Refresh grid view tags (cross-module)
+                    window.refreshWorkspaceTags?.();
+
                     showToast('Tag deleted successfully', 'success');
                 } else {
                     debugLog('Failed to delete tag:', data.error);
@@ -595,7 +611,7 @@ function handleTagSelectionDone() {
     bootstrap.Modal.getInstance(document.getElementById('tagSelectionModal')).hide();
 }
 
-function updateDocumentTagsDisplay() {
+export function updateDocumentTagsDisplay() {
     const container = document.getElementById('doc-selected-tags-container');
     if (!container) return;
     
