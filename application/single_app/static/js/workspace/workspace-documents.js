@@ -13,6 +13,8 @@ let docsAuthorFilter = ''; // Added for Author filter
 let docsKeywordsFilter = ''; // Added for Keywords filter
 let docsAbstractFilter = ''; // Added for Abstract filter
 let docsTagsFilter = ''; // Added for Tags filter
+let docsSortBy = '_ts';    // Current sort field
+let docsSortOrder = 'desc'; // Current sort order
 const activePolls = new Set();
 
 // ------------- DOM Elements (Documents Tab) -------------
@@ -148,6 +150,9 @@ if (docsClearFiltersBtn) {
         docsKeywordsFilter = '';
         docsAbstractFilter = '';
         docsTagsFilter = '';
+        docsSortBy = '_ts';
+        docsSortOrder = 'desc';
+        updateListSortIcons();
 
         docsCurrentPage = 1; // Reset to first page
         fetchUserDocuments();
@@ -180,6 +185,37 @@ if (docsSearchInput) {
         });
     }
 });
+
+// Sortable column headers in list view
+document.querySelectorAll('#documents-table .sortable-header').forEach(th => {
+    th.addEventListener('click', () => {
+        const field = th.getAttribute('data-sort-field');
+        if (docsSortBy === field) {
+            docsSortOrder = docsSortOrder === 'asc' ? 'desc' : 'asc';
+        } else {
+            docsSortBy = field;
+            docsSortOrder = 'asc';
+        }
+        docsCurrentPage = 1;
+        updateListSortIcons();
+        fetchUserDocuments();
+    });
+});
+
+function updateListSortIcons() {
+    document.querySelectorAll('#documents-table .sortable-header').forEach(th => {
+        const field = th.getAttribute('data-sort-field');
+        const icon = th.querySelector('.sort-icon');
+        if (!icon) return;
+        if (field === docsSortBy) {
+            icon.className = docsSortOrder === 'asc'
+                ? 'bi bi-sort-alpha-down small sort-icon'
+                : 'bi bi-sort-alpha-up small sort-icon';
+        } else {
+            icon.className = 'bi bi-arrow-down-up text-muted small sort-icon';
+        }
+    });
+}
 
 
 // Metadata Modal Form Submission
@@ -484,6 +520,13 @@ function fetchUserDocuments() {
     if (docsSharedOnlyFilter && docsSharedOnlyFilter.checked) {
         params.append('shared_only', 'true');
     }
+    // Add sort parameters
+    if (docsSortBy !== '_ts') {
+        params.append('sort_by', docsSortBy);
+    }
+    if (docsSortOrder !== 'desc') {
+        params.append('sort_order', docsSortOrder);
+    }
 
     console.log("Fetching documents with params:", params.toString()); // Debugging: Check params
 
@@ -525,6 +568,15 @@ function fetchUserDocuments() {
                     docs = docs.filter(doc =>
                         Array.isArray(doc.shared_user_ids) && doc.shared_user_ids.length > 0
                     );
+                }
+                // Client-side sort to ensure correct order
+                if (docsSortBy !== '_ts') {
+                    docs.sort((a, b) => {
+                        const valA = (a[docsSortBy] || '').toLowerCase();
+                        const valB = (b[docsSortBy] || '').toLowerCase();
+                        const cmp = valA.localeCompare(valB);
+                        return docsSortOrder === 'asc' ? cmp : -cmp;
+                    });
                 }
                 window.lastFetchedDocs = docs;
                 docs.forEach(doc => renderDocumentRow(doc));

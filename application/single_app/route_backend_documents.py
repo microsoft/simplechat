@@ -283,10 +283,18 @@ def register_route_backend_documents(app):
         keywords_filter = request.args.get('keywords', default=None, type=str)
         abstract_filter = request.args.get('abstract', default=None, type=str)
         tags_filter = request.args.get('tags', default=None, type=str)  # Comma-separated tags
+        sort_by = request.args.get('sort_by', default='_ts', type=str)
+        sort_order = request.args.get('sort_order', default='desc', type=str)
 
         # Ensure page and page_size are positive
         if page < 1: page = 1
         if page_size < 1: page_size = 10
+
+        # Validate sort parameters
+        allowed_sort_fields = {'_ts', 'file_name', 'title'}
+        if sort_by not in allowed_sort_fields:
+            sort_by = '_ts'
+        sort_order = sort_order.upper() if sort_order.lower() in ('asc', 'desc') else 'DESC'
         # Limit page size to prevent abuse? (Optional)
         # page_size = min(page_size, 100)
 
@@ -318,8 +326,8 @@ def register_route_backend_documents(app):
         if classification_filter:
             param_name = f"@classification_{param_count}"
             if classification_filter.lower() == 'none':
-                # Filter for documents where classification is null, undefined, or empty string
-                query_conditions.append(f"(NOT IS_DEFINED(c.document_classification) OR c.document_classification = null OR c.document_classification = '')")
+                # Filter for documents where classification is null, undefined, empty string, or the literal "None"
+                query_conditions.append(f"(NOT IS_DEFINED(c.document_classification) OR c.document_classification = null OR c.document_classification = '' OR LOWER(c.document_classification) = 'none')")
                 # No parameter needed for this specific condition
             else:
                 query_conditions.append(f"c.document_classification = {param_name}")
@@ -388,12 +396,11 @@ def register_route_backend_documents(app):
         # --- 4) Second query: fetch the page of data based on filters ---
         try:
             offset = (page - 1) * page_size
-            # Note: ORDER BY c._ts DESC to show newest first
             data_query_str = f"""
                 SELECT *
                 FROM c
                 WHERE {where_clause}
-                ORDER BY c._ts DESC
+                ORDER BY c.{sort_by} {sort_order}
                 OFFSET {offset} LIMIT {page_size}
             """
             # debug_print(f"Data Query: {data_query_str}") # Optional Debugging

@@ -9,8 +9,13 @@ let workspaceTags = []; // All available workspace tags with colors
 let currentView = 'list'; // 'list' or 'grid'
 let selectedTagFilter = [];
 let currentFolder = null;    // null = folder overview, string = tag name being viewed
+let currentFolderType = null; // null | 'tag' | 'classification'
 let folderCurrentPage = 1;
 let folderPageSize = 10;
+let gridSortBy = 'count';    // 'count' or 'name'
+let gridSortOrder = 'desc';  // 'asc' or 'desc'
+let folderSortBy = '_ts';    // Sort field for folder drill-down
+let folderSortOrder = 'desc'; // Sort order for folder drill-down
 
 // ============= Initialization =============
 
@@ -26,6 +31,32 @@ export function initializeTags() {
     
     // Setup bulk tag management
     setupBulkTagManagement();
+
+    // Wire static grid sort buttons
+    document.querySelectorAll('#grid-controls-bar .grid-sort-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const field = btn.getAttribute('data-sort');
+            if (gridSortBy === field) {
+                gridSortOrder = gridSortOrder === 'asc' ? 'desc' : 'asc';
+            } else {
+                gridSortBy = field;
+                gridSortOrder = field === 'name' ? 'asc' : 'desc';
+            }
+            renderGridView();
+        });
+    });
+
+    // Wire grid page-size select
+    const gridPageSizeSelect = document.getElementById('grid-page-size-select');
+    if (gridPageSizeSelect) {
+        gridPageSizeSelect.addEventListener('change', (e) => {
+            folderPageSize = parseInt(e.target.value, 10);
+            folderCurrentPage = 1;
+            if (currentFolder) {
+                renderFolderContents(currentFolder);
+            }
+        });
+    }
     
     // Load saved view preference
     const savedView = localStorage.getItem('personalWorkspaceViewPreference');
@@ -93,24 +124,53 @@ function switchView(view) {
     const listView = document.getElementById('documents-list-view');
     const gridView = document.getElementById('documents-grid-view');
     const viewInfo = document.getElementById('docs-view-info');
+    const listControls = document.getElementById('list-controls-bar');
+    const gridControls = document.getElementById('grid-controls-bar');
 
     if (view === 'list') {
         // Reset folder drill-down state
         currentFolder = null;
+        currentFolderType = null;
         folderCurrentPage = 1;
+        folderSortBy = '_ts';
+        folderSortOrder = 'desc';
         const tagContainer = document.getElementById('tag-folders-container');
         if (tagContainer) tagContainer.className = 'row g-2';
 
         listView.style.display = 'block';
         gridView.style.display = 'none';
+        if (listControls) listControls.style.display = 'flex';
+        if (gridControls) gridControls.style.display = 'none';
         if (viewInfo) viewInfo.textContent = '';
         // Trigger reload of documents if needed
         window.fetchUserDocuments?.();
     } else {
         listView.style.display = 'none';
         gridView.style.display = 'block';
+        if (listControls) listControls.style.display = 'none';
+        if (gridControls) gridControls.style.display = 'flex';
         renderGridView();
     }
+}
+
+// Update sort icons in the static grid control bar
+function updateGridSortIcons() {
+    const bar = document.getElementById('grid-controls-bar');
+    if (!bar) return;
+    bar.querySelectorAll('.grid-sort-icon').forEach(icon => {
+        const field = icon.getAttribute('data-sort');
+        icon.className = 'bi ms-1 grid-sort-icon';
+        icon.setAttribute('data-sort', field);
+        if (gridSortBy === field) {
+            if (field === 'name') {
+                icon.classList.add(gridSortOrder === 'asc' ? 'bi-sort-alpha-down' : 'bi-sort-alpha-up');
+            } else {
+                icon.classList.add(gridSortOrder === 'asc' ? 'bi-sort-numeric-down' : 'bi-sort-numeric-up');
+            }
+        } else {
+            icon.classList.add('bi-arrow-down-up', 'text-muted');
+        }
+    });
 }
 
 // ============= Grid View Rendering =============
@@ -120,11 +180,22 @@ async function renderGridView() {
     if (!container) return;
 
     // If inside a folder, check that the folder still exists
-    if (currentFolder && currentFolder !== '__untagged__') {
-        const folderStillExists = workspaceTags.some(t => t.name === currentFolder);
-        if (!folderStillExists) {
-            currentFolder = null;
-            folderCurrentPage = 1;
+    if (currentFolder && currentFolder !== '__untagged__' && currentFolder !== '__unclassified__') {
+        if (currentFolderType === 'classification') {
+            const categories = window.classification_categories || [];
+            const folderStillExists = categories.some(cat => cat.label === currentFolder);
+            if (!folderStillExists) {
+                currentFolder = null;
+                currentFolderType = null;
+                folderCurrentPage = 1;
+            }
+        } else {
+            const folderStillExists = workspaceTags.some(t => t.name === currentFolder);
+            if (!folderStillExists) {
+                currentFolder = null;
+                currentFolderType = null;
+                folderCurrentPage = 1;
+            }
         }
     }
 
@@ -159,59 +230,126 @@ async function renderGridView() {
 
         const untaggedCount = allDocs.filter(doc => !doc.tags || doc.tags.length === 0).length;
 
-        // Build folder cards
-        let html = '';
-
-        // Untagged folder (always show if there are untagged documents)
-        if (untaggedCount > 0) {
-            html += `
-                <div class="col-6 col-sm-4 col-md-3 col-lg-2">
-                    <div class="tag-folder-card" data-tag="__untagged__" title="Untagged Documents (${untaggedCount} files)">
-                        <div class="tag-folder-icon"><i class="bi bi-folder2-open" style="color: #6c757d;"></i></div>
-                        <div class="tag-folder-name text-muted">Untagged</div>
-                        <div class="tag-folder-count">${untaggedCount} file${untaggedCount !== 1 ? 's' : ''}</div>
-                    </div>
-                </div>
-            `;
+        // Classification folder data
+        const classificationEnabled = (window.enable_document_classification === true
+            || window.enable_document_classification === "true");
+        const categories = classificationEnabled ? (window.classification_categories || []) : [];
+        const classificationCounts = {};
+        let unclassifiedCount = 0;
+        if (classificationEnabled) {
+            allDocs.forEach(doc => {
+                const cls = doc.document_classification;
+                if (!cls || cls === '' || cls.toLowerCase() === 'none') {
+                    unclassifiedCount++;
+                } else {
+                    classificationCounts[cls] = (classificationCounts[cls] || 0) + 1;
+                }
+            });
         }
 
-        // Tag folders
+        // Build unified array of folder items
+        const folderItems = [];
+
+        if (untaggedCount > 0) {
+            folderItems.push({
+                type: 'tag', key: '__untagged__', displayName: 'Untagged',
+                count: untaggedCount, icon: 'bi-folder2-open', color: '#6c757d', isSpecial: true
+            });
+        }
+
+        if (classificationEnabled && unclassifiedCount > 0) {
+            folderItems.push({
+                type: 'classification', key: '__unclassified__', displayName: 'Unclassified',
+                count: unclassifiedCount, icon: 'bi-bookmark', color: '#6c757d', isSpecial: true
+            });
+        }
+
         workspaceTags.forEach(tag => {
+            folderItems.push({
+                type: 'tag', key: tag.name, displayName: tag.name,
+                count: tag.count, icon: 'bi-folder-fill', color: tag.color,
+                isSpecial: false, tagData: tag
+            });
+        });
+
+        if (classificationEnabled) {
+            categories.forEach(cat => {
+                const count = classificationCounts[cat.label] || 0;
+                if (count > 0) {
+                    folderItems.push({
+                        type: 'classification', key: cat.label, displayName: cat.label,
+                        count: count, icon: 'bi-bookmark-fill', color: cat.color || '#6c757d',
+                        isSpecial: false
+                    });
+                }
+            });
+        }
+
+        // Sort: special folders first, then by user-selected sort
+        folderItems.sort((a, b) => {
+            if (a.isSpecial && !b.isSpecial) return -1;
+            if (!a.isSpecial && b.isSpecial) return 1;
+            if (gridSortBy === 'name') {
+                const cmp = a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' });
+                return gridSortOrder === 'asc' ? cmp : -cmp;
+            }
+            // Default: sort by count
+            const cmp = a.count - b.count;
+            return gridSortOrder === 'asc' ? cmp : -cmp;
+        });
+
+        // Update sort icons in the static control bar
+        updateGridSortIcons();
+
+        let html = '';
+
+        // Render folder cards
+        folderItems.forEach(item => {
+            const escapedKey = escapeHtml(item.key);
+            const escapedName = escapeHtml(item.displayName);
+            const countLabel = `${item.count} file${item.count !== 1 ? 's' : ''}`;
+
+            let actionsHtml = '';
+            if (item.type === 'tag' && !item.isSpecial) {
+                actionsHtml = `
+                    <div class="tag-folder-actions">
+                        <div class="dropdown">
+                            <button class="tag-folder-menu-btn" type="button" data-bs-toggle="dropdown" onclick="event.stopPropagation();">
+                                <i class="bi bi-three-dots-vertical"></i>
+                            </button>
+                            <ul class="dropdown-menu">
+                                <li><a class="dropdown-item" href="#" onclick="window.renameTag('${escapedKey}'); return false;">
+                                    <i class="bi bi-pencil me-2"></i>Rename Tag
+                                </a></li>
+                                <li><a class="dropdown-item" href="#" onclick="window.changeTagColor('${escapedKey}', '${item.tagData.color}'); return false;">
+                                    <i class="bi bi-palette me-2"></i>Change Color
+                                </a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item text-danger" href="#" onclick="window.deleteTag('${escapedKey}'); return false;">
+                                    <i class="bi bi-trash me-2"></i>Delete Tag
+                                </a></li>
+                            </ul>
+                        </div>
+                    </div>`;
+            }
+
             html += `
                 <div class="col-6 col-sm-4 col-md-3 col-lg-2">
-                    <div class="tag-folder-card" data-tag="${escapeHtml(tag.name)}" title="${escapeHtml(tag.name)} (${tag.count} files)">
-                        <div class="tag-folder-actions">
-                            <div class="dropdown">
-                                <button class="tag-folder-menu-btn" type="button" data-bs-toggle="dropdown" onclick="event.stopPropagation();">
-                                    <i class="bi bi-three-dots-vertical"></i>
-                                </button>
-                                <ul class="dropdown-menu">
-                                    <li><a class="dropdown-item" href="#" onclick="window.renameTag('${escapeHtml(tag.name)}'); return false;">
-                                        <i class="bi bi-pencil me-2"></i>Rename Tag
-                                    </a></li>
-                                    <li><a class="dropdown-item" href="#" onclick="window.changeTagColor('${escapeHtml(tag.name)}', '${tag.color}'); return false;">
-                                        <i class="bi bi-palette me-2"></i>Change Color
-                                    </a></li>
-                                    <li><hr class="dropdown-divider"></li>
-                                    <li><a class="dropdown-item text-danger" href="#" onclick="window.deleteTag('${escapeHtml(tag.name)}'); return false;">
-                                        <i class="bi bi-trash me-2"></i>Delete Tag
-                                    </a></li>
-                                </ul>
-                            </div>
-                        </div>
-                        <div class="tag-folder-icon"><i class="bi bi-folder-fill" style="color: ${tag.color};"></i></div>
-                        <div class="tag-folder-name">${escapeHtml(tag.name)}</div>
-                        <div class="tag-folder-count">${tag.count} file${tag.count !== 1 ? 's' : ''}</div>
+                    <div class="tag-folder-card" data-tag="${escapedKey}" data-folder-type="${item.type}" title="${escapedName} (${countLabel})">
+                        ${actionsHtml}
+                        <div class="tag-folder-icon"><i class="bi ${item.icon}" style="color: ${item.color};"></i></div>
+                        <div class="tag-folder-name${item.isSpecial ? ' text-muted' : ''}">${escapedName}</div>
+                        <div class="tag-folder-count">${countLabel}</div>
                     </div>
                 </div>
             `;
         });
 
-        if (html === '') {
+        if (folderItems.length === 0) {
             html = `
                 <div class="col-12 text-center text-muted py-5">
                     <i class="bi bi-folder2-open display-1 mb-3"></i>
-                    <p>No tags yet. Add tags to documents to organize them into folders.</p>
+                    <p>No folders yet. Add tags to documents to organize them into folders.</p>
                 </div>
             `;
         }
@@ -221,11 +359,14 @@ async function renderGridView() {
         // Add click handlers to folder cards
         container.querySelectorAll('.tag-folder-card').forEach(card => {
             card.addEventListener('click', (e) => {
-                // Don't drill down if user clicked the dropdown menu
                 if (e.target.closest('.tag-folder-actions')) return;
                 const tagName = card.getAttribute('data-tag');
+                const folderType = card.getAttribute('data-folder-type') || 'tag';
                 currentFolder = tagName;
+                currentFolderType = folderType;
                 folderCurrentPage = 1;
+                folderSortBy = '_ts';
+                folderSortOrder = 'desc';
                 renderFolderContents(tagName);
             });
         });
@@ -243,15 +384,16 @@ async function renderGridView() {
 
 // ============= Folder Drill-Down =============
 
-function buildBreadcrumbHtml(displayName, tagColor) {
+function buildBreadcrumbHtml(displayName, tagColor, folderType = 'tag') {
+    const icon = (folderType === 'classification') ? 'bi-bookmark-fill' : 'bi-folder-fill';
     return `
         <div class="folder-breadcrumb d-flex align-items-center">
             <a href="#" class="grid-back-btn d-flex align-items-center">
-                <i class="bi bi-arrow-left me-1"></i> All Tags
+                <i class="bi bi-arrow-left me-1"></i> All
             </a>
             <span class="mx-2 text-muted">/</span>
             <span>
-                <i class="bi bi-folder-fill me-1" style="color: ${tagColor};"></i>
+                <i class="bi ${icon} me-1" style="color: ${tagColor};"></i>
                 <strong>${escapeHtml(displayName)}</strong>
             </span>
         </div>`;
@@ -262,21 +404,38 @@ function wireBackButton(container) {
         btn.addEventListener('click', (e) => {
             e.preventDefault();
             currentFolder = null;
+            currentFolderType = null;
             folderCurrentPage = 1;
+            folderSortBy = '_ts';
+            folderSortOrder = 'desc';
             container.className = 'row g-2';
+            // Show the grid controls bar again
+            const gridControls = document.getElementById('grid-controls-bar');
+            if (gridControls) gridControls.style.display = 'flex';
             renderGridView();
         });
     });
 }
 
 function buildFolderDocumentsTable(docs) {
+    const fnIcon = folderSortBy === 'file_name'
+        ? (folderSortOrder === 'asc' ? 'bi-sort-alpha-down' : 'bi-sort-alpha-up')
+        : 'bi-arrow-down-up text-muted';
+    const titleIcon = folderSortBy === 'title'
+        ? (folderSortOrder === 'asc' ? 'bi-sort-alpha-down' : 'bi-sort-alpha-up')
+        : 'bi-arrow-down-up text-muted';
+
     let html = `
-        <table class="table table-striped table-sm">
+        <table class="table table-striped table-sm" id="folder-docs-table">
             <thead>
                 <tr>
                     <th style="width: 50px;"></th>
-                    <th>File Name</th>
-                    <th>Title</th>
+                    <th class="folder-sortable-header" data-sort-field="file_name" style="cursor: pointer; user-select: none;">
+                        File Name <i class="bi ${fnIcon} small sort-icon"></i>
+                    </th>
+                    <th class="folder-sortable-header" data-sort-field="title" style="cursor: pointer; user-select: none;">
+                        Title <i class="bi ${titleIcon} small sort-icon"></i>
+                    </th>
                     <th style="width: 240px;">Actions</th>
                 </tr>
             </thead>
@@ -497,20 +656,40 @@ async function renderFolderContents(tagName) {
     const container = document.getElementById('tag-folders-container');
     if (!container) return;
 
+    // Hide the grid controls bar (folder sort buttons don't apply inside a folder)
+    const gridControls = document.getElementById('grid-controls-bar');
+    if (gridControls) gridControls.style.display = 'none';
+
     // Switch container from grid layout to single-column
     container.className = '';
 
-    // Resolve display values
-    const tagInfo = workspaceTags.find(t => t.name === tagName);
-    const displayName = tagName === '__untagged__' ? 'Untagged Documents' : tagName;
-    const tagColor = tagInfo?.color || '#6c757d';
+    // Determine display values based on folder type
+    const isClassification = (currentFolderType === 'classification');
+    let displayName, tagColor;
+
+    if (tagName === '__untagged__') {
+        displayName = 'Untagged Documents';
+        tagColor = '#6c757d';
+    } else if (tagName === '__unclassified__') {
+        displayName = 'Unclassified Documents';
+        tagColor = '#6c757d';
+    } else if (isClassification) {
+        const categories = window.classification_categories || [];
+        const cat = categories.find(c => c.label === tagName);
+        displayName = tagName;
+        tagColor = cat?.color || '#6c757d';
+    } else {
+        const tagInfo = workspaceTags.find(t => t.name === tagName);
+        displayName = tagName;
+        tagColor = tagInfo?.color || '#6c757d';
+    }
 
     // Update view info
     const viewInfo = document.getElementById('docs-view-info');
     if (viewInfo) viewInfo.textContent = `Viewing: ${displayName}`;
 
     // Show breadcrumb + loading spinner
-    container.innerHTML = buildBreadcrumbHtml(displayName, tagColor) +
+    container.innerHTML = buildBreadcrumbHtml(displayName, tagColor, currentFolderType || 'tag') +
         `<div class="text-center text-muted py-4">
             <div class="spinner-border spinner-border-sm me-2" role="status">
                 <span class="visually-hidden">Loading...</span>
@@ -529,9 +708,44 @@ async function renderFolderContents(tagName) {
             const allUntagged = (allData.documents || []).filter(
                 doc => !doc.tags || doc.tags.length === 0
             );
+            // Client-side sorting for untagged
+            if (folderSortBy !== '_ts') {
+                allUntagged.sort((a, b) => {
+                    const valA = (a[folderSortBy] || '').toLowerCase();
+                    const valB = (b[folderSortBy] || '').toLowerCase();
+                    const cmp = valA.localeCompare(valB);
+                    return folderSortOrder === 'asc' ? cmp : -cmp;
+                });
+            }
             totalCount = allUntagged.length;
             const start = (folderCurrentPage - 1) * folderPageSize;
             docs = allUntagged.slice(start, start + folderPageSize);
+        } else if (tagName === '__unclassified__') {
+            // Server-side filter for unclassified documents
+            const params = new URLSearchParams({
+                page: folderCurrentPage,
+                page_size: folderPageSize,
+                classification: 'none'
+            });
+            if (folderSortBy !== '_ts') params.append('sort_by', folderSortBy);
+            if (folderSortOrder !== 'desc') params.append('sort_order', folderSortOrder);
+            const response = await fetch(`/api/documents?${params.toString()}`);
+            const data = await response.json();
+            docs = data.documents || [];
+            totalCount = data.total_count || docs.length;
+        } else if (isClassification) {
+            // Server-side filter for a specific classification category
+            const params = new URLSearchParams({
+                page: folderCurrentPage,
+                page_size: folderPageSize,
+                classification: tagName
+            });
+            if (folderSortBy !== '_ts') params.append('sort_by', folderSortBy);
+            if (folderSortOrder !== 'desc') params.append('sort_order', folderSortOrder);
+            const response = await fetch(`/api/documents?${params.toString()}`);
+            const data = await response.json();
+            docs = data.documents || [];
+            totalCount = data.total_count || docs.length;
         } else {
             // Use server-side tag filtering with pagination
             const params = new URLSearchParams({
@@ -539,15 +753,37 @@ async function renderFolderContents(tagName) {
                 page_size: folderPageSize,
                 tags: tagName
             });
+            if (folderSortBy !== '_ts') params.append('sort_by', folderSortBy);
+            if (folderSortOrder !== 'desc') params.append('sort_order', folderSortOrder);
             const response = await fetch(`/api/documents?${params.toString()}`);
             const data = await response.json();
             docs = data.documents || [];
             totalCount = data.total_count || docs.length;
         }
 
+        // Client-side sort to ensure correct order (fallback if server-side ORDER BY is ignored)
+        if (folderSortBy !== '_ts' && docs.length > 1) {
+            docs.sort((a, b) => {
+                const valA = (a[folderSortBy] || '').toLowerCase();
+                const valB = (b[folderSortBy] || '').toLowerCase();
+                const cmp = valA.localeCompare(valB);
+                return folderSortOrder === 'asc' ? cmp : -cmp;
+            });
+        }
+
         // Build the full view
-        let html = buildBreadcrumbHtml(displayName, tagColor);
-        html += `<div class="text-muted small mb-2">${totalCount} document(s)</div>`;
+        let html = buildBreadcrumbHtml(displayName, tagColor, currentFolderType || 'tag');
+        html += `<div class="d-flex align-items-center gap-3 mb-2">
+            <span class="text-muted small">${totalCount} document(s)</span>
+            <div class="ms-auto">
+                <select id="folder-page-size-select" class="form-select form-select-sm d-inline-block" style="width:auto;">
+                    <option value="10"${folderPageSize === 10 ? ' selected' : ''}>10</option>
+                    <option value="20"${folderPageSize === 20 ? ' selected' : ''}>20</option>
+                    <option value="50"${folderPageSize === 50 ? ' selected' : ''}>50</option>
+                </select>
+                <span class="ms-1 small text-muted">items per page</span>
+            </div>
+        </div>`;
 
         if (docs.length === 0) {
             html += `
@@ -563,12 +799,37 @@ async function renderFolderContents(tagName) {
         container.innerHTML = html;
         wireBackButton(container);
 
+        // Wire up folder page-size select
+        const folderPageSizeSelect = document.getElementById('folder-page-size-select');
+        if (folderPageSizeSelect) {
+            folderPageSizeSelect.addEventListener('change', (e) => {
+                folderPageSize = parseInt(e.target.value, 10);
+                folderCurrentPage = 1;
+                renderFolderContents(currentFolder);
+            });
+        }
+
+        // Wire up sortable column headers in folder drill-down table
+        container.querySelectorAll('.folder-sortable-header').forEach(th => {
+            th.addEventListener('click', () => {
+                const field = th.getAttribute('data-sort-field');
+                if (folderSortBy === field) {
+                    folderSortOrder = folderSortOrder === 'asc' ? 'desc' : 'asc';
+                } else {
+                    folderSortBy = field;
+                    folderSortOrder = 'asc';
+                }
+                folderCurrentPage = 1;
+                renderFolderContents(currentFolder);
+            });
+        });
+
         if (docs.length > 0) {
             renderFolderPagination(folderCurrentPage, folderPageSize, totalCount);
         }
     } catch (error) {
         console.error('Error loading folder contents:', error);
-        container.innerHTML = buildBreadcrumbHtml(displayName, tagColor) +
+        container.innerHTML = buildBreadcrumbHtml(displayName, tagColor, currentFolderType || 'tag') +
             `<div class="text-center text-danger py-4">
                 <i class="bi bi-exclamation-triangle display-4 d-block mb-2"></i>
                 <p>Error loading documents.</p>

@@ -185,8 +185,8 @@
 
     /* === Grid View (Tag Folders) Styles === */
     .tag-folder-card {
-        border: none;
-        border-radius: 0.375rem;
+        border: 1px solid transparent;
+        border-radius: 0.5rem;
         padding: 0.75rem 0.5rem;
         text-align: center;
         cursor: pointer;
@@ -197,6 +197,7 @@
 
     .tag-folder-card:hover {
         background: rgba(0,0,0,0.04);
+        border-color: #dee2e6;
     }
 
     .tag-folder-icon {
@@ -519,8 +520,12 @@
                   <th>
                     <!-- Expand/Collapse Column -->
                   </th>
-                  <th>File Name</th>
-                  <th>Title</th>
+                  <th class="sortable-header" data-sort-field="file_name" style="cursor: pointer; user-select: none;">
+                    File Name <i class="bi bi-arrow-down-up text-muted small sort-icon"></i>
+                  </th>
+                  <th class="sortable-header" data-sort-field="title" style="cursor: pointer; user-select: none;">
+                    Title <i class="bi bi-arrow-down-up text-muted small sort-icon"></i>
+                  </th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -547,9 +552,8 @@
             </div>
           </div>
 
-          <!-- Documents Pagination & Page Size -->
-          <div class="d-flex align-items-center gap-3 mb-3 mt-3">
-            <!-- Page Size Section -->
+          <!-- List View Controls (pagination & page size) -->
+          <div id="list-controls-bar" class="align-items-center gap-3 mb-3 mt-3" style="display: flex;">
             <div>
               <label for="docs-page-size-select" class="visually-hidden">Items per page:</label>
               <select id="docs-page-size-select" class="form-select form-select-sm d-inline-block" style="width:auto;">
@@ -559,9 +563,32 @@
               </select>
               <span class="ms-1 small text-muted">items per page</span>
             </div>
-
-            <!-- Pagination Controls -->
             <div id="docs-pagination-container" class="d-flex gap-1 ms-auto">
+                 <!-- Populated by JavaScript -->
+            </div>
+          </div>
+
+          <!-- Grid View Controls (sort, page size, pagination) -->
+          <div id="grid-controls-bar" class="align-items-center gap-3 mb-3 mt-3" style="display: none;">
+            <div class="d-flex align-items-center gap-2">
+              <small class="text-muted">Sort:</small>
+              <button class="btn btn-sm btn-outline-secondary grid-sort-btn" data-sort="name">
+                Name <i class="bi bi-arrow-down-up text-muted ms-1 grid-sort-icon" data-sort="name"></i>
+              </button>
+              <button class="btn btn-sm btn-outline-secondary grid-sort-btn" data-sort="count">
+                Files <i class="bi bi-sort-numeric-up ms-1 grid-sort-icon" data-sort="count"></i>
+              </button>
+            </div>
+            <div>
+              <label for="grid-page-size-select" class="visually-hidden">Items per page:</label>
+              <select id="grid-page-size-select" class="form-select form-select-sm d-inline-block" style="width:auto;">
+                <option value="10" selected>10</option>
+                <option value="20">20</option>
+                <option value="50">50</option>
+              </select>
+              <span class="ms-1 small text-muted">items per page</span>
+            </div>
+            <div id="grid-pagination-container" class="d-flex gap-1 ms-auto">
                  <!-- Populated by JavaScript -->
             </div>
           </div>
