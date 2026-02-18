@@ -1,0 +1,36 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.25/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.25",
+  "version": "1.0.1",
+  "id": "d4871930-f34f-462e-a709-befc11081da5",
+  "name": {
+    "short": "Simple Chat",
+    "full": "Simple Chat App"
+  },
+  "description": {
+    "short": "AI Chat",
+    "full": "The most basic AI chat app for Microsoft Teams."
+  },
+  "developer": {
+    "name": "Your Name",
+    "websiteUrl": "https://example.com",
+    "privacyUrl": "https://example.com/privacy",
+    "termsOfUseUrl": "https://example.com/terms"
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "accentColor": "#FFFFFF",
+  "staticTabs": [
+    {
+      "entityId": "main",
+      "name": "Simple Chat",
+      "contentUrl": "https://sceddev-sbx-app.azurewebsites.net",
+      "websiteUrl": "https://sceddev-sbx-app.azurewebsites.net",
+      "scopes": ["personal"]
+    }
+  ],
+  "permissions": ["identity"],
+  "validDomains": ["sceddev-sbx-app.azurewebsites.net"]
+}
