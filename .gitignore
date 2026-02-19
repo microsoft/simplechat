@@ -30,6 +30,9 @@ priv-*
 # temporary files
 flask_session
 
+# local user workspace
+gunger/
+
 # node modules
 /node_modules
 /package-lock.json
@@ -42,3 +45,4 @@ flask_session
 **/my_chart.png
 **/sample_pie.csv
 **/sample_stacked_column.csv
+application/external_apps/mcp/.env.azure

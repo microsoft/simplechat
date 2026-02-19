@@ -142,6 +142,8 @@ from functions_authentication import get_current_user_id
 from functions_global_agents import ensure_default_global_agent_exists
 
 from route_external_health import *
+from route_external_authentication import *
+from route_external_prm import *
 
 # =================== Session Configuration ===================
 def configure_sessions(settings):
@@ -639,6 +641,12 @@ register_route_backend_user_agreement(app)
 
 # ------------------- Extenral Health Routes ----------
 register_route_external_health(app)
+
+# ------------------- External Authentication Routes ---
+register_route_external_authentication(app)
+
+# ------------------- PRM Metadata Routes --------------
+register_route_external_prm(app)
 
 if __name__ == '__main__':
     settings = get_settings(use_cosmos=True)
