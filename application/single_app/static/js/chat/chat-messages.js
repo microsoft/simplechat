@@ -5,7 +5,7 @@ import {
   showLoadingIndicatorInChatbox,
   hideLoadingIndicatorInChatbox,
 } from "./chat-loading-indicator.js";
-import { docScopeSelect, getDocumentMetadata, personalDocs, groupDocs, publicDocs, getSelectedTags } from "./chat-documents.js";
+import { getDocumentMetadata, personalDocs, groupDocs, publicDocs, getSelectedTags, getEffectiveScopes } from "./chat-documents.js";
 import { promptSelect } from "./chat-prompts.js";
 import {
   createNewConversation,
@@ -1366,24 +1366,16 @@ export function actuallySendMessage(finalMessageToSend) {
   }
 
   let selectedDocumentId = null;
-  let classificationsToSend = null;
+  let selectedDocumentIds = [];
   const docSel = document.getElementById("document-select");
-  const classificationInput = document.getElementById("classification-select");
 
-  // Always set selectedDocumentId if a document is selected, regardless of hybridSearchEnabled
+  // Read all selected document IDs (multi-select support)
   if (docSel) {
-    const selectedDocOption = docSel.options[docSel.selectedIndex];
-    if (selectedDocOption && selectedDocOption.value !== "") {
-      selectedDocumentId = selectedDocOption.value;
-    } else {
-      selectedDocumentId = null;
-    }
-  }
-
-  // Only set classificationsToSend if classificationInput exists
-  if (classificationInput) {
-    classificationsToSend =
-      classificationInput.value === "N/A" ? null : classificationInput.value;
+    selectedDocumentIds = Array.from(docSel.selectedOptions)
+      .map(o => o.value)
+      .filter(v => v); // Filter out empty strings
+    // For backwards compat, set single ID to first selected or null
+    selectedDocumentId = selectedDocumentIds.length > 0 ? selectedDocumentIds[0] : null;
   }
 
   let imageGenEnabled = false;
@@ -1439,48 +1431,68 @@ export function actuallySendMessage(finalMessageToSend) {
     }
   }
 
-  // Determine the correct doc_scope, especially when "all" is selected but a specific document is chosen
-  let effectiveDocScope = docScopeSelect ? docScopeSelect.value : "all";
-  
-  // If scope is "all" but a specific document is selected, determine the actual scope of that document
-  if (effectiveDocScope === "all" && selectedDocumentId) {
-    const documentMetadata = getDocumentMetadata(selectedDocumentId);
-    if (documentMetadata) {
-      // Check which list the document belongs to
-      if (personalDocs.find(doc => doc.id === selectedDocumentId || doc.document_id === selectedDocumentId)) {
-        effectiveDocScope = "personal";
-      } else if (groupDocs.find(doc => doc.id === selectedDocumentId || doc.document_id === selectedDocumentId)) {
-        effectiveDocScope = "group";
-      } else if (publicDocs.find(doc => doc.id === selectedDocumentId || doc.document_id === selectedDocumentId)) {
-        effectiveDocScope = "public";
+  // Get effective scopes from multi-select scope dropdown
+  const scopes = getEffectiveScopes();
+
+  // Determine the correct doc_scope based on selected scopes
+  let effectiveDocScope = "all";
+  if (scopes.personal && scopes.groupIds.length === 0 && scopes.publicWorkspaceIds.length === 0) {
+    effectiveDocScope = "personal";
+  } else if (!scopes.personal && scopes.groupIds.length > 0 && scopes.publicWorkspaceIds.length === 0) {
+    effectiveDocScope = "group";
+  } else if (!scopes.personal && scopes.groupIds.length === 0 && scopes.publicWorkspaceIds.length > 0) {
+    effectiveDocScope = "public";
+  }
+
+  // If documents are selected, determine the actual scope from the documents themselves
+  if (selectedDocumentIds.length > 0) {
+    const docScopes = new Set();
+    selectedDocumentIds.forEach(docId => {
+      if (personalDocs.find(doc => doc.id === docId || doc.document_id === docId)) {
+        docScopes.add("personal");
+      } else if (groupDocs.find(doc => doc.id === docId || doc.document_id === docId)) {
+        docScopes.add("group");
+      } else if (publicDocs.find(doc => doc.id === docId || doc.document_id === docId)) {
+        docScopes.add("public");
       }
-      console.log(`Document ${selectedDocumentId} scope detected as: ${effectiveDocScope}`);
+    });
+
+    // Only narrow scope if ALL selected docs are from the same scope
+    if (docScopes.size === 1) {
+      effectiveDocScope = docScopes.values().next().value;
+      console.log(`All selected documents are from scope: ${effectiveDocScope}`);
+    } else if (docScopes.size > 1) {
+      effectiveDocScope = "all";
+      console.log(`Selected documents span ${docScopes.size} scopes (${[...docScopes].join(', ')}), keeping scope as "all"`);
     }
   }
 
-  // Fallback: if group_id is null/empty, use window.activeGroupId
-  const finalGroupId = group_id || window.activeGroupId || null;
+  // Use group IDs from scope selector; fall back to window.activeGroupId for backwards compat
+  const finalGroupIds = scopes.groupIds.length > 0 ? scopes.groupIds : (window.activeGroupId ? [window.activeGroupId] : []);
+  const finalGroupId = finalGroupIds[0] || window.activeGroupId || null;
   const webSearchToggle = document.getElementById("search-web-btn");
   const webSearchEnabled = webSearchToggle ? webSearchToggle.classList.contains("active") : false;
-  
+
   // Prepare message data object
-  // Get active public workspace ID from user settings (similar to active_group_id)
-  const finalPublicWorkspaceId = window.activePublicWorkspaceId || null;
-  
+  // Get public workspace IDs from scope selector; fall back to window.activePublicWorkspaceId
+  const finalPublicWorkspaceId = scopes.publicWorkspaceIds[0] || window.activePublicWorkspaceId || null;
+
   // Get selected tags from chat-documents module
   const selectedTags = getSelectedTags();
-  
+
   const messageData = {
     message: finalMessageToSend,
     conversation_id: currentConversationId,
     hybrid_search: hybridSearchEnabled,
     web_search_enabled: webSearchEnabled,
     selected_document_id: selectedDocumentId,
-    classifications: classificationsToSend,
-    tags: selectedTags,  // Add tags to message data
+    selected_document_ids: selectedDocumentIds,
+    classifications: null,
+    tags: selectedTags,
     image_generation: imageGenEnabled,
     doc_scope: effectiveDocScope,
     chat_type: chat_type,
+    active_group_ids: finalGroupIds,
     active_group_id: finalGroupId,
     active_public_workspace_id: finalPublicWorkspaceId,
     model_deployment: modelDeployment,

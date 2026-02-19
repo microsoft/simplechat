@@ -238,33 +238,31 @@ def get_cache_partition_key(
     doc_scope: str,
     user_id: str,
     active_group_id: Optional[str] = None,
+    active_group_ids: Optional[List[str]] = None,
     active_public_workspace_id: Optional[str] = None
 ) -> str:
     """
     Determine the partition key to use for cache storage based on scope.
-    
+
     For shared caches (group/public), use a consistent partition key so all users
     can access the same cached results.
-    
-    Args:
-        doc_scope: Scope of search ("personal", "group", "public", "all")
-        user_id: User ID (for personal scope)
-        active_group_id: Active group ID (for group scope)
-        active_public_workspace_id: Active public workspace ID (for public scope)
-        
-    Returns:
-        Partition key string to use for Cosmos DB operations
     """
+    # Backwards compat: wrap single group ID into list
+    if not active_group_ids and active_group_id:
+        active_group_ids = [active_group_id]
+    # Use first sorted group ID for partition key (deterministic)
+    first_group_id = sorted(active_group_ids)[0] if active_group_ids else None
+
     if doc_scope == "personal":
         return user_id
     elif doc_scope == "group":
-        return f"group:{active_group_id}" if active_group_id else user_id
+        return f"group:{first_group_id}" if first_group_id else user_id
     elif doc_scope == "public":
         return f"public:{active_public_workspace_id}" if active_public_workspace_id else user_id
     elif doc_scope == "all":
         # For "all" scope, prioritize group > public > personal
-        if active_group_id:
-            return f"group:{active_group_id}"
+        if first_group_id:
+            return f"group:{first_group_id}"
         elif active_public_workspace_id:
             return f"public:{active_public_workspace_id}"
         else:
@@ -277,8 +275,10 @@ def generate_search_cache_key(
     query: str,
     user_id: str,
     document_id: Optional[str] = None,
+    document_ids: Optional[List[str]] = None,
     doc_scope: str = "all",
     active_group_id: Optional[str] = None,
+    active_group_ids: Optional[List[str]] = None,
     active_public_workspace_id: Optional[str] = None,
     top_n: int = 12,
     enable_file_sharing: bool = True,
@@ -310,28 +310,36 @@ def generate_search_cache_key(
     """
     # Normalize query (case-insensitive, whitespace-normalized)
     normalized_query = ' '.join(query.lower().strip().split())
-    
+
+    # Backwards compat: wrap single group ID into list
+    if not active_group_ids and active_group_id:
+        active_group_ids = [active_group_id]
+
     # Normalize and sort tags filter for consistent cache keys
     tags_str = ''
     if tags_filter and isinstance(tags_filter, list):
         sorted_tags = sorted([t.lower() for t in tags_filter])
         tags_str = ','.join(sorted_tags)
-    
+
     # Build fingerprint based on scope
     fingerprints = []
-    
+
     if doc_scope in ["personal", "all"]:
         personal_fp = get_personal_document_fingerprint(user_id)
         fingerprints.append(f"personal:{personal_fp}")
-    
-    if doc_scope in ["group", "all"] and active_group_id:
-        group_fp = get_group_document_fingerprint(active_group_id)
-        fingerprints.append(f"group:{group_fp}")
-    
+
+    if doc_scope in ["group", "all"] and active_group_ids:
+        for gid in sorted(active_group_ids):
+            group_fp = get_group_document_fingerprint(gid)
+            fingerprints.append(f"group:{gid}:{group_fp}")
+
     if doc_scope in ["public", "all"] and active_public_workspace_id:
         public_fp = get_public_workspace_document_fingerprint(active_public_workspace_id)
         fingerprints.append(f"public:{public_fp}")
     
+    # Build document IDs string for cache key
+    doc_ids_str = ','.join(sorted(document_ids)) if document_ids else (document_id or '')
+
     # Combine all components
     # Note: For group/public scopes, we DON'T include user_id in cache key
     # so cache is shared across users with access
@@ -339,7 +347,7 @@ def generate_search_cache_key(
         cache_key_components = [
             normalized_query,
             user_id,  # Include user_id for personal searches
-            document_id or '',
+            doc_ids_str,
             doc_scope,
             str(top_n),
             str(enable_file_sharing),
@@ -348,11 +356,12 @@ def generate_search_cache_key(
         ]
     else:
         # For group/public/all, exclude user_id to enable cache sharing
+        group_ids_str = ','.join(sorted(active_group_ids)) if active_group_ids else ''
         cache_key_components = [
             normalized_query,
-            document_id or '',
+            doc_ids_str,
             doc_scope,
-            active_group_id or '',
+            group_ids_str,
             active_public_workspace_id or '',
             str(top_n),
             str(enable_file_sharing),
@@ -376,33 +385,24 @@ def generate_search_cache_key(
 
 
 def get_cached_search_results(
-    cache_key: str, 
+    cache_key: str,
     user_id: str,
     doc_scope: str = "all",
     active_group_id: Optional[str] = None,
+    active_group_ids: Optional[List[str]] = None,
     active_public_workspace_id: Optional[str] = None
 ) -> Optional[List[Dict[str, Any]]]:
     """
     Retrieve cached search results from Cosmos DB if still valid.
-    
-    Args:
-        cache_key: Cache key to lookup
-        user_id: User ID (for personal scope partition key)
-        doc_scope: Document scope to determine partition key
-        active_group_id: Active group ID (for group scope partition key)
-        active_public_workspace_id: Active public workspace ID (for public scope partition key)
-        
-    Returns:
-        Cached results if found and not expired, None otherwise
     """
     # Check if caching is enabled
     cache_enabled, ttl_seconds = get_cache_settings()
     if not cache_enabled:
         _debug_print("Cache DISABLED - Skipping cache read", "CACHE")
         return None
-    
+
     # Determine correct partition key based on scope for shared cache access
-    partition_key = get_cache_partition_key(doc_scope, user_id, active_group_id, active_public_workspace_id)
+    partition_key = get_cache_partition_key(doc_scope, user_id, active_group_id, active_group_ids, active_public_workspace_id)
     
     try:
         # Try to read from Cosmos DB using scope-based partition key
@@ -456,28 +456,21 @@ def get_cached_search_results(
     return None
 
 
-def cache_search_results(cache_key: str, results: List[Dict[str, Any]], user_id: str, 
+def cache_search_results(cache_key: str, results: List[Dict[str, Any]], user_id: str,
                          doc_scope: str = "all", active_group_id: Optional[str] = None,
+                         active_group_ids: Optional[List[str]] = None,
                          active_public_workspace_id: Optional[str] = None) -> None:
     """
     Store search results in Cosmos DB cache with expiry time.
-    
-    Args:
-        cache_key: Cache key to store under
-        results: Search results to cache
-        user_id: User ID (for personal scope partition key)
-        doc_scope: Document scope for the search
-        active_group_id: Active group ID (for group scope partition key)
-        active_public_workspace_id: Active public workspace ID (for public scope partition key)
     """
     # Check if caching is enabled
     cache_enabled, ttl_seconds = get_cache_settings()
     if not cache_enabled:
         _debug_print("Cache DISABLED - Skipping cache write", "CACHE")
         return
-    
+
     # Determine correct partition key based on scope for shared cache storage
-    partition_key = get_cache_partition_key(doc_scope, user_id, active_group_id, active_public_workspace_id)
+    partition_key = get_cache_partition_key(doc_scope, user_id, active_group_id, active_group_ids, active_public_workspace_id)
     
     expiry_time = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
     

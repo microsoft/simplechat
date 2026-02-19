@@ -149,26 +149,49 @@ def register_route_backend_group_documents(app):
     @enabled_required("enable_group_workspaces")
     def api_get_group_documents():
         """
-        Return a paginated, filtered list of documents for the user's *active* group.
-        Mirrors logic of api_get_user_documents.
+        Return a paginated, filtered list of documents for the user's groups.
+        Accepts optional `group_ids` query param (comma-separated) to load from
+        multiple groups at once. Falls back to single active group from user settings.
+        Permission: user must be a member of each group (non-members silently excluded).
         """
         user_id = get_current_user_id()
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
-        user_settings = get_user_settings(user_id)
-        active_group_id = user_settings["settings"].get("activeGroupOid")
+        group_ids_param = request.args.get('group_ids', '')
 
-        if not active_group_id:
-            return jsonify({'error': 'No active group selected'}), 400
+        if group_ids_param:
+            # Multi-group mode: validate each group
+            requested_ids = [gid.strip() for gid in group_ids_param.split(',') if gid.strip()]
+            validated_group_ids = []
+            for gid in requested_ids:
+                group_doc = find_group_by_id(gid)
+                if not group_doc:
+                    continue
+                role = get_user_role_in_group(group_doc, user_id)
+                if not role:
+                    continue
+                validated_group_ids.append(gid)
 
-        group_doc = find_group_by_id(group_id=active_group_id)
-        if not group_doc:
-            return jsonify({'error': 'Active group not found'}), 404
+            if not validated_group_ids:
+                return jsonify({'documents': [], 'page': 1, 'page_size': 10, 'total_count': 0}), 200
+        else:
+            # Fallback: single active group from user settings
+            user_settings = get_user_settings(user_id)
+            active_group_id = user_settings["settings"].get("activeGroupOid")
 
-        role = get_user_role_in_group(group_doc, user_id)
-        if not role:
-            return jsonify({'error': 'You are not a member of the active group'}), 403
+            if not active_group_id:
+                return jsonify({'error': 'No active group selected'}), 400
+
+            group_doc = find_group_by_id(group_id=active_group_id)
+            if not group_doc:
+                return jsonify({'error': 'Active group not found'}), 404
+
+            role = get_user_role_in_group(group_doc, user_id)
+            if not role:
+                return jsonify({'error': 'You are not a member of the active group'}), 403
+
+            validated_group_ids = [active_group_id]
 
         # --- 1) Read pagination and filter parameters ---
         page = request.args.get('page', default=1, type=int)
@@ -183,9 +206,22 @@ def register_route_backend_group_documents(app):
         if page_size < 1: page_size = 10
 
         # --- 2) Build dynamic WHERE clause and parameters ---
-        # Include documents owned by group OR shared with group via shared_group_ids
-        query_conditions = ["(c.group_id = @group_id OR ARRAY_CONTAINS(c.shared_group_ids, @group_id))"]
-        query_params = [{"name": "@group_id", "value": active_group_id}]
+        # Include documents owned by any validated group OR shared with any validated group
+        if len(validated_group_ids) == 1:
+            group_condition = "(c.group_id = @group_id_0 OR ARRAY_CONTAINS(c.shared_group_ids, @group_id_0))"
+            query_params = [{"name": "@group_id_0", "value": validated_group_ids[0]}]
+        else:
+            own_parts = []
+            shared_parts = []
+            query_params = []
+            for i, gid in enumerate(validated_group_ids):
+                param_name = f"@group_id_{i}"
+                own_parts.append(f"c.group_id = {param_name}")
+                shared_parts.append(f"ARRAY_CONTAINS(c.shared_group_ids, {param_name})")
+                query_params.append({"name": param_name, "value": gid})
+            group_condition = f"(({' OR '.join(own_parts)}) OR ({' OR '.join(shared_parts)}))"
+
+        query_conditions = [group_condition]
         param_count = 0
 
         if search_term:
@@ -257,21 +293,40 @@ def register_route_backend_group_documents(app):
 
         
         # --- new: do we have any legacy documents? ---
+        legacy_count = 0
         try:
-            legacy_q = """
-                SELECT VALUE COUNT(1)
-                FROM c
-                WHERE c.group_id = @group_id
-                    AND NOT IS_DEFINED(c.percentage_complete)
-            """
-            legacy_docs = list(
-                cosmos_group_documents_container.query_items(
-                    query=legacy_q,
-                    parameters=[{"name":"@group_id","value":active_group_id}],
-                    enable_cross_partition_query=True
+            if len(validated_group_ids) == 1:
+                legacy_q = """
+                    SELECT VALUE COUNT(1)
+                    FROM c
+                    WHERE c.group_id = @group_id
+                        AND NOT IS_DEFINED(c.percentage_complete)
+                """
+                legacy_docs = list(
+                    cosmos_group_documents_container.query_items(
+                        query=legacy_q,
+                        parameters=[{"name":"@group_id","value":validated_group_ids[0]}],
+                        enable_cross_partition_query=True
+                    )
                 )
-            )
-            legacy_count = legacy_docs[0] if legacy_docs else 0
+                legacy_count = legacy_docs[0] if legacy_docs else 0
+            else:
+                # For multi-group, check each group
+                for gid in validated_group_ids:
+                    legacy_q = """
+                        SELECT VALUE COUNT(1)
+                        FROM c
+                        WHERE c.group_id = @group_id
+                            AND NOT IS_DEFINED(c.percentage_complete)
+                    """
+                    legacy_docs = list(
+                        cosmos_group_documents_container.query_items(
+                            query=legacy_q,
+                            parameters=[{"name":"@group_id","value":gid}],
+                            enable_cross_partition_query=True
+                        )
+                    )
+                    legacy_count += legacy_docs[0] if legacy_docs else 0
         except Exception as e:
             print(f"Error executing legacy query: {e}")
 
@@ -863,3 +918,49 @@ def register_route_backend_group_documents(app):
             return jsonify({'message': 'Successfully removed group from shared document'}), 200
         except Exception as e:
             return jsonify({'error': f'Error removing group from shared document: {str(e)}'}), 500
+
+    @app.route('/api/group_documents/tags', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    def api_get_group_document_tags():
+        """
+        Get all unique tags used across one or more group workspaces with document counts.
+        Accepts optional `group_ids` query param (comma-separated).
+        Falls back to single active group from user settings if not provided.
+        Permission: user must be a member of each group (non-members silently excluded).
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        group_ids_param = request.args.get('group_ids', '')
+
+        if group_ids_param:
+            group_ids = [gid.strip() for gid in group_ids_param.split(',') if gid.strip()]
+        else:
+            user_settings = get_user_settings(user_id)
+            active_group_id = user_settings["settings"].get("activeGroupOid")
+            group_ids = [active_group_id] if active_group_id else []
+
+        from functions_documents import get_workspace_tags
+
+        all_tags = {}
+        for gid in group_ids:
+            group_doc = find_group_by_id(gid)
+            if not group_doc:
+                continue
+            role = get_user_role_in_group(group_doc, user_id)
+            if not role:
+                continue
+
+            tags = get_workspace_tags(user_id, group_id=gid)
+            for tag in tags:
+                if tag['name'] in all_tags:
+                    all_tags[tag['name']]['count'] += tag['count']
+                else:
+                    all_tags[tag['name']] = dict(tag)
+
+        merged = sorted(all_tags.values(), key=lambda t: t['name'])
+        return jsonify({'tags': merged}), 200

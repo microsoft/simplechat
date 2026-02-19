@@ -684,10 +684,10 @@ function renderDocumentRow(doc) {
             `;
         }
         
-        // Add Search in Chat option
+        // Add Chat option
         actionsDropdown += `
             <li><a class="dropdown-item" href="#" onclick="window.redirectToChat('${docId}'); return false;">
-                <i class="bi bi-chat-dots-fill me-2"></i>Search in Chat
+                <i class="bi bi-chat-dots-fill me-2"></i>Chat
             </a></li>
         `;
         
@@ -1358,6 +1358,13 @@ window.removeSelfFromDocument = function(documentId, event) {
 
 window.redirectToChat = function(documentId) {
     window.location.href = `/chats?search_documents=true&doc_scope=personal&document_id=${documentId}`;
+}
+
+window.chatWithSelected = function() {
+    const docIds = Array.from(window.selectedDocuments);
+    if (docIds.length === 0) return;
+    const idsParam = encodeURIComponent(docIds.join(','));
+    window.location.href = `/chats?search_documents=true&doc_scope=personal&document_ids=${idsParam}`;
 }
 
 // Make fetchUserDocuments globally available for workspace-init.js

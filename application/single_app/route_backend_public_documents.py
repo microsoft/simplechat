@@ -392,3 +392,43 @@ def register_route_backend_public_documents(app):
             return jsonify({'message':f'Upgraded {count} docs'}), 200
         except Exception as e:
             return jsonify({'error':str(e)}), 500
+
+    @app.route('/api/public_workspace_documents/tags', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('enable_public_workspaces')
+    def api_get_public_workspace_document_tags():
+        """
+        Get all unique tags used across one or more public workspaces with document counts.
+        Accepts optional `workspace_ids` query param (comma-separated).
+        Falls back to all visible public workspaces from user settings if not provided.
+        Permission: only workspaces the user has visibility to are included.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        ws_ids_param = request.args.get('workspace_ids', '')
+
+        if ws_ids_param:
+            workspace_ids = [wid.strip() for wid in ws_ids_param.split(',') if wid.strip()]
+        else:
+            workspace_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
+
+        visible_ids = set(get_user_visible_public_workspace_ids_from_settings(user_id))
+        validated_ids = [wid for wid in workspace_ids if wid in visible_ids]
+
+        from functions_documents import get_workspace_tags
+
+        all_tags = {}
+        for wid in validated_ids:
+            tags = get_workspace_tags(user_id, public_workspace_id=wid)
+            for tag in tags:
+                if tag['name'] in all_tags:
+                    all_tags[tag['name']]['count'] += tag['count']
+                else:
+                    all_tags[tag['name']] = dict(tag)
+
+        merged = sorted(all_tags.values(), key=lambda t: t['name'])
+        return jsonify({'tags': merged}), 200

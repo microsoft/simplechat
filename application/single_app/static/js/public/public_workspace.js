@@ -294,7 +294,7 @@ function renderPublicDocumentRow(doc) {
     <td class="align-middle">${firstTdHtml}</td>
     <td class="align-middle" title="${escapeHtml(doc.file_name)}">${escapeHtml(doc.file_name)}</td>
     <td class="align-middle" title="${escapeHtml(doc.title || '')}">${escapeHtml(doc.title || '')}</td>
-    <td class="align-middle">${canManage ? `<button class="btn btn-sm btn-danger" onclick="deletePublicDocument('${doc.id}', event)" title="Delete Document"><i class="bi bi-trash-fill"></i></button><button class="btn btn-sm btn-primary ms-1" onclick="searchPublicDocumentInChat('${doc.id}')" title="Search in Chat"><i class="bi bi-chat-dots-fill"></i> Chat</button>` : ''}</td>`;
+    <td class="align-middle">${canManage ? `<button class="btn btn-sm btn-danger" onclick="deletePublicDocument('${doc.id}', event)" title="Delete Document"><i class="bi bi-trash-fill"></i></button><button class="btn btn-sm btn-primary ms-1" onclick="searchPublicDocumentInChat('${doc.id}')" title="Chat"><i class="bi bi-chat-dots-fill"></i> Chat</button>` : ''}</td>`;
 
   // Create details row
   const detailsRow = document.createElement('tr');
@@ -635,8 +635,8 @@ window.deletePublicDocument=async function(id, event){ if(!confirm('Delete?')) r
 
 window.searchPublicDocumentInChat = function(docId) {
   console.log(`Search public document in chat: ${docId}`);
-  // TODO: Implement search in chat functionality
-  alert('Search in chat functionality not yet implemented');
+  // TODO: Implement chat functionality
+  alert('Chat functionality not yet implemented');
 };
 
 // Prompts

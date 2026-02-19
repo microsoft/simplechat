@@ -404,20 +404,45 @@
                 <div id="search-documents-container" class="card p-2 mb-2" style="display: none; border-radius: 0.5rem;">
                     
                      <div class="d-flex flex-wrap align-items-end gap-2">
-                         <div class="flex-shrink-0" style="min-width: 120px; max-width: 200px;">
-                             <label for="doc-scope-select" class="form-label mb-1 small text-muted">Scope</label>
-                             <select class="form-select form-select-sm" id="doc-scope-select">
-                                 <option value="all" selected>All</option>
-                                 <option value="personal">Personal</option>
-                                 <option value="group">Group{% if active_group_name %}: {{ active_group_name }}{% endif %}</option>
-                                 {% if settings.enable_public_workspaces %}
-                                 <option value="public">Public</option>
-                                 {% endif %}
-                             </select>
+                         <div class="flex-shrink-0" style="min-width: 120px; max-width: 250px;">
+                             <label class="form-label mb-1 small text-muted">Scope</label>
+                             <div class="dropdown" id="scope-dropdown">
+                                <button class="form-select form-select-sm d-flex justify-content-between align-items-center"
+                                        type="button"
+                                        id="scope-dropdown-button"
+                                        data-bs-toggle="dropdown"
+                                        data-bs-auto-close="outside"
+                                        aria-expanded="false">
+                                    <span class="selected-scope-text text-truncate">All</span>
+                                </button>
+                                <div class="dropdown-menu p-2" id="scope-dropdown-menu" style="width: 280px; max-height: 400px; overflow-y: auto;">
+                                    <div id="scope-dropdown-items">
+                                        <!-- Populated by JS from window.userGroups and window.userVisiblePublicWorkspaces -->
+                                    </div>
+                                </div>
+                             </div>
+                             <!-- Hidden select kept for backwards compat -->
+                             <select class="d-none" id="doc-scope-select" multiple></select>
                          </div>
                          <div class="flex-shrink-0" style="min-width: 150px; max-width: 250px;">
-                             <label for="chat-tags-filter" class="form-label mb-1 small text-muted">Tags</label>
-                             <select class="form-select form-select-sm" id="chat-tags-filter" multiple style="display: none;">
+                             <label class="form-label mb-1 small text-muted">Tags</label>
+                             <div class="dropdown" id="tags-dropdown" style="display: none;">
+                                <button class="form-select form-select-sm d-flex justify-content-between align-items-center"
+                                        type="button"
+                                        id="tags-dropdown-button"
+                                        data-bs-toggle="dropdown"
+                                        data-bs-auto-close="outside"
+                                        aria-expanded="false">
+                                    <span class="selected-tags-text text-truncate">All Tags</span>
+                                </button>
+                                <div class="dropdown-menu p-2" id="tags-dropdown-menu" style="width: 250px; max-height: 300px; overflow-y: auto;">
+                                    <div class="dropdown-items-container" id="tags-dropdown-items">
+                                        <!-- Tags will be populated here -->
+                                    </div>
+                                </div>
+                             </div>
+                             <!-- Hidden select element for compatibility with getSelectedTags -->
+                             <select class="d-none" id="chat-tags-filter" multiple style="display: none;">
                              </select>
                          </div>
                              <div class="flex-grow-1" style="min-width: 250px;">
@@ -440,23 +465,10 @@
                                     </div>
                                 </div>
                                 <!-- Hidden select element for compatibility -->
-                                <select class="d-none" id="document-select"></select>
+                                <select class="d-none" id="document-select" multiple></select>
                              </div>
                          </div>
-                        {% if settings.enable_document_classification %}
-                        <div class="flex-grow-1 classification-container" style="max-width: 150px;">
-                             <label for="classification-control" class="form-label mb-1 small text-muted">Classification</label>
-                             <input type="text" id="classification-select" class="form-control form-control-sm" style="display: none;" readonly />
-                             <div class="dropdown" id="classification-multiselect-dropdown" style="display: none;">
-                                <button id="classification-dropdown-btn" class="btn btn-light btn-sm dropdown-toggle w-100 text-start" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
-                                    {_ Placeholder _}
-                                </button>
-                                <ul class="dropdown-menu w-100" id="classification-dropdown-menu" style="max-height: 200px; overflow-y: auto;">
-                                    
-                                </ul>
-                             </div>
-                         </div>
-                        {% endif %}
+
                      </div>
                 </div>
                 {% endif %}
@@ -909,6 +921,8 @@
     window.activeGroupId = "{{ active_group_id }}";
     window.activeGroupName = "{{ active_group_name }}";
     window.activePublicWorkspaceId = "{{ active_public_workspace_id }}";
+    window.userGroups = {{ user_groups|tojson|safe }};
+    window.userVisiblePublicWorkspaces = {{ user_visible_public_workspaces|tojson|safe }};
     window.enableEnhancedCitations = "{{ enable_enhanced_citations }}";
     window.enable_document_classification = "{{ enable_document_classification }}";
     window.classification_categories = JSON.parse('{{ settings.document_classification_categories|tojson(indent=None)|safe }}' || '[]');

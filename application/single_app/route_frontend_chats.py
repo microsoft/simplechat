@@ -1,14 +1,18 @@
 # route_frontend_chats.py
 
+import logging
 from config import *
 from functions_authentication import *
 from functions_content import *
 from functions_settings import *
 from functions_documents import *
-from functions_group import find_group_by_id
+from functions_group import find_group_by_id, get_user_groups
+from functions_public_workspaces import find_public_workspace_by_id, get_user_visible_public_workspace_ids_from_settings
 from functions_appinsights import log_event
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_debug import debug_print
+
+logger = logging.getLogger(__name__)
 
 def register_route_frontend_chats(app):
     @app.route('/chats', methods=['GET'])
@@ -38,10 +42,29 @@ def register_route_frontend_chats(app):
 
         if not user_id:
             return redirect(url_for('login'))
-        
+
         # Get user display name from user settings
         user_display_name = user_settings.get('display_name', '')
-        
+
+        # Get all groups the user belongs to (for multi-scope selector)
+        user_groups_simple = []
+        try:
+            user_groups_raw = get_user_groups(user_id)
+            user_groups_simple = [{'id': g['id'], 'name': g.get('name', 'Unnamed')} for g in user_groups_raw]
+        except Exception as e:
+            logger.warning(f"Failed to load user groups for chats page: {e}")
+
+        # Get visible public workspaces with names (for multi-scope selector)
+        user_visible_public_workspaces = []
+        try:
+            visible_ws_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
+            for ws_id in visible_ws_ids:
+                ws_doc = find_public_workspace_by_id(ws_id)
+                if ws_doc:
+                    user_visible_public_workspaces.append({'id': ws_id, 'name': ws_doc.get('name', 'Unknown')})
+        except Exception as e:
+            logger.warning(f"Failed to load visible public workspaces for chats page: {e}")
+
         return render_template(
             'chats.html',
             settings=public_settings,
@@ -55,6 +78,8 @@ def register_route_frontend_chats(app):
             enable_extract_meta_data=enable_extract_meta_data,
             user_id=user_id,
             user_display_name=user_display_name,
+            user_groups=user_groups_simple,
+            user_visible_public_workspaces=user_visible_public_workspaces,
         )
     
     @app.route('/upload', methods=['POST'])

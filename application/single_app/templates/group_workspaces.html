@@ -2436,11 +2436,11 @@ app_settings.app_title }} {% endblock %} {% block head %}
             }
         }
         
-        // Search in Chat - only if chat is allowed (not inactive)
+        // Chat - only if chat is allowed (not inactive)
         if (canChat) {
             actionsDropdown += `
                 <li><a class="dropdown-item" href="#" onclick="searchGroupDocumentInChat('${docId}'); return false;">
-                    <i class="bi bi-chat-dots-fill me-2"></i>Search in Chat
+                    <i class="bi bi-chat-dots-fill me-2"></i>Chat
                 </a></li>
             `;
         }

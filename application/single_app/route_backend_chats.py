@@ -21,7 +21,7 @@ from functions_authentication import *
 from functions_search import *
 from functions_settings import *
 from functions_agents import get_agent_id_by_name
-from functions_group import find_group_by_id
+from functions_group import find_group_by_id, get_user_role_in_group
 from functions_chat import *
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_debug import debug_print
@@ -60,6 +60,10 @@ def register_route_backend_chats(app):
             hybrid_search_enabled = data.get('hybrid_search')
             web_search_enabled = data.get('web_search_enabled')
             selected_document_id = data.get('selected_document_id')
+            selected_document_ids = data.get('selected_document_ids', [])
+            # Backwards compat: if no multi-select but single ID is set, wrap in list
+            if not selected_document_ids and selected_document_id:
+                selected_document_ids = [selected_document_id]
             image_gen_enabled = data.get('image_generation')
             document_scope = data.get('doc_scope')
             tags_filter = data.get('tags', [])  # Extract tags filter
@@ -124,6 +128,19 @@ def register_route_backend_chats(app):
                     return dict_requires_reload(result)
                 return False
             active_group_id = data.get('active_group_id')
+            active_group_ids = data.get('active_group_ids', [])
+            # Backwards compat: if new list not provided, wrap single ID
+            if not active_group_ids and active_group_id:
+                active_group_ids = [active_group_id]
+            # Permission validation: only keep groups user is a member of
+            validated_group_ids = []
+            for gid in active_group_ids:
+                g_doc = find_group_by_id(gid)
+                if g_doc and get_user_role_in_group(g_doc, user_id):
+                    validated_group_ids.append(gid)
+            active_group_ids = validated_group_ids
+            # Keep single ID for backwards compat in metadata/context
+            active_group_id = active_group_ids[0] if active_group_ids else data.get('active_group_id')
             active_public_workspace_id = data.get('active_public_workspace_id')  # Extract active public workspace ID
             frontend_gpt_model = data.get('model_deployment')
             top_n_results = data.get('top_n')  # Extract top_n parameter from request
@@ -840,11 +857,11 @@ def register_route_backend_chats(app):
                         "doc_scope": document_scope,
                     }
                     
-                    # Add active_group_id when:
+                    # Add active_group_ids when:
                     # 1. Document scope is 'group' or chat_type is 'group', OR
                     # 2. Document scope is 'all' and groups are enabled (so group search can be included)
-                    if active_group_id and (document_scope == 'group' or document_scope == 'all' or chat_type == 'group'):
-                        search_args["active_group_id"] = active_group_id
+                    if active_group_ids and (document_scope == 'group' or document_scope == 'all' or chat_type == 'group'):
+                        search_args["active_group_ids"] = active_group_ids
     
                     # Add active_public_workspace_id when:
                     # 1. Document scope is 'public' or
@@ -852,7 +869,9 @@ def register_route_backend_chats(app):
                     if active_public_workspace_id and (document_scope == 'public' or document_scope == 'all'):
                         search_args["active_public_workspace_id"] = active_public_workspace_id
                         
-                    if selected_document_id:
+                    if selected_document_ids:
+                        search_args["document_ids"] = selected_document_ids
+                    elif selected_document_id:
                         search_args["document_id"] = selected_document_id
                     
                     # Add tags filter if provided
@@ -2705,10 +2724,27 @@ def register_route_backend_chats(app):
                 hybrid_search_enabled = data.get('hybrid_search')
                 web_search_enabled = data.get('web_search_enabled')
                 selected_document_id = data.get('selected_document_id')
+                selected_document_ids = data.get('selected_document_ids', [])
+                # Backwards compat: if no multi-select but single ID is set, wrap in list
+                if not selected_document_ids and selected_document_id:
+                    selected_document_ids = [selected_document_id]
                 image_gen_enabled = data.get('image_generation')
                 document_scope = data.get('doc_scope')
                 tags_filter = data.get('tags', [])  # Extract tags filter
                 active_group_id = data.get('active_group_id')
+                active_group_ids = data.get('active_group_ids', [])
+                # Backwards compat: if new list not provided, wrap single ID
+                if not active_group_ids and active_group_id:
+                    active_group_ids = [active_group_id]
+                # Permission validation: only keep groups user is a member of
+                validated_group_ids = []
+                for gid in active_group_ids:
+                    g_doc = find_group_by_id(gid)
+                    if g_doc and get_user_role_in_group(g_doc, user_id):
+                        validated_group_ids.append(gid)
+                active_group_ids = validated_group_ids
+                # Keep single ID for backwards compat in metadata/context
+                active_group_id = active_group_ids[0] if active_group_ids else data.get('active_group_id')
                 active_public_workspace_id = data.get('active_public_workspace_id')  # Extract active public workspace ID
                 frontend_gpt_model = data.get('model_deployment')
                 classifications_to_send = data.get('classifications')
@@ -3080,8 +3116,8 @@ def register_route_backend_chats(app):
                             "doc_scope": document_scope,
                         }
                         
-                        if active_group_id and (document_scope == 'group' or document_scope == 'all' or chat_type == 'group'):
-                            search_args['active_group_id'] = active_group_id
+                        if active_group_ids and (document_scope == 'group' or document_scope == 'all' or chat_type == 'group'):
+                            search_args['active_group_ids'] = active_group_ids
                         
                         # Add active_public_workspace_id when:
                         # 1. Document scope is 'public' or
@@ -3089,7 +3125,9 @@ def register_route_backend_chats(app):
                         if active_public_workspace_id and (document_scope == 'public' or document_scope == 'all'):
                             search_args['active_public_workspace_id'] = active_public_workspace_id
                         
-                        if selected_document_id:
+                        if selected_document_ids:
+                            search_args['document_ids'] = selected_document_ids
+                        elif selected_document_id:
                             search_args['document_id'] = selected_document_id
                         
                         # Add tags filter if provided

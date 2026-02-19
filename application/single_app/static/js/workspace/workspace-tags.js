@@ -16,6 +16,7 @@ let gridSortBy = 'count';    // 'count' or 'name'
 let gridSortOrder = 'desc';  // 'asc' or 'desc'
 let folderSortBy = '_ts';    // Sort field for folder drill-down
 let folderSortOrder = 'desc'; // Sort order for folder drill-down
+let folderSearchTerm = '';    // Search term for folder drill-down
 
 // ============= Initialization =============
 
@@ -127,6 +128,9 @@ function switchView(view) {
     const listControls = document.getElementById('list-controls-bar');
     const gridControls = document.getElementById('grid-controls-bar');
 
+    const filterBtn = document.getElementById('docs-filters-toggle-btn');
+    const filterCollapse = document.getElementById('docs-filters-collapse');
+
     if (view === 'list') {
         // Reset folder drill-down state
         currentFolder = null;
@@ -134,6 +138,7 @@ function switchView(view) {
         folderCurrentPage = 1;
         folderSortBy = '_ts';
         folderSortOrder = 'desc';
+        folderSearchTerm = '';
         const tagContainer = document.getElementById('tag-folders-container');
         if (tagContainer) tagContainer.className = 'row g-2';
 
@@ -141,6 +146,7 @@ function switchView(view) {
         gridView.style.display = 'none';
         if (listControls) listControls.style.display = 'flex';
         if (gridControls) gridControls.style.display = 'none';
+        if (filterBtn) filterBtn.style.display = '';
         if (viewInfo) viewInfo.textContent = '';
         // Trigger reload of documents if needed
         window.fetchUserDocuments?.();
@@ -149,6 +155,12 @@ function switchView(view) {
         gridView.style.display = 'block';
         if (listControls) listControls.style.display = 'none';
         if (gridControls) gridControls.style.display = 'flex';
+        // Hide list view filters in grid folder overview
+        if (filterBtn) filterBtn.style.display = 'none';
+        if (filterCollapse) {
+            const bsCollapse = bootstrap.Collapse.getInstance(filterCollapse);
+            if (bsCollapse) bsCollapse.hide();
+        }
         renderGridView();
     }
 }
@@ -318,6 +330,9 @@ async function renderGridView() {
                                 <i class="bi bi-three-dots-vertical"></i>
                             </button>
                             <ul class="dropdown-menu">
+                                <li><a class="dropdown-item" href="#" onclick="window.chatWithFolder('tag', '${escapedKey}'); return false;">
+                                    <i class="bi bi-chat-dots me-2"></i>Chat
+                                </a></li>
                                 <li><a class="dropdown-item" href="#" onclick="window.renameTag('${escapedKey}'); return false;">
                                     <i class="bi bi-pencil me-2"></i>Rename Tag
                                 </a></li>
@@ -327,6 +342,20 @@ async function renderGridView() {
                                 <li><hr class="dropdown-divider"></li>
                                 <li><a class="dropdown-item text-danger" href="#" onclick="window.deleteTag('${escapedKey}'); return false;">
                                     <i class="bi bi-trash me-2"></i>Delete Tag
+                                </a></li>
+                            </ul>
+                        </div>
+                    </div>`;
+            } else if (item.type === 'classification' && !item.isSpecial) {
+                actionsHtml = `
+                    <div class="tag-folder-actions">
+                        <div class="dropdown">
+                            <button class="tag-folder-menu-btn" type="button" data-bs-toggle="dropdown" onclick="event.stopPropagation();">
+                                <i class="bi bi-three-dots-vertical"></i>
+                            </button>
+                            <ul class="dropdown-menu">
+                                <li><a class="dropdown-item" href="#" onclick="window.chatWithFolder('classification', '${escapedKey}'); return false;">
+                                    <i class="bi bi-chat-dots me-2"></i>Chat
                                 </a></li>
                             </ul>
                         </div>
@@ -367,6 +396,7 @@ async function renderGridView() {
                 folderCurrentPage = 1;
                 folderSortBy = '_ts';
                 folderSortOrder = 'desc';
+                folderSearchTerm = '';
                 renderFolderContents(tagName);
             });
         });
@@ -408,6 +438,7 @@ function wireBackButton(container) {
             folderCurrentPage = 1;
             folderSortBy = '_ts';
             folderSortOrder = 'desc';
+            folderSearchTerm = '';
             container.className = 'row g-2';
             // Show the grid controls bar again
             const gridControls = document.getElementById('grid-controls-bar');
@@ -503,7 +534,7 @@ function buildFolderDocumentsTable(docs) {
 
             actionsDropdown += `
                         <li><a class="dropdown-item" href="#" onclick="window.redirectToChat('${docId}'); return false;">
-                            <i class="bi bi-chat-dots-fill me-2"></i>Search in Chat
+                            <i class="bi bi-chat-dots-fill me-2"></i>Chat
                         </a></li>`;
 
             if (isOwner) {
@@ -703,7 +734,9 @@ async function renderFolderContents(tagName) {
 
         if (tagName === '__untagged__') {
             // Fetch all and filter client-side for untagged
-            const allResponse = await fetch('/api/documents?page_size=1000');
+            const untaggedParams = new URLSearchParams({ page_size: 1000 });
+            if (folderSearchTerm) untaggedParams.append('search', folderSearchTerm);
+            const allResponse = await fetch(`/api/documents?${untaggedParams.toString()}`);
             const allData = await allResponse.json();
             const allUntagged = (allData.documents || []).filter(
                 doc => !doc.tags || doc.tags.length === 0
@@ -727,6 +760,7 @@ async function renderFolderContents(tagName) {
                 page_size: folderPageSize,
                 classification: 'none'
             });
+            if (folderSearchTerm) params.append('search', folderSearchTerm);
             if (folderSortBy !== '_ts') params.append('sort_by', folderSortBy);
             if (folderSortOrder !== 'desc') params.append('sort_order', folderSortOrder);
             const response = await fetch(`/api/documents?${params.toString()}`);
@@ -740,6 +774,7 @@ async function renderFolderContents(tagName) {
                 page_size: folderPageSize,
                 classification: tagName
             });
+            if (folderSearchTerm) params.append('search', folderSearchTerm);
             if (folderSortBy !== '_ts') params.append('sort_by', folderSortBy);
             if (folderSortOrder !== 'desc') params.append('sort_order', folderSortOrder);
             const response = await fetch(`/api/documents?${params.toString()}`);
@@ -753,6 +788,7 @@ async function renderFolderContents(tagName) {
                 page_size: folderPageSize,
                 tags: tagName
             });
+            if (folderSearchTerm) params.append('search', folderSearchTerm);
             if (folderSortBy !== '_ts') params.append('sort_by', folderSortBy);
             if (folderSortOrder !== 'desc') params.append('sort_order', folderSortOrder);
             const response = await fetch(`/api/documents?${params.toString()}`);
@@ -773,7 +809,15 @@ async function renderFolderContents(tagName) {
 
         // Build the full view
         let html = buildBreadcrumbHtml(displayName, tagColor, currentFolderType || 'tag');
-        html += `<div class="d-flex align-items-center gap-3 mb-2">
+        // Inline search bar for folder drill-down
+        html += `<div class="d-flex align-items-center gap-2 mb-2">
+            <div class="input-group input-group-sm" style="max-width: 320px;">
+                <input type="search" id="folder-search-input" class="form-control form-control-sm" 
+                       placeholder="Search file name or title..." value="${escapeHtml(folderSearchTerm)}">
+                <button class="btn btn-outline-secondary" type="button" id="folder-search-btn">
+                    <i class="bi bi-search"></i>
+                </button>
+            </div>
             <span class="text-muted small">${totalCount} document(s)</span>
             <div class="ms-auto">
                 <select id="folder-page-size-select" class="form-select form-select-sm d-inline-block" style="width:auto;">
@@ -807,6 +851,23 @@ async function renderFolderContents(tagName) {
                 folderCurrentPage = 1;
                 renderFolderContents(currentFolder);
             });
+        }
+
+        // Wire up folder search
+        const folderSearchInput = document.getElementById('folder-search-input');
+        const folderSearchBtn = document.getElementById('folder-search-btn');
+        if (folderSearchInput) {
+            const doSearch = () => {
+                folderSearchTerm = folderSearchInput.value.trim();
+                folderCurrentPage = 1;
+                renderFolderContents(currentFolder);
+            };
+            folderSearchBtn?.addEventListener('click', doSearch);
+            folderSearchInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); doSearch(); }
+            });
+            // Clear search on the 'x' button in type=search
+            folderSearchInput.addEventListener('search', doSearch);
         }
 
         // Wire up sortable column headers in folder drill-down table
@@ -1170,6 +1231,11 @@ window.deleteTag = async function(tagName) {
         console.error('Error deleting tag:', error);
         alert('Error deleting tag');
     }
+};
+
+window.chatWithFolder = function(folderType, folderName) {
+    const encoded = encodeURIComponent(folderName);
+    window.location.href = `/chats?search_documents=true&doc_scope=personal&tags=${encoded}`;
 };
 
 // ============= Export for use in other modules =============
