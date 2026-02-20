@@ -59,7 +59,7 @@ export function getEffectiveScopes() {
 /* ---------------------------------------------------------------------------
    Set scope from legacy URL parameter values (personal/group/public/all)
 --------------------------------------------------------------------------- */
-export function setScopeFromUrlParam(scopeString) {
+export function setScopeFromUrlParam(scopeString, options = {}) {
   const groups = window.userGroups || [];
   const publicWorkspaces = window.userVisiblePublicWorkspaces || [];
 
@@ -71,13 +71,13 @@ export function setScopeFromUrlParam(scopeString) {
       break;
     case "group":
       selectedPersonal = false;
-      selectedGroupIds = groups.map(g => g.id);
+      selectedGroupIds = options.groupId ? [options.groupId] : groups.map(g => g.id);
       selectedPublicWorkspaceIds = [];
       break;
     case "public":
       selectedPersonal = false;
       selectedGroupIds = [];
-      selectedPublicWorkspaceIds = publicWorkspaces.map(ws => ws.id);
+      selectedPublicWorkspaceIds = options.workspaceId ? [options.workspaceId] : publicWorkspaces.map(ws => ws.id);
       break;
     default: // "all"
       selectedPersonal = true;
@@ -86,7 +86,7 @@ export function setScopeFromUrlParam(scopeString) {
       break;
   }
 
-  syncScopeButtonText();
+  buildScopeDropdown();
 }
 
 /* ---------------------------------------------------------------------------

@@ -1074,6 +1074,10 @@ export async function createNewConversation(callback) {
     if (titleEl) {
       titleEl.textContent = data.title || "New Conversation";
     }
+    // Clear classification/tag badges from previous conversation
+    if (currentConversationClassificationsEl) {
+      currentConversationClassificationsEl.innerHTML = "";
+    }
     updateConversationUrl(data.conversation_id);
     console.log('[createNewConversation] Created conversation without reload:', data.conversation_id);
 

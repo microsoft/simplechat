@@ -107,6 +107,8 @@ window.addEventListener('DOMContentLoaded', async () => {
       const workspaceParam = getUrlParameter("workspace") || "";
       const openSearchParam = getUrlParameter("openSearch") === "1";
       const scopeParam = getUrlParameter("scope") || "";
+      const groupIdParam = getUrlParameter("group_id") || "";
+      const workspaceIdParam = getUrlParameter("workspace_id") || "";
       const localSearchDocsBtn = document.getElementById("search-documents-btn");
       const localDocScopeSel = document.getElementById("doc-scope-select");
       const localDocSelectEl = document.getElementById("document-select");
@@ -136,7 +138,7 @@ window.addEventListener('DOMContentLoaded', async () => {
                   searchDocumentsContainer.style.display = "block";
                   
                   // Set scope to public
-                  setScopeFromUrlParam("public");
+                  setScopeFromUrlParam("public", { workspaceId: workspaceParam });
 
                   // Populate documents for public scope
                   populateDocumentSelectScope();
@@ -164,7 +166,7 @@ window.addEventListener('DOMContentLoaded', async () => {
           localSearchDocsBtn.classList.add("active");
           searchDocumentsContainer.style.display = "block";
           if (localDocScopeParam) {
-              setScopeFromUrlParam(localDocScopeParam);
+              setScopeFromUrlParam(localDocScopeParam, { groupId: groupIdParam, workspaceId: workspaceIdParam });
           }
           populateDocumentSelectScope(); // Populate based on scope (might be default or from URL)
 

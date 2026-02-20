@@ -6372,24 +6372,24 @@ def get_workspace_tags(user_id, group_id=None, public_workspace_id=None):
                 if normalized_tag:
                     tag_counts[normalized_tag] = tag_counts.get(normalized_tag, 0) + 1
         
-        # Get tag definitions (colors) from user settings
-        user_settings = get_user_settings(user_id)
-        
-        # Debug: Check structure of user_settings
-        print(f"DEBUG [get_workspace_tags]: user_settings keys: {list(user_settings.keys())}")
-        print(f"DEBUG [get_workspace_tags]: Has 'settings' key: {'settings' in user_settings}")
-        
-        # tag_definitions is inside the 'settings' sub-object
-        settings_dict = user_settings.get('settings', {})
-        tag_definitions = settings_dict.get('tag_definitions', {})
-        workspace_tag_defs = tag_definitions.get(workspace_type, {})
-        
-        # Debug logging
-        print(f"DEBUG [get_workspace_tags]: user_id={user_id}, workspace_type={workspace_type}")
-        print(f"DEBUG [get_workspace_tags]: tag_definitions keys: {list(tag_definitions.keys())}")
-        print(f"DEBUG [get_workspace_tags]: workspace_tag_defs ({workspace_type}): {workspace_tag_defs}")
-        print(f"DEBUG [get_workspace_tags]: tag_counts: {tag_counts}")
-        
+        # Get tag definitions (colors) from the appropriate source
+        if is_public_workspace:
+            # Read from public workspace record (shared across all users)
+            from functions_public_workspaces import find_public_workspace_by_id
+            ws_doc = find_public_workspace_by_id(public_workspace_id)
+            workspace_tag_defs = (ws_doc or {}).get('tag_definitions', {})
+        elif is_group:
+            # Read from group record (shared across all group members)
+            from functions_group import find_group_by_id
+            group_doc = find_group_by_id(group_id)
+            workspace_tag_defs = (group_doc or {}).get('tag_definitions', {})
+        else:
+            # Personal: read from user settings
+            user_settings = get_user_settings(user_id)
+            settings_dict = user_settings.get('settings', {})
+            tag_definitions = settings_dict.get('tag_definitions', {})
+            workspace_tag_defs = tag_definitions.get('personal', {})
+
         # Build result with colors from used tags
         results = []
         for tag_name, count in tag_counts.items():
@@ -6403,16 +6403,12 @@ def get_workspace_tags(user_id, group_id=None, public_workspace_id=None):
         # Add defined tags that haven't been used yet (count = 0)
         for tag_name, tag_def in workspace_tag_defs.items():
             if tag_name not in tag_counts:
-                print(f"DEBUG [get_workspace_tags]: Adding unused tag: {tag_name} with color {tag_def.get('color')}")
                 results.append({
                     'name': tag_name,
                     'count': 0,
                     'color': tag_def.get('color', get_default_tag_color(tag_name))
                 })
-        
-        print(f"DEBUG [get_workspace_tags]: Final results count: {len(results)}")
-        print(f"DEBUG [get_workspace_tags]: Final results: {results}")
-        
+
         # Sort by count descending, then name ascending
         results.sort(key=lambda x: (-x['count'], x['name']))
         
@@ -6447,42 +6443,75 @@ def get_default_tag_color(tag_name):
     return color_palette[color_index]
 
 
-def get_or_create_tag_definition(user_id, tag_name, workspace_type='personal', color=None):
+def get_or_create_tag_definition(user_id, tag_name, workspace_type='personal', color=None, group_id=None, public_workspace_id=None):
     """
-    Get or create a tag definition in user settings.
-    Assigns default color if new tag.
-    
+    Get or create a tag definition.
+    For personal: stored in user settings.
+    For group: stored on the group Cosmos record.
+    For public: stored on the public workspace Cosmos record.
+
     Args:
         user_id: User ID
         tag_name: Normalized tag name
         workspace_type: 'personal', 'group', or 'public'
         color: Optional hex color code
-        
+        group_id: Group ID (required when workspace_type='group')
+        public_workspace_id: Public workspace ID (required when workspace_type='public')
+
     Returns:
         Tag definition dict with color
     """
-    from functions_settings import get_user_settings, update_user_settings
     from datetime import datetime, timezone
-    
-    user_settings = get_user_settings(user_id)
-    tag_definitions = user_settings.get('tag_definitions', {})
-    
-    if workspace_type not in tag_definitions:
-        tag_definitions[workspace_type] = {}
-    
-    workspace_tags = tag_definitions[workspace_type]
-    
-    if tag_name not in workspace_tags:
-        # Create new tag definition
-        workspace_tags[tag_name] = {
-            'color': color if color else get_default_tag_color(tag_name),
-            'created_at': datetime.now(timezone.utc).isoformat()
-        }
-        
-        # Save updated settings - only pass the changed field to avoid nested structure
-        update_user_settings(user_id, {'tag_definitions': tag_definitions})
-    
-    return workspace_tags[tag_name]
+
+    if workspace_type == 'group' and group_id:
+        from functions_group import find_group_by_id
+        group_doc = find_group_by_id(group_id)
+        if not group_doc:
+            return {'color': color or get_default_tag_color(tag_name)}
+        tag_defs = group_doc.get('tag_definitions', {})
+        if tag_name not in tag_defs:
+            tag_defs[tag_name] = {
+                'color': color if color else get_default_tag_color(tag_name),
+                'created_at': datetime.now(timezone.utc).isoformat()
+            }
+            group_doc['tag_definitions'] = tag_defs
+            cosmos_groups_container.upsert_item(group_doc)
+        return tag_defs[tag_name]
+    elif workspace_type == 'public' and public_workspace_id:
+        from functions_public_workspaces import find_public_workspace_by_id
+        ws_doc = find_public_workspace_by_id(public_workspace_id)
+        if not ws_doc:
+            return {'color': color or get_default_tag_color(tag_name)}
+        tag_defs = ws_doc.get('tag_definitions', {})
+        if tag_name not in tag_defs:
+            tag_defs[tag_name] = {
+                'color': color if color else get_default_tag_color(tag_name),
+                'created_at': datetime.now(timezone.utc).isoformat()
+            }
+            ws_doc['tag_definitions'] = tag_defs
+            cosmos_public_workspaces_container.upsert_item(ws_doc)
+        return tag_defs[tag_name]
+    else:
+        # Personal: store in user settings
+        from functions_settings import get_user_settings, update_user_settings
+
+        user_settings = get_user_settings(user_id)
+        settings_dict = user_settings.get('settings', {})
+        tag_definitions = settings_dict.get('tag_definitions', {})
+
+        if 'personal' not in tag_definitions:
+            tag_definitions['personal'] = {}
+
+        workspace_tags = tag_definitions['personal']
+
+        if tag_name not in workspace_tags:
+            workspace_tags[tag_name] = {
+                'color': color if color else get_default_tag_color(tag_name),
+                'created_at': datetime.now(timezone.utc).isoformat()
+            }
+            update_user_settings(user_id, {'tag_definitions': tag_definitions})
+
+        return workspace_tags[tag_name]
 
 
 def propagate_tags_to_chunks(document_id, tags, user_id, group_id=None, public_workspace_id=None):

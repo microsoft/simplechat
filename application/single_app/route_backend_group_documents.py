@@ -201,9 +201,17 @@ def register_route_backend_group_documents(app):
         author_filter = request.args.get('author', default=None, type=str)
         keywords_filter = request.args.get('keywords', default=None, type=str)
         abstract_filter = request.args.get('abstract', default=None, type=str)
+        tags_filter = request.args.get('tags', default=None, type=str)
+        sort_by = request.args.get('sort_by', default='_ts', type=str)
+        sort_order = request.args.get('sort_order', default='desc', type=str)
 
         if page < 1: page = 1
         if page_size < 1: page_size = 10
+
+        allowed_sort_fields = {'_ts', 'file_name', 'title'}
+        if sort_by not in allowed_sort_fields:
+            sort_by = '_ts'
+        sort_order = sort_order.upper() if sort_order.lower() in ('asc', 'desc') else 'DESC'
 
         # --- 2) Build dynamic WHERE clause and parameters ---
         # Include documents owned by any validated group OR shared with any validated group
@@ -257,6 +265,16 @@ def register_route_backend_group_documents(app):
             query_params.append({"name": param_name, "value": abstract_filter})
             param_count += 1
 
+        if tags_filter:
+            from functions_documents import normalize_tag
+            tags_list = [normalize_tag(t.strip()) for t in tags_filter.split(',') if t.strip()]
+            if tags_list:
+                for idx, tag in enumerate(tags_list):
+                    param_name = f"@tag_{param_count}_{idx}"
+                    query_conditions.append(f"ARRAY_CONTAINS(c.tags, {param_name})")
+                    query_params.append({"name": param_name, "value": tag})
+                param_count += len(tags_list)
+
         where_clause = " AND ".join(query_conditions)
 
         # --- 3) Get total count ---
@@ -279,7 +297,7 @@ def register_route_backend_group_documents(app):
                 SELECT *
                 FROM c
                 WHERE {where_clause}
-                ORDER BY c._ts DESC
+                ORDER BY c.{sort_by} {sort_order}
                 OFFSET {offset} LIMIT {page_size}
             """
             docs = list(cosmos_group_documents_container.query_items(
@@ -470,6 +488,22 @@ def register_route_backend_group_documents(app):
                         authors=authors_list
                     )
                     updated_fields['authors'] = authors_list
+
+            if 'tags' in data:
+                from functions_documents import validate_tags, get_or_create_tag_definition
+                tags_input = data['tags'] if isinstance(data['tags'], list) else []
+                is_valid, error_msg, normalized_tags = validate_tags(tags_input)
+                if not is_valid:
+                    return jsonify({'error': error_msg}), 400
+                for tag in normalized_tags:
+                    get_or_create_tag_definition(user_id, tag, workspace_type='group', group_id=active_group_id)
+                update_document(
+                    document_id=document_id,
+                    group_id=active_group_id,
+                    user_id=user_id,
+                    tags=normalized_tags
+                )
+                updated_fields['tags'] = normalized_tags
 
             # Log the metadata update transaction if any fields were updated
             if updated_fields:
@@ -964,3 +998,401 @@ def register_route_backend_group_documents(app):
 
         merged = sorted(all_tags.values(), key=lambda t: t['name'])
         return jsonify({'tags': merged}), 200
+
+    @app.route('/api/group_documents/tags', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    def api_create_group_tag():
+        """
+        Create a new tag in the group workspace.
+
+        Request body:
+        {
+            "tag_name": "new-tag",
+            "color": "#3b82f6"  // optional
+        }
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        user_settings = get_user_settings(user_id)
+        active_group_id = user_settings["settings"].get("activeGroupOid")
+        if not active_group_id:
+            return jsonify({'error': 'No active group selected'}), 400
+
+        group_doc = find_group_by_id(group_id=active_group_id)
+        if not group_doc:
+            return jsonify({'error': 'Active group not found'}), 404
+
+        role = get_user_role_in_group(group_doc, user_id)
+        if role not in ["Owner", "Admin", "DocumentManager"]:
+            return jsonify({'error': 'You do not have permission to manage tags'}), 403
+
+        data = request.get_json()
+        tag_name = data.get('tag_name')
+        color = data.get('color', '#0d6efd')
+
+        if not tag_name:
+            return jsonify({'error': 'tag_name is required'}), 400
+
+        from functions_documents import normalize_tag, validate_tags
+        from datetime import datetime, timezone
+
+        try:
+            is_valid, error_msg, normalized_tags = validate_tags([tag_name])
+            if not is_valid:
+                return jsonify({'error': error_msg}), 400
+
+            normalized_tag = normalized_tags[0]
+
+            tag_defs = group_doc.get('tag_definitions', {})
+
+            if normalized_tag in tag_defs:
+                return jsonify({'error': 'Tag already exists'}), 409
+
+            tag_defs[normalized_tag] = {
+                'color': color,
+                'created_at': datetime.now(timezone.utc).isoformat()
+            }
+            group_doc['tag_definitions'] = tag_defs
+            cosmos_groups_container.upsert_item(group_doc)
+
+            return jsonify({
+                'message': f'Tag "{normalized_tag}" created successfully',
+                'tag': {
+                    'name': normalized_tag,
+                    'color': color
+                }
+            }), 201
+
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/group_documents/bulk-tag', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    def api_bulk_tag_group_documents():
+        """
+        Apply tag operations to multiple group documents.
+
+        Request body:
+        {
+            "document_ids": ["doc1", "doc2", ...],
+            "action": "add_tags" | "remove_tags" | "set_tags",
+            "tags": ["tag1", "tag2", ...]
+        }
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        user_settings = get_user_settings(user_id)
+        active_group_id = user_settings["settings"].get("activeGroupOid")
+        if not active_group_id:
+            return jsonify({'error': 'No active group selected'}), 400
+
+        group_doc = find_group_by_id(group_id=active_group_id)
+        if not group_doc:
+            return jsonify({'error': 'Active group not found'}), 404
+
+        role = get_user_role_in_group(group_doc, user_id)
+        if role not in ["Owner", "Admin", "DocumentManager"]:
+            return jsonify({'error': 'You do not have permission to manage tags'}), 403
+
+        data = request.get_json()
+        document_ids = data.get('document_ids', [])
+        action = data.get('action')
+        tags_input = data.get('tags', [])
+
+        if not document_ids or not isinstance(document_ids, list):
+            return jsonify({'error': 'document_ids must be a non-empty array'}), 400
+
+        if action not in ['add_tags', 'remove_tags', 'set_tags']:
+            return jsonify({'error': 'action must be add_tags, remove_tags, or set_tags'}), 400
+
+        from functions_documents import (
+            validate_tags, update_document,
+            propagate_tags_to_chunks, get_or_create_tag_definition
+        )
+
+        is_valid, error_msg, normalized_tags = validate_tags(tags_input)
+        if not is_valid:
+            return jsonify({'error': error_msg}), 400
+
+        for tag in normalized_tags:
+            get_or_create_tag_definition(user_id, tag, workspace_type='group', group_id=active_group_id)
+
+        results = {
+            'success': [],
+            'errors': []
+        }
+
+        try:
+            for doc_id in document_ids:
+                try:
+                    query = "SELECT TOP 1 * FROM c WHERE c.id = @document_id AND c.group_id = @group_id ORDER BY c.version DESC"
+                    parameters = [
+                        {"name": "@document_id", "value": doc_id},
+                        {"name": "@group_id", "value": active_group_id}
+                    ]
+
+                    document_results = list(
+                        cosmos_group_documents_container.query_items(
+                            query=query,
+                            parameters=parameters,
+                            enable_cross_partition_query=True
+                        )
+                    )
+
+                    if not document_results:
+                        results['errors'].append({
+                            'document_id': doc_id,
+                            'error': 'Document not found or access denied'
+                        })
+                        continue
+
+                    doc = document_results[0]
+                    current_tags = doc.get('tags', [])
+                    new_tags = []
+
+                    if action == 'add_tags':
+                        new_tags = list(set(current_tags + normalized_tags))
+                    elif action == 'remove_tags':
+                        new_tags = [t for t in current_tags if t not in normalized_tags]
+                    elif action == 'set_tags':
+                        new_tags = normalized_tags
+
+                    update_document(
+                        document_id=doc_id,
+                        group_id=active_group_id,
+                        user_id=user_id,
+                        tags=new_tags
+                    )
+
+                    try:
+                        propagate_tags_to_chunks(doc_id, new_tags, user_id, group_id=active_group_id)
+                    except Exception:
+                        pass
+
+                    results['success'].append({
+                        'document_id': doc_id,
+                        'tags': new_tags
+                    })
+
+                except Exception as doc_error:
+                    results['errors'].append({
+                        'document_id': doc_id,
+                        'error': str(doc_error)
+                    })
+
+            if results['success']:
+                invalidate_group_search_cache(active_group_id)
+
+            status_code = 200 if not results['errors'] else 207
+            return jsonify(results), status_code
+
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/group_documents/tags/<tag_name>', methods=['PATCH'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    def api_update_group_tag(tag_name):
+        """
+        Update a group tag (rename or change color).
+
+        Request body:
+        {
+            "new_name": "new-tag-name",  // optional
+            "color": "#3b82f6"           // optional
+        }
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        user_settings = get_user_settings(user_id)
+        active_group_id = user_settings["settings"].get("activeGroupOid")
+        if not active_group_id:
+            return jsonify({'error': 'No active group selected'}), 400
+
+        group_doc = find_group_by_id(group_id=active_group_id)
+        if not group_doc:
+            return jsonify({'error': 'Active group not found'}), 404
+
+        role = get_user_role_in_group(group_doc, user_id)
+        if role not in ["Owner", "Admin", "DocumentManager"]:
+            return jsonify({'error': 'You do not have permission to manage tags'}), 403
+
+        data = request.get_json()
+        new_name = data.get('new_name')
+        new_color = data.get('color')
+
+        from functions_documents import normalize_tag, validate_tags, update_document, propagate_tags_to_chunks
+
+        try:
+            normalized_old_tag = normalize_tag(tag_name)
+
+            if new_name:
+                is_valid, error_msg, normalized_new = validate_tags([new_name])
+                if not is_valid:
+                    return jsonify({'error': error_msg}), 400
+
+                normalized_new_tag = normalized_new[0]
+
+                query = "SELECT * FROM c WHERE c.group_id = @group_id"
+                parameters = [{"name": "@group_id", "value": active_group_id}]
+                documents = list(cosmos_group_documents_container.query_items(
+                    query=query, parameters=parameters, enable_cross_partition_query=True
+                ))
+
+                latest_documents = {}
+                for doc in documents:
+                    file_name = doc['file_name']
+                    if file_name not in latest_documents or doc['version'] > latest_documents[file_name]['version']:
+                        latest_documents[file_name] = doc
+
+                all_docs = list(latest_documents.values())
+                updated_count = 0
+
+                for doc in all_docs:
+                    if normalized_old_tag in doc.get('tags', []):
+                        current_tags = doc['tags']
+                        new_tags = [normalized_new_tag if t == normalized_old_tag else t for t in current_tags]
+
+                        update_document(
+                            document_id=doc['id'],
+                            group_id=active_group_id,
+                            user_id=user_id,
+                            tags=new_tags
+                        )
+
+                        try:
+                            propagate_tags_to_chunks(doc['id'], new_tags, user_id, group_id=active_group_id)
+                        except Exception:
+                            pass
+
+                        updated_count += 1
+
+                tag_defs = group_doc.get('tag_definitions', {})
+                if normalized_old_tag in tag_defs:
+                    old_def = tag_defs.pop(normalized_old_tag)
+                    tag_defs[normalized_new_tag] = old_def
+                group_doc['tag_definitions'] = tag_defs
+                cosmos_groups_container.upsert_item(group_doc)
+
+                invalidate_group_search_cache(active_group_id)
+
+                return jsonify({
+                    'message': f'Tag renamed from "{normalized_old_tag}" to "{normalized_new_tag}"',
+                    'documents_updated': updated_count
+                }), 200
+
+            if new_color:
+                tag_defs = group_doc.get('tag_definitions', {})
+
+                if normalized_old_tag in tag_defs:
+                    tag_defs[normalized_old_tag]['color'] = new_color
+                else:
+                    from datetime import datetime, timezone
+                    tag_defs[normalized_old_tag] = {
+                        'color': new_color,
+                        'created_at': datetime.now(timezone.utc).isoformat()
+                    }
+
+                group_doc['tag_definitions'] = tag_defs
+                cosmos_groups_container.upsert_item(group_doc)
+
+                return jsonify({
+                    'message': f'Tag color updated for "{normalized_old_tag}"'
+                }), 200
+
+            return jsonify({'error': 'No updates specified'}), 400
+
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/group_documents/tags/<tag_name>', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    def api_delete_group_tag(tag_name):
+        """Delete a tag from all documents in the group workspace."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        user_settings = get_user_settings(user_id)
+        active_group_id = user_settings["settings"].get("activeGroupOid")
+        if not active_group_id:
+            return jsonify({'error': 'No active group selected'}), 400
+
+        group_doc = find_group_by_id(group_id=active_group_id)
+        if not group_doc:
+            return jsonify({'error': 'Active group not found'}), 404
+
+        role = get_user_role_in_group(group_doc, user_id)
+        if role not in ["Owner", "Admin", "DocumentManager"]:
+            return jsonify({'error': 'You do not have permission to manage tags'}), 403
+
+        from functions_documents import normalize_tag, update_document, propagate_tags_to_chunks
+
+        try:
+            normalized_tag = normalize_tag(tag_name)
+
+            query = "SELECT * FROM c WHERE c.group_id = @group_id"
+            parameters = [{"name": "@group_id", "value": active_group_id}]
+            documents = list(cosmos_group_documents_container.query_items(
+                query=query, parameters=parameters, enable_cross_partition_query=True
+            ))
+
+            latest_documents = {}
+            for doc in documents:
+                file_name = doc['file_name']
+                if file_name not in latest_documents or doc['version'] > latest_documents[file_name]['version']:
+                    latest_documents[file_name] = doc
+
+            all_docs = list(latest_documents.values())
+            updated_count = 0
+
+            for doc in all_docs:
+                if normalized_tag in doc.get('tags', []):
+                    new_tags = [t for t in doc['tags'] if t != normalized_tag]
+
+                    update_document(
+                        document_id=doc['id'],
+                        group_id=active_group_id,
+                        user_id=user_id,
+                        tags=new_tags
+                    )
+
+                    try:
+                        propagate_tags_to_chunks(doc['id'], new_tags, user_id, group_id=active_group_id)
+                    except Exception:
+                        pass
+
+                    updated_count += 1
+
+            tag_defs = group_doc.get('tag_definitions', {})
+            if normalized_tag in tag_defs:
+                tag_defs.pop(normalized_tag)
+                group_doc['tag_definitions'] = tag_defs
+                cosmos_groups_container.upsert_item(group_doc)
+
+            if updated_count > 0:
+                invalidate_group_search_cache(active_group_id)
+
+            return jsonify({
+                'message': f'Tag "{normalized_tag}" deleted from {updated_count} document(s)'
+            }), 200
+
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
