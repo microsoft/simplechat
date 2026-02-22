@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 import webbrowser
@@ -1480,6 +1481,35 @@ class _PrmAndAuthShim:
         # Validate PRM metadata at startup (no fallbacks/defaults).
         _ = self._load_prm_metadata()
     
+    @staticmethod
+    def _resolve_env_placeholders(raw_text: str) -> str:
+        """Replace ``${VAR}`` and ``${VAR:-default}`` placeholders with env values.
+
+        Supports:
+        - ``${VAR}``           – required; raises if *VAR* is unset/empty.
+        - ``${VAR:-fallback}`` – uses *fallback* when *VAR* is unset/empty.
+
+        Unrecognised patterns (no ``${...}``) are returned unchanged so that
+        literal strings and URLs survive without modification.
+        """
+        _PLACEHOLDER_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-(.*?))?\}")
+
+        def _replacer(match: re.Match) -> str:  # type: ignore[type-arg]
+            var_name = match.group(1)
+            default_value = match.group(2)  # None when no ``:-`` was used
+            env_value = os.environ.get(var_name, "").strip()
+            if env_value:
+                return env_value
+            if default_value is not None:
+                return default_value
+            raise ValueError(
+                f"PRM metadata placeholder ${{{var_name}}} is unresolved: "
+                f"set the {var_name} environment variable or provide a "
+                f"default with ${{{var_name}:-default}}"
+            )
+
+        return _PLACEHOLDER_RE.sub(_replacer, raw_text)
+
     def _load_prm_metadata(self) -> Dict[str, Any]:
         candidate_path = Path(self._prm_metadata_path)
         if not candidate_path.is_absolute():
@@ -1489,7 +1519,18 @@ class _PrmAndAuthShim:
             raise ValueError(f"PRM metadata file not found at {candidate_path}")
         
         with candidate_path.open("r", encoding="utf-8") as handle:
-            data: Any = json.load(handle)
+            raw_text = handle.read()
+
+        # Resolve environment-variable placeholders before parsing JSON.
+        resolved_text = self._resolve_env_placeholders(raw_text)
+
+        try:
+            data: Any = json.loads(resolved_text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"PRM metadata at {candidate_path} is not valid JSON after "
+                f"environment-variable substitution: {exc}"
+            ) from exc
 
         if isinstance(data, dict):
             return cast(Dict[str, Any], data)

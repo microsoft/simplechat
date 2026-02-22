@@ -99,7 +99,24 @@ This MCP server provides **14 tools** for interacting with SimpleChat via the Mo
 The MCP server serves PRM metadata at:
 `http://localhost:8000/.well-known/oauth-protected-resource`
 
-Update `prm_metadata.json` with your Entra tenant, client, and scopes.
+### Environment-Variable Placeholders
+
+`prm_metadata.json` supports `${VAR}` placeholders that are resolved from
+environment variables at runtime.  This keeps secrets and tenant-specific
+identifiers out of the committed file.
+
+| Syntax | Behaviour |
+|---|---|
+| `${VAR}` | **Required** — raises an error if `VAR` is unset or empty. |
+| `${VAR:-fallback}` | Uses *fallback* when `VAR` is unset or empty. |
+
+The default `prm_metadata.json` uses two placeholders:
+
+- `MCP_PRM_TENANT_ID` — Your Entra (Azure AD) tenant ID.
+- `MCP_PRM_RESOURCE_APP_ID` — The app-registration client/resource ID used in scope URIs.
+
+Set these in your `.env` file (see `example.env`) or as environment variables
+in your deployment (e.g. Azure Container Apps app settings).
 
 ## Deployment
 

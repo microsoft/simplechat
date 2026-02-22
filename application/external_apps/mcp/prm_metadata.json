@@ -3,10 +3,10 @@
   "resource_name": "SimpleChat MCP Server",
   "resource_documentation": "https://microsoft.github.io/simplechat/",
   "authorization_servers": [
-    "https://login.microsoftonline.com/7d887458-fb0d-40bf-adb3-084d875f65db/v2.0"
+    "https://login.microsoftonline.com/${MCP_PRM_TENANT_ID}/v2.0"
   ],
   "scopes_supported": [
-    "api://0b8c00b9-4dcd-4959-83be-7a0521ce54ce/.default"
+    "api://${MCP_PRM_RESOURCE_APP_ID}/.default"
   ],
   "bearer_methods_supported": [
     "header"
