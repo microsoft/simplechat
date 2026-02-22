@@ -1083,8 +1083,8 @@ window.fetchPublicDocs = fetchPublicDocs;
 // === Grid/Folder/Tag Management Functions ===
 
 function loadPublicWorkspaceTags() {
-  if (!activePublicId) return;
-  fetch(`/api/public_workspace_documents/tags?workspace_ids=${activePublicId}`)
+  if (!activePublicId) return Promise.resolve();
+  return fetch(`/api/public_workspace_documents/tags?workspace_ids=${activePublicId}`)
     .then(r => r.ok ? r.json() : Promise.reject('Failed to load tags'))
     .then(data => {
       publicWorkspaceTags = data.tags || [];
@@ -1244,11 +1244,17 @@ async function renderPublicGridView() {
             <li><hr class="dropdown-divider"></li>
             <li><a class="dropdown-item text-danger" href="#" onclick="deletePublicTag('${ek}'); return false;"><i class="bi bi-trash me-2"></i>Delete Tag</a></li>
           </ul></div></div>`;
-      } else if (item.type === 'classification' && !item.isSpecial) {
+      } else if (item.type === 'classification') {
         actionsHtml = `<div class="tag-folder-actions"><div class="dropdown">
           <button class="tag-folder-menu-btn" type="button" data-bs-toggle="dropdown" onclick="event.stopPropagation();"><i class="bi bi-three-dots-vertical"></i></button>
           <ul class="dropdown-menu">
             <li><a class="dropdown-item" href="#" onclick="chatWithPublicFolder('classification','${ek}'); return false;"><i class="bi bi-chat-dots me-2"></i>Chat</a></li>
+          </ul></div></div>`;
+      } else if (item.type === 'tag' && item.isSpecial) {
+        actionsHtml = `<div class="tag-folder-actions"><div class="dropdown">
+          <button class="tag-folder-menu-btn" type="button" data-bs-toggle="dropdown" onclick="event.stopPropagation();"><i class="bi bi-three-dots-vertical"></i></button>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="#" onclick="chatWithPublicFolder('tag','${ek}'); return false;"><i class="bi bi-chat-dots me-2"></i>Chat</a></li>
           </ul></div></div>`;
       }
       html += `<div class="col-6 col-sm-4 col-md-3 col-lg-2">

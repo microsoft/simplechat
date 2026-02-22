@@ -33,6 +33,10 @@ export let publicDocs = [];
 // Each entry: { element, nextSibling }
 let tagFilteredOutItems = [];
 
+// Scope lock state
+let scopeLocked = null;    // null = auto-lockable, true = locked, false = user-unlocked
+let lockedContexts = [];   // Array of {scope, id} identifying locked workspaces
+
 // Build name maps from server-provided data (fixes activeGroupName bug)
 const groupIdToName = {};
 (window.userGroups || []).forEach(g => { groupIdToName[g.id] = g.name; });
@@ -54,6 +58,124 @@ export function getEffectiveScopes() {
     groupIds: [...selectedGroupIds],
     publicWorkspaceIds: [...selectedPublicWorkspaceIds],
   };
+}
+
+/* ---------------------------------------------------------------------------
+   Scope Lock — exported functions
+--------------------------------------------------------------------------- */
+
+/** Returns current scope lock state: null (auto-lockable), true (locked), false (user-unlocked). */
+export function isScopeLocked() {
+  return scopeLocked;
+}
+
+/**
+ * Apply scope lock from metadata after a response.
+ * Called after AI response when backend sets scope_locked=true.
+ */
+export function applyScopeLock(contexts, lockState) {
+  if (lockState !== true) return;
+  scopeLocked = true;
+  lockedContexts = contexts || [];
+  rebuildScopeDropdownWithLock();
+  updateHeaderLockIcon();
+}
+
+/**
+ * Toggle scope lock via API call. Can both lock and unlock.
+ * @param {string} conversationId
+ * @param {boolean} newState - true = lock, false = unlock
+ * @returns {Promise}
+ */
+export async function toggleScopeLock(conversationId, newState) {
+  if (!conversationId) return;
+
+  const response = await fetch(`/api/conversations/${conversationId}/scope_lock`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({ scope_locked: newState })
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to toggle scope lock');
+  }
+
+  const result = await response.json();
+  scopeLocked = newState;
+  // lockedContexts preserved from API response (never cleared)
+  lockedContexts = result.locked_contexts || lockedContexts;
+
+  if (newState === true) {
+    // Re-locking: narrow scope to locked workspaces, rebuild with lock
+    selectedPersonal = lockedContexts.some(c => c.scope === 'personal');
+    selectedGroupIds = lockedContexts.filter(c => c.scope === 'group').map(c => c.id);
+    selectedPublicWorkspaceIds = lockedContexts.filter(c => c.scope === 'public').map(c => c.id);
+    rebuildScopeDropdownWithLock();
+  } else {
+    // Unlocking: open all scopes, rebuild normally
+    const groups = window.userGroups || [];
+    const publicWorkspaces = window.userVisiblePublicWorkspaces || [];
+    selectedPersonal = true;
+    selectedGroupIds = groups.map(g => g.id);
+    selectedPublicWorkspaceIds = publicWorkspaces.map(ws => ws.id);
+    buildScopeDropdown();
+    updateScopeLockIcon();
+  }
+
+  updateHeaderLockIcon();
+
+  // Reload docs for the new scope
+  loadAllDocs().then(() => { loadTagsForScope(); });
+}
+
+/**
+ * Restore scope lock state when switching conversations.
+ * Called from selectConversation() in chat-conversations.js.
+ */
+export function restoreScopeLockState(lockState, contexts) {
+  scopeLocked = lockState;
+  lockedContexts = contexts || [];
+
+  if (scopeLocked === true && lockedContexts.length > 0) {
+    // Set scope selection to match locked contexts
+    selectedPersonal = lockedContexts.some(c => c.scope === 'personal');
+    selectedGroupIds = lockedContexts.filter(c => c.scope === 'group').map(c => c.id);
+    selectedPublicWorkspaceIds = lockedContexts.filter(c => c.scope === 'public').map(c => c.id);
+
+    rebuildScopeDropdownWithLock();
+    // Reload docs for the locked scope
+    loadAllDocs().then(() => { loadTagsForScope(); });
+  } else {
+    // Not locked (null or false) — rebuild dropdown normally
+    buildScopeDropdown();
+    updateScopeLockIcon();
+  }
+
+  updateHeaderLockIcon();
+}
+
+/**
+ * Reset scope lock for a new conversation.
+ * Resets to "All" with no lock.
+ */
+export function resetScopeLock() {
+  scopeLocked = null;
+  lockedContexts = [];
+
+  const groups = window.userGroups || [];
+  const publicWorkspaces = window.userVisiblePublicWorkspaces || [];
+  selectedPersonal = true;
+  selectedGroupIds = groups.map(g => g.id);
+  selectedPublicWorkspaceIds = publicWorkspaces.map(ws => ws.id);
+
+  buildScopeDropdown();
+  updateScopeLockIcon();
+  updateHeaderLockIcon();
+
+  // Reload documents for the full "All" scope
+  loadAllDocs().then(() => { loadTagsForScope(); });
 }
 
 /* ---------------------------------------------------------------------------
@@ -161,6 +283,137 @@ function buildScopeDropdown() {
   }
 
   syncScopeButtonText();
+}
+
+/* ---------------------------------------------------------------------------
+   Rebuild Scope Dropdown with Lock Indicators
+--------------------------------------------------------------------------- */
+function rebuildScopeDropdownWithLock() {
+  if (scopeLocked !== true || !scopeDropdownItems) {
+    buildScopeDropdown();
+    updateScopeLockIcon();
+    return;
+  }
+
+  // First build the dropdown normally
+  buildScopeDropdown();
+
+  // Build a set of locked scope keys for fast lookup (e.g. "personal", "group:abc", "public:xyz")
+  const lockedKeys = new Set();
+  for (const ctx of lockedContexts) {
+    if (ctx.scope === 'personal') {
+      lockedKeys.add('personal');
+    } else if (ctx.scope === 'group') {
+      lockedKeys.add(`group:${ctx.id}`);
+    } else if (ctx.scope === 'public') {
+      lockedKeys.add(`public:${ctx.id}`);
+    }
+  }
+
+  // Force scope selection to match locked contexts
+  selectedPersonal = lockedKeys.has('personal');
+  selectedGroupIds = lockedContexts.filter(c => c.scope === 'group').map(c => c.id);
+  selectedPublicWorkspaceIds = lockedContexts.filter(c => c.scope === 'public').map(c => c.id);
+
+  // Iterate all scope items and apply lock/disable styling
+  scopeDropdownItems.querySelectorAll('.dropdown-item[data-scope-value]').forEach(item => {
+    const val = item.getAttribute('data-scope-value');
+    const cb = item.querySelector('.scope-checkbox');
+    const isLocked = lockedKeys.has(val);
+
+    if (isLocked) {
+      // This workspace is locked — mark as active and locked
+      if (cb) cb.checked = true;
+      item.classList.add('scope-locked-item');
+      item.classList.remove('scope-disabled-item');
+      item.style.pointerEvents = 'none';
+
+      // Add lock icon if not already present
+      if (!item.querySelector('.bi-lock-fill')) {
+        const lockIcon = document.createElement('i');
+        lockIcon.classList.add('bi', 'bi-lock-fill', 'ms-auto', 'text-warning', 'scope-lock-badge');
+        item.appendChild(lockIcon);
+      }
+    } else {
+      // This workspace is not locked — gray it out
+      if (cb) cb.checked = false;
+      item.classList.add('scope-disabled-item');
+      item.classList.remove('scope-locked-item');
+      item.style.pointerEvents = 'none';
+      item.title = 'Scope locked to other workspaces';
+    }
+  });
+
+  // Disable the "All" toggle
+  const allToggle = scopeDropdownItems.querySelector('[data-scope-action="toggle-all"]');
+  if (allToggle) {
+    allToggle.classList.add('scope-disabled-item');
+    allToggle.style.pointerEvents = 'none';
+    const allCb = allToggle.querySelector('.scope-checkbox-all');
+    if (allCb) {
+      allCb.checked = false;
+      allCb.indeterminate = true;
+    }
+  }
+
+  syncScopeButtonText();
+  updateScopeLockIcon();
+}
+
+/* ---------------------------------------------------------------------------
+   Update Scope Lock Icon Visibility and Tooltip
+--------------------------------------------------------------------------- */
+function updateScopeLockIcon() {
+  const indicator = document.getElementById('scope-lock-indicator');
+  if (!indicator) return;
+
+  if (scopeLocked === true) {
+    indicator.style.display = 'inline';
+
+    // Build tooltip showing locked workspace names
+    const names = [];
+    for (const ctx of lockedContexts) {
+      if (ctx.scope === 'personal') {
+        names.push('Personal');
+      } else if (ctx.scope === 'group') {
+        const name = groupIdToName[ctx.id] || ctx.id;
+        names.push(`Group: ${name}`);
+      } else if (ctx.scope === 'public') {
+        const name = publicWorkspaceIdToName[ctx.id] || ctx.id;
+        names.push(`Public: ${name}`);
+      }
+    }
+    indicator.title = `Scope locked to: ${names.join(', ')}. Click to manage.`;
+  } else {
+    indicator.style.display = 'none';
+  }
+
+  updateHeaderLockIcon();
+}
+
+/* ---------------------------------------------------------------------------
+   Update Header Lock Icon (inline with classification badges)
+--------------------------------------------------------------------------- */
+function updateHeaderLockIcon() {
+  const headerBtn = document.getElementById('header-scope-lock-btn');
+  if (!headerBtn) return;
+
+  if (scopeLocked === null || scopeLocked === undefined) {
+    // No data used yet — hide header lock
+    headerBtn.style.display = 'none';
+  } else if (scopeLocked === true) {
+    // Locked
+    headerBtn.style.display = 'inline';
+    headerBtn.className = 'text-warning';
+    headerBtn.innerHTML = '<i class="bi bi-lock-fill"></i>';
+    headerBtn.title = 'Scope locked — click to manage';
+  } else {
+    // Unlocked (false)
+    headerBtn.style.display = 'inline';
+    headerBtn.className = 'text-muted';
+    headerBtn.innerHTML = '<i class="bi bi-unlock"></i>';
+    headerBtn.title = 'Scope unlocked — click to re-lock';
+  }
 }
 
 function createScopeItem(value, label, checked) {
@@ -318,6 +571,7 @@ export function populateDocumentSelectScope() {
       id: d.id,
       label: `[Personal] ${d.title || d.file_name}`,
       tags: d.tags || [],
+      classification: d.document_classification || '',
     }));
     finalDocs = finalDocs.concat(pDocs);
   }
@@ -328,6 +582,7 @@ export function populateDocumentSelectScope() {
       id: d.id,
       label: `[Group: ${groupIdToName[d.group_id] || "Unknown"}] ${d.title || d.file_name}`,
       tags: d.tags || [],
+      classification: d.document_classification || '',
     }));
     finalDocs = finalDocs.concat(gDocs);
   }
@@ -342,6 +597,7 @@ export function populateDocumentSelectScope() {
         id: d.id,
         label: `[Public: ${publicWorkspaceIdToName[d.public_workspace_id] || "Unknown"}] ${d.title || d.file_name}`,
         tags: d.tags || [],
+        classification: d.document_classification || '',
       }));
     finalDocs = finalDocs.concat(pubDocs);
   }
@@ -353,6 +609,7 @@ export function populateDocumentSelectScope() {
     opt.value = doc.id;
     opt.textContent = doc.label;
     opt.dataset.tags = JSON.stringify(doc.tags || []);
+    opt.dataset.classification = doc.classification || '';
     docSelectEl.appendChild(opt);
 
     // Add to custom dropdown
@@ -362,6 +619,7 @@ export function populateDocumentSelectScope() {
       dropdownItem.classList.add("dropdown-item", "d-flex", "align-items-center");
       dropdownItem.setAttribute("data-document-id", doc.id);
       dropdownItem.dataset.tags = JSON.stringify(doc.tags || []);
+      dropdownItem.dataset.classification = doc.classification || '';
       dropdownItem.style.display = "flex";
       dropdownItem.style.width = "100%";
       dropdownItem.style.textAlign = "left";
@@ -656,23 +914,69 @@ export async function loadTagsForScope() {
       }
     });
 
-    const allTags = Object.entries(tagMap).map(([name, count]) => ({ name, count }));
+    const allTags = Object.entries(tagMap).map(([name, count]) => ({ name, displayName: name, count, isClassification: false }));
     allTags.sort((a, b) => a.name.localeCompare(b.name));
 
-    if (allTags.length > 0) {
+    // Add classification categories if enabled
+    const classificationItems = [];
+    const classificationEnabled = (window.enable_document_classification === true
+        || String(window.enable_document_classification).toLowerCase() === 'true');
+    if (classificationEnabled) {
+      const categories = window.classification_categories || [];
+      const scopesForCls = getEffectiveScopes();
+
+      // Gather all in-scope docs
+      const scopeDocs = [];
+      if (scopesForCls.personal) scopeDocs.push(...personalDocs);
+      if (scopesForCls.groupIds.length > 0) scopeDocs.push(...groupDocs);
+      if (scopesForCls.publicWorkspaceIds.length > 0) {
+        const wsSet = new Set(scopesForCls.publicWorkspaceIds);
+        scopeDocs.push(...publicDocs.filter(d => wsSet.has(d.public_workspace_id)));
+      }
+
+      // Count classifications
+      const clsCounts = {};
+      let unclassifiedCount = 0;
+      scopeDocs.forEach(doc => {
+        const cls = doc.document_classification;
+        if (!cls || cls === '' || cls.toLowerCase() === 'none') {
+          unclassifiedCount++;
+        } else {
+          clsCounts[cls] = (clsCounts[cls] || 0) + 1;
+        }
+      });
+
+      // Always show Unclassified entry
+      classificationItems.push({ name: '__unclassified__', displayName: 'Unclassified', count: unclassifiedCount, isClassification: true, color: '#6c757d' });
+      // Always show all configured categories (even at 0 count)
+      categories.forEach(cat => {
+        const count = clsCounts[cat.label] || 0;
+        classificationItems.push({ name: cat.label, displayName: cat.label, count, isClassification: true, color: cat.color || '#6c757d' });
+      });
+    }
+
+    const hasItems = allTags.length > 0 || classificationItems.length > 0;
+
+    if (hasItems) {
       showTagsDropdown();
 
-      // Populate hidden select
+      // Populate hidden select with tags and classifications
       allTags.forEach(tag => {
         const option = document.createElement('option');
         option.value = tag.name;
         option.textContent = `${tag.name} (${tag.count})`;
         chatTagsFilter.appendChild(option);
       });
+      classificationItems.forEach(cls => {
+        const option = document.createElement('option');
+        option.value = cls.name;
+        option.textContent = `${cls.displayName} (${cls.count})`;
+        chatTagsFilter.appendChild(option);
+      });
 
       // Populate custom dropdown with checkboxes
       if (tagsDropdownItems) {
-        // Add "All Tags" (clear all) item
+        // Add "Clear All" item
         const allItem = document.createElement('button');
         allItem.type = 'button';
         allItem.classList.add('dropdown-item', 'text-muted', 'small');
@@ -683,12 +987,12 @@ export async function loadTagsForScope() {
         allItem.style.textAlign = 'left';
         tagsDropdownItems.appendChild(allItem);
 
-        // Add a divider
-        const divider = document.createElement('div');
-        divider.classList.add('dropdown-divider');
-        tagsDropdownItems.appendChild(divider);
+        // Divider after Clear All
+        const divider1 = document.createElement('div');
+        divider1.classList.add('dropdown-divider');
+        tagsDropdownItems.appendChild(divider1);
 
-        // Add each tag with a checkbox
+        // Render regular tags
         allTags.forEach(tag => {
           const item = document.createElement('button');
           item.type = 'button';
@@ -711,6 +1015,49 @@ export async function loadTagsForScope() {
           item.appendChild(label);
           tagsDropdownItems.appendChild(item);
         });
+
+        // Render classification items with visual distinction
+        if (classificationItems.length > 0) {
+          // Divider before classifications
+          const divider2 = document.createElement('div');
+          divider2.classList.add('dropdown-divider');
+          tagsDropdownItems.appendChild(divider2);
+
+          // Small header
+          const header = document.createElement('div');
+          header.classList.add('dropdown-header', 'small', 'text-muted', 'px-3', 'py-1');
+          header.textContent = 'Classifications';
+          tagsDropdownItems.appendChild(header);
+
+          classificationItems.forEach(cls => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.classList.add('dropdown-item', 'd-flex', 'align-items-center');
+            item.setAttribute('data-tag-value', cls.name);
+            item.style.display = 'flex';
+            item.style.width = '100%';
+            item.style.textAlign = 'left';
+
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.classList.add('form-check-input', 'me-2', 'tag-checkbox');
+            checkbox.style.pointerEvents = 'none';
+            checkbox.style.minWidth = '16px';
+
+            const icon = document.createElement('i');
+            icon.classList.add('bi', 'bi-bookmark-fill', 'me-1');
+            icon.style.color = cls.color;
+            icon.style.fontSize = '0.75rem';
+
+            const label = document.createElement('span');
+            label.textContent = `${cls.displayName} (${cls.count})`;
+
+            item.appendChild(checkbox);
+            item.appendChild(icon);
+            item.appendChild(label);
+            tagsDropdownItems.appendChild(item);
+          });
+        }
       }
     } else {
       hideTagsDropdown();
@@ -781,7 +1128,18 @@ export function filterDocumentsBySelectedTags() {
 
   const selectedTags = getSelectedTags();
 
-  // 2) If tags are selected, remove non-matching items from the DOM
+  // Helper: check if a document matches by tag or classification
+  function matchesSelection(tags, classification) {
+    const matchesByTag = tags.some(tag => selectedTags.includes(tag));
+    if (matchesByTag) return true;
+    const docCls = classification || '';
+    return selectedTags.some(sel => {
+      if (sel === '__unclassified__') return !docCls || docCls === '' || docCls.toLowerCase() === 'none';
+      return docCls === sel;
+    });
+  }
+
+  // 2) If tags/classifications are selected, remove non-matching items from the DOM
   if (selectedTags.length > 0) {
     const items = Array.from(docDropdownItems.querySelectorAll('.dropdown-item'));
     items.forEach(item => {
@@ -791,8 +1149,9 @@ export function filterDocumentsBySelectedTags() {
 
       let docTags = [];
       try { docTags = JSON.parse(item.dataset.tags || '[]'); } catch (e) { docTags = []; }
+      const docClassification = item.dataset.classification || '';
 
-      if (!docTags.some(tag => selectedTags.includes(tag))) {
+      if (!matchesSelection(docTags, docClassification)) {
         const nextSibling = item.nextElementSibling;
         docDropdownItems.removeChild(item);
         tagFilteredOutItems.push({ element: item, nextSibling });
@@ -808,7 +1167,8 @@ export function filterDocumentsBySelectedTags() {
 
       let optTags = [];
       try { optTags = JSON.parse(opt.dataset.tags || '[]'); } catch (e) { optTags = []; }
-      opt.disabled = !optTags.some(tag => selectedTags.includes(tag));
+      const optClassification = opt.dataset.classification || '';
+      opt.disabled = !matchesSelection(optTags, optClassification);
     });
   }
 }
@@ -851,6 +1211,10 @@ if (scopeDropdownMenu) {
 if (scopeDropdownItems) {
   scopeDropdownItems.addEventListener('click', function(e) {
     e.stopPropagation();
+
+    // Guard: prevent changes when scope is locked
+    if (scopeLocked === true) { e.preventDefault(); return; }
+
     const item = e.target.closest('.dropdown-item');
     if (!item) return;
 
@@ -952,8 +1316,12 @@ if (searchDocumentsBtn) {
 
     if (this.classList.contains("active")) {
       searchDocumentsContainer.style.display = "block";
-      // Build the scope dropdown on first open
-      buildScopeDropdown();
+      // Build the scope dropdown on first open (respect lock state)
+      if (scopeLocked === true) {
+        rebuildScopeDropdownWithLock();
+      } else {
+        buildScopeDropdown();
+      }
       // Ensure initial population and state is correct when opening
       loadAllDocs().then(() => {
         // Load tags for the currently selected scope
@@ -1218,5 +1586,100 @@ document.addEventListener('DOMContentLoaded', function() {
     } catch (err) {
       console.error("Error initializing bootstrap dropdown:", err);
     }
+  }
+
+  // --- Scope Lock: Dual-mode modal event wiring ---
+  const confirmToggleBtn = document.getElementById('confirm-scope-lock-toggle-btn');
+  if (confirmToggleBtn) {
+    confirmToggleBtn.addEventListener('click', async () => {
+      const conversationId = window.currentConversationId;
+      if (!conversationId) return;
+
+      const newState = scopeLocked === true ? false : true;
+
+      try {
+        confirmToggleBtn.disabled = true;
+        confirmToggleBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>' +
+          (newState ? 'Locking...' : 'Unlocking...');
+        await toggleScopeLock(conversationId, newState);
+
+        // Hide modal
+        const modalEl = document.getElementById('scopeLockModal');
+        if (modalEl) {
+          const modalInstance = bootstrap.Modal.getInstance(modalEl);
+          if (modalInstance) modalInstance.hide();
+        }
+      } catch (err) {
+        console.error('Failed to toggle scope lock:', err);
+      } finally {
+        confirmToggleBtn.disabled = false;
+      }
+    });
+  }
+
+  const scopeLockModal = document.getElementById('scopeLockModal');
+  if (scopeLockModal) {
+    scopeLockModal.addEventListener('show.bs.modal', () => {
+      const titleEl = document.getElementById('scopeLockModalLabel');
+      const descEl = document.getElementById('scope-lock-modal-description');
+      const alertEl = document.getElementById('scope-lock-modal-alert');
+      const toggleBtn = document.getElementById('confirm-scope-lock-toggle-btn');
+      const listEl = document.getElementById('locked-workspaces-list');
+
+      // Build workspace list
+      const workspaceItems = [];
+      for (const ctx of lockedContexts) {
+        let name = '';
+        let icon = '';
+        if (ctx.scope === 'personal') {
+          name = 'Personal';
+          icon = 'bi-person';
+        } else if (ctx.scope === 'group') {
+          name = groupIdToName[ctx.id] || ctx.id;
+          icon = 'bi-people';
+        } else if (ctx.scope === 'public') {
+          name = publicWorkspaceIdToName[ctx.id] || ctx.id;
+          icon = 'bi-globe';
+        }
+        if (name) {
+          workspaceItems.push(`<li class="list-group-item"><i class="bi ${icon} me-2"></i>${name}</li>`);
+        }
+      }
+
+      if (listEl) {
+        if (workspaceItems.length > 0) {
+          const listLabel = scopeLocked === true ? 'Currently locked to:' : 'Will lock to:';
+          listEl.innerHTML = `<p class="small text-muted mb-2">${listLabel}</p><ul class="list-group list-group-flush">${workspaceItems.join('')}</ul>`;
+        } else {
+          listEl.innerHTML = '<p class="text-muted">No specific workspaces recorded.</p>';
+        }
+      }
+
+      if (scopeLocked === true) {
+        // Currently locked — show unlock mode
+        if (titleEl) titleEl.innerHTML = '<i class="bi bi-unlock me-2"></i>Unlock Workspace Scope';
+        if (descEl) descEl.textContent = 'This conversation\'s scope is locked to prevent accidental cross-contamination with other data sources.';
+        if (alertEl) {
+          alertEl.className = 'alert alert-warning mb-0';
+          alertEl.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>Unlocking allows you to select any workspace for this conversation. You can re-lock it later.';
+        }
+        if (toggleBtn) {
+          toggleBtn.className = 'btn btn-warning';
+          toggleBtn.innerHTML = '<i class="bi bi-unlock me-1"></i>Unlock Scope';
+        }
+      } else {
+        // Currently unlocked — show lock mode
+        if (titleEl) titleEl.innerHTML = '<i class="bi bi-lock me-2"></i>Lock Workspace Scope';
+        if (descEl) descEl.textContent = 'Re-lock the scope to restrict this conversation to the workspaces that produced search results.';
+        if (alertEl) {
+          alertEl.className = 'alert alert-info mb-0';
+          alertEl.innerHTML = '<i class="bi bi-info-circle me-1"></i>Locking will restrict the scope dropdown to only the workspaces listed above.';
+        }
+        if (toggleBtn) {
+          toggleBtn.className = 'btn btn-success';
+          toggleBtn.innerHTML = '<i class="bi bi-lock me-1"></i>Lock Scope';
+        }
+      }
+    });
   }
 });

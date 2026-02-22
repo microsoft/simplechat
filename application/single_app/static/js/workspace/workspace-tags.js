@@ -346,7 +346,7 @@ async function renderGridView() {
                             </ul>
                         </div>
                     </div>`;
-            } else if (item.type === 'classification' && !item.isSpecial) {
+            } else if (item.type === 'classification') {
                 actionsHtml = `
                     <div class="tag-folder-actions">
                         <div class="dropdown">
@@ -355,6 +355,20 @@ async function renderGridView() {
                             </button>
                             <ul class="dropdown-menu">
                                 <li><a class="dropdown-item" href="#" onclick="window.chatWithFolder('classification', '${escapedKey}'); return false;">
+                                    <i class="bi bi-chat-dots me-2"></i>Chat
+                                </a></li>
+                            </ul>
+                        </div>
+                    </div>`;
+            } else if (item.type === 'tag' && item.isSpecial) {
+                actionsHtml = `
+                    <div class="tag-folder-actions">
+                        <div class="dropdown">
+                            <button class="tag-folder-menu-btn" type="button" data-bs-toggle="dropdown" onclick="event.stopPropagation();">
+                                <i class="bi bi-three-dots-vertical"></i>
+                            </button>
+                            <ul class="dropdown-menu">
+                                <li><a class="dropdown-item" href="#" onclick="window.chatWithFolder('tag', '${escapedKey}'); return false;">
                                     <i class="bi bi-chat-dots me-2"></i>Chat
                                 </a></li>
                             </ul>

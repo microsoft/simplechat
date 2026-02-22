@@ -3930,8 +3930,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
   // ============= GRID VIEW / TAG MANAGEMENT FUNCTIONS =============
 
   function loadGroupWorkspaceTags() {
-    if (!activeGroupId) return;
-    fetch(`/api/group_documents/tags?group_ids=${activeGroupId}`)
+    if (!activeGroupId) return Promise.resolve();
+    return fetch(`/api/group_documents/tags?group_ids=${activeGroupId}`)
       .then(r => r.ok ? r.json() : Promise.reject('Failed to load tags'))
       .then(data => {
         groupWorkspaceTags = data.tags || [];
@@ -4094,11 +4094,17 @@ app_settings.app_title }} {% endblock %} {% block head %}
               <li><hr class="dropdown-divider"></li>
               <li><a class="dropdown-item text-danger" href="#" onclick="deleteGroupTag('${ek}'); return false;"><i class="bi bi-trash me-2"></i>Delete Tag</a></li>
             </ul></div></div>`;
-        } else if (item.type === 'classification' && !item.isSpecial) {
+        } else if (item.type === 'classification') {
           actionsHtml = `<div class="tag-folder-actions"><div class="dropdown">
             <button class="tag-folder-menu-btn" type="button" data-bs-toggle="dropdown" onclick="event.stopPropagation();"><i class="bi bi-three-dots-vertical"></i></button>
             <ul class="dropdown-menu">
               <li><a class="dropdown-item" href="#" onclick="chatWithGroupFolder('classification','${ek}'); return false;"><i class="bi bi-chat-dots me-2"></i>Chat</a></li>
+            </ul></div></div>`;
+        } else if (item.type === 'tag' && item.isSpecial) {
+          actionsHtml = `<div class="tag-folder-actions"><div class="dropdown">
+            <button class="tag-folder-menu-btn" type="button" data-bs-toggle="dropdown" onclick="event.stopPropagation();"><i class="bi bi-three-dots-vertical"></i></button>
+            <ul class="dropdown-menu">
+              <li><a class="dropdown-item" href="#" onclick="chatWithGroupFolder('tag','${ek}'); return false;"><i class="bi bi-chat-dots me-2"></i>Chat</a></li>
             </ul></div></div>`;
         }
         html += `<div class="col-6 col-sm-4 col-md-3 col-lg-2">

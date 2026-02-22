@@ -5,7 +5,7 @@ import {
   showLoadingIndicatorInChatbox,
   hideLoadingIndicatorInChatbox,
 } from "./chat-loading-indicator.js";
-import { getDocumentMetadata, personalDocs, groupDocs, publicDocs, getSelectedTags, getEffectiveScopes } from "./chat-documents.js";
+import { getDocumentMetadata, personalDocs, groupDocs, publicDocs, getSelectedTags, getEffectiveScopes, applyScopeLock } from "./chat-documents.js";
 import { promptSelect } from "./chat-prompts.js";
 import {
   createNewConversation,
@@ -1673,6 +1673,18 @@ export function actuallySendMessage(finalMessageToSend) {
           document.getElementById("current-conversation-title").textContent = data.conversation_title || "New Conversation";
           console.log('[sendMessage] New conversation setup complete, conversation ID:', currentConversationId);
         }
+      }
+
+      // Apply scope lock if document search was used
+      if (data.augmented && currentConversationId) {
+        fetch(`/api/conversations/${currentConversationId}/metadata`, { credentials: 'same-origin' })
+          .then(r => r.json())
+          .then(metadata => {
+            if (metadata.scope_locked === true && metadata.locked_contexts) {
+              applyScopeLock(metadata.locked_contexts, metadata.scope_locked);
+            }
+          })
+          .catch(err => console.warn('Failed to fetch scope lock metadata:', err));
       }
     })
     .catch((error) => {
