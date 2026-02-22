@@ -298,6 +298,24 @@ class SQLSchemaPlugin(BasePlugin):
                 }
             )
             
+            # Get tables
+            tables_query = self._get_tables_query(include_system_tables, table_filter)
+            cursor.execute(tables_query)
+            tables = cursor.fetchall()
+
+            # Get schema for each table
+            for table_row in tables:
+                table_name = table_row[0] if isinstance(table_row, (list, tuple)) else table_row
+                table_schema = self._get_table_schema_data(cursor, table_name)
+                schema_data["tables"][table_name] = table_schema
+
+            # Get relationships
+            relationships = self._get_relationships_data(cursor)
+            schema_data["relationships"] = relationships
+
+            log_event(f"[SQLSchemaPlugin] Retrieved schema for {len(schema_data['tables'])} tables")
+            return ResultWithMetadata(schema_data, self.metadata)
+            
         except Exception as e:
             error_msg = f"Failed to get database schema: {str(e)}"
             print(f"[SQLSchemaPlugin] ERROR: {error_msg}")
@@ -310,28 +328,6 @@ class SQLSchemaPlugin(BasePlugin):
                 {"error": error_msg},
                 {"source": "sql_schema_plugin", "success": False}
             )
-            
-            # Get tables
-            tables_query = self._get_tables_query(include_system_tables, table_filter)
-            cursor.execute(tables_query)
-            tables = cursor.fetchall()
-            
-            # Get schema for each table
-            for table_row in tables:
-                table_name = table_row[0] if isinstance(table_row, (list, tuple)) else table_row
-                table_schema = self._get_table_schema_data(cursor, table_name)
-                schema_data["tables"][table_name] = table_schema
-            
-            # Get relationships
-            relationships = self._get_relationships_data(cursor)
-            schema_data["relationships"] = relationships
-            
-            log_event(f"[SQLSchemaPlugin] Retrieved schema for {len(schema_data['tables'])} tables")
-            return ResultWithMetadata(schema_data, self.metadata)
-            
-        except Exception as e:
-            log_event(f"[SQLSchemaPlugin] Error getting database schema: {e}")
-            raise
 
     @kernel_function(description="Get detailed schema for a specific table")
     @plugin_function_logger("SQLSchemaPlugin")
