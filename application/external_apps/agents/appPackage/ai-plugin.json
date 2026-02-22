@@ -1,0 +1,84 @@
+{
+    "$schema": "https://developer.microsoft.com/json-schemas/copilot/plugin/v2.4/schema.json",
+    "schema_version": "v2.4",
+    "name_for_human": "M365SCAgent",
+    "description_for_human": "M365SCAgent${{APP_NAME_SUFFIX}}",
+    "contact_email": "publisher-email@example.com",
+    "namespace": "m365scagent",
+    "functions": [
+        {
+            "name": "get_conversation_messages",
+            "description": "Return messages for a specific conversation from SimpleChat.\n\n    Args:\n        conversation_id: The UUID of the conversation to retrieve messages from.\n\n    Returns a list of messages with role, content, timestamp, and metadata.\n    "
+        },
+        {
+            "name": "list_conversations",
+            "description": "Return the authenticated user's conversations (chats) from SimpleChat.\n\n    Returns a list of all conversations including id, title, last_updated,\n    tags, classification, and pinned/hidden status.\n    "
+        },
+        {
+            "name": "list_group_documents",
+            "description": "Return documents from the user's active group workspace in SimpleChat.\n\n    Lists documents uploaded to the currently active group. The active group\n    is determined by the user's settings (activeGroupOid).\n\n    Args:\n        page: Page number (default 1).\n        page_size: Items per page (default 10).\n        search: Search by file name or title (case-insensitive substring match).\n        classification: Filter by document classification. Use \"none\" for unclassified.\n        author: Filter by author name (substring match).\n        keywords: Filter by keyword (substring match).\n\n    Returns a paginated list of group documents with metadata.\n    "
+        },
+        {
+            "name": "list_group_prompts",
+            "description": "Return prompts from the user's active group workspace in SimpleChat.\n\n    Lists prompts created in the currently active group. The active group\n    is determined by the user's settings (activeGroupOid).\n\n    Args:\n        page: Page number (default 1).\n        page_size: Items per page (default 10).\n        search: Search by prompt name (case-insensitive substring match).\n\n    Returns a paginated list of group prompts with name, content, and metadata.\n    "
+        },
+        {
+            "name": "list_group_workspaces",
+            "description": "Return the authenticated user's group workspaces from SimpleChat.\n\n    Lists groups the user is a member of (Owner, Admin, or Member).\n\n    Args:\n        page: Page number (default 1).\n        page_size: Items per page (default 10).\n        search: Search by group name or description (case-insensitive substring match).\n\n    Returns a paginated list of groups with id, name, description, userRole, status, and isActive flag.\n    "
+        },
+        {
+            "name": "list_personal_documents",
+            "description": "Return the authenticated user's personal workspace documents from SimpleChat.\n\n    Lists documents the user has uploaded or that have been shared with them.\n\n    Args:\n        page: Page number (default 1).\n        page_size: Items per page (default 10).\n        search: Search by file name or title (case-insensitive substring match).\n        classification: Filter by document classification. Use \"none\" for unclassified.\n        author: Filter by author name (substring match).\n        keywords: Filter by keyword (substring match).\n\n    Returns a paginated list of documents with metadata.\n    "
+        },
+        {
+            "name": "list_personal_prompts",
+            "description": "Return the authenticated user's personal prompts from SimpleChat.\n\n    Lists prompts the user has created in their personal workspace.\n\n    Args:\n        page: Page number (default 1).\n        page_size: Items per page (default 10).\n        search: Search by prompt name (case-insensitive substring match).\n\n    Returns a paginated list of prompts with name, content, and metadata.\n    "
+        },
+        {
+            "name": "list_public_documents",
+            "description": "Return documents from the user's active public workspace in SimpleChat.\n\n    Lists documents uploaded to the currently active public workspace. The active\n    workspace is determined by the user's settings (activePublicWorkspaceOid).\n\n    Args:\n        page: Page number (default 1).\n        page_size: Items per page (default 10).\n        search: Search by file name or title (case-insensitive substring match).\n\n    Returns a paginated list of public workspace documents with metadata.\n    "
+        },
+        {
+            "name": "list_public_prompts",
+            "description": "Return prompts from the user's active public workspace in SimpleChat.\n\n    Lists prompts created in the currently active public workspace. The active\n    workspace is determined by the user's settings (activePublicWorkspaceOid).\n\n    Args:\n        page: Page number (default 1).\n        page_size: Items per page (default 10).\n        search: Search by prompt name (case-insensitive substring match).\n\n    Returns a paginated list of public workspace prompts with name, content, and metadata.\n    "
+        },
+        {
+            "name": "list_public_workspaces",
+            "description": "Return the authenticated user's public workspaces from SimpleChat.\n    \n    Uses the bearer token from PRM authentication to create a SimpleChat session.\n    "
+        },
+        {
+            "name": "send_chat_message",
+            "description": "Send a chat message to a SimpleChat conversation and return the AI response.\n\n    Args:\n        conversation_id: The UUID of the conversation to send the message to.\n            If empty, a new conversation will be created automatically by SimpleChat.\n        message: The text message to send.\n\n    Returns the AI reply, conversation_id, title, model info, and citations.\n    "
+        },
+        {
+            "name": "show_user_profile",
+            "description": "Return the signed-in user's SimpleChat profile."
+        }
+    ],
+    "runtimes": [
+        {
+            "type": "RemoteMCPServer",
+            "spec": {
+                "url": "${{MCP_SERVER_URL}}"
+            },
+            "run_for_functions": [
+                "get_conversation_messages",
+                "list_conversations",
+                "list_group_documents",
+                "list_group_prompts",
+                "list_group_workspaces",
+                "list_personal_documents",
+                "list_personal_prompts",
+                "list_public_documents",
+                "list_public_prompts",
+                "list_public_workspaces",
+                "send_chat_message",
+                "show_user_profile"
+            ],
+            "auth": {
+                "type": "OAuthPluginVault",
+                "reference_id": "${{MCP_DA_AUTH_ID_SIMPLECHAT}}"
+            }
+        }
+    ]
+}
