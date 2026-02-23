@@ -618,6 +618,7 @@ export function populateDocumentSelectScope() {
       dropdownItem.type = "button";
       dropdownItem.classList.add("dropdown-item", "d-flex", "align-items-center");
       dropdownItem.setAttribute("data-document-id", doc.id);
+      dropdownItem.setAttribute("title", doc.label);
       dropdownItem.dataset.tags = JSON.stringify(doc.tags || []);
       dropdownItem.dataset.classification = doc.classification || '';
       dropdownItem.style.display = "flex";
