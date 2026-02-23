@@ -195,6 +195,13 @@ function updatePublicRoleDisplay(){
     if (display) display.style.display = 'block';
     if (uploadSection) uploadSection.style.display = ['Owner','Admin','DocumentManager'].includes(userRoleInActivePublic) ? 'block' : 'none';
     // uploadHr was removed from template, so skip
+    
+    // Control visibility of Settings tab (only for Owners and Admins)
+    const settingsTabNav = document.getElementById('public-settings-tab-nav');
+    const canManageSettings = ['Owner', 'Admin'].includes(userRoleInActivePublic);
+    if (settingsTabNav) {
+      settingsTabNav.style.display = canManageSettings ? 'block' : 'none';
+    }
   } else {
     if (display) display.style.display = 'none';
   }
@@ -246,10 +253,135 @@ function updateWorkspaceUIBasedOnStatus(status) {
   }
 }
 
+// ===================== PUBLIC RETENTION POLICY =====================
+
+async function loadPublicRetentionSettings() {
+  if (!activePublicId) return;
+  
+  const convSelect = document.getElementById('public-conversation-retention-days');
+  const docSelect = document.getElementById('public-document-retention-days');
+  
+  if (!convSelect || !docSelect) return; // Settings tab not available
+  
+  console.log('Loading public workspace retention settings for:', activePublicId);
+  
+  try {
+    // Fetch organization defaults for public workspace retention
+    const orgDefaultsResp = await fetch('/api/retention-policy/defaults/public');
+    const orgData = await orgDefaultsResp.json();
+    
+    if (orgData.success) {
+      const convDefaultOption = convSelect.querySelector('option[value="default"]');
+      const docDefaultOption = docSelect.querySelector('option[value="default"]');
+      
+      if (convDefaultOption) {
+        convDefaultOption.textContent = `Using organization default (${orgData.default_conversation_label})`;
+      }
+      if (docDefaultOption) {
+        docDefaultOption.textContent = `Using organization default (${orgData.default_document_label})`;
+      }
+      console.log('Loaded org defaults:', orgData);
+    }
+  } catch (error) {
+    console.error('Error loading public workspace retention defaults:', error);
+  }
+  
+  // Load current public workspace's retention policy settings
+  try {
+    const workspaceResp = await fetch(`/api/public_workspaces/${activePublicId}`);
+    
+    if (!workspaceResp.ok) {
+      throw new Error(`Failed to fetch workspace: ${workspaceResp.status}`);
+    }
+    
+    const workspaceData = await workspaceResp.json();
+    console.log('Loaded workspace data:', workspaceData);
+    
+    // API returns workspace object directly (not wrapped in success/workspace)
+    if (workspaceData && workspaceData.retention_policy) {
+      const retentionPolicy = workspaceData.retention_policy;
+      let convRetention = retentionPolicy.conversation_retention_days;
+      let docRetention = retentionPolicy.document_retention_days;
+      
+      console.log('Found retention policy:', retentionPolicy);
+      
+      // If undefined, use 'default'
+      if (convRetention === undefined || convRetention === null) convRetention = 'default';
+      if (docRetention === undefined || docRetention === null) docRetention = 'default';
+      
+      convSelect.value = convRetention;
+      docSelect.value = docRetention;
+      console.log('Set retention values to:', { conv: convRetention, doc: docRetention });
+    } else {
+      // Set to organization default if no retention policy set
+      console.log('No retention policy found, using defaults');
+      convSelect.value = 'default';
+      docSelect.value = 'default';
+    }
+  } catch (error) {
+    console.error('Error loading public workspace retention settings:', error);
+    // Set defaults on error
+    convSelect.value = 'default';
+    docSelect.value = 'default';
+  }
+}
+
+async function savePublicRetentionSettings() {
+  if (!activePublicId) {
+    alert('No active public workspace selected.');
+    return;
+  }
+  
+  const convSelect = document.getElementById('public-conversation-retention-days');
+  const docSelect = document.getElementById('public-document-retention-days');
+  const statusSpan = document.getElementById('public-retention-save-status');
+  
+  if (!convSelect || !docSelect) return;
+  
+  const retentionData = {
+    conversation_retention_days: convSelect.value,
+    document_retention_days: docSelect.value
+  };
+  
+  console.log('Saving public workspace retention settings:', retentionData);
+  
+  // Show saving status
+  if (statusSpan) {
+    statusSpan.innerHTML = '<span class="text-info"><i class="bi bi-hourglass-split"></i> Saving...</span>';
+  }
+  
+  try {
+    const response = await fetch(`/api/retention-policy/public/${activePublicId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(retentionData)
+    });
+    
+    const data = await response.json();
+    console.log('Save response:', data);
+    
+    if (response.ok && data.success) {
+      if (statusSpan) {
+        statusSpan.innerHTML = '<span class="text-success"><i class="bi bi-check-circle-fill"></i> Saved successfully!</span>';
+        setTimeout(() => { statusSpan.innerHTML = ''; }, 3000);
+      }
+      console.log('Public workspace retention settings saved successfully');
+    } else {
+      throw new Error(data.error || 'Failed to save retention settings');
+    }
+  } catch (error) {
+    console.error('Error saving public workspace retention settings:', error);
+    if (statusSpan) {
+      statusSpan.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-circle-fill"></i> Error: ${error.message}</span>`;
+    }
+    alert(`Error saving retention settings: ${error.message}`);
+  }
+}
+
 function loadActivePublicData(){
   const activeTab = document.querySelector('#publicWorkspaceTab .nav-link.active').dataset.bsTarget;
   if(activeTab==='#public-docs-tab') fetchPublicDocs(); else fetchPublicPrompts();
-  updatePublicRoleDisplay(); updatePublicPromptsRoleUI(); updateWorkspaceStatusAlert();
+  updatePublicRoleDisplay(); updatePublicPromptsRoleUI(); updateWorkspaceStatusAlert(); loadPublicRetentionSettings();
 }
 
 async function fetchPublicDocs(){
