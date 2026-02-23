@@ -107,6 +107,11 @@
     <li class="nav-item" role="presentation">
       <button class="nav-link" id="public-prompts-tab-btn" data-bs-toggle="tab" data-bs-target="#public-prompts-tab" type="button" role="tab">Public Prompts</button>
     </li>
+    {% if app_settings.enable_retention_policy_public %}
+    <li class="nav-item" role="presentation" id="public-settings-tab-nav" style="display:none">
+      <button class="nav-link" id="public-settings-tab-btn" data-bs-toggle="tab" data-bs-target="#public-settings-tab" type="button" role="tab">Settings</button>
+    </li>
+    {% endif %}
   </ul>
 
   <div class="tab-content" id="publicWorkspaceTabContent">
@@ -260,6 +265,73 @@
         <div class="d-flex align-items-center gap-3 mb-3 mt-3"><div><label class="visually-hidden">Items per page:</label><select id="public-prompts-page-size-select" class="form-select form-select-sm d-inline-block" style="width:auto;"><option value="10" selected>10</option><option value="20">20</option><option value="50">50</option></select><span class="ms-1 small text-muted">items per page</span></div><div id="public-prompts-pagination-container" class="d-flex gap-1 ms-auto"></div></div>
       </div>
     </div>
+
+    {% if app_settings.enable_retention_policy_public %}
+    <!-- Settings Tab -->
+    <div class="tab-pane fade" id="public-settings-tab" role="tabpanel">
+      <div class="card p-4 my-3">
+        <h5 class="mb-3"><i class="bi bi-hourglass-split me-2"></i>Retention Policy Settings</h5>
+        <p class="text-muted">Configure how long to keep conversations and documents in this public workspace. Items older than the specified period will be automatically deleted.</p>
+        
+        <div class="alert alert-info">
+          <i class="bi bi-info-circle me-2"></i>
+          <strong>Default:</strong> You can use the organization default or set a custom retention period. Choose "No automatic deletion" to keep items indefinitely.
+        </div>
+        
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label for="public-conversation-retention-days" class="form-label">Conversation Retention</label>
+            <select class="form-select" id="public-conversation-retention-days" name="conversation_retention_days">
+              <option value="default">Using organization default</option>
+              <option value="none">No automatic deletion</option>
+              <option value="7">7 days (1 week)</option>
+              <option value="14">14 days (2 weeks)</option>
+              <option value="30">30 days (1 month)</option>
+              <option value="60">60 days (2 months)</option>
+              <option value="90">90 days (3 months)</option>
+              <option value="180">180 days (6 months)</option>
+              <option value="365">365 days (1 year)</option>
+              <option value="730">730 days (2 years)</option>
+              <option value="1095">1095 days (3 years)</option>
+              <option value="3650">3650 days (10 years)</option>
+            </select>
+            <small class="form-text text-muted">Conversations older than this will be automatically deleted.</small>
+          </div>
+          
+          <div class="col-md-6">
+            <label for="public-document-retention-days" class="form-label">Document Retention</label>
+            <select class="form-select" id="public-document-retention-days" name="document_retention_days">
+              <option value="default">Using organization default</option>
+              <option value="none">No automatic deletion</option>
+              <option value="7">7 days (1 week)</option>
+              <option value="14">14 days (2 weeks)</option>
+              <option value="30">30 days (1 month)</option>
+              <option value="60">60 days (2 months)</option>
+              <option value="90">90 days (3 months)</option>
+              <option value="180">180 days (6 months)</option>
+              <option value="365">365 days (1 year)</option>
+              <option value="730">730 days (2 years)</option>
+              <option value="1095">1095 days (3 years)</option>
+              <option value="3650">3650 days (10 years)</option>
+            </select>
+            <small class="form-text text-muted">Documents older than this will be automatically deleted.</small>
+          </div>
+        </div>
+        
+        <div class="mt-3">
+          <button type="button" class="btn btn-primary" onclick="savePublicRetentionSettings()">
+            <i class="bi bi-save me-1"></i>Save Retention Settings
+          </button>
+          <span id="public-retention-save-status" class="ms-3"></span>
+        </div>
+        
+        <div class="alert alert-warning mt-3 mb-0">
+          <i class="bi bi-exclamation-triangle me-2"></i>
+          <strong>Important:</strong> Deleted conversations will be archived if archiving is enabled. All deletions are logged in activity history.
+        </div>
+      </div>
+    </div>
+    {% endif %}
   </div>
 </div>
 
