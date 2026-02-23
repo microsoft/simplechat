@@ -1,6 +1,6 @@
 # SimpleChat MCP Server (FastMCP)
 
-This MCP server provides **14 tools** for interacting with SimpleChat via the Model Context Protocol (Streamable HTTP transport).
+This MCP server provides **9 active tools** for interacting with SimpleChat via the Model Context Protocol (Streamable HTTP transport).
 
 ## Tools
 
@@ -28,19 +28,21 @@ This MCP server provides **14 tools** for interacting with SimpleChat via the Mo
 | **list_personal_documents** | Required | `GET /api/documents` | Returns paginated personal documents. Params: `page`, `page_size`, `search`, `classification`, `author`, `keywords`. |
 | **list_personal_prompts** | Required | `GET /api/prompts` | Returns paginated personal prompts. Params: `page`, `page_size`, `search`. |
 
-### Group Workspaces (3 tools)
+### Search (1 tool)
 | Tool | Auth | SimpleChat API | Description |
 |------|------|----------------|-------------|
-| **list_group_workspaces** | Required | `GET /api/groups` | Returns paginated group workspaces the user is a member of. Params: `page`, `page_size`, `search`. |
-| **list_group_documents** | Required | `GET /api/group_documents` | Returns documents from the user's active group. Params: `page`, `page_size`, `search`, `classification`, `author`, `keywords`. |
-| **list_group_prompts** | Required | `GET /api/group_prompts` | Returns prompts from the user's active group. Params: `page`, `page_size`, `search`. |
+| **search_documents** | Required | `POST /api/search` | Hybrid (text + vector) search across documents. Params: `query` (required), `doc_scope` (`all`/`personal`/`group`/`public`), `document_id`, `top_n`, `active_group_id`, `active_public_workspace_id`. |
 
-### Public Workspaces (3 tools)
-| Tool | Auth | SimpleChat API | Description |
-|------|------|----------------|-------------|
-| **list_public_workspaces** | Required | `GET /api/public_workspaces` | Returns paginated public workspaces. Params: `page`, `page_size`, `search`. |
-| **list_public_documents** | Required | `GET /api/public_documents` | Returns documents from the user's active public workspace. Params: `page`, `page_size`, `search`. |
-| **list_public_prompts** | Required | `GET /api/public_prompts` | Returns prompts from the user's active public workspace. Params: `page`, `page_size`, `search`. |
+### Disabled Tools (code intact, decorator commented out)
+The following tools are present in the codebase but currently disabled:
+- `list_public_workspaces` — `GET /api/public_workspaces`
+- `list_group_workspaces` — `GET /api/groups`
+- `list_group_documents` — `GET /api/group_documents`
+- `list_group_prompts` — `GET /api/group_prompts`
+- `list_public_documents` — `GET /api/public_documents`
+- `list_public_prompts` — `GET /api/public_prompts`
+
+To re-enable a tool, uncomment its `@_mcp.tool(...)` decorator in `server_minimal.py`.
 
 ## Prerequisites
 
@@ -99,7 +101,7 @@ This MCP server provides **14 tools** for interacting with SimpleChat via the Mo
 The MCP server serves PRM metadata at:
 `http://localhost:8000/.well-known/oauth-protected-resource`
 
-Update `prm_metadata.json` with your Entra tenant, client, and scopes.
+The `prm_metadata.json` file is a structural template. At runtime, `authorization_servers` and `scopes_supported` are dynamically set from `OAUTH_TOKEN_URL` and `OAUTH_CLIENT_ID` environment variables. The `resource` field is set from the request origin. All three values are required — missing env vars cause an immediate startup error.
 
 ## Deployment
 

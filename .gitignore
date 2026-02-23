@@ -46,3 +46,5 @@ flask_session
 **/sample_pie.csv
 **/sample_stacked_column.csv
 application/external_apps/mcp/.env.azure
+application/external_apps/mcp/logs/mcp_stderr.log
+application/external_apps/mcp/logs/mcp_stdout.log

@@ -600,7 +600,7 @@ def show_user_profile(ctx: Context[Any, Any, Any]) -> Dict[str, Any]:
     }
 
 
-@_mcp.tool(name="list_public_workspaces")
+# @_mcp.tool(name="list_public_workspaces")
 def list_public_workspaces(
     ctx: Context[Any, Any, Any],
     page: int = 1,
@@ -843,7 +843,7 @@ def list_personal_prompts(
     return result
 
 
-@_mcp.tool(name="list_group_workspaces")
+# @_mcp.tool(name="list_group_workspaces")
 def list_group_workspaces(
     ctx: Context[Any, Any, Any],
     page: int = 1,
@@ -922,7 +922,7 @@ def list_group_workspaces(
     return result
 
 
-@_mcp.tool(name="list_group_documents")
+# @_mcp.tool(name="list_group_documents")
 def list_group_documents(
     ctx: Context[Any, Any, Any],
     page: int = 1,
@@ -1014,7 +1014,7 @@ def list_group_documents(
     return result
 
 
-@_mcp.tool(name="list_group_prompts")
+# @_mcp.tool(name="list_group_prompts")
 def list_group_prompts(
     ctx: Context[Any, Any, Any],
     page: int = 1,
@@ -1094,7 +1094,7 @@ def list_group_prompts(
     return result
 
 
-@_mcp.tool(name="list_public_documents")
+# @_mcp.tool(name="list_public_documents")
 def list_public_documents(
     ctx: Context[Any, Any, Any],
     page: int = 1,
@@ -1174,7 +1174,7 @@ def list_public_documents(
     return result
 
 
-@_mcp.tool(name="list_public_prompts")
+# @_mcp.tool(name="list_public_prompts")
 def list_public_prompts(
     ctx: Context[Any, Any, Any],
     page: int = 1,
@@ -1468,6 +1468,108 @@ def send_chat_message(
     return result
 
 
+@_mcp.tool(name="search_documents")
+def search_documents(
+    ctx: Context[Any, Any, Any],
+    query: str = "",
+    doc_scope: str = "all",
+    document_id: Optional[str] = None,
+    top_n: int = 12,
+    active_group_id: Optional[str] = None,
+    active_public_workspace_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Search across documents in SimpleChat using hybrid (text + vector) search.
+
+    Args:
+        query: The search query text (required).
+        doc_scope: Scope of search — "all", "personal", "group", or "public". Default "all".
+        document_id: Restrict search to a specific document ID (optional).
+        top_n: Maximum number of results to return. Default 12.
+        active_group_id: Group ID to search within when doc_scope is "group" or "all" (optional).
+        active_public_workspace_id: Public workspace ID when doc_scope is "public" or "all" (optional).
+
+    Returns search results with chunk text, file names, scores, and metadata.
+    """
+    if not query or not query.strip():
+        return {
+            "success": False,
+            "error": "missing_parameter",
+            "message": "query is required.",
+        }
+
+    if doc_scope not in ("all", "personal", "group", "public"):
+        return {
+            "success": False,
+            "error": "invalid_parameter",
+            "message": f"Invalid doc_scope: {doc_scope}. Must be one of: all, personal, group, public.",
+        }
+
+    bearer_token = _get_bearer_token_from_context(ctx)
+    auth_source = "prm" if bearer_token else "device_code"
+    if not bearer_token:
+        with _STATE_LOCK:
+            access_token = _STATE.get("access_token")
+        if isinstance(access_token, str) and access_token.strip():
+            bearer_token = access_token.strip()
+        else:
+            return {
+                "success": False,
+                "error": "not_authenticated",
+                "message": "Not authenticated. Provide a PRM bearer token or complete device-code login.",
+            }
+
+    try:
+        session = _get_or_create_simplechat_session(bearer_token)
+    except Exception as e:
+        return {
+            "success": False,
+            "error": "session_creation_failed",
+            "message": str(e),
+            "hint": "Ensure your bearer token is valid and SimpleChat is accessible.",
+        }
+
+    simplechat_base_url = _env("SIMPLECHAT_BASE_URL")
+    simplechat_verify_ssl = _require_env_bool("SIMPLECHAT_VERIFY_SSL")
+
+    payload: Dict[str, Any] = {
+        "query": query.strip(),
+        "doc_scope": doc_scope,
+        "top_n": top_n,
+    }
+    if document_id:
+        payload["document_id"] = document_id
+    if active_group_id:
+        payload["active_group_id"] = active_group_id
+    if active_public_workspace_id:
+        payload["active_public_workspace_id"] = active_public_workspace_id
+
+    url = f"{simplechat_base_url}/api/search"
+    print(f"[MCP] Calling SimpleChat POST {url}")
+    response = session.post(
+        url,
+        json=payload,
+        verify=simplechat_verify_ssl,
+        timeout=60,
+    )
+
+    if response.status_code != 200:
+        try:
+            details = response.json()
+        except Exception:
+            details = {"raw": response.text}
+        return {
+            "error": "simplechat_request_failed",
+            "status_code": response.status_code,
+            "details": details,
+            "hint": "If this is 401/403, ensure your PRM bearer token has SimpleChat API access.",
+        }
+
+    result = response.json()
+    if isinstance(result, dict):
+        result.setdefault("auth_source", auth_source)
+    return result
+
+
 class _PrmAndAuthShim:
     """ASGI middleware that serves PRM metadata and enforces authentication."""
     
@@ -1491,9 +1593,26 @@ class _PrmAndAuthShim:
         with candidate_path.open("r", encoding="utf-8") as handle:
             data: Any = json.load(handle)
 
-        if isinstance(data, dict):
-            return cast(Dict[str, Any], data)
-        raise ValueError(f"PRM metadata at {candidate_path} must be a JSON object")
+        if not isinstance(data, dict):
+            raise ValueError(f"PRM metadata at {candidate_path} must be a JSON object")
+
+        # Dynamically set authorization_servers and scopes_supported from
+        # environment variables (.env locally, Azure App Settings in the cloud).
+        # These are required — missing values cause an immediate startup error.
+        token_url = _require_env_value("OAUTH_TOKEN_URL")
+        client_id = _require_env_value("OAUTH_CLIENT_ID")
+
+        # Extract tenant-specific authority from token URL
+        # e.g. https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token
+        #   -> https://login.microsoftonline.com/{tenant}/v2.0
+        authority = token_url.replace("/oauth2/v2.0/token", "/v2.0").replace("/oauth2/token", "/v2.0")
+        data["authorization_servers"] = [authority]
+        data["scopes_supported"] = [f"api://{client_id}/.default"]
+
+        # resource is set dynamically at serve time from the request origin
+        # (see __call__ method), so we don't set it here.
+
+        return cast(Dict[str, Any], data)
     
     @staticmethod
     def _get_request_origin(scope: Dict[str, Any]) -> str:

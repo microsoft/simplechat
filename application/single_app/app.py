@@ -51,6 +51,7 @@ from route_frontend_public_workspaces import *
 from route_frontend_safety import *
 from route_frontend_feedback import *
 from route_frontend_notifications import *
+from route_frontend_search import *
 
 from route_backend_chats import *
 from route_backend_conversations import *
@@ -143,7 +144,6 @@ from functions_global_agents import ensure_default_global_agent_exists
 
 from route_external_health import *
 from route_external_authentication import *
-from route_external_prm import *
 
 # =================== Session Configuration ===================
 def configure_sessions(settings):
@@ -582,6 +582,9 @@ register_route_frontend_feedback(app)
 # ------------------- Notifications Routes --------------
 register_route_frontend_notifications(app)
 
+# ------------------- Search Routes ----------------------
+register_route_frontend_search(app)
+
 # ------------------- API Chat Routes --------------------
 register_route_backend_chats(app)
 
@@ -644,9 +647,6 @@ register_route_external_health(app)
 
 # ------------------- External Authentication Routes ---
 register_route_external_authentication(app)
-
-# ------------------- PRM Metadata Routes --------------
-register_route_external_prm(app)
 
 if __name__ == '__main__':
     settings = get_settings(use_cosmos=True)

@@ -1,12 +1,12 @@
 {
-  "resource": "http://localhost:8000",
+  "resource": "DYNAMIC_AT_RUNTIME",
   "resource_name": "SimpleChat MCP Server",
   "resource_documentation": "https://microsoft.github.io/simplechat/",
   "authorization_servers": [
-    "https://login.microsoftonline.com/7d887458-fb0d-40bf-adb3-084d875f65db/v2.0"
+    "DYNAMIC_FROM_OAUTH_TOKEN_URL"
   ],
   "scopes_supported": [
-    "api://0b8c00b9-4dcd-4959-83be-7a0521ce54ce/.default"
+    "DYNAMIC_FROM_OAUTH_CLIENT_ID"
   ],
   "bearer_methods_supported": [
     "header"
