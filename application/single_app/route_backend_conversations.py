@@ -795,7 +795,10 @@ def register_route_backend_conversations(app):
                 "tags": conversation_item.get('tags', []),
                 "strict": conversation_item.get('strict', False),
                 "is_pinned": conversation_item.get('is_pinned', False),
-                "is_hidden": conversation_item.get('is_hidden', False)
+                "is_hidden": conversation_item.get('is_hidden', False),
+                "scope_locked": conversation_item.get('scope_locked'),
+                "locked_contexts": conversation_item.get('locked_contexts', []),
+                "chat_type": conversation_item.get('chat_type')
             }), 200
             
         except CosmosResourceNotFoundError:
@@ -803,7 +806,59 @@ def register_route_backend_conversations(app):
         except Exception as e:
             print(f"Error retrieving conversation metadata: {e}")
             return jsonify({'error': 'Failed to retrieve conversation metadata'}), 500
-    
+
+    @app.route('/api/conversations/<conversation_id>/scope_lock', methods=['PATCH'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def patch_conversation_scope_lock(conversation_id):
+        """
+        Toggle the scope lock on a conversation.
+        Unlock is reversible — locked_contexts are preserved for re-locking.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        data = request.get_json()
+        if data is None or 'scope_locked' not in data:
+            return jsonify({'error': 'Missing scope_locked field'}), 400
+
+        new_value = data['scope_locked']
+        if new_value is not True and new_value is not False:
+            return jsonify({'error': 'scope_locked must be true or false'}), 400
+
+        # Enforce scope lock if admin setting is enabled
+        if new_value is False:
+            settings = get_settings()
+            if settings.get('enforce_workspace_scope_lock', True):
+                return jsonify({'error': 'Scope unlock is disabled by administrator'}), 403
+
+        try:
+            conversation_item = cosmos_conversations_container.read_item(
+                item=conversation_id, partition_key=conversation_id
+            )
+            if conversation_item.get('user_id') != user_id:
+                return jsonify({'error': 'Forbidden'}), 403
+
+            conversation_item['scope_locked'] = new_value
+            # locked_contexts are PRESERVED regardless — needed for re-locking
+
+            from datetime import datetime
+            conversation_item['last_updated'] = datetime.utcnow().isoformat()
+            cosmos_conversations_container.upsert_item(conversation_item)
+
+            return jsonify({
+                "success": True,
+                "scope_locked": new_value,
+                "locked_contexts": conversation_item.get('locked_contexts', [])
+            }), 200
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Conversation not found'}), 404
+        except Exception as e:
+            print(f"Error updating scope lock: {e}")
+            return jsonify({'error': 'Failed to update scope lock'}), 500
+
     @app.route('/api/conversations/classifications', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required

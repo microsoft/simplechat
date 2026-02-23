@@ -193,6 +193,10 @@ def register_route_frontend_admin_settings(app):
         if 'enable_left_nav_default' not in settings:
             settings['enable_left_nav_default'] = True
         
+        # --- Add defaults for workspace scope lock ---
+        if 'enforce_workspace_scope_lock' not in settings:
+            settings['enforce_workspace_scope_lock'] = True
+
         # --- Add defaults for multimodal vision ---
         if 'enable_multimodal_vision' not in settings:
             settings['enable_multimodal_vision'] = False
@@ -731,6 +735,7 @@ def register_route_frontend_admin_settings(app):
                 'enable_group_creation': form_data.get('disable_group_creation') != 'on',
                 'enable_public_workspaces': form_data.get('enable_public_workspaces') == 'on',
                 'enable_file_sharing': form_data.get('enable_file_sharing') == 'on',
+                'enforce_workspace_scope_lock': form_data.get('enforce_workspace_scope_lock') == 'on',
                 'enable_file_processing_logs': enable_file_processing_logs,
                 'file_processing_logs_timer_enabled': file_processing_logs_timer_enabled,
                 'file_timer_value': file_timer_value,
