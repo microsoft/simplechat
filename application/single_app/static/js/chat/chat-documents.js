@@ -839,15 +839,9 @@ function initializeDocumentDropdown() {
   // Re-apply tag filter (DOM removal approach — no CSS issues)
   filterDocumentsBySelectedTags();
 
-  // Set a fixed narrower width for the dropdown
-  let maxWidth = 400;
-
-  // Calculate parent container width (we want dropdown to fit inside right pane)
+  // Size the dropdown to fill its parent container
   const parentContainer = docDropdownButton.closest('.flex-grow-1');
-  if (parentContainer) {
-    const parentWidth = parentContainer.offsetWidth;
-    maxWidth = Math.min(maxWidth, parentWidth * 0.9);
-  }
+  const maxWidth = parentContainer ? parentContainer.offsetWidth : 400;
 
   docDropdownMenu.style.maxWidth = `${maxWidth}px`;
   docDropdownMenu.style.width = `${maxWidth}px`;
