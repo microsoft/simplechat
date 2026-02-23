@@ -1,0 +1,4 @@
+mcp
+requests
+python-dotenv
+msal

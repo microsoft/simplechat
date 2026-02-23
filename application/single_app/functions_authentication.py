@@ -1,6 +1,7 @@
 # functions_authentication.py
 
 from config import *
+from flask import g
 from functions_settings import *
 from functions_debug import debug_print
 
@@ -463,17 +464,50 @@ def accesstoken_required(f):
         if not is_valid:
             return jsonify({"message": data}), 401
 
-        # Check for "ExternalApi" role in the token claims
-        roles = data.get("roles") if isinstance(data, dict) else None
-        if not roles or "ExternalApi" not in roles:
-            return jsonify({"message": "Forbidden: ExternalApi role required"}), 403
+        if not is_external_api_authorized(data):
+            return jsonify({"message": "Forbidden: ExternalApi, User, or Admin role/scope required"}), 403
 
         debug_print("User is valid")
 
+        if isinstance(data, dict):
+            g.user_claims = data
         # You can now access claims from `data`, e.g., data['sub'], data['name'], data['roles']
         #kwargs['user_claims'] = data # Pass claims to the decorated function # NOT NEEDED FOR NOW
         return f(*args, **kwargs)
     return decorated_function
+
+
+def is_external_api_authorized(claims):
+    if not isinstance(claims, dict):
+        return False
+
+    allowed_roles = {"ExternalApi", "User", "Admin"}
+    roles = claims.get("roles")
+    normalized_roles = []
+    if isinstance(roles, list):
+        normalized_roles = [role for role in roles if isinstance(role, str)]
+    elif isinstance(roles, str):
+        normalized_roles = [roles]
+
+    if any(role in allowed_roles for role in normalized_roles):
+        return True
+
+    scopes_raw = ""
+    if isinstance(claims.get("scp"), str):
+        scopes_raw = claims.get("scp", "")
+    elif isinstance(claims.get("scope"), str):
+        scopes_raw = claims.get("scope", "")
+
+    if not scopes_raw:
+        return False
+
+    scope_values = [scope for scope in scopes_raw.split() if scope]
+    for scope in scope_values:
+        scope_name = scope.split("/")[-1]
+        if scope_name in allowed_roles:
+            return True
+
+    return False
 
 def login_required(f):
     @wraps(f)

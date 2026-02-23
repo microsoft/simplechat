@@ -2,6 +2,7 @@
 
 from unittest import result
 from config import *
+from urllib.parse import urlparse
 from functions_authentication import _build_msal_app, _load_cache, _save_cache
 from functions_debug import debug_print
 from swagger_wrapper import swagger_route, get_auth_security
@@ -27,6 +28,26 @@ def build_front_door_urls(front_door_url):
     login_redirect_url = f"{base_url}/getAToken"
     
     return home_url, login_redirect_url
+
+def _parse_bool(value, default=False):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in ["1", "true", "yes", "y", "on"]:
+        return True
+    if text in ["0", "false", "no", "n", "off"]:
+        return False
+    return default
+
+def _is_local_redirect_uri(redirect_uri):
+    if not redirect_uri:
+        return False
+    parsed = urlparse(redirect_uri)
+    if parsed.scheme not in ["http", "https"]:
+        return False
+    return parsed.hostname in ["localhost", "127.0.0.1"]
 
 def register_route_frontend_authentication(app):
     @app.route('/login')
@@ -165,6 +186,8 @@ def register_route_frontend_authentication(app):
     @app.route('/getATokenApi') # This is your redirect URI path
     @swagger_route(security=get_auth_security())
     def authorized_api():
+        create_session = _parse_bool(request.args.get('create_session'), default=False)
+        request_redirect_uri = request.args.get('redirect_uri')
         # Check for errors passed back from Azure AD
         if request.args.get('error'):
             error = request.args.get('error')
@@ -177,22 +200,28 @@ def register_route_frontend_authentication(app):
             print("Authorization code not found in callback.")
             return "Authorization code not found", 400
 
-        # Build MSAL app WITH session cache (will be loaded by _build_msal_app via _load_cache)
-        msal_app = _build_msal_app(cache=_load_cache()) # Load existing cache
+        # Build MSAL app (use cache only if a session will be created)
+        if create_session:
+            msal_app = _build_msal_app(cache=_load_cache()) # Load existing cache
+        else:
+            msal_app = _build_msal_app()
 
         # Get settings for redirect URI (same logic as other routes)
-        from functions_settings import get_settings
-        settings = get_settings()
-        
-        if settings.get('enable_front_door', False):
-            front_door_url = settings.get('front_door_url')
-            if front_door_url:
-                home_url, login_redirect_url = build_front_door_urls(front_door_url)
-                redirect_uri = login_redirect_url
-            else:
-                redirect_uri = LOGIN_REDIRECT_URL or url_for('authorized', _external=True, _scheme='https')
+        if request_redirect_uri and _is_local_redirect_uri(request_redirect_uri):
+            redirect_uri = request_redirect_uri
         else:
-            redirect_uri = url_for('authorized', _external=True, _scheme='https')
+            from functions_settings import get_settings
+            settings = get_settings()
+            
+            if settings.get('enable_front_door', False):
+                front_door_url = settings.get('front_door_url')
+                if front_door_url:
+                    home_url, login_redirect_url = build_front_door_urls(front_door_url)
+                    redirect_uri = login_redirect_url
+                else:
+                    redirect_uri = LOGIN_REDIRECT_URL or url_for('authorized', _external=True, _scheme='https')
+            else:
+                redirect_uri = url_for('authorized', _external=True, _scheme='https')
 
         result = msal_app.acquire_token_by_authorization_code(
             code=code,
@@ -204,8 +233,20 @@ def register_route_frontend_authentication(app):
             error_description = result.get("error_description", result.get("error"))
             print(f"Token acquisition failure: {error_description}")
             return f"Login failure: {error_description}", 500
+        response_payload = dict(result)
 
-        return jsonify(result, 200)
+        if create_session:
+            session["user"] = result.get("id_token_claims")
+            _save_cache(msal_app.token_cache)
+            session_id = getattr(session, "sid", None) or session.get("session_id") or session.get("_id")
+            if not session_id:
+                session_id = str(uuid4())
+                session["session_id"] = session_id
+            if "session_id" not in response_payload:
+                response_payload["session_id"] = session_id
+
+        response_payload["session_created"] = create_session
+        return jsonify(response_payload), 200
 
     @app.route('/logout')
     @swagger_route(security=get_auth_security())

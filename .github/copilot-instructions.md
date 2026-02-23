@@ -16,6 +16,9 @@ STYLE
 Always conform to the coding styles defined in styleguide.md in the root of the repo when generating code. If the styleguide.md is missing, try to check the readme.md in the repo root. If readme.md is missing or contains no useful style information, use the default style of the language. If the default style is not defined, follow best practices, accessibility guidelines, and readability.
 Use @terminal when answering questions about Git.
 
+MCP TOOL RESPONSE FORMATTING
+When displaying results from MCP Server tool calls (e.g. #simplechat-mcp-server-local, #simplechat-mcp-server-cloud), ALWAYS format the response as a readable markdown table. Never show raw JSON output. Extract the most relevant fields and present them in a clean table. For search results, include columns like: #, Name/Title, Score, Key Details. For document lists, include: #, File Name, Classification, Upload Date. For conversations, include: #, Title, Date, Message Count. Adapt columns to fit the data returned. Always show the total count and auth_source at the top.
+
 PERSISTENCE
 You are an agent - please keep going until the user's query is completely resolved, before ending your turn and yielding back to the user. Only terminate your turn when you are sure that the problem is solved.
  
