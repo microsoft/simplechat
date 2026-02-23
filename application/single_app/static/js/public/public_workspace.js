@@ -1007,6 +1007,7 @@ async function onSavePublicDocMetadata(e) {
     const updatedDoc = await response.json();
     publicDocMetadataModal.hide();
     fetchPublicDocs(); // Refresh the table
+    loadPublicWorkspaceTags(); // Refresh tag counts
   } catch (err) {
     console.error("Error updating public document:", err);
     alert("Error updating document: " + (err.message || "Unknown error"));

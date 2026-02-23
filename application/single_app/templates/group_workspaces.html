@@ -3241,6 +3241,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       .then((updatedDoc) => {
         if (docMetadataModal) docMetadataModal.hide();
         fetchGroupDocuments(); // Refresh group documents list
+        loadGroupWorkspaceTags(); // Refresh tag counts
       })
       .catch((err) => {
         alert("Error updating document: " + (err.error || err.message));
@@ -4167,17 +4168,83 @@ app_settings.app_title }} {% endblock %} {% block head %}
       return 'bi-arrow-down-up text-muted';
     };
     let html = `<table class="table table-striped table-sm"><thead><tr>
+      <th style="width:50px;"></th>
       <th class="folder-sortable-header" data-sort-field="file_name" style="cursor:pointer;user-select:none;">File Name <i class="bi ${sortIconFn('file_name')} small"></i></th>
       <th class="folder-sortable-header" data-sort-field="title" style="cursor:pointer;user-select:none;">Title <i class="bi ${sortIconFn('title')} small"></i></th>
-      <th>Status</th>
+      <th style="width:240px;">Actions</th>
     </tr></thead><tbody>`;
+
+    const groupStatus = window.currentGroupStatus || 'active';
+    const canManage = ["Owner", "Admin", "DocumentManager"].includes(userRoleInActiveGroup);
+    const canModify = (groupStatus === 'active');
+    const canChat = (groupStatus !== 'inactive');
+
     docs.forEach(doc => {
-      const pct = parseFloat(doc.percentage_complete) || 0;
-      const statusLabel = pct >= 100 || (doc.status && doc.status.toLowerCase() === 'complete') ? '<span class="badge bg-success">Complete</span>' : `<span class="badge bg-warning text-dark">${Math.round(pct)}%</span>`;
+      const docId = doc.id;
+      const pctStr = String(doc.percentage_complete);
+      const pct = /^\d+(\.\d+)?$/.test(pctStr) ? parseFloat(pctStr) : 0;
+      const docStatus = doc.status || '';
+      const isComplete = pct >= 100
+          || docStatus.toLowerCase().includes('complete')
+          || docStatus.toLowerCase().includes('error');
+      const hasError = docStatus.toLowerCase().includes('error');
+
+      // First column: expand/collapse or status indicator
+      let firstColHtml = '';
+      if (isComplete && !hasError) {
+        firstColHtml = `<button class="btn btn-link p-0" onclick="onEditGroupDocument('${docId}')" title="View Metadata"><span class="bi bi-chevron-right"></span></button>`;
+      } else if (hasError) {
+        firstColHtml = `<span class="text-danger" title="Processing Error: ${escapeHtml(docStatus)}"><i class="bi bi-exclamation-triangle-fill"></i></span>`;
+      } else {
+        firstColHtml = `<span class="text-muted" title="Processing: ${escapeHtml(docStatus)} (${pct.toFixed(0)}%)"><i class="bi bi-hourglass-split"></i></span>`;
+      }
+
+      // Chat button
+      let chatButton = '';
+      if (isComplete && !hasError && canChat) {
+        chatButton = `<button class="btn btn-sm btn-primary me-1 action-btn-wide text-start" onclick="searchGroupDocumentInChat('${docId}')" title="Open Chat for Document" aria-label="Open Chat for Document: ${escapeHtml(doc.file_name || 'Untitled')}"><i class="bi bi-chat-dots-fill me-1" aria-hidden="true"></i>Chat</button>`;
+      }
+
+      // Actions dropdown
+      let actionsDropdown = '';
+      if (isComplete && !hasError) {
+        actionsDropdown = `<div class="dropdown action-dropdown d-inline-block"><button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-three-dots-vertical"></i></button><ul class="dropdown-menu dropdown-menu-end"><li><a class="dropdown-item select-btn" href="#" onclick="toggleGroupSelectionMode(); return false;"><i class="bi bi-check-square me-2"></i>Select</a></li>`;
+
+        if (canModify) {
+          actionsDropdown += `<li><hr class="dropdown-divider"></li><li><a class="dropdown-item" href="#" onclick="onEditGroupDocument('${docId}'); return false;"><i class="bi bi-pencil-fill me-2"></i>Edit Metadata</a></li>`;
+          if (window.enable_extract_meta_data === true || window.enable_extract_meta_data === "true") {
+            actionsDropdown += `<li><a class="dropdown-item" href="#" onclick="onExtractGroupMetadata('${docId}', event); return false;"><i class="bi bi-magic me-2"></i>Extract Metadata</a></li>`;
+          }
+        }
+
+        if (canChat) {
+          actionsDropdown += `<li><a class="dropdown-item" href="#" onclick="searchGroupDocumentInChat('${docId}'); return false;"><i class="bi bi-chat-dots-fill me-2"></i>Chat</a></li>`;
+        }
+
+        if (canManage) {
+          const canShare = (groupStatus === 'active' || groupStatus === 'upload_disabled');
+          if (canShare) {
+            actionsDropdown += `<li><hr class="dropdown-divider"></li><li><a class="dropdown-item" href="#" onclick="shareGroupDocument('${docId}', '${escapeHtml(doc.file_name || '')}'); return false;"><i class="bi bi-share-fill me-2"></i>Share<span class="badge bg-secondary ms-1">${doc.shared_group_ids ? doc.shared_group_ids.length : 0}</span></a></li>`;
+          }
+          const canDelete = (groupStatus === 'active' || groupStatus === 'upload_disabled');
+          if (canDelete) {
+            actionsDropdown += `<li><hr class="dropdown-divider"></li><li><a class="dropdown-item text-danger" href="#" onclick="deleteGroupDocument('${docId}', event); return false;"><i class="bi bi-trash-fill me-2"></i>Delete</a></li>`;
+          }
+        }
+
+        actionsDropdown += `</ul></div>`;
+      } else if (canManage) {
+        const canDelete = (groupStatus === 'active' || groupStatus === 'upload_disabled');
+        if (canDelete) {
+          actionsDropdown = `<div class="dropdown action-dropdown d-inline-block"><button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-three-dots-vertical"></i></button><ul class="dropdown-menu dropdown-menu-end"><li><a class="dropdown-item text-danger" href="#" onclick="deleteGroupDocument('${docId}', event); return false;"><i class="bi bi-trash-fill me-2"></i>Delete</a></li></ul></div>`;
+        }
+      }
+
       html += `<tr>
-        <td title="${escapeHtml(doc.file_name)}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(doc.file_name)}</td>
-        <td title="${escapeHtml(doc.title || '')}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(doc.title || '')}</td>
-        <td>${statusLabel}</td>
+        <td class="align-middle">${firstColHtml}</td>
+        <td class="align-middle" title="${escapeHtml(doc.file_name || '')}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(doc.file_name || '')}</td>
+        <td class="align-middle" title="${escapeHtml(doc.title || '')}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(doc.title || 'N/A')}</td>
+        <td class="align-middle">${chatButton}${actionsDropdown}</td>
       </tr>`;
     });
     html += '</tbody></table>';
