@@ -14,6 +14,15 @@
     *   **Files Modified**: `config.py`, `functions_settings.py`, `route_frontend_admin_settings.py`, `admin_settings.html`, `chats.html`, `chat-documents.js`, `route_backend_conversations.py`.
     *   (Ref: `ENFORCE_WORKSPACE_SCOPE_LOCK.md`)
 
+*   **Blob Metadata Tag Propagation**
+    *   Document tags now propagate to Azure Blob Storage metadata when enhanced citations is enabled.
+    *   **Automatic Sync**: When tags are added, removed, or updated on a document, the corresponding blob's metadata is updated with a `document_tags` field containing a comma-separated list of tags.
+    *   **Conditional**: Only active when `enable_enhanced_citations` is enabled in admin settings; no blob metadata changes occur otherwise.
+    *   **Cross-Workspace**: Works for personal, group, and public workspace documents.
+    *   **Non-Blocking**: Blob metadata update failures are logged but do not prevent the primary tag propagation to AI Search chunks.
+    *   **Files Modified**: `functions_documents.py`.
+    *   (Ref: `BLOB_METADATA_TAG_PROPAGATION.md`)
+
 *   **Document Tag System**
     *   Comprehensive tag management system for organizing documents across personal, group, and public workspaces.
     *   **Tag Definitions**: Tags with custom colors from a 10-color default palette (blue, green, amber, red, purple, pink, cyan, lime, orange, indigo) or user-specified hex codes. Colors assigned deterministically via character-sum hash.

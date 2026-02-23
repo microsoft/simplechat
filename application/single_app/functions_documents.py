@@ -6514,6 +6514,78 @@ def get_or_create_tag_definition(user_id, tag_name, workspace_type='personal', c
         return workspace_tags[tag_name]
 
 
+def propagate_tags_to_blob_metadata(document_id, tags, user_id, group_id=None, public_workspace_id=None):
+    """
+    Update blob metadata with document tags when enhanced citations is enabled.
+    Tags are stored as a comma-separated string in blob metadata.
+
+    Args:
+        document_id: Document ID
+        tags: Array of normalized tag names
+        user_id: User ID
+        group_id: Optional group ID
+        public_workspace_id: Optional public workspace ID
+    """
+    try:
+        settings = get_settings()
+        if not settings.get('enable_enhanced_citations', False):
+            return
+
+        is_group = group_id is not None
+        is_public_workspace = public_workspace_id is not None
+
+        # Read document from Cosmos DB to get file_name
+        if is_public_workspace:
+            cosmos_container = cosmos_public_documents_container
+        elif is_group:
+            cosmos_container = cosmos_group_documents_container
+        else:
+            cosmos_container = cosmos_user_documents_container
+
+        doc_item = cosmos_container.read_item(document_id, partition_key=document_id)
+        file_name = doc_item.get('file_name')
+        if not file_name:
+            print(f"Warning: No file_name found for document {document_id}, skipping blob metadata update")
+            return
+
+        # Determine container and blob path
+        if is_public_workspace:
+            storage_account_container_name = storage_account_public_documents_container_name
+            blob_path = f"{public_workspace_id}/{file_name}"
+        elif is_group:
+            storage_account_container_name = storage_account_group_documents_container_name
+            blob_path = f"{group_id}/{file_name}"
+        else:
+            storage_account_container_name = storage_account_user_documents_container_name
+            blob_path = f"{user_id}/{file_name}"
+
+        blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+        if not blob_service_client:
+            print(f"Warning: Blob service client not available, skipping blob metadata update")
+            return
+
+        blob_client = blob_service_client.get_blob_client(
+            container=storage_account_container_name,
+            blob=blob_path
+        )
+
+        if not blob_client.exists():
+            print(f"Warning: Blob not found at {blob_path}, skipping metadata update")
+            return
+
+        # Get existing metadata and update with tags
+        properties = blob_client.get_blob_properties()
+        existing_metadata = dict(properties.metadata) if properties.metadata else {}
+        existing_metadata['document_tags'] = ','.join(tags) if tags else ''
+        blob_client.set_blob_metadata(metadata=existing_metadata)
+
+        print(f"Successfully updated blob metadata tags for document {document_id} at {blob_path}")
+
+    except Exception as e:
+        print(f"Warning: Failed to update blob metadata tags for document {document_id}: {e}")
+        # Non-fatal — tag propagation to chunks is the primary operation
+
+
 def propagate_tags_to_chunks(document_id, tags, user_id, group_id=None, public_workspace_id=None):
     """
     Update all chunks for a document with new tags.
@@ -6552,7 +6624,10 @@ def propagate_tags_to_chunks(document_id, tags, user_id, group_id=None, public_w
                 # Continue with other chunks
 
         print(f"Successfully propagated tags to {chunk_count} chunks for document {document_id}")
-        
+
+        # Also update blob metadata with tags if enhanced citations is enabled
+        propagate_tags_to_blob_metadata(document_id, tags, user_id, group_id, public_workspace_id)
+
     except Exception as e:
         print(f"Error propagating tags to chunks for document {document_id}: {e}")
         raise
