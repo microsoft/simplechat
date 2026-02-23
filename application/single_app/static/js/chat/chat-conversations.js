@@ -10,6 +10,7 @@ const newConversationBtn = document.getElementById("new-conversation-btn");
 const deleteSelectedBtn = document.getElementById("delete-selected-btn");
 const pinSelectedBtn = document.getElementById("pin-selected-btn");
 const hideSelectedBtn = document.getElementById("hide-selected-btn");
+const exportSelectedBtn = document.getElementById("export-selected-btn");
 const conversationsList = document.getElementById("conversations-list");
 const currentConversationTitleEl = document.getElementById("current-conversation-title");
 const currentConversationClassificationsEl = document.getElementById("current-conversation-classifications");
@@ -95,6 +96,9 @@ function enterSelectionMode() {
   if (hideSelectedBtn) {
     hideSelectedBtn.style.display = "block";
   }
+  if (exportSelectedBtn) {
+    exportSelectedBtn.style.display = "block";
+  }
   
   // Only reload conversations if we're transitioning from inactive to active
   // This shows hidden conversations in selection mode
@@ -127,6 +131,9 @@ function exitSelectionMode() {
   }
   if (hideSelectedBtn) {
     hideSelectedBtn.style.display = "none";
+  }
+  if (exportSelectedBtn) {
+    exportSelectedBtn.style.display = "none";
   }
   
   // Clear any selections
@@ -521,6 +528,16 @@ export function createConversationItem(convo) {
   dropdownMenu.appendChild(pinLi);
   dropdownMenu.appendChild(hideLi);
   dropdownMenu.appendChild(selectLi);
+
+  // Add Export option
+  const exportLi = document.createElement("li");
+  const exportA = document.createElement("a");
+  exportA.classList.add("dropdown-item", "export-btn");
+  exportA.href = "#";
+  exportA.innerHTML = '<i class="bi bi-download me-2"></i>Export';
+  exportLi.appendChild(exportA);
+  dropdownMenu.appendChild(exportLi);
+
   dropdownMenu.appendChild(editLi);
   dropdownMenu.appendChild(deleteLi);
   rightDiv.appendChild(dropdownBtn);
@@ -568,6 +585,16 @@ export function createConversationItem(convo) {
     event.stopPropagation();
     closeDropdownMenu(dropdownBtn);
     enterSelectionMode();
+  });
+
+  // Add event listener for the Export button
+  exportA.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    closeDropdownMenu(dropdownBtn);
+    if (window.chatExport && window.chatExport.openExportWizard) {
+      window.chatExport.openExportWizard([convo.id], true);
+    }
   });
 
   // Add event listener for the Pin button
@@ -1409,6 +1436,17 @@ if (pinSelectedBtn) {
 
 if (hideSelectedBtn) {
   hideSelectedBtn.addEventListener("click", bulkHideConversations);
+}
+
+if (exportSelectedBtn) {
+  exportSelectedBtn.addEventListener("click", () => {
+    if (window.chatExport && window.chatExport.openExportWizard) {
+      const selectedIds = Array.from(selectedConversations);
+      if (selectedIds.length > 0) {
+        window.chatExport.openExportWizard(selectedIds, false);
+      }
+    }
+  });
 }
 
 // Helper function to set show hidden conversations state and return a promise
