@@ -1662,6 +1662,17 @@ document.addEventListener('DOMContentLoaded', function() {
           toggleBtn.className = 'btn btn-warning';
           toggleBtn.innerHTML = '<i class="bi bi-unlock me-1"></i>Unlock Scope';
         }
+
+        // Check if admin enforces scope lock — hide unlock button
+        if (window.appSettings && window.appSettings.enforce_workspace_scope_lock) {
+          if (toggleBtn) toggleBtn.classList.add('d-none');
+          if (alertEl) {
+            alertEl.className = 'alert alert-info mb-0';
+            alertEl.innerHTML = '<i class="bi bi-info-circle me-1"></i>Workspace scope lock is enforced by your administrator. The scope cannot be unlocked.';
+          }
+        } else {
+          if (toggleBtn) toggleBtn.classList.remove('d-none');
+        }
       } else {
         // Currently unlocked — show lock mode
         if (titleEl) titleEl.innerHTML = '<i class="bi bi-lock me-2"></i>Lock Workspace Scope';
@@ -1673,6 +1684,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (toggleBtn) {
           toggleBtn.className = 'btn btn-success';
           toggleBtn.innerHTML = '<i class="bi bi-lock me-1"></i>Lock Scope';
+          toggleBtn.classList.remove('d-none');
         }
       }
     });

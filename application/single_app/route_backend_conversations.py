@@ -828,6 +828,12 @@ def register_route_backend_conversations(app):
         if new_value is not True and new_value is not False:
             return jsonify({'error': 'scope_locked must be true or false'}), 400
 
+        # Enforce scope lock if admin setting is enabled
+        if new_value is False:
+            settings = get_settings()
+            if settings.get('enforce_workspace_scope_lock', True):
+                return jsonify({'error': 'Scope unlock is disabled by administrator'}), 403
+
         try:
             conversation_item = cosmos_conversations_container.read_item(
                 item=conversation_id, partition_key=conversation_id

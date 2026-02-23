@@ -5,6 +5,15 @@
 
 #### New Features
 
+*   **Enforce Workspace Scope Lock**
+    *   New admin setting to control whether users can unlock workspace scope in chat conversations.
+    *   **Enabled by Default**: When enabled, workspace scope automatically locks after the first AI search and users cannot unlock it, preventing accidental cross-contamination between data sources.
+    *   **Informational Modal**: Users can still click the lock icon to view which workspaces are locked, but the "Unlock Scope" button is hidden and replaced with an informational message.
+    *   **Backend Enforcement**: Server-side validation rejects unlock API requests when the setting is enabled, providing defense-in-depth security.
+    *   **Admin Toggle**: Located in Admin Settings > Workspace tab in the new "Workspace Scope Lock" section.
+    *   **Files Modified**: `config.py`, `functions_settings.py`, `route_frontend_admin_settings.py`, `admin_settings.html`, `chats.html`, `chat-documents.js`, `route_backend_conversations.py`.
+    *   (Ref: `ENFORCE_WORKSPACE_SCOPE_LOCK.md`)
+
 *   **Document Tag System**
     *   Comprehensive tag management system for organizing documents across personal, group, and public workspaces.
     *   **Tag Definitions**: Tags with custom colors from a 10-color default palette (blue, green, amber, red, purple, pink, cyan, lime, orange, indigo) or user-specified hex codes. Colors assigned deterministically via character-sum hash.

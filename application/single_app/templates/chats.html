@@ -1003,7 +1003,8 @@
     window.appSettings = {
         enable_text_to_speech: {{ 'true' if app_settings.enable_text_to_speech else 'false' }},
         enable_speech_to_text_input: {{ 'true' if app_settings.enable_speech_to_text_input else 'false' }},
-        enable_web_search_user_notice: {{ 'true' if settings.enable_web_search_user_notice else 'false' }}
+        enable_web_search_user_notice: {{ 'true' if settings.enable_web_search_user_notice else 'false' }},
+        enforce_workspace_scope_lock: {{ 'true' if settings.enforce_workspace_scope_lock else 'false' }}
     };
 
     // Layout related globals (can stay here or move entirely into chat-layout.js if preferred)
