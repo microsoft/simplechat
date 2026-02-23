@@ -337,10 +337,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
     >
       <div class="card p-3 my-3">
         <div id="group-legacy-update-prompt-placeholder"></div>
-        <h5>Group Documents</h5>
-        <p class="text-muted small">
-          Documents uploaded here are visible to all group members.
-        </p>
         <!-- Document Upload (visibility controlled by JS based on role) -->
         <div class="mb-3" id="upload-section" style="display: none">
           <div id="upload-area" class="upload-area text-center p-4 border border-2 border-dashed rounded bg-light" style="cursor:pointer; transition: border-color 0.2s;">
@@ -638,8 +634,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
       aria-labelledby="prompts-tab-btn"
     >
       <div class="card p-3 my-3">
-        <h5>Group Prompts</h5>
-
         <!-- Shown when user can't manage prompts -->
         <div
           id="group-prompts-role-warning"
@@ -655,7 +649,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           id="create-group-prompt-section"
           style="display: none"
         >
-          <button id="create-group-prompt-btn" class="btn btn-success">
+          <button id="create-group-prompt-btn" class="btn btn-success btn-sm">
             New Prompt
           </button>
         </div>
@@ -758,7 +752,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
     >
       <div class="card p-3 my-3">
         <div class="d-flex justify-content-between align-items-center mb-2">
-          <h5 class="mb-0 d-flex align-items-center gap-2">Group Agents</h5>
           <div class="d-flex align-items-center gap-2">
             <button type="button" class="btn btn-outline-info btn-sm agent-examples-trigger" data-bs-toggle="modal" data-bs-target="#agentExamplesModal" data-trigger-button="#create-group-agent-btn">
               <i class="bi bi-magic"></i>
@@ -818,7 +811,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
       <template id="group-plugins-table-template">
         <div class="card p-3 my-3">
           <div class="d-flex justify-content-between align-items-center mb-2">
-            <h5 class="mb-0 d-flex align-items-center gap-2">Group Actions</h5>
             <button class="btn btn-success btn-sm" id="create-group-plugin-btn">New Action</button>
           </div>
           <div class="mb-3">
