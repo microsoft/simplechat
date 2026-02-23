@@ -1,4 +1,6 @@
 // static/js/public_workspace.js
+import { showToast } from "./chat/chat-toast.js";
+
 'use strict';
 
 // --- Global State ---
@@ -200,7 +202,7 @@ function updatePublicRoleDisplay(){
     const settingsTabNav = document.getElementById('public-settings-tab-nav');
     const canManageSettings = ['Owner', 'Admin'].includes(userRoleInActivePublic);
     if (settingsTabNav) {
-      settingsTabNav.style.display = canManageSettings ? 'block' : 'none';
+      settingsTabNav.classList.toggle('d-none', !canManageSettings);
     }
   } else {
     if (display) display.style.display = 'none';
@@ -328,7 +330,7 @@ async function loadPublicRetentionSettings() {
 
 async function savePublicRetentionSettings() {
   if (!activePublicId) {
-    alert('No active public workspace selected.');
+    showToast('No active public workspace selected.', 'warning');
     return;
   }
   
@@ -374,7 +376,7 @@ async function savePublicRetentionSettings() {
     if (statusSpan) {
       statusSpan.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-circle-fill"></i> Error: ${error.message}</span>`;
     }
-    alert(`Error saving retention settings: ${error.message}`);
+    showToast(`Error saving retention settings: ${error.message}`, 'danger');
   }
 }
 

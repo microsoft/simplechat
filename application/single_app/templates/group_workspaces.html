@@ -279,7 +279,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     </li>
     {% endif %}
     {% if app_settings.enable_retention_policy_group %}
-    <li class="nav-item" role="presentation" id="group-settings-tab-nav" style="display:none">
+    <li class="nav-item d-none" role="presentation" id="group-settings-tab-nav">
       <button
         class="nav-link"
         id="group-settings-tab-btn"
@@ -2293,7 +2293,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const settingsTabNav = document.getElementById('group-settings-tab-nav');
     const canManageSettings = ['Owner', 'Admin'].includes(userRoleInActiveGroup);
     if (settingsTabNav) {
-      settingsTabNav.style.display = canManageSettings ? 'block' : 'none';
+      settingsTabNav.classList.toggle('d-none', !canManageSettings);
     }
 
     notifyGroupWorkspaceContext();
@@ -2374,7 +2374,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
   async function saveGroupRetentionSettings() {
     if (!activeGroupId) {
-      alert('No active group selected.');
+      showToast('No active group selected.', 'warning');
       return;
     }
     
@@ -2420,7 +2420,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       if (statusSpan) {
         statusSpan.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-circle-fill"></i> Error: ${error.message}</span>`;
       }
-      alert(`Error saving retention settings: ${error.message}`);
+      showToast(`Error saving retention settings: ${error.message}`, 'danger');
     }
   }
 
