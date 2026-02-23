@@ -380,7 +380,7 @@ def register_route_backend_public_documents(app):
             
             return jsonify({'message':'Metadata updated'}), 200
         except Exception as e:
-            return jsonify({'error':str(e)}), 500
+            return jsonify({'error': str(e)}), 500
 
     @app.route('/api/public_documents/<doc_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
