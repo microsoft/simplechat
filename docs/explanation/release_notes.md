@@ -94,6 +94,28 @@
     *   **Files Modified**: `chat-citations.js`, `chat-enhanced-citations.js`.
     *   (Ref: Citation rendering, metadata citations, enhanced citation modal, `CITATION_IMPROVEMENTS.md`)
 
+### **(v0.237.049)**
+
+#### Bug Fixes
+
+*   **Plugin Schema Validation `$ref` Resolution Fix**
+    *   Fixed HTTP 500 error when creating or saving user plugins (actions). The JSON schema validator could not resolve `$ref: '#/definitions/AuthType'` because the `Plugin` sub-schema was extracted without a `RefResolver`, losing access to the parent schema's `definitions` block.
+    *   **Root Cause**: `validate_plugin()` created a `Draft7Validator` using only `schema['definitions']['Plugin']`, which did not include the `definitions` section containing `AuthType`. The `validate_agent()` function already handled this correctly with `RefResolver.from_schema(schema)`.
+    *   **Solution**: Added a `RefResolver` created from the full schema so that `$ref` pointers resolve correctly during validation.
+    *   (Ref: `json_schema_validation.py`, `plugin.schema.json`, `AuthType` definition, `RefResolver`)
+
+*   **Personal Agent Missing `user_id` Fix**
+    *   Fixed issue where personal agents were saved to Cosmos DB without a `user_id` field, making them invisible to the user who created them.
+    *   **Root Cause**: `save_personal_agent()` built a `cleaned_agent` dict with the correct `user_id`, `id`, and metadata, but the second half of the function switched to operating on the raw `agent_data` parameter. The final `upsert_item(body=agent_data)` saved the object that never had `user_id` assigned.
+    *   **Solution**: Changed all `agent_data` references after sanitization to use `cleaned_agent` consistently, ensuring `user_id` and all other fields are included in the persisted document.
+    *   (Ref: `functions_personal_agents.py`, `save_personal_agent`, Cosmos DB personal agents container)
+
+*   **Global Agent Creation Blocked by `global_selected_agent` Check Fix**
+    *   Fixed HTTP 400 error "There must be at least one agent matching the global_selected_agent" when adding or editing global agents.
+    *   **Root Cause**: The add and edit agent routes performed a post-save check verifying that a global agent matched the `global_selected_agent` setting. This check was incorrect for add operations (adding an agent can never remove the selected one) and had a side-effect bug where the agent was already persisted before the 400 error was returned.
+    *   **Solution**: Removed the post-save `global_selected_agent` enforcement from the add and edit routes. The delete route already correctly prevents deletion of the selected agent.
+    *   (Ref: `route_backend_agents.py`, global agent add/edit routes, `global_selected_agent` setting)
+
 ### **(v0.237.008)**
 
 #### New Features
