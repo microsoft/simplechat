@@ -544,6 +544,7 @@ export function setSidebarSelectionMode(isActive) {
     if (isActive) {
       conversationsToggle.style.color = '#856404';
       conversationsToggle.style.fontWeight = '600';
+      conversationsToggle.classList.add('selection-active');
       conversationsActions.style.display = 'flex !important';
       conversationsActions.style.setProperty('display', 'flex', 'important');
       // Hide the search and eye buttons in selection mode
@@ -585,6 +586,7 @@ export function setSidebarSelectionMode(isActive) {
     } else {
       conversationsToggle.style.color = '';
       conversationsToggle.style.fontWeight = '';
+      conversationsToggle.classList.remove('selection-active');
       conversationsActions.style.display = 'none !important';
       conversationsActions.style.setProperty('display', 'none', 'important');
       if (sidebarDeleteBtn) {
