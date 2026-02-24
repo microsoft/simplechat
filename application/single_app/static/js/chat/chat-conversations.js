@@ -509,6 +509,14 @@ export function createConversationItem(convo) {
   selectA.href = "#";
   selectA.innerHTML = '<i class="bi bi-check-square me-2"></i>Select';
   selectLi.appendChild(selectA);
+  
+  // Add Export option
+  const exportLi = document.createElement("li");
+  const exportA = document.createElement("a");
+  exportA.classList.add("dropdown-item", "export-btn");
+  exportA.href = "#";
+  exportA.innerHTML = '<i class="bi bi-download me-2"></i>Export';
+  exportLi.appendChild(exportA);
 
   const editLi = document.createElement("li");
   const editA = document.createElement("a");
@@ -528,14 +536,6 @@ export function createConversationItem(convo) {
   dropdownMenu.appendChild(pinLi);
   dropdownMenu.appendChild(hideLi);
   dropdownMenu.appendChild(selectLi);
-
-  // Add Export option
-  const exportLi = document.createElement("li");
-  const exportA = document.createElement("a");
-  exportA.classList.add("dropdown-item", "export-btn");
-  exportA.href = "#";
-  exportA.innerHTML = '<i class="bi bi-download me-2"></i>Export';
-  exportLi.appendChild(exportA);
   dropdownMenu.appendChild(exportLi);
 
   dropdownMenu.appendChild(editLi);
