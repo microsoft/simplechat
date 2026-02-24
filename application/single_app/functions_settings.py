@@ -133,6 +133,7 @@ def get_settings(use_cosmos=False):
         'enable_public_workspaces': False,
         'require_member_of_create_public_workspace': False,
         'enable_file_sharing': False,
+        'enforce_workspace_scope_lock': True,
 
         # Multimedia
         'enable_video_file_support': False,

@@ -4,6 +4,7 @@ import { hideLoadingIndicatorInChatbox, showLoadingIndicatorInChatbox } from './
 import { loadUserSettings, saveUserSetting } from './chat-layout.js';
 import { showToast } from './chat-toast.js';
 import { updateSidebarConversationTitle } from './chat-sidebar-conversations.js';
+import { applyScopeLock } from './chat-documents.js';
 
 let streamingEnabled = false;
 let currentEventSource = null;
@@ -357,6 +358,18 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData) {
         
         // Update sidebar conversation title in real-time
         updateSidebarConversationTitle(finalData.conversation_id, finalData.conversation_title);
+    }
+
+    // Apply scope lock if document search was used
+    if (finalData.augmented && finalData.conversation_id) {
+        fetch(`/api/conversations/${finalData.conversation_id}/metadata`, { credentials: 'same-origin' })
+            .then(r => r.json())
+            .then(metadata => {
+                if (metadata.scope_locked === true && metadata.locked_contexts) {
+                    applyScopeLock(metadata.locked_contexts, metadata.scope_locked);
+                }
+            })
+            .catch(err => console.warn('Failed to fetch scope lock metadata after streaming:', err));
     }
 }
 

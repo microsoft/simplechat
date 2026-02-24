@@ -464,7 +464,30 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
             }
             current_tags[semantic_key] = semantic_tag    # Update the tags array
     conversation_item['tags'] = list(current_tags.values())
-    
+
+    # --- Scope Lock Logic ---
+    current_scope_locked = conversation_item.get('scope_locked')
+
+    if document_map:
+        # Always update locked_contexts when search results exist (even if unlocked)
+        # This ensures re-locking uses the most up-to-date workspace list
+        locked_set = set()
+        for ctx in conversation_item.get('context', []):
+            if ctx.get('scope') != 'model_knowledge' and ctx.get('type') in ('primary', 'secondary'):
+                locked_set.add((ctx['scope'], ctx.get('id')))
+
+        # Merge with existing locked_contexts
+        for ctx in conversation_item.get('locked_contexts', []):
+            locked_set.add((ctx.get('scope'), ctx.get('id')))
+
+        conversation_item['locked_contexts'] = [
+            {"scope": s, "id": i} for s, i in locked_set if s and i
+        ]
+
+        # Only auto-lock the FIRST time (from null state)
+        if current_scope_locked is None:
+            conversation_item['scope_locked'] = True
+
     return conversation_item
 
 

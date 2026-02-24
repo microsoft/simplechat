@@ -208,6 +208,24 @@
             border-top-left-radius: 0 !important;
             border-top-right-radius: 0 !important;
         }
+
+        /* Scope lock styles */
+        .scope-locked-item {
+            background-color: rgba(var(--bs-primary-rgb), 0.05) !important;
+            cursor: default !important;
+            pointer-events: none;
+        }
+        .scope-disabled-item {
+            opacity: 0.4;
+            cursor: not-allowed !important;
+            pointer-events: none;
+        }
+        .scope-lock-badge {
+            font-size: 0.65rem;
+        }
+        #scope-lock-indicator:hover {
+            color: var(--bs-primary) !important;
+        }
     </style>
 {% endblock %}
 
@@ -252,7 +270,17 @@
                             <i class="bi bi-info-circle"></i>
                         </button>
                     </div>
-                    <div id="current-conversation-classifications" class="mt-1">
+                    <div class="d-flex align-items-center mt-1 gap-2">
+                        <span id="header-scope-lock-btn"
+                              class="text-warning"
+                              style="display: none; cursor: pointer; font-size: 0.9rem;"
+                              title="Scope locked"
+                              data-bs-toggle="modal"
+                              data-bs-target="#scopeLockModal">
+                            <i class="bi bi-lock-fill"></i>
+                        </span>
+                        <div id="current-conversation-classifications">
+                        </div>
                     </div>
                 </div>
             </div>
@@ -407,15 +435,55 @@
                 <div id="search-documents-container" class="card p-2 mb-2" style="display: none; border-radius: 0.5rem;">
                     
                      <div class="d-flex flex-wrap align-items-end gap-2">
-                         <div class="flex-shrink-0" style="min-width: 120px; max-width: 200px;">
-                             <label for="doc-scope-select" class="form-label mb-1 small text-muted">Scope</label>
-                             <select class="form-select form-select-sm" id="doc-scope-select">
-                                 <option value="all" selected>All</option>
-                                 <option value="personal">Personal</option>
-                                 <option value="group">Group{% if active_group_name %}: {{ active_group_name }}{% endif %}</option>
-                                 {% if settings.enable_public_workspaces %}
-                                 <option value="public">Public</option>
-                                 {% endif %}
+                         <div class="flex-shrink-0" style="min-width: 120px; max-width: 250px;">
+                             <label class="form-label mb-1 small text-muted d-flex align-items-center gap-1">
+                                Scope
+                                <span id="scope-lock-indicator"
+                                      class="text-warning"
+                                      style="display: none; cursor: pointer; font-size: 0.85rem;"
+                                      title="Scope locked"
+                                      data-bs-toggle="modal"
+                                      data-bs-target="#scopeLockModal">
+                                    <i class="bi bi-lock-fill"></i>
+                                </span>
+                             </label>
+                             <div class="dropdown" id="scope-dropdown">
+                                <button class="form-select form-select-sm d-flex justify-content-between align-items-center"
+                                        type="button"
+                                        id="scope-dropdown-button"
+                                        data-bs-toggle="dropdown"
+                                        data-bs-auto-close="outside"
+                                        aria-expanded="false">
+                                    <span class="selected-scope-text text-truncate">All</span>
+                                </button>
+                                <div class="dropdown-menu p-2" id="scope-dropdown-menu" style="width: 280px; max-height: 400px; overflow-y: auto;">
+                                    <div id="scope-dropdown-items">
+                                        <!-- Populated by JS from window.userGroups and window.userVisiblePublicWorkspaces -->
+                                    </div>
+                                </div>
+                             </div>
+                             <!-- Hidden select kept for backwards compat -->
+                             <select class="d-none" id="doc-scope-select" multiple></select>
+                         </div>
+                         <div class="flex-shrink-0" style="min-width: 150px; max-width: 250px;">
+                             <label class="form-label mb-1 small text-muted">Tags</label>
+                             <div class="dropdown" id="tags-dropdown" style="display: none;">
+                                <button class="form-select form-select-sm d-flex justify-content-between align-items-center"
+                                        type="button"
+                                        id="tags-dropdown-button"
+                                        data-bs-toggle="dropdown"
+                                        data-bs-auto-close="outside"
+                                        aria-expanded="false">
+                                    <span class="selected-tags-text text-truncate">All Tags</span>
+                                </button>
+                                <div class="dropdown-menu p-2" id="tags-dropdown-menu" style="width: 250px; max-height: 300px; overflow-y: auto;">
+                                    <div class="dropdown-items-container" id="tags-dropdown-items">
+                                        <!-- Tags will be populated here -->
+                                    </div>
+                                </div>
+                             </div>
+                             <!-- Hidden select element for compatibility with getSelectedTags -->
+                             <select class="d-none" id="chat-tags-filter" multiple style="display: none;">
                              </select>
                          </div>
                              <div class="flex-grow-1" style="min-width: 250px;">
@@ -429,7 +497,7 @@
                                         aria-expanded="false">
                                     <span class="selected-document-text">All Documents</span>
                                 </button>
-                                <div class="dropdown-menu p-2" id="document-dropdown-menu" style="width: 400px;">
+                                <div class="dropdown-menu p-2" id="document-dropdown-menu" style="width: 100%;">
                                     <div class="document-search-container mb-2">
                                         <input type="text" class="form-control form-control-sm" placeholder="Search documents..." id="document-search-input">
                                     </div>
@@ -438,23 +506,10 @@
                                     </div>
                                 </div>
                                 <!-- Hidden select element for compatibility -->
-                                <select class="d-none" id="document-select"></select>
+                                <select class="d-none" id="document-select" multiple></select>
                              </div>
                          </div>
-                        {% if settings.enable_document_classification %}
-                        <div class="flex-grow-1 classification-container" style="max-width: 150px;">
-                             <label for="classification-control" class="form-label mb-1 small text-muted">Classification</label>
-                             <input type="text" id="classification-select" class="form-control form-control-sm" style="display: none;" readonly />
-                             <div class="dropdown" id="classification-multiselect-dropdown" style="display: none;">
-                                <button id="classification-dropdown-btn" class="btn btn-light btn-sm dropdown-toggle w-100 text-start" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
-                                    {_ Placeholder _}
-                                </button>
-                                <ul class="dropdown-menu w-100" id="classification-dropdown-menu" style="max-height: 200px; overflow-y: auto;">
-                                    
-                                </ul>
-                             </div>
-                         </div>
-                        {% endif %}
+
                      </div>
                 </div>
                 {% endif %}
@@ -930,6 +985,31 @@
 
 <div class="toast-container position-fixed top-0 end-0 p-3" id="toast-container"></div>
 
+<!-- Scope Lock/Unlock Modal (dual-mode: content set dynamically by JS) -->
+<div class="modal fade" id="scopeLockModal" tabindex="-1" aria-labelledby="scopeLockModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="scopeLockModalLabel">
+                    <!-- Title set dynamically by JS based on current state -->
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p id="scope-lock-modal-description"></p>
+                <div id="locked-workspaces-list" class="mb-3"></div>
+                <div id="scope-lock-modal-alert" class="alert mb-0"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn" id="confirm-scope-lock-toggle-btn">
+                    <!-- Button text/style set dynamically -->
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
@@ -939,6 +1019,8 @@
     window.activeGroupId = "{{ active_group_id }}";
     window.activeGroupName = "{{ active_group_name }}";
     window.activePublicWorkspaceId = "{{ active_public_workspace_id }}";
+    window.userGroups = {{ user_groups|tojson|safe }};
+    window.userVisiblePublicWorkspaces = {{ user_visible_public_workspaces|tojson|safe }};
     window.enableEnhancedCitations = "{{ enable_enhanced_citations }}";
     window.enable_document_classification = "{{ enable_document_classification }}";
     window.classification_categories = JSON.parse('{{ settings.document_classification_categories|tojson(indent=None)|safe }}' || '[]');
@@ -956,7 +1038,8 @@
     window.appSettings = {
         enable_text_to_speech: {{ 'true' if app_settings.enable_text_to_speech else 'false' }},
         enable_speech_to_text_input: {{ 'true' if app_settings.enable_speech_to_text_input else 'false' }},
-        enable_web_search_user_notice: {{ 'true' if settings.enable_web_search_user_notice else 'false' }}
+        enable_web_search_user_notice: {{ 'true' if settings.enable_web_search_user_notice else 'false' }},
+        enforce_workspace_scope_lock: {{ 'true' if settings.enforce_workspace_scope_lock else 'false' }}
     };
 
     // Layout related globals (can stay here or move entirely into chat-layout.js if preferred)
