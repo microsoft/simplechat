@@ -6,6 +6,16 @@
 
 #### New Features
 
+*   **Owner-Only Group Agent and Action Management**
+    *   New admin setting to restrict group agent and group action management (create, edit, delete) to only the group Owner role.
+    *   **Admin Toggle**: "Require Owner to Manage Group Agents and Actions" located in Admin Settings > My Groups section, under the existing group creation membership setting.
+    *   **Default Off**: When disabled, both Owner and Admin roles can manage group agents and actions (preserving existing behavior).
+    *   **When Enabled**: Only the group Owner can create, edit, and delete group agents and group actions. Group Admins and other roles are restricted to read-only access.
+    *   **Backend Enforcement**: Server-side validation returns 403 for non-Owner users attempting create, update, or delete operations on group agents and actions.
+    *   **Frontend Enforcement**: "New Agent" and "New Action" buttons are hidden, edit/delete controls are removed, and a permission warning is displayed for non-Owner users.
+    *   **Files Modified**: `functions_settings.py`, `admin_settings.html`, `route_frontend_admin_settings.py`, `route_backend_agents.py`, `route_backend_plugins.py`, `group_workspaces.html`, `group_agents.js`, `group_plugins.js`.
+    *   (Ref: `require_owner_for_group_agent_management` setting, `assert_group_role` permission check)
+
 *   **Enforce Workspace Scope Lock**
     *   New admin setting to control whether users can unlock workspace scope in chat conversations.
     *   **Enabled by Default**: When enabled, workspace scope automatically locks after the first AI search and users cannot unlock it, preventing accidental cross-contamination between data sources.

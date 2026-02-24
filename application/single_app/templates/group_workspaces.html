@@ -1364,7 +1364,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
     window.groupWorkspaceContext = {
       activeGroupId,
       activeGroupName,
-      userRole: userRoleInActiveGroup
+      userRole: userRoleInActiveGroup,
+      requireOwnerForAgentManagement: {{ settings.require_owner_for_group_agent_management | tojson }}
     };
     window.dispatchEvent(new CustomEvent('groupWorkspace:context-changed', {
       detail: window.groupWorkspaceContext
