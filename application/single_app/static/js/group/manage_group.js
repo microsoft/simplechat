@@ -576,7 +576,6 @@ function rejectRequest(requestId) {
 }
 
 // Search users for manual add
-// Search users for manual add
 function searchUsers() {
   const term = $("#userSearchTerm").val().trim();
   if (!term) {

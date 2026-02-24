@@ -26,7 +26,7 @@ export function parseCitations(message) {
   // ... (keep existing implementation)
   const citationRegex = /\(Source:\s*([^,]+),\s*Page(?:s)?:\s*([^)]+)\)\s*((?:\[#.*?\]\s*)+)/gi;
 
-  return message.replace(citationRegex, (whole, filename, pages, bracketSection) => {
+  let result = message.replace(citationRegex, (whole, filename, pages, bracketSection) => {
     let filenameHtml;
     if (/^https?:\/\/.+/i.test(filename.trim())) {
       filenameHtml = `<a href="${filename.trim()}" target="_blank" rel="noopener noreferrer">${filename.trim()}</a>`;
@@ -96,6 +96,14 @@ export function parseCitations(message) {
     const linkedPagesText = linkedTokens.join(', ');
     return `(Source: ${filenameHtml}, Pages: ${linkedPagesText})`;
   });
+
+  // Cleanup pass: strip any remaining [#guid...] bracket groups that the main regex didn't match.
+  // These appear when the model uses non-standard citation formats (e.g. "passim" instead of "Page: N").
+  // Pattern matches brackets containing one or more UUID-like citation IDs (with optional _suffix parts).
+  const guidBracketRegex = /\s*\[#?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[^\]]*\]/gi;
+  result = result.replace(guidBracketRegex, '');
+
+  return result;
 }
 
 
