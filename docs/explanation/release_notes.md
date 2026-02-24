@@ -2,6 +2,17 @@
 
 # Feature Release
 
+### **(v0.238.025)**
+
+#### Bug Fixes
+
+*   **Public Workspace setActive 403 Fix**
+    *   Fixed issue where non-owner/admin/document-manager users received a 403 "Not a member" error when trying to activate a public workspace for chat.
+    *   Root cause was an overly restrictive membership check on the `/api/public_workspaces/setActive` endpoint that only allowed owners, admins, and document managers — even though public workspaces are intended to be accessible to all authenticated users for chatting.
+    *   Removed the membership verification from the `setActive` endpoint; the route still requires authentication (`@login_required`, `@user_required`) and the public workspaces feature flag (`@enabled_required`).
+    *   Other admin-level endpoints (listing members, viewing stats, ownership transfer) retain their membership checks.
+    *   (Ref: `route_backend_public_workspaces.py`, `api_set_active_public_workspace`)
+
 ### **(v0.238.024)**
 
 #### New Features
