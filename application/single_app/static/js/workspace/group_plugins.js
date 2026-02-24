@@ -30,6 +30,9 @@ function escapeHtml(value) {
 
 function canManagePlugins() {
   const role = currentContext?.userRole;
+  if (currentContext?.requireOwnerForAgentManagement) {
+    return role === "Owner";
+  }
   return role === "Owner" || role === "Admin";
 }
 
