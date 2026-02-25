@@ -1,11 +1,11 @@
 {
   "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.25/MicrosoftTeams.schema.json",
   "manifestVersion": "1.25",
-  "version": "1.0.1",
-  "id": "d4871930-f34f-462e-a709-befc11081da5",
+  "version": "1.0.4",
+  "id": "d4871930-f34f-462e-a709-befc11081da6",
   "name": {
-    "short": "Simple Chat",
-    "full": "Simple Chat App"
+    "short": "Simple Chat 2",
+    "full": "Simple Chat App 2"
   },
   "description": {
     "short": "AI Chat",
@@ -32,5 +32,9 @@
     }
   ],
   "permissions": ["identity"],
-  "validDomains": ["sceddev-sbx-app.azurewebsites.net"]
+  "validDomains": ["sceddev-sbx-app.azurewebsites.net"],
+  "webApplicationInfo": {
+    "id": "d4871930-f34f-462e-a709-befc11081da5",
+    "resource": "api://sceddev-sbx-app.azurewebsites.net/d4871930-f34f-462e-a709-befc11081da5"
+  }
 }
