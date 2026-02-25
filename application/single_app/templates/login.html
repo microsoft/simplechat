@@ -250,13 +250,9 @@
             console.log('Redirecting to standard Azure AD login flow');
             updateStatus('Redirecting...', 'Using standard authentication');
             
-            // Remove teams parameter and redirect to standard Azure AD flow
-            const currentUrl = new URL(window.location.href);
-            currentUrl.searchParams.delete('teams');
-            
-            // Redirect to the login endpoint without teams parameter
-            // This will trigger the standard Azure AD flow
-            window.location.href = '{{ url_for("login") }}';
+            // Set teams=false parameter to explicitly indicate fallback to standard Azure AD flow
+            // This tells the backend to skip Teams SSO detection and use standard authentication
+            window.location.href = '{{ url_for("login") }}?teams=false';
         }
 
         function showError(message, title = 'Authentication Error') {

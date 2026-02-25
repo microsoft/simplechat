@@ -58,7 +58,11 @@ def register_route_frontend_authentication(app):
     @swagger_route(security=get_auth_security())
     def login():
         # Check if this is a Teams context (via query parameter)
-        is_teams = True # request.args.get('teams') == 'true'
+        # teams=true: Attempt Teams SSO detection
+        # teams=false: Skip Teams SSO, use standard Azure AD flow
+        # No parameter: Default to Teams SSO detection (for backward compatibility)
+        teams_param = request.args.get('teams', 'true')
+        is_teams = teams_param == 'true'
         
         if is_teams and ENABLE_TEAMS_SSO:
             # Render a page that will detect Teams and handle SSO
