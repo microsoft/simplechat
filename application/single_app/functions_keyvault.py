@@ -111,6 +111,34 @@ def retrieve_secret_from_key_vault_by_full_name(full_secret_name):
         return full_secret_name
         
 
+def retrieve_secret_direct(secret_name):
+    """
+    Retrieve a secret directly from Key Vault by its exact name, bypassing source/scope name
+    validation and the enable_key_vault_secret_storage guard. Use this for infrastructure
+    secrets (e.g. Redis key) where the secret name is arbitrary and not controlled by the
+    scope_value--source--scope--secret_name convention.
+
+    Args:
+        secret_name (str): The exact Key Vault secret name.
+
+    Returns:
+        str: The secret value.
+
+    Raises:
+        ValueError: If Key Vault is not configured in settings.
+        Exception: If the secret cannot be retrieved.
+    """
+    settings = app_settings_cache.get_settings_cache()
+    key_vault_name = settings.get("key_vault_name", "").strip()
+    if not key_vault_name:
+        raise ValueError("Key Vault name is not configured in settings (key_vault_name).")
+    if not secret_name:
+        raise ValueError("secret_name must not be empty.")
+    key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+    secret_client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
+    retrieved = secret_client.get_secret(secret_name)
+    return retrieved.value
+
 def store_secret_in_key_vault(secret_name, secret_value, scope_value, source="global", scope="global"):
     """
     Store a secret in Key Vault using a dynamic name based on source, scope, and scope_value.

@@ -2036,13 +2036,25 @@
                             <select class="form-select" id="redis_auth_type" name="redis_auth_type">
                                 <option value="key" {% if settings.redis_auth_type == 'key' or not settings.redis_auth_type %}selected{% endif %}>Key</option>
                                 <option value="managed_identity" {% if settings.redis_auth_type == 'managed_identity' %}selected{% endif %}>Managed Identity</option>
+                                <option value="key_vault" {% if settings.redis_auth_type == 'key_vault' %}selected{% endif %}>Key Vault</option>
                             </select>
                         </div>
-                        <div class="mb-3" id="redis_key_container" {% if settings.redis_auth_type != 'key' and settings.redis_auth_type %}style="display: none;"{% endif %}>
-                            <label for="redis_key" class="form-label">Redis Access Key</label>
+                        <div class="mb-3" id="redis_key_container" {% if settings.redis_auth_type == 'managed_identity' %}style="display: none;"{% endif %}>
+                            <label for="redis_key" class="form-label" id="redis_key_label">
+                                {%- if settings.redis_auth_type == 'key_vault' -%}
+                                    Key Vault Secret Name
+                                {%- else -%}
+                                    Redis Access Key
+                                {%- endif -%}
+                            </label>
                             <div class="input-group">
                                 <input type="password" class="form-control" id="redis_key" name="redis_key" value="{{ settings.redis_key or '' }}">
                                 <button type="button" class="btn btn-outline-secondary" id="toggle_redis_key">Show</button>
+                            </div>
+                            <div id="redis_key_vault_hint" class="form-text text-muted" {% if settings.redis_auth_type != 'key_vault' %}style="display: none;"{% endif %}>
+                                Enter the full Key Vault secret name. <a href="#security" onclick="switchTab(event, 'security-tab')">
+                                Key Vault
+                            </a> must be configured and <strong>Enable Key Vault Secret Storage</strong> must be enabled.
                             </div>
                         </div>
                         <button type="button" class="btn btn-secondary mt-3" id="test_redis_button">

@@ -36,6 +36,30 @@ def configure_app_cache(settings, redis_cache_endpoint=None):
                 password=token.token,
                 ssl=True
             )
+        elif redis_auth_type == 'key_vault':
+            print("[ASC] Redis enabled using Key Vault Secret")
+            redis_key_secret_name = settings.get('redis_key', '').strip()
+            key_vault_name = settings.get('key_vault_name', '').strip()
+            key_vault_identity = settings.get('key_vault_identity', '').strip()
+            try:
+                from azure.keyvault.secrets import SecretClient
+                from config import KEY_VAULT_DOMAIN
+                kv_credential = DefaultAzureCredential(managed_identity_client_id=key_vault_identity) if key_vault_identity else DefaultAzureCredential()
+                kv_client = SecretClient(vault_url=f"https://{key_vault_name}{KEY_VAULT_DOMAIN}", credential=kv_credential)
+                redis_password = kv_client.get_secret(redis_key_secret_name).value
+                if redis_password:
+                    redis_password = redis_password.strip()
+                print("[ASC] Redis key retrieved from Key Vault successfully")
+            except Exception as kv_err:
+                print(f"[ASC] ERROR: Failed to retrieve Redis key from Key Vault: {kv_err}")
+                raise
+            redis_client = Redis(
+                host=redis_url,
+                port=6380,
+                db=0,
+                password=redis_password,
+                ssl=True
+            )
         else:
             redis_key = settings.get('redis_key', '').strip()
             print("[ASC] Redis enabled using Access Key")

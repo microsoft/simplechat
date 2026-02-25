@@ -1867,14 +1867,30 @@ function setupToggles() {
     const redisAuthType = document.getElementById('redis_auth_type');
     if (redisAuthType) {
         const redisKeyContainer = document.getElementById('redis_key_container');
+        const redisKeyLabel = document.getElementById('redis_key_label');
+
+        // Helper to update the label text based on auth type
+        function updateRedisKeyLabel(authTypeValue) {
+            if (!redisKeyLabel) return;
+            redisKeyLabel.textContent = authTypeValue === 'key_vault' ? 'Key Vault Secret Name' : 'Redis Access Key';
+        }
+
         // Set initial state on load
         if (redisKeyContainer) {
-            redisKeyContainer.style.display = (redisAuthType.value === 'key') ? 'block' : 'none';
+            redisKeyContainer.style.display = (redisAuthType.value === 'key' || redisAuthType.value === 'key_vault') ? 'block' : 'none';
         }
+        updateRedisKeyLabel(redisAuthType.value);
+
         redisAuthType.addEventListener('change', function () {
             if (redisKeyContainer) {
-                redisKeyContainer.style.display = (this.value === 'key') ? 'block' : 'none';
+                redisKeyContainer.style.display = (this.value === 'key' || this.value === 'key_vault') ? 'block' : 'none';
             }
+            const redisKeyVaultHint = document.getElementById('redis_key_vault_hint');
+            if (redisKeyVaultHint) {
+                redisKeyVaultHint.style.display = (this.value === 'key_vault') ? 'block' : 'none';
+            }
+            updateRedisKeyLabel(this.value);
+            markFormAsModified();
         });
     }
 
@@ -2179,7 +2195,8 @@ function setupTestButtons() {
             const payload = {
                 test_type: 'redis',
                 endpoint: document.getElementById('redis_url').value,
-                key: document.getElementById('redis_key').value
+                key: document.getElementById('redis_key').value,
+                auth_type: document.getElementById('redis_auth_type').value
             };
 
             try {

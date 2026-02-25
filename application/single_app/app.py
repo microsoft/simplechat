@@ -174,6 +174,22 @@ def configure_sessions(settings):
                             socket_connect_timeout=5,
                             socket_timeout=5
                         )
+                    elif redis_auth_type == 'key_vault':
+                        print("Redis enabled using Key Vault Secret")
+                        from functions_keyvault import retrieve_secret_direct
+                        redis_key_secret_name = settings.get('redis_key', '').strip()
+                        redis_password = retrieve_secret_direct(redis_key_secret_name)
+                        if redis_password:
+                            redis_password = redis_password.strip()
+                        redis_client = Redis(
+                            host=redis_url,
+                            port=6380,
+                            db=0,
+                            password=redis_password,
+                            ssl=True,
+                            socket_connect_timeout=5,
+                            socket_timeout=5
+                        )
                     else:
                         redis_key = settings.get('redis_key', '').strip()
                         print("Redis enabled using Access Key")

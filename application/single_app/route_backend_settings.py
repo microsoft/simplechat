@@ -706,6 +706,14 @@ def _test_redis_connection(payload):
             cache_endpoint = get_redis_cache_infrastructure_endpoint(redis_hostname)
             token = credential.get_token(cache_endpoint)
             redis_password = token.token
+        elif redis_auth_type == 'key_vault':
+            if not redis_key:
+                return jsonify({'error': 'Key Vault secret name is required for key_vault auth'}), 400
+            try:
+                from functions_keyvault import retrieve_secret_direct
+                redis_password = retrieve_secret_direct(redis_key)
+            except Exception as kv_err:
+                return jsonify({'error': f'Failed to retrieve Redis key from Key Vault: {str(kv_err)}'}), 500
         else:
             if not redis_key:
                 return jsonify({'error': 'Redis key is required for key auth'}), 400
