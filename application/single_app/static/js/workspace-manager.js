@@ -1,7 +1,7 @@
 // workspace-manager.js
 // Public Workspace Management Functionality
 
-import { showToast } from "./chat/chat-toast.js";
+import { showToast } from "../chat/chat-toast.js";
 
 window.WorkspaceManager = {
     currentWorkspaceId: null,

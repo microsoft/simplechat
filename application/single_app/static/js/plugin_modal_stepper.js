@@ -1,6 +1,6 @@
 // plugin_modal_stepper.js
 // Multi-step modal functionality for action/plugin creation
-import { showToast } from "./chat/chat-toast.js";
+import { showToast } from "../chat/chat-toast.js";
 
 export class PluginModalStepper {
   

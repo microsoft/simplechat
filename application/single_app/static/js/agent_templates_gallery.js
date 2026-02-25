@@ -1,7 +1,7 @@
 // agent_templates_gallery.js
 // Dynamically renders the agent template gallery within the agent builder
 
-import { showToast } from "./chat/chat-toast.js";
+import { showToast } from "../chat/chat-toast.js";
 
 const gallerySelector = ".agent-template-gallery";
 let cachedTemplates = null;

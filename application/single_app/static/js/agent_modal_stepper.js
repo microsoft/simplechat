@@ -1,6 +1,6 @@
 // agent_modal_stepper.js
 // Multi-step modal functionality for agent creation
-import { showToast } from "./chat/chat-toast.js";
+import { showToast } from "../chat/chat-toast.js";
 import * as agentsCommon from "./agents_common.js";
 import { getModelSupportedLevels } from "./chat/chat-reasoning.js";
 

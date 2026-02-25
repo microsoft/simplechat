@@ -2,7 +2,7 @@
 // Control Center JavaScript functionality
 // Handles user management, pagination, modals, and API interactions
 
-import { showToast } from "./chat/chat-toast.js";
+import { showToast } from "../chat/chat-toast.js";
 
 function parseDateKey(dateStr) {
     if (!dateStr) {
