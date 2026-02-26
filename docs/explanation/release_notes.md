@@ -2,6 +2,19 @@
 
 # Feature Release
 
+### **(v0.238.025)**
+
+#### Bug Fixes
+
+*   **Chats Page User Settings Hardening**
+    *   Fixed a user-specific chats page failure where only one affected user could not load `/chats` due to malformed per-user settings data.
+    *   **Root Cause**: The chats route assumed `user_settings["settings"]` was always a dictionary. If that field existed but had an invalid type (for example string, null, or list), the page could fail before rendering.
+    *   **Solution**: Hardened `get_user_settings()` to normalize missing/malformed `settings` to `{}` and persist the repaired document. Hardened the chats route to use safe dictionary fallbacks when reading nested settings values.
+    *   **Telemetry**: Added repair logging (`[UserSettings] Malformed settings repaired`) to improve diagnostics for future user-specific data-shape issues.
+    *   **Files Modified**: `functions_settings.py`, `route_frontend_chats.py`, `config.py`.
+    *   **Files Added**: `test_chats_user_settings_hardening_fix.py`, `CHATS_USER_SETTINGS_HARDENING_FIX.md`.
+    *   (Ref: user settings normalization, `/chats` route resilience, `functional_tests/test_chats_user_settings_hardening_fix.py`, `docs/explanation/fixes/CHATS_USER_SETTINGS_HARDENING_FIX.md`)
+
 ### **(v0.238.024)**
 
 #### New Features
