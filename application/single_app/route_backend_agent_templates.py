@@ -12,6 +12,7 @@ from functions_agent_templates import (
     STATUS_APPROVED,
     validate_template_payload,
     list_agent_templates,
+    list_agent_template_tags,
     create_agent_template,
     update_agent_template,
     approve_agent_template,
@@ -46,6 +47,18 @@ def list_public_agent_templates():
         return jsonify({'templates': []})
     templates = list_agent_templates(status=STATUS_APPROVED, include_internal=False)
     return jsonify({'templates': templates})
+
+
+@bp_agent_templates.route('/api/agent-templates/tags', methods=['GET'])
+@login_required
+@swagger_route(security=get_auth_security())
+def list_public_agent_template_tags():
+    """Return a deduplicated, sorted list of tags across approved agent templates."""
+    enabled, _, _, _ = _feature_flags()
+    if not enabled:
+        return jsonify({'tags': []})
+    tags = list_agent_template_tags(status=STATUS_APPROVED)
+    return jsonify({'tags': tags})
 
 
 @bp_agent_templates.route('/api/agent-templates', methods=['POST'])

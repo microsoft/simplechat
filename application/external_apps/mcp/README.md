@@ -1,6 +1,6 @@
 # SimpleChat MCP Server (FastMCP)
 
-This MCP server provides **9 active tools** for interacting with SimpleChat via the Model Context Protocol (Streamable HTTP transport).
+This MCP server provides **10 active tools** for interacting with SimpleChat via the Model Context Protocol (Streamable HTTP transport).
 
 ## Tools
 
@@ -20,7 +20,7 @@ This MCP server provides **9 active tools** for interacting with SimpleChat via 
 |------|------|----------------|-------------|
 | **list_conversations** | Required | `GET /api/get_conversations` | Returns all conversations for the authenticated user. |
 | **get_conversation_messages** | Required | `GET /api/get_messages` | Returns messages for a specific conversation. Params: `conversation_id` (required). |
-| **send_chat_message** | Required | `POST /api/chat` | Sends a message and returns AI response. Params: `message` (required), `conversation_id` (optional — creates new if empty). |
+| **send_personal_chat_message** | Required | `POST /api/chat` | Sends a message scoped to the user's personal workspace and returns AI response. Only personal documents are used for RAG. Params: `message` (required), `conversation_id` (optional — creates new if empty). |
 
 ### Personal Workspace (2 tools)
 | Tool | Auth | SimpleChat API | Description |
@@ -31,18 +31,25 @@ This MCP server provides **9 active tools** for interacting with SimpleChat via 
 ### Search (1 tool)
 | Tool | Auth | SimpleChat API | Description |
 |------|------|----------------|-------------|
-| **search_documents** | Required | `POST /api/search` | Hybrid (text + vector) search across documents. Params: `query` (required), `doc_scope` (`all`/`personal`/`group`/`public`), `document_id`, `top_n`, `active_group_id`, `active_public_workspace_id`. |
+| **search_personal_documents** | Required | `POST /api/search` | Hybrid (text + vector) search across the user's personal documents only. Params: `query` (required), `document_id`, `top_n`. |
 
-### Disabled Tools (code intact, decorator commented out)
-The following tools are present in the codebase but currently disabled:
+### Agent Templates (1 tool)
+| Tool | Auth | SimpleChat API | Description |
+|------|------|----------------|-------------|
+| **list_agent_template_tags** | Required | `GET /api/agent-templates/tags` | Returns a deduplicated, sorted list of all tags across approved agent templates. |
+
+### Unapproved Tools (disabled by default)
+The following tools are gated behind the `ENABLE_UNAPPROVED_TOOLS` environment variable.
+Set `ENABLE_UNAPPROVED_TOOLS=true` to make them available to MCP clients.
+
 - `list_public_workspaces` — `GET /api/public_workspaces`
 - `list_group_workspaces` — `GET /api/groups`
 - `list_group_documents` — `GET /api/group_documents`
 - `list_group_prompts` — `GET /api/group_prompts`
 - `list_public_documents` — `GET /api/public_documents`
 - `list_public_prompts` — `GET /api/public_prompts`
-
-To re-enable a tool, uncomment its `@_mcp.tool(...)` decorator in `server_minimal.py`.
+- `send_chat_message` — `POST /api/chat` (all scopes; approved version is `send_personal_chat_message`)
+- `search_documents` — `POST /api/search` (all scopes; approved version is `search_personal_documents`)
 
 ## Prerequisites
 
@@ -86,6 +93,7 @@ To re-enable a tool, uncomment its `@_mcp.tool(...)` decorator in `server_minima
 - `OAUTH_TIMEOUT_SECONDS` — Device-code polling timeout in seconds (e.g. `900`)
 
 ### Optional
+- `ENABLE_UNAPPROVED_TOOLS` — Enable unapproved tools (group/public workspace tools). Default `false`.
 - `OAUTH_REDIRECT_PORT` — Redirect port for auth-code flow (default: `53682`)
 - `OAUTH_USE_DEVICE_CODE` — Enable device-code flow (`true` or `false`)
 - `OAUTH_OPEN_BROWSER` — Auto-open browser during device-code flow (`false` by default)

@@ -144,8 +144,27 @@ def validate_template_payload(payload: Dict[str, Any]) -> Optional[str]:
             _parse_additional_settings(payload['additional_settings'])
         except ValueError as exc:
             return str(exc)
-    # Return false if valid to keep with consistency of returning bools or values because we return the error.
-    return False
+    # Return None if valid
+    return None
+
+
+def list_agent_template_tags(status: Optional[str] = None) -> List[str]:
+    """Return a sorted, deduplicated list of tags across agent templates.
+
+    Args:
+        status: If provided, only consider templates with this status.
+                Defaults to *None* (all statuses).
+
+    Returns:
+        A sorted list of unique tag strings.
+    """
+    templates = list_agent_templates(status=status, include_internal=False)
+    all_tags: set[str] = set()
+    for tpl in templates:
+        for tag in tpl.get('tags', []):
+            if tag:
+                all_tags.add(tag)
+    return sorted(all_tags, key=str.lower)
 
 
 def list_agent_templates(status: Optional[str] = None, include_internal: bool = False) -> List[Dict[str, Any]]:

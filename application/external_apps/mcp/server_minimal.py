@@ -21,6 +21,7 @@ Tools exposed:
 - list_conversations
 - get_conversation_messages
 - send_chat_message
+- list_agent_template_tags
 """
 
 from __future__ import annotations
@@ -78,6 +79,19 @@ DEFAULT_PRM_METADATA_PATH = _require_env_value("MCP_PRM_METADATA_PATH").strip()
 
 MCP_BIND_HOST = _require_env_value("FASTMCP_HOST")
 MCP_BIND_PORT = _require_env_int("FASTMCP_PORT")
+
+# When true, tools that are not yet approved (group/public workspace tools)
+# are registered and available to MCP clients.  Default: false.
+_ENABLE_UNAPPROVED_TOOLS = os.getenv("ENABLE_UNAPPROVED_TOOLS", "false").strip().lower() in (
+    "1", "true", "yes", "y", "on"
+)
+
+
+def _unapproved_tool(name: str):
+    """Decorator that registers a tool only when ENABLE_UNAPPROVED_TOOLS is true."""
+    if _ENABLE_UNAPPROVED_TOOLS:
+        return _mcp.tool(name=name)
+    return lambda fn: fn  # no-op: function exists but is not exposed as an MCP tool
 
 
 # Pass host=MCP_BIND_HOST so FastMCP does not auto-enable DNS rebinding
@@ -600,7 +614,7 @@ def show_user_profile(ctx: Context[Any, Any, Any]) -> Dict[str, Any]:
     }
 
 
-# @_mcp.tool(name="list_public_workspaces")
+@_unapproved_tool(name="list_public_workspaces")
 def list_public_workspaces(
     ctx: Context[Any, Any, Any],
     page: int = 1,
@@ -843,7 +857,7 @@ def list_personal_prompts(
     return result
 
 
-# @_mcp.tool(name="list_group_workspaces")
+@_unapproved_tool(name="list_group_workspaces")
 def list_group_workspaces(
     ctx: Context[Any, Any, Any],
     page: int = 1,
@@ -922,7 +936,7 @@ def list_group_workspaces(
     return result
 
 
-# @_mcp.tool(name="list_group_documents")
+@_unapproved_tool(name="list_group_documents")
 def list_group_documents(
     ctx: Context[Any, Any, Any],
     page: int = 1,
@@ -1014,7 +1028,7 @@ def list_group_documents(
     return result
 
 
-# @_mcp.tool(name="list_group_prompts")
+@_unapproved_tool(name="list_group_prompts")
 def list_group_prompts(
     ctx: Context[Any, Any, Any],
     page: int = 1,
@@ -1094,7 +1108,7 @@ def list_group_prompts(
     return result
 
 
-# @_mcp.tool(name="list_public_documents")
+@_unapproved_tool(name="list_public_documents")
 def list_public_documents(
     ctx: Context[Any, Any, Any],
     page: int = 1,
@@ -1174,7 +1188,7 @@ def list_public_documents(
     return result
 
 
-# @_mcp.tool(name="list_public_prompts")
+@_unapproved_tool(name="list_public_prompts")
 def list_public_prompts(
     ctx: Context[Any, Any, Any],
     page: int = 1,
@@ -1386,7 +1400,7 @@ def get_conversation_messages(
     return result
 
 
-@_mcp.tool(name="send_chat_message")
+@_unapproved_tool(name="send_chat_message")
 def send_chat_message(
     ctx: Context[Any, Any, Any],
     conversation_id: str = "",
@@ -1468,7 +1482,7 @@ def send_chat_message(
     return result
 
 
-@_mcp.tool(name="search_documents")
+@_unapproved_tool(name="search_documents")
 def search_documents(
     ctx: Context[Any, Any, Any],
     query: str = "",
@@ -1550,6 +1564,243 @@ def search_documents(
         json=payload,
         verify=simplechat_verify_ssl,
         timeout=60,
+    )
+
+    if response.status_code != 200:
+        try:
+            details = response.json()
+        except Exception:
+            details = {"raw": response.text}
+        return {
+            "error": "simplechat_request_failed",
+            "status_code": response.status_code,
+            "details": details,
+            "hint": "If this is 401/403, ensure your PRM bearer token has SimpleChat API access.",
+        }
+
+    result = response.json()
+    if isinstance(result, dict):
+        result.setdefault("auth_source", auth_source)
+    return result
+
+
+@_mcp.tool(name="send_personal_chat_message")
+def send_personal_chat_message(
+    ctx: Context[Any, Any, Any],
+    conversation_id: str = "",
+    message: str = "",
+) -> Dict[str, Any]:
+    """Send a chat message scoped to the user's personal workspace and return the AI response.
+
+    This tool always sends with doc_scope="personal" so only personal documents
+    are used for retrieval-augmented generation (RAG).  Group and public workspace
+    documents are never included.
+
+    Args:
+        conversation_id: The UUID of the conversation to send the message to.
+            If empty, a new conversation will be created automatically by SimpleChat.
+        message: The text message to send.
+
+    Returns the AI reply, conversation_id, title, model info, and citations.
+    """
+    if not message or not message.strip():
+        return {
+            "success": False,
+            "error": "missing_parameter",
+            "message": "message is required.",
+        }
+
+    bearer_token = _get_bearer_token_from_context(ctx)
+    auth_source = "prm" if bearer_token else "device_code"
+    if not bearer_token:
+        with _STATE_LOCK:
+            access_token = _STATE.get("access_token")
+        if isinstance(access_token, str) and access_token.strip():
+            bearer_token = access_token.strip()
+        else:
+            return {
+                "success": False,
+                "error": "not_authenticated",
+                "message": "Not authenticated. Provide a PRM bearer token or complete device-code login.",
+            }
+
+    try:
+        session = _get_or_create_simplechat_session(bearer_token)
+    except Exception as e:
+        return {
+            "success": False,
+            "error": "session_creation_failed",
+            "message": str(e),
+            "hint": "Ensure your bearer token is valid and SimpleChat is accessible.",
+        }
+
+    simplechat_base_url = _env("SIMPLECHAT_BASE_URL")
+    simplechat_verify_ssl = _require_env_bool("SIMPLECHAT_VERIFY_SSL")
+
+    payload: Dict[str, Any] = {
+        "message": message.strip(),
+        "doc_scope": "personal",
+    }
+    if conversation_id and conversation_id.strip():
+        payload["conversation_id"] = conversation_id.strip()
+
+    url = f"{simplechat_base_url}/api/chat"
+    print(f"[MCP] Calling SimpleChat POST {url} (personal scope)")
+    response = session.post(
+        url,
+        json=payload,
+        verify=simplechat_verify_ssl,
+        timeout=120,
+    )
+
+    if response.status_code != 200:
+        try:
+            details = response.json()
+        except Exception:
+            details = {"raw": response.text}
+        return {
+            "error": "simplechat_request_failed",
+            "status_code": response.status_code,
+            "details": details,
+            "hint": "Check that the conversation_id is valid and SimpleChat is configured with an AI model.",
+        }
+
+    result = response.json()
+    if isinstance(result, dict):
+        result.setdefault("auth_source", auth_source)
+    return result
+
+
+@_mcp.tool(name="search_personal_documents")
+def search_personal_documents(
+    ctx: Context[Any, Any, Any],
+    query: str = "",
+    document_id: Optional[str] = None,
+    top_n: int = 12,
+) -> Dict[str, Any]:
+    """Search the user's personal documents using hybrid (text + vector) search.
+
+    This tool always searches with doc_scope="personal" so only the user's own
+    documents are included.  Group and public workspace documents are never searched.
+
+    Args:
+        query: The search query text (required).
+        document_id: Restrict search to a specific document ID (optional).
+        top_n: Maximum number of results to return. Default 12.
+
+    Returns search results with chunk text, file names, scores, and metadata.
+    """
+    if not query or not query.strip():
+        return {
+            "success": False,
+            "error": "missing_parameter",
+            "message": "query is required.",
+        }
+
+    bearer_token = _get_bearer_token_from_context(ctx)
+    auth_source = "prm" if bearer_token else "device_code"
+    if not bearer_token:
+        with _STATE_LOCK:
+            access_token = _STATE.get("access_token")
+        if isinstance(access_token, str) and access_token.strip():
+            bearer_token = access_token.strip()
+        else:
+            return {
+                "success": False,
+                "error": "not_authenticated",
+                "message": "Not authenticated. Provide a PRM bearer token or complete device-code login.",
+            }
+
+    try:
+        session = _get_or_create_simplechat_session(bearer_token)
+    except Exception as e:
+        return {
+            "success": False,
+            "error": "session_creation_failed",
+            "message": str(e),
+            "hint": "Ensure your bearer token is valid and SimpleChat is accessible.",
+        }
+
+    simplechat_base_url = _env("SIMPLECHAT_BASE_URL")
+    simplechat_verify_ssl = _require_env_bool("SIMPLECHAT_VERIFY_SSL")
+
+    payload: Dict[str, Any] = {
+        "query": query.strip(),
+        "doc_scope": "personal",
+        "top_n": top_n,
+    }
+    if document_id:
+        payload["document_id"] = document_id
+
+    url = f"{simplechat_base_url}/api/search"
+    print(f"[MCP] Calling SimpleChat POST {url} (personal scope)")
+    response = session.post(
+        url,
+        json=payload,
+        verify=simplechat_verify_ssl,
+        timeout=60,
+    )
+
+    if response.status_code != 200:
+        try:
+            details = response.json()
+        except Exception:
+            details = {"raw": response.text}
+        return {
+            "error": "simplechat_request_failed",
+            "status_code": response.status_code,
+            "details": details,
+            "hint": "If this is 401/403, ensure your PRM bearer token has SimpleChat API access.",
+        }
+
+    result = response.json()
+    if isinstance(result, dict):
+        result.setdefault("auth_source", auth_source)
+    return result
+
+
+@_mcp.tool(name="list_agent_template_tags")
+def list_agent_template_tags(
+    ctx: Context[Any, Any, Any],
+) -> Dict[str, Any]:
+    """Return all configured agent template tags from SimpleChat.
+
+    Returns a deduplicated, sorted list of tags across all approved agent templates.
+    Useful for discovering available categories when filtering or creating templates.
+    """
+    bearer_token = _get_bearer_token_from_context(ctx)
+    auth_source = "prm" if bearer_token else "device_code"
+    if not bearer_token:
+        with _STATE_LOCK:
+            access_token = _STATE.get("access_token")
+        if isinstance(access_token, str) and access_token.strip():
+            bearer_token = access_token.strip()
+        else:
+            return {
+                "success": False,
+                "error": "not_authenticated",
+                "message": "Not authenticated. Provide a PRM bearer token or complete device-code login.",
+            }
+
+    try:
+        session = _get_or_create_simplechat_session(bearer_token)
+    except Exception as e:
+        return {
+            "success": False,
+            "error": "session_creation_failed",
+            "message": str(e),
+            "hint": "Ensure your bearer token is valid and SimpleChat is accessible.",
+        }
+
+    simplechat_base_url = _env("SIMPLECHAT_BASE_URL")
+    simplechat_verify_ssl = _require_env_bool("SIMPLECHAT_VERIFY_SSL")
+
+    url = f"{simplechat_base_url}/api/agent-templates/tags"
+    print(f"[MCP] Calling SimpleChat GET {url}")
+    response = session.get(
+        url,
+        verify=simplechat_verify_ssl,
+        timeout=30,
     )
 
     if response.status_code != 200:
@@ -1789,6 +2040,7 @@ class _PrmAndAuthShim:
 
 if __name__ == "__main__":
     print(f"[MCP] Starting server with MCP_REQUIRE_AUTH={DEFAULT_REQUIRE_MCP_AUTH}")
+    print(f"[MCP] ENABLE_UNAPPROVED_TOOLS={_ENABLE_UNAPPROVED_TOOLS}")
     print(f"[MCP] PRM metadata path: {DEFAULT_PRM_METADATA_PATH}")
 
     import uvicorn
