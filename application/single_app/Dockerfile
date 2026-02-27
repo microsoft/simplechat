@@ -7,7 +7,7 @@ FROM mcr.microsoft.com/azurelinux/base/python:3.12 AS builder
 ARG UID
 ARG GID
 
-# Setup pip.conf if has content
+# Copy pip.conf into the image for pip configuration
 COPY docker-customization/pip.conf /etc/pip.conf
 
 # CA
@@ -59,7 +59,7 @@ ENV HOME=/home/nonroot \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     PYTHONUNBUFFERED=1 \
-    CERT_FILE=/etc/ssl/certs/ca-bundle.crt \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt \
     SSL_CERT_DIR=/etc/ssl/certs \
     REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-bundle.crt
     
