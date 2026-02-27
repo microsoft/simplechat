@@ -649,6 +649,12 @@ export function appendMessage(
     )}</textarea>
         `;
     
+    const plainTextButtonHtml = `
+            <button class="plain-text-btn btn btn-sm btn-link text-muted" data-message-id="${messageId}" title="View as plain text">
+                <i class="bi bi-file-text"></i>
+            </button>
+        `;
+    
     const maskButtonHtml = `
             <button class="mask-btn btn btn-sm btn-link text-muted" data-message-id="${messageId}" title="${maskTitle}">
                 <i class="bi ${maskIcon}"></i>
@@ -674,7 +680,7 @@ export function appendMessage(
                 <i class="bi bi-box-arrow-in-right"></i>
             </button>
         `;
-    const copyAndFeedbackHtml = `<div class="message-actions d-flex align-items-center gap-2">${actionsDropdownHtml}${ttsButtonHtml}${copyButtonHtml}${maskButtonHtml}${carouselButtonsHtml}</div>`;
+    const copyAndFeedbackHtml = `<div class="message-actions d-flex align-items-center gap-2">${actionsDropdownHtml}${ttsButtonHtml}${copyButtonHtml}${plainTextButtonHtml}${maskButtonHtml}${carouselButtonsHtml}</div>`;
 
     const citationsButtonsHtml = createCitationsHtml(
       hybridCitations,
@@ -919,6 +925,16 @@ export function appendMessage(
           showToast("Failed to copy text.", "warning");
         });
     });
+    
+    const plainTextBtn = messageDiv.querySelector(".plain-text-btn");
+    plainTextBtn?.addEventListener("click", () => {
+      const hiddenTextarea = document.getElementById(
+        copyBtn.dataset.hiddenTextId
+      );
+      if (!hiddenTextarea) return;
+      showPlainTextModal(hiddenTextarea.value, messageId);
+    });
+    
     const toggleBtn = messageDiv.querySelector(".citation-toggle-btn");
     if (toggleBtn) {
       toggleBtn.addEventListener("click", () => {
@@ -3308,6 +3324,70 @@ function executeMessageDeletion(deleteThread = false) {
   });
 }
 
+/**
+ * Show a modal with the plain text version of an AI response
+ * @param {string} plainText - The plain text content to display
+ * @param {string} messageId - The message ID for reference
+ */
+function showPlainTextModal(plainText, messageId) {
+  // Check if modal already exists
+  let modal = document.getElementById('plainTextModal');
+  
+  if (!modal) {
+    // Create modal structure
+    const modalHtml = `
+      <div class="modal fade" id="plainTextModal" tabindex="-1" aria-labelledby="plainTextModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title" id="plainTextModalLabel">Plain Text View</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+              <textarea class="form-control" id="plainTextContent" rows="15" readonly style="font-family: monospace; white-space: pre-wrap;"></textarea>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Close</button>
+              <button type="button" class="btn btn-sm btn-primary" id="copyPlainTextBtn">
+                <i class="bi bi-copy me-1"></i>Copy to Clipboard
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    // Append modal to body
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    modal = document.getElementById('plainTextModal');
+    
+    // Attach copy button handler (only once)
+    const copyPlainTextBtn = document.getElementById('copyPlainTextBtn');
+    copyPlainTextBtn.addEventListener('click', () => {
+      const textarea = document.getElementById('plainTextContent');
+      navigator.clipboard.writeText(textarea.value)
+        .then(() => {
+          const originalHtml = copyPlainTextBtn.innerHTML;
+          copyPlainTextBtn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Copied!';
+          setTimeout(() => {
+            copyPlainTextBtn.innerHTML = originalHtml;
+          }, 2000);
+        })
+        .catch(err => {
+          console.error('Failed to copy:', err);
+          showToast('Failed to copy text', 'warning');
+        });
+    });
+  }
+  
+  // Update modal content
+  document.getElementById('plainTextContent').value = plainText;
+  
+  // Show modal using Bootstrap
+  const bootstrapModal = new bootstrap.Modal(modal);
+  bootstrapModal.show();
+}
+
 // Expose functions globally
 window.chatMessages = {
   applySearchHighlight,
@@ -3317,3 +3397,4 @@ window.chatMessages = {
 
 // Expose deletion function globally for modal buttons
 window.executeMessageDeletion = executeMessageDeletion;
+
