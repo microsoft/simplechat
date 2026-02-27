@@ -195,12 +195,25 @@ def register_route_backend_generate_prompt(app):
 
             # Call Azure OpenAI (non-streaming)
             log_event("Generate prompt from conversation started", level=logging.INFO)
-            response = gpt_client.chat.completions.create(
-                model=gpt_model,
-                messages=[{"role": "system", "content": full_prompt}],
-                max_tokens=1500,
-                temperature=0.7
-            )
+
+            # Build API parameters - o-series and gpt-5 models require max_completion_tokens instead of max_tokens
+            gpt_model_lower = gpt_model.lower()
+            uses_completion_tokens = ('o1' in gpt_model_lower or 'o3' in gpt_model_lower or 'gpt-5' in gpt_model_lower)
+
+            api_params = {
+                "model": gpt_model,
+                "messages": [{"role": "system", "content": full_prompt}],
+                "temperature": 0.7,
+            }
+
+            if uses_completion_tokens:
+                api_params["max_completion_tokens"] = 1500
+            else:
+                api_params["max_tokens"] = 1500
+
+            debug_print(f"[GeneratePrompt] Using model: {gpt_model}, parameter: {'max_completion_tokens' if uses_completion_tokens else 'max_tokens'}")
+
+            response = gpt_client.chat.completions.create(**api_params)
 
             ai_response = response.choices[0].message.content.strip()
             debug_print(f"[GeneratePrompt] Raw AI response: {ai_response[:200]}...")

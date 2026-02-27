@@ -2,7 +2,16 @@
 
 # Feature Release
 
-### **(v0.238.025)**
+### **(v0.238.026)**
+
+#### Bug Fixes
+
+*   **GPT-5 / Reasoning Model Compatibility for max_tokens Parameter**
+    *   Fixed `max_tokens` parameter usage that caused 400 errors with GPT-5 and o-series reasoning models (o1, o3) which require `max_completion_tokens` instead.
+    *   Applied model detection to use the correct parameter based on model name.
+    *   Affected areas: Generate Prompt from Conversation, search context summarization, and older conversation history summarization.
+    *   (Ref: `route_backend_generate_prompt.py`, `route_backend_chats.py`)
+
 
 #### New Features
 

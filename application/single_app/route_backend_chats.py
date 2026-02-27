@@ -820,11 +820,17 @@ def register_route_backend_chats(app):
 
                                 try:
                                     # Use the already initialized gpt_client and gpt_model
-                                    summary_response_search = gpt_client.chat.completions.create(
-                                        model=gpt_model,
-                                        messages=[{"role": "system", "content": summary_prompt_search}],
-                                        max_tokens=100 # Keep summary short
-                                    )
+                                    # o-series and gpt-5 models require max_completion_tokens instead of max_tokens
+                                    summary_search_params = {
+                                        "model": gpt_model,
+                                        "messages": [{"role": "system", "content": summary_prompt_search}],
+                                    }
+                                    gpt_model_lower = gpt_model.lower()
+                                    if 'o1' in gpt_model_lower or 'o3' in gpt_model_lower or 'gpt-5' in gpt_model_lower:
+                                        summary_search_params["max_completion_tokens"] = 100
+                                    else:
+                                        summary_search_params["max_tokens"] = 100
+                                    summary_response_search = gpt_client.chat.completions.create(**summary_search_params)
                                     summary_for_search = summary_response_search.choices[0].message.content.strip()
                                     if summary_for_search:
                                         search_query = f"Based on the recent conversation about: '{summary_for_search}', the user is now asking: {user_message}"
@@ -1566,12 +1572,18 @@ def register_route_backend_chats(app):
                         summary_prompt_older += "\n".join(message_texts_older)
                         try:
                             # Use the already initialized client and model
-                            summary_response_older = gpt_client.chat.completions.create(
-                                model=gpt_model,
-                                messages=[{"role": "system", "content": summary_prompt_older}],
-                                max_tokens=150, # Adjust token limit for summary
-                                temperature=0.3 # Lower temp for factual summary
-                            )
+                            # o-series and gpt-5 models require max_completion_tokens instead of max_tokens
+                            summary_older_params = {
+                                "model": gpt_model,
+                                "messages": [{"role": "system", "content": summary_prompt_older}],
+                                "temperature": 0.3,  # Lower temp for factual summary
+                            }
+                            gpt_model_lower = gpt_model.lower()
+                            if 'o1' in gpt_model_lower or 'o3' in gpt_model_lower or 'gpt-5' in gpt_model_lower:
+                                summary_older_params["max_completion_tokens"] = 150
+                            else:
+                                summary_older_params["max_tokens"] = 150
+                            summary_response_older = gpt_client.chat.completions.create(**summary_older_params)
                             summary_of_older = summary_response_older.choices[0].message.content.strip()
                             debug_print(f"Generated summary: {summary_of_older}")
                         except Exception as e:
