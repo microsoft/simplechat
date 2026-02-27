@@ -35,8 +35,14 @@ from pathlib import Path
 from typing import Any, Dict, Optional, cast
 
 import requests
+import uvicorn
 from dotenv import load_dotenv
 from mcp.server.fastmcp import Context, FastMCP
+
+try:
+    import jwt as pyjwt
+except ImportError:
+    pyjwt = None  # type: ignore[assignment]
 
 
 _DOTENV_PATH = Path(__file__).resolve().parent / ".env"
@@ -575,8 +581,10 @@ def show_user_profile(ctx: Context[Any, Any, Any]) -> Dict[str, Any]:
     # by SimpleChat during /external/login).
     if not isinstance(claims, dict) or not claims:
         try:
-            import jwt as pyjwt
-            claims = pyjwt.decode(bearer_token, options={"verify_signature": False})
+            if pyjwt is not None:
+                claims = pyjwt.decode(bearer_token, options={"verify_signature": False})
+            else:
+                claims = {}
         except Exception:
             claims = {}
 
@@ -2042,8 +2050,6 @@ if __name__ == "__main__":
     print(f"[MCP] Starting server with MCP_REQUIRE_AUTH={DEFAULT_REQUIRE_MCP_AUTH}")
     print(f"[MCP] ENABLE_UNAPPROVED_TOOLS={_ENABLE_UNAPPROVED_TOOLS}")
     print(f"[MCP] PRM metadata path: {DEFAULT_PRM_METADATA_PATH}")
-
-    import uvicorn
 
     base_app = _mcp.streamable_http_app()
 

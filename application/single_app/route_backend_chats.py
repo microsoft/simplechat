@@ -596,7 +596,8 @@ def register_route_backend_chats(app):
 
                 # Generate thread_id for the user message
                 # We track the 'tip' of the thread in latest_thread_id
-                import uuid
+                # Note: uuid is available from config import — do NOT re-import locally
+                # as it causes UnboundLocalError for earlier uses in this function scope.
                 current_user_thread_id = str(uuid.uuid4())
                 latest_thread_id = current_user_thread_id
                 

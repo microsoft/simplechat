@@ -181,9 +181,25 @@ if ($envSettings.ContainsKey("SIMPLECHAT_VERIFY_SSL")) {
     $SimpleChatVerifySsl = $envSettings["SIMPLECHAT_VERIFY_SSL"].ToLower() -in @("1", "true", "yes", "y", "on")
 }
 
+$originalTag = $ImageTag
 $imageTag = "${ImageName}:${ImageTag}"
 Write-Host "Building image in ACR: $imageTag"
-Invoke-AzCli @("acr", "build", "--registry", $AcrName, "--image", $imageTag, ".", "--no-logs", "--only-show-errors") | Out-Null
+
+# Work around Azure CLI 'charmap' encoding bug on Windows (colorama/cp1252)
+$prevPythonIOEncoding = $env:PYTHONIOENCODING
+$env:PYTHONIOENCODING = "utf-8"
+
+Invoke-AzCli @("acr", "build", "--registry", $AcrName, "--resource-group", $ResourceGroup, "--image", $imageTag, ".")
+
+$env:PYTHONIOENCODING = $prevPythonIOEncoding
+
+# Verify the image was actually pushed
+$verifyTag = Invoke-AzCli @("acr", "repository", "show-tags", "--name", $AcrName, "--repository", $ImageName, "--query", "[?contains(@, '$originalTag')]", "-o", "tsv", "--only-show-errors")
+if (-not $verifyTag) {
+    Write-Error "ACR build failed — image tag '$originalTag' not found in registry."
+    exit 1
+}
+Write-Host "ACR build succeeded — image tag '$originalTag' confirmed in registry."
 
 $acrLoginServer = Invoke-AzCli @("acr", "show", "--name", $AcrName, "--resource-group", $ResourceGroup, "--query", "loginServer", "-o", "tsv", "--only-show-errors")
 $acrCreds = (Invoke-AzCli @("acr", "credential", "show", "--name", $AcrName, "--query", "{username:username,password:passwords[0].value}", "-o", "json", "--only-show-errors")) | ConvertFrom-Json
