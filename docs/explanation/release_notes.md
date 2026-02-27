@@ -1408,7 +1408,6 @@
    - Updated `base.html` and `workspace.html` to reflect visual improvements.
 4. **Security Improvements**
    - Implemented `X-Content-Type-Options: nosniff` header to mitigate MIME sniffing vulnerabilities.
-   - Enhanced security for loading AI Search index schema JSON files by implementing path validation and using `secure_filename` in backend settings. (Ref: `route_backend_settings.py`)
 5. **Build & Deployment**
    - Added `docker_image_publish_dev.yml` GitHub Action workflow for publishing dev Docker images.
    - Updated Dockerfile to use **Python 3.12**.
@@ -1705,7 +1704,7 @@ We introduced a robust user feedback system, expanded content-safety features fo
    - **Real-Time Message Scanning**: If Content Safety is enabled, user prompts are scanned for potentially disallowed content. Blocked messages are flagged and a “safety” message is added to the conversation log in place of a normal AI reply.
    - **Admin Safety Logs**: Site admins (with “Admin” role) can view a new “Safety Violations” page (at /admin/safety_violations) showing blocked or flagged messages. Admins can update the status, action taken, or notes on each violation.
 2. **Expanded APIM Support for GPT, Embeddings, and Image Generation**
-   - **Fine-Grained APIM Toggles**: You can now enable or disable APIM usage independently for GPT, embeddings, and image generation. Each service has its own APIM endpoint, version, deployment, and subscription key fields in Admin Settings.
+   - **Fine-Grained APIM Toggles**: You can now enable or disable APIM usage independently for GPT, embeddings, and image generation. Each service has its own APIM endpoint, version, and subscription key fields in Admin Settings.
    - **UI-Driven Switching**: Check/uncheck “Enable APIM” to toggle between native Azure OpenAI endpoints or APIM-managed endpoints, all without redeploying the app.
 3. **Workspaces & Documents Configuration**
    - **User Documents and Group Documents**: A new “Workspaces” tab in Admin Settings (replacing the old “Web Search” tab) lets you enable or disable user-specific documents and group-based documents.
