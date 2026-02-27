@@ -11,6 +11,7 @@ import { initConversationInfoButton } from "./chat-conversation-info-button.js";
 import { initializeStreamingToggle } from "./chat-streaming.js";
 import { initializeReasoningToggle } from "./chat-reasoning.js";
 import { initializeSpeechInput } from "./chat-speech-input.js";
+import { initializeGeneratePrompt } from "./chat-generate-prompt.js";
 
 window.addEventListener('DOMContentLoaded', async () => {
   console.log("DOM Content Loaded. Starting initializations."); // Log start
@@ -26,6 +27,9 @@ window.addEventListener('DOMContentLoaded', async () => {
   
   // Initialize reasoning toggle
   initializeReasoningToggle();
+  
+  // Initialize generate prompt from conversation
+  initializeGeneratePrompt();
   
   // Initialize speech input
   try {

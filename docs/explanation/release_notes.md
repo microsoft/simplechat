@@ -2,6 +2,20 @@
 
 # Feature Release
 
+### **(v0.238.025)**
+
+#### New Features
+
+*   **Generate Prompt from Conversation**
+    *   New AI-powered feature that analyzes a chat conversation and generates a reusable prompt capturing the intent, patterns, and techniques observed.
+    *   **Toolbar Button**: "Generate Prompt" button (magic wand icon) in the chat toolbar, visible when workspaces are enabled.
+    *   **AI Analysis**: Sends conversation messages to Azure OpenAI with a meta-prompt that instructs the model to extract core intent and produce a structured, reusable prompt.
+    *   **Review & Edit Modal**: AI-generated prompt name and content are displayed in an editable modal before saving, allowing users to refine the output.
+    *   **Multi-Scope Save**: Users can save the generated prompt to Personal, Group, or Public workspace prompts.
+    *   **Regenerate**: A "Regenerate" button allows re-running the AI analysis for a different result.
+    *   **Smart Filtering**: Only active-thread user/assistant messages are analyzed; images, files, system, and safety messages are excluded. Long conversations are truncated to the last 50 messages.
+    *   (Ref: `route_backend_generate_prompt.py`, `chat-generate-prompt.js`, `GENERATE_PROMPT_FROM_CONVERSATION.md`)
+
 ### **(v0.238.024)**
 
 #### New Features

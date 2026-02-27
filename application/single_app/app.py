@@ -73,6 +73,7 @@ from route_backend_agent_templates import bp_agent_templates
 from route_backend_public_workspaces import *
 from route_backend_public_documents import *
 from route_backend_public_prompts import *
+from route_backend_generate_prompt import *
 from route_backend_user_agreement import register_route_backend_user_agreement
 from route_backend_speech import register_route_backend_speech
 from route_backend_tts import register_route_backend_tts
@@ -633,6 +634,9 @@ register_route_backend_public_documents(app)
 
 # ------------------- API Public Prompts Routes ----------
 register_route_backend_public_prompts(app)
+
+# ------------------- API Generate Prompt Routes ----------
+register_route_backend_generate_prompt(app)
 
 # ------------------- API User Agreement Routes ----------
 register_route_backend_user_agreement(app)
