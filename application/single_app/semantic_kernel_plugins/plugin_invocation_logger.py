@@ -10,6 +10,7 @@ import json
 import time
 import logging
 import functools
+import inspect
 from typing import Any, Dict, List, Optional, Callable
 from datetime import datetime
 from dataclasses import dataclass, asdict
@@ -329,94 +330,223 @@ def plugin_function_logger(plugin_name: str):
         log_event(f"[Plugin Function Logger] Decorating function for plugin", 
                  extra={"function_name": func.__name__, "plugin_name": plugin_name}, 
                  level=logging.DEBUG)
+
+        try:
+            unwrapped_func = inspect.unwrap(func)
+        except Exception:
+            unwrapped_func = func
+
+        # Only skip the first positional argument when the wrapped callable
+        # explicitly declares a conventional instance/class receiver.
+        skip_first_positional_arg = False
+        try:
+            signature = inspect.signature(unwrapped_func)
+            parameters = list(signature.parameters.values())
+            if parameters:
+                first_parameter = parameters[0]
+                if (
+                    first_parameter.kind in (
+                        inspect.Parameter.POSITIONAL_ONLY,
+                        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    )
+                    and first_parameter.name in {"self", "cls"}
+                ):
+                    skip_first_positional_arg = True
+        except (TypeError, ValueError):
+            # Keep all args if the callable cannot be introspected.
+            skip_first_positional_arg = False
+
+        is_async_callable = inspect.iscoroutinefunction(unwrapped_func)
         
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            start_time = time.time()
-            function_name = func.__name__
-            
-            log_event(f"[Plugin Function Logger] Function call started", 
-                     extra={"plugin_name": plugin_name, "function_name": function_name}, 
-                     level=logging.DEBUG)
-            
-            # Prepare parameters (combine args and kwargs)
+        def _build_parameters(args, kwargs):
             parameters = {}
             if args:
-                # Handle 'self' parameter for methods
-                if hasattr(args[0], '__class__'):
-                    parameters.update({f"arg_{i}": arg for i, arg in enumerate(args[1:])})
-                else:
-                    parameters.update({f"arg_{i}": arg for i, arg in enumerate(args)})
+                positional_args = args[1:] if skip_first_positional_arg else args
+                parameters.update({f"arg_{i}": arg for i, arg in enumerate(positional_args)})
             parameters.update(kwargs)
-            
-            # Enhanced logging: Show parameters
+            return parameters
+
+        def _log_start(function_name: str):
+            log_event(
+                f"[Plugin Function Logger] Function call started",
+                extra={"plugin_name": plugin_name, "function_name": function_name},
+                level=logging.DEBUG
+            )
+
+        def _log_parameters(function_name: str, parameters: Dict[str, Any]):
             param_str = ", ".join([f"{k}={v}" for k, v in parameters.items()]) if parameters else "no parameters"
-            log_event(f"[Plugin Function Logger] Function parameters", 
-                     extra={
-                         "plugin_name": plugin_name,
-                         "function_name": function_name,
-                         "parameters": parameters,
-                         "param_string": param_str
-                     }, 
-                     level=logging.DEBUG)
-            
-            try:
-                result = func(*args, **kwargs)
-                end_time = time.time()
-                duration_ms = (end_time - start_time) * 1000
-                
-                # Enhanced logging: Show result and timing
-                result_preview = str(result)[:200] + "..." if len(str(result)) > 200 else str(result)
-                log_event(f"[Plugin Function Logger] Function completed successfully", 
-                         extra={
-                             "plugin_name": plugin_name,
-                             "function_name": function_name,
-                             "result_preview": result_preview,
-                             "duration_ms": duration_ms,
-                             "full_function_name": f"{plugin_name}.{function_name}"
-                         }, 
-                         level=logging.INFO)
-                
-                log_plugin_invocation(
-                    plugin_name=plugin_name,
-                    function_name=function_name,
-                    parameters=parameters,
-                    result=result,
-                    start_time=start_time,
-                    end_time=end_time,
-                    success=True
-                )
-                
-                return result
-                
-            except Exception as e:
-                end_time = time.time()
-                duration_ms = (end_time - start_time) * 1000
-                
-                # Enhanced logging: Show error and timing
-                log_event(f"[Plugin Function Logger] Function failed with error", 
-                         extra={
-                             "plugin_name": plugin_name,
-                             "function_name": function_name,
-                             "duration_ms": duration_ms,
-                             "error_message": str(e),
-                             "full_function_name": f"{plugin_name}.{function_name}"
-                         }, 
-                         level=logging.ERROR)
-                
-                log_plugin_invocation(
-                    plugin_name=plugin_name,
-                    function_name=function_name,
-                    parameters=parameters,
-                    result=None,
-                    start_time=start_time,
-                    end_time=end_time,
-                    success=False,
-                    error_message=str(e)
-                )
-                
-                raise  # Re-raise the exception
-        
+            log_event(
+                f"[Plugin Function Logger] Function parameters",
+                extra={
+                    "plugin_name": plugin_name,
+                    "function_name": function_name,
+                    "parameters": parameters,
+                    "param_string": param_str
+                },
+                level=logging.DEBUG
+            )
+
+        def _log_success(function_name: str, result: Any, duration_ms: float):
+            result_preview = str(result)[:200] + "..." if len(str(result)) > 200 else str(result)
+            log_event(
+                f"[Plugin Function Logger] Function completed successfully",
+                extra={
+                    "plugin_name": plugin_name,
+                    "function_name": function_name,
+                    "result_preview": result_preview,
+                    "duration_ms": duration_ms,
+                    "full_function_name": f"{plugin_name}.{function_name}"
+                },
+                level=logging.INFO
+            )
+
+        def _log_failure(function_name: str, error: Exception, duration_ms: float):
+            log_event(
+                f"[Plugin Function Logger] Function failed with error",
+                extra={
+                    "plugin_name": plugin_name,
+                    "function_name": function_name,
+                    "duration_ms": duration_ms,
+                    "error_message": str(error),
+                    "full_function_name": f"{plugin_name}.{function_name}"
+                },
+                level=logging.ERROR
+            )
+
+        if is_async_callable:
+            @functools.wraps(func)
+            async def wrapper(*args, **kwargs):
+                start_time = time.time()
+                function_name = func.__name__
+                _log_start(function_name)
+                parameters = _build_parameters(args, kwargs)
+                _log_parameters(function_name, parameters)
+
+                try:
+                    result = await func(*args, **kwargs)
+                    end_time = time.time()
+                    duration_ms = (end_time - start_time) * 1000
+                    _log_success(function_name, result, duration_ms)
+
+                    log_plugin_invocation(
+                        plugin_name=plugin_name,
+                        function_name=function_name,
+                        parameters=parameters,
+                        result=result,
+                        start_time=start_time,
+                        end_time=end_time,
+                        success=True
+                    )
+
+                    return result
+
+                except Exception as e:
+                    end_time = time.time()
+                    duration_ms = (end_time - start_time) * 1000
+                    _log_failure(function_name, e, duration_ms)
+
+                    log_plugin_invocation(
+                        plugin_name=plugin_name,
+                        function_name=function_name,
+                        parameters=parameters,
+                        result=None,
+                        start_time=start_time,
+                        end_time=end_time,
+                        success=False,
+                        error_message=str(e)
+                    )
+
+                    raise
+        else:
+            @functools.wraps(func)
+            def wrapper(*args, **kwargs):
+                start_time = time.time()
+                function_name = func.__name__
+                _log_start(function_name)
+                parameters = _build_parameters(args, kwargs)
+                _log_parameters(function_name, parameters)
+
+                try:
+                    result = func(*args, **kwargs)
+                    if inspect.isawaitable(result):
+                        log_event(
+                            "[Plugin Function Logger] Awaitable returned from sync wrapper; deferring completion logging",
+                            extra={
+                                "plugin_name": plugin_name,
+                                "function_name": function_name,
+                                "full_function_name": f"{plugin_name}.{function_name}",
+                            },
+                            level=logging.WARNING,
+                        )
+
+                        async def _await_and_log(awaitable_result):
+                            try:
+                                awaited_value = await awaitable_result
+                                end_time = time.time()
+                                duration_ms = (end_time - start_time) * 1000
+                                _log_success(function_name, awaited_value, duration_ms)
+                                log_plugin_invocation(
+                                    plugin_name=plugin_name,
+                                    function_name=function_name,
+                                    parameters=parameters,
+                                    result=awaited_value,
+                                    start_time=start_time,
+                                    end_time=end_time,
+                                    success=True,
+                                )
+                                return awaited_value
+                            except Exception as await_error:
+                                end_time = time.time()
+                                duration_ms = (end_time - start_time) * 1000
+                                _log_failure(function_name, await_error, duration_ms)
+                                log_plugin_invocation(
+                                    plugin_name=plugin_name,
+                                    function_name=function_name,
+                                    parameters=parameters,
+                                    result=None,
+                                    start_time=start_time,
+                                    end_time=end_time,
+                                    success=False,
+                                    error_message=str(await_error),
+                                )
+                                raise
+
+                        return _await_and_log(result)
+
+                    end_time = time.time()
+                    duration_ms = (end_time - start_time) * 1000
+                    _log_success(function_name, result, duration_ms)
+
+                    log_plugin_invocation(
+                        plugin_name=plugin_name,
+                        function_name=function_name,
+                        parameters=parameters,
+                        result=result,
+                        start_time=start_time,
+                        end_time=end_time,
+                        success=True
+                    )
+
+                    return result
+
+                except Exception as e:
+                    end_time = time.time()
+                    duration_ms = (end_time - start_time) * 1000
+                    _log_failure(function_name, e, duration_ms)
+
+                    log_plugin_invocation(
+                        plugin_name=plugin_name,
+                        function_name=function_name,
+                        parameters=parameters,
+                        result=None,
+                        start_time=start_time,
+                        end_time=end_time,
+                        success=False,
+                        error_message=str(e)
+                    )
+
+                    raise
+
         return wrapper
     return decorator
 

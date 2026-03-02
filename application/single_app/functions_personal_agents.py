@@ -137,31 +137,31 @@ def save_personal_agent(user_id, agent_data):
         # Validate required fields
         required_fields = ['name', 'display_name', 'description', 'instructions']
         for field in required_fields:
-            if field not in agent_data:
-                agent_data[field] = ''
-                
+            if field not in cleaned_agent:
+                cleaned_agent[field] = ''
+
         # Set defaults for optional fields
-        agent_data.setdefault('azure_openai_gpt_deployment', '')
-        agent_data.setdefault('azure_openai_gpt_api_version', '')
-        agent_data.setdefault('azure_agent_apim_gpt_deployment', '')
-        agent_data.setdefault('azure_agent_apim_gpt_api_version', '')
-        agent_data.setdefault('enable_agent_gpt_apim', False)
-        agent_data.setdefault('reasoning_effort', '')
-        agent_data.setdefault('actions_to_load', [])
-        agent_data.setdefault('other_settings', {})
-        
+        cleaned_agent.setdefault('azure_openai_gpt_deployment', '')
+        cleaned_agent.setdefault('azure_openai_gpt_api_version', '')
+        cleaned_agent.setdefault('azure_agent_apim_gpt_deployment', '')
+        cleaned_agent.setdefault('azure_agent_apim_gpt_api_version', '')
+        cleaned_agent.setdefault('enable_agent_gpt_apim', False)
+        cleaned_agent.setdefault('reasoning_effort', '')
+        cleaned_agent.setdefault('actions_to_load', [])
+        cleaned_agent.setdefault('other_settings', {})
+
         # Remove empty reasoning_effort to avoid schema validation errors
-        if agent_data.get('reasoning_effort') == '':
-            agent_data.pop('reasoning_effort', None)
-        agent_data['is_global'] = False
-        agent_data['is_group'] = False
-        agent_data.setdefault('agent_type', 'local')
-        
+        if cleaned_agent.get('reasoning_effort') == '':
+            cleaned_agent.pop('reasoning_effort', None)
+        cleaned_agent['is_global'] = False
+        cleaned_agent['is_group'] = False
+        cleaned_agent.setdefault('agent_type', 'local')
+
         # Store sensitive keys in Key Vault if enabled
-        agent_data = keyvault_agent_save_helper(agent_data, agent_data.get('id', ''), scope="user")
-        if agent_data.get('max_completion_tokens') is None:
-            agent_data['max_completion_tokens'] = -1
-        result = cosmos_personal_agents_container.upsert_item(body=agent_data)
+        cleaned_agent = keyvault_agent_save_helper(cleaned_agent, cleaned_agent.get('id', ''), scope="user")
+        if cleaned_agent.get('max_completion_tokens') is None:
+            cleaned_agent['max_completion_tokens'] = -1
+        result = cosmos_personal_agents_container.upsert_item(body=cleaned_agent)
         # Remove Cosmos metadata from response
         cleaned_result = {k: v for k, v in result.items() if not k.startswith('_')}
         cleaned_result.setdefault('is_global', False)

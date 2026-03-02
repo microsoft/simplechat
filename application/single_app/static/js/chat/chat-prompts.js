@@ -2,7 +2,7 @@
 
 import { userInput} from "./chat-messages.js";
 import { updateSendButtonVisibility } from "./chat-messages.js";
-import { docScopeSelect } from "./chat-documents.js";
+import { docScopeSelect, getEffectiveScopes } from "./chat-documents.js";
 
 const promptSelectionContainer = document.getElementById("prompt-selection-container");
 export const promptSelect = document.getElementById("prompt-select"); // Keep export if needed elsewhere
@@ -66,33 +66,32 @@ export function loadPublicPrompts() {
 export function populatePromptSelectScope() {
   if (!promptSelect) return;
 
-  console.log("Populating prompt dropdown with scope:", docScopeSelect?.value || "all");
+  // Determine effective scope from multi-select dropdown
+  const scopes = getEffectiveScopes();
+  console.log("Populating prompt dropdown with scopes:", scopes);
   console.log("User prompts:", userPrompts.length);
   console.log("Group prompts:", groupPrompts.length);
   console.log("Public prompts:", publicPrompts.length);
 
   const previousValue = promptSelect.value; // Store previous selection if needed
   promptSelect.innerHTML = "";
-  
+
   const defaultOpt = document.createElement("option");
   defaultOpt.value = "";
   defaultOpt.textContent = "Select a Prompt...";
   promptSelect.appendChild(defaultOpt);
 
-  const scopeVal = docScopeSelect?.value || "all";
   let finalPrompts = [];
 
-  if (scopeVal === "all") {
-    const pPrompts = userPrompts.map((p) => ({...p, scope: "Personal"}));
-    const gPrompts = groupPrompts.map((p) => ({...p, scope: "Group"}));
-    const pubPrompts = publicPrompts.map((p) => ({...p, scope: "Public"}));
-    finalPrompts = pPrompts.concat(gPrompts).concat(pubPrompts);
-  } else if (scopeVal === "personal") {
-    finalPrompts = userPrompts.map((p) => ({...p, scope: "Personal"}));
-  } else if (scopeVal === "group") {
-    finalPrompts = groupPrompts.map((p) => ({...p, scope: "Group"}));
-  } else if (scopeVal === "public") {
-    finalPrompts = publicPrompts.map((p) => ({...p, scope: "Public"}));
+  // Include prompts based on which scopes are selected
+  if (scopes.personal) {
+    finalPrompts = finalPrompts.concat(userPrompts.map((p) => ({...p, scope: "Personal"})));
+  }
+  if (scopes.groupIds.length > 0) {
+    finalPrompts = finalPrompts.concat(groupPrompts.map((p) => ({...p, scope: "Group"})));
+  }
+  if (scopes.publicWorkspaceIds.length > 0) {
+    finalPrompts = finalPrompts.concat(publicPrompts.map((p) => ({...p, scope: "Public"})));
   }
 
   // Add prompt options
