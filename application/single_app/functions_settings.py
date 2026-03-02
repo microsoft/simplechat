@@ -130,9 +130,11 @@ def get_settings(use_cosmos=False):
         'enable_group_workspaces': True,
         'enable_group_creation': True,
         'require_member_of_create_group': False,
+        'require_owner_for_group_agent_management': False,
         'enable_public_workspaces': False,
         'require_member_of_create_public_workspace': False,
         'enable_file_sharing': False,
+        'enforce_workspace_scope_lock': True,
 
         # Multimedia
         'enable_video_file_support': False,

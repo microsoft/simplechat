@@ -360,8 +360,18 @@ def register_route_external_public_documents(app):
             if updated_fields:
                 from functions_documents import get_document
                 from functions_activity_logging import log_document_metadata_update_transaction
-                doc = get_document(user_id, document_id, public_workspace_id=active_workspace_id)
-                if doc:
+                doc_response = get_document(user_id, document_id, public_workspace_id=active_workspace_id)
+                doc = None
+                if isinstance(doc_response, tuple):
+                    resp, status_code = doc_response
+                    if status_code == 200 and hasattr(resp, 'get_json'):
+                        doc = resp.get_json()
+                elif hasattr(doc_response, 'get_json'):
+                    doc = doc_response.get_json()
+                else:
+                    doc = doc_response
+
+                if doc and isinstance(doc, dict):
                     log_document_metadata_update_transaction(
                         user_id=user_id,
                         document_id=document_id,

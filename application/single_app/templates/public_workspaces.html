@@ -8,7 +8,7 @@
   #public-documents-table th:nth-child(1), #public-documents-table td:nth-child(1) { width: 50px; text-align: left; }
   #public-documents-table th:nth-child(2), #public-documents-table td:nth-child(2) { min-width:50px; max-width:150px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
   #public-documents-table th:nth-child(3), #public-documents-table td:nth-child(3) { min-width:50px; max-width:200px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-  #public-documents-table th:nth-child(4), #public-documents-table td:nth-child(4) { width:200px; }
+  #public-documents-table th:nth-child(4), #public-documents-table td:nth-child(4) { width:280px; }
   .classification-badge { display:inline-block; padding:0.3em 0.6em; font-size:0.85em; font-weight:600; line-height:1; color:#fff; text-align:center; white-space:nowrap; vertical-align:baseline; border-radius:0.375rem; }
   .classification-badge.text-dark { color:#212529!important; }
   #public-documents-table td { vertical-align: middle; }
@@ -28,6 +28,11 @@
   .filter-controls-row + .filter-controls-row {
     margin-top: 0.75rem;
   }
+  /* Document checkbox and selection mode styles */
+  .document-checkbox { cursor:pointer; min-width:18px; min-height:18px; display:none; }
+  .selection-mode .document-checkbox { display:block; }
+  .selection-mode .document-row { padding-left:0.5rem; }
+  .action-dropdown .dropdown-toggle::after { display:none; }
   /* Dropdown styles */
   #public-dropdown .dropdown-item { padding:0.5rem 1rem; cursor:pointer; }
   #public-dropdown .dropdown-item:hover { background-color:#f8f9fa; }
@@ -63,6 +68,52 @@
   [data-bs-theme="dark"] .activity-item {
     border-color: var(--bs-border-color) !important;
   }
+
+  /* === Grid View (Tag Folders) Styles === */
+  .tag-folder-card {
+    border: 1px solid transparent;
+    border-radius: 0.5rem;
+    padding: 0.75rem 0.5rem;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    background: transparent;
+    position: relative;
+  }
+  .tag-folder-card:hover {
+    background: rgba(0,0,0,0.04);
+    border-color: #dee2e6;
+  }
+  .tag-folder-icon { font-size: 2.5rem; margin-bottom: 0.25rem; }
+  .tag-folder-name {
+    font-weight: 500; font-size: 0.8rem; margin-bottom: 0.15rem;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    max-width: 120px; margin-left: auto; margin-right: auto;
+  }
+  .tag-folder-count { color: #6c757d; font-size: 0.75rem; }
+  .tag-folder-actions {
+    position: absolute; top: 0.25rem; right: 0.25rem;
+    opacity: 0; transition: opacity 0.2s;
+  }
+  .tag-folder-card:hover .tag-folder-actions { opacity: 1; }
+  .tag-folder-menu-btn {
+    background: rgba(255,255,255,0.9); border: 1px solid #dee2e6;
+    border-radius: 0.25rem; padding: 0.1rem 0.3rem;
+    font-size: 0.75rem; cursor: pointer;
+  }
+  .tag-folder-menu-btn:hover { background: #fff; }
+  .folder-breadcrumb { padding: 0.5rem 0; margin-bottom: 0.75rem; border-bottom: 1px solid #dee2e6; }
+  .folder-breadcrumb a { text-decoration: none; color: #0d6efd; }
+  .folder-breadcrumb a:hover { text-decoration: underline; }
+  .sortable-header { cursor: pointer; user-select: none; }
+  .tag-badge {
+    display: inline-block; padding: 0.25em 0.5em; margin: 0.1rem;
+    font-size: 0.8rem; font-weight: 500; border-radius: 0.25rem;
+    cursor: pointer; transition: opacity 0.2s;
+  }
+  .tag-badge:hover { opacity: 0.8; }
+  .tag-badge.text-light { color: #fff !important; }
+  .tag-badge.text-dark { color: #212529 !important; }
 </style>
 {% endblock %}
 {% block content %}
@@ -107,14 +158,17 @@
     <li class="nav-item" role="presentation">
       <button class="nav-link" id="public-prompts-tab-btn" data-bs-toggle="tab" data-bs-target="#public-prompts-tab" type="button" role="tab">Public Prompts</button>
     </li>
+    {% if app_settings.enable_retention_policy_public %}
+    <li class="nav-item d-none" role="presentation" id="public-settings-tab-nav">
+      <button class="nav-link" id="public-settings-tab-btn" data-bs-toggle="tab" data-bs-target="#public-settings-tab" type="button" role="tab">Settings</button>
+    </li>
+    {% endif %}
   </ul>
 
   <div class="tab-content" id="publicWorkspaceTabContent">
     <!-- Documents Tab -->
     <div class="tab-pane fade show active" id="public-docs-tab" role="tabpanel">
       <div class="card p-3 my-3">
-        <h5>Public Documents</h5>
-        <p class="text-muted small">Documents uploaded here are visible to all authenticated users of this service.</p>
         <div class="mb-3" id="upload-public-section" style="display:none">
           <div id="upload-area" class="upload-area text-center p-4 border border-2 border-dashed rounded bg-light" style="cursor:pointer; transition: border-color 0.2s;">
             <input type="file" id="file-input" multiple style="display:none;" />
@@ -146,12 +200,9 @@
               <select id="public-docs-classification-filter" class="form-select form-select-sm">
                 <option value="">(All Classifications)</option>
                 <option value="none">(No Classification)</option>
-                <option value="None">None</option>
-                <option value="N/A">N/A</option>
-                <option value="Pending">Pending</option>
-                <option value="Public">Public</option>
-                <option value="CUI">CUI</option>
-                <option value="ITAR">ITAR</option>
+                {% for cat in settings.document_classification_categories %}
+                <option value="{{ cat.label }}">{{ cat.label }}</option>
+                {% endfor %}
               </select>
             </div>
             <div class="col-md-5 filter-buttons-col mt-2 mt-md-0">
@@ -177,12 +228,35 @@
               <input type="search" id="public-docs-abstract-filter" class="form-control form-control-sm" placeholder="Abstract content..." spellcheck="false" data-ms-editor="true">
             </div>
             <div class="col-md-3 filter-buttons-col mt-2 mt-md-0">
-              <!-- Buttons removed from metadata row -->
+              <label for="public-docs-tags-filter" class="form-label mb-1 small">Filter by Tags:</label>
+              <select id="public-docs-tags-filter" class="form-select form-select-sm" multiple size="1">
+                <!-- Populated dynamically -->
+              </select>
             </div>
           </div>
         </div>
 
         <!-- Removed duplicate filter row outside the collapsible area -->
+
+        <!-- View Controls (List/Grid Toggle) -->
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div class="btn-group btn-group-sm" role="group" aria-label="View mode">
+            <input type="radio" class="btn-check" name="public-docs-view-mode" id="public-docs-view-list" autocomplete="off" checked>
+            <label class="btn btn-outline-secondary" for="public-docs-view-list">
+              <i class="bi bi-list-ul"></i> List
+            </label>
+            <input type="radio" class="btn-check" name="public-docs-view-mode" id="public-docs-view-grid" autocomplete="off">
+            <label class="btn btn-outline-secondary" for="public-docs-view-grid">
+              <i class="bi bi-grid-3x3-gap"></i> Grid
+            </label>
+          </div>
+          <div class="d-flex align-items-center gap-2">
+            <button type="button" class="btn btn-sm btn-outline-primary" id="public-manage-tags-btn">
+              <i class="bi bi-tags me-1"></i>Manage Tags
+            </button>
+            <div class="text-muted small" id="public-docs-view-info"></div>
+          </div>
+        </div>
 
         <!-- Bulk Actions Bar (shown when documents are selected) -->
         <div id="publicBulkActionsBar" class="alert alert-info py-2 mb-2" style="display: none;">
@@ -194,6 +268,14 @@
               <button type="button" class="btn btn-sm btn-danger" id="public-delete-selected-btn">
                 <i class="bi bi-trash me-1"></i>Delete Selected
               </button>
+              <button type="button" class="btn btn-sm btn-primary ms-2" id="public-chat-selected-btn"
+                      onclick="chatWithPublicSelected()">
+                <i class="bi bi-chat-dots-fill me-1"></i>Chat with Selected
+              </button>
+              <button type="button" class="btn btn-sm btn-info ms-2" id="public-bulk-tag-btn"
+                      data-bs-toggle="modal" data-bs-target="#publicBulkTagModal">
+                <i class="bi bi-tags me-1"></i>Tag Selected
+              </button>
               <button type="button" class="btn btn-sm btn-secondary ms-2" id="public-clear-selection-btn">
                 Clear Selection
               </button>
@@ -201,13 +283,19 @@
           </div>
         </div>
 
+        <!-- Documents List View -->
+        <div id="public-documents-list-view">
         <table class="table table-striped" id="public-documents-table">
           <thead>
             <tr>
               <th></th>
               <!-- Expand -->
-              <th>File Name</th>
-              <th>Title</th>
+              <th class="sortable-header" data-sort-field="file_name" style="cursor: pointer; user-select: none;">
+                File Name <i class="bi bi-arrow-down-up text-muted small sort-icon"></i>
+              </th>
+              <th class="sortable-header" data-sort-field="title" style="cursor: pointer; user-select: none;">
+                Title <i class="bi bi-arrow-down-up text-muted small sort-icon"></i>
+              </th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -230,15 +318,49 @@
           </div>
           <div id="public-docs-pagination-container" class="d-flex gap-1 ms-auto"></div>
         </div>
+        </div>
+        <!-- End Documents List View -->
+
+        <!-- Documents Grid View (Tag Folders) -->
+        <div id="public-documents-grid-view" style="display: none;">
+          <div id="public-tag-folders-container" class="row g-2">
+            <div class="col-12 text-center text-muted py-5">
+              <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
+              Loading tag folders...
+            </div>
+          </div>
+        </div>
+
+        <!-- Grid View Controls (sort, page size, pagination) -->
+        <div id="public-grid-controls-bar" class="align-items-center gap-3 mb-3 mt-3" style="display: none;">
+          <div class="d-flex align-items-center gap-2">
+            <small class="text-muted">Sort:</small>
+            <button class="btn btn-sm btn-outline-secondary public-grid-sort-btn" data-sort="name">
+              Name <i class="bi bi-arrow-down-up text-muted ms-1 public-grid-sort-icon" data-sort="name"></i>
+            </button>
+            <button class="btn btn-sm btn-outline-secondary public-grid-sort-btn" data-sort="count">
+              Files <i class="bi bi-sort-numeric-up ms-1 public-grid-sort-icon" data-sort="count"></i>
+            </button>
+          </div>
+          <div>
+            <label for="public-grid-page-size-select" class="visually-hidden">Items per page:</label>
+            <select id="public-grid-page-size-select" class="form-select form-select-sm d-inline-block" style="width:auto;">
+              <option value="10" selected>10</option>
+              <option value="20">20</option>
+              <option value="50">50</option>
+            </select>
+            <span class="ms-1 small text-muted">items per page</span>
+          </div>
+          <div id="public-grid-pagination-container" class="d-flex gap-1 ms-auto"></div>
+        </div>
       </div>
     </div>
 
     <!-- Prompts Tab -->
     <div class="tab-pane fade" id="public-prompts-tab" role="tabpanel">
       <div class="card p-3 my-3">
-        <h5>Public Prompts</h5>
         <div id="public-prompts-role-warning" class="alert alert-warning" style="display:none">You do not have permission to manage public prompts.</div>
-        <div class="mb-3" id="create-public-prompt-section" style="display:none"><button id="create-public-prompt-btn" class="btn btn-success">New Prompt</button></div>
+        <div class="mb-3" id="create-public-prompt-section" style="display:none"><button id="create-public-prompt-btn" class="btn btn-success btn-sm">New Prompt</button></div>
         
         <!-- Prompts Filters -->
         <button class="btn btn-outline-secondary btn-sm mb-2" type="button" data-bs-toggle="collapse" data-bs-target="#public-prompts-filters-collapse" aria-expanded="false" aria-controls="public-prompts-filters-collapse" id="public-prompts-filters-toggle-btn">
@@ -260,6 +382,73 @@
         <div class="d-flex align-items-center gap-3 mb-3 mt-3"><div><label class="visually-hidden">Items per page:</label><select id="public-prompts-page-size-select" class="form-select form-select-sm d-inline-block" style="width:auto;"><option value="10" selected>10</option><option value="20">20</option><option value="50">50</option></select><span class="ms-1 small text-muted">items per page</span></div><div id="public-prompts-pagination-container" class="d-flex gap-1 ms-auto"></div></div>
       </div>
     </div>
+
+    {% if app_settings.enable_retention_policy_public %}
+    <!-- Settings Tab -->
+    <div class="tab-pane fade" id="public-settings-tab" role="tabpanel">
+      <div class="card p-4 my-3">
+        <h5 class="mb-3"><i class="bi bi-hourglass-split me-2"></i>Retention Policy Settings</h5>
+        <p class="text-muted">Configure how long to keep conversations and documents in this public workspace. Items older than the specified period will be automatically deleted.</p>
+        
+        <div class="alert alert-info">
+          <i class="bi bi-info-circle me-2"></i>
+          <strong>Default:</strong> You can use the organization default or set a custom retention period. Choose "No automatic deletion" to keep items indefinitely.
+        </div>
+        
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label for="public-conversation-retention-days" class="form-label">Conversation Retention</label>
+            <select class="form-select" id="public-conversation-retention-days" name="conversation_retention_days">
+              <option value="default">Using organization default</option>
+              <option value="none">No automatic deletion</option>
+              <option value="7">7 days (1 week)</option>
+              <option value="14">14 days (2 weeks)</option>
+              <option value="30">30 days (1 month)</option>
+              <option value="60">60 days (2 months)</option>
+              <option value="90">90 days (3 months)</option>
+              <option value="180">180 days (6 months)</option>
+              <option value="365">365 days (1 year)</option>
+              <option value="730">730 days (2 years)</option>
+              <option value="1095">1095 days (3 years)</option>
+              <option value="3650">3650 days (10 years)</option>
+            </select>
+            <small class="form-text text-muted">Conversations older than this will be automatically deleted.</small>
+          </div>
+          
+          <div class="col-md-6">
+            <label for="public-document-retention-days" class="form-label">Document Retention</label>
+            <select class="form-select" id="public-document-retention-days" name="document_retention_days">
+              <option value="default">Using organization default</option>
+              <option value="none">No automatic deletion</option>
+              <option value="7">7 days (1 week)</option>
+              <option value="14">14 days (2 weeks)</option>
+              <option value="30">30 days (1 month)</option>
+              <option value="60">60 days (2 months)</option>
+              <option value="90">90 days (3 months)</option>
+              <option value="180">180 days (6 months)</option>
+              <option value="365">365 days (1 year)</option>
+              <option value="730">730 days (2 years)</option>
+              <option value="1095">1095 days (3 years)</option>
+              <option value="3650">3650 days (10 years)</option>
+            </select>
+            <small class="form-text text-muted">Documents older than this will be automatically deleted.</small>
+          </div>
+        </div>
+        
+        <div class="mt-3">
+          <button type="button" class="btn btn-primary" onclick="savePublicRetentionSettings()">
+            <i class="bi bi-save me-1"></i>Save Retention Settings
+          </button>
+          <span id="public-retention-save-status" class="ms-3"></span>
+        </div>
+        
+        <div class="alert alert-warning mt-3 mb-0">
+          <i class="bi bi-exclamation-triangle me-2"></i>
+          <strong>Important:</strong> Deleted conversations will be archived if archiving is enabled. All deletions are logged in activity history.
+        </div>
+      </div>
+    </div>
+    {% endif %}
   </div>
 </div>
 
@@ -282,12 +471,9 @@
             <select class="form-select" id="public-doc-classification">
               <option value="">-- Select Classification --</option>
               <option value="none">(No Classification)</option>
-              <option value="None">None</option>
-              <option value="N/A">N/A</option>
-              <option value="Pending">Pending</option>
-              <option value="Public">Public</option>
-              <option value="CUI">CUI</option>
-              <option value="ITAR">ITAR</option>
+              {% for cat in settings.document_classification_categories %}
+              <option value="{{ cat.label }}">{{ cat.label }}</option>
+              {% endfor %}
             </select>
           </div>
 
@@ -319,6 +505,23 @@
           <div class="mb-3">
             <label for="public-doc-authors" class="form-label">Authors (comma separated)</label>
             <input type="text" class="form-control" id="public-doc-authors" />
+          </div>
+          <!-- Tags -->
+          <div class="mb-3">
+            <label class="form-label d-flex justify-content-between align-items-center">
+              <span>Tags</span>
+              <button type="button" class="btn btn-sm btn-outline-primary" id="public-doc-manage-tags-btn">
+                <i class="bi bi-tags"></i> Manage Tags
+              </button>
+            </label>
+            <div id="public-doc-selected-tags-display" class="border rounded p-2 mb-2" style="min-height: 40px;">
+              <div class="d-flex flex-wrap gap-1" id="public-doc-selected-tags-container">
+                <span class="text-muted small">No tags selected</span>
+              </div>
+            </div>
+            <div class="form-text">
+              Click "Manage Tags" to select tags, create new ones, or edit existing tags.
+            </div>
           </div>
         </div>
         <!-- end modal-body -->
@@ -387,11 +590,160 @@
     </div>
   </div>
 </div>
+
+<!-- Bulk Tag Assignment Modal (Public) -->
+<div class="modal fade" id="publicBulkTagModal" tabindex="-1" aria-labelledby="publicBulkTagModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="publicBulkTagModalLabel">
+          <i class="bi bi-tags me-2"></i>Tag Assignment for Selected Documents
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-info mb-3">
+          <i class="bi bi-info-circle me-2"></i>
+          <strong>Selected:</strong> <span id="public-bulk-tag-doc-count">0</span> document(s)
+        </div>
+        <div class="mb-3">
+          <label for="public-bulk-tag-action" class="form-label fw-bold">Action</label>
+          <select class="form-select" id="public-bulk-tag-action">
+            <option value="add_tags">Add Tags (append to existing)</option>
+            <option value="remove_tags">Remove Tags (remove specific tags)</option>
+            <option value="set_tags">Replace All Tags (overwrite existing)</option>
+          </select>
+        </div>
+        <div class="mb-3">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <label class="form-label fw-bold mb-0">Select Tags to Apply</label>
+            <button type="button" class="btn btn-sm btn-outline-primary" id="public-bulk-create-tag-btn">
+              <i class="bi bi-plus-circle me-1"></i>Create Tag
+            </button>
+          </div>
+          <div class="border rounded p-3 bg-light" style="min-height: 120px; max-height: 300px; overflow-y: auto;">
+            <div id="public-bulk-tags-list" class="d-flex flex-wrap gap-2">
+              <div class="text-muted w-100 text-center py-3">No tags available.</div>
+            </div>
+          </div>
+          <div class="form-text mt-2">Click tags to select/deselect them.</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="public-bulk-tag-apply-btn">
+          <span class="button-text"><i class="bi bi-check-circle me-1"></i>Apply to Selected Documents</span>
+          <span class="button-loading d-none">
+            <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Applying...
+          </span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Public Tag Management Modal -->
+<div class="modal fade" id="publicTagManagementModal" tabindex="-1" aria-labelledby="publicTagManagementModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="publicTagManagementModalLabel">Manage Workspace Tags</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <!-- Add New Tag Form -->
+        <div class="card mb-3">
+          <div class="card-body position-relative">
+            <h6 class="card-title d-inline-block" id="public-tag-form-title">Add New Tag</h6>
+            <button type="button" class="btn btn-sm btn-link text-danger position-absolute top-0 end-0 mt-2 me-2 d-none" id="public-cancel-edit-btn" title="Cancel editing">
+              <i class="bi bi-x-circle"></i>
+            </button>
+            <div class="row g-2">
+              <div class="col-md-6">
+                <input type="text" class="form-control" id="public-new-tag-name" placeholder="Tag name (lowercase, alphanumeric)" maxlength="50">
+                <div class="form-text">Use lowercase letters, numbers, hyphens, underscores</div>
+              </div>
+              <div class="col-md-4">
+                <div class="input-group">
+                  <span class="input-group-text">Color</span>
+                  <input type="color" class="form-control form-control-color" id="public-new-tag-color" value="#0d6efd">
+                </div>
+              </div>
+              <div class="col-md-2">
+                <button type="button" class="btn btn-primary w-100" id="public-add-tag-btn">
+                  <i class="bi bi-plus-circle"></i> Add
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- Existing Tags Table -->
+        <div class="card">
+          <div class="card-body">
+            <h6 class="card-title">Existing Tags</h6>
+            <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+              <table class="table table-sm table-hover">
+                <thead class="table-light sticky-top">
+                  <tr>
+                    <th style="width: 50px;">Color</th>
+                    <th>Tag Name</th>
+                    <th style="width: 80px;">Count</th>
+                    <th style="width: 100px;">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="public-existing-tags-tbody">
+                  <tr><td colspan="4" class="text-center text-muted">No tags yet. Add one above.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Public Tag Selection Modal -->
+<div class="modal fade" id="publicTagSelectionModal" tabindex="-1" aria-labelledby="publicTagSelectionModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="publicTagSelectionModalLabel">Select Tags</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-2 p-2 bg-light border-bottom d-flex justify-content-between align-items-center">
+          <span class="small">Select tags to apply:</span>
+          <button type="button" class="btn btn-sm btn-outline-primary" id="public-open-tag-mgmt-btn">
+            <i class="bi bi-gear"></i> Manage Tags
+          </button>
+        </div>
+        <div id="public-tag-selection-list" class="list-group" style="max-height: 400px; overflow-y: auto;">
+          <div class="text-muted text-center p-3">No tags available</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="public-tag-selection-done-btn">Done</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 {% block scripts %}
 <script>
   // Pass settings to JavaScript
   window.max_file_size_mb = {{ settings.max_file_size_mb | default(16) }};
+  window.classification_categories = JSON.parse('{{ settings.document_classification_categories|tojson(indent=None)|safe }}' || '[]');
+  if (!Array.isArray(window.classification_categories)) {
+    window.classification_categories = [];
+  }
+  window.enable_document_classification = "{{ enable_document_classification | tojson }}";
+  window.enable_extract_meta_data = "{{ enable_extract_meta_data | tojson }}";
 </script>
 <script src="/static/js/public/public_workspace_utility.js"></script>
 <script src="/static/js/public/public_workspace.js"></script>

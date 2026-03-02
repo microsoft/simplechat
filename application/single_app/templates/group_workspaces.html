@@ -167,6 +167,52 @@ app_settings.app_title }} {% endblock %} {% block head %}
     background-color: #dc3545;
     color: #fff;
   }
+
+  /* === Grid View (Tag Folders) Styles === */
+  .tag-folder-card {
+    border: 1px solid transparent;
+    border-radius: 0.5rem;
+    padding: 0.75rem 0.5rem;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    background: transparent;
+    position: relative;
+  }
+  .tag-folder-card:hover {
+    background: rgba(0,0,0,0.04);
+    border-color: #dee2e6;
+  }
+  .tag-folder-icon { font-size: 2.5rem; margin-bottom: 0.25rem; }
+  .tag-folder-name {
+    font-weight: 500; font-size: 0.8rem; margin-bottom: 0.15rem;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    max-width: 120px; margin-left: auto; margin-right: auto;
+  }
+  .tag-folder-count { color: #6c757d; font-size: 0.75rem; }
+  .tag-folder-actions {
+    position: absolute; top: 0.25rem; right: 0.25rem;
+    opacity: 0; transition: opacity 0.2s;
+  }
+  .tag-folder-card:hover .tag-folder-actions { opacity: 1; }
+  .tag-folder-menu-btn {
+    background: rgba(255,255,255,0.9); border: 1px solid #dee2e6;
+    border-radius: 0.25rem; padding: 0.1rem 0.3rem;
+    font-size: 0.75rem; cursor: pointer;
+  }
+  .tag-folder-menu-btn:hover { background: #fff; }
+  .folder-breadcrumb { padding: 0.5rem 0; margin-bottom: 0.75rem; border-bottom: 1px solid #dee2e6; }
+  .folder-breadcrumb a { text-decoration: none; color: #0d6efd; }
+  .folder-breadcrumb a:hover { text-decoration: underline; }
+  .sortable-header { cursor: pointer; user-select: none; }
+  .tag-badge {
+    display: inline-block; padding: 0.25em 0.5em; margin: 0.1rem;
+    font-size: 0.8rem; font-weight: 500; border-radius: 0.25rem;
+    cursor: pointer; transition: opacity 0.2s;
+  }
+  .tag-badge:hover { opacity: 0.8; }
+  .tag-badge.text-light { color: #fff !important; }
+  .tag-badge.text-dark { color: #212529 !important; }
 </style>
 {% endblock %} {% block content %}
 <div class="container">
@@ -278,6 +324,22 @@ app_settings.app_title }} {% endblock %} {% block head %}
       </button>
     </li>
     {% endif %}
+    {% if app_settings.enable_retention_policy_group %}
+    <li class="nav-item d-none" role="presentation" id="group-settings-tab-nav">
+      <button
+        class="nav-link"
+        id="group-settings-tab-btn"
+        data-bs-toggle="tab"
+        data-bs-target="#group-settings-tab"
+        type="button"
+        role="tab"
+        aria-controls="group-settings-tab"
+        aria-selected="false"
+      >
+        Settings
+      </button>
+    </li>
+    {% endif %}
   </ul>
 
   <!-- Tab Panes -->
@@ -291,10 +353,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
     >
       <div class="card p-3 my-3">
         <div id="group-legacy-update-prompt-placeholder"></div>
-        <h5>Group Documents</h5>
-        <p class="text-muted small">
-          Documents uploaded here are visible to all group members.
-        </p>
         <!-- Document Upload (visibility controlled by JS based on role) -->
         <div class="mb-3" id="upload-section" style="display: none">
           <div id="upload-area" class="upload-area text-center p-4 border border-2 border-dashed rounded bg-light" style="cursor:pointer; transition: border-color 0.2s;">
@@ -429,12 +487,35 @@ app_settings.app_title }} {% endblock %} {% block head %}
                 placeholder="Abstract content..."
               />
             </div>
-            <div class="col-md-3 filter-buttons-col mt-2 mt-md-0">
-              <!-- Buttons removed from metadata row -->
+            <div class="col-md-3">
+              <label for="group-docs-tags-filter" class="form-label mb-1 small">Filter by Tags:</label>
+              <select id="group-docs-tags-filter" class="form-select form-select-sm" multiple size="1">
+                <!-- Populated dynamically -->
+              </select>
             </div>
           </div>
         </div>
         <!-- End Metadata Filters -->
+
+        <!-- View Controls (List/Grid Toggle) -->
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div class="btn-group btn-group-sm" role="group" aria-label="View mode">
+            <input type="radio" class="btn-check" name="group-docs-view-mode" id="group-docs-view-list" autocomplete="off" checked>
+            <label class="btn btn-outline-secondary" for="group-docs-view-list">
+              <i class="bi bi-list-ul"></i> List
+            </label>
+            <input type="radio" class="btn-check" name="group-docs-view-mode" id="group-docs-view-grid" autocomplete="off">
+            <label class="btn btn-outline-secondary" for="group-docs-view-grid">
+              <i class="bi bi-grid-3x3-gap"></i> Grid
+            </label>
+          </div>
+          <div class="d-flex align-items-center gap-2">
+            <button type="button" class="btn btn-sm btn-outline-primary" id="group-manage-tags-btn">
+              <i class="bi bi-tags me-1"></i>Manage Tags
+            </button>
+            <div class="text-muted small" id="group-docs-view-info"></div>
+          </div>
+        </div>
 
         <!-- Bulk Actions Bar (shown when documents are selected) -->
         <div id="groupBulkActionsBar" class="alert alert-info py-2 mb-2" style="display: none;">
@@ -449,6 +530,14 @@ app_settings.app_title }} {% endblock %} {% block head %}
               <button type="button" class="btn btn-sm btn-warning me-2" id="group-remove-selected-btn">
                 <i class="bi bi-x-circle me-1"></i>Remove Selected
               </button>
+              <button type="button" class="btn btn-sm btn-primary me-2" id="group-chat-selected-btn"
+                      onclick="chatWithGroupSelected()">
+                <i class="bi bi-chat-dots-fill me-1"></i>Chat with Selected
+              </button>
+              <button type="button" class="btn btn-sm btn-info me-2" id="group-bulk-tag-btn"
+                      data-bs-toggle="modal" data-bs-target="#groupBulkTagModal">
+                <i class="bi bi-tags me-1"></i>Tag Selected
+              </button>
               <button type="button" class="btn btn-sm btn-secondary" id="group-clear-selection-btn">
                 Clear Selection
               </button>
@@ -456,14 +545,20 @@ app_settings.app_title }} {% endblock %} {% block head %}
           </div>
         </div>
 
+        <!-- Documents List View -->
+        <div id="group-documents-list-view">
         <!-- Documents List Table -->
         <table class="table table-striped" id="group-documents-table">
           <thead>
             <tr>
               <th></th>
               <!-- Expand -->
-              <th>File Name</th>
-              <th>Title</th>
+              <th class="sortable-header" data-sort-field="file_name" style="cursor: pointer; user-select: none;">
+                File Name <i class="bi bi-arrow-down-up text-muted small sort-icon"></i>
+              </th>
+              <th class="sortable-header" data-sort-field="title" style="cursor: pointer; user-select: none;">
+                Title <i class="bi bi-arrow-down-up text-muted small sort-icon"></i>
+              </th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -507,6 +602,41 @@ app_settings.app_title }} {% endblock %} {% block head %}
             <!-- Populated by JavaScript -->
           </div>
         </div>
+        </div>
+        <!-- End Documents List View -->
+
+        <!-- Documents Grid View (Tag Folders) -->
+        <div id="group-documents-grid-view" style="display: none;">
+          <div id="group-tag-folders-container" class="row g-2">
+            <div class="col-12 text-center text-muted py-5">
+              <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
+              Loading tag folders...
+            </div>
+          </div>
+        </div>
+
+        <!-- Grid View Controls (sort, page size, pagination) -->
+        <div id="group-grid-controls-bar" class="align-items-center gap-3 mb-3 mt-3" style="display: none;">
+          <div class="d-flex align-items-center gap-2">
+            <small class="text-muted">Sort:</small>
+            <button class="btn btn-sm btn-outline-secondary group-grid-sort-btn" data-sort="name">
+              Name <i class="bi bi-arrow-down-up text-muted ms-1 group-grid-sort-icon" data-sort="name"></i>
+            </button>
+            <button class="btn btn-sm btn-outline-secondary group-grid-sort-btn" data-sort="count">
+              Files <i class="bi bi-sort-numeric-up ms-1 group-grid-sort-icon" data-sort="count"></i>
+            </button>
+          </div>
+          <div>
+            <label for="group-grid-page-size-select" class="visually-hidden">Items per page:</label>
+            <select id="group-grid-page-size-select" class="form-select form-select-sm d-inline-block" style="width:auto;">
+              <option value="10" selected>10</option>
+              <option value="20">20</option>
+              <option value="50">50</option>
+            </select>
+            <span class="ms-1 small text-muted">items per page</span>
+          </div>
+          <div id="group-grid-pagination-container" class="d-flex gap-1 ms-auto"></div>
+        </div>
       </div>
       <!-- End Card -->
     </div>
@@ -520,8 +650,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
       aria-labelledby="prompts-tab-btn"
     >
       <div class="card p-3 my-3">
-        <h5>Group Prompts</h5>
-
         <!-- Shown when user can't manage prompts -->
         <div
           id="group-prompts-role-warning"
@@ -537,7 +665,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           id="create-group-prompt-section"
           style="display: none"
         >
-          <button id="create-group-prompt-btn" class="btn btn-success">
+          <button id="create-group-prompt-btn" class="btn btn-success btn-sm">
             New Prompt
           </button>
         </div>
@@ -640,7 +768,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
     >
       <div class="card p-3 my-3">
         <div class="d-flex justify-content-between align-items-center mb-2">
-          <h5 class="mb-0 d-flex align-items-center gap-2">Group Agents</h5>
           <div class="d-flex align-items-center gap-2">
             <button type="button" class="btn btn-outline-info btn-sm agent-examples-trigger" data-bs-toggle="modal" data-bs-target="#agentExamplesModal" data-trigger-button="#create-group-agent-btn">
               <i class="bi bi-magic"></i>
@@ -700,7 +827,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
       <template id="group-plugins-table-template">
         <div class="card p-3 my-3">
           <div class="d-flex justify-content-between align-items-center mb-2">
-            <h5 class="mb-0 d-flex align-items-center gap-2">Group Actions</h5>
             <button class="btn btn-success btn-sm" id="create-group-plugin-btn">New Action</button>
           </div>
           <div class="mb-3">
@@ -734,6 +860,79 @@ app_settings.app_title }} {% endblock %} {% block head %}
       </template>
     </div>
     <!-- End GROUP ACTIONS TAB -->
+    {% endif %}
+
+    {% if app_settings.enable_retention_policy_group %}
+    <!-- ============= GROUP SETTINGS TAB ============= -->
+    <div
+      class="tab-pane fade"
+      id="group-settings-tab"
+      role="tabpanel"
+      aria-labelledby="group-settings-tab-btn"
+    >
+      <div class="card p-4 my-3">
+        <h5 class="mb-3"><i class="bi bi-hourglass-split me-2"></i>Retention Policy Settings</h5>
+        <p class="text-muted">Configure how long to keep conversations and documents in this group workspace. Items older than the specified period will be automatically deleted.</p>
+        
+        <div class="alert alert-info">
+          <i class="bi bi-info-circle me-2"></i>
+          <strong>Default:</strong> You can use the organization default or set a custom retention period. Choose "No automatic deletion" to keep items indefinitely.
+        </div>
+        
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label for="group-conversation-retention-days" class="form-label">Conversation Retention</label>
+            <select class="form-select" id="group-conversation-retention-days" name="conversation_retention_days">
+              <option value="default">Using organization default</option>
+              <option value="none">No automatic deletion</option>
+              <option value="7">7 days (1 week)</option>
+              <option value="14">14 days (2 weeks)</option>
+              <option value="30">30 days (1 month)</option>
+              <option value="60">60 days (2 months)</option>
+              <option value="90">90 days (3 months)</option>
+              <option value="180">180 days (6 months)</option>
+              <option value="365">365 days (1 year)</option>
+              <option value="730">730 days (2 years)</option>
+              <option value="1095">1095 days (3 years)</option>
+              <option value="3650">3650 days (10 years)</option>
+            </select>
+            <small class="form-text text-muted">Conversations older than this will be automatically deleted.</small>
+          </div>
+          
+          <div class="col-md-6">
+            <label for="group-document-retention-days" class="form-label">Document Retention</label>
+            <select class="form-select" id="group-document-retention-days" name="document_retention_days">
+              <option value="default">Using organization default</option>
+              <option value="none">No automatic deletion</option>
+              <option value="7">7 days (1 week)</option>
+              <option value="14">14 days (2 weeks)</option>
+              <option value="30">30 days (1 month)</option>
+              <option value="60">60 days (2 months)</option>
+              <option value="90">90 days (3 months)</option>
+              <option value="180">180 days (6 months)</option>
+              <option value="365">365 days (1 year)</option>
+              <option value="730">730 days (2 years)</option>
+              <option value="1095">1095 days (3 years)</option>
+              <option value="3650">3650 days (10 years)</option>
+            </select>
+            <small class="form-text text-muted">Documents older than this will be automatically deleted.</small>
+          </div>
+        </div>
+        
+        <div class="mt-3">
+          <button type="button" class="btn btn-primary" onclick="saveGroupRetentionSettings()">
+            <i class="bi bi-save me-1"></i>Save Retention Settings
+          </button>
+          <span id="group-retention-save-status" class="ms-3"></span>
+        </div>
+        
+        <div class="alert alert-warning mt-3 mb-0">
+          <i class="bi bi-exclamation-triangle me-2"></i>
+          <strong>Important:</strong> Deleted conversations will be archived if archiving is enabled. All deletions are logged in activity history.
+        </div>
+      </div>
+    </div>
+    <!-- End GROUP SETTINGS TAB -->
     {% endif %}
   </div>
   <!-- End Tab Content -->
@@ -893,6 +1092,23 @@ app_settings.app_title }} {% endblock %} {% block head %}
               >Authors (comma separated)</label
             ><input type="text" class="form-control" id="doc-authors" />
           </div>
+          <!-- Tags -->
+          <div class="mb-3">
+            <label class="form-label d-flex justify-content-between align-items-center">
+              <span>Tags</span>
+              <button type="button" class="btn btn-sm btn-outline-primary" id="group-doc-manage-tags-btn">
+                <i class="bi bi-tags"></i> Manage Tags
+              </button>
+            </label>
+            <div id="group-doc-selected-tags-display" class="border rounded p-2 mb-2" style="min-height: 40px;">
+              <div class="d-flex flex-wrap gap-1" id="group-doc-selected-tags-container">
+                <span class="text-muted small">No tags selected</span>
+              </div>
+            </div>
+            <div class="form-text">
+              Click "Manage Tags" to select tags, create new ones, or edit existing tags.
+            </div>
+          </div>
         </div>
         <div class="modal-footer">
           <button id="doc-save-btn" type="submit" class="btn btn-primary">
@@ -996,6 +1212,148 @@ app_settings.app_title }} {% endblock %} {% block head %}
     </form>
   </div>
 </div>
+<!-- Bulk Tag Assignment Modal (Group) -->
+<div class="modal fade" id="groupBulkTagModal" tabindex="-1" aria-labelledby="groupBulkTagModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="groupBulkTagModalLabel">
+          <i class="bi bi-tags me-2"></i>Tag Assignment for Selected Documents
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-info mb-3">
+          <i class="bi bi-info-circle me-2"></i>
+          <strong>Selected:</strong> <span id="group-bulk-tag-doc-count">0</span> document(s)
+        </div>
+        <div class="mb-3">
+          <label for="group-bulk-tag-action" class="form-label fw-bold">Action</label>
+          <select class="form-select" id="group-bulk-tag-action">
+            <option value="add_tags">Add Tags (append to existing)</option>
+            <option value="remove_tags">Remove Tags (remove specific tags)</option>
+            <option value="set_tags">Replace All Tags (overwrite existing)</option>
+          </select>
+        </div>
+        <div class="mb-3">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <label class="form-label fw-bold mb-0">Select Tags to Apply</label>
+            <button type="button" class="btn btn-sm btn-outline-primary" id="group-bulk-create-tag-btn">
+              <i class="bi bi-plus-circle me-1"></i>Create Tag
+            </button>
+          </div>
+          <div class="border rounded p-3 bg-light" style="min-height: 120px; max-height: 300px; overflow-y: auto;">
+            <div id="group-bulk-tags-list" class="d-flex flex-wrap gap-2">
+              <div class="text-muted w-100 text-center py-3">No tags available.</div>
+            </div>
+          </div>
+          <div class="form-text mt-2">Click tags to select/deselect them.</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="group-bulk-tag-apply-btn">
+          <span class="button-text"><i class="bi bi-check-circle me-1"></i>Apply to Selected Documents</span>
+          <span class="button-loading d-none">
+            <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Applying...
+          </span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Group Tag Management Modal -->
+<div class="modal fade" id="groupTagManagementModal" tabindex="-1" aria-labelledby="groupTagManagementModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="groupTagManagementModalLabel">Manage Workspace Tags</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <!-- Add New Tag Form -->
+        <div class="card mb-3">
+          <div class="card-body position-relative">
+            <h6 class="card-title d-inline-block" id="group-tag-form-title">Add New Tag</h6>
+            <button type="button" class="btn btn-sm btn-link text-danger position-absolute top-0 end-0 mt-2 me-2 d-none" id="group-cancel-edit-btn" title="Cancel editing">
+              <i class="bi bi-x-circle"></i>
+            </button>
+            <div class="row g-2">
+              <div class="col-md-6">
+                <input type="text" class="form-control" id="group-new-tag-name" placeholder="Tag name (lowercase, alphanumeric)" maxlength="50">
+                <div class="form-text">Use lowercase letters, numbers, hyphens, underscores</div>
+              </div>
+              <div class="col-md-4">
+                <div class="input-group">
+                  <span class="input-group-text">Color</span>
+                  <input type="color" class="form-control form-control-color" id="group-new-tag-color" value="#0d6efd">
+                </div>
+              </div>
+              <div class="col-md-2">
+                <button type="button" class="btn btn-primary w-100" id="group-add-tag-btn">
+                  <i class="bi bi-plus-circle"></i> Add
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- Existing Tags Table -->
+        <div class="card">
+          <div class="card-body">
+            <h6 class="card-title">Existing Tags</h6>
+            <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+              <table class="table table-sm table-hover">
+                <thead class="table-light sticky-top">
+                  <tr>
+                    <th style="width: 50px;">Color</th>
+                    <th>Tag Name</th>
+                    <th style="width: 80px;">Count</th>
+                    <th style="width: 100px;">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="group-existing-tags-tbody">
+                  <tr><td colspan="4" class="text-center text-muted">No tags yet. Add one above.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Group Tag Selection Modal -->
+<div class="modal fade" id="groupTagSelectionModal" tabindex="-1" aria-labelledby="groupTagSelectionModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="groupTagSelectionModalLabel">Select Tags</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-2 p-2 bg-light border-bottom d-flex justify-content-between align-items-center">
+          <span class="small">Select tags to apply:</span>
+          <button type="button" class="btn btn-sm btn-outline-primary" id="group-open-tag-mgmt-btn">
+            <i class="bi bi-gear"></i> Manage Tags
+          </button>
+        </div>
+        <div id="group-tag-selection-list" class="list-group" style="max-height: 400px; overflow-y: auto;">
+          <div class="text-muted text-center p-3">No tags available</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="group-tag-selection-done-btn">Done</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 {% endblock %} {% block scripts %}
 <!-- SimpleMDE CSS/JS (Keep As Is) -->
 <!-- <script src="https://cdn.jsdelivr.net/npm/simplemde/dist/simplemde.min.js"></script>
@@ -1095,7 +1453,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
     window.groupWorkspaceContext = {
       activeGroupId,
       activeGroupName,
-      userRole: userRoleInActiveGroup
+      userRole: userRoleInActiveGroup,
+      requireOwnerForAgentManagement: {{ settings.require_owner_for_group_agent_management | tojson }}
     };
     window.dispatchEvent(new CustomEvent('groupWorkspace:context-changed', {
       detail: window.groupWorkspaceContext
@@ -1113,10 +1472,29 @@ app_settings.app_title }} {% endblock %} {% block head %}
   let groupDocsKeywordsFilter = "";
   let groupDocsAbstractFilter = "";
   const groupActivePolls = new Set(); // Separate polling set for group docs
-  
+
   // Document selection state for group documents
   let groupSelectedDocuments = new Set();
   let groupSelectionMode = false;
+
+  // Grid/folder view state
+  let groupCurrentView = 'list';
+  let groupCurrentFolder = null;
+  let groupCurrentFolderType = null;
+  let groupFolderCurrentPage = 1;
+  let groupFolderPageSize = 10;
+  let groupGridSortBy = 'count';
+  let groupGridSortOrder = 'desc';
+  let groupFolderSortBy = '_ts';
+  let groupFolderSortOrder = 'desc';
+  let groupFolderSearchTerm = '';
+  let groupWorkspaceTags = [];
+  let groupDocsSortBy = '_ts';
+  let groupDocsSortOrder = 'desc';
+  let groupDocsTagsFilter = '';
+  let groupBulkSelectedTags = new Set();
+  let groupDocSelectedTags = new Set();
+  let groupEditingTag = null;
 
   // --- Modals ---
   const loadingModal = new bootstrap.Modal(
@@ -1125,6 +1503,12 @@ app_settings.app_title }} {% endblock %} {% block head %}
   const docMetadataModal = new bootstrap.Modal(
     document.getElementById("docMetadataModal")
   ); // Ref for doc edit modal
+  const groupTagManagementModal = new bootstrap.Modal(
+    document.getElementById("groupTagManagementModal")
+  );
+  const groupTagSelectionModal = new bootstrap.Modal(
+    document.getElementById("groupTagSelectionModal")
+  );
 
   // --- Editors ---
   const groupPromptContentEl = document.getElementById("group-prompt-content");
@@ -2154,6 +2538,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
     if (targetId === "#documents-tab") {
       fetchGroupDocuments();
+      loadGroupWorkspaceTags();
     } else if (targetId === "#prompts-tab") {
       fetchGroupPrompts();
     } else if (targetId === "#group-agents-tab") {
@@ -2168,6 +2553,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     // Update UI elements dependent on role (applies to both tabs potentially)
     updateRoleDisplay();
     updateGroupPromptsRoleUI(); // This is specific to prompts tab UI elements
+    loadGroupRetentionSettings(); // Load retention settings
   }
 
   function updateRoleDisplay() {
@@ -2199,7 +2585,139 @@ app_settings.app_title }} {% endblock %} {% block head %}
       uploadSection.style.display = showUpload ? "block" : "none";
     if (uploadHr) uploadHr.style.display = showUpload ? "block" : "none";
 
+    // Control visibility of Settings tab (only for Owners and Admins)
+    const settingsTabNav = document.getElementById('group-settings-tab-nav');
+    const canManageSettings = ['Owner', 'Admin'].includes(userRoleInActiveGroup);
+    if (settingsTabNav) {
+      settingsTabNav.classList.toggle('d-none', !canManageSettings);
+    }
+
     notifyGroupWorkspaceContext();
+  }
+
+  /* ===================== GROUP RETENTION POLICY ===================== */
+
+  async function loadGroupRetentionSettings() {
+    if (!activeGroupId) return;
+    
+    const convSelect = document.getElementById('group-conversation-retention-days');
+    const docSelect = document.getElementById('group-document-retention-days');
+    
+    if (!convSelect || !docSelect) return; // Settings tab not available
+    
+    console.log('Loading group retention settings for:', activeGroupId);
+    
+    try {
+      // Fetch organization defaults for group retention
+      const orgDefaultsResp = await fetch('/api/retention-policy/defaults/group');
+      const orgData = await orgDefaultsResp.json();
+      
+      if (orgData.success) {
+        const convDefaultOption = convSelect.querySelector('option[value="default"]');
+        const docDefaultOption = docSelect.querySelector('option[value="default"]');
+        
+        if (convDefaultOption) {
+          convDefaultOption.textContent = `Using organization default (${orgData.default_conversation_label})`;
+        }
+        if (docDefaultOption) {
+          docDefaultOption.textContent = `Using organization default (${orgData.default_document_label})`;
+        }
+        console.log('Loaded org defaults:', orgData);
+      }
+    } catch (error) {
+      console.error('Error loading group retention defaults:', error);
+    }
+    
+    // Load current group's retention policy settings
+    try {
+      const groupResp = await fetch(`/api/groups/${activeGroupId}`);
+      
+      if (!groupResp.ok) {
+        throw new Error(`Failed to fetch group: ${groupResp.status}`);
+      }
+      
+      const groupData = await groupResp.json();
+      console.log('Loaded group data:', groupData);
+      
+      // API returns group object directly (not wrapped in success/group)
+      if (groupData && groupData.retention_policy) {
+        const retentionPolicy = groupData.retention_policy;
+        let convRetention = retentionPolicy.conversation_retention_days;
+        let docRetention = retentionPolicy.document_retention_days;
+        
+        console.log('Found retention policy:', retentionPolicy);
+        
+        // If undefined, use 'default'
+        if (convRetention === undefined || convRetention === null) convRetention = 'default';
+        if (docRetention === undefined || docRetention === null) docRetention = 'default';
+        
+        convSelect.value = convRetention;
+        docSelect.value = docRetention;
+        console.log('Set retention values to:', { conv: convRetention, doc: docRetention });
+      } else {
+        // Set to organization default if no retention policy set
+        console.log('No retention policy found, using defaults');
+        convSelect.value = 'default';
+        docSelect.value = 'default';
+      }
+    } catch (error) {
+      console.error('Error loading group retention settings:', error);
+      // Set defaults on error
+      convSelect.value = 'default';
+      docSelect.value = 'default';
+    }
+  }
+
+  async function saveGroupRetentionSettings() {
+    if (!activeGroupId) {
+      showToast('No active group selected.', 'warning');
+      return;
+    }
+    
+    const convSelect = document.getElementById('group-conversation-retention-days');
+    const docSelect = document.getElementById('group-document-retention-days');
+    const statusSpan = document.getElementById('group-retention-save-status');
+    
+    if (!convSelect || !docSelect) return;
+    
+    const retentionData = {
+      conversation_retention_days: convSelect.value,
+      document_retention_days: docSelect.value
+    };
+    
+    console.log('Saving group retention settings:', retentionData);
+    
+    // Show saving status
+    if (statusSpan) {
+      statusSpan.innerHTML = '<span class="text-info"><i class="bi bi-hourglass-split"></i> Saving...</span>';
+    }
+    
+    try {
+      const response = await fetch(`/api/retention-policy/group/${activeGroupId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(retentionData)
+      });
+      
+      const data = await response.json();
+      console.log('Save response:', data);
+      
+      if (response.ok && data.success) {
+        if (statusSpan) {
+          statusSpan.innerHTML = '<span class="text-success"><i class="bi bi-check-circle-fill"></i> Saved successfully!</span>';
+          setTimeout(() => { statusSpan.innerHTML = ''; }, 3000);
+        }
+        console.log('Group retention settings saved successfully');
+      } else {
+        throw new Error(data.error || 'Failed to save retention settings');
+      }
+    } catch (error) {
+      console.error('Error saving group retention settings:', error);
+      if (statusSpan) {
+        statusSpan.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-circle-fill"></i> Error: ${error.message}</span>`;
+      }
+      showToast(`Error saving retention settings: ${error.message}`, 'danger');
+    }
   }
 
   /* ===================== GROUP DOCUMENTS ===================== */
@@ -2227,6 +2745,14 @@ app_settings.app_title }} {% endblock %} {% block head %}
     groupDocsAbstractFilter = groupDocsAbstractFilterInput
       ? groupDocsAbstractFilterInput.value.trim()
       : "";
+    // Tags filter
+    const tagsSelect = document.getElementById('group-docs-tags-filter');
+    if (tagsSelect) {
+      const selectedOpts = Array.from(tagsSelect.selectedOptions).map(o => o.value);
+      groupDocsTagsFilter = selectedOpts.join(',');
+    } else {
+      groupDocsTagsFilter = '';
+    }
     groupDocsCurrentPage = 1; // Reset page
     fetchGroupDocuments();
   }
@@ -2245,6 +2771,12 @@ app_settings.app_title }} {% endblock %} {% block head %}
     groupDocsAuthorFilter = "";
     groupDocsKeywordsFilter = "";
     groupDocsAbstractFilter = "";
+    groupDocsTagsFilter = "";
+    groupDocsSortBy = '_ts';
+    groupDocsSortOrder = 'desc';
+    const tagsSelect = document.getElementById('group-docs-tags-filter');
+    if (tagsSelect) { Array.from(tagsSelect.options).forEach(o => o.selected = false); }
+    updateGroupListSortIcons();
     groupDocsCurrentPage = 1; // Reset page
     fetchGroupDocuments();
   }
@@ -2284,6 +2816,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
       params.append("keywords", groupDocsKeywordsFilter);
     if (groupDocsAbstractFilter)
       params.append("abstract", groupDocsAbstractFilter);
+    if (groupDocsTagsFilter) params.append("tags", groupDocsTagsFilter);
+    if (groupDocsSortBy !== '_ts') params.append("sort_by", groupDocsSortBy);
+    if (groupDocsSortOrder !== 'desc') params.append("sort_order", groupDocsSortOrder);
 
     console.log("Fetching group documents with params:", params.toString());
 
@@ -2309,7 +2844,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
             groupDocsClassificationFilter ||
             groupDocsAuthorFilter ||
             groupDocsKeywordsFilter ||
-            groupDocsAbstractFilter;
+            groupDocsAbstractFilter ||
+            groupDocsTagsFilter;
           groupDocumentsTableBody.innerHTML = `<tr><td colspan="4" class="text-center p-4 text-muted">
                     ${
                       filtersActive
@@ -2436,11 +2972,11 @@ app_settings.app_title }} {% endblock %} {% block head %}
             }
         }
         
-        // Search in Chat - only if chat is allowed (not inactive)
+        // Chat - only if chat is allowed (not inactive)
         if (canChat) {
             actionsDropdown += `
                 <li><a class="dropdown-item" href="#" onclick="searchGroupDocumentInChat('${docId}'); return false;">
-                    <i class="bi bi-chat-dots-fill me-2"></i>Search in Chat
+                    <i class="bi bi-chat-dots-fill me-2"></i>Chat
                 </a></li>
             `;
         }
@@ -2845,6 +3381,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
         } else if (classificationSelect) {
           classificationSelect.closest(".mb-3").style.display = "none";
         }
+        // Load tags for the document
+        groupDocSelectedTags = new Set(Array.isArray(doc.tags) ? doc.tags : []);
+        updateGroupDocTagsDisplay();
         docMetadataModal.show();
       })
       .catch((err) => {
@@ -2902,6 +3441,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
       payload.document_classification = selectedClassification;
     }
 
+    // Add tags
+    payload.tags = Array.from(groupDocSelectedTags);
+
     // Use the group PATCH endpoint
     fetch(`/api/group_documents/${docId}`, {
       method: "PATCH",
@@ -2914,6 +3456,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       .then((updatedDoc) => {
         if (docMetadataModal) docMetadataModal.hide();
         fetchGroupDocuments(); // Refresh group documents list
+        loadGroupWorkspaceTags(); // Refresh tag counts
       })
       .catch((err) => {
         alert("Error updating document: " + (err.error || err.message));
@@ -3249,9 +3792,17 @@ app_settings.app_title }} {% endblock %} {% block head %}
   function searchGroupDocumentInChat(docId) {
     // Renamed function
     // Redirect to chat page with group scope and document ID
-    window.location.href = `/chats?search_documents=true&doc_scope=group&document_id=${docId}`;
+    window.location.href = `/chats?search_documents=true&doc_scope=group&document_id=${docId}&group_id=${activeGroupId}`;
   }
   window.searchGroupDocumentInChat = searchGroupDocumentInChat; // Expose globally
+
+  // --- Chat with Selected Group Documents ---
+  function chatWithGroupSelected() {
+    if (groupSelectedDocuments.size === 0) return;
+    const idsParam = encodeURIComponent(Array.from(groupSelectedDocuments).join(','));
+    window.location.href = `/chats?search_documents=true&doc_scope=group&document_ids=${idsParam}&group_id=${activeGroupId}`;
+  }
+  window.chatWithGroupSelected = chatWithGroupSelected;
 
   /* ===================== GROUP PROMPTS ===================== */
   // — State —
@@ -3591,6 +4142,949 @@ app_settings.app_title }} {% endblock %} {% block head %}
   // — Expose & initial load —
   window.fetchGroupPrompts = fetchGroupPrompts;
   window.onCreateGroupPrompt = createGroupPromptBtn?.onclick;
+
+  // ============= GRID VIEW / TAG MANAGEMENT FUNCTIONS =============
+
+  function loadGroupWorkspaceTags() {
+    if (!activeGroupId) return Promise.resolve();
+    return fetch(`/api/group_documents/tags?group_ids=${activeGroupId}`)
+      .then(r => r.ok ? r.json() : Promise.reject('Failed to load tags'))
+      .then(data => {
+        groupWorkspaceTags = data.tags || [];
+        // Update tags filter select
+        const sel = document.getElementById('group-docs-tags-filter');
+        if (sel) {
+          const prev = Array.from(sel.selectedOptions).map(o => o.value);
+          sel.innerHTML = '';
+          groupWorkspaceTags.forEach(t => {
+            const opt = document.createElement('option');
+            opt.value = t.name;
+            opt.textContent = `${t.name} (${t.count})`;
+            if (prev.includes(t.name)) opt.selected = true;
+            sel.appendChild(opt);
+          });
+        }
+        // Update bulk tag modal list
+        updateGroupBulkTagsList();
+        // Refresh grid if visible
+        if (groupCurrentView === 'grid') renderGroupGridView();
+      })
+      .catch(err => console.error('Error loading group workspace tags:', err));
+  }
+
+  function setupGroupViewSwitcher() {
+    const listRadio = document.getElementById('group-docs-view-list');
+    const gridRadio = document.getElementById('group-docs-view-grid');
+    if (listRadio) listRadio.addEventListener('change', () => { if (listRadio.checked) switchGroupView('list'); });
+    if (gridRadio) gridRadio.addEventListener('change', () => { if (gridRadio.checked) switchGroupView('grid'); });
+  }
+
+  function switchGroupView(view) {
+    groupCurrentView = view;
+    localStorage.setItem('groupWorkspaceViewPreference', view);
+    const listView = document.getElementById('group-documents-list-view');
+    const gridView = document.getElementById('group-documents-grid-view');
+    const viewInfo = document.getElementById('group-docs-view-info');
+    const gridControls = document.getElementById('group-grid-controls-bar');
+    const filterBtn = document.getElementById('group-docs-filters-toggle-btn');
+    const filterCollapse = document.getElementById('group-docs-filters-collapse');
+    const bulkBar = document.getElementById('groupBulkActionsBar');
+
+    if (view === 'list') {
+      groupCurrentFolder = null;
+      groupCurrentFolderType = null;
+      groupFolderCurrentPage = 1;
+      groupFolderSortBy = '_ts';
+      groupFolderSortOrder = 'desc';
+      groupFolderSearchTerm = '';
+      const tagContainer = document.getElementById('group-tag-folders-container');
+      if (tagContainer) tagContainer.className = 'row g-2';
+      if (listView) listView.style.display = 'block';
+      if (gridView) gridView.style.display = 'none';
+      if (gridControls) gridControls.style.display = 'none';
+      if (filterBtn) filterBtn.style.display = '';
+      if (viewInfo) viewInfo.textContent = '';
+      fetchGroupDocuments();
+    } else {
+      if (listView) listView.style.display = 'none';
+      if (gridView) gridView.style.display = 'block';
+      if (gridControls) gridControls.style.display = 'flex';
+      if (filterBtn) filterBtn.style.display = 'none';
+      if (filterCollapse) {
+        const bsCollapse = bootstrap.Collapse.getInstance(filterCollapse);
+        if (bsCollapse) bsCollapse.hide();
+      }
+      if (bulkBar) bulkBar.style.display = 'none';
+      renderGroupGridView();
+    }
+  }
+
+  async function renderGroupGridView() {
+    const container = document.getElementById('group-tag-folders-container');
+    if (!container || !activeGroupId) return;
+
+    if (groupCurrentFolder && groupCurrentFolder !== '__untagged__' && groupCurrentFolder !== '__unclassified__') {
+      if (groupCurrentFolderType === 'classification') {
+        const categories = window.classification_categories || [];
+        if (!categories.some(cat => cat.label === groupCurrentFolder)) {
+          groupCurrentFolder = null; groupCurrentFolderType = null; groupFolderCurrentPage = 1;
+        }
+      } else {
+        if (!groupWorkspaceTags.some(t => t.name === groupCurrentFolder)) {
+          groupCurrentFolder = null; groupCurrentFolderType = null; groupFolderCurrentPage = 1;
+        }
+      }
+    }
+
+    if (groupCurrentFolder) { renderGroupFolderContents(groupCurrentFolder); return; }
+
+    const viewInfo = document.getElementById('group-docs-view-info');
+    if (viewInfo) viewInfo.textContent = '';
+    container.className = 'row g-2';
+    container.innerHTML = '<div class="col-12 text-center text-muted py-5"><div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>Loading tag folders...</div>';
+
+    try {
+      const docsResponse = await fetch(`/api/group_documents?page_size=1000`);
+      const docsData = await docsResponse.json();
+      const allDocs = docsData.documents || [];
+      const untaggedCount = allDocs.filter(doc => !doc.tags || doc.tags.length === 0).length;
+
+      const classificationEnabled = (window.enable_document_classification === true || window.enable_document_classification === "true");
+      const categories = classificationEnabled ? (window.classification_categories || []) : [];
+      const classificationCounts = {};
+      let unclassifiedCount = 0;
+      if (classificationEnabled) {
+        allDocs.forEach(doc => {
+          const cls = doc.document_classification;
+          if (!cls || cls === '' || cls.toLowerCase() === 'none') { unclassifiedCount++; }
+          else { classificationCounts[cls] = (classificationCounts[cls] || 0) + 1; }
+        });
+      }
+
+      const folderItems = [];
+      if (untaggedCount > 0) {
+        folderItems.push({ type: 'tag', key: '__untagged__', displayName: 'Untagged', count: untaggedCount, icon: 'bi-folder2-open', color: '#6c757d', isSpecial: true });
+      }
+      if (classificationEnabled && unclassifiedCount > 0) {
+        folderItems.push({ type: 'classification', key: '__unclassified__', displayName: 'Unclassified', count: unclassifiedCount, icon: 'bi-bookmark', color: '#6c757d', isSpecial: true });
+      }
+      groupWorkspaceTags.forEach(tag => {
+        folderItems.push({ type: 'tag', key: tag.name, displayName: tag.name, count: tag.count, icon: 'bi-folder-fill', color: tag.color, isSpecial: false, tagData: tag });
+      });
+      if (classificationEnabled) {
+        categories.forEach(cat => {
+          const count = classificationCounts[cat.label] || 0;
+          if (count > 0) {
+            folderItems.push({ type: 'classification', key: cat.label, displayName: cat.label, count: count, icon: 'bi-bookmark-fill', color: cat.color || '#6c757d', isSpecial: false });
+          }
+        });
+      }
+
+      folderItems.sort((a, b) => {
+        if (a.isSpecial && !b.isSpecial) return -1;
+        if (!a.isSpecial && b.isSpecial) return 1;
+        if (groupGridSortBy === 'name') {
+          const cmp = a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' });
+          return groupGridSortOrder === 'asc' ? cmp : -cmp;
+        }
+        const cmp = a.count - b.count;
+        return groupGridSortOrder === 'asc' ? cmp : -cmp;
+      });
+
+      updateGroupGridSortIcons();
+
+      const canManageTags = ['Owner', 'Admin', 'DocumentManager'].includes(userRoleInActiveGroup);
+      let html = '';
+      folderItems.forEach(item => {
+        const ek = escapeHtml(item.key);
+        const en = escapeHtml(item.displayName);
+        const cl = `${item.count} file${item.count !== 1 ? 's' : ''}`;
+        let actionsHtml = '';
+        if (item.type === 'tag' && !item.isSpecial && canManageTags) {
+          actionsHtml = `<div class="tag-folder-actions"><div class="dropdown">
+            <button class="tag-folder-menu-btn" type="button" data-bs-toggle="dropdown" onclick="event.stopPropagation();"><i class="bi bi-three-dots-vertical"></i></button>
+            <ul class="dropdown-menu">
+              <li><a class="dropdown-item" href="#" onclick="chatWithGroupFolder('tag','${ek}'); return false;"><i class="bi bi-chat-dots me-2"></i>Chat</a></li>
+              <li><a class="dropdown-item" href="#" onclick="renameGroupTag('${ek}'); return false;"><i class="bi bi-pencil me-2"></i>Rename Tag</a></li>
+              <li><a class="dropdown-item" href="#" onclick="changeGroupTagColor('${ek}','${item.tagData.color}'); return false;"><i class="bi bi-palette me-2"></i>Change Color</a></li>
+              <li><hr class="dropdown-divider"></li>
+              <li><a class="dropdown-item text-danger" href="#" onclick="deleteGroupTag('${ek}'); return false;"><i class="bi bi-trash me-2"></i>Delete Tag</a></li>
+            </ul></div></div>`;
+        } else if (item.type === 'classification') {
+          actionsHtml = `<div class="tag-folder-actions"><div class="dropdown">
+            <button class="tag-folder-menu-btn" type="button" data-bs-toggle="dropdown" onclick="event.stopPropagation();"><i class="bi bi-three-dots-vertical"></i></button>
+            <ul class="dropdown-menu">
+              <li><a class="dropdown-item" href="#" onclick="chatWithGroupFolder('classification','${ek}'); return false;"><i class="bi bi-chat-dots me-2"></i>Chat</a></li>
+            </ul></div></div>`;
+        } else if (item.type === 'tag' && item.isSpecial) {
+          actionsHtml = `<div class="tag-folder-actions"><div class="dropdown">
+            <button class="tag-folder-menu-btn" type="button" data-bs-toggle="dropdown" onclick="event.stopPropagation();"><i class="bi bi-three-dots-vertical"></i></button>
+            <ul class="dropdown-menu">
+              <li><a class="dropdown-item" href="#" onclick="chatWithGroupFolder('tag','${ek}'); return false;"><i class="bi bi-chat-dots me-2"></i>Chat</a></li>
+            </ul></div></div>`;
+        }
+        html += `<div class="col-6 col-sm-4 col-md-3 col-lg-2">
+          <div class="tag-folder-card" data-tag="${ek}" data-folder-type="${item.type}" title="${en} (${cl})">
+            ${actionsHtml}
+            <div class="tag-folder-icon"><i class="bi ${item.icon}" style="color: ${item.color};"></i></div>
+            <div class="tag-folder-name${item.isSpecial ? ' text-muted' : ''}">${en}</div>
+            <div class="tag-folder-count">${cl}</div>
+          </div></div>`;
+      });
+
+      if (folderItems.length === 0) {
+        html = '<div class="col-12 text-center text-muted py-5"><i class="bi bi-folder2-open display-1 mb-3"></i><p>No folders yet. Add tags to documents to organize them.</p></div>';
+      }
+      container.innerHTML = html;
+      container.querySelectorAll('.tag-folder-card').forEach(card => {
+        card.addEventListener('click', (e) => {
+          if (e.target.closest('.tag-folder-actions')) return;
+          groupCurrentFolder = card.getAttribute('data-tag');
+          groupCurrentFolderType = card.getAttribute('data-folder-type') || 'tag';
+          groupFolderCurrentPage = 1;
+          groupFolderSortBy = '_ts'; groupFolderSortOrder = 'desc'; groupFolderSearchTerm = '';
+          renderGroupFolderContents(groupCurrentFolder);
+        });
+      });
+    } catch (error) {
+      console.error('Error rendering group grid view:', error);
+      container.innerHTML = '<div class="col-12 text-center text-danger py-5"><i class="bi bi-exclamation-triangle display-4 mb-2"></i><p>Error loading tag folders</p></div>';
+    }
+  }
+
+  function buildGroupBreadcrumbHtml(displayName, tagColor, folderType) {
+    const icon = folderType === 'classification' ? 'bi-bookmark-fill' : 'bi-folder-fill';
+    return `<div class="folder-breadcrumb">
+      <a href="#" class="group-folder-back-btn"><i class="bi bi-arrow-left me-1"></i>All Folders</a>
+      <span class="mx-2">/</span>
+      <i class="bi ${icon} me-1" style="color: ${tagColor};"></i>
+      <strong>${escapeHtml(displayName)}</strong>
+    </div>`;
+  }
+
+  function wireGroupBackButton(container) {
+    container.querySelectorAll('.group-folder-back-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        groupCurrentFolder = null; groupCurrentFolderType = null;
+        groupFolderCurrentPage = 1; groupFolderSearchTerm = '';
+        const gridControls = document.getElementById('group-grid-controls-bar');
+        if (gridControls) gridControls.style.display = 'flex';
+        renderGroupGridView();
+      });
+    });
+  }
+
+  function buildGroupFolderDocumentsTable(docs) {
+    let sortIconFn = (field) => {
+      if (groupFolderSortBy === field) {
+        return groupFolderSortOrder === 'asc' ? 'bi-sort-up' : 'bi-sort-down';
+      }
+      return 'bi-arrow-down-up text-muted';
+    };
+    let html = `<table class="table table-striped table-sm"><thead><tr>
+      <th style="width:50px;"></th>
+      <th class="folder-sortable-header" data-sort-field="file_name" style="cursor:pointer;user-select:none;">File Name <i class="bi ${sortIconFn('file_name')} small"></i></th>
+      <th class="folder-sortable-header" data-sort-field="title" style="cursor:pointer;user-select:none;">Title <i class="bi ${sortIconFn('title')} small"></i></th>
+      <th style="width:240px;">Actions</th>
+    </tr></thead><tbody>`;
+
+    const groupStatus = window.currentGroupStatus || 'active';
+    const canManage = ["Owner", "Admin", "DocumentManager"].includes(userRoleInActiveGroup);
+    const canModify = (groupStatus === 'active');
+    const canChat = (groupStatus !== 'inactive');
+
+    docs.forEach(doc => {
+      const docId = doc.id;
+      const pctStr = String(doc.percentage_complete);
+      const pct = /^\d+(\.\d+)?$/.test(pctStr) ? parseFloat(pctStr) : 0;
+      const docStatus = doc.status || '';
+      const isComplete = pct >= 100
+          || docStatus.toLowerCase().includes('complete')
+          || docStatus.toLowerCase().includes('error');
+      const hasError = docStatus.toLowerCase().includes('error');
+
+      // First column: expand/collapse or status indicator
+      let firstColHtml = '';
+      if (isComplete && !hasError) {
+        firstColHtml = `<button class="btn btn-link p-0" onclick="onEditGroupDocument('${docId}')" title="View Metadata"><span class="bi bi-chevron-right"></span></button>`;
+      } else if (hasError) {
+        firstColHtml = `<span class="text-danger" title="Processing Error: ${escapeHtml(docStatus)}"><i class="bi bi-exclamation-triangle-fill"></i></span>`;
+      } else {
+        firstColHtml = `<span class="text-muted" title="Processing: ${escapeHtml(docStatus)} (${pct.toFixed(0)}%)"><i class="bi bi-hourglass-split"></i></span>`;
+      }
+
+      // Chat button
+      let chatButton = '';
+      if (isComplete && !hasError && canChat) {
+        chatButton = `<button class="btn btn-sm btn-primary me-1 action-btn-wide text-start" onclick="searchGroupDocumentInChat('${docId}')" title="Open Chat for Document" aria-label="Open Chat for Document: ${escapeHtml(doc.file_name || 'Untitled')}"><i class="bi bi-chat-dots-fill me-1" aria-hidden="true"></i>Chat</button>`;
+      }
+
+      // Actions dropdown
+      let actionsDropdown = '';
+      if (isComplete && !hasError) {
+        actionsDropdown = `<div class="dropdown action-dropdown d-inline-block"><button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-three-dots-vertical"></i></button><ul class="dropdown-menu dropdown-menu-end"><li><a class="dropdown-item select-btn" href="#" onclick="toggleGroupSelectionMode(); return false;"><i class="bi bi-check-square me-2"></i>Select</a></li>`;
+
+        if (canModify) {
+          actionsDropdown += `<li><hr class="dropdown-divider"></li><li><a class="dropdown-item" href="#" onclick="onEditGroupDocument('${docId}'); return false;"><i class="bi bi-pencil-fill me-2"></i>Edit Metadata</a></li>`;
+          if (window.enable_extract_meta_data === true || window.enable_extract_meta_data === "true") {
+            actionsDropdown += `<li><a class="dropdown-item" href="#" onclick="onExtractGroupMetadata('${docId}', event); return false;"><i class="bi bi-magic me-2"></i>Extract Metadata</a></li>`;
+          }
+        }
+
+        if (canChat) {
+          actionsDropdown += `<li><a class="dropdown-item" href="#" onclick="searchGroupDocumentInChat('${docId}'); return false;"><i class="bi bi-chat-dots-fill me-2"></i>Chat</a></li>`;
+        }
+
+        if (canManage) {
+          const canShare = (groupStatus === 'active' || groupStatus === 'upload_disabled');
+          if (canShare) {
+            actionsDropdown += `<li><hr class="dropdown-divider"></li><li><a class="dropdown-item" href="#" onclick="shareGroupDocument('${docId}', '${escapeHtml(doc.file_name || '')}'); return false;"><i class="bi bi-share-fill me-2"></i>Share<span class="badge bg-secondary ms-1">${doc.shared_group_ids ? doc.shared_group_ids.length : 0}</span></a></li>`;
+          }
+          const canDelete = (groupStatus === 'active' || groupStatus === 'upload_disabled');
+          if (canDelete) {
+            actionsDropdown += `<li><hr class="dropdown-divider"></li><li><a class="dropdown-item text-danger" href="#" onclick="deleteGroupDocument('${docId}', event); return false;"><i class="bi bi-trash-fill me-2"></i>Delete</a></li>`;
+          }
+        }
+
+        actionsDropdown += `</ul></div>`;
+      } else if (canManage) {
+        const canDelete = (groupStatus === 'active' || groupStatus === 'upload_disabled');
+        if (canDelete) {
+          actionsDropdown = `<div class="dropdown action-dropdown d-inline-block"><button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-three-dots-vertical"></i></button><ul class="dropdown-menu dropdown-menu-end"><li><a class="dropdown-item text-danger" href="#" onclick="deleteGroupDocument('${docId}', event); return false;"><i class="bi bi-trash-fill me-2"></i>Delete</a></li></ul></div>`;
+        }
+      }
+
+      html += `<tr>
+        <td class="align-middle">${firstColHtml}</td>
+        <td class="align-middle" title="${escapeHtml(doc.file_name || '')}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(doc.file_name || '')}</td>
+        <td class="align-middle" title="${escapeHtml(doc.title || '')}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(doc.title || 'N/A')}</td>
+        <td class="align-middle">${chatButton}${actionsDropdown}</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+    return html;
+  }
+
+  async function renderGroupFolderContents(tagName) {
+    const container = document.getElementById('group-tag-folders-container');
+    if (!container) return;
+    const gridControls = document.getElementById('group-grid-controls-bar');
+    if (gridControls) gridControls.style.display = 'none';
+    container.className = '';
+
+    const isClassification = (groupCurrentFolderType === 'classification');
+    let displayName, tagColor;
+    if (tagName === '__untagged__') { displayName = 'Untagged Documents'; tagColor = '#6c757d'; }
+    else if (tagName === '__unclassified__') { displayName = 'Unclassified Documents'; tagColor = '#6c757d'; }
+    else if (isClassification) {
+      const cat = (window.classification_categories || []).find(c => c.label === tagName);
+      displayName = tagName; tagColor = cat?.color || '#6c757d';
+    } else {
+      const tagInfo = groupWorkspaceTags.find(t => t.name === tagName);
+      displayName = tagName; tagColor = tagInfo?.color || '#6c757d';
+    }
+
+    const viewInfo = document.getElementById('group-docs-view-info');
+    if (viewInfo) viewInfo.textContent = `Viewing: ${displayName}`;
+
+    container.innerHTML = buildGroupBreadcrumbHtml(displayName, tagColor, groupCurrentFolderType || 'tag') +
+      '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>Loading documents...</div>';
+    wireGroupBackButton(container);
+
+    try {
+      let docs, totalCount;
+      if (tagName === '__untagged__') {
+        const resp = await fetch(`/api/group_documents?page_size=1000${groupFolderSearchTerm ? '&search=' + encodeURIComponent(groupFolderSearchTerm) : ''}`);
+        const data = await resp.json();
+        let allUntagged = (data.documents || []).filter(d => !d.tags || d.tags.length === 0);
+        if (groupFolderSortBy !== '_ts') {
+          allUntagged.sort((a, b) => {
+            const va = (a[groupFolderSortBy] || '').toLowerCase();
+            const vb = (b[groupFolderSortBy] || '').toLowerCase();
+            const cmp = va.localeCompare(vb);
+            return groupFolderSortOrder === 'asc' ? cmp : -cmp;
+          });
+        }
+        totalCount = allUntagged.length;
+        const start = (groupFolderCurrentPage - 1) * groupFolderPageSize;
+        docs = allUntagged.slice(start, start + groupFolderPageSize);
+      } else if (tagName === '__unclassified__') {
+        const params = new URLSearchParams({ page: groupFolderCurrentPage, page_size: groupFolderPageSize, classification: 'none' });
+        if (groupFolderSearchTerm) params.append('search', groupFolderSearchTerm);
+        if (groupFolderSortBy !== '_ts') params.append('sort_by', groupFolderSortBy);
+        if (groupFolderSortOrder !== 'desc') params.append('sort_order', groupFolderSortOrder);
+        const resp = await fetch(`/api/group_documents?${params.toString()}`);
+        const data = await resp.json();
+        docs = data.documents || []; totalCount = data.total_count || docs.length;
+      } else if (isClassification) {
+        const params = new URLSearchParams({ page: groupFolderCurrentPage, page_size: groupFolderPageSize, classification: tagName });
+        if (groupFolderSearchTerm) params.append('search', groupFolderSearchTerm);
+        if (groupFolderSortBy !== '_ts') params.append('sort_by', groupFolderSortBy);
+        if (groupFolderSortOrder !== 'desc') params.append('sort_order', groupFolderSortOrder);
+        const resp = await fetch(`/api/group_documents?${params.toString()}`);
+        const data = await resp.json();
+        docs = data.documents || []; totalCount = data.total_count || docs.length;
+      } else {
+        const params = new URLSearchParams({ page: groupFolderCurrentPage, page_size: groupFolderPageSize, tags: tagName });
+        if (groupFolderSearchTerm) params.append('search', groupFolderSearchTerm);
+        if (groupFolderSortBy !== '_ts') params.append('sort_by', groupFolderSortBy);
+        if (groupFolderSortOrder !== 'desc') params.append('sort_order', groupFolderSortOrder);
+        const resp = await fetch(`/api/group_documents?${params.toString()}`);
+        const data = await resp.json();
+        docs = data.documents || []; totalCount = data.total_count || docs.length;
+      }
+
+      let html = buildGroupBreadcrumbHtml(displayName, tagColor, groupCurrentFolderType || 'tag');
+      html += `<div class="d-flex align-items-center gap-2 mb-2">
+        <div class="input-group input-group-sm" style="max-width: 320px;">
+          <input type="search" id="group-folder-search-input" class="form-control form-control-sm" placeholder="Search file name or title..." value="${escapeHtml(groupFolderSearchTerm)}">
+          <button class="btn btn-outline-secondary" type="button" id="group-folder-search-btn"><i class="bi bi-search"></i></button>
+        </div>
+        <span class="text-muted small">${totalCount} document(s)</span>
+        <div class="ms-auto">
+          <select id="group-folder-page-size-select" class="form-select form-select-sm d-inline-block" style="width:auto;">
+            <option value="10"${groupFolderPageSize === 10 ? ' selected' : ''}>10</option>
+            <option value="20"${groupFolderPageSize === 20 ? ' selected' : ''}>20</option>
+            <option value="50"${groupFolderPageSize === 50 ? ' selected' : ''}>50</option>
+          </select>
+          <span class="ms-1 small text-muted">per page</span>
+        </div>
+      </div>`;
+
+      if (docs.length === 0) {
+        html += '<div class="text-center text-muted py-4"><i class="bi bi-folder2-open display-4 d-block mb-2"></i><p>No documents found in this folder.</p></div>';
+      } else {
+        html += buildGroupFolderDocumentsTable(docs);
+        html += '<div id="group-folder-pagination" class="d-flex justify-content-center mt-3"></div>';
+      }
+
+      container.innerHTML = html;
+      wireGroupBackButton(container);
+
+      // Wire search
+      const si = document.getElementById('group-folder-search-input');
+      const sb = document.getElementById('group-folder-search-btn');
+      if (si) {
+        const doSearch = () => { groupFolderSearchTerm = si.value.trim(); groupFolderCurrentPage = 1; renderGroupFolderContents(groupCurrentFolder); };
+        sb?.addEventListener('click', doSearch);
+        si.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); doSearch(); } });
+        si.addEventListener('search', doSearch);
+      }
+
+      // Wire page size
+      const fps = document.getElementById('group-folder-page-size-select');
+      if (fps) fps.addEventListener('change', (e) => { groupFolderPageSize = parseInt(e.target.value, 10); groupFolderCurrentPage = 1; renderGroupFolderContents(groupCurrentFolder); });
+
+      // Wire sortable headers
+      container.querySelectorAll('.folder-sortable-header').forEach(th => {
+        th.addEventListener('click', () => {
+          const field = th.getAttribute('data-sort-field');
+          if (groupFolderSortBy === field) { groupFolderSortOrder = groupFolderSortOrder === 'asc' ? 'desc' : 'asc'; }
+          else { groupFolderSortBy = field; groupFolderSortOrder = 'asc'; }
+          groupFolderCurrentPage = 1;
+          renderGroupFolderContents(groupCurrentFolder);
+        });
+      });
+
+      if (docs.length > 0) renderGroupFolderPagination(groupFolderCurrentPage, groupFolderPageSize, totalCount);
+    } catch (error) {
+      console.error('Error loading group folder contents:', error);
+      container.innerHTML = buildGroupBreadcrumbHtml(displayName, tagColor, groupCurrentFolderType || 'tag') +
+        '<div class="text-center text-danger py-4"><i class="bi bi-exclamation-triangle display-4 d-block mb-2"></i><p>Error loading documents.</p></div>';
+      wireGroupBackButton(container);
+    }
+  }
+
+  function renderGroupFolderPagination(currentPage, pageSize, totalCount) {
+    const container = document.getElementById('group-folder-pagination');
+    if (!container) return;
+    const totalPages = Math.ceil(totalCount / pageSize);
+    if (totalPages <= 1) { container.innerHTML = ''; return; }
+    let html = '';
+    html += `<button class="btn btn-sm btn-outline-secondary${currentPage <= 1 ? ' disabled' : ''}" onclick="groupFolderGoToPage(${currentPage - 1})">&laquo;</button>`;
+    for (let i = 1; i <= totalPages; i++) {
+      if (i === currentPage) html += `<button class="btn btn-sm btn-primary">${i}</button>`;
+      else if (i <= 2 || i > totalPages - 2 || Math.abs(i - currentPage) <= 1) html += `<button class="btn btn-sm btn-outline-secondary" onclick="groupFolderGoToPage(${i})">${i}</button>`;
+      else if (i === 3 && currentPage > 4) html += '<span class="px-1">...</span>';
+      else if (i === totalPages - 2 && currentPage < totalPages - 3) html += '<span class="px-1">...</span>';
+    }
+    html += `<button class="btn btn-sm btn-outline-secondary${currentPage >= totalPages ? ' disabled' : ''}" onclick="groupFolderGoToPage(${currentPage + 1})">&raquo;</button>`;
+    container.innerHTML = html;
+  }
+  window.groupFolderGoToPage = function(page) {
+    groupFolderCurrentPage = page;
+    renderGroupFolderContents(groupCurrentFolder);
+  };
+
+  function chatWithGroupFolder(folderType, folderName) {
+    const encoded = encodeURIComponent(folderName);
+    if (folderType === 'classification') {
+      window.location.href = `/chats?search_documents=true&doc_scope=group&classification=${encoded}&group_id=${activeGroupId}`;
+    } else {
+      window.location.href = `/chats?search_documents=true&doc_scope=group&tags=${encoded}&group_id=${activeGroupId}`;
+    }
+  }
+  window.chatWithGroupFolder = chatWithGroupFolder;
+
+  function renameGroupTag(tagName) {
+    const newName = prompt(`Rename tag "${tagName}" to:`, tagName);
+    if (!newName || newName.trim() === tagName) return;
+    fetch(`/api/group_documents/tags/${encodeURIComponent(tagName)}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ new_name: newName.trim() })
+    }).then(r => r.json().then(d => ({ ok: r.ok, data: d })))
+      .then(({ ok, data }) => {
+        if (ok) { alert(data.message); loadGroupWorkspaceTags(); if (groupCurrentView === 'grid') renderGroupGridView(); else fetchGroupDocuments(); }
+        else alert('Error: ' + (data.error || 'Failed to rename'));
+      }).catch(e => { console.error(e); alert('Error renaming tag'); });
+  }
+  window.renameGroupTag = renameGroupTag;
+
+  function changeGroupTagColor(tagName, currentColor) {
+    const newColor = prompt(`Enter new hex color for "${tagName}":`, currentColor || '#0d6efd');
+    if (!newColor || newColor === currentColor) return;
+    fetch(`/api/group_documents/tags/${encodeURIComponent(tagName)}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ color: newColor.trim() })
+    }).then(r => r.json().then(d => ({ ok: r.ok, data: d })))
+      .then(({ ok, data }) => {
+        if (ok) { alert(data.message); loadGroupWorkspaceTags(); if (groupCurrentView === 'grid') renderGroupGridView(); }
+        else alert('Error: ' + (data.error || 'Failed to change color'));
+      }).catch(e => { console.error(e); alert('Error changing tag color'); });
+  }
+  window.changeGroupTagColor = changeGroupTagColor;
+
+  function deleteGroupTag(tagName) {
+    if (!confirm(`Delete tag "${tagName}" from all documents?`)) return;
+    fetch(`/api/group_documents/tags/${encodeURIComponent(tagName)}`, { method: 'DELETE' })
+      .then(r => r.json().then(d => ({ ok: r.ok, data: d })))
+      .then(({ ok, data }) => {
+        if (ok) { alert(data.message); loadGroupWorkspaceTags(); if (groupCurrentView === 'grid') renderGroupGridView(); else fetchGroupDocuments(); }
+        else alert('Error: ' + (data.error || 'Failed to delete'));
+      }).catch(e => { console.error(e); alert('Error deleting tag'); });
+  }
+  window.deleteGroupTag = deleteGroupTag;
+
+  function updateGroupListSortIcons() {
+    document.querySelectorAll('#group-documents-table .sortable-header .sort-icon').forEach(icon => {
+      const field = icon.closest('.sortable-header').getAttribute('data-sort-field');
+      icon.className = 'bi small sort-icon';
+      if (groupDocsSortBy === field) {
+        icon.classList.add(groupDocsSortOrder === 'asc' ? 'bi-sort-up' : 'bi-sort-down');
+      } else {
+        icon.classList.add('bi-arrow-down-up', 'text-muted');
+      }
+    });
+  }
+
+  function updateGroupGridSortIcons() {
+    const bar = document.getElementById('group-grid-controls-bar');
+    if (!bar) return;
+    bar.querySelectorAll('.group-grid-sort-icon').forEach(icon => {
+      const field = icon.getAttribute('data-sort');
+      icon.className = 'bi ms-1 group-grid-sort-icon';
+      icon.setAttribute('data-sort', field);
+      if (groupGridSortBy === field) {
+        icon.classList.add(field === 'name' ? (groupGridSortOrder === 'asc' ? 'bi-sort-alpha-down' : 'bi-sort-alpha-up') : (groupGridSortOrder === 'asc' ? 'bi-sort-numeric-down' : 'bi-sort-numeric-up'));
+      } else {
+        icon.classList.add('bi-arrow-down-up', 'text-muted');
+      }
+    });
+  }
+
+  function updateGroupBulkTagsList() {
+    const listEl = document.getElementById('group-bulk-tags-list');
+    if (!listEl) return;
+    if (groupWorkspaceTags.length === 0) {
+      listEl.innerHTML = '<div class="text-muted w-100 text-center py-3">No tags available. Create some first.</div>';
+      return;
+    }
+    listEl.innerHTML = '';
+    groupWorkspaceTags.forEach(tag => {
+      const el = document.createElement('span');
+      el.className = `tag-badge ${isColorLight(tag.color) ? 'text-dark' : 'text-light'}`;
+      el.style.backgroundColor = tag.color;
+      el.style.border = groupBulkSelectedTags.has(tag.name) ? '3px solid #000' : '3px solid transparent';
+      el.textContent = tag.name;
+      el.style.cursor = 'pointer';
+      el.addEventListener('click', () => {
+        if (groupBulkSelectedTags.has(tag.name)) { groupBulkSelectedTags.delete(tag.name); el.style.border = '3px solid transparent'; }
+        else { groupBulkSelectedTags.add(tag.name); el.style.border = '3px solid #000'; }
+      });
+      listEl.appendChild(el);
+    });
+  }
+
+  async function applyGroupBulkTagChanges() {
+    const action = document.getElementById('group-bulk-tag-action').value;
+    const selectedTags = Array.from(groupBulkSelectedTags);
+    const documentIds = Array.from(groupSelectedDocuments);
+    if (documentIds.length === 0) { alert('No documents selected'); return; }
+    if (selectedTags.length === 0) { alert('Please select at least one tag'); return; }
+
+    const applyBtn = document.getElementById('group-bulk-tag-apply-btn');
+    const btnText = applyBtn.querySelector('.button-text');
+    const btnLoad = applyBtn.querySelector('.button-loading');
+    applyBtn.disabled = true; btnText.classList.add('d-none'); btnLoad.classList.remove('d-none');
+
+    try {
+      const response = await fetch('/api/group_documents/bulk-tag', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ document_ids: documentIds, action: action, tags: selectedTags })
+      });
+      const result = await response.json();
+      if (response.ok) {
+        const sc = result.success?.length || 0;
+        const ec = result.errors?.length || 0;
+        let msg = `Tags updated for ${sc} document(s)`;
+        if (ec > 0) msg += `\n${ec} document(s) had errors`;
+        alert(msg);
+        await loadGroupWorkspaceTags();
+        fetchGroupDocuments();
+        groupSelectedDocuments.clear();
+        const bar = document.getElementById('groupBulkActionsBar');
+        if (bar) bar.style.display = 'none';
+        const modal = bootstrap.Modal.getInstance(document.getElementById('groupBulkTagModal'));
+        if (modal) modal.hide();
+      } else { alert('Error: ' + (result.error || 'Failed to update tags')); }
+    } catch (e) { console.error(e); alert('Error updating tags'); }
+    finally { applyBtn.disabled = false; btnText.classList.remove('d-none'); btnLoad.classList.add('d-none'); }
+  }
+
+  // Wire up grid view events on DOMContentLoaded
+  (function initGroupGridView() {
+    setupGroupViewSwitcher();
+
+    // Load saved view preference
+    const savedView = localStorage.getItem('groupWorkspaceViewPreference');
+    if (savedView === 'grid') {
+      const gridRadio = document.getElementById('group-docs-view-grid');
+      if (gridRadio) { gridRadio.checked = true; switchGroupView('grid'); }
+    }
+
+    // Wire sortable headers in list view
+    document.querySelectorAll('#group-documents-table .sortable-header').forEach(th => {
+      th.addEventListener('click', () => {
+        const field = th.getAttribute('data-sort-field');
+        if (groupDocsSortBy === field) { groupDocsSortOrder = groupDocsSortOrder === 'asc' ? 'desc' : 'asc'; }
+        else { groupDocsSortBy = field; groupDocsSortOrder = 'asc'; }
+        groupDocsCurrentPage = 1;
+        updateGroupListSortIcons();
+        fetchGroupDocuments();
+      });
+    });
+
+    // Wire grid sort buttons
+    document.querySelectorAll('#group-grid-controls-bar .group-grid-sort-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const field = btn.getAttribute('data-sort');
+        if (groupGridSortBy === field) { groupGridSortOrder = groupGridSortOrder === 'asc' ? 'desc' : 'asc'; }
+        else { groupGridSortBy = field; groupGridSortOrder = field === 'name' ? 'asc' : 'desc'; }
+        renderGroupGridView();
+      });
+    });
+
+    // Wire grid page size
+    const gps = document.getElementById('group-grid-page-size-select');
+    if (gps) gps.addEventListener('change', (e) => { groupFolderPageSize = parseInt(e.target.value, 10); groupFolderCurrentPage = 1; if (groupCurrentFolder) renderGroupFolderContents(groupCurrentFolder); });
+
+    // Wire bulk tag modal
+    const bulkTagModal = document.getElementById('groupBulkTagModal');
+    if (bulkTagModal) {
+      bulkTagModal.addEventListener('show.bs.modal', () => {
+        document.getElementById('group-bulk-tag-doc-count').textContent = groupSelectedDocuments.size;
+        groupBulkSelectedTags.clear();
+        updateGroupBulkTagsList();
+      });
+    }
+    const bulkApply = document.getElementById('group-bulk-tag-apply-btn');
+    if (bulkApply) bulkApply.addEventListener('click', applyGroupBulkTagChanges);
+
+    // Wire bulk create tag button
+    const bulkCreate = document.getElementById('group-bulk-create-tag-btn');
+    if (bulkCreate) {
+      bulkCreate.addEventListener('click', async () => {
+        const name = prompt('Enter new tag name:');
+        if (!name) return;
+        try {
+          const resp = await fetch('/api/group_documents/tags', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tag_name: name.trim() })
+          });
+          const data = await resp.json();
+          if (resp.ok) { await loadGroupWorkspaceTags(); updateGroupBulkTagsList(); }
+          else alert('Error: ' + (data.error || 'Failed to create tag'));
+        } catch (e) { console.error(e); alert('Error creating tag'); }
+      });
+    }
+  })();
+
+  // ============ Group Tag Management & Selection Functions ============
+
+  function isGroupColorLight(hex) {
+    if (!hex) return true;
+    hex = hex.replace('#', '');
+    const r = parseInt(hex.substr(0,2),16), g = parseInt(hex.substr(2,2),16), b = parseInt(hex.substr(4,2),16);
+    return (r * 299 + g * 587 + b * 114) / 1000 > 155;
+  }
+
+  function escapeGroupHtml(text) {
+    const d = document.createElement('div');
+    d.textContent = text;
+    return d.innerHTML;
+  }
+
+  // --- Tag Management Modal ---
+  function showGroupTagManagementModal() {
+    loadGroupWorkspaceTags().then(() => {
+      refreshGroupTagManagementTable();
+      groupTagManagementModal.show();
+    });
+  }
+
+  function refreshGroupTagManagementTable() {
+    const tbody = document.getElementById('group-existing-tags-tbody');
+    if (!tbody) return;
+    if (groupWorkspaceTags.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No tags yet. Add one above.</td></tr>';
+      return;
+    }
+    let html = '';
+    groupWorkspaceTags.forEach(tag => {
+      const ek = escapeGroupHtml(tag.name);
+      html += `<tr>
+        <td><div style="width:30px;height:30px;background-color:${tag.color};border-radius:4px;border:1px solid #dee2e6;"></div></td>
+        <td><span class="badge" style="background-color:${tag.color};color:${isGroupColorLight(tag.color)?'#000':'#fff'};">${ek}</span></td>
+        <td>${tag.count}</td>
+        <td>
+          <button class="btn btn-sm btn-outline-primary me-1" onclick="window.editGroupTagInModal('${ek}','${tag.color}')"><i class="bi bi-pencil"></i></button>
+          <button class="btn btn-sm btn-outline-danger" onclick="window.deleteGroupTagFromModal('${ek}')"><i class="bi bi-trash"></i></button>
+        </td>
+      </tr>`;
+    });
+    tbody.innerHTML = html;
+  }
+
+  function groupCancelEditMode() {
+    groupEditingTag = null;
+    const nameInput = document.getElementById('group-new-tag-name');
+    const colorInput = document.getElementById('group-new-tag-color');
+    const formTitle = document.getElementById('group-tag-form-title');
+    const addBtn = document.getElementById('group-add-tag-btn');
+    const cancelBtn = document.getElementById('group-cancel-edit-btn');
+    if (nameInput) nameInput.value = '';
+    if (colorInput) colorInput.value = '#0d6efd';
+    if (formTitle) formTitle.textContent = 'Add New Tag';
+    if (addBtn) { addBtn.innerHTML = '<i class="bi bi-plus-circle"></i> Add'; addBtn.classList.remove('btn-success'); addBtn.classList.add('btn-primary'); }
+    if (cancelBtn) cancelBtn.classList.add('d-none');
+  }
+
+  window.editGroupTagInModal = function(tagName, currentColor) {
+    groupEditingTag = { originalName: tagName, originalColor: currentColor };
+    const nameInput = document.getElementById('group-new-tag-name');
+    const colorInput = document.getElementById('group-new-tag-color');
+    const formTitle = document.getElementById('group-tag-form-title');
+    const addBtn = document.getElementById('group-add-tag-btn');
+    const cancelBtn = document.getElementById('group-cancel-edit-btn');
+    if (nameInput) nameInput.value = tagName;
+    if (colorInput) colorInput.value = currentColor;
+    if (formTitle) formTitle.textContent = 'Edit Tag';
+    if (addBtn) { addBtn.innerHTML = '<i class="bi bi-save"></i> Save'; addBtn.classList.remove('btn-primary'); addBtn.classList.add('btn-success'); }
+    if (cancelBtn) cancelBtn.classList.remove('d-none');
+    if (nameInput) nameInput.focus();
+  };
+
+  window.deleteGroupTagFromModal = async function(tagName) {
+    if (!confirm(`Delete tag "${tagName}"? This will remove it from all documents.`)) return;
+    try {
+      const resp = await fetch(`/api/group_documents/tags/${encodeURIComponent(tagName)}`, { method: 'DELETE' });
+      const data = await resp.json();
+      if (resp.ok) {
+        await loadGroupWorkspaceTags();
+        refreshGroupTagManagementTable();
+      } else {
+        alert('Error: ' + (data.error || 'Failed to delete tag'));
+      }
+    } catch (e) { console.error(e); alert('Error deleting tag'); }
+  };
+
+  async function handleGroupAddOrSaveTag() {
+    const nameInput = document.getElementById('group-new-tag-name');
+    const colorInput = document.getElementById('group-new-tag-color');
+    if (!nameInput || !colorInput) return;
+    const tagName = nameInput.value.trim().toLowerCase();
+    const tagColor = colorInput.value;
+
+    if (!tagName) { alert('Please enter a tag name'); return; }
+    if (!/^[a-z0-9_-]+$/.test(tagName)) { alert('Tag name must contain only lowercase letters, numbers, hyphens, and underscores'); return; }
+
+    if (groupEditingTag) {
+      // Edit mode - save changes
+      const nameChanged = tagName !== groupEditingTag.originalName;
+      const colorChanged = tagColor !== groupEditingTag.originalColor;
+      if (!nameChanged && !colorChanged) { groupCancelEditMode(); return; }
+      if (nameChanged && groupWorkspaceTags.some(t => t.name === tagName && t.name !== groupEditingTag.originalName)) {
+        alert('A tag with this name already exists'); return;
+      }
+      try {
+        const body = {};
+        if (nameChanged) body.new_name = tagName;
+        if (colorChanged) body.color = tagColor;
+        const resp = await fetch(`/api/group_documents/tags/${encodeURIComponent(groupEditingTag.originalName)}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+          groupCancelEditMode();
+          await loadGroupWorkspaceTags();
+          refreshGroupTagManagementTable();
+          if (groupCurrentView === 'grid') renderGroupGridView();
+        } else { alert('Error: ' + (data.error || 'Failed to update tag')); }
+      } catch (e) { console.error(e); alert('Error updating tag'); }
+    } else {
+      // Add mode
+      if (groupWorkspaceTags.some(t => t.name === tagName)) { alert('A tag with this name already exists'); return; }
+      try {
+        const resp = await fetch('/api/group_documents/tags', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tag_name: tagName, color: tagColor })
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+          nameInput.value = '';
+          colorInput.value = '#0d6efd';
+          await loadGroupWorkspaceTags();
+          refreshGroupTagManagementTable();
+          if (groupCurrentView === 'grid') renderGroupGridView();
+        } else { alert('Error: ' + (data.error || 'Failed to create tag')); }
+      } catch (e) { console.error(e); alert('Error creating tag'); }
+    }
+  }
+
+  // --- Tag Selection Modal ---
+  function showGroupTagSelectionModal() {
+    loadGroupWorkspaceTags().then(() => {
+      renderGroupTagSelectionList();
+      groupTagSelectionModal.show();
+    });
+  }
+
+  function renderGroupTagSelectionList() {
+    const listContainer = document.getElementById('group-tag-selection-list');
+    if (!listContainer) return;
+    if (groupWorkspaceTags.length === 0) {
+      listContainer.innerHTML = `<div class="text-center p-4">
+        <p class="text-muted mb-3">No tags available yet.</p>
+        <button type="button" class="btn btn-primary" id="group-create-first-tag-btn"><i class="bi bi-plus-circle"></i> Create Your First Tag</button>
+      </div>`;
+      document.getElementById('group-create-first-tag-btn')?.addEventListener('click', () => {
+        groupTagSelectionModal.hide();
+        showGroupTagManagementModal();
+      });
+      return;
+    }
+    let html = '';
+    groupWorkspaceTags.forEach(tag => {
+      const isSelected = groupDocSelectedTags.has(tag.name);
+      const textColor = isGroupColorLight(tag.color) ? '#000' : '#fff';
+      html += `<label class="list-group-item d-flex align-items-center" style="cursor:pointer;">
+        <input class="form-check-input me-3" type="checkbox" value="${escapeGroupHtml(tag.name)}" ${isSelected ? 'checked' : ''}>
+        <span class="badge me-2" style="background-color:${tag.color};color:${textColor};">${escapeGroupHtml(tag.name)}</span>
+        <span class="ms-auto text-muted small">${tag.count} docs</span>
+      </label>`;
+    });
+    listContainer.innerHTML = html;
+    listContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      cb.addEventListener('change', (e) => {
+        if (e.target.checked) groupDocSelectedTags.add(e.target.value);
+        else groupDocSelectedTags.delete(e.target.value);
+      });
+    });
+  }
+
+  // --- Document Tags Display ---
+  function updateGroupDocTagsDisplay() {
+    const container = document.getElementById('group-doc-selected-tags-container');
+    if (!container) return;
+    if (groupDocSelectedTags.size === 0) {
+      container.innerHTML = '<span class="text-muted small">No tags selected</span>';
+      return;
+    }
+    let html = '';
+    groupDocSelectedTags.forEach(tagName => {
+      const tag = groupWorkspaceTags.find(t => t.name === tagName);
+      const color = tag ? tag.color : '#6c757d';
+      const textColor = isGroupColorLight(color) ? '#000' : '#fff';
+      html += `<span class="badge" style="background-color:${color};color:${textColor};">
+        ${escapeGroupHtml(tagName)}
+        <i class="bi bi-x" style="cursor:pointer;" onclick="window.removeGroupDocSelectedTag('${escapeGroupHtml(tagName)}')"></i>
+      </span>`;
+    });
+    container.innerHTML = html;
+  }
+
+  window.removeGroupDocSelectedTag = function(tagName) {
+    groupDocSelectedTags.delete(tagName);
+    updateGroupDocTagsDisplay();
+  };
+
+  // --- Wire up events ---
+  (function initGroupTagManagement() {
+    // Manage Tags button (next to view toggle)
+    const manageTagsBtn = document.getElementById('group-manage-tags-btn');
+    if (manageTagsBtn) {
+      manageTagsBtn.addEventListener('click', showGroupTagManagementModal);
+    }
+
+    // Manage Tags button inside metadata modal (opens Select Tags)
+    const docManageTagsBtn = document.getElementById('group-doc-manage-tags-btn');
+    if (docManageTagsBtn) {
+      docManageTagsBtn.addEventListener('click', () => {
+        showGroupTagSelectionModal();
+      });
+    }
+
+    // Tag Selection Done button
+    const tagSelectDoneBtn = document.getElementById('group-tag-selection-done-btn');
+    if (tagSelectDoneBtn) {
+      tagSelectDoneBtn.addEventListener('click', () => {
+        updateGroupDocTagsDisplay();
+        groupTagSelectionModal.hide();
+      });
+    }
+
+    // Open Manage Tags from within Selection modal
+    const openMgmtBtn = document.getElementById('group-open-tag-mgmt-btn');
+    if (openMgmtBtn) {
+      openMgmtBtn.addEventListener('click', () => {
+        groupTagSelectionModal.hide();
+        showGroupTagManagementModal();
+      });
+    }
+
+    // Add/Save tag button in management modal
+    const addTagBtn = document.getElementById('group-add-tag-btn');
+    if (addTagBtn) addTagBtn.addEventListener('click', handleGroupAddOrSaveTag);
+
+    // Cancel edit button
+    const cancelEditBtn = document.getElementById('group-cancel-edit-btn');
+    if (cancelEditBtn) cancelEditBtn.addEventListener('click', groupCancelEditMode);
+
+    // Enter key on tag name input
+    const tagNameInput = document.getElementById('group-new-tag-name');
+    if (tagNameInput) {
+      tagNameInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); handleGroupAddOrSaveTag(); }
+      });
+    }
+
+    // When tag management modal closes, refresh selection if it was open
+    document.getElementById('groupTagManagementModal')?.addEventListener('hidden.bs.modal', () => {
+      groupCancelEditMode();
+    });
+  })();
+
 </script>
 {% if settings.enable_semantic_kernel and settings.allow_group_agents %}
 <script type="module" src="/static/js/agents_common.js"></script>

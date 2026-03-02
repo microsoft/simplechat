@@ -147,6 +147,19 @@
       "synonymMaps": []
     },
     {
+      "name": "document_tags",
+      "type": "Collection(Edm.String)",
+      "searchable": true,
+      "filterable": true,
+      "retrievable": true,
+      "stored": true,
+      "sortable": false,
+      "facetable": true,
+      "key": false,
+      "analyzer": "standard.lucene",
+      "synonymMaps": []
+    },
+    {
       "name": "chunk_summary",
       "type": "Edm.String",
       "searchable": true,
