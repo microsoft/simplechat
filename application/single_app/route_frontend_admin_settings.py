@@ -302,6 +302,7 @@ def register_route_frontend_admin_settings(app):
             multimodal_vision_model = form_data.get('multimodal_vision_model', '')
 
             require_member_of_create_group = form_data.get('require_member_of_create_group') == 'on'
+            require_owner_for_group_agent_management = form_data.get('require_owner_for_group_agent_management') == 'on'
             require_member_of_create_public_workspace = form_data.get('require_member_of_create_public_workspace') == 'on'
             require_member_of_safety_violation_admin = form_data.get('require_member_of_safety_violation_admin') == 'on'
             require_member_of_control_center_admin = form_data.get('require_member_of_control_center_admin') == 'on'
@@ -742,6 +743,7 @@ def register_route_frontend_admin_settings(app):
                 'file_timer_unit': file_timer_unit,
                 'file_processing_logs_turnoff_time': file_processing_logs_turnoff_time_str,
                 'require_member_of_create_group': require_member_of_create_group,
+                'require_owner_for_group_agent_management': require_owner_for_group_agent_management,
                 'require_member_of_create_public_workspace': require_member_of_create_public_workspace,
                 
                 # Retention Policy

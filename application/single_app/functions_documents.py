@@ -6420,6 +6420,44 @@ def validate_tags(tags):
     return True, None, normalized
 
 
+def sanitize_tags_for_filter(raw_tags):
+    """
+    Sanitize and validate tags for use in filter/query operations.
+    Silently skips invalid tags since they can never match stored tags.
+
+    Args:
+        raw_tags: Either a comma-separated string or a list of strings
+    Returns:
+        List of valid, normalized tag strings matching ^[a-z0-9_-]+$
+    """
+    import re
+
+    if isinstance(raw_tags, str):
+        candidates = [t.strip() for t in raw_tags.split(',') if t.strip()]
+    elif isinstance(raw_tags, list):
+        candidates = [t for t in raw_tags if isinstance(t, str)]
+    else:
+        return []
+
+    valid_tags = []
+    seen = set()
+
+    for tag in candidates:
+        normalized = normalize_tag(tag)
+        if not normalized:
+            continue
+        if not re.match(r'^[a-z0-9_-]+$', normalized):
+            continue
+        if len(normalized) > 50:
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        valid_tags.append(normalized)
+
+    return valid_tags
+
+
 def get_workspace_tags(user_id, group_id=None, public_workspace_id=None):
     """
     Get all unique tags used in a workspace with document counts.

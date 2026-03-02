@@ -324,6 +324,22 @@ app_settings.app_title }} {% endblock %} {% block head %}
       </button>
     </li>
     {% endif %}
+    {% if app_settings.enable_retention_policy_group %}
+    <li class="nav-item d-none" role="presentation" id="group-settings-tab-nav">
+      <button
+        class="nav-link"
+        id="group-settings-tab-btn"
+        data-bs-toggle="tab"
+        data-bs-target="#group-settings-tab"
+        type="button"
+        role="tab"
+        aria-controls="group-settings-tab"
+        aria-selected="false"
+      >
+        Settings
+      </button>
+    </li>
+    {% endif %}
   </ul>
 
   <!-- Tab Panes -->
@@ -845,6 +861,79 @@ app_settings.app_title }} {% endblock %} {% block head %}
     </div>
     <!-- End GROUP ACTIONS TAB -->
     {% endif %}
+
+    {% if app_settings.enable_retention_policy_group %}
+    <!-- ============= GROUP SETTINGS TAB ============= -->
+    <div
+      class="tab-pane fade"
+      id="group-settings-tab"
+      role="tabpanel"
+      aria-labelledby="group-settings-tab-btn"
+    >
+      <div class="card p-4 my-3">
+        <h5 class="mb-3"><i class="bi bi-hourglass-split me-2"></i>Retention Policy Settings</h5>
+        <p class="text-muted">Configure how long to keep conversations and documents in this group workspace. Items older than the specified period will be automatically deleted.</p>
+        
+        <div class="alert alert-info">
+          <i class="bi bi-info-circle me-2"></i>
+          <strong>Default:</strong> You can use the organization default or set a custom retention period. Choose "No automatic deletion" to keep items indefinitely.
+        </div>
+        
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label for="group-conversation-retention-days" class="form-label">Conversation Retention</label>
+            <select class="form-select" id="group-conversation-retention-days" name="conversation_retention_days">
+              <option value="default">Using organization default</option>
+              <option value="none">No automatic deletion</option>
+              <option value="7">7 days (1 week)</option>
+              <option value="14">14 days (2 weeks)</option>
+              <option value="30">30 days (1 month)</option>
+              <option value="60">60 days (2 months)</option>
+              <option value="90">90 days (3 months)</option>
+              <option value="180">180 days (6 months)</option>
+              <option value="365">365 days (1 year)</option>
+              <option value="730">730 days (2 years)</option>
+              <option value="1095">1095 days (3 years)</option>
+              <option value="3650">3650 days (10 years)</option>
+            </select>
+            <small class="form-text text-muted">Conversations older than this will be automatically deleted.</small>
+          </div>
+          
+          <div class="col-md-6">
+            <label for="group-document-retention-days" class="form-label">Document Retention</label>
+            <select class="form-select" id="group-document-retention-days" name="document_retention_days">
+              <option value="default">Using organization default</option>
+              <option value="none">No automatic deletion</option>
+              <option value="7">7 days (1 week)</option>
+              <option value="14">14 days (2 weeks)</option>
+              <option value="30">30 days (1 month)</option>
+              <option value="60">60 days (2 months)</option>
+              <option value="90">90 days (3 months)</option>
+              <option value="180">180 days (6 months)</option>
+              <option value="365">365 days (1 year)</option>
+              <option value="730">730 days (2 years)</option>
+              <option value="1095">1095 days (3 years)</option>
+              <option value="3650">3650 days (10 years)</option>
+            </select>
+            <small class="form-text text-muted">Documents older than this will be automatically deleted.</small>
+          </div>
+        </div>
+        
+        <div class="mt-3">
+          <button type="button" class="btn btn-primary" onclick="saveGroupRetentionSettings()">
+            <i class="bi bi-save me-1"></i>Save Retention Settings
+          </button>
+          <span id="group-retention-save-status" class="ms-3"></span>
+        </div>
+        
+        <div class="alert alert-warning mt-3 mb-0">
+          <i class="bi bi-exclamation-triangle me-2"></i>
+          <strong>Important:</strong> Deleted conversations will be archived if archiving is enabled. All deletions are logged in activity history.
+        </div>
+      </div>
+    </div>
+    <!-- End GROUP SETTINGS TAB -->
+    {% endif %}
   </div>
   <!-- End Tab Content -->
 </div>
@@ -1364,7 +1453,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
     window.groupWorkspaceContext = {
       activeGroupId,
       activeGroupName,
-      userRole: userRoleInActiveGroup
+      userRole: userRoleInActiveGroup,
+      requireOwnerForAgentManagement: {{ settings.require_owner_for_group_agent_management | tojson }}
     };
     window.dispatchEvent(new CustomEvent('groupWorkspace:context-changed', {
       detail: window.groupWorkspaceContext
@@ -2463,6 +2553,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     // Update UI elements dependent on role (applies to both tabs potentially)
     updateRoleDisplay();
     updateGroupPromptsRoleUI(); // This is specific to prompts tab UI elements
+    loadGroupRetentionSettings(); // Load retention settings
   }
 
   function updateRoleDisplay() {
@@ -2494,7 +2585,139 @@ app_settings.app_title }} {% endblock %} {% block head %}
       uploadSection.style.display = showUpload ? "block" : "none";
     if (uploadHr) uploadHr.style.display = showUpload ? "block" : "none";
 
+    // Control visibility of Settings tab (only for Owners and Admins)
+    const settingsTabNav = document.getElementById('group-settings-tab-nav');
+    const canManageSettings = ['Owner', 'Admin'].includes(userRoleInActiveGroup);
+    if (settingsTabNav) {
+      settingsTabNav.classList.toggle('d-none', !canManageSettings);
+    }
+
     notifyGroupWorkspaceContext();
+  }
+
+  /* ===================== GROUP RETENTION POLICY ===================== */
+
+  async function loadGroupRetentionSettings() {
+    if (!activeGroupId) return;
+    
+    const convSelect = document.getElementById('group-conversation-retention-days');
+    const docSelect = document.getElementById('group-document-retention-days');
+    
+    if (!convSelect || !docSelect) return; // Settings tab not available
+    
+    console.log('Loading group retention settings for:', activeGroupId);
+    
+    try {
+      // Fetch organization defaults for group retention
+      const orgDefaultsResp = await fetch('/api/retention-policy/defaults/group');
+      const orgData = await orgDefaultsResp.json();
+      
+      if (orgData.success) {
+        const convDefaultOption = convSelect.querySelector('option[value="default"]');
+        const docDefaultOption = docSelect.querySelector('option[value="default"]');
+        
+        if (convDefaultOption) {
+          convDefaultOption.textContent = `Using organization default (${orgData.default_conversation_label})`;
+        }
+        if (docDefaultOption) {
+          docDefaultOption.textContent = `Using organization default (${orgData.default_document_label})`;
+        }
+        console.log('Loaded org defaults:', orgData);
+      }
+    } catch (error) {
+      console.error('Error loading group retention defaults:', error);
+    }
+    
+    // Load current group's retention policy settings
+    try {
+      const groupResp = await fetch(`/api/groups/${activeGroupId}`);
+      
+      if (!groupResp.ok) {
+        throw new Error(`Failed to fetch group: ${groupResp.status}`);
+      }
+      
+      const groupData = await groupResp.json();
+      console.log('Loaded group data:', groupData);
+      
+      // API returns group object directly (not wrapped in success/group)
+      if (groupData && groupData.retention_policy) {
+        const retentionPolicy = groupData.retention_policy;
+        let convRetention = retentionPolicy.conversation_retention_days;
+        let docRetention = retentionPolicy.document_retention_days;
+        
+        console.log('Found retention policy:', retentionPolicy);
+        
+        // If undefined, use 'default'
+        if (convRetention === undefined || convRetention === null) convRetention = 'default';
+        if (docRetention === undefined || docRetention === null) docRetention = 'default';
+        
+        convSelect.value = convRetention;
+        docSelect.value = docRetention;
+        console.log('Set retention values to:', { conv: convRetention, doc: docRetention });
+      } else {
+        // Set to organization default if no retention policy set
+        console.log('No retention policy found, using defaults');
+        convSelect.value = 'default';
+        docSelect.value = 'default';
+      }
+    } catch (error) {
+      console.error('Error loading group retention settings:', error);
+      // Set defaults on error
+      convSelect.value = 'default';
+      docSelect.value = 'default';
+    }
+  }
+
+  async function saveGroupRetentionSettings() {
+    if (!activeGroupId) {
+      showToast('No active group selected.', 'warning');
+      return;
+    }
+    
+    const convSelect = document.getElementById('group-conversation-retention-days');
+    const docSelect = document.getElementById('group-document-retention-days');
+    const statusSpan = document.getElementById('group-retention-save-status');
+    
+    if (!convSelect || !docSelect) return;
+    
+    const retentionData = {
+      conversation_retention_days: convSelect.value,
+      document_retention_days: docSelect.value
+    };
+    
+    console.log('Saving group retention settings:', retentionData);
+    
+    // Show saving status
+    if (statusSpan) {
+      statusSpan.innerHTML = '<span class="text-info"><i class="bi bi-hourglass-split"></i> Saving...</span>';
+    }
+    
+    try {
+      const response = await fetch(`/api/retention-policy/group/${activeGroupId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(retentionData)
+      });
+      
+      const data = await response.json();
+      console.log('Save response:', data);
+      
+      if (response.ok && data.success) {
+        if (statusSpan) {
+          statusSpan.innerHTML = '<span class="text-success"><i class="bi bi-check-circle-fill"></i> Saved successfully!</span>';
+          setTimeout(() => { statusSpan.innerHTML = ''; }, 3000);
+        }
+        console.log('Group retention settings saved successfully');
+      } else {
+        throw new Error(data.error || 'Failed to save retention settings');
+      }
+    } catch (error) {
+      console.error('Error saving group retention settings:', error);
+      if (statusSpan) {
+        statusSpan.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-circle-fill"></i> Error: ${error.message}</span>`;
+      }
+      showToast(`Error saving retention settings: ${error.message}`, 'danger');
+    }
   }
 
   /* ===================== GROUP DOCUMENTS ===================== */

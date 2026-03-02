@@ -77,18 +77,21 @@ def build_tags_filter(tags_filter):
     """
     Build OData filter clause for tags.
     tags_filter: List of tag names (already normalized)
-    Returns: String like "document_tags/any(t: t in ('tag1', 'tag2'))" or empty string
+    Returns: String like "document_tags/any(t: t eq 'tag1') and ..." or empty string
+
+    Tags are validated to contain only [a-z0-9_-] characters before
+    being interpolated into the OData expression.
     """
     if not tags_filter or not isinstance(tags_filter, list) or len(tags_filter) == 0:
         return ""
-    
-    # Escape single quotes in tag names
-    escaped_tags = [tag.replace("'", "''") for tag in tags_filter]
-    tags_list_str = "', '".join(escaped_tags)
-    
-    # For AND logic (all tags must be present), we need multiple any() clauses
-    # document_tags/any(t: t eq 'tag1') and document_tags/any(t: t eq 'tag2')
-    tag_conditions = [f"document_tags/any(t: t eq '{tag}')" for tag in escaped_tags]
+
+    from functions_documents import sanitize_tags_for_filter
+    safe_tags = sanitize_tags_for_filter(tags_filter)
+
+    if not safe_tags:
+        return ""
+
+    tag_conditions = [f"document_tags/any(t: t eq '{tag}')" for tag in safe_tags]
     return " and ".join(tag_conditions)
 
 def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12, doc_scope="all", active_group_id=None, active_group_ids=None, active_public_workspace_id=None, enable_file_sharing=True, tags_filter=None):
