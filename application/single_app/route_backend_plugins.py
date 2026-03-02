@@ -438,7 +438,9 @@ def create_group_action_route():
     user_id = get_current_user_id()
     try:
         active_group = require_active_group(user_id)
-        assert_group_role(user_id, active_group)
+        app_settings = get_settings()
+        allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
+        assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
     except LookupError as exc:
@@ -482,7 +484,9 @@ def update_group_action_route(action_id):
     user_id = get_current_user_id()
     try:
         active_group = require_active_group(user_id)
-        assert_group_role(user_id, active_group)
+        app_settings = get_settings()
+        allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
+        assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
     except LookupError as exc:
@@ -541,7 +545,9 @@ def delete_group_action_route(action_id):
     user_id = get_current_user_id()
     try:
         active_group = require_active_group(user_id)
-        assert_group_role(user_id, active_group)
+        app_settings = get_settings()
+        allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
+        assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
     except LookupError as exc:

@@ -2174,6 +2174,24 @@
                         <p class="text-muted small mb-0">
                             If enabled, only users who are members of the 'CreateGroups' role (defined in your App registration) can create new groups. If disabled, any authenticated user can create groups (provided 'Enable My Groups' is active).
                         </p>
+
+                        <hr>
+
+                        <!-- Require Owner to Manage Group Agents and Actions -->
+                        <div class="form-group form-check form-switch mb-2">
+                            <input type="checkbox"
+                                class="form-check-input"
+                                id="require_owner_for_group_agent_management"
+                                name="require_owner_for_group_agent_management"
+                                {% if settings.require_owner_for_group_agent_management %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="require_owner_for_group_agent_management">
+                                Require Owner to Manage Group Agents and Actions
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, only the group Owner can create, edit, and delete group agents and actions. Group Admins will have read-only access."></i>
+                        </div>
+                        <p class="text-muted small mb-0">
+                            If enabled, only the group Owner can create, edit, and delete group agents and group actions. Admins and other roles will only be able to view them.
+                        </p>
                     </div>
                     
                 </div>
