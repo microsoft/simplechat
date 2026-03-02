@@ -213,6 +213,7 @@ if AZURE_ENVIRONMENT == "usgovernment":
 elif AZURE_ENVIRONMENT == "custom":
     resource_manager = CUSTOM_RESOURCE_MANAGER_URL_VALUE
     authority = CUSTOM_IDENTITY_URL_VALUE
+    video_indexer_endpoint = os.getenv("CUSTOM_VIDEO_INDEXER_ENDPOINT", "https://api.videoindexer.ai")
     credential_scopes=[resource_manager + "/.default"]
     cognitive_services_scope = CUSTOM_COGNITIVE_SERVICES_URL_VALUE  
     search_resource_manager = CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE
