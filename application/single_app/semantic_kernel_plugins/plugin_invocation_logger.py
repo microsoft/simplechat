@@ -330,14 +330,33 @@ def plugin_function_logger(plugin_name: str):
         log_event(f"[Plugin Function Logger] Decorating function for plugin", 
                  extra={"function_name": func.__name__, "plugin_name": plugin_name}, 
                  level=logging.DEBUG)
+
+        # Only skip the first positional argument when the wrapped callable
+        # explicitly declares a conventional instance/class receiver.
+        skip_first_positional_arg = False
+        try:
+            unwrapped_func = inspect.unwrap(func)
+            signature = inspect.signature(unwrapped_func)
+            parameters = list(signature.parameters.values())
+            if parameters:
+                first_parameter = parameters[0]
+                if (
+                    first_parameter.kind in (
+                        inspect.Parameter.POSITIONAL_ONLY,
+                        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    )
+                    and first_parameter.name in {"self", "cls"}
+                ):
+                    skip_first_positional_arg = True
+        except (TypeError, ValueError):
+            # Keep all args if the callable cannot be introspected.
+            skip_first_positional_arg = False
         
         def _build_parameters(args, kwargs):
             parameters = {}
             if args:
-                if hasattr(args[0], '__class__'):
-                    parameters.update({f"arg_{i}": arg for i, arg in enumerate(args[1:])})
-                else:
-                    parameters.update({f"arg_{i}": arg for i, arg in enumerate(args)})
+                positional_args = args[1:] if skip_first_positional_arg else args
+                parameters.update({f"arg_{i}": arg for i, arg in enumerate(positional_args)})
             parameters.update(kwargs)
             return parameters
 
