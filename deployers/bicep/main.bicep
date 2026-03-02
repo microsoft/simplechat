@@ -85,14 +85,14 @@ param gptModels array = [
   {
     modelName: 'gpt-4.1'
     modelVersion: '2025-04-14'
-    skuName: 'GlobalStandard'
-    skuCapacity: 150
+    skuName: cloudEnvironment == 'AzureCloud' ? 'GlobalStandard' : 'Standard'
+    skuCapacity: 50
   }
   {
     modelName: 'gpt-4o'
     modelVersion: '2024-11-20'
-    skuName: 'GlobalStandard'
-    skuCapacity: 100
+    skuName: cloudEnvironment == 'AzureCloud' ? 'GlobalStandard' : 'Standard'
+    skuCapacity: 50
   }
 ]
 
@@ -110,6 +110,17 @@ param embeddingModels array = [
     skuName: 'GlobalStandard'
     skuCapacity: 150
   }
+]
+
+@description('''Array of embedding model names to deploy to the OpenAI resource.''')
+param embeddingModelsGov array = [
+  {
+    modelName: 'text-embedding-ada-002'
+    modelVersion: '2'
+    skuName: cloudEnvironment == 'AzureCloud' ? 'GlobalStandard' : 'Standard'
+    skuCapacity: 50
+  }
+  
 ]
 
 //----------------
@@ -386,7 +397,7 @@ module openAI 'modules/openAI.bicep' = {
     configureApplicationPermissions: configureApplicationPermissions
 
     gptModels: gptModels
-    embeddingModels: embeddingModels
+    embeddingModels: cloudEnvironment == 'AzureCloud' ? embeddingModels : embeddingModelsGov
 
     enablePrivateNetworking: enablePrivateNetworking
   }

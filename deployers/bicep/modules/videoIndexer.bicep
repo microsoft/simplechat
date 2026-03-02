@@ -27,7 +27,7 @@ resource openAiService 'Microsoft.CognitiveServices/accounts@2024-10-01' existin
 }
 
 // deploy video indexer service if required
-resource videoIndexerService 'Microsoft.VideoIndexer/accounts@2025-04-01' = {
+resource videoIndexerService 'Microsoft.VideoIndexer/accounts@2025-03-01' = {
   name: toLower('${appName}-${environment}-video')
   location: location
 
@@ -35,7 +35,6 @@ resource videoIndexerService 'Microsoft.VideoIndexer/accounts@2025-04-01' = {
     type: 'SystemAssigned'
   }
   properties: {
-    publicNetworkAccess: enablePrivateNetworking ? 'Disabled' : 'Enabled'
     storageServices: {
       resourceId: storage.id
     }

@@ -13,9 +13,9 @@ services:
       context: ../../
       dockerfile: application/single_app/Dockerfile
 hooks:
-  postprovision:
   # this is run after the infrastructure has been provisioned but before services are deployed.
   # primary use is to configure application settings and permissions
+  postprovision:
     posix:
       shell: sh
       run: |
@@ -94,12 +94,78 @@ hooks:
             echo "========================================"
         else
             echo ""
-            echo "ℹ Skipping post-deployment configuration (var_configureApplication is not true)"
+            echo "i Skipping post-deployment configuration (var_configureApplication is not true)"
             echo ""
             echo "========================================"
             echo "POST-PROVISION: Completed (skipped)"
             echo "========================================"
         fi
+
+    windows:
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = "Stop"
+        
+        Write-Host "========================================"
+        Write-Host "POST-PROVISION: Starting configuration"
+        Write-Host "========================================"
+
+        if ($Env:var_configureApplication -eq "true") {
+            Write-Host ""
+            Write-Host "[1/4] Granting permissions to CosmosDB..."
+            if (pwsh -File ./bicep/cosmosDb-postDeployPerms.ps1) {
+                Write-Host "✓ CosmosDB permissions granted successfully"
+            }
+            else {
+                Write-Error "✗ ERROR: Failed to grant CosmosDB permissions"
+                exit 1
+            }
+
+            Write-Host ""
+            Write-Host "[2/4] Installing Python dependencies..."
+            python3 -m pip install --user -r ./bicep/requirements.txt *> $null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "✓ Dependencies installed successfully"
+            }
+            else {
+                Write-Error "✗ ERROR: Failed to install Python dependencies"
+                exit 1
+            }
+
+            Write-Host ""
+            Write-Host "[3/4] Running post-deployment configuration..."
+            if (python3 ./bicep/postconfig.py) {
+                Write-Host "✓ Post-deployment configuration completed"
+            }
+            else {
+                Write-Error "✗ ERROR: Post-deployment configuration failed"
+                exit 1
+            }
+
+            Write-Host ""
+            Write-Host "[4/4] Restarting web service to apply settings..."
+            az webapp restart --name $Env:var_webService --resource-group $Env:var_rgName | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "✓ Web service restarted successfully"
+            }
+            else {
+                Write-Error "✗ ERROR: Failed to restart web service"
+                exit 1
+            }
+
+            Write-Host ""
+            Write-Host "========================================"
+            Write-Host "POST-PROVISION: Completed successfully"
+            Write-Host "========================================"
+        }
+        else {
+            Write-Host ""
+            Write-Host "i Skipping post-deployment configuration (var_configureApplication is not true)"
+            Write-Host ""
+            Write-Host "========================================"
+            Write-Host "POST-PROVISION: Completed (skipped)"
+            Write-Host "========================================"
+        }
 
   predeploy:
   # this is run after infrastructure and postprovisioning but before service deployment
@@ -139,51 +205,25 @@ hooks:
         fi
         
         echo ""
-        echo "[2/6] Building Docker image..."
-        echo "Context: $(pwd)"
-        echo "Dockerfile: application/single_app/Dockerfile"
-        if docker build -f application/single_app/Dockerfile \
-            -t ${var_containerRegistry}/${var_imageName}:${timestamp} . ; then
-            echo "✓ Docker image built successfully"
+        echo "[2/6] Building image in ACR..."
+        timestamp="$(date +"%Y%m%d-%H%M%S")"
+        image_ts="${var_imageName}:${timestamp}"
+        image_latest="${var_imageName}:latest"
+
+        # Trigger remote build; context is repo root one level up from deployer
+        if az acr build \
+            --registry "${var_acrName}" \
+            --image "${image_ts}" \
+            --image "${image_latest}" \
+            --file application/single_app/Dockerfile \
+            ./ ; then
+            echo "✓ ACR build completed and images pushed"
         else
-            cleanup_on_error "Docker build"
+            cleanup_on_error "ACR build"
         fi
         
         echo ""
-        echo "[3/6] Tagging image as latest..."
-        if docker tag ${var_containerRegistry}/${var_imageName}:${timestamp} \
-            ${var_containerRegistry}/${var_imageName}:latest ; then
-            echo "✓ Image tagged successfully"
-        else
-            cleanup_on_error "Docker tag"
-        fi
-        
-        echo ""
-        echo "[4/6] Logging in to ACR (${var_acrName})..."
-        if az acr login --name ${var_acrName}; then
-            echo "✓ ACR login successful"
-        else
-            cleanup_on_error "ACR login"
-        fi
-        
-        echo ""
-        echo "[5/6] Pushing images to ACR..."
-        echo "  → Pushing latest tag..."
-        if docker push ${var_containerRegistry}/${var_imageName}:latest; then
-            echo "  ✓ Latest tag pushed successfully"
-        else
-            cleanup_on_error "Docker push (latest)"
-        fi
-        
-        echo "  → Pushing timestamped tag..."
-        if docker push ${var_containerRegistry}/${var_imageName}:${timestamp}; then
-            echo "  ✓ Timestamped tag pushed successfully"
-        else
-            cleanup_on_error "Docker push (timestamp)"
-        fi
-        
-        echo ""
-        echo "[6/6] Restarting web service..."
+        echo "[3/6] Restarting web service..."
         if az webapp start --name ${var_webService} --resource-group ${var_rgName}; then
             echo "✓ Web service restarted successfully"
         else
@@ -195,6 +235,73 @@ hooks:
         echo "========================================"
         echo "PRE-DEPLOY: Completed successfully"
         echo "========================================"
+
+    windows:
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        # Set up variables
+        Write-Host "$Env:var_acrName"
+        Write-Host "$Env:var_webService"
+
+        function Cleanup-OnError([string]$step) {
+            Write-Error "✗ ERROR: Deployment failed at step: $step"
+            Write-Host "Attempting to restart web service..."
+            az webapp start --name $Env:var_webService --resource-group $Env:var_rgName 2>$null | Out-Null
+            exit 1
+        }
+
+        Write-Host "========================================"
+        Write-Host "PRE-DEPLOY: Building and pushing image"
+        Write-Host "========================================"
+        
+        Set-Location ..
+        $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+        Write-Host ""
+        Write-Host "Deployment timestamp: $timestamp"
+        Write-Host "Image: $($Env:var_containerRegistry)/$($Env:var_imageName):$timestamp"
+        Write-Host "Current directory: $(Get-Location)"
+        
+        Write-Host ""
+        Write-Host "[1/6] Stopping web service..."
+        az webapp stop --name $Env:var_webService --resource-group $Env:var_rgName | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "✓ Web service stopped successfully"
+        }
+        else {
+            Write-Error "✗ ERROR: Failed to stop web service"
+            exit 1
+        }
+        
+        Write-Host ""
+        Write-Host "[2/6] Building image in ACR..."
+        $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+        $imageTs = "$($Env:var_imageName):$timestamp"
+        $imageLatest = "$($Env:var_imageName):latest"
+
+        if (az acr build --registry $Env:var_acrName --image $imageTs --image $imageLatest --file application/single_app/Dockerfile ./) {
+            Write-Host "✓ ACR build completed and images pushed"
+        }
+        else {
+            Cleanup-OnError "ACR build"
+        }
+        
+        Write-Host ""
+        Write-Host "[3/6] Restarting web service..."
+        az webapp start --name $Env:var_webService --resource-group $Env:var_rgName | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "✓ Web service restarted successfully"
+        }
+        else {
+            Write-Error "✗ ERROR: Failed to restart web service"
+            exit 1
+        }
+        
+        Write-Host ""
+        Write-Host "========================================"
+        Write-Host "PRE-DEPLOY: Completed successfully"
+        Write-Host "========================================"
     
   postup:
     # this is the final step to run after everything else is done
@@ -261,10 +368,80 @@ hooks:
             echo "✓ Private networking configured successfully"
         else
             echo ""
-            echo "ℹ Skipping private networking configuration (var_enablePrivateNetworking is not true)"
+            echo "i: Skipping private networking configuration (var_enablePrivateNetworking is not true)"
         fi
 
         echo ""
         echo "========================================"
         echo "✓ DEPLOYMENT COMPLETED SUCCESSFULLY"
         echo "========================================"
+
+    windows:
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = "Stop"
+        
+        Write-Host "========================================"
+        Write-Host "POST-UP: Final configuration"
+        Write-Host "========================================"
+        
+        if ($Env:var_enablePrivateNetworking -eq "true") {
+            Write-Host ""
+            Write-Host "Configuring private networking..."
+            
+            Write-Host ""
+            Write-Host "[1/4] Disabling public network access for CosmosDB..."
+            az cosmosdb update --name $Env:var_cosmosDb_accountName --resource-group $Env:var_rgName --public-network-access Disabled | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "✓ CosmosDB public access disabled"
+            }
+            else {
+                Write-Error "✗ ERROR: Failed to disable CosmosDB public access"
+                exit 1
+            }
+            
+            Write-Host ""
+            Write-Host "[2/4] Disabling public network access for Key Vault..."
+            az keyvault update --name $Env:var_keyVaultName --resource-group $Env:var_rgName --public-network-access Disabled | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "✓ Key Vault public access disabled"
+            }
+            else {
+                Write-Error "✗ ERROR: Failed to disable Key Vault public access"
+                exit 1
+            }
+
+            Write-Host ""
+            Write-Host "[3/4] Disabling public network access for Azure Container Registry..."
+            az acr update --name $Env:var_acrName --resource-group $Env:var_rgName --public-network-enabled false | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "✓ ACR public access disabled"
+            }
+            else {
+                Write-Error "✗ ERROR: Failed to disable ACR public access"
+                exit 1
+            }
+
+            Write-Host ""
+            Write-Host "[4/4] Disabling public network access for Web Application..."
+            az resource update --name $Env:var_webService --resource-group $Env:var_rgName --resource-type "Microsoft.Web/sites" --set properties.publicNetworkAccess=Disabled | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "✓ Web Application public access disabled"
+            }
+            else {
+                Write-Error "✗ ERROR: Failed to disable Web Application public access"
+                exit 1
+            }
+            
+            Write-Host ""
+            Write-Host "✓ Private networking configured successfully"
+        }
+        else {
+            Write-Host ""
+            Write-Host "ℹ Skipping private networking configuration (var_enablePrivateNetworking is not true)"
+        }
+
+        Write-Host ""
+        Write-Host "========================================"
+        Write-Host "✓ DEPLOYMENT COMPLETED SUCCESSFULLY"
+        Write-Host "========================================"

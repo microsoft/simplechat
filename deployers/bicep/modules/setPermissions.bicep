@@ -59,7 +59,7 @@ resource contentSafety 'Microsoft.CognitiveServices/accounts@2025-06-01' existin
   name: contentSafetyName
 }
 
-resource videoIndexerService 'Microsoft.VideoIndexer/accounts@2025-04-01' existing = if (videoIndexerName != '') {
+resource videoIndexerService 'Microsoft.VideoIndexer/accounts@2025-03-01' existing = if (videoIndexerName != '') {
   name: videoIndexerName
 }
 

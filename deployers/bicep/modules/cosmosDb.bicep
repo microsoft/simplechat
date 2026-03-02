@@ -28,11 +28,7 @@ resource cosmosDb 'Microsoft.DocumentDB/databaseAccounts@2023-04-15' = {
   properties: {
     publicNetworkAccess: 'Enabled'  // configuration is set in post provision step in azure.yaml with post deployment script
     databaseAccountOfferType: 'Standard'
-    capabilities: [
-      {
-        name: 'EnableServerless'
-      }
-    ]
+    capabilities: []
     isVirtualNetworkFilterEnabled: enablePrivateNetworking ? true : false
     ipRules: enablePrivateNetworking ? allowedIpAddresses : []
 

@@ -1,14 +1,27 @@
+# postconfig.py
 from azure.cosmos import CosmosClient
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
-from azure.identity import DefaultAzureCredential
+from azure.identity import DefaultAzureCredential, AzureAuthorityHosts
 from azure.keyvault.secrets import SecretClient
 import os
 import json
 
-credential = DefaultAzureCredential()
-token = credential.get_token("https://cosmos.azure.com/.default")
+
+def infer_authority(host_candidates):
+    """Infer Azure authority based on resource host (supports public and gov)."""
+    for host in host_candidates:
+        if host and ".azure.us" in host:
+            return AzureAuthorityHosts.AZURE_GOVERNMENT
+    return AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
+
 
 cosmosEndpoint = os.getenv("var_cosmosDb_uri")
+keyVaultUri = os.getenv("var_keyVaultUri")
+authority = infer_authority([cosmosEndpoint, keyVaultUri])
+
+credential = DefaultAzureCredential(authority=authority)
+token = credential.get_token("https://cosmos.azure.com/.default")
+
 client = CosmosClient(cosmosEndpoint, credential=credential)
 
 database_name = "SimpleChat"
@@ -32,7 +45,7 @@ except CosmosResourceNotFoundError:
 
 # Get values from environment variables
 var_authenticationType = os.getenv("var_authenticationType")
-var_keyVaultUri = os.getenv("var_keyVaultUri")
+var_keyVaultUri = keyVaultUri
 
 var_openAIEndpoint = os.getenv("var_openAIEndpoint")
 var_openAIResourceGroup = os.getenv("var_openAIResourceGroup")
