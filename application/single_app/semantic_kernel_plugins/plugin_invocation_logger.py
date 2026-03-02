@@ -331,11 +331,15 @@ def plugin_function_logger(plugin_name: str):
                  extra={"function_name": func.__name__, "plugin_name": plugin_name}, 
                  level=logging.DEBUG)
 
+        try:
+            unwrapped_func = inspect.unwrap(func)
+        except Exception:
+            unwrapped_func = func
+
         # Only skip the first positional argument when the wrapped callable
         # explicitly declares a conventional instance/class receiver.
         skip_first_positional_arg = False
         try:
-            unwrapped_func = inspect.unwrap(func)
             signature = inspect.signature(unwrapped_func)
             parameters = list(signature.parameters.values())
             if parameters:
@@ -351,6 +355,8 @@ def plugin_function_logger(plugin_name: str):
         except (TypeError, ValueError):
             # Keep all args if the callable cannot be introspected.
             skip_first_positional_arg = False
+
+        is_async_callable = inspect.iscoroutinefunction(unwrapped_func)
         
         def _build_parameters(args, kwargs):
             parameters = {}
@@ -407,7 +413,7 @@ def plugin_function_logger(plugin_name: str):
                 level=logging.ERROR
             )
 
-        if inspect.iscoroutinefunction(func):
+        if is_async_callable:
             @functools.wraps(func)
             async def wrapper(*args, **kwargs):
                 start_time = time.time()
@@ -462,8 +468,51 @@ def plugin_function_logger(plugin_name: str):
 
                 try:
                     result = func(*args, **kwargs)
-                    if inspect.iscoroutine(result):
-                        raise RuntimeError("Async coroutine returned from sync function wrapper")
+                    if inspect.isawaitable(result):
+                        log_event(
+                            "[Plugin Function Logger] Awaitable returned from sync wrapper; deferring completion logging",
+                            extra={
+                                "plugin_name": plugin_name,
+                                "function_name": function_name,
+                                "full_function_name": f"{plugin_name}.{function_name}",
+                            },
+                            level=logging.WARNING,
+                        )
+
+                        async def _await_and_log(awaitable_result):
+                            try:
+                                awaited_value = await awaitable_result
+                                end_time = time.time()
+                                duration_ms = (end_time - start_time) * 1000
+                                _log_success(function_name, awaited_value, duration_ms)
+                                log_plugin_invocation(
+                                    plugin_name=plugin_name,
+                                    function_name=function_name,
+                                    parameters=parameters,
+                                    result=awaited_value,
+                                    start_time=start_time,
+                                    end_time=end_time,
+                                    success=True,
+                                )
+                                return awaited_value
+                            except Exception as await_error:
+                                end_time = time.time()
+                                duration_ms = (end_time - start_time) * 1000
+                                _log_failure(function_name, await_error, duration_ms)
+                                log_plugin_invocation(
+                                    plugin_name=plugin_name,
+                                    function_name=function_name,
+                                    parameters=parameters,
+                                    result=None,
+                                    start_time=start_time,
+                                    end_time=end_time,
+                                    success=False,
+                                    error_message=str(await_error),
+                                )
+                                raise
+
+                        return _await_and_log(result)
+
                     end_time = time.time()
                     duration_ms = (end_time - start_time) * 1000
                     _log_success(function_name, result, duration_ms)

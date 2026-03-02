@@ -88,7 +88,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.237.050"
+VERSION = "0.237.051"
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
