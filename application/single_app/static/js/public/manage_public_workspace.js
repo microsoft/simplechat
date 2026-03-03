@@ -20,6 +20,14 @@ $(document).ready(function () {
     loadWorkspaceStats();
   });
 
+  // Retention policy settings
+  $("#savePublicRetentionBtn").on("click", function () {
+    savePublicRetentionSettings();
+  });
+  $('#settings-tab').on('shown.bs.tab', function () {
+    loadPublicRetentionSettings();
+  });
+
   // Activity timeline pagination
   $('input[name="activityLimit"]').on('change', function() {
     const limit = parseInt($(this).val());
@@ -281,7 +289,9 @@ function loadWorkspaceInfo(callback) {
         $("#addBulkMemberBtn").show();
         $("#pendingRequestsSection").show();
         $("#activityTimelineSection").show();
+        $("#settings-tab-item").removeClass("d-none");
         loadPendingRequests();
+        loadPublicRetentionSettings();
       }
 
       if (callback) callback();
@@ -1244,7 +1254,7 @@ async function bulkAssignRole() {
 
 async function bulkRemoveMembers() {
   const selectedMembers = getSelectedMembers();
-  
+
   if (selectedMembers.length === 0) {
     alert("No members selected");
     return;
@@ -1252,21 +1262,21 @@ async function bulkRemoveMembers() {
 
   // Close modal
   $("#bulkRemoveMembersModal").modal("hide");
-  
+
   let successCount = 0;
   let failedCount = 0;
   const failures = [];
 
   for (let i = 0; i < selectedMembers.length; i++) {
     const member = selectedMembers[i];
-    
+
     try {
       const response = await fetch(`/api/public_workspaces/${workspaceId}/members/${member.userId}`, {
         method: 'DELETE'
       });
 
       const data = await response.json();
-      
+
       if (response.ok && data.success) {
         successCount++;
       } else {
@@ -1293,3 +1303,101 @@ async function bulkRemoveMembers() {
   loadMembers();
 }
 
+/* ===================== PUBLIC RETENTION POLICY ===================== */
+
+async function loadPublicRetentionSettings() {
+    const convSelect = document.getElementById('public-conversation-retention-days');
+    const docSelect = document.getElementById('public-document-retention-days');
+
+    if (!convSelect || !docSelect) return;
+
+    try {
+        const orgDefaultsResp = await fetch('/api/retention-policy/defaults/public');
+        const orgData = await orgDefaultsResp.json();
+
+        if (orgData.success) {
+            const convDefaultOption = convSelect.querySelector('option[value="default"]');
+            const docDefaultOption = docSelect.querySelector('option[value="default"]');
+
+            if (convDefaultOption) {
+                convDefaultOption.textContent = `Using organization default (${orgData.default_conversation_label})`;
+            }
+            if (docDefaultOption) {
+                docDefaultOption.textContent = `Using organization default (${orgData.default_document_label})`;
+            }
+        }
+    } catch (error) {
+        console.error('Error loading public workspace retention defaults:', error);
+    }
+
+    try {
+        const workspaceResp = await fetch(`/api/public_workspaces/${workspaceId}`);
+
+        if (!workspaceResp.ok) {
+            throw new Error(`Failed to fetch workspace: ${workspaceResp.status}`);
+        }
+
+        const workspaceData = await workspaceResp.json();
+
+        if (workspaceData && workspaceData.retention_policy) {
+            const retentionPolicy = workspaceData.retention_policy;
+            let convRetention = retentionPolicy.conversation_retention_days;
+            let docRetention = retentionPolicy.document_retention_days;
+
+            if (convRetention === undefined || convRetention === null) convRetention = 'default';
+            if (docRetention === undefined || docRetention === null) docRetention = 'default';
+
+            convSelect.value = convRetention;
+            docSelect.value = docRetention;
+        } else {
+            convSelect.value = 'default';
+            docSelect.value = 'default';
+        }
+    } catch (error) {
+        console.error('Error loading public workspace retention settings:', error);
+        convSelect.value = 'default';
+        docSelect.value = 'default';
+    }
+}
+
+async function savePublicRetentionSettings() {
+    const convSelect = document.getElementById('public-conversation-retention-days');
+    const docSelect = document.getElementById('public-document-retention-days');
+    const statusSpan = document.getElementById('public-retention-save-status');
+
+    if (!convSelect || !docSelect) return;
+
+    const retentionData = {
+        conversation_retention_days: convSelect.value,
+        document_retention_days: docSelect.value
+    };
+
+    if (statusSpan) {
+        statusSpan.innerHTML = '<span class="text-info"><i class="bi bi-hourglass-split"></i> Saving...</span>';
+    }
+
+    try {
+        const response = await fetch(`/api/retention-policy/public/${workspaceId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(retentionData)
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+            if (statusSpan) {
+                statusSpan.innerHTML = '<span class="text-success"><i class="bi bi-check-circle-fill"></i> Saved successfully!</span>';
+                setTimeout(() => { statusSpan.innerHTML = ''; }, 3000);
+            }
+        } else {
+            throw new Error(data.error || 'Failed to save retention settings');
+        }
+    } catch (error) {
+        console.error('Error saving public workspace retention settings:', error);
+        if (statusSpan) {
+            statusSpan.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-circle-fill"></i> Error: ${error.message}</span>`;
+        }
+        alert(`Error saving retention settings: ${error.message}`);
+    }
+}
