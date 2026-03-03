@@ -1,14 +1,18 @@
 # route_frontend_chats.py
 
+import logging
 from config import *
 from functions_authentication import *
 from functions_content import *
 from functions_settings import *
 from functions_documents import *
-from functions_group import find_group_by_id
+from functions_group import find_group_by_id, get_user_groups
+from functions_public_workspaces import find_public_workspace_by_id, get_user_visible_public_workspace_ids_from_settings
 from functions_appinsights import log_event
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_debug import debug_print
+
+logger = logging.getLogger(__name__)
 
 def register_route_frontend_chats(app):
     @app.route('/chats', methods=['GET'])
@@ -17,8 +21,12 @@ def register_route_frontend_chats(app):
     @user_required
     def chats():
         user_id = get_current_user_id()
+        if not user_id:
+            return redirect(url_for('login'))
+
         settings = get_settings()
         user_settings = get_user_settings(user_id)
+        user_settings_dict = user_settings.get("settings", {}) if isinstance(user_settings, dict) else {}
         public_settings = sanitize_settings_for_user(settings)
         enable_user_feedback = public_settings.get("enable_user_feedback", False)
         enable_enhanced_citations = public_settings.get("enable_enhanced_citations", False)
@@ -26,7 +34,7 @@ def register_route_frontend_chats(app):
         enable_extract_meta_data = public_settings.get("enable_extract_meta_data", False)
         enable_multi_model_endpoints = public_settings.get("enable_multi_model_endpoints", False)
         multi_endpoint_notice = public_settings.get("multi_endpoint_migration_notice", {})
-        active_group_id = user_settings["settings"].get("activeGroupOid", "")
+        active_group_id = user_settings_dict.get("activeGroupOid", "")
         active_group_name = ""
         if active_group_id:
             group_doc = find_group_by_id(active_group_id)
@@ -34,7 +42,7 @@ def register_route_frontend_chats(app):
                 active_group_name = group_doc.get("name", "")
         
         # Get active public workspace ID from user settings
-        active_public_workspace_id = user_settings["settings"].get("activePublicWorkspaceOid", "")
+        active_public_workspace_id = user_settings_dict.get("activePublicWorkspaceOid", "")
         
         categories_list = public_settings.get("document_classification_categories","")
 
@@ -60,7 +68,26 @@ def register_route_frontend_chats(app):
         
         # Get user display name from user settings
         user_display_name = user_settings.get('display_name', '')
-        
+
+        # Get all groups the user belongs to (for multi-scope selector)
+        user_groups_simple = []
+        try:
+            user_groups_raw = get_user_groups(user_id)
+            user_groups_simple = [{'id': g['id'], 'name': g.get('name', 'Unnamed')} for g in user_groups_raw]
+        except Exception as e:
+            logger.warning(f"Failed to load user groups for chats page: {e}")
+
+        # Get visible public workspaces with names (for multi-scope selector)
+        user_visible_public_workspaces = []
+        try:
+            visible_ws_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
+            for ws_id in visible_ws_ids:
+                ws_doc = find_public_workspace_by_id(ws_id)
+                if ws_doc:
+                    user_visible_public_workspaces.append({'id': ws_id, 'name': ws_doc.get('name', 'Unknown')})
+        except Exception as e:
+            logger.warning(f"Failed to load visible public workspaces for chats page: {e}")
+
         return render_template(
             'chats.html',
             settings=public_settings,
@@ -77,6 +104,8 @@ def register_route_frontend_chats(app):
             multi_endpoint_models=multi_endpoint_models,
             user_id=user_id,
             user_display_name=user_display_name,
+            user_groups=user_groups_simple,
+            user_visible_public_workspaces=user_visible_public_workspaces,
         )
     
     @app.route('/upload', methods=['POST'])
@@ -140,7 +169,8 @@ def register_route_frontend_chats(app):
         file.seek(0)
 
         filename = secure_filename(file.filename)
-        file_ext = os.path.splitext(filename)[1].lower()
+        file_ext = os.path.splitext(filename)[1].lower()  # e.g., '.png'
+        file_ext_nodot = file_ext.lstrip('.')              # e.g., 'png'
 
         with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
             file.save(tmp_file.name)
@@ -153,9 +183,9 @@ def register_route_frontend_chats(app):
 
         try:
             # Check if this is an image file
-            is_image_file = file_ext in ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.heif']
+            is_image_file = file_ext_nodot in IMAGE_EXTENSIONS
             
-            if file_ext in ['.pdf', '.docx', '.pptx', '.html', '.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.heif']:
+            if file_ext_nodot in (DOCUMENT_EXTENSIONS | {'html'}) or is_image_file:
                 extracted_content_raw  = extract_content_with_azure_di(temp_file_path)
                 
                 # Convert pages_data list to string
@@ -213,25 +243,25 @@ def register_route_frontend_chats(app):
                         print(f"Warning: Vision analysis failed for chat upload: {vision_error}")
                         # Continue without vision analysis
                 
-            elif file_ext in ['.doc', '.docm']:
+            elif file_ext_nodot in {'doc', 'docm'}:
                 # Use docx2txt for .doc and .docm files
                 try:
                     import docx2txt
                     extracted_content = docx2txt.process(temp_file_path)
                 except ImportError:
                     return jsonify({'error': 'docx2txt library required for .doc/.docm files'}), 500
-            elif file_ext == '.txt':
+            elif file_ext_nodot == 'txt':
                 extracted_content  = extract_text_file(temp_file_path)
-            elif file_ext == '.md':
+            elif file_ext_nodot == 'md':
                 extracted_content  = extract_markdown_file(temp_file_path)
-            elif file_ext == '.json':
+            elif file_ext_nodot == 'json':
                 with open(temp_file_path, 'r', encoding='utf-8') as f:
                     parsed_json = json.load(f)
                     extracted_content  = json.dumps(parsed_json, indent=2)
-            elif file_ext in ['.xml', '.yaml', '.yml', '.log']:
+            elif file_ext_nodot in {'xml', 'yaml', 'yml', 'log'}:
                 # Handle XML, YAML, and LOG files as text for inline chat
                 extracted_content  = extract_text_file(temp_file_path)
-            elif file_ext in ['.csv', '.xls', '.xlsx', '.xlsm']:
+            elif file_ext_nodot in TABULAR_EXTENSIONS:
                 extracted_content = extract_table_file(temp_file_path, file_ext)
                 is_table = True
             else:
@@ -707,8 +737,8 @@ def register_route_frontend_chats(app):
         is_pdf = file_ext == '.pdf'
         is_word = file_ext in ('.docx', '.doc', '.docm')
         is_ppt = file_ext in ('.pptx', '.ppt')
-        is_image = file_ext in ('.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.gif', '.webp') # Added more image types
-        is_text = file_ext in ('.txt', '.md', '.csv', '.json', '.log', '.xml', '.yaml', '.yml', '.html', '.htm') # Common text-based types
+        is_image = file_ext.lstrip('.') in (IMAGE_EXTENSIONS | {'gif', 'webp'}) # Added more image types
+        is_text = file_ext.lstrip('.') in (BASE_ALLOWED_EXTENSIONS - {'doc', 'docm'}) # Common text-based types
 
         try:
             # Download the file to the specified location

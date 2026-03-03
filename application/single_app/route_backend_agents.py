@@ -255,7 +255,9 @@ def create_group_agent_route():
     user_id = get_current_user_id()
     try:
         active_group = require_active_group(user_id)
-        assert_group_role(user_id, active_group)
+        app_settings = get_settings()
+        allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
+        assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
     except LookupError as exc:
@@ -304,7 +306,9 @@ def update_group_agent_route(agent_id):
     user_id = get_current_user_id()
     try:
         active_group = require_active_group(user_id)
-        assert_group_role(user_id, active_group)
+        app_settings = get_settings()
+        allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
+        assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
     except LookupError as exc:
@@ -370,7 +374,9 @@ def delete_group_agent_route(agent_id):
     user_id = get_current_user_id()
     try:
         active_group = require_active_group(user_id)
-        assert_group_role(user_id, active_group)
+        app_settings = get_settings()
+        allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
+        assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
     except LookupError as exc:
@@ -549,17 +555,7 @@ def add_agent():
         result = save_global_agent(cleaned_agent)
         if not result:
             return jsonify({'error': 'Failed to save agent.'}), 500
-        
-        # Enforce that if there are agents, one must match global_selected_agent
-        settings = get_settings()
-        global_selected_agent = settings.get('global_selected_agent', {})
-        global_selected_name = global_selected_agent.get('name')
-        updated_agents = get_global_agents()
-        if len(updated_agents) > 0:
-            found = any(a.get('name') == global_selected_name for a in updated_agents)
-            if not found:
-                return jsonify({'error': 'There must be at least one agent matching the global_selected_agent.'}), 400
-        
+
         log_event("Agent added", extra={"action": "add", "agent": {k: v for k, v in cleaned_agent.items() if k != 'id'}, "user": str(get_current_user_id())})
         # --- HOT RELOAD TRIGGER ---
         setattr(builtins, "kernel_reload_needed", True)
@@ -670,17 +666,7 @@ def edit_agent(agent_name):
         result = save_global_agent(cleaned_agent)
         if not result:
             return jsonify({'error': 'Failed to save agent.'}), 500
-        
-        # Enforce that if there are agents, one must match global_selected_agent
-        settings = get_settings()
-        global_selected_agent = settings.get('global_selected_agent', {})
-        global_selected_name = global_selected_agent.get('name')
-        updated_agents = get_global_agents()
-        if len(updated_agents) > 0:
-            found = any(a.get('name') == global_selected_name for a in updated_agents)
-            if not found:
-                return jsonify({'error': 'There must be at least one agent matching the global_selected_agent.'}), 400
-        
+
         log_event(
             f"Agent {agent_name} edited",
             extra={

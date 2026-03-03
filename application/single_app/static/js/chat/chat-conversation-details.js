@@ -75,7 +75,7 @@ export async function showConversationDetails(conversationId) {
  * @returns {string} HTML string
  */
 function renderConversationMetadata(metadata, conversationId) {
-  const { context = [], tags = [], strict = false, classification = [], last_updated, chat_type = 'personal_single_user', is_pinned = false, is_hidden = false } = metadata;
+  const { context = [], tags = [], strict = false, classification = [], last_updated, chat_type = 'personal_single_user', is_pinned = false, is_hidden = false, scope_locked, locked_contexts = [] } = metadata;
   
   // Organize tags by category
   const tagsByCategory = {
@@ -122,6 +122,9 @@ function renderConversationMetadata(metadata, conversationId) {
               </div>
               <div class="col-sm-6">
                 <strong>Status:</strong> ${is_pinned ? '<span class="badge bg-primary"><i class="bi bi-pin-angle me-1"></i>Pinned</span>' : ''} ${is_hidden ? '<span class="badge bg-secondary ms-1"><i class="bi bi-eye-slash me-1"></i>Hidden</span>' : ''}${!is_pinned && !is_hidden ? '<span class="text-muted">Normal</span>' : ''}
+              </div>
+              <div class="col-sm-6">
+                <strong>Scope Lock:</strong> ${formatScopeLockStatus(scope_locked, locked_contexts)}
               </div>
             </div>
           </div>
@@ -474,6 +477,31 @@ function formatDate(dateString) {
   if (!dateString) return 'Unknown';
   const date = new Date(dateString);
   return date.toLocaleString();
+}
+
+function formatScopeLockStatus(scopeLocked, lockedContexts) {
+  if (scopeLocked === null || scopeLocked === undefined) {
+    return '<span class="badge bg-secondary">N/A</span>';
+  }
+  if (scopeLocked === true) {
+    const groups = window.userGroups || [];
+    const publicWorkspaces = window.userVisiblePublicWorkspaces || [];
+    const groupMap = {};
+    groups.forEach(g => { groupMap[g.id] = g.name; });
+    const pubMap = {};
+    publicWorkspaces.forEach(ws => { pubMap[ws.id] = ws.name; });
+
+    const names = (lockedContexts || []).map(ctx => {
+      if (ctx.scope === 'personal') return 'Personal';
+      if (ctx.scope === 'group') return groupMap[ctx.id] || ctx.id;
+      if (ctx.scope === 'public') return pubMap[ctx.id] || ctx.id;
+      return ctx.scope;
+    });
+    return '<span class="badge bg-success"><i class="bi bi-lock-fill me-1"></i>Locked</span>' +
+      (names.length > 0 ? '<br><small class="text-muted">' + names.join(', ') + '</small>' : '');
+  }
+  // false — unlocked
+  return '<span class="badge bg-warning text-dark"><i class="bi bi-unlock me-1"></i>Unlocked</span>';
 }
 
 function formatClassifications(classifications) {

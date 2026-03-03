@@ -471,11 +471,21 @@ function setRole(userId, newRole) {
     data: JSON.stringify({ role: newRole }),
     success: function () {
       $("#changeRoleModal").modal("hide");
+      showToast("success", "Role updated successfully");
       loadMembers();
     },
     error: function (err) {
-      console.error(err);
-      alert("Failed to update role.");
+      console.error("Error updating role:", err);
+      let errorMsg = "Failed to update role.";
+      if (err.status === 404) {
+        errorMsg = "Member not found. They may have been removed.";
+        loadMembers(); // Refresh the member list
+      } else if (err.status === 403) {
+        errorMsg = "You don't have permission to change this member's role.";
+      } else if (err.responseJSON && err.responseJSON.message) {
+        errorMsg = err.responseJSON.message;
+      }
+      showToast("error", errorMsg);
     },
   });
 }
@@ -486,11 +496,21 @@ function removeMember(userId) {
     url: `/api/groups/${groupId}/members/${userId}`,
     method: "DELETE",
     success: function () {
+      showToast("success", "Member removed successfully");
       loadMembers();
     },
     error: function (err) {
-      console.error(err);
-      alert("Failed to remove member.");
+      console.error("Error removing member:", err);
+      let errorMsg = "Failed to remove member.";
+      if (err.status === 404) {
+        errorMsg = "Member not found. They may have already been removed.";
+        loadMembers(); // Refresh the member list
+      } else if (err.status === 403) {
+        errorMsg = "You don't have permission to remove this member.";
+      } else if (err.responseJSON && err.responseJSON.message) {
+        errorMsg = err.responseJSON.message;
+      }
+      showToast("error", errorMsg);
     },
   });
 }
@@ -555,7 +575,6 @@ function rejectRequest(requestId) {
   });
 }
 
-// Search users for manual add
 // Search users for manual add
 function searchUsers() {
   const term = $("#userSearchTerm").val().trim();

@@ -438,7 +438,9 @@ def create_group_action_route():
     user_id = get_current_user_id()
     try:
         active_group = require_active_group(user_id)
-        assert_group_role(user_id, active_group)
+        app_settings = get_settings()
+        allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
+        assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
     except LookupError as exc:
@@ -458,6 +460,12 @@ def create_group_action_route():
     for key in ('group_id', 'last_updated', 'user_id', 'is_global', 'is_group', 'scope'):
         payload.pop(key, None)
 
+    # Merge with schema to ensure all required fields are present (same as global actions)
+    schema_dir = os.path.join(current_app.root_path, 'static', 'json', 'schemas')
+    merged = get_merged_plugin_settings(payload.get('type'), payload, schema_dir)
+    payload['metadata'] = merged.get('metadata', payload.get('metadata', {}))
+    payload['additionalFields'] = merged.get('additionalFields', payload.get('additionalFields', {}))
+
     try:
         saved = save_group_action(active_group, payload)
     except Exception as exc:
@@ -476,7 +484,9 @@ def update_group_action_route(action_id):
     user_id = get_current_user_id()
     try:
         active_group = require_active_group(user_id)
-        assert_group_role(user_id, active_group)
+        app_settings = get_settings()
+        allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
+        assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
     except LookupError as exc:
@@ -511,6 +521,12 @@ def update_group_action_route(action_id):
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
 
+    # Merge with schema to ensure all required fields are present (same as global actions)
+    schema_dir = os.path.join(current_app.root_path, 'static', 'json', 'schemas')
+    schema_merged = get_merged_plugin_settings(merged.get('type'), merged, schema_dir)
+    merged['metadata'] = schema_merged.get('metadata', merged.get('metadata', {}))
+    merged['additionalFields'] = schema_merged.get('additionalFields', merged.get('additionalFields', {}))
+
     try:
         saved = save_group_action(active_group, merged)
     except Exception as exc:
@@ -529,7 +545,9 @@ def delete_group_action_route(action_id):
     user_id = get_current_user_id()
     try:
         active_group = require_active_group(user_id)
-        assert_group_role(user_id, active_group)
+        app_settings = get_settings()
+        allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
+        assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
     except LookupError as exc:

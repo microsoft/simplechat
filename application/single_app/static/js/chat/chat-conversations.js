@@ -5,6 +5,7 @@ import { loadMessages } from "./chat-messages.js";
 import { isColorLight, toBoolean } from "./chat-utils.js";
 import { loadSidebarConversations, setActiveConversation as setSidebarActiveConversation } from "./chat-sidebar-conversations.js";
 import { toggleConversationInfoButton } from "./chat-conversation-info-button.js";
+import { restoreScopeLockState, resetScopeLock } from "./chat-documents.js";
 import { loadUserSettings } from "./chat-layout.js";
 import { setUserSetting } from "../agents_common.js";
 
@@ -1026,6 +1027,11 @@ export async function selectConversation(conversationId) {
           console.log(`selectConversation: No context - defaulted to personal_single_user`);
         }
       }
+
+      // Restore scope lock state from metadata
+      const metaScopeLocked = metadata.scope_locked !== undefined ? metadata.scope_locked : null;
+      const metaLockedContexts = metadata.locked_contexts || [];
+      restoreScopeLockState(metaScopeLocked, metaLockedContexts);
     }
   } catch (error) {
     console.warn('Failed to fetch conversation metadata:', error);
@@ -1203,6 +1209,8 @@ export async function createNewConversation(callback) {
     }
 
     currentConversationId = data.conversation_id;
+    // Reset scope lock for new conversation
+    resetScopeLock();
     // Add to list (pass empty classifications for new convo)
     addConversationToList(data.conversation_id, data.title /* Use title from API if provided */, []);
     
@@ -1214,6 +1222,10 @@ export async function createNewConversation(callback) {
     const titleEl = document.getElementById("current-conversation-title");
     if (titleEl) {
       titleEl.textContent = data.title || "New Conversation";
+    }
+    // Clear classification/tag badges from previous conversation
+    if (currentConversationClassificationsEl) {
+      currentConversationClassificationsEl.innerHTML = "";
     }
     updateConversationUrl(data.conversation_id);
     console.log('[createNewConversation] Created conversation without reload:', data.conversation_id);

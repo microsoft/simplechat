@@ -1,4 +1,4 @@
-# semantic_kernel_loader.py
+﻿# semantic_kernel_loader.py
 """
 Loader for Semantic Kernel plugins/actions from app settings.
 - Loads plugin/action manifests from settings (CosmosDB)
@@ -1469,6 +1469,35 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
         load_core_plugins_only(kernel, settings)
         return kernel, None
     
+    # Ensure migration is complete (will migrate any remaining legacy data)
+    ensure_agents_migration_complete(user_id)
+    agents_cfg = get_personal_agents(user_id)
+
+    print(f"[SK Loader] User settings found {len(agents_cfg)} agents for user '{user_id}'")
+
+    # Always mark user agents as is_global: False
+    for agent in agents_cfg:
+        agent['is_global'] = False
+
+    # Load group agents for user's active group (if any)
+    try:
+        active_group_id = require_active_group(user_id)
+        group_agents = get_group_agents(active_group_id)
+        if group_agents:
+            print(f"[SK Loader] Found {len(group_agents)} group agents for active group '{active_group_id}'")
+            # Badge group agents with group metadata
+            for group_agent in group_agents:
+                group_agent['is_global'] = False
+                group_agent['is_group'] = True
+            agents_cfg.extend(group_agents)
+            print(f"[SK Loader] After merging group agents: {len(agents_cfg)} total agents")
+        else:
+            print(f"[SK Loader] No group agents found for active group '{active_group_id}'")
+    except ValueError:
+        # No active group set - this is fine, just means no group agents available
+        print(f"[SK Loader] User '{user_id}' has no active group - skipping group agent loading")
+
+    # Append selected group agent (if any) to the candidate list so downstream selection logic can resolve it
     selected_agent_data = selected_agent if isinstance(selected_agent, dict) else {}
     selected_agent_is_group = selected_agent_data.get('is_group', False)
     selected_agent_group_id = selected_agent_data.get('group_id')
@@ -1497,55 +1526,39 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
     agents_cfg = []
     active_group_id = None
     if selected_agent_is_group:
+        resolved_group_id = selected_agent_data.get('group_id')
+        active_group_id = None
+        
+        # Group agent MUST have a group_id
+        if not resolved_group_id:
+            log_event(
+                "[SK Loader] Group agent selected but no group_id provided in selection data.",
+                level=logging.ERROR
+            )
+            load_core_plugins_only(kernel, settings)
+            return kernel, None
+        
         try:
             active_group_id = require_active_group(user_id)
+            if resolved_group_id != active_group_id:
+                debug_print(
+                    f"[SK Loader] Selected group agent references group {resolved_group_id}, active group is {active_group_id}."
+                )
+                log_event(
+                    "[SK Loader] Group agent selected from the non-active group.",
+                    level=logging.ERROR
+                )
+                load_core_plugins_only(kernel, settings)
+                return kernel, None
         except ValueError as err:
             active_group_id = None
             debug_print(f"[SK Loader] No active group available while loading group agent: {err}")
-
-        allowed_group_ids = {gid for gid in [conversation_group_id, active_group_id] if gid}
-        if selected_agent_group_id and allowed_group_ids and str(selected_agent_group_id) not in {str(gid) for gid in allowed_group_ids}:
             log_event(
-                "[SK Loader] Selected group agent does not match active or conversation group context.",
-                level=logging.ERROR,
-                extra={
-                    "selected_agent_group_id": selected_agent_group_id,
-                    "conversation_group_id": conversation_group_id,
-                    "active_group_id": active_group_id
-                }
+                "[SK Loader] Group agent selected but no active group in settings.",
+                level=logging.ERROR
             )
             load_core_plugins_only(kernel, settings)
             return kernel, None
-
-        effective_group_id = selected_agent_group_id or conversation_group_id or active_group_id
-        if not effective_group_id:
-            log_event(
-                "[SK Loader] Group agent selected but no group context available.",
-                level=logging.WARNING
-            )
-            load_core_plugins_only(kernel, settings)
-            return kernel, None
-
-        group_agents = get_group_agents(effective_group_id)
-        if group_agents:
-            print(f"[SK Loader] Found {len(group_agents)} group agents for group '{effective_group_id}'")
-            for group_agent in group_agents:
-                group_agent['is_global'] = False
-                group_agent['is_group'] = True
-                group_agent.setdefault('group_id', effective_group_id)
-            agents_cfg = group_agents
-        else:
-            print(f"[SK Loader] No group agents found for group '{effective_group_id}'")
-    else:
-        agents_cfg = get_personal_agents(user_id)
-        print(f"[SK Loader] User settings found {len(agents_cfg)} agents for user '{user_id}'")
-        for agent in agents_cfg:
-            agent['is_global'] = False
-            agent['is_group'] = False
-
-    # Append selected group agent (if any) to the candidate list so downstream selection logic can resolve it
-    if selected_agent_is_group:
-        resolved_group_id = selected_agent_group_id or conversation_group_id or active_group_id
 
         if resolved_group_id:
             agent_identifier = selected_agent_data.get('id') or selected_agent_data.get('name')
@@ -1575,11 +1588,6 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
                     f"[SK Loader] Selected group agent '{selected_agent_data.get('name')}' not found for group {resolved_group_id}.",
                     level=logging.WARNING
                 )
-        else:
-            log_event(
-                "[SK Loader] Unable to resolve group ID for selected group agent; skipping group agent load.",
-                level=logging.WARNING
-            )
 
     # PATCH: Merge global agents if enabled
     merge_global = settings.get('merge_global_semantic_kernel_with_workspace', False)

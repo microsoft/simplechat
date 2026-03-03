@@ -33,6 +33,9 @@ function escapeHtml(value) {
 
 function canManageAgents() {
   const role = currentContext?.userRole;
+  if (currentContext?.requireOwnerForAgentManagement) {
+    return role === "Owner";
+  }
   return role === "Owner" || role === "Admin";
 }
 

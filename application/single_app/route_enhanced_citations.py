@@ -15,7 +15,7 @@ from functions_documents import get_document_metadata
 from functions_group import get_user_groups
 from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
 from swagger_wrapper import swagger_route, get_auth_security
-from config import CLIENTS, storage_account_user_documents_container_name, storage_account_group_documents_container_name, storage_account_public_documents_container_name
+from config import CLIENTS, storage_account_user_documents_container_name, storage_account_group_documents_container_name, storage_account_public_documents_container_name, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, AUDIO_EXTENSIONS
 from functions_debug import debug_print
 
 def register_enhanced_citations_routes(app):
@@ -49,9 +49,8 @@ def register_enhanced_citations_routes(app):
             # Check if it's an image file
             file_name = raw_doc['file_name']
             ext = file_name.lower().split('.')[-1] if '.' in file_name else ''
-            image_extensions = ['jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'heif']
             
-            if ext not in image_extensions:
+            if ext not in IMAGE_EXTENSIONS:
                 return jsonify({"error": "File is not an image"}), 400
 
             # Serve the image content directly
@@ -88,9 +87,8 @@ def register_enhanced_citations_routes(app):
             # Check if it's a video file
             file_name = raw_doc['file_name']
             ext = file_name.lower().split('.')[-1] if '.' in file_name else ''
-            video_extensions = ['mp4', 'mov', 'avi', 'mkv', 'flv', 'webm', 'wmv']
             
-            if ext not in video_extensions:
+            if ext not in VIDEO_EXTENSIONS:
                 return jsonify({"error": "File is not a video"}), 400
 
             # Serve the video content directly
@@ -127,9 +125,8 @@ def register_enhanced_citations_routes(app):
             # Check if it's an audio file
             file_name = raw_doc['file_name']
             ext = file_name.lower().split('.')[-1] if '.' in file_name else ''
-            audio_extensions = ['mp3', 'wav', 'ogg', 'aac', 'flac', 'm4a']
             
-            if ext not in audio_extensions:
+            if ext not in AUDIO_EXTENSIONS:
                 return jsonify({"error": "File is not an audio file"}), 400
 
             # Serve the audio content directly
