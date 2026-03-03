@@ -2,7 +2,7 @@
 layout: page
 title: "Setup Instructions"
 description: "Complete guide to deploying and configuring Simple Chat"
-section: "tutorials"
+section: "Tutorials"
 nav_links:
   next:
     title: "Manual Setup"
