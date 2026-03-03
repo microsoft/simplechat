@@ -42,3 +42,7 @@ flask_session
 **/my_chart.png
 **/sample_pie.csv
 **/sample_stacked_column.csv
+
+nul
+/tmp_images
+tmp**cwd
