@@ -15,6 +15,12 @@ import docx
 import fitz # PyMuPDF
 import math
 import mimetypes
+# Register font MIME types so Flask serves them correctly (required for
+# X-Content-Type-Options: nosniff to not block Bootstrap Icons)
+mimetypes.add_type('font/woff', '.woff')
+mimetypes.add_type('font/woff2', '.woff2')
+mimetypes.add_type('font/ttf', '.ttf')
+mimetypes.add_type('font/otf', '.otf')
 import openpyxl
 import xlrd
 import traceback
