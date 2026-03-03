@@ -11,7 +11,7 @@ Export one or multiple conversations from the Chat page in JSON or Markdown form
 
 Right-click or click the ellipsis menu on any conversation in the sidebar to access the **Export** option.
 
-![Single conversation export via context menu]({{ '/images/feature-export_conversation-single.png' | relative_url }})
+<img src="{{ '/images/feature-export_conversation-single.png' | relative_url }}" alt="Single conversation export via context menu" style="width: 60%;" />
 
 This opens the export wizard pre-loaded with the selected conversation.
 
@@ -23,7 +23,7 @@ To export several conversations at once:
 2. Check the conversations you want to export
 3. Click the **export button** in the selection toolbar
 
-![Multi-select export mode with 2 conversations selected]({{ '/images/feature-export_conversation-multi.png' | relative_url }})
+<img src="{{ '/images/feature-export_conversation-multi.png' | relative_url }}" alt="Multi-select export mode with 2 conversations selected" style="width: 60%;" />
 
 ## Export Wizard
 
@@ -36,7 +36,7 @@ Select between two export formats:
 - **JSON** -- Structured data format, ideal for programmatic analysis or re-import
 - **Markdown** -- Human-readable format, great for documentation and sharing
 
-![Step 1 - Choose export format]({{ '/images/feature-export_conversation-step-01.png' | relative_url }})
+<img src="{{ '/images/feature-export_conversation-step-01.png' | relative_url }}" alt="Step 1 - Choose export format" style="width: 60%;" />
 
 ### Step 2: Choose Packaging
 
@@ -45,7 +45,7 @@ Select how the exported file(s) should be packaged:
 - **Single File** -- All selected conversations combined into one file
 - **ZIP Archive** -- Each conversation as a separate file inside a ZIP
 
-![Step 2 - Choose output packaging]({{ '/images/feature-export_conversation-step-02.png' | relative_url }})
+<img src="{{ '/images/feature-export_conversation-step-02.png' | relative_url }}" alt="Step 2 - Choose output packaging" style="width: 60%;" />
 
 ### Step 3: Review and Download
 
@@ -53,7 +53,7 @@ Review your export settings and click **Download Export** to save the file.
 
 The summary shows the number of conversations, chosen format, packaging type, and resulting file extension.
 
-![Step 3 - Review settings and download]({{ '/images/feature-export_conversation-step-03.png' | relative_url }})
+<img src="{{ '/images/feature-export_conversation-step-03.png' | relative_url }}" alt="Step 3 - Review settings and download" style="width: 60%;" />
 
 ## Notes
 
