@@ -40,7 +40,7 @@ return render_template("my_groups.html", can_create_groups=can_create_groups)
 
 1. **JavaScript Permission Handling**:
    ```javascript
-   {% raw %}const canCreateGroups = {{ can_create_groups|tojson }};{% endraw %}
+   const canCreateGroups = {{ can_create_groups|tojson }};
    const createGroupModal = canCreateGroups ? new bootstrap.Modal(document.getElementById('createGroupModal')) : null;
    
    if (canCreateGroups) {

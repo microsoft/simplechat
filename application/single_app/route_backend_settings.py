@@ -11,6 +11,102 @@ from swagger_wrapper import swagger_route, get_auth_security
 import redis 
 
 
+def auto_fix_index_fields(idx_type: str, user_id: str = 'system', admin_email: str = None) -> dict:
+    """
+    Automatically fix missing fields in an Azure AI Search index.
+    
+    Args:
+        idx_type (str): Type of index ('user', 'group', or 'public')
+        user_id (str): User ID triggering the fix
+        admin_email (str): Admin email if available
+        
+    Returns:
+        dict: Result with 'status', 'added' fields, or 'error'
+    """
+    try:
+        # Load the golden JSON schema
+        json_name = secure_filename(f'ai_search-index-{idx_type}.json')
+        base_path = os.path.join(current_app.root_path, 'static', 'json')
+        json_path = os.path.normpath(os.path.join(base_path, json_name))
+        
+        if not json_path.startswith(base_path):
+            return {'error': 'Invalid file path'}
+            
+        with open(json_path, 'r') as f:
+            full_def = json.load(f)
+
+        client = get_index_client()
+        index_obj = client.get_index(full_def['name'])
+
+        existing_names = {fld.name for fld in index_obj.fields}
+        missing_defs = [fld for fld in full_def['fields'] if fld['name'] not in existing_names]
+
+        if not missing_defs:
+            return {'status': 'nothingToAdd'}
+
+        new_fields = []
+        for fld in missing_defs:
+            name = fld['name']
+            ftype = fld['type']
+
+            if ftype.lower() == "collection(edm.single)":
+                # Vector field
+                dims = fld.get('dimensions', 1536)
+                vp = fld.get('vectorSearchProfile')
+                new_fields.append(
+                    SearchField(
+                        name=name,
+                        type=ftype,
+                        searchable=True,
+                        filterable=False,
+                        retrievable=True,
+                        sortable=False,
+                        facetable=False,
+                        vector_search_dimensions=dims,
+                        vector_search_profile_name=vp
+                    )
+                )
+            else:
+                # Regular field
+                new_fields.append(
+                    SearchField(
+                        name=name,
+                        type=ftype,
+                        searchable=fld.get('searchable', False),
+                        filterable=fld.get('filterable', False),
+                        retrievable=fld.get('retrievable', True),
+                        sortable=fld.get('sortable', False),
+                        facetable=fld.get('facetable', False),
+                        key=fld.get('key', False),
+                        analyzer_name=fld.get('analyzer'),
+                        index_analyzer_name=fld.get('indexAnalyzer'),
+                        search_analyzer_name=fld.get('searchAnalyzer'),
+                        normalizer_name=fld.get('normalizer'),
+                        synonym_map_names=fld.get('synonymMaps', [])
+                    )
+                )
+
+        # Update the index
+        index_obj.fields.extend(new_fields)
+        index_obj.etag = "*"
+        client.create_or_update_index(index_obj)
+
+        added = [f.name for f in new_fields]
+        
+        # Log the automatic fix
+        log_index_auto_fix(
+            index_type=idx_type,
+            missing_fields=added,
+            user_id=user_id,
+            admin_email=admin_email
+        )
+        
+        return {'status': 'success', 'added': added}
+
+    except Exception as e:
+        return {'error': str(e)}
+
+
 def register_route_backend_settings(app):
     @app.route('/api/admin/settings/check_index_fields', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -20,6 +116,7 @@ def register_route_backend_settings(app):
         try:
             data = request.get_json(force=True)
             idx_type = data.get('indexType')  # 'user', 'group', or 'public'
+            auto_fix = data.get('autoFix', True)  # Default to auto-fix enabled
 
             if not idx_type or idx_type not in ['user', 'group', 'public']:
                 return jsonify({'error': 'Invalid indexType. Must be "user", "group", or "public"'}), 400
@@ -53,11 +150,49 @@ def register_route_backend_settings(app):
                 expected_names = { fld['name'] for fld in expected['fields'] }
                 missing = sorted(expected_names - existing_names)
 
-                return jsonify({ 
-                    'missingFields': missing,
-                    'indexExists': True,
-                    'indexName': expected['name']
-                }), 200
+                if missing:
+                    # Automatically fix if enabled
+                    if auto_fix:
+                        user = session.get('user', {})
+                        admin_email = user.get('preferred_username', user.get('email'))
+                        user_id = get_current_user_id() or 'system'
+                        
+                        fix_result = auto_fix_index_fields(
+                            idx_type=idx_type,
+                            user_id=user_id,
+                            admin_email=admin_email
+                        )
+                        
+                        if fix_result.get('status') == 'success':
+                            return jsonify({
+                                'indexExists': True,
+                                'missingFields': [],
+                                'autoFixed': True,
+                                'fieldsAdded': fix_result.get('added', []),
+                                'indexName': expected['name']
+                            }), 200
+                        else:
+                            # Auto-fix failed, return missing fields for manual fix
+                            return jsonify({
+                                'indexExists': True,
+                                'missingFields': missing,
+                                'autoFixFailed': True,
+                                'error': fix_result.get('error'),
+                                'indexName': expected['name']
+                            }), 200
+                    else:
+                        # Auto-fix disabled, return missing fields
+                        return jsonify({
+                            'indexExists': True,
+                            'missingFields': missing,
+                            'indexName': expected['name']
+                        }), 200
+                else:
+                    return jsonify({ 
+                        'missingFields': [],
+                        'indexExists': True,
+                        'indexName': expected['name']
+                    }), 200
                 
             except ResourceNotFoundError as not_found_error:
                 # Index doesn't exist - this is the specific exception for "index not found"
