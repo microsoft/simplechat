@@ -39,14 +39,16 @@ return render_template("my_groups.html", can_create_groups=can_create_groups)
 ```
 
 1. **JavaScript Permission Handling**:
+   {% raw %}
    ```javascript
    const canCreateGroups = {{ can_create_groups|tojson }};
    const createGroupModal = canCreateGroups ? new bootstrap.Modal(document.getElementById('createGroupModal')) : null;
-   
+
    if (canCreateGroups) {
      $("#createGroupForm").on("submit", handleCreateGroup);
    }
    ```
+   {% endraw %}
 
 ## Testing Approach
 Created functional test `test_create_group_permission_fix.py` that validates:
