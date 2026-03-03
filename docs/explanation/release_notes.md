@@ -92,6 +92,19 @@
     *   **Files Modified**: `chat-documents.js`, `chat-messages.js`, `functions_search.py`, `route_backend_chats.py`, `chats.html`.
     *   (Ref: Multi-document selection, tag filtering, OData search integration, `CHAT_DOCUMENT_AND_TAG_FILTERING.md`)
 
+#### New Features
+
+*   **Conversation Export**
+    *   Export one or multiple conversations from the Chat page in JSON or Markdown format.
+    *   **Single Export**: Use the ellipsis menu on any conversation to quickly export it.
+    *   **Multi-Export**: Enter selection mode, check the conversations you want, and click the export button.
+    *   A guided 4-step wizard walks you through selection review, format choice, packaging options (single file or ZIP archive), and download.
+    *   Sensitive internal metadata is automatically stripped from exported data for security.
+
+*   **Retention Policy UI for Groups and Public Workspaces**
+    *   Can now configure conversation and document retention periods directly from the workspace and group management page.
+    *   Choose from preset retention periods ranging from 7 days to 10 years, use the organization default, or disable automatic deletion entirely.
+
 #### Bug Fixes
 
 *   **Citation Parsing Bug Fix**
