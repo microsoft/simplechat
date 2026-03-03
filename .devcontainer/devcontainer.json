@@ -3,7 +3,14 @@
 {
 	"name": "Python 3",
 	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-	"image": "mcr.microsoft.com/devcontainers/python:0-3.11",
+	//"image": "mcr.microsoft.com/devcontainers/python:0-3.11",
+	"build": {
+		"dockerfile": "Dockerfile",
+		"args": {
+			"VARIANT": "3.11"
+		}
+	},
+	// Features to add to the dev container. More info: https://containers.dev/features.
 	"features": {
 		"ghcr.io/devcontainers/features/docker-in-docker:2": {
 			"version": "latest"
@@ -14,18 +21,16 @@
 			"installBicep": true,
 			"installUsingPython": true,
 			"version": "2.72.0",
-			"bicepVersion": "latest"			
+			"bicepVersion": "latest"
 		},
 		"ghcr.io/devcontainers/features/terraform:1": {},
 		"ghcr.io/devcontainers/features/powershell:1": {},
 		"ghcr.io/azure/azure-dev/azd:latest": {}
 	},
-	// Features to add to the dev container. More info: https://containers.dev/features.
-	// "features": {},
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
 	// "forwardPorts": [],
 	// Use 'postCreateCommand' to run commands after the container is created.
-	"postCreateCommand": "pip3 install --user -r application/single_app/requirements.txt",
+	"postCreateCommand": "python3 -m venv .venv && .venv/bin/pip install -r application/single_app/requirements.txt",
 	// Configure tool-specific properties.
 	"customizations": {
 		"vscode": {
@@ -36,7 +41,10 @@
 				"ms-vscode.azurecli",
 				"HashiCorp.terraform",
 				"ms-vscode.powershell"
-			]
+			],
+			"settings": {
+				"python.defaultInterpreterPath": "${containerWorkspaceFolder}/.venv/bin/python"
+			}
 		}
 	}
 	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
