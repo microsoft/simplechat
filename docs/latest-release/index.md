@@ -19,6 +19,8 @@ Export one or multiple conversations from the Chat page in JSON or Markdown form
 
 Configure conversation and document retention periods directly from the workspace and group management pages. Choose from preset retention periods ranging from 7 days to 10 years, use the organization default, or disable automatic deletion entirely.
 
+[Read the full guide]({{ '/latest-release/retention-policy/' | relative_url }})
+
 ### Owner-Only Group Agent Management
 
 New admin setting to restrict group agent and action management (create, edit, delete) to only the group Owner role. When enabled, group Admins and other roles are restricted to read-only access. Backend enforcement returns 403 for unauthorized operations.
@@ -27,21 +29,31 @@ New admin setting to restrict group agent and action management (create, edit, d
 
 New admin setting to control whether users can unlock workspace scope in chat conversations. When enabled, workspace scope automatically locks after the first AI search and users cannot unlock it, preventing accidental cross-contamination between data sources.
 
+[Read the full guide]({{ '/latest-release/workspace-scope-lock/' | relative_url }})
+
 ### Document Tag System
 
 Comprehensive tag management system for organizing documents across personal, group, and public workspaces. Includes color-coded tags from a 10-color default palette, full CRUD API, bulk tag operations, and AI Search integration for tag-based filtering during hybrid search.
+
+[Read the full guide]({{ '/latest-release/tags-grid-view-chat-filtering/' | relative_url }})
 
 ### Workspace Folder View
 
 Toggle between traditional list view and folder-based grid view for workspace documents. Tag folders display document count and color coding, with drill-down navigation, in-folder search, and configurable page sizes. View preference is saved automatically.
 
+[Read the full guide]({{ '/latest-release/tags-grid-view-chat-filtering/' | relative_url }})
+
 ### Multi-Workspace Scope Management
 
 Select from personal, multiple group, and multiple public workspaces simultaneously in the chat interface. Includes hierarchical scope dropdown with checkbox multi-selection and per-conversation scope locking that freezes workspace selection after the first AI search.
 
+[Read the full guide]({{ '/latest-release/tags-grid-view-chat-filtering/' | relative_url }})
+
 ### Chat Document and Tag Filtering
 
 Checkbox-based multi-document and multi-tag filtering in the chat interface, replacing the legacy single-document dropdown. Each document is labeled with its source workspace, and tags load dynamically across all selected scopes.
+
+[Read the full guide]({{ '/latest-release/tags-grid-view-chat-filtering/' | relative_url }})
 
 ## Bug Fixes
 

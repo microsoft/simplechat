@@ -36,7 +36,7 @@ Select between two export formats:
 - **JSON** -- Structured data format, ideal for programmatic analysis or re-import
 - **Markdown** -- Human-readable format, great for documentation and sharing
 
-<img src="{{ '/images/feature-export_conversation-step-01.png' | relative_url }}" alt="Step 1 - Choose export format" style="width: 60%;" />
+<img src="{{ '/images/feature-export_conversation-step-01.png' | relative_url }}" alt="Step 1 - Choose export format" style="width: 70%;" />
 
 ### Step 2: Choose Packaging
 
@@ -45,7 +45,7 @@ Select how the exported file(s) should be packaged:
 - **Single File** -- All selected conversations combined into one file
 - **ZIP Archive** -- Each conversation as a separate file inside a ZIP
 
-<img src="{{ '/images/feature-export_conversation-step-02.png' | relative_url }}" alt="Step 2 - Choose output packaging" style="width: 60%;" />
+<img src="{{ '/images/feature-export_conversation-step-02.png' | relative_url }}" alt="Step 2 - Choose output packaging" style="width: 70%;" />
 
 ### Step 3: Review and Download
 
@@ -53,7 +53,7 @@ Review your export settings and click **Download Export** to save the file.
 
 The summary shows the number of conversations, chosen format, packaging type, and resulting file extension.
 
-<img src="{{ '/images/feature-export_conversation-step-03.png' | relative_url }}" alt="Step 3 - Review settings and download" style="width: 60%;" />
+<img src="{{ '/images/feature-export_conversation-step-03.png' | relative_url }}" alt="Step 3 - Review settings and download" style="width: 70%;" />
 
 ## Notes
 
