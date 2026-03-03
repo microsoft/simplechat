@@ -6,7 +6,7 @@ RG_NAME="${var_rgName}"
 
 COSMOS_URI="${var_cosmosDb_uri}"
 # Extract account name from commercial or sovereign (e.g., .azure.com, .azure.us), with optional port/path
-ACCOUNT_NAME=$(echo "$COSMOS_URI" | sed -E 's#https://([^./]+)\.documents\.azure\.[^/:]+(:[0-9]+)?(/.*)?#$\1#')
+ACCOUNT_NAME=$(echo "$COSMOS_URI" | sed -E 's#https://([^./]+)\.documents\.azure\.[^/:]+(:[0-9]+)?(/.*)?#\1#')
 
 echo "==============================="
 echo "Cosmos DB Account Name: $ACCOUNT_NAME"
