@@ -815,6 +815,7 @@ export function addConversationToList(conversationId, title = null, classificati
 // Select a conversation, load messages, update UI
 export async function selectConversation(conversationId) {
   currentConversationId = conversationId;
+  window.currentConversationId = conversationId;
 
   const convoItem = document.querySelector(`.conversation-item[data-conversation-id="${conversationId}"]`);
   if (!convoItem) {
