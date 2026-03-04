@@ -26,8 +26,10 @@ hooks:
         echo "========================================"
         
         # Set up variables
-        export var_acrName=${var_acrname}
+        
         export var_configureApplication=${var_configureApplication}
+        export var_containerRegistry=${var_containerRegistry}
+        export var_imageName=${var_imageName}
         export var_cosmosDb_uri=${var_cosmosDb_uri}
         export var_cosmosDb_accountName=${var_cosmosDb_accountName}
         export var_subscriptionId=${AZURE_SUBSCRIPTION_ID}
