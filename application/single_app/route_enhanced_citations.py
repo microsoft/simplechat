@@ -8,6 +8,7 @@ import tempfile
 import requests
 import mimetypes
 import io
+import pandas
 
 from functions_authentication import login_required, user_required, get_current_user_id
 from functions_settings import get_settings, enabled_required
@@ -299,6 +300,71 @@ def register_enhanced_citations_routes(app):
 
         except Exception as e:
             debug_print(f"Error serving tabular workspace citation: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/enhanced_citations/tabular_preview", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_enhanced_citations")
+    def get_enhanced_citation_tabular_preview():
+        """
+        Return JSON preview of a tabular file for rendering as an HTML table.
+        Reads the file into a pandas DataFrame and returns columns + rows as JSON.
+        """
+        doc_id = request.args.get("doc_id")
+        max_rows = min(int(request.args.get("max_rows", 200)), 500)
+        if not doc_id:
+            return jsonify({"error": "doc_id is required"}), 400
+
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated"}), 401
+
+        try:
+            doc_response, status_code = get_document(user_id, doc_id)
+            if status_code != 200:
+                return doc_response, status_code
+
+            raw_doc = doc_response.get_json()
+            file_name = raw_doc.get('file_name', '')
+            ext = file_name.lower().rsplit('.', 1)[-1] if '.' in file_name else ''
+            if ext not in ('csv', 'xlsx', 'xls', 'xlsm'):
+                return jsonify({"error": "File is not a tabular file"}), 400
+
+            # Download blob
+            workspace_type, container_name = determine_workspace_type_and_container(raw_doc)
+            blob_name = get_blob_name(raw_doc, workspace_type)
+            blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+            if not blob_service_client:
+                return jsonify({"error": "Blob storage client not available"}), 500
+            blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
+            data = blob_client.download_blob().readall()
+
+            # Read into DataFrame
+            if ext == 'csv':
+                df = pandas.read_csv(io.BytesIO(data), keep_default_na=False, dtype=str)
+            elif ext in ('xlsx', 'xlsm'):
+                df = pandas.read_excel(io.BytesIO(data), engine='openpyxl', keep_default_na=False, dtype=str)
+            elif ext == 'xls':
+                df = pandas.read_excel(io.BytesIO(data), engine='xlrd', keep_default_na=False, dtype=str)
+            else:
+                return jsonify({"error": f"Unsupported file type: {ext}"}), 400
+
+            total_rows = len(df)
+            preview = df.head(max_rows)
+
+            return jsonify({
+                "filename": file_name,
+                "total_rows": total_rows,
+                "total_columns": len(df.columns),
+                "columns": list(df.columns),
+                "rows": preview.values.tolist(),
+                "truncated": total_rows > max_rows
+            })
+
+        except Exception as e:
+            debug_print(f"Error generating tabular preview: {e}")
             return jsonify({"error": str(e)}), 500
 
 def get_document(user_id, doc_id):
