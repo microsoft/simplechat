@@ -10,19 +10,13 @@
 			"VARIANT": "3.11"
 		}
 	},
-	// Features to add to the dev container. More info: https://containers.dev/features.
+	// Features to add to the dev container. More info: .
 	"features": {
 		"ghcr.io/devcontainers/features/docker-in-docker:2": {
 			"version": "latest"
 		},
 		"ghcr.io/devcontainers/features/python:1": {},
 		"ghcr.io/devcontainers-extra/features/black:2": {},
-		"ghcr.io/devcontainers/features/azure-cli:1": {
-			"installBicep": true,
-			"installUsingPython": true,
-			"version": "2.72.0",
-			"bicepVersion": "latest"
-		},
 		"ghcr.io/devcontainers/features/terraform:1": {},
 		"ghcr.io/devcontainers/features/powershell:1": {},
 		"ghcr.io/azure/azure-dev/azd:latest": {}
@@ -30,7 +24,7 @@
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
 	// "forwardPorts": [],
 	// Use 'postCreateCommand' to run commands after the container is created.
-	"postCreateCommand": "python3 -m venv .venv && .venv/bin/pip install -r application/single_app/requirements.txt",
+	"postCreateCommand": ".devcontainer/post-create.sh",
 	// Configure tool-specific properties.
 	"customizations": {
 		"vscode": {
