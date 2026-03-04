@@ -142,6 +142,54 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
         log_event(f"[Tabular SK Analysis] Error: {e}", level=logging.WARNING, exceptionTraceback=True)
         return None
 
+def collect_tabular_sk_citations(user_id, conversation_id):
+    """Collect plugin invocations from the tabular SK analysis and convert to citation format."""
+    from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
+
+    plugin_logger = get_plugin_logger()
+    plugin_invocations = plugin_logger.get_invocations_for_conversation(user_id, conversation_id)
+
+    if not plugin_invocations:
+        return []
+
+    def make_json_serializable(obj):
+        if obj is None:
+            return None
+        elif isinstance(obj, (str, int, float, bool)):
+            return obj
+        elif isinstance(obj, dict):
+            return {str(k): make_json_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [make_json_serializable(item) for item in obj]
+        else:
+            return str(obj)
+
+    citations = []
+    for inv in plugin_invocations:
+        timestamp_str = None
+        if inv.timestamp:
+            if hasattr(inv.timestamp, 'isoformat'):
+                timestamp_str = inv.timestamp.isoformat()
+            else:
+                timestamp_str = str(inv.timestamp)
+
+        citation = {
+            'tool_name': f"{inv.plugin_name}.{inv.function_name}",
+            'function_name': inv.function_name,
+            'plugin_name': inv.plugin_name,
+            'function_arguments': make_json_serializable(inv.parameters),
+            'function_result': make_json_serializable(inv.result),
+            'duration_ms': inv.duration_ms,
+            'timestamp': timestamp_str,
+            'success': inv.success,
+            'error_message': make_json_serializable(inv.error_message),
+            'user_id': inv.user_id
+        }
+        citations.append(citation)
+
+    log_event(f"[Tabular SK Citations] Collected {len(citations)} tool execution citations", level=logging.INFO)
+    return citations
+
 def register_route_backend_chats(app):
     @app.route('/api/chat', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -1113,6 +1161,12 @@ def register_route_backend_chats(app):
                                 'role': 'system',
                                 'content': tabular_system_msg
                             })
+
+                            # Collect tool execution citations from SK tabular analysis
+                            if tabular_analysis:
+                                tabular_sk_citations = collect_tabular_sk_citations(user_id, conversation_id)
+                                if tabular_sk_citations:
+                                    agent_citations_list.extend(tabular_sk_citations)
 
                     # Loop through each source document/chunk used for this message
                     for source_doc in combined_documents:
@@ -3535,6 +3589,11 @@ def register_route_backend_chats(app):
                                             f"Use these computed results to answer the user's question accurately."
                                         )
                                     })
+
+                                    # Collect tool execution citations from SK tabular analysis
+                                    tabular_sk_citations = collect_tabular_sk_citations(user_id, conversation_id)
+                                    if tabular_sk_citations:
+                                        agent_citations_list.extend(tabular_sk_citations)
 
                         # Reorder hybrid citations list in descending order based on page_number
                         hybrid_citations_list.sort(key=lambda x: x.get('page_number', 0), reverse=True)
