@@ -26,7 +26,7 @@ hooks:
         echo "========================================"
         
         # Set up variables
-        
+        export var_acrName=${var_acrname}
         export var_configureApplication=${var_configureApplication}
         export var_containerRegistry=${var_containerRegistry}
         export var_imageName=${var_imageName}
