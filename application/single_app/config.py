@@ -88,9 +88,15 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.238.024"
+VERSION = "0.238.026"
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
+
+# Session idle timeout configuration (inactivity-based logout)
+IDLE_TIMEOUT_MINUTES = max(1, int(os.getenv('IDLE_TIMEOUT_MINUTES', '30')))
+IDLE_WARNING_MINUTES = max(0, int(os.getenv('IDLE_WARNING_MINUTES', '28')))
+if IDLE_WARNING_MINUTES >= IDLE_TIMEOUT_MINUTES:
+    IDLE_WARNING_MINUTES = max(0, IDLE_TIMEOUT_MINUTES - 1)
 
 # Security Headers Configuration
 SECURITY_HEADERS = {

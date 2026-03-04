@@ -98,6 +98,8 @@ executor.init_app(app)
 app.config['SESSION_TYPE'] = SESSION_TYPE
 app.config['VERSION'] = VERSION
 app.config['SECRET_KEY'] = SECRET_KEY
+app.config['IDLE_TIMEOUT_MINUTES'] = IDLE_TIMEOUT_MINUTES
+app.config['IDLE_WARNING_MINUTES'] = IDLE_WARNING_MINUTES
 
 # Ensure filesystem session directory (when used) points to a writable path inside container.
 if SESSION_TYPE == 'filesystem':
@@ -423,7 +425,12 @@ def inject_settings():
         print(f"Error injecting user settings: {e}")
         log_event(f"Error injecting user settings: {e}", level=logging.ERROR)
         user_settings = {}
-    return dict(app_settings=public_settings, user_settings=user_settings)
+    return dict(
+        app_settings=public_settings,
+        user_settings=user_settings,
+        idle_timeout_minutes=app.config.get('IDLE_TIMEOUT_MINUTES', 30),
+        idle_warning_minutes=app.config.get('IDLE_WARNING_MINUTES', 28)
+    )
 
 @app.template_filter('to_datetime')
 def to_datetime_filter(value):
@@ -446,6 +453,69 @@ def reload_kernel_if_needed():
         initialize_semantic_kernel()
         """
         setattr(builtins, "kernel_reload_needed", False)
+
+IDLE_TIMEOUT_EXEMPT_PATHS = {
+    '/login',
+    '/logout',
+    '/logout/local',
+    '/getAToken',
+    '/getATokenApi',
+    '/robots933456.txt',
+    '/favicon.ico'
+}
+
+IDLE_TIMEOUT_EXEMPT_PREFIXES = (
+    '/static/',
+    '/health',
+    '/api/health'
+)
+
+def _is_idle_timeout_exempt(path):
+    if path in IDLE_TIMEOUT_EXEMPT_PATHS:
+        return True
+    return any(path.startswith(prefix) for prefix in IDLE_TIMEOUT_EXEMPT_PREFIXES)
+
+@app.before_request
+def enforce_idle_session_timeout():
+    if 'user' not in session:
+        return None
+
+    if request.method == 'OPTIONS' or _is_idle_timeout_exempt(request.path):
+        return None
+
+    idle_timeout_minutes = app.config.get('IDLE_TIMEOUT_MINUTES', 30)
+    now_epoch = int(time.time())
+    last_activity_epoch = session.get('last_activity_epoch')
+
+    if last_activity_epoch is not None:
+        try:
+            idle_seconds = now_epoch - int(float(last_activity_epoch))
+            if idle_seconds >= (idle_timeout_minutes * 60):
+                user_id = session.get('user', {}).get('oid') or session.get('user', {}).get('sub')
+                session.clear()
+
+                log_event(
+                    f"Session expired due to {idle_timeout_minutes} minute inactivity timeout for user {user_id or 'unknown'}.",
+                    level=logging.INFO
+                )
+
+                if request.path.startswith('/api/'):
+                    return jsonify({
+                        'error': 'Session expired',
+                        'message': 'Your session expired due to inactivity. Please sign in again.',
+                        'requires_reauth': True
+                    }), 401
+
+                return redirect(url_for('local_logout'))
+        except Exception as e:
+            log_event(f"Idle timeout evaluation failed: {e}", level=logging.WARNING)
+
+    if request.path.startswith('/api/'):
+        return None
+
+    session['last_activity_epoch'] = now_epoch
+    session.modified = True
+    return None
 
 @app.after_request
 def add_security_headers(response):
@@ -528,6 +598,17 @@ def serve_js_modules(filename):
 @swagger_route(security=get_auth_security())
 def acceptable_use_policy():
     return render_template('acceptable_use_policy.html')
+
+@app.route('/api/session/heartbeat', methods=['POST'])
+@swagger_route(security=get_auth_security())
+@login_required
+def session_heartbeat():
+    session['last_activity_epoch'] = int(time.time())
+    session.modified = True
+    return jsonify({
+        'message': 'Session refreshed',
+        'idle_timeout_minutes': app.config.get('IDLE_TIMEOUT_MINUTES', 30)
+    }), 200
 
 @app.route('/api/semantic-kernel/plugins')
 @swagger_route(security=get_auth_security())
