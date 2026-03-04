@@ -798,6 +798,7 @@
                 </div>
 
                 <!-- Agent Template Submissions Section -->
+                {% if settings.enable_agent_template_gallery %}
                 <div class="card p-3 mb-4" id="agent-templates-admin-panel">
                     <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
                         <div>
@@ -878,6 +879,7 @@
                         </nav>
                     </div>
                 </div>
+                {% endif %}
 
                 <!-- Actions Configuration Section -->
                 <div class="card p-3 mb-4" id="actions-configuration">
