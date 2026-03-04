@@ -39,6 +39,109 @@ def get_kernel_agents():
     log_event(f"[SKChat] get_kernel_agents - g.kernel_agents: {type(g_agents)} ({len(g_agents) if g_agents else 0} agents), builtins.kernel_agents: {type(builtins_agents)} ({len(builtins_agents) if builtins_agents else 0} agents)", level=logging.INFO)
     return g_agents or builtins_agents
 
+async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
+                                   conversation_id, gpt_model, settings,
+                                   source_hint="workspace", group_id=None,
+                                   public_workspace_id=None):
+    """Run lightweight SK with TabularProcessingPlugin to analyze tabular data.
+
+    Creates a temporary Kernel with only the TabularProcessingPlugin, uses the
+    same chat model as the user's session, and returns computed analysis results.
+    Returns None on failure for graceful degradation.
+    """
+    from semantic_kernel import Kernel as SKKernel
+    from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
+    from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
+    from semantic_kernel.connectors.ai.open_ai.prompt_execution_settings.azure_chat_prompt_execution_settings import AzureChatPromptExecutionSettings
+    from semantic_kernel.contents.chat_history import ChatHistory as SKChatHistory
+    from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
+
+    try:
+        log_event(f"[Tabular SK Analysis] Starting analysis for files: {tabular_filenames}", level=logging.INFO)
+
+        # 1. Create lightweight kernel with only tabular plugin
+        kernel = SKKernel()
+        kernel.add_plugin(TabularProcessingPlugin(), plugin_name="tabular_processing")
+
+        # 2. Create chat service using same config as main chat
+        enable_gpt_apim = settings.get('enable_gpt_apim', False)
+        if enable_gpt_apim:
+            chat_service = AzureChatCompletion(
+                service_id="tabular-analysis",
+                deployment_name=gpt_model,
+                endpoint=settings.get('azure_apim_gpt_endpoint'),
+                api_key=settings.get('azure_apim_gpt_subscription_key'),
+                api_version=settings.get('azure_apim_gpt_api_version'),
+            )
+        else:
+            auth_type = settings.get('azure_openai_gpt_authentication_type')
+            if auth_type == 'managed_identity':
+                token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
+                chat_service = AzureChatCompletion(
+                    service_id="tabular-analysis",
+                    deployment_name=gpt_model,
+                    endpoint=settings.get('azure_openai_gpt_endpoint'),
+                    api_version=settings.get('azure_openai_gpt_api_version'),
+                    ad_token_provider=token_provider,
+                )
+            else:
+                chat_service = AzureChatCompletion(
+                    service_id="tabular-analysis",
+                    deployment_name=gpt_model,
+                    endpoint=settings.get('azure_openai_gpt_endpoint'),
+                    api_key=settings.get('azure_openai_gpt_key'),
+                    api_version=settings.get('azure_openai_gpt_api_version'),
+                )
+        kernel.add_service(chat_service)
+
+        # 3. Build chat history
+        chat_history = SKChatHistory()
+        chat_history.add_system_message(
+            "You are a data analyst. Use the tabular_processing plugin functions to "
+            "analyze the data and answer the user's question. Call the appropriate "
+            "functions (describe_tabular_file, aggregate_column, filter_rows, "
+            "query_tabular_data, group_by_aggregate) to compute exact answers. "
+            "Return the computed results clearly."
+        )
+
+        source_context = f"source='{source_hint}'"
+        if group_id:
+            source_context += f", group_id='{group_id}'"
+        if public_workspace_id:
+            source_context += f", public_workspace_id='{public_workspace_id}'"
+
+        chat_history.add_user_message(
+            f"Tabular files available: {tabular_filenames}. "
+            f"Use user_id='{user_id}', conversation_id='{conversation_id}', {source_context}. "
+            f"Question: {user_question}"
+        )
+
+        # 4. Execute with auto function calling
+        execution_settings = AzureChatPromptExecutionSettings(
+            service_id="tabular-analysis",
+            function_choice_behavior=FunctionChoiceBehavior.Auto(
+                maximum_auto_invoke_attempts=5
+            ),
+        )
+
+        result = await chat_service.get_chat_message_contents(
+            chat_history, execution_settings, kernel=kernel
+        )
+
+        if result and result[0].content:
+            analysis = result[0].content
+            # Cap at 20k characters to stay within token budget
+            if len(analysis) > 20000:
+                analysis = analysis[:20000] + "\n[Analysis truncated]"
+            log_event(f"[Tabular SK Analysis] Analysis complete, {len(analysis)} chars", level=logging.INFO)
+            return analysis
+        log_event("[Tabular SK Analysis] No content in SK response", level=logging.WARNING)
+        return None
+
+    except Exception as e:
+        log_event(f"[Tabular SK Analysis] Error: {e}", level=logging.WARNING, exceptionTraceback=True)
+        return None
+
 def register_route_backend_chats(app):
     @app.route('/api/chat', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -962,24 +1065,50 @@ def register_route_backend_chats(app):
                                 tabular_files_in_results.add(fname)
 
                         if tabular_files_in_results:
-                            tabular_source_hint = "workspace"
-                            if active_group_id:
+                            # Determine source based on document_scope, not just active IDs
+                            if document_scope == 'group' and active_group_id:
                                 tabular_source_hint = "group"
-                            elif active_public_workspace_id:
+                            elif document_scope == 'public' and active_public_workspace_id:
                                 tabular_source_hint = "public"
+                            else:
+                                tabular_source_hint = "workspace"
 
                             tabular_filenames = ", ".join(tabular_files_in_results)
-                            tabular_system_msg = (
-                                f"IMPORTANT: The search results include data from tabular file(s): {tabular_filenames}. "
-                                f"The search results contain only a schema summary (column names and a few sample rows), NOT the full data. "
-                                f"You MUST use the tabular_processing plugin functions to answer ANY question about these files. "
-                                f"Do NOT attempt to answer using the schema summary alone — it is incomplete. "
-                                f"Available functions: describe_tabular_file, aggregate_column, filter_rows, query_tabular_data, group_by_aggregate. "
-                                f"Use source='{tabular_source_hint}'"
-                                + (f" and group_id='{active_group_id}'" if tabular_source_hint == "group" else "")
-                                + (f" and public_workspace_id='{active_public_workspace_id}'" if tabular_source_hint == "public" else "")
-                                + "."
-                            )
+
+                            # Run SK tabular analysis to pre-compute results
+                            tabular_analysis = asyncio.run(run_tabular_sk_analysis(
+                                user_question=user_message,
+                                tabular_filenames=tabular_filenames,
+                                user_id=user_id,
+                                conversation_id=conversation_id,
+                                gpt_model=gpt_model,
+                                settings=settings,
+                                source_hint=tabular_source_hint,
+                                group_id=active_group_id if tabular_source_hint == "group" else None,
+                                public_workspace_id=active_public_workspace_id if tabular_source_hint == "public" else None,
+                            ))
+
+                            if tabular_analysis:
+                                # Inject pre-computed analysis results as context
+                                tabular_system_msg = (
+                                    f"The following analysis was computed from the tabular file(s) "
+                                    f"{tabular_filenames} using data analysis functions:\n\n"
+                                    f"{tabular_analysis}\n\n"
+                                    f"Use these computed results to answer the user's question accurately."
+                                )
+                            else:
+                                # Fallback: instruct LLM to use plugin functions (for agent mode)
+                                tabular_system_msg = (
+                                    f"IMPORTANT: The search results include data from tabular file(s): {tabular_filenames}. "
+                                    f"The search results contain only a schema summary (column names and a few sample rows), NOT the full data. "
+                                    f"You MUST use the tabular_processing plugin functions to answer ANY question about these files. "
+                                    f"Do NOT attempt to answer using the schema summary alone — it is incomplete. "
+                                    f"Available functions: describe_tabular_file, aggregate_column, filter_rows, query_tabular_data, group_by_aggregate. "
+                                    f"Use source='{tabular_source_hint}'"
+                                    + (f" and group_id='{active_group_id}'" if tabular_source_hint == "group" else "")
+                                    + (f" and public_workspace_id='{active_public_workspace_id}'" if tabular_source_hint == "public" else "")
+                                    + "."
+                                )
                             system_messages_for_augmentation.append({
                                 'role': 'system',
                                 'content': tabular_system_msg
@@ -3363,7 +3492,50 @@ def register_route_backend_chats(app):
                             'content': system_prompt_search,
                             'documents': combined_documents
                         })
-                        
+
+                        # Auto-detect tabular files in search results and run SK analysis
+                        if settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
+                            tabular_files_in_results = set()
+                            for source_doc in combined_documents:
+                                fname = source_doc.get('file_name', '')
+                                if fname and any(fname.lower().endswith(ext) for ext in TABULAR_EXTENSIONS):
+                                    tabular_files_in_results.add(fname)
+
+                            if tabular_files_in_results:
+                                # Determine source based on document_scope, not just active IDs
+                                if document_scope == 'group' and active_group_id:
+                                    tabular_source_hint = "group"
+                                elif document_scope == 'public' and active_public_workspace_id:
+                                    tabular_source_hint = "public"
+                                else:
+                                    tabular_source_hint = "workspace"
+
+                                tabular_filenames = ", ".join(tabular_files_in_results)
+
+                                # Run SK tabular analysis to pre-compute results
+                                tabular_analysis = asyncio.run(run_tabular_sk_analysis(
+                                    user_question=user_message,
+                                    tabular_filenames=tabular_filenames,
+                                    user_id=user_id,
+                                    conversation_id=conversation_id,
+                                    gpt_model=gpt_model,
+                                    settings=settings,
+                                    source_hint=tabular_source_hint,
+                                    group_id=active_group_id if tabular_source_hint == "group" else None,
+                                    public_workspace_id=active_public_workspace_id if tabular_source_hint == "public" else None,
+                                ))
+
+                                if tabular_analysis:
+                                    system_messages_for_augmentation.append({
+                                        'role': 'system',
+                                        'content': (
+                                            f"The following analysis was computed from the tabular file(s) "
+                                            f"{tabular_filenames} using data analysis functions:\n\n"
+                                            f"{tabular_analysis}\n\n"
+                                            f"Use these computed results to answer the user's question accurately."
+                                        )
+                                    })
+
                         # Reorder hybrid citations list in descending order based on page_number
                         hybrid_citations_list.sort(key=lambda x: x.get('page_number', 0), reverse=True)
                 

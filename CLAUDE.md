@@ -58,6 +58,7 @@ return render_template('page.html', settings=public_settings)
 
 ## Version Management
 
+- Its important to update the version at the end of every plan
 - Version is stored in `config.py`: `VERSION = "X.XXX.XXX"`
 - When incrementing, only change the third segment (e.g., `0.238.024` -> `0.238.025`)
 - Include the current version in functional test file headers and documentation files
