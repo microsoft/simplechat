@@ -953,6 +953,38 @@ def register_route_backend_chats(app):
                         'documents': combined_documents # Keep track of docs used
                     })
 
+                    # Auto-detect tabular files in search results and prompt the LLM to use the plugin
+                    if settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
+                        tabular_files_in_results = set()
+                        for source_doc in combined_documents:
+                            fname = source_doc.get('file_name', '')
+                            if fname and any(fname.lower().endswith(ext) for ext in TABULAR_EXTENSIONS):
+                                tabular_files_in_results.add(fname)
+
+                        if tabular_files_in_results:
+                            tabular_source_hint = "workspace"
+                            if active_group_id:
+                                tabular_source_hint = "group"
+                            elif active_public_workspace_id:
+                                tabular_source_hint = "public"
+
+                            tabular_filenames = ", ".join(tabular_files_in_results)
+                            tabular_system_msg = (
+                                f"IMPORTANT: The search results include data from tabular file(s): {tabular_filenames}. "
+                                f"The search results contain only a schema summary (column names and a few sample rows), NOT the full data. "
+                                f"You MUST use the tabular_processing plugin functions to answer ANY question about these files. "
+                                f"Do NOT attempt to answer using the schema summary alone — it is incomplete. "
+                                f"Available functions: describe_tabular_file, aggregate_column, filter_rows, query_tabular_data, group_by_aggregate. "
+                                f"Use source='{tabular_source_hint}'"
+                                + (f" and group_id='{active_group_id}'" if tabular_source_hint == "group" else "")
+                                + (f" and public_workspace_id='{active_public_workspace_id}'" if tabular_source_hint == "public" else "")
+                                + "."
+                            )
+                            system_messages_for_augmentation.append({
+                                'role': 'system',
+                                'content': tabular_system_msg
+                            })
+
                     # Loop through each source document/chunk used for this message
                     for source_doc in combined_documents:
                         # 4. Create a citation dictionary, selecting the desired fields
@@ -1138,8 +1170,8 @@ def register_route_backend_chats(app):
                                 """
                             # Update the system message with enhanced content and updated documents array
                             if system_messages_for_augmentation:
-                                system_messages_for_augmentation[-1]['content'] = system_prompt_search
-                                system_messages_for_augmentation[-1]['documents'] = combined_documents
+                                system_messages_for_augmentation[0]['content'] = system_prompt_search
+                                system_messages_for_augmentation[0]['documents'] = combined_documents
                     # --- END NEW METADATA CITATIONS ---
 
                     # Update conversation classifications if new ones were found

@@ -265,6 +265,42 @@ def register_enhanced_citations_routes(app):
             debug_print(f"Error serving tabular citation: {e}")
             return jsonify({"error": str(e)}), 500
 
+    @app.route("/api/enhanced_citations/tabular_workspace", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_enhanced_citations")
+    def get_enhanced_citation_tabular_workspace():
+        """
+        Serve tabular file (CSV, XLSX, etc.) from blob storage for workspace documents.
+        Uses doc_id to look up the document across personal, group, and public workspaces.
+        """
+        doc_id = request.args.get("doc_id")
+        if not doc_id:
+            return jsonify({"error": "doc_id is required"}), 400
+
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated"}), 401
+
+        try:
+            doc_response, status_code = get_document(user_id, doc_id)
+            if status_code != 200:
+                return doc_response, status_code
+
+            raw_doc = doc_response.get_json()
+            file_name = raw_doc.get('file_name', '')
+            ext = file_name.lower().split('.')[-1] if '.' in file_name else ''
+
+            if ext not in ('csv', 'xlsx', 'xls', 'xlsm'):
+                return jsonify({"error": "File is not a tabular file"}), 400
+
+            return serve_enhanced_citation_content(raw_doc, force_download=True)
+
+        except Exception as e:
+            debug_print(f"Error serving tabular workspace citation: {e}")
+            return jsonify({"error": str(e)}), 500
+
 def get_document(user_id, doc_id):
     """
     Get document metadata - searches across all enabled workspace types

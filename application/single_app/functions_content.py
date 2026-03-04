@@ -352,7 +352,7 @@ def generate_embedding(
                 embedding_model = selected_embedding_model['deploymentName']
 
     while True:
-        random_delay = random.uniform(0.5, 2.0)
+        random_delay = random.uniform(0.05, 0.2)
         time.sleep(random_delay)
 
         try:
@@ -385,3 +385,102 @@ def generate_embedding(
 
         except Exception as e:
             raise
+
+def generate_embeddings_batch(
+    texts,
+    batch_size=16,
+    max_retries=5,
+    initial_delay=1.0,
+    delay_multiplier=2.0
+):
+    """Generate embeddings for multiple texts in batches.
+
+    Azure OpenAI embeddings API accepts a list of strings as input.
+    This reduces per-call overhead and delay significantly.
+
+    Args:
+        texts: List of text strings to embed.
+        batch_size: Number of texts per API call (default 16).
+        max_retries: Max retries on rate limit errors.
+        initial_delay: Initial retry delay in seconds.
+        delay_multiplier: Multiplier for exponential backoff.
+
+    Returns:
+        list of (embedding, token_usage) tuples, one per input text.
+    """
+    settings = get_settings()
+
+    enable_embedding_apim = settings.get('enable_embedding_apim', False)
+
+    if enable_embedding_apim:
+        embedding_model = settings.get('azure_apim_embedding_deployment')
+        embedding_client = AzureOpenAI(
+            api_version=settings.get('azure_apim_embedding_api_version'),
+            azure_endpoint=settings.get('azure_apim_embedding_endpoint'),
+            api_key=settings.get('azure_apim_embedding_subscription_key'))
+    else:
+        if (settings.get('azure_openai_embedding_authentication_type') == 'managed_identity'):
+            token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
+
+            embedding_client = AzureOpenAI(
+                api_version=settings.get('azure_openai_embedding_api_version'),
+                azure_endpoint=settings.get('azure_openai_embedding_endpoint'),
+                azure_ad_token_provider=token_provider
+            )
+
+            embedding_model_obj = settings.get('embedding_model', {})
+            if embedding_model_obj and embedding_model_obj.get('selected'):
+                selected_embedding_model = embedding_model_obj['selected'][0]
+                embedding_model = selected_embedding_model['deploymentName']
+        else:
+            embedding_client = AzureOpenAI(
+                api_version=settings.get('azure_openai_embedding_api_version'),
+                azure_endpoint=settings.get('azure_openai_embedding_endpoint'),
+                api_key=settings.get('azure_openai_embedding_key')
+            )
+
+            embedding_model_obj = settings.get('embedding_model', {})
+            if embedding_model_obj and embedding_model_obj.get('selected'):
+                selected_embedding_model = embedding_model_obj['selected'][0]
+                embedding_model = selected_embedding_model['deploymentName']
+
+    results = []
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i:i + batch_size]
+        retries = 0
+        current_delay = initial_delay
+
+        while True:
+            random_delay = random.uniform(0.05, 0.2)
+            time.sleep(random_delay)
+
+            try:
+                response = embedding_client.embeddings.create(
+                    model=embedding_model,
+                    input=batch
+                )
+
+                for item in response.data:
+                    token_usage = None
+                    if hasattr(response, 'usage') and response.usage:
+                        token_usage = {
+                            'prompt_tokens': response.usage.prompt_tokens // len(batch),
+                            'total_tokens': response.usage.total_tokens // len(batch),
+                            'model_deployment_name': embedding_model
+                        }
+                    results.append((item.embedding, token_usage))
+                break
+
+            except RateLimitError as e:
+                retries += 1
+                if retries > max_retries:
+                    raise
+
+                wait_time = current_delay * random.uniform(1.0, 1.5)
+                time.sleep(wait_time)
+                current_delay *= delay_multiplier
+
+            except Exception as e:
+                raise
+
+    return results

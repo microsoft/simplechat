@@ -18,11 +18,13 @@ export function getFileType(fileName) {
     const imageExtensions = ['jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif'];
     const videoExtensions = ['mp4', 'mov', 'avi', 'mkv', 'flv', 'webm', 'wmv', 'm4v', '3gp'];
     const audioExtensions = ['mp3', 'wav', 'ogg', 'aac', 'flac', 'm4a'];
-    
+    const tabularExtensions = ['csv', 'xlsx', 'xls', 'xlsm'];
+
     if (imageExtensions.includes(ext)) return 'image';
     if (ext === 'pdf') return 'pdf';
     if (videoExtensions.includes(ext)) return 'video';
     if (audioExtensions.includes(ext)) return 'audio';
+    if (tabularExtensions.includes(ext)) return 'tabular';
     
     return 'other';
 }
@@ -65,6 +67,9 @@ export function showEnhancedCitationModal(docId, pageNumberOrTimestamp, citation
             // Convert to timestamp for seeking
             const audioTimestamp = convertTimestampToSeconds(pageNumberOrTimestamp);
             showAudioModal(docId, audioTimestamp, docMetadata.file_name);
+            break;
+        case 'tabular':
+            showTabularDownloadModal(docId, docMetadata.file_name);
             break;
         default:
             // Fall back to text citation for unsupported types
@@ -292,6 +297,36 @@ export function showAudioModal(docId, timestamp, fileName) {
 }
 
 /**
+ * Show tabular file download modal
+ * @param {string} docId - Document ID
+ * @param {string} fileName - File name
+ */
+export function showTabularDownloadModal(docId, fileName) {
+    console.log(`Showing tabular download modal for docId: ${docId}, fileName: ${fileName}`);
+
+    // Create or get tabular modal
+    let tabularModal = document.getElementById("enhanced-tabular-modal");
+    if (!tabularModal) {
+        tabularModal = createTabularModal();
+    }
+
+    const title = tabularModal.querySelector(".modal-title");
+    const fileNameDisplay = tabularModal.querySelector("#enhanced-tabular-filename");
+    const downloadBtn = tabularModal.querySelector("#enhanced-tabular-download");
+
+    title.textContent = `Tabular Data: ${fileName}`;
+    fileNameDisplay.textContent = fileName;
+
+    const downloadUrl = `/api/enhanced_citations/tabular_workspace?doc_id=${encodeURIComponent(docId)}`;
+    downloadBtn.href = downloadUrl;
+    downloadBtn.download = fileName;
+
+    // Show modal
+    const modalInstance = new bootstrap.Modal(tabularModal);
+    modalInstance.show();
+}
+
+/**
  * Convert timestamp string to seconds
  * @param {string|number} timestamp - Timestamp in various formats
  * @returns {number} - Time in seconds
@@ -438,6 +473,39 @@ function createPdfModal() {
                     <iframe id="pdfFrame" class="w-100" style="height: 70vh; border: none;">
                         Your browser does not support PDF viewing.
                     </iframe>
+                </div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    return modal;
+}
+
+/**
+ * Create tabular file download modal HTML structure
+ * @returns {HTMLElement} - Modal element
+ */
+function createTabularModal() {
+    const modal = document.createElement("div");
+    modal.id = "enhanced-tabular-modal";
+    modal.classList.add("modal", "fade");
+    modal.tabIndex = -1;
+    modal.innerHTML = `
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Tabular Data Citation</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body text-center">
+                    <div class="mb-3">
+                        <i class="bi bi-file-earmark-spreadsheet display-1 text-success"></i>
+                    </div>
+                    <p id="enhanced-tabular-filename" class="fw-bold mb-3"></p>
+                    <p class="text-muted mb-3">This file can be downloaded and opened in a spreadsheet application.</p>
+                    <a id="enhanced-tabular-download" class="btn btn-primary" target="_blank" rel="noopener noreferrer">
+                        <i class="bi bi-download me-2"></i>Download File
+                    </a>
                 </div>
             </div>
         </div>

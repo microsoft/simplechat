@@ -3,8 +3,8 @@
 TabularProcessingPlugin for Semantic Kernel: provides data analysis operations
 on tabular files (CSV, XLSX, XLS, XLSM) stored in Azure Blob Storage.
 
-Works with both workspace documents (user-documents container) and
-chat-uploaded documents (personal-chat container).
+Works with workspace documents (user-documents, group-documents, public-documents)
+and chat-uploaded documents (personal-chat container).
 """
 import io
 import json
@@ -20,6 +20,7 @@ from config import (
     storage_account_user_documents_container_name,
     storage_account_personal_chat_container_name,
     storage_account_group_documents_container_name,
+    storage_account_public_documents_container_name,
 )
 
 
@@ -72,7 +73,8 @@ class TabularProcessingPlugin:
                 pass
         return df
 
-    def _resolve_blob_location(self, user_id: str, conversation_id: str, filename: str, source: str) -> tuple:
+    def _resolve_blob_location(self, user_id: str, conversation_id: str, filename: str, source: str,
+                               group_id: str = None, public_workspace_id: str = None) -> tuple:
         """Resolve container name and blob path from source type."""
         source = source.lower().strip()
         if source == 'chat':
@@ -81,15 +83,64 @@ class TabularProcessingPlugin:
         elif source == 'workspace':
             container = storage_account_user_documents_container_name
             blob_path = f"{user_id}/{filename}"
+        elif source == 'group':
+            if not group_id:
+                raise ValueError("group_id is required for source='group'")
+            container = storage_account_group_documents_container_name
+            blob_path = f"{group_id}/{filename}"
+        elif source == 'public':
+            if not public_workspace_id:
+                raise ValueError("public_workspace_id is required for source='public'")
+            container = storage_account_public_documents_container_name
+            blob_path = f"{public_workspace_id}/{filename}"
         else:
-            raise ValueError(f"Unknown source '{source}'. Use 'workspace' or 'chat'.")
+            raise ValueError(f"Unknown source '{source}'. Use 'workspace', 'chat', 'group', or 'public'.")
         return container, blob_path
+
+    def _resolve_blob_location_with_fallback(self, user_id: str, conversation_id: str, filename: str, source: str,
+                                              group_id: str = None, public_workspace_id: str = None) -> tuple:
+        """Try primary source first, then fall back to other containers if blob not found."""
+        source = source.lower().strip()
+        attempts = []
+
+        # Primary attempt based on specified source
+        try:
+            primary = self._resolve_blob_location(user_id, conversation_id, filename, source, group_id, public_workspace_id)
+            attempts.append(primary)
+        except ValueError:
+            pass
+
+        # Fallback attempts in priority order (skip the primary source)
+        if source != 'workspace':
+            attempts.append((storage_account_user_documents_container_name, f"{user_id}/{filename}"))
+        if source != 'group' and group_id:
+            attempts.append((storage_account_group_documents_container_name, f"{group_id}/{filename}"))
+        if source != 'public' and public_workspace_id:
+            attempts.append((storage_account_public_documents_container_name, f"{public_workspace_id}/{filename}"))
+        if source != 'chat':
+            attempts.append((storage_account_personal_chat_container_name, f"{user_id}/{conversation_id}/{filename}"))
+
+        client = self._get_blob_service_client()
+        for container, blob_path in attempts:
+            try:
+                blob_client = client.get_blob_client(container=container, blob=blob_path)
+                if blob_client.exists():
+                    log_event(f"[TabularProcessingPlugin] Found blob at {container}/{blob_path}", level=logging.DEBUG)
+                    return container, blob_path
+            except Exception:
+                continue
+
+        # If nothing found, return primary for the original error message
+        if attempts:
+            return attempts[0]
+        raise ValueError(f"Could not resolve blob location for {filename}")
 
     @kernel_function(
         description=(
-            "List all tabular data files available for a user. Checks both workspace documents "
-            "(user-documents container) and chat-uploaded documents (personal-chat container). "
-            "Returns a JSON list of available files with their source (workspace or chat)."
+            "List all tabular data files available for a user. Checks workspace documents "
+            "(user-documents container), chat-uploaded documents (personal-chat container), "
+            "and optionally group or public workspace documents. "
+            "Returns a JSON list of available files with their source."
         ),
         name="list_tabular_files"
     )
@@ -97,9 +148,11 @@ class TabularProcessingPlugin:
     def list_tabular_files(
         self,
         user_id: Annotated[str, "The user ID (from Scope ID in Conversation Metadata)"],
-        conversation_id: Annotated[str, "The conversation ID (from Conversation Metadata)"]
+        conversation_id: Annotated[str, "The conversation ID (from Conversation Metadata)"],
+        group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
+        public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
     ) -> Annotated[str, "JSON list of available tabular files"]:
-        """List all tabular files available for the user in workspace and chat containers."""
+        """List all tabular files available for the user across all accessible containers."""
         results = []
         try:
             workspace_prefix = f"{user_id}/"
@@ -133,6 +186,40 @@ class TabularProcessingPlugin:
         except Exception as e:
             log_event(f"[TabularProcessingPlugin] Error listing chat blobs: {e}", level=logging.WARNING)
 
+        if group_id:
+            try:
+                group_prefix = f"{group_id}/"
+                group_blobs = self._list_tabular_blobs(
+                    storage_account_group_documents_container_name, group_prefix
+                )
+                for blob in group_blobs:
+                    filename = blob.split('/')[-1]
+                    results.append({
+                        "filename": filename,
+                        "blob_path": blob,
+                        "source": "group",
+                        "container": storage_account_group_documents_container_name
+                    })
+            except Exception as e:
+                log_event(f"[TabularProcessingPlugin] Error listing group blobs: {e}", level=logging.WARNING)
+
+        if public_workspace_id:
+            try:
+                public_prefix = f"{public_workspace_id}/"
+                public_blobs = self._list_tabular_blobs(
+                    storage_account_public_documents_container_name, public_prefix
+                )
+                for blob in public_blobs:
+                    filename = blob.split('/')[-1]
+                    results.append({
+                        "filename": filename,
+                        "blob_path": blob,
+                        "source": "public",
+                        "container": storage_account_public_documents_container_name
+                    })
+            except Exception as e:
+                log_event(f"[TabularProcessingPlugin] Error listing public blobs: {e}", level=logging.WARNING)
+
         return json.dumps(results, indent=2)
 
     @kernel_function(
@@ -148,11 +235,16 @@ class TabularProcessingPlugin:
         user_id: Annotated[str, "The user ID (from Scope ID in Conversation Metadata)"],
         conversation_id: Annotated[str, "The conversation ID (from Conversation Metadata)"],
         filename: Annotated[str, "The filename of the tabular file"],
-        source: Annotated[str, "Source: 'workspace' or 'chat'"] = "chat"
+        source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
+        group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
+        public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
     ) -> Annotated[str, "JSON summary of the tabular file"]:
         """Get schema and preview of a tabular file."""
         try:
-            container, blob_path = self._resolve_blob_location(user_id, conversation_id, filename, source)
+            container, blob_path = self._resolve_blob_location(
+                user_id, conversation_id, filename, source,
+                group_id=group_id, public_workspace_id=public_workspace_id
+            )
             df = self._read_tabular_blob_to_dataframe(container, blob_path)
             df_numeric = self._try_numeric_conversion(df.copy())
 
@@ -185,11 +277,16 @@ class TabularProcessingPlugin:
         filename: Annotated[str, "The filename of the tabular file"],
         column: Annotated[str, "The column name to aggregate"],
         operation: Annotated[str, "Aggregation: sum, mean, count, min, max, median, std, nunique, value_counts"],
-        source: Annotated[str, "Source: 'workspace' or 'chat'"] = "chat"
+        source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
+        group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
+        public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
     ) -> Annotated[str, "JSON result of the aggregation"]:
         """Execute an aggregation operation on a column."""
         try:
-            container, blob_path = self._resolve_blob_location(user_id, conversation_id, filename, source)
+            container, blob_path = self._resolve_blob_location(
+                user_id, conversation_id, filename, source,
+                group_id=group_id, public_workspace_id=public_workspace_id
+            )
             df = self._read_tabular_blob_to_dataframe(container, blob_path)
             df = self._try_numeric_conversion(df)
 
@@ -241,12 +338,17 @@ class TabularProcessingPlugin:
         column: Annotated[str, "The column to filter on"],
         operator: Annotated[str, "Operator: ==, !=, >, <, >=, <=, contains, startswith, endswith"],
         value: Annotated[str, "The value to compare against"],
-        source: Annotated[str, "Source: 'workspace' or 'chat'"] = "chat",
-        max_rows: Annotated[str, "Maximum rows to return"] = "100"
+        source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
+        max_rows: Annotated[str, "Maximum rows to return"] = "100",
+        group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
+        public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
     ) -> Annotated[str, "JSON list of matching rows"]:
         """Filter rows based on a condition."""
         try:
-            container, blob_path = self._resolve_blob_location(user_id, conversation_id, filename, source)
+            container, blob_path = self._resolve_blob_location(
+                user_id, conversation_id, filename, source,
+                group_id=group_id, public_workspace_id=public_workspace_id
+            )
             df = self._read_tabular_blob_to_dataframe(container, blob_path)
             df = self._try_numeric_conversion(df)
 
@@ -315,12 +417,17 @@ class TabularProcessingPlugin:
         conversation_id: Annotated[str, "The conversation ID (from Conversation Metadata)"],
         filename: Annotated[str, "The filename of the tabular file"],
         query_expression: Annotated[str, "Pandas query expression (e.g. 'Age > 30 and State == \"CA\"')"],
-        source: Annotated[str, "Source: 'workspace' or 'chat'"] = "chat",
-        max_rows: Annotated[str, "Maximum rows to return"] = "100"
+        source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
+        max_rows: Annotated[str, "Maximum rows to return"] = "100",
+        group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
+        public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
     ) -> Annotated[str, "JSON result of the query"]:
         """Execute a pandas query expression against a tabular file."""
         try:
-            container, blob_path = self._resolve_blob_location(user_id, conversation_id, filename, source)
+            container, blob_path = self._resolve_blob_location(
+                user_id, conversation_id, filename, source,
+                group_id=group_id, public_workspace_id=public_workspace_id
+            )
             df = self._read_tabular_blob_to_dataframe(container, blob_path)
             df = self._try_numeric_conversion(df)
 
@@ -352,11 +459,16 @@ class TabularProcessingPlugin:
         group_by_column: Annotated[str, "The column to group by"],
         aggregate_column: Annotated[str, "The column to aggregate"],
         operation: Annotated[str, "Aggregation operation: sum, mean, count, min, max"],
-        source: Annotated[str, "Source: 'workspace' or 'chat'"] = "chat"
+        source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
+        group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
+        public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
     ) -> Annotated[str, "JSON result of the group-by aggregation"]:
         """Group by one column and aggregate another."""
         try:
-            container, blob_path = self._resolve_blob_location(user_id, conversation_id, filename, source)
+            container, blob_path = self._resolve_blob_location(
+                user_id, conversation_id, filename, source,
+                group_id=group_id, public_workspace_id=public_workspace_id
+            )
             df = self._read_tabular_blob_to_dataframe(container, blob_path)
             df = self._try_numeric_conversion(df)
 
