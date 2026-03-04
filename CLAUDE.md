@@ -84,7 +84,7 @@ return render_template('page.html', settings=public_settings)
 
 ## Release Notes
 
-After completing code changes, offer to update `docs/explanation/release_notes.md`.
+After completing plans and code changes, offer to update `docs/explanation/release_notes.md`.
 
 - Add entries under the current version from `config.py`
 - If the version was bumped, create a new section at the top: `### **(vX.XXX.XXX)**`

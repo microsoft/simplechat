@@ -61,7 +61,8 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
 
         # 1. Create lightweight kernel with only tabular plugin
         kernel = SKKernel()
-        kernel.add_plugin(TabularProcessingPlugin(), plugin_name="tabular_processing")
+        tabular_plugin = TabularProcessingPlugin()
+        kernel.add_plugin(tabular_plugin, plugin_name="tabular_processing")
 
         # 2. Create chat service using same config as main chat
         enable_gpt_apim = settings.get('enable_gpt_apim', False)
@@ -94,29 +95,56 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 )
         kernel.add_service(chat_service)
 
-        # 3. Build chat history
-        chat_history = SKChatHistory()
-        chat_history.add_system_message(
-            "You are a data analyst. Use the tabular_processing plugin functions to "
-            "analyze the data and answer the user's question. Call the appropriate "
-            "functions (describe_tabular_file, aggregate_column, filter_rows, "
-            "query_tabular_data, group_by_aggregate) to compute exact answers. "
-            "Return the computed results clearly."
-        )
-
+        # 3. Pre-dispatch: load file schemas to eliminate discovery LLM rounds
         source_context = f"source='{source_hint}'"
         if group_id:
             source_context += f", group_id='{group_id}'"
         if public_workspace_id:
             source_context += f", public_workspace_id='{public_workspace_id}'"
 
-        chat_history.add_user_message(
-            f"Tabular files available: {tabular_filenames}. "
-            f"Use user_id='{user_id}', conversation_id='{conversation_id}', {source_context}. "
-            f"Question: {user_question}"
+        schema_parts = []
+        for fname in tabular_filenames:
+            try:
+                container, blob_path = tabular_plugin._resolve_blob_location_with_fallback(
+                    user_id, conversation_id, fname, source_hint,
+                    group_id=group_id, public_workspace_id=public_workspace_id
+                )
+                df = tabular_plugin._read_tabular_blob_to_dataframe(container, blob_path)
+                df_numeric = tabular_plugin._try_numeric_conversion(df.copy())
+                schema_info = {
+                    "filename": fname,
+                    "row_count": len(df),
+                    "columns": list(df.columns),
+                    "dtypes": {col: str(dtype) for col, dtype in df_numeric.dtypes.items()},
+                    "preview": df.head(3).to_dict(orient='records')
+                }
+                schema_parts.append(json.dumps(schema_info, indent=2, default=str))
+                log_event(f"[Tabular SK Analysis] Pre-loaded schema for {fname} ({len(df)} rows)", level=logging.DEBUG)
+            except Exception as e:
+                log_event(f"[Tabular SK Analysis] Failed to pre-load schema for {fname}: {e}", level=logging.WARNING)
+                schema_parts.append(json.dumps({"filename": fname, "error": f"Could not pre-load: {str(e)}"}))
+
+        schema_context = "\n".join(schema_parts)
+
+        # 4. Build chat history with pre-loaded schemas
+        chat_history = SKChatHistory()
+        chat_history.add_system_message(
+            "You are a data analyst. Use the tabular_processing plugin functions to "
+            "analyze the data and answer the user's question.\n\n"
+            f"FILE SCHEMAS (pre-loaded — do NOT call list_tabular_files or describe_tabular_file):\n"
+            f"{schema_context}\n\n"
+            "IMPORTANT: Batch multiple independent function calls in a SINGLE response. "
+            "For example, call multiple aggregate_column or group_by_aggregate functions "
+            "at once rather than one at a time.\n\n"
+            "Return the computed results clearly."
         )
 
-        # 4. Execute with auto function calling
+        chat_history.add_user_message(
+            f"Analyze the tabular data to answer: {user_question}\n"
+            f"Use user_id='{user_id}', conversation_id='{conversation_id}', {source_context}."
+        )
+
+        # 5. Execute with auto function calling
         execution_settings = AzureChatPromptExecutionSettings(
             service_id="tabular-analysis",
             function_choice_behavior=FunctionChoiceBehavior.Auto(
@@ -1121,12 +1149,12 @@ def register_route_backend_chats(app):
                             else:
                                 tabular_source_hint = "workspace"
 
-                            tabular_filenames = ", ".join(tabular_files_in_results)
+                            tabular_filenames_str = ", ".join(tabular_files_in_results)
 
                             # Run SK tabular analysis to pre-compute results
                             tabular_analysis = asyncio.run(run_tabular_sk_analysis(
                                 user_question=user_message,
-                                tabular_filenames=tabular_filenames,
+                                tabular_filenames=tabular_files_in_results,
                                 user_id=user_id,
                                 conversation_id=conversation_id,
                                 gpt_model=gpt_model,
@@ -1140,14 +1168,14 @@ def register_route_backend_chats(app):
                                 # Inject pre-computed analysis results as context
                                 tabular_system_msg = (
                                     f"The following analysis was computed from the tabular file(s) "
-                                    f"{tabular_filenames} using data analysis functions:\n\n"
+                                    f"{tabular_filenames_str} using data analysis functions:\n\n"
                                     f"{tabular_analysis}\n\n"
                                     f"Use these computed results to answer the user's question accurately."
                                 )
                             else:
                                 # Fallback: instruct LLM to use plugin functions (for agent mode)
                                 tabular_system_msg = (
-                                    f"IMPORTANT: The search results include data from tabular file(s): {tabular_filenames}. "
+                                    f"IMPORTANT: The search results include data from tabular file(s): {tabular_filenames_str}. "
                                     f"The search results contain only a schema summary (column names and a few sample rows), NOT the full data. "
                                     f"You MUST use the tabular_processing plugin functions to answer ANY question about these files. "
                                     f"Do NOT attempt to answer using the schema summary alone — it is incomplete. "
@@ -3564,12 +3592,12 @@ def register_route_backend_chats(app):
                                 else:
                                     tabular_source_hint = "workspace"
 
-                                tabular_filenames = ", ".join(tabular_files_in_results)
+                                tabular_filenames_str = ", ".join(tabular_files_in_results)
 
                                 # Run SK tabular analysis to pre-compute results
                                 tabular_analysis = asyncio.run(run_tabular_sk_analysis(
                                     user_question=user_message,
-                                    tabular_filenames=tabular_filenames,
+                                    tabular_filenames=tabular_files_in_results,
                                     user_id=user_id,
                                     conversation_id=conversation_id,
                                     gpt_model=gpt_model,
@@ -3584,7 +3612,7 @@ def register_route_backend_chats(app):
                                         'role': 'system',
                                         'content': (
                                             f"The following analysis was computed from the tabular file(s) "
-                                            f"{tabular_filenames} using data analysis functions:\n\n"
+                                            f"{tabular_filenames_str} using data analysis functions:\n\n"
                                             f"{tabular_analysis}\n\n"
                                             f"Use these computed results to answer the user's question accurately."
                                         )
