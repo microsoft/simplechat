@@ -1685,25 +1685,37 @@ def register_route_backend_chats(app):
                         filename = message.get('filename', 'uploaded_file')
                         file_content = message.get('file_content', '') # Assuming file content is stored
                         is_table = message.get('is_table', False)
-                        
-                        # Use higher limit for tabular data that needs complete analysis
-                        content_limit = max_tabular_content_length_in_history if is_table else max_file_content_length_in_history
-                        
-                        display_content = file_content[:content_limit]
-                        if len(file_content) > content_limit:
-                            display_content += "..."
-                        
-                        # Enhanced message for tabular data
-                        if is_table:
+                        file_content_source = message.get('file_content_source', '')
+
+                        # Tabular files stored in blob (enhanced citations enabled) - reference plugin
+                        if is_table and file_content_source == 'blob':
                             conversation_history_for_api.append({
-                                'role': 'system', # Represent file as system info
-                                'content': f"[User uploaded a tabular data file named '{filename}'. This is CSV format data for analysis:\n{display_content}]\nThis is complete tabular data in CSV format. You can perform calculations, analysis, and data operations on this dataset."
+                                'role': 'system',
+                                'content': f"[User uploaded a tabular data file named '{filename}'. "
+                                    f"The file is stored in blob storage and available for analysis. "
+                                    f"Use the tabular_processing plugin functions (list_tabular_files, describe_tabular_file, "
+                                    f"aggregate_column, filter_rows, query_tabular_data, group_by_aggregate) to analyze this data. "
+                                    f"The file source is 'chat'.]"
                             })
                         else:
-                            conversation_history_for_api.append({
-                                'role': 'system', # Represent file as system info
-                                'content': f"[User uploaded a file named '{filename}'. Content preview:\n{display_content}]\nUse this file context if relevant."
-                            })
+                            # Use higher limit for tabular data that needs complete analysis
+                            content_limit = max_tabular_content_length_in_history if is_table else max_file_content_length_in_history
+
+                            display_content = file_content[:content_limit]
+                            if len(file_content) > content_limit:
+                                display_content += "..."
+
+                            # Enhanced message for tabular data
+                            if is_table:
+                                conversation_history_for_api.append({
+                                    'role': 'system', # Represent file as system info
+                                    'content': f"[User uploaded a tabular data file named '{filename}'. This is CSV format data for analysis:\n{display_content}]\nThis is complete tabular data in CSV format. You can perform calculations, analysis, and data operations on this dataset."
+                                })
+                            else:
+                                conversation_history_for_api.append({
+                                    'role': 'system', # Represent file as system info
+                                    'content': f"[User uploaded a file named '{filename}'. Content preview:\n{display_content}]\nUse this file context if relevant."
+                                })
                     elif role == 'image': # Handle image uploads with extracted text and vision analysis
                         filename = message.get('filename', 'uploaded_image')
                         is_user_upload = message.get('metadata', {}).get('is_user_upload', False)

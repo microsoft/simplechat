@@ -237,8 +237,33 @@ def register_route_frontend_chats(app):
                 # Handle XML, YAML, and LOG files as text for inline chat
                 extracted_content  = extract_text_file(temp_file_path)
             elif file_ext_nodot in TABULAR_EXTENSIONS:
-                extracted_content = extract_table_file(temp_file_path, file_ext)
                 is_table = True
+
+                # Upload tabular file to blob storage for tabular processing plugin access
+                if settings.get('enable_enhanced_citations', False):
+                    try:
+                        blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+                        if blob_service_client:
+                            blob_path = f"{user_id}/{conversation_id}/{filename}"
+                            blob_client = blob_service_client.get_blob_client(
+                                container=storage_account_personal_chat_container_name,
+                                blob=blob_path
+                            )
+                            metadata = {
+                                "conversation_id": str(conversation_id),
+                                "user_id": str(user_id)
+                            }
+                            with open(temp_file_path, "rb") as blob_f:
+                                blob_client.upload_blob(blob_f, overwrite=True, metadata=metadata)
+                            log_event(f"Uploaded chat tabular file to blob storage: {blob_path}")
+                    except Exception as blob_err:
+                        log_event(
+                            f"Warning: Failed to upload chat tabular file to blob storage: {blob_err}",
+                            level=logging.WARNING
+                        )
+                else:
+                    # Only extract content for Cosmos storage when enhanced citations is disabled
+                    extracted_content = extract_table_file(temp_file_path, file_ext)
             else:
                 return jsonify({'error': 'Unsupported file type'}), 400
 
@@ -395,25 +420,50 @@ def register_route_frontend_chats(app):
 
                 current_thread_id = str(uuid.uuid4())
                 
-                file_message = {
-                    'id': file_message_id,
-                    'conversation_id': conversation_id,
-                    'role': 'file',
-                    'filename': filename,
-                    'file_content': extracted_content,
-                    'is_table': is_table,
-                    'timestamp': datetime.utcnow().isoformat(),
-                    'model_deployment_name': None,
-                    'metadata': {
-                        'thread_info': {
-                            'thread_id': current_thread_id,
-                            'previous_thread_id': previous_thread_id,
-                            'active_thread': True,
-                            'thread_attempt': 1
+                # When enhanced citations is enabled and file is tabular, store a lightweight
+                # reference without file_content to avoid Cosmos DB size limits.
+                # The tabular data lives in blob storage and is served from there.
+                if is_table and settings.get('enable_enhanced_citations', False):
+                    file_message = {
+                        'id': file_message_id,
+                        'conversation_id': conversation_id,
+                        'role': 'file',
+                        'filename': filename,
+                        'is_table': is_table,
+                        'file_content_source': 'blob',
+                        'blob_container': storage_account_personal_chat_container_name,
+                        'blob_path': f"{user_id}/{conversation_id}/{filename}",
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'model_deployment_name': None,
+                        'metadata': {
+                            'thread_info': {
+                                'thread_id': current_thread_id,
+                                'previous_thread_id': previous_thread_id,
+                                'active_thread': True,
+                                'thread_attempt': 1
+                            }
                         }
                     }
-                }
-                
+                else:
+                    file_message = {
+                        'id': file_message_id,
+                        'conversation_id': conversation_id,
+                        'role': 'file',
+                        'filename': filename,
+                        'file_content': extracted_content,
+                        'is_table': is_table,
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'model_deployment_name': None,
+                        'metadata': {
+                            'thread_info': {
+                                'thread_id': current_thread_id,
+                                'previous_thread_id': previous_thread_id,
+                                'active_thread': True,
+                                'thread_attempt': 1
+                            }
+                        }
+                    }
+
                 # Add vision analysis if available
                 if vision_analysis:
                     file_message['vision_analysis'] = vision_analysis

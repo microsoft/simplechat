@@ -98,6 +98,8 @@ def register_route_frontend_admin_settings(app):
             settings['enable_text_plugin'] = False
         if 'enable_fact_memory_plugin' not in settings:
             settings['enable_fact_memory_plugin'] = False
+        if 'enable_tabular_processing_plugin' not in settings:
+            settings['enable_tabular_processing_plugin'] = False
         if 'enable_default_embedding_model_plugin' not in settings:
             settings['enable_default_embedding_model_plugin'] = False
         if 'enable_multi_agent_orchestration' not in settings:
