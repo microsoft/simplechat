@@ -195,7 +195,19 @@
     *   **Removed Duplicate Comment**: Cleaned up duplicate "Render user-search results" comment.
     *   **Impact**: Member management buttons now render and function correctly, provide better error feedback, and auto-recover from stale member data.
     *   (Ref: `manage_group.js`, event handler deduplication, error handling improvements, toast notifications)
-    
+
+*   **Custom Environment User Search Path Fix**
+    *   Fixed unable to search for users in custom environment.
+    *   **Root Cause**: Path not added to CUSTOM_GRAPH_URL_VALUE in custom environment user search.
+    *   **Solution**: Added path to user search URL in `route_backend_users.py`.
+    *   **Impact**: Group owners are able to search for users when adding members.
+
+#### New Features
+
+*   **Bicep Custom Environment Configuration**
+    * Bicep deployment now sets configuration needed to function in custom (airgapped) environment.
+    *   (Ref: `deployers/bicep/`, MAG support)
+
 ### **(v0.237.009)**
 
 #### New Features
