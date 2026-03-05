@@ -735,6 +735,20 @@ def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="gl
         print(f"[SK Loader] Error loading agent-specific plugins: {e}")
         log_event(f"[SK Loader] Error loading agent-specific plugins: {e}", level=logging.ERROR, exceptionTraceback=True)
 
+def _build_mi_token_provider(endpoint):
+    """Build a bearer token provider for managed identity auth.
+
+    Selects the correct Azure Cognitive Services scope based on whether the
+    endpoint is in the US Government cloud (.azure.us) or the commercial cloud.
+    """
+    scope = (
+        "https://cognitiveservices.azure.us/.default"
+        if ".azure.us" in (endpoint or "")
+        else "https://cognitiveservices.azure.com/.default"
+    )
+    return get_bearer_token_provider(DefaultAzureCredential(), scope)
+
+
 def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis_client=None, mode_label="global"):
     """
     DRY helper to load a single agent (default agent) for the kernel.
@@ -811,8 +825,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 },
                 level=logging.INFO
             )
-            _scope = "https://cognitiveservices.azure.us/.default" if ".azure.us" in (agent_config.get("endpoint") or "") else "https://cognitiveservices.azure.com/.default"
-            _token_provider = get_bearer_token_provider(DefaultAzureCredential(), _scope)
+            _token_provider = _build_mi_token_provider(agent_config.get("endpoint"))
             chat_service = AzureChatCompletion(
                 service_id=service_id,
                 deployment_name=agent_config["deployment"],
@@ -1599,8 +1612,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
                                 # default_headers={"Ocp-Apim-Subscription-Key": agent_config["key"]}
                             )
                         elif _ma_use_mi:
-                            _scope = "https://cognitiveservices.azure.us/.default" if ".azure.us" in (agent_config.get("endpoint") or "") else "https://cognitiveservices.azure.com/.default"
-                            _token_provider = get_bearer_token_provider(DefaultAzureCredential(), _scope)
+                            _token_provider = _build_mi_token_provider(agent_config.get("endpoint"))
                             chat_service = AzureChatCompletion(
                                 service_id=service_id,
                                 deployment_name=agent_config["deployment"],
@@ -1727,8 +1739,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
                                 # default_headers={"Ocp-Apim-Subscription-Key": orchestrator_config["key"]}
                             )
                         elif _orch_use_mi:
-                            _scope = "https://cognitiveservices.azure.us/.default" if ".azure.us" in (orchestrator_config.get("endpoint") or "") else "https://cognitiveservices.azure.com/.default"
-                            _token_provider = get_bearer_token_provider(DefaultAzureCredential(), _scope)
+                            _token_provider = _build_mi_token_provider(orchestrator_config.get("endpoint"))
                             chat_service = AzureChatCompletion(
                                 service_id=service_id,
                                 deployment_name=orchestrator_config["deployment"],
