@@ -85,13 +85,21 @@ multi-agent orchestrator):
 
 ```python
 auth_type = settings.get('azure_openai_gpt_authentication_type', '')
-use_managed_identity = (auth_type == 'managed_identity') and not apim_enabled and not agent_config.get("key")
+use_managed_identity = (
+    auth_type == 'managed_identity'
+    and not apim_enabled
+    and not agent_config.get("key")
+    and bool(DefaultAzureCredential)
+    and not agent_config.get("endpoint_is_user_supplied", False)
+)
 ```
 
 `use_managed_identity` is `True` when ALL of:
 - Global auth type is `managed_identity`
 - APIM is not enabled (APIM uses subscription keys, not MI)
 - No API key is present (if a key exists, use it directly)
+- `azure-identity` imported successfully (`DefaultAzureCredential` is not `None`)
+- Endpoint is system-controlled, not user/agent-supplied (prevents MI token theft)
 
 ### 3. Updated gate condition to accept MI (~line 768)
 
@@ -130,9 +138,9 @@ all others use the commercial Azure scope.
 
 ```
 User sends message
-    → SK Loader resolves agent config (case 4: merge agent partial + global GPT)
-    → endpoint = global endpoint, key = None (MI), deployment = 'gpt-4.1'
-    → use_managed_identity = True  (auth_type='managed_identity', key=None, APIM=off)
+    → SK Loader resolves agent config (case 6: global GPT fallback, allow_user_custom_agent_endpoints=False)
+    → endpoint = global endpoint, key = None (MI), deployment = 'gpt-4.1', endpoint_is_user_supplied = False
+    → use_managed_identity = True  (auth_type='managed_identity', key=None, APIM=off, DefaultAzureCredential ok, endpoint_is_user_supplied=False)
     → Gate passes: (agent_config["key"] or use_managed_identity) = True
     → AzureChatCompletion created with ad_token_provider (DefaultAzureCredential)
     → Agent loads with full instructions + ServiceNow tools (OpenAPI plugin)
