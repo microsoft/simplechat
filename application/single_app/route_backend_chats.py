@@ -2131,6 +2131,22 @@ def register_route_backend_chats(app):
 
                 if selected_agent:
                     thought_tracker.add_thought('agent_tool_call', f"Sending to agent '{getattr(selected_agent, 'display_name', getattr(selected_agent, 'name', 'unknown'))}'")
+
+                    # Register callback to write plugin thoughts to Cosmos in real-time
+                    callback_key = f"{user_id}:{conversation_id}"
+                    plugin_logger = get_plugin_logger()
+
+                    def on_plugin_invocation(inv):
+                        duration_str = f" ({int(inv.duration_ms)}ms)" if inv.duration_ms else ""
+                        tool_name = f"{inv.plugin_name}.{inv.function_name}"
+                        thought_tracker.add_thought(
+                            'agent_tool_call',
+                            f"Agent called {tool_name}{duration_str}",
+                            detail=f"success={inv.success}"
+                        )
+
+                    plugin_logger.register_callback(callback_key, on_plugin_invocation)
+
                     def invoke_selected_agent():
                         return asyncio.run(run_sk_call(
                             selected_agent.invoke,
@@ -2141,16 +2157,18 @@ def register_route_backend_chats(app):
                         msg = str(result)
                         notice = None
                         agent_used = getattr(selected_agent, 'name', 'All Plugins')
-                        
+
+                        # Deregister real-time thought callback
+                        plugin_logger.deregister_callbacks(callback_key)
+
                         # Get the actual model deployment used by the agent
                         actual_model_deployment = getattr(selected_agent, 'deployment_name', None) or agent_used
                         debug_print(f"Agent '{agent_used}' using deployment: {actual_model_deployment}")
-                        
+
                         # Extract detailed plugin invocations for enhanced agent citations
-                        plugin_logger = get_plugin_logger()
-                        # CRITICAL FIX: Filter by user_id and conversation_id to prevent cross-conversation contamination
+                        # (Thoughts already written to Cosmos in real-time by callback)
                         plugin_invocations = plugin_logger.get_invocations_for_conversation(user_id, conversation_id)
-                        
+
                         # Convert plugin invocations to citation format with detailed information
                         detailed_citations = []
                         for inv in plugin_invocations:
@@ -2225,6 +2243,7 @@ def register_route_backend_chats(app):
                             )
                         return (msg, actual_model_deployment, "agent", notice)
                     def agent_error(e):
+                        plugin_logger.deregister_callbacks(callback_key)
                         debug_print(f"Error during Semantic Kernel Agent invocation: {str(e)}")
                         log_event(
                             f"Error during Semantic Kernel Agent invocation: {str(e)}",
@@ -2265,8 +2284,17 @@ def register_route_backend_chats(app):
                                 or agent_used
                             )
 
+                            # Deregister real-time thought callback
+                            plugin_logger.deregister_callbacks(callback_key)
+
                             foundry_citations = getattr(selected_agent, 'last_run_citations', []) or []
                             if foundry_citations:
+                                # Emit thoughts for Foundry agent citations/tool calls
+                                for citation in foundry_citations:
+                                    thought_tracker.add_thought(
+                                        'agent_tool_call',
+                                        f"Agent retrieved citation from Azure AI Foundry"
+                                    )
                                 for citation in foundry_citations:
                                     try:
                                         serializable = json.loads(json.dumps(citation, default=str))
@@ -2303,6 +2331,7 @@ def register_route_backend_chats(app):
                             return (msg, actual_model_deployment, 'agent', notice)
 
                         def foundry_agent_error(e):
+                            plugin_logger.deregister_callbacks(callback_key)
                             log_event(
                                 f"Error during Azure AI Foundry agent invocation: {str(e)}",
                                 extra={
@@ -3529,7 +3558,21 @@ def register_route_backend_chats(app):
                         # Stream from agent using invoke_stream
                         yield emit_thought('agent_tool_call', f"Sending to agent '{agent_display_name_used or agent_name_used}'")
                         debug_print(f"--- Streaming from Agent: {agent_name_used} ---")
-                        
+
+                        # Register callback to persist plugin thoughts to Cosmos in real-time
+                        callback_key = f"{user_id}:{conversation_id}"
+                        plugin_logger_cb = get_plugin_logger()
+
+                        def on_plugin_invocation_streaming(inv):
+                            duration_str = f" ({int(inv.duration_ms)}ms)" if inv.duration_ms else ""
+                            tool_name = f"{inv.plugin_name}.{inv.function_name}"
+                            thought_tracker.add_thought(
+                                'agent_tool_call',
+                                f"Agent called {tool_name}{duration_str}"
+                            )
+
+                        plugin_logger_cb.register_callback(callback_key, on_plugin_invocation_streaming)
+
                         # Import required classes
                         from semantic_kernel.contents.chat_message_content import ChatMessageContent
                         
@@ -3585,36 +3628,49 @@ def register_route_backend_chats(app):
                         try:
                             # Run streaming and collect chunks and usage
                             chunks, stream_usage = loop.run_until_complete(stream_agent_async())
-                            
-                            # Yield chunks to frontend
-                            for chunk_content in chunks:
-                                accumulated_content += chunk_content
-                                yield f"data: {json.dumps({'content': chunk_content})}\n\n"
-                            
-                            # Try to capture token usage from stream metadata
-                            if stream_usage:
-                                # stream_usage is a CompletionUsage object, not a dict
-                                prompt_tokens = getattr(stream_usage, 'prompt_tokens', 0)
-                                completion_tokens = getattr(stream_usage, 'completion_tokens', 0)
-                                total_tokens = getattr(stream_usage, 'total_tokens', None)
-                                
-                                # Calculate total if not provided
-                                if total_tokens is None or total_tokens == 0:
-                                    total_tokens = prompt_tokens + completion_tokens
-                                
-                                token_usage_data = {
-                                    'prompt_tokens': prompt_tokens,
-                                    'completion_tokens': completion_tokens,
-                                    'total_tokens': total_tokens,
-                                    'captured_at': datetime.utcnow().isoformat()
-                                }
-                                debug_print(f"[Agent Streaming Tokens] From metadata - prompt: {prompt_tokens}, completion: {completion_tokens}, total: {total_tokens}")
                         except Exception as stream_error:
+                            plugin_logger_cb.deregister_callbacks(callback_key)
                             debug_print(f"❌ Agent streaming error: {stream_error}")
                             import traceback
                             traceback.print_exc()
                             yield f"data: {json.dumps({'error': f'Agent streaming failed: {str(stream_error)}'})}\n\n"
                             return
+
+                        # Deregister callback (agent completed successfully)
+                        plugin_logger_cb.deregister_callbacks(callback_key)
+
+                        # Emit SSE-only events for streaming UI (Cosmos writes already done by callback)
+                        agent_plugin_invocations = plugin_logger_cb.get_invocations_for_conversation(user_id, conversation_id)
+                        for inv in agent_plugin_invocations:
+                            duration_str = f" ({int(inv.duration_ms)}ms)" if inv.duration_ms else ""
+                            tool_name = f"{inv.plugin_name}.{inv.function_name}"
+                            content = f"Agent called {tool_name}{duration_str}"
+                            yield f"data: {json.dumps({'type': 'thought', 'step_index': thought_tracker.current_index, 'step_type': 'agent_tool_call', 'content': content})}\n\n"
+                            thought_tracker.current_index += 1
+
+                        # Yield chunks to frontend
+                        for chunk_content in chunks:
+                            accumulated_content += chunk_content
+                            yield f"data: {json.dumps({'content': chunk_content})}\n\n"
+
+                        # Try to capture token usage from stream metadata
+                        if stream_usage:
+                            # stream_usage is a CompletionUsage object, not a dict
+                            prompt_tokens = getattr(stream_usage, 'prompt_tokens', 0)
+                            completion_tokens = getattr(stream_usage, 'completion_tokens', 0)
+                            total_tokens = getattr(stream_usage, 'total_tokens', None)
+
+                            # Calculate total if not provided
+                            if total_tokens is None or total_tokens == 0:
+                                total_tokens = prompt_tokens + completion_tokens
+
+                            token_usage_data = {
+                                'prompt_tokens': prompt_tokens,
+                                'completion_tokens': completion_tokens,
+                                'total_tokens': total_tokens,
+                                'captured_at': datetime.utcnow().isoformat()
+                            }
+                            debug_print(f"[Agent Streaming Tokens] From metadata - prompt: {prompt_tokens}, completion: {completion_tokens}, total: {total_tokens}")
                         
                         # Collect token usage from kernel services if not captured from stream
                         if not token_usage_data:
