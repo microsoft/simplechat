@@ -3827,11 +3827,12 @@ function checkOptionalFeaturesEnabled(stepNumber) {
                 return endpoint && key;
             }
         
-        case 11: // User feedback and archiving
-            // Check if feedback is enabled
+        case 11: // User feedback, archiving, and thoughts
+            // Check if feedback, archiving, or thoughts is enabled
             const feedbackEnabled = document.getElementById('enable_user_feedback')?.checked;
             const archivingEnabled = document.getElementById('enable_conversation_archiving')?.checked;
-            return feedbackEnabled || archivingEnabled;
+            const thoughtsEnabled = document.getElementById('enable_thoughts')?.checked;
+            return feedbackEnabled || archivingEnabled || thoughtsEnabled;
             
         case 12: // Enhanced citations and image generation
             // Check if enhanced citations or image generation is enabled

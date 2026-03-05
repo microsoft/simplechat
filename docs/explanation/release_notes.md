@@ -2,6 +2,25 @@
 
 # Feature Release
 
+### **(v0.239.003)**
+
+#### New Features
+
+*   **Processing Thoughts**
+    *   Real-time processing step traces replace the generic "AI is typing..." indicator during chat responses.
+    *   Users see live updates showing what the system is doing: searching documents, performing web search, calling agents, checking content safety, and generating responses.
+    *   **Non-Streaming Mode**: Frontend polls `/api/conversations/<id>/thoughts/pending` every 2 seconds to show current processing step in the loading indicator.
+    *   **Streaming Mode**: Thought events embedded in SSE stream as `{"type": "thought", ...}` payloads, displayed as animated badges on the streaming placeholder.
+    *   **Per-Message History**: Each assistant message footer includes a lightbulb toggle button. Clicking it opens a collapsible section showing all recorded processing steps with icons and durations.
+    *   **Lazy Loading**: Thoughts are fetched from the API on first toggle click, not preloaded on page render.
+    *   **Cosmos DB Persistence**: Thoughts stored in dedicated `thoughts` container (partition key: `/user_id`), with `archive_thoughts` container for archived conversations.
+    *   **Admin Toggle**: `enable_thoughts` setting in Admin Settings > Optional Features > Processing Thoughts section. Disabled by default.
+    *   **Archive Support**: Thoughts are archived or deleted alongside conversations during single and bulk delete operations.
+    *   **8 Instrumentation Points**: content_safety, search (2), tabular_analysis, web_search (2), agent_tool_call, generation.
+    *   **Files Created**: `functions_thoughts.py`, `route_backend_thoughts.py`, `static/js/chat/chat-thoughts.js`.
+    *   **Files Modified**: `config.py`, `functions_settings.py`, `app.py`, `route_backend_chats.py`, `route_backend_conversations.py`, `admin_settings.html`, `admin_settings.js`, `chat-messages.js`, `chat-streaming.js`, `chat-loading-indicator.js`, `chats.css`.
+    *   (Ref: `PROCESSING_THOUGHTS.md`)
+
 ### **(v0.239.001)**
 
 #### New Features

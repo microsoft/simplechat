@@ -28,6 +28,7 @@ from functions_debug import debug_print
 from functions_activity_logging import log_chat_activity, log_conversation_creation, log_token_usage
 from flask import current_app
 from swagger_wrapper import swagger_route, get_auth_security
+from functions_thoughts import ThoughtTracker
 
 
 def get_kernel():
@@ -668,6 +669,18 @@ def register_route_backend_chats(app):
 
                 conversation_item['last_updated'] = datetime.utcnow().isoformat()
                 cosmos_conversations_container.upsert_item(conversation_item) # Update timestamp and potentially title
+
+                # Generate assistant_message_id early for thought tracking
+                assistant_message_id = f"{conversation_id}_assistant_{int(time.time())}_{random.randint(1000,9999)}"
+
+                # Initialize thought tracker
+                thought_tracker = ThoughtTracker(
+                    conversation_id=conversation_id,
+                    message_id=assistant_message_id,
+                    thread_id=current_user_thread_id,
+                    user_id=user_id
+                )
+
         # region 3 - Content Safety
             # ---------------------------------------------------------------------
             # 3) Check Content Safety (but DO NOT return 403).
@@ -679,6 +692,7 @@ def register_route_backend_chats(app):
             blocklist_matches = []
 
             if settings.get('enable_content_safety') and "content_safety_client" in CLIENTS:
+                thought_tracker.add_thought('content_safety', 'Checking content safety...')
                 try:
                     content_safety_client = CLIENTS["content_safety_client"]
                     request_obj = AnalyzeTextOptions(text=user_message)
@@ -836,6 +850,7 @@ def register_route_backend_chats(app):
 
 
                 # Perform the search
+                thought_tracker.add_thought('search', f"Searching {document_scope or 'personal'} workspace documents for '{(search_query or user_message)[:50]}'")
                 try:
                     # Prepare search arguments
                     # Set default and maximum values for top_n
@@ -899,6 +914,8 @@ def register_route_backend_chats(app):
                     }), 500
 
                 if search_results:
+                    unique_doc_names = set(doc.get('file_name', 'Unknown') for doc in search_results)
+                    thought_tracker.add_thought('search', f"Found {len(search_results)} results from {len(unique_doc_names)} documents")
                     retrieved_texts = []
                     combined_documents = []
                     classifications_found = set(conversation_item.get('classification', [])) # Load existing
@@ -1489,6 +1506,7 @@ def register_route_backend_chats(app):
                     }), status_code
 
             if web_search_enabled:
+                thought_tracker.add_thought('web_search', f"Searching the web for '{(search_query or user_message)[:50]}'")
                 perform_web_search(
                     settings=settings,
                     conversation_id=conversation_id,
@@ -1504,7 +1522,9 @@ def register_route_backend_chats(app):
                     agent_citations_list=agent_citations_list,
                     web_search_citations_list=web_search_citations_list,
                 )
-            
+                if web_search_citations_list:
+                    thought_tracker.add_thought('web_search', f"Got {len(web_search_citations_list)} web search results")
+
         # region 5 - FINAL conversation history preparation
             # ---------------------------------------------------------------------
             # 5) Prepare FINAL conversation history for GPT (including summarization)
@@ -2110,6 +2130,7 @@ def register_route_backend_chats(app):
                     })
 
                 if selected_agent:
+                    thought_tracker.add_thought('agent_tool_call', f"Sending to agent '{getattr(selected_agent, 'display_name', getattr(selected_agent, 'name', 'unknown'))}'")
                     def invoke_selected_agent():
                         return asyncio.run(run_sk_call(
                             selected_agent.invoke,
@@ -2360,6 +2381,7 @@ def register_route_backend_chats(app):
                         'on_error': kernel_error
                     })
 
+            thought_tracker.add_thought('generation', 'Generating response...')
             def invoke_gpt_fallback():
                 if not conversation_history_for_api:
                     raise Exception('Cannot generate response: No conversation history available.')
@@ -2510,8 +2532,8 @@ def register_route_backend_chats(app):
                 if hasattr(selected_agent, 'name'):
                     agent_name = selected_agent.name
             
-            assistant_message_id = f"{conversation_id}_assistant_{int(time.time())}_{random.randint(1000,9999)}"
-            
+            # assistant_message_id was generated earlier for thought tracking
+
             # Get user_info and thread_id from the user message for ownership tracking and threading
             user_info_for_assistant = None
             user_thread_id = None
@@ -2672,7 +2694,8 @@ def register_route_backend_chats(app):
                 'web_search_citations': web_search_citations_list,
                 'agent_citations': agent_citations_list,
                 'reload_messages': reload_messages_required,
-                'kernel_fallback_notice': kernel_fallback_notice
+                'kernel_fallback_notice': kernel_fallback_notice,
+                'thoughts_enabled': thought_tracker.enabled
             }), 200
         
         except Exception as e:
@@ -3111,10 +3134,27 @@ def register_route_backend_chats(app):
                 
                 conversation_item['last_updated'] = datetime.utcnow().isoformat()
                 cosmos_conversations_container.upsert_item(conversation_item)
-                
+
+                # Generate assistant_message_id early for thought tracking
+                assistant_message_id = f"{conversation_id}_assistant_{int(time.time())}_{random.randint(1000,9999)}"
+
+                # Initialize thought tracker for streaming path
+                thought_tracker = ThoughtTracker(
+                    conversation_id=conversation_id,
+                    message_id=assistant_message_id,
+                    thread_id=current_user_thread_id,
+                    user_id=user_id
+                )
+
+                def emit_thought(step_type, content, detail=None):
+                    """Add a thought to Cosmos and return an SSE event string."""
+                    thought_tracker.add_thought(step_type, content, detail)
+                    return f"data: {json.dumps({'type': 'thought', 'step_index': thought_tracker.current_index - 1, 'step_type': step_type, 'content': content})}\n\n"
+
                 # Hybrid search (if enabled)
                 combined_documents = []
                 if hybrid_search_enabled:
+                    yield emit_thought('search', f"Searching {document_scope or 'personal'} workspace documents for '{(search_query or user_message)[:50]}'")
                     try:
                         search_args = {
                             "query": search_query,
@@ -3144,8 +3184,10 @@ def register_route_backend_chats(app):
                         search_results = hybrid_search(**search_args)
                     except Exception as e:
                         debug_print(f"Error during hybrid search: {e}")
-                    
+
                     if search_results:
+                        unique_doc_names_stream = set(doc.get('file_name', 'Unknown') for doc in search_results)
+                        yield emit_thought('search', f"Found {len(search_results)} results from {len(unique_doc_names_stream)} documents")
                         retrieved_texts = []
                         
                         for doc in search_results:
@@ -3324,6 +3366,7 @@ def register_route_backend_chats(app):
                         hybrid_citations_list.sort(key=lambda x: x.get('page_number', 0), reverse=True)
                 
                 if web_search_enabled:
+                    yield emit_thought('web_search', f"Searching the web for '{(search_query or user_message)[:50]}'")
                     perform_web_search(
                         settings=settings,
                         conversation_id=conversation_id,
@@ -3339,6 +3382,8 @@ def register_route_backend_chats(app):
                         agent_citations_list=agent_citations_list,
                         web_search_citations_list=web_search_citations_list,
                     )
+                    if web_search_citations_list:
+                        yield emit_thought('web_search', f"Got {len(web_search_citations_list)} web search results")
 
                 # Update message chat type
                 message_chat_type = None
@@ -3472,7 +3517,7 @@ def register_route_backend_chats(app):
                 # Stream the response
                 accumulated_content = ""
                 token_usage_data = None  # Will be populated from final stream chunk
-                assistant_message_id = f"{conversation_id}_assistant_{int(time.time())}_{random.randint(1000,9999)}"
+                # assistant_message_id was generated earlier for thought tracking
                 final_model_used = gpt_model  # Default to gpt_model, will be overridden if agent is used
                 
                 # DEBUG: Check agent streaming decision
@@ -3482,6 +3527,7 @@ def register_route_backend_chats(app):
                 try:
                     if use_agent_streaming and selected_agent:
                         # Stream from agent using invoke_stream
+                        yield emit_thought('agent_tool_call', f"Sending to agent '{agent_display_name_used or agent_name_used}'")
                         debug_print(f"--- Streaming from Agent: {agent_name_used} ---")
                         
                         # Import required classes
@@ -3650,6 +3696,7 @@ def register_route_backend_chats(app):
                     
                     else:
                         # Stream from regular GPT model (non-agent)
+                        yield emit_thought('generation', 'Generating response...')
                         debug_print(f"--- Streaming from GPT ({gpt_model}) ---")
                         
                         # Prepare stream parameters
@@ -3818,7 +3865,8 @@ def register_route_backend_chats(app):
                         'agent_citations': agent_citations_list,
                         'agent_display_name': agent_display_name_used if use_agent_streaming else None,
                         'agent_name': agent_name_used if use_agent_streaming else None,
-                        'full_content': accumulated_content
+                        'full_content': accumulated_content,
+                        'thoughts_enabled': thought_tracker.enabled
                     }
                     yield f"data: {json.dumps(final_data)}\n\n"
                     

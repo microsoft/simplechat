@@ -94,7 +94,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.239.002"
+VERSION = "0.239.003"
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
@@ -457,6 +457,18 @@ cosmos_approvals_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_approvals_container_name,
     partition_key=PartitionKey(path="/group_id"),
     default_ttl=-1  # TTL disabled by default, enabled per-document for auto-cleanup
+)
+
+cosmos_thoughts_container_name = "thoughts"
+cosmos_thoughts_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_thoughts_container_name,
+    partition_key=PartitionKey(path="/user_id")
+)
+
+cosmos_archived_thoughts_container_name = "archive_thoughts"
+cosmos_archived_thoughts_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_archived_thoughts_container_name,
+    partition_key=PartitionKey(path="/user_id")
 )
 
 def ensure_custom_logo_file_exists(app, settings):

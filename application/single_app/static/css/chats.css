@@ -1677,3 +1677,96 @@ mark.search-highlight {
         transform: scale(1.05);
     }
 }
+
+/* =============================================
+   Processing Thoughts
+   ============================================= */
+
+/* Loading indicator thought text */
+.thought-live-text {
+    font-style: italic;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 300px;
+}
+
+/* Toggle button in message footer */
+.thoughts-toggle-btn {
+    font-size: 0.9rem;
+    color: #6c757d;
+    padding: 0 0.25rem;
+    border: none;
+    background: none;
+    cursor: pointer;
+    transition: color 0.15s ease-in-out;
+}
+
+.thoughts-toggle-btn:hover {
+    color: #ffc107;
+}
+
+/* Collapsible container inside message bubble */
+.thoughts-container {
+    max-height: 300px;
+    overflow-y: auto;
+    font-size: 0.85rem;
+}
+
+/* Individual thought step */
+.thought-step {
+    display: flex;
+    align-items: flex-start;
+    border-left: 2px solid #dee2e6;
+    padding-left: 0.75rem;
+    margin-bottom: 0.25rem;
+}
+
+.thought-step i {
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+
+/* Streaming cursor thought badge pulse animation */
+.animate-pulse {
+    animation: thought-pulse 1.5s ease-in-out infinite;
+}
+
+/* Streaming thought display (before content arrives) */
+.streaming-thought-display {
+    display: flex;
+    align-items: center;
+    padding: 0.5rem 0;
+}
+
+[data-bs-theme="dark"] .streaming-thought-display .badge {
+    background-color: rgba(13, 202, 240, 0.15) !important;
+    color: #6edff6 !important;
+    border-color: rgba(13, 202, 240, 0.3) !important;
+}
+
+@keyframes thought-pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.6;
+    }
+}
+
+/* Dark mode overrides */
+[data-bs-theme="dark"] .thoughts-toggle-btn {
+    color: #adb5bd;
+}
+
+[data-bs-theme="dark"] .thoughts-toggle-btn:hover {
+    color: #ffc107;
+}
+
+[data-bs-theme="dark"] .thought-step {
+    border-left-color: #495057;
+}
+
+[data-bs-theme="dark"] .thoughts-container {
+    border-top-color: #495057 !important;
+}
