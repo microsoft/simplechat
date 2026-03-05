@@ -2,6 +2,15 @@
 
 # Feature Release
 
+### **(v0.239.003)**
+
+#### Bug Fixes
+
+*   **Docker Customization: CA Certificate and pip.conf**
+    *   Fixed Docker customization issues related to custom CA certificate handling and `pip.conf` configuration.
+    *   Ensures Python package installation works reliably in environments requiring custom certificate trust and pip configuration.
+    *   (Ref: Docker customization, CA cert setup, `pip.conf` handling)
+
 ### **(v0.239.001)**
 
 #### New Features
