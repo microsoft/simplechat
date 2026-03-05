@@ -1,6 +1,6 @@
 # Agent Managed Identity SK Loader Fix
 
-**Fixed/Implemented in version:** **0.238.025** (matches `config.py` `app.config['VERSION']`)  
+**Fixed/Implemented in version:** **0.238.025**  
 **GitHub Issue:** [#769 — Agents fail silently when using Managed Identity authentication](https://github.com/microsoft/simplechat/issues/769)
 
 ## Issue Description
