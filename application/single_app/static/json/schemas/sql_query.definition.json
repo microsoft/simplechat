@@ -1,6 +1,9 @@
 {
   "$schema": "./plugin.definition.schema.json",
   "allowedAuthTypes": [
+    "user",
+    "identity",
+    "servicePrincipal",
     "connection_string"
   ]
 }

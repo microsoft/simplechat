@@ -117,9 +117,12 @@ function renderAgentsTable(list) {
     const displayName = truncateName(agent.display_name || agent.displayName || agent.name || "");
     const description = escapeHtml(agent.description || "No description available.");
 
-    let actionsHtml = "<span class=\"text-muted small\">—</span>";
+    let actionsHtml = `
+        <button type="button" class="btn btn-sm btn-primary me-1 chat-group-agent-btn" data-agent-name="${escapeHtml(agent.name || '')}" title="Chat with this agent">
+          <i class="bi bi-chat-dots me-1"></i>Chat
+        </button>`;
     if (canManage) {
-      actionsHtml = `
+      actionsHtml += `
         <button type="button" class="btn btn-sm btn-outline-secondary me-1 edit-group-agent-btn" data-agent-id="${escapeHtml(agent.id || agent.name || "")}">
           <i class="bi bi-pencil"></i>
         </button>
@@ -343,7 +346,49 @@ async function fetchGroupAgents() {
   }
 }
 
+async function chatWithGroupAgent(agentName) {
+  try {
+    const agent = agents.find(a => a.name === agentName);
+    if (!agent) {
+      throw new Error("Agent not found");
+    }
+
+    const payloadData = {
+      selected_agent: {
+        name: agentName,
+        display_name: agent.display_name || agent.displayName || agentName,
+        is_global: !!agent.is_global,
+        is_group: true,
+        group_id: currentContext.activeGroupId,
+        group_name: currentContext.activeGroupName
+      }
+    };
+
+    const resp = await fetch("/api/user/settings/selected_agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payloadData)
+    });
+
+    if (!resp.ok) {
+      throw new Error("Failed to select agent");
+    }
+
+    window.location.href = "/chats";
+  } catch (err) {
+    console.error("Error selecting group agent for chat:", err);
+    showToast("Error selecting agent for chat. Please try again.", "danger");
+  }
+}
+
 function handleTableClick(event) {
+  const chatBtn = event.target.closest(".chat-group-agent-btn");
+  if (chatBtn) {
+    const agentName = chatBtn.dataset.agentName;
+    chatWithGroupAgent(agentName);
+    return;
+  }
+
   const editBtn = event.target.closest(".edit-group-agent-btn");
   if (editBtn) {
     const agentId = editBtn.dataset.agentId;

@@ -460,6 +460,13 @@ def create_group_action_route():
     for key in ('group_id', 'last_updated', 'user_id', 'is_global', 'is_group', 'scope'):
         payload.pop(key, None)
 
+    # Handle endpoint based on plugin type (same logic as personal plugins)
+    plugin_type = payload.get('type', '')
+    if plugin_type in ['sql_schema', 'sql_query']:
+        payload.setdefault('endpoint', f'sql://{plugin_type}')
+    elif plugin_type == 'msgraph':
+        payload.setdefault('endpoint', 'https://graph.microsoft.com')
+
     # Merge with schema to ensure all required fields are present (same as global actions)
     schema_dir = os.path.join(current_app.root_path, 'static', 'json', 'schemas')
     merged = get_merged_plugin_settings(payload.get('type'), payload, schema_dir)
@@ -515,6 +522,13 @@ def update_group_action_route(action_id):
     merged['is_global'] = False
     merged['is_group'] = True
     merged['id'] = existing.get('id', action_id)
+
+    # Handle endpoint based on plugin type (same logic as personal plugins)
+    plugin_type = merged.get('type', '')
+    if plugin_type in ['sql_schema', 'sql_query']:
+        merged.setdefault('endpoint', f'sql://{plugin_type}')
+    elif plugin_type == 'msgraph':
+        merged.setdefault('endpoint', 'https://graph.microsoft.com')
 
     try:
         validate_group_action_payload(merged, partial=False)
@@ -928,4 +942,116 @@ def _merge_group_and_global_actions(group_actions, global_actions):
     return normalized_actions
 
 
+@bpap.route('/api/plugins/test-sql-connection', methods=['POST'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+def test_sql_connection():
+    """Test a SQL database connection using provided configuration."""
+    data = request.get_json(silent=True) or {}
+    database_type = (data.get('database_type') or 'sqlserver').lower()
+    connection_method = data.get('connection_method', 'parameters')
+    connection_string = data.get('connection_string', '')
+    server = data.get('server', '')
+    database = data.get('database', '')
+    port = data.get('port', '')
+    driver = data.get('driver', '')
+    username = data.get('username', '')
+    password = data.get('password', '')
+    auth_type = data.get('auth_type', 'username_password')
+    timeout = min(int(data.get('timeout', 10)), 15)  # Cap at 15 seconds for test
 
+    # Map azure_sql to sqlserver
+    if database_type in ('azure_sql', 'azuresql'):
+        database_type = 'sqlserver'
+
+    try:
+        if database_type == 'sqlserver':
+            import pyodbc
+            if connection_method == 'connection_string' and connection_string:
+                conn = pyodbc.connect(connection_string, timeout=timeout)
+            else:
+                if not server or not database:
+                    return jsonify({'success': False, 'error': 'Server and database are required for individual parameters connection.'}), 400
+                drv = driver or 'ODBC Driver 17 for SQL Server'
+                conn_str = f"DRIVER={{{drv}}};SERVER={server};DATABASE={database}"
+                if port:
+                    conn_str += f",{port}"
+                if auth_type == 'username_password' and username and password:
+                    conn_str += f";UID={username};PWD={password}"
+                elif auth_type == 'managed_identity':
+                    conn_str += ";Authentication=ActiveDirectoryMsi"
+                elif auth_type == 'integrated':
+                    conn_str += ";Trusted_Connection=yes"
+                conn = pyodbc.connect(conn_str, timeout=timeout)
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            cursor.close()
+            conn.close()
+            return jsonify({'success': True, 'message': f'Successfully connected to {data.get("database", "database")} on {data.get("server", "server")}.'})
+
+        elif database_type == 'postgresql':
+            import psycopg2
+            if connection_method == 'connection_string' and connection_string:
+                conn = psycopg2.connect(connection_string, connect_timeout=timeout)
+            else:
+                if not server or not database:
+                    return jsonify({'success': False, 'error': 'Server and database are required.'}), 400
+                conn_params = {'host': server, 'database': database, 'connect_timeout': timeout}
+                if port:
+                    conn_params['port'] = int(port)
+                if username:
+                    conn_params['user'] = username
+                if password:
+                    conn_params['password'] = password
+                conn = psycopg2.connect(**conn_params)
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            cursor.close()
+            conn.close()
+            return jsonify({'success': True, 'message': f'Successfully connected to PostgreSQL database {data.get("database", "")}.'})
+
+        elif database_type == 'mysql':
+            import pymysql
+            if connection_method == 'connection_string' and connection_string:
+                # pymysql doesn't natively parse connection strings, so use params
+                return jsonify({'success': False, 'error': 'MySQL test connection requires individual parameters, not a connection string.'}), 400
+            if not server or not database:
+                return jsonify({'success': False, 'error': 'Server and database are required.'}), 400
+            conn_params = {'host': server, 'database': database, 'connect_timeout': timeout}
+            if port:
+                conn_params['port'] = int(port)
+            if username:
+                conn_params['user'] = username
+            if password:
+                conn_params['password'] = password
+            conn = pymysql.connect(**conn_params)
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            cursor.close()
+            conn.close()
+            return jsonify({'success': True, 'message': f'Successfully connected to MySQL database {data.get("database", "")}.'})
+
+        elif database_type == 'sqlite':
+            import sqlite3
+            db_path = connection_string or database
+            if not db_path:
+                return jsonify({'success': False, 'error': 'Database path is required for SQLite.'}), 400
+            conn = sqlite3.connect(db_path, timeout=timeout)
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            cursor.close()
+            conn.close()
+            return jsonify({'success': True, 'message': f'Successfully connected to SQLite database.'})
+
+        else:
+            return jsonify({'success': False, 'error': f'Unsupported database type: {database_type}'}), 400
+
+    except ImportError as e:
+        return jsonify({'success': False, 'error': f'Database driver not installed: {str(e)}'}), 400
+    except Exception as e:
+        error_msg = str(e)
+        # Sanitize error message to avoid leaking sensitive details
+        if 'password' in error_msg.lower() or 'pwd' in error_msg.lower():
+            error_msg = 'Authentication failed. Please check your credentials.'
+        return jsonify({'success': False, 'error': f'Connection failed: {error_msg}'}), 400

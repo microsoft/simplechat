@@ -2,6 +2,9 @@
 // Multi-step modal functionality for action/plugin creation
 import { showToast } from "./chat/chat-toast.js";
 
+// Action types hidden from the creation UI (backend plugins remain intact)
+const HIDDEN_ACTION_TYPES = ['sql_schema', 'ui_test', 'queue_storage', 'blob_storage', 'embedding_model'];
+
 export class PluginModalStepper {
   
 
@@ -129,6 +132,12 @@ export class PluginModalStepper {
     
     document.getElementById('sql-auth-type').addEventListener('change', () => this.handleSqlAuthTypeChange());
     
+    // Test SQL connection button
+    const testConnBtn = document.getElementById('sql-test-connection-btn');
+    if (testConnBtn) {
+      testConnBtn.addEventListener('click', () => this.testSqlConnection());
+    }
+    
     // Set up display name to generated name conversion
     this.setupNameGeneration();
     
@@ -193,6 +202,8 @@ export class PluginModalStepper {
       if (!res.ok) throw new Error('Failed to load action types');
       
       this.availableTypes = await res.json();
+      // Hide deprecated/internal action types from the creation UI
+      this.availableTypes = this.availableTypes.filter(t => !HIDDEN_ACTION_TYPES.includes(t.type));
       // Sort action types alphabetically by display name
       this.availableTypes.sort((a, b) => {
         const nameA = (a.display || a.displayName || a.type || a.name || '').toLowerCase();
@@ -538,43 +549,52 @@ export class PluginModalStepper {
     }
 
     if (stepNumber === 4) {
-      // Load additional settings schema for selected type
-      let options = {forceReload: true};
-      this.getAdditionalSettingsSchema(this.selectedType, options);
+      const isSqlType = this.selectedType === 'sql_query' || this.selectedType === 'sql_schema';
       const additionalFieldsDiv = document.getElementById('plugin-additional-fields-div');
-      if (additionalFieldsDiv) {
-        // Only clear and rebuild if type changes
-        if (this.selectedType !== this.lastAdditionalFieldsType) {
-          additionalFieldsDiv.innerHTML = '';
-          additionalFieldsDiv.classList.remove('d-none');
-          if (this.selectedType) {
-            this.getAdditionalSettingsSchema(this.selectedType)
-              .then(schema => {
-                if (schema) {
-                  this.buildAdditionalFieldsUI(schema, additionalFieldsDiv);
-                  try {
-                    if (this.isEditMode && this.originalPlugin && this.originalPlugin.additionalFields) {
-                      this.populateDynamicAdditionalFields(this.originalPlugin.additionalFields);
+
+      // For SQL types, hide additional fields entirely since Step 3 covers all SQL config
+      if (isSqlType && additionalFieldsDiv) {
+        additionalFieldsDiv.innerHTML = '';
+        additionalFieldsDiv.classList.add('d-none');
+        this.lastAdditionalFieldsType = this.selectedType;
+      } else {
+        // Load additional settings schema for selected type
+        let options = {forceReload: true};
+        this.getAdditionalSettingsSchema(this.selectedType, options);
+        if (additionalFieldsDiv) {
+          // Only clear and rebuild if type changes
+          if (this.selectedType !== this.lastAdditionalFieldsType) {
+            additionalFieldsDiv.innerHTML = '';
+            additionalFieldsDiv.classList.remove('d-none');
+            if (this.selectedType) {
+              this.getAdditionalSettingsSchema(this.selectedType)
+                .then(schema => {
+                  if (schema) {
+                    this.buildAdditionalFieldsUI(schema, additionalFieldsDiv);
+                    try {
+                      if (this.isEditMode && this.originalPlugin && this.originalPlugin.additionalFields) {
+                        this.populateDynamicAdditionalFields(this.originalPlugin.additionalFields);
+                      }
+                    } catch (error) {
+                      console.error('Error populating dynamic additional fields:', error);
                     }
-                  } catch (error) {
-                    console.error('Error populating dynamic additional fields:', error);
+                  } else {
+                    console.log('No additional settings schema found');
+                    additionalFieldsDiv.classList.add('d-none');
                   }
-                } else {
-                  console.log('No additional settings schema found');
+                })
+                .catch(error => {
+                  console.error(`Error fetching additional settings schema for type: ${this.selectedType} -- ${error}`);
                   additionalFieldsDiv.classList.add('d-none');
-                }
-              })
-              .catch(error => {
-                console.error(`Error fetching additional settings schema for type: ${this.selectedType} -- ${error}`);
-                additionalFieldsDiv.classList.add('d-none');
-              });
-          } else {
-            console.warn('No plugin type selected');
-            additionalFieldsDiv.classList.add('d-none');
+                });
+            } else {
+              console.warn('No plugin type selected');
+              additionalFieldsDiv.classList.add('d-none');
+            }
+            this.lastAdditionalFieldsType = this.selectedType;
           }
-          this.lastAdditionalFieldsType = this.selectedType;
+          // Otherwise, preserve user data and do not redraw
         }
-        // Otherwise, preserve user data and do not redraw
       }
 
       if (!this.isEditMode) {
@@ -1230,6 +1250,80 @@ export class PluginModalStepper {
     this.updateSqlAuthInfo();
   }
 
+  async testSqlConnection() {
+    const btn = document.getElementById('sql-test-connection-btn');
+    const resultDiv = document.getElementById('sql-test-connection-result');
+    const alertDiv = document.getElementById('sql-test-connection-alert');
+    if (!btn || !resultDiv || !alertDiv) return;
+
+    // Collect current SQL config from Step 3
+    const databaseType = document.querySelector('input[name="sql-database-type"]:checked')?.value;
+    const connectionMethod = document.querySelector('input[name="sql-connection-method"]:checked')?.value || 'parameters';
+    const authType = document.getElementById('sql-auth-type')?.value || 'username_password';
+
+    if (!databaseType) {
+      resultDiv.classList.remove('d-none');
+      alertDiv.className = 'alert alert-warning mb-0 py-2 px-3 small';
+      alertDiv.textContent = 'Please select a database type first.';
+      return;
+    }
+
+    const payload = {
+      database_type: databaseType,
+      connection_method: connectionMethod,
+      auth_type: authType
+    };
+
+    if (connectionMethod === 'connection_string') {
+      payload.connection_string = document.getElementById('sql-connection-string')?.value?.trim() || '';
+    } else {
+      payload.server = document.getElementById('sql-server')?.value?.trim() || '';
+      payload.database = document.getElementById('sql-database')?.value?.trim() || '';
+      payload.port = document.getElementById('sql-port')?.value?.trim() || '';
+      if (databaseType === 'sqlserver' || databaseType === 'azure_sql') {
+        payload.driver = document.getElementById('sql-driver')?.value || '';
+      }
+    }
+
+    if (authType === 'username_password') {
+      payload.username = document.getElementById('sql-username')?.value?.trim() || '';
+      payload.password = document.getElementById('sql-password')?.value?.trim() || '';
+    }
+
+    payload.timeout = parseInt(document.getElementById('sql-timeout')?.value) || 10;
+
+    // Show loading state
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Testing...';
+    btn.disabled = true;
+    resultDiv.classList.add('d-none');
+
+    try {
+      const response = await fetch('/api/plugins/test-sql-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+
+      resultDiv.classList.remove('d-none');
+      if (data.success) {
+        alertDiv.className = 'alert alert-success mb-0 py-2 px-3 small';
+        alertDiv.innerHTML = '<i class="bi bi-check-circle me-2"></i>' + (data.message || 'Connection successful!');
+      } else {
+        alertDiv.className = 'alert alert-danger mb-0 py-2 px-3 small';
+        alertDiv.innerHTML = '<i class="bi bi-x-circle me-2"></i>' + (data.error || 'Connection failed.');
+      }
+    } catch (error) {
+      resultDiv.classList.remove('d-none');
+      alertDiv.className = 'alert alert-danger mb-0 py-2 px-3 small';
+      alertDiv.innerHTML = '<i class="bi bi-x-circle me-2"></i>Test failed: ' + (error.message || 'Network error');
+    } finally {
+      btn.innerHTML = originalText;
+      btn.disabled = false;
+    }
+  }
+
   updateSqlConnectionExamples() {
     const selectedType = document.querySelector('input[name="sql-database-type"]:checked')?.value;
     const examplesDiv = document.getElementById('sql-connection-examples');
@@ -1720,12 +1814,17 @@ export class PluginModalStepper {
     
     // Collect additional fields from the dynamic UI and MERGE with existing additionalFields
     // This preserves OpenAPI spec content and other auto-populated fields
-    try {
-      const dynamicFields = this.collectAdditionalFields();
-      // Merge dynamicFields into additionalFields (preserving existing values)
-      additionalFields = { ...additionalFields, ...dynamicFields };
-    } catch (e) {
-      throw new Error('Invalid additional fields input');
+    // For SQL types, Step 3 already provides all necessary config — skip dynamic field merge
+    // to prevent empty Step 4 fields from overwriting populated Step 3 values
+    const isSqlType = this.selectedType === 'sql_query' || this.selectedType === 'sql_schema';
+    if (!isSqlType) {
+      try {
+        const dynamicFields = this.collectAdditionalFields();
+        // Merge dynamicFields into additionalFields (preserving existing values)
+        additionalFields = { ...additionalFields, ...dynamicFields };
+      } catch (e) {
+        throw new Error('Invalid additional fields input');
+      }
     }
     
     let metadata = {};
@@ -2106,6 +2205,7 @@ export class PluginModalStepper {
 
   populateAdvancedSummary() {
     const advancedSection = document.getElementById('summary-advanced-section');
+    const isSqlType = this.selectedType === 'sql_query' || this.selectedType === 'sql_schema';
     
     // Check if there's any metadata or additional fields
     const metadata = document.getElementById('plugin-metadata').value.trim();
@@ -2123,9 +2223,33 @@ export class PluginModalStepper {
       hasMetadata = metadata.length > 0 && metadata !== '{}';
     }
     
-    // DRY: Use private helper to collect additional fields
-    let additionalFieldsObj = this.collectAdditionalFields();
-    hasAdditionalFields = Object.keys(additionalFieldsObj).length > 0;
+    // For SQL types, additional fields are already shown in the SQL Database Configuration
+    // summary section, so skip showing them again in Advanced to avoid redundancy
+    if (!isSqlType) {
+      // DRY: Use private helper to collect additional fields
+      let additionalFieldsObj = this.collectAdditionalFields();
+      hasAdditionalFields = Object.keys(additionalFieldsObj).length > 0;
+
+      // Show/hide additional fields preview
+      const additionalFieldsPreview = document.getElementById('summary-additional-fields-preview');
+      if (hasAdditionalFields) {
+        let previewContent = '';
+        if (typeof additionalFieldsObj === 'object' && additionalFieldsObj !== null) {
+          previewContent = JSON.stringify(additionalFieldsObj, null, 2);
+        } else {
+          previewContent = '';
+        }
+        document.getElementById('summary-additional-fields-content').textContent = previewContent;
+        additionalFieldsPreview.style.display = '';
+      } else {
+        additionalFieldsPreview.style.display = 'none';
+      }
+    } else {
+      // Hide additional fields for SQL types
+      const additionalFieldsPreview = document.getElementById('summary-additional-fields-preview');
+      if (additionalFieldsPreview) additionalFieldsPreview.style.display = 'none';
+      hasAdditionalFields = false;
+    }
     
     // Update has metadata/additional fields indicators
     document.getElementById('summary-has-metadata').textContent = hasMetadata ? 'Yes' : 'No';
@@ -2138,21 +2262,6 @@ export class PluginModalStepper {
       metadataPreview.style.display = '';
     } else {
       metadataPreview.style.display = 'none';
-    }
-    
-    // Show/hide additional fields preview
-    const additionalFieldsPreview = document.getElementById('summary-additional-fields-preview');
-    if (hasAdditionalFields) {
-      let previewContent = '';
-      if (typeof additionalFieldsObj === 'object' && additionalFieldsObj !== null) {
-        previewContent = JSON.stringify(additionalFieldsObj, null, 2);
-      } else {
-        previewContent = '';
-      }
-      document.getElementById('summary-additional-fields-content').textContent = previewContent;
-      additionalFieldsPreview.style.display = '';
-    } else {
-      additionalFieldsPreview.style.display = 'none';
     }
     
     // Show advanced section if there's any advanced content
