@@ -40,6 +40,11 @@ from functions_personal_agents import get_personal_agents, ensure_migration_comp
 from semantic_kernel_plugins.plugin_loader import discover_plugins
 from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
 import app_settings_cache
+try:
+    from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+except ImportError:
+    DefaultAzureCredential = None
+    get_bearer_token_provider = None
 
 
 
@@ -758,7 +763,9 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
 
     log_event(f"[SK Loader] Agent config resolved for {agent_cfg.get('name')} - endpoint: {bool(agent_config.get('endpoint'))}, key: {bool(agent_config.get('key'))}, deployment: {agent_config.get('deployment')}, max_completion_tokens: {agent_config.get('max_completion_tokens')}", level=logging.INFO)
     
-    if AzureChatCompletion and agent_config["endpoint"] and agent_config["key"] and agent_config["deployment"]:
+    auth_type = settings.get('azure_openai_gpt_authentication_type', '')
+    use_managed_identity = (auth_type == 'managed_identity') and not apim_enabled and not agent_config.get("key")
+    if AzureChatCompletion and agent_config["endpoint"] and (agent_config["key"] or use_managed_identity) and agent_config["deployment"]:
         print(f"[SK Loader] Azure config valid for {agent_config['name']}, creating chat service...")
         if apim_enabled:
             log_event(
@@ -778,6 +785,25 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 api_key=agent_config["key"],
                 api_version=agent_config["api_version"],
                 # default_headers={"Ocp-Apim-Subscription-Key": agent_config["key"]}
+            )
+        elif use_managed_identity:
+            log_event(
+                f"[SK Loader] Initializing Managed Identity AzureChatCompletion for agent: {agent_config['name']} ({mode_label})",
+                {
+                    "aoai_endpoint": agent_config["endpoint"],
+                    "aoai_deployment": agent_config["deployment"],
+                    "agent_name": agent_config["name"]
+                },
+                level=logging.INFO
+            )
+            _scope = "https://cognitiveservices.azure.us/.default" if ".azure.us" in (agent_config.get("endpoint") or "") else "https://cognitiveservices.azure.com/.default"
+            _token_provider = get_bearer_token_provider(DefaultAzureCredential(), _scope)
+            chat_service = AzureChatCompletion(
+                service_id=service_id,
+                deployment_name=agent_config["deployment"],
+                endpoint=agent_config["endpoint"],
+                ad_token_provider=_token_provider,
+                api_version=agent_config["api_version"],
             )
         else:
             log_event(
@@ -1521,7 +1547,10 @@ def load_semantic_kernel(kernel: Kernel, settings):
             agent_config = resolve_agent_config(agent_cfg, settings)
             chat_service = None
             service_id = f"aoai-chat-{agent_config['name'].replace(' ', '').lower()}"
-            if AzureChatCompletion and agent_config["endpoint"] and agent_config["key"] and agent_config["deployment"]:
+            _ma_auth_type = settings.get('azure_openai_gpt_authentication_type', '')
+            _ma_apim_enabled = settings.get("enable_gpt_apim", False)
+            _ma_use_mi = (_ma_auth_type == 'managed_identity') and not _ma_apim_enabled and not agent_config.get("key")
+            if AzureChatCompletion and agent_config["endpoint"] and (agent_config["key"] or _ma_use_mi) and agent_config["deployment"]:
                 try:
                     try:
                         chat_service = kernel.get_service(service_id=service_id)
@@ -1547,6 +1576,16 @@ def load_semantic_kernel(kernel: Kernel, settings):
                                 api_key=agent_config["key"],
                                 api_version=agent_config["api_version"],
                                 # default_headers={"Ocp-Apim-Subscription-Key": agent_config["key"]}
+                            )
+                        elif _ma_use_mi:
+                            _scope = "https://cognitiveservices.azure.us/.default" if ".azure.us" in (agent_config.get("endpoint") or "") else "https://cognitiveservices.azure.com/.default"
+                            _token_provider = get_bearer_token_provider(DefaultAzureCredential(), _scope)
+                            chat_service = AzureChatCompletion(
+                                service_id=service_id,
+                                deployment_name=agent_config["deployment"],
+                                endpoint=agent_config["endpoint"],
+                                ad_token_provider=_token_provider,
+                                api_version=agent_config["api_version"],
                             )
                         else:
                             chat_service = AzureChatCompletion(
@@ -1631,7 +1670,10 @@ def load_semantic_kernel(kernel: Kernel, settings):
                 orchestrator_config = resolve_agent_config(orchestrator_cfg, settings)
                 service_id = f"aoai-chat-{orchestrator_config['name']}"
                 chat_service = None
-                if AzureChatCompletion and orchestrator_config["endpoint"] and orchestrator_config["key"] and orchestrator_config["deployment"]:
+                _orch_auth_type = settings.get('azure_openai_gpt_authentication_type', '')
+                _orch_apim_enabled = settings.get("enable_gpt_apim", False)
+                _orch_use_mi = (_orch_auth_type == 'managed_identity') and not _orch_apim_enabled and not orchestrator_config.get("key")
+                if AzureChatCompletion and orchestrator_config["endpoint"] and (orchestrator_config["key"] or _orch_use_mi) and orchestrator_config["deployment"]:
                     try:
                         chat_service = kernel.get_service(service_id=service_id)
                     except Exception:
@@ -1656,6 +1698,16 @@ def load_semantic_kernel(kernel: Kernel, settings):
                                 api_key=orchestrator_config["key"],
                                 api_version=orchestrator_config["api_version"],
                                 # default_headers={"Ocp-Apim-Subscription-Key": orchestrator_config["key"]}
+                            )
+                        elif _orch_use_mi:
+                            _scope = "https://cognitiveservices.azure.us/.default" if ".azure.us" in (orchestrator_config.get("endpoint") or "") else "https://cognitiveservices.azure.com/.default"
+                            _token_provider = get_bearer_token_provider(DefaultAzureCredential(), _scope)
+                            chat_service = AzureChatCompletion(
+                                service_id=service_id,
+                                deployment_name=orchestrator_config["deployment"],
+                                endpoint=orchestrator_config["endpoint"],
+                                ad_token_provider=_token_provider,
+                                api_version=orchestrator_config["api_version"],
                             )
                         else:
                             chat_service = AzureChatCompletion(
