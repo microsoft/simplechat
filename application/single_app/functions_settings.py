@@ -259,6 +259,8 @@ def get_settings(use_cosmos=False):
         # Other
         'max_file_size_mb': 150,
         'conversation_history_limit': 10,
+        'idle_timeout_minutes': 30,
+        'idle_warning_minutes': 28,
         'default_system_prompt': '',
         'enable_file_processing_logs': True,
         'file_processing_logs_timer_enabled': False,

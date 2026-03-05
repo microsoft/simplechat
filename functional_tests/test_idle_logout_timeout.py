@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
 Functional test for idle session auto-logout.
-Version: 0.238.026
-Implemented in: 0.238.026
+Version: 0.239.003
+Implemented in: 0.239.003
 
 This test ensures that server-side idle timeout enforcement and
-client-side warning/logout wiring are present for a 30-minute inactivity window.
+client-side warning/logout wiring are present and sourced from admin settings.
 """
 
 import os
@@ -34,13 +34,17 @@ def test_server_idle_timeout_wiring():
         auth_route_content = _read_file("application", "single_app", "route_frontend_authentication.py")
 
         required_app_markers = [
+            "def get_idle_timeout_settings(settings=None):",
+            "settings.get('idle_timeout_minutes', 30)",
+            "settings.get('idle_warning_minutes', 28)",
             "def enforce_idle_session_timeout():",
             "last_activity_epoch",
             "IDLE_TIMEOUT_EXEMPT_PATHS",
             "'/logout/local'",
             "redirect(url_for('local_logout'))",
             "@app.route('/api/session/heartbeat', methods=['POST'])",
-            "def session_heartbeat():"
+            "def session_heartbeat():",
+            "idle_timeout_minutes, _ = get_idle_timeout_settings()"
         ]
 
         missing_app_markers = [marker for marker in required_app_markers if marker not in app_content]
@@ -49,9 +53,7 @@ def test_server_idle_timeout_wiring():
             return False
 
         required_config_markers = [
-            "IDLE_TIMEOUT_MINUTES",
-            "IDLE_WARNING_MINUTES",
-            "VERSION = \"0.238.026\""
+            "VERSION = \"0.239.003\""
         ]
 
         missing_config_markers = [marker for marker in required_config_markers if marker not in config_content]
@@ -148,6 +150,56 @@ def test_idle_warning_javascript_wiring():
         return False
 
 
+def test_admin_idle_settings_wiring():
+    """Validate admin settings and Cosmos defaults for idle timeout are wired."""
+    print("🔍 Testing admin idle settings wiring...")
+
+    try:
+        settings_content = _read_file("application", "single_app", "functions_settings.py")
+        admin_route_content = _read_file("application", "single_app", "route_frontend_admin_settings.py")
+        admin_template_content = _read_file("application", "single_app", "templates", "admin_settings.html")
+
+        required_settings_markers = [
+            "'idle_timeout_minutes': 30",
+            "'idle_warning_minutes': 28"
+        ]
+        missing_settings_markers = [marker for marker in required_settings_markers if marker not in settings_content]
+        if missing_settings_markers:
+            print(f"❌ Missing settings default markers: {missing_settings_markers}")
+            return False
+
+        required_route_markers = [
+            "form_data.get('idle_timeout_minutes')",
+            "form_data.get('idle_warning_minutes')",
+            "'idle_timeout_minutes': idle_timeout_minutes",
+            "'idle_warning_minutes': idle_warning_minutes"
+        ]
+        missing_route_markers = [marker for marker in required_route_markers if marker not in admin_route_content]
+        if missing_route_markers:
+            print(f"❌ Missing admin route markers: {missing_route_markers}")
+            return False
+
+        required_template_markers = [
+            "id=\"idle_timeout_minutes\"",
+            "name=\"idle_timeout_minutes\"",
+            "id=\"idle_warning_minutes\"",
+            "name=\"idle_warning_minutes\""
+        ]
+        missing_template_markers = [marker for marker in required_template_markers if marker not in admin_template_content]
+        if missing_template_markers:
+            print(f"❌ Missing admin template markers: {missing_template_markers}")
+            return False
+
+        print("✅ Admin idle settings wiring is present")
+        return True
+
+    except Exception as error:
+        print(f"❌ Error testing admin settings wiring: {error}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def main():
     """Run all idle-timeout functional checks."""
     print("🧪 Running Idle Timeout Functional Tests...\n")
@@ -155,7 +207,8 @@ def main():
     tests = [
         test_server_idle_timeout_wiring,
         test_base_template_warning_modal_wiring,
-        test_idle_warning_javascript_wiring
+        test_idle_warning_javascript_wiring,
+        test_admin_idle_settings_wiring
     ]
 
     results = []

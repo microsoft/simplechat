@@ -99,8 +99,6 @@ executor.init_app(app)
 app.config['SESSION_TYPE'] = SESSION_TYPE
 app.config['VERSION'] = VERSION
 app.config['SECRET_KEY'] = SECRET_KEY
-app.config['IDLE_TIMEOUT_MINUTES'] = IDLE_TIMEOUT_MINUTES
-app.config['IDLE_WARNING_MINUTES'] = IDLE_WARNING_MINUTES
 
 # Ensure filesystem session directory (when used) points to a writable path inside container.
 if SESSION_TYPE == 'filesystem':
@@ -411,10 +409,37 @@ def before_first_request():
     # Unified session setup
     configure_sessions(settings)
 
+
+def get_idle_timeout_settings(settings=None):
+    if settings is None:
+        settings = get_settings() or {}
+
+    timeout_raw = settings.get('idle_timeout_minutes', 30)
+    warning_raw = settings.get('idle_warning_minutes', 28)
+
+    try:
+        timeout_minutes = int(timeout_raw)
+    except (TypeError, ValueError):
+        timeout_minutes = 30
+
+    try:
+        warning_minutes = int(warning_raw)
+    except (TypeError, ValueError):
+        warning_minutes = 28
+
+    timeout_minutes = max(1, timeout_minutes)
+    warning_minutes = max(0, warning_minutes)
+
+    if warning_minutes >= timeout_minutes:
+        warning_minutes = max(0, timeout_minutes - 1)
+
+    return timeout_minutes, warning_minutes
+
 @app.context_processor
 def inject_settings():
     settings = get_settings()
     public_settings = sanitize_settings_for_user(settings)
+    idle_timeout_minutes, idle_warning_minutes = get_idle_timeout_settings(settings)
     # Inject per-user settings if logged in
     user_settings = {}
     try:
@@ -429,8 +454,8 @@ def inject_settings():
     return dict(
         app_settings=public_settings,
         user_settings=user_settings,
-        idle_timeout_minutes=app.config.get('IDLE_TIMEOUT_MINUTES', 30),
-        idle_warning_minutes=app.config.get('IDLE_WARNING_MINUTES', 28)
+        idle_timeout_minutes=idle_timeout_minutes,
+        idle_warning_minutes=idle_warning_minutes
     )
 
 @app.template_filter('to_datetime')
@@ -484,7 +509,7 @@ def enforce_idle_session_timeout():
     if request.method == 'OPTIONS' or _is_idle_timeout_exempt(request.path):
         return None
 
-    idle_timeout_minutes = app.config.get('IDLE_TIMEOUT_MINUTES', 30)
+    idle_timeout_minutes, _ = get_idle_timeout_settings()
     now_epoch = int(time.time())
     last_activity_epoch = session.get('last_activity_epoch')
 
@@ -606,9 +631,10 @@ def acceptable_use_policy():
 def session_heartbeat():
     session['last_activity_epoch'] = int(time.time())
     session.modified = True
+    idle_timeout_minutes, _ = get_idle_timeout_settings()
     return jsonify({
         'message': 'Session refreshed',
-        'idle_timeout_minutes': app.config.get('IDLE_TIMEOUT_MINUTES', 30)
+        'idle_timeout_minutes': idle_timeout_minutes
     }), 200
 
 @app.route('/api/semantic-kernel/plugins')

@@ -2,6 +2,17 @@
 
 # Feature Release
 
+### **(v0.239.003)**
+
+#### New Features
+
+*   **Admin-Managed Idle Session Timeout Settings**
+    *   Added idle session configuration variables to Admin Settings so timeout values are managed in-app and persisted in Cosmos DB.
+    *   Added configurable fields for idle logout timeout and warning lead time in the General > System Settings section.
+    *   Updated runtime enforcement and heartbeat responses to read these values from persisted settings with safe bounds validation.
+    *   Includes version update to align configuration and release metadata.
+    *   (Ref: `application/single_app/functions_settings.py`, `application/single_app/route_frontend_admin_settings.py`, `application/single_app/templates/admin_settings.html`, `application/single_app/app.py`, `application/single_app/config.py`, `functional_tests/test_idle_logout_timeout.py`)
+
 ### **(v0.239.001)**
 
 #### New Features

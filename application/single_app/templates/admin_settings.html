@@ -1424,6 +1424,28 @@
                             name="conversation_history_limit" value="{{ settings.conversation_history_limit }}">
                     </div>
                     <div class="mb-3">
+                        <label for="idle_timeout_minutes" class="form-label">Idle Logout Timeout (Minutes)</label>
+                        <input
+                            type="number"
+                            class="form-control"
+                            id="idle_timeout_minutes"
+                            name="idle_timeout_minutes"
+                            min="1"
+                            value="{{ settings.idle_timeout_minutes | default(30) }}">
+                        <small class="form-text text-muted">Users are logged out locally after this many minutes of inactivity.</small>
+                    </div>
+                    <div class="mb-3">
+                        <label for="idle_warning_minutes" class="form-label">Idle Warning Lead Time (Minutes)</label>
+                        <input
+                            type="number"
+                            class="form-control"
+                            id="idle_warning_minutes"
+                            name="idle_warning_minutes"
+                            min="0"
+                            value="{{ settings.idle_warning_minutes | default(28) }}">
+                        <small class="form-text text-muted">Show the warning modal this many minutes before automatic logout.</small>
+                    </div>
+                    <div class="mb-3">
                         <label for="default_system_prompt" class="form-label">Default System Prompt</label>
                         <textarea class="form-control" id="default_system_prompt" name="default_system_prompt"
                             rows="5">{{ settings.default_system_prompt }}</textarea>
