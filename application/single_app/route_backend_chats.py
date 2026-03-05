@@ -1893,6 +1893,7 @@ def register_route_backend_chats(app):
                 allowed_roles_in_history = ['user', 'assistant'] # Add 'system' if you PERSIST general system messages not related to augmentation
                 max_file_content_length_in_history = 50000 # Increased limit for all file content in history
                 max_tabular_content_length_in_history = 50000 # Same limit for tabular data consistency
+                chat_tabular_files = set()  # Track tabular files uploaded directly to chat
 
                 for message in recent_messages:
                     role = message.get('role')
@@ -1932,6 +1933,7 @@ def register_route_backend_chats(app):
 
                         # Tabular files stored in blob (enhanced citations enabled) - reference plugin
                         if is_table and file_content_source == 'blob':
+                            chat_tabular_files.add(filename)  # Track for mini SK analysis
                             conversation_history_for_api.append({
                                 'role': 'system',
                                 'content': f"[User uploaded a tabular data file named '{filename}'. "
@@ -2021,6 +2023,45 @@ def register_route_backend_chats(app):
                             })
 
                     # Ignored roles: 'safety', 'blocked', 'system' (if they are only for augmentation/summary)
+
+                # --- Mini SK analysis for tabular files uploaded directly to chat ---
+                if chat_tabular_files and settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
+                    chat_tabular_filenames_str = ", ".join(chat_tabular_files)
+                    log_event(
+                        f"[Chat Tabular SK] Detected {len(chat_tabular_files)} tabular file(s) uploaded to chat: {chat_tabular_filenames_str}",
+                        level=logging.INFO
+                    )
+
+                    chat_tabular_analysis = asyncio.run(run_tabular_sk_analysis(
+                        user_question=user_message,
+                        tabular_filenames=chat_tabular_files,
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        gpt_model=gpt_model,
+                        settings=settings,
+                        source_hint="chat",
+                    ))
+
+                    if chat_tabular_analysis:
+                        # Inject pre-computed analysis results as context
+                        conversation_history_for_api.append({
+                            'role': 'system',
+                            'content': (
+                                f"The following analysis was computed from the chat-uploaded tabular file(s) "
+                                f"{chat_tabular_filenames_str} using data analysis functions:\n\n"
+                                f"{chat_tabular_analysis}\n\n"
+                                f"Use these computed results to answer the user's question accurately."
+                            )
+                        })
+
+                        # Collect tool execution citations from SK tabular analysis
+                        chat_tabular_sk_citations = collect_tabular_sk_citations(user_id, conversation_id)
+                        if chat_tabular_sk_citations:
+                            agent_citations_list.extend(chat_tabular_sk_citations)
+
+                        debug_print(f"[Chat Tabular SK] Analysis injected, {len(chat_tabular_analysis)} chars")
+                    else:
+                        debug_print("[Chat Tabular SK] Analysis returned None, relying on existing file context messages")
 
                 # Ensure the very last message is the current user's message (it should be if fetched correctly)
                 if not conversation_history_for_api or conversation_history_for_api[-1]['role'] != 'user':
@@ -3684,15 +3725,108 @@ def register_route_backend_chats(app):
                             'content': aug_msg['content']
                         })
                     
-                    # Add recent messages
+                    # Add recent messages (with file role handling)
                     allowed_roles_in_history = ['user', 'assistant']
+                    max_file_content_length_in_history = 50000
+                    max_tabular_content_length_in_history = 50000
+                    chat_tabular_files = set()  # Track tabular files uploaded directly to chat
+
                     for message in recent_messages:
-                        if message.get('role') in allowed_roles_in_history:
+                        role = message.get('role')
+                        content = message.get('content', '')
+
+                        if role in allowed_roles_in_history:
                             conversation_history_for_api.append({
-                                'role': message['role'],
-                                'content': message.get('content', '')
+                                'role': role,
+                                'content': content
                             })
-                    
+                        elif role == 'file':
+                            filename = message.get('filename', 'uploaded_file')
+                            file_content = message.get('file_content', '')
+                            is_table = message.get('is_table', False)
+                            file_content_source = message.get('file_content_source', '')
+
+                            # Tabular files stored in blob - track for mini SK analysis
+                            if is_table and file_content_source == 'blob':
+                                chat_tabular_files.add(filename)
+                                conversation_history_for_api.append({
+                                    'role': 'system',
+                                    'content': (
+                                        f"[User uploaded a tabular data file named '{filename}'. "
+                                        f"The file is stored in blob storage and available for analysis. "
+                                        f"Use the tabular_processing plugin functions (list_tabular_files, "
+                                        f"describe_tabular_file, aggregate_column, filter_rows, "
+                                        f"query_tabular_data, group_by_aggregate) to analyze this data. "
+                                        f"The file source is 'chat'.]"
+                                    )
+                                })
+                            else:
+                                content_limit = (
+                                    max_tabular_content_length_in_history if is_table
+                                    else max_file_content_length_in_history
+                                )
+                                display_content = file_content[:content_limit]
+                                if len(file_content) > content_limit:
+                                    display_content += "..."
+
+                                if is_table:
+                                    conversation_history_for_api.append({
+                                        'role': 'system',
+                                        'content': (
+                                            f"[User uploaded a tabular data file named '{filename}'. "
+                                            f"This is CSV format data for analysis:\n{display_content}]\n"
+                                            f"This is complete tabular data in CSV format. You can perform "
+                                            f"calculations, analysis, and data operations on this dataset."
+                                        )
+                                    })
+                                else:
+                                    conversation_history_for_api.append({
+                                        'role': 'system',
+                                        'content': (
+                                            f"[User uploaded a file named '{filename}'. "
+                                            f"Content preview:\n{display_content}]\n"
+                                            f"Use this file context if relevant."
+                                        )
+                                    })
+
+                    # --- Mini SK analysis for tabular files uploaded directly to chat ---
+                    if chat_tabular_files and settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
+                        chat_tabular_filenames_str = ", ".join(chat_tabular_files)
+                        log_event(
+                            f"[Chat Tabular SK] Streaming: Detected {len(chat_tabular_files)} tabular file(s) uploaded to chat: {chat_tabular_filenames_str}",
+                            level=logging.INFO
+                        )
+
+                        chat_tabular_analysis = asyncio.run(run_tabular_sk_analysis(
+                            user_question=user_message,
+                            tabular_filenames=chat_tabular_files,
+                            user_id=user_id,
+                            conversation_id=conversation_id,
+                            gpt_model=gpt_model,
+                            settings=settings,
+                            source_hint="chat",
+                        ))
+
+                        if chat_tabular_analysis:
+                            conversation_history_for_api.append({
+                                'role': 'system',
+                                'content': (
+                                    f"The following analysis was computed from the chat-uploaded tabular file(s) "
+                                    f"{chat_tabular_filenames_str} using data analysis functions:\n\n"
+                                    f"{chat_tabular_analysis}\n\n"
+                                    f"Use these computed results to answer the user's question accurately."
+                                )
+                            })
+
+                            # Collect tool execution citations
+                            chat_tabular_sk_citations = collect_tabular_sk_citations(user_id, conversation_id)
+                            if chat_tabular_sk_citations:
+                                agent_citations_list.extend(chat_tabular_sk_citations)
+
+                            debug_print(f"[Chat Tabular SK] Streaming: Analysis injected, {len(chat_tabular_analysis)} chars")
+                        else:
+                            debug_print("[Chat Tabular SK] Streaming: Analysis returned None, relying on existing file context")
+
                 except Exception as e:
                     yield f"data: {json.dumps({'error': f'History error: {str(e)}'})}\n\n"
                     return
@@ -3827,7 +3961,6 @@ def register_route_backend_chats(app):
                             return chunks, usage_data
                         
                         # Execute async streaming
-                        import asyncio
                         try:
                             # Try to get existing event loop
                             loop = asyncio.get_event_loop()
