@@ -40,6 +40,11 @@ from functions_personal_agents import get_personal_agents, ensure_migration_comp
 from semantic_kernel_plugins.plugin_loader import discover_plugins
 from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
 import app_settings_cache
+try:
+    from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+except ImportError:
+    DefaultAzureCredential = None
+    get_bearer_token_provider = None
 
 
 
@@ -295,26 +300,32 @@ def resolve_agent_config(agent, settings):
         debug_print(f"[SK Loader] Using user APIM with global fallback")
         merged = merge_fields(u_apim, g_apim if global_apim_enabled and any_filled(*g_apim) else (None, None, None, None))
         endpoint, key, deployment, api_version = merged
+        endpoint_is_user_supplied = True
     # 2. User APIM enabled but no user APIM values, and global APIM enabled and present: use global APIM
     elif user_apim_enabled and global_apim_enabled and any_filled(*g_apim):
         debug_print(f"[SK Loader] Using global APIM (user APIM enabled but not present)")
         endpoint, key, deployment, api_version = g_apim
+        endpoint_is_user_supplied = False
     # 3. User GPT config is FULLY filled: use user GPT (all fields filled)
     elif all_filled(*u_gpt) and can_use_agent_endpoints:
         debug_print(f"[SK Loader] Using agent GPT config (all fields filled)")
         endpoint, key, deployment, api_version = u_gpt
+        endpoint_is_user_supplied = True
     # 4. User GPT config is PARTIALLY filled, global APIM is NOT enabled: merge user GPT with global GPT
     elif any_filled(*u_gpt) and not global_apim_enabled and can_use_agent_endpoints:
         debug_print(f"[SK Loader] Using agent GPT config (partially filled, merging with global GPT, global APIM not enabled)")
         endpoint, key, deployment, api_version = merge_fields(u_gpt, g_gpt)
+        endpoint_is_user_supplied = True
     # 5. Global APIM enabled and present: use global APIM
     elif global_apim_enabled and any_filled(*g_apim):
         debug_print(f"[SK Loader] Using global APIM (fallback)")
         endpoint, key, deployment, api_version = g_apim
+        endpoint_is_user_supplied = False
     # 6. Fallback to global GPT config
     else:
         debug_print(f"[SK Loader] Using global GPT config (fallback)")
         endpoint, key, deployment, api_version = g_gpt
+        endpoint_is_user_supplied = False
 
     result = {
         "endpoint": endpoint,
@@ -337,6 +348,9 @@ def resolve_agent_config(agent, settings):
         "max_completion_tokens": agent.get("max_completion_tokens", -1),  # -1 meant use model default determined by the service, 35-trubo is 4096, 4o is 16384, 4.1 is at least 32768
         "agent_type": agent_type or "local",
         "other_settings": other_settings,
+        # Security: track whether the endpoint was user/agent-supplied vs system-controlled.
+        # Managed identity must NOT be used with user-supplied endpoints to prevent token theft.
+        "endpoint_is_user_supplied": endpoint_is_user_supplied,
     }
 
     print(f"[SK Loader] Final resolved config for {agent.get('name')}: endpoint={bool(endpoint)}, key={bool(key)}, deployment={deployment}")
@@ -721,6 +735,20 @@ def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="gl
         print(f"[SK Loader] Error loading agent-specific plugins: {e}")
         log_event(f"[SK Loader] Error loading agent-specific plugins: {e}", level=logging.ERROR, exceptionTraceback=True)
 
+def _build_mi_token_provider(endpoint):
+    """Build a bearer token provider for managed identity auth.
+
+    Selects the correct Azure Cognitive Services scope based on whether the
+    endpoint is in the US Government cloud (.azure.us) or the commercial cloud.
+    """
+    scope = (
+        "https://cognitiveservices.azure.us/.default"
+        if ".azure.us" in (endpoint or "")
+        else "https://cognitiveservices.azure.com/.default"
+    )
+    return get_bearer_token_provider(DefaultAzureCredential(), scope)
+
+
 def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis_client=None, mode_label="global"):
     """
     DRY helper to load a single agent (default agent) for the kernel.
@@ -758,7 +786,15 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
 
     log_event(f"[SK Loader] Agent config resolved for {agent_cfg.get('name')} - endpoint: {bool(agent_config.get('endpoint'))}, key: {bool(agent_config.get('key'))}, deployment: {agent_config.get('deployment')}, max_completion_tokens: {agent_config.get('max_completion_tokens')}", level=logging.INFO)
     
-    if AzureChatCompletion and agent_config["endpoint"] and agent_config["key"] and agent_config["deployment"]:
+    auth_type = settings.get('azure_openai_gpt_authentication_type', '')
+    use_managed_identity = (
+        auth_type == 'managed_identity'
+        and not apim_enabled
+        and not agent_config.get("key")
+        and bool(DefaultAzureCredential)
+        and not agent_config.get("endpoint_is_user_supplied", False)
+    )
+    if AzureChatCompletion and agent_config["endpoint"] and (agent_config["key"] or use_managed_identity) and agent_config["deployment"]:
         print(f"[SK Loader] Azure config valid for {agent_config['name']}, creating chat service...")
         if apim_enabled:
             log_event(
@@ -778,6 +814,24 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 api_key=agent_config["key"],
                 api_version=agent_config["api_version"],
                 # default_headers={"Ocp-Apim-Subscription-Key": agent_config["key"]}
+            )
+        elif use_managed_identity:
+            log_event(
+                f"[SK Loader] Initializing Managed Identity AzureChatCompletion for agent: {agent_config['name']} ({mode_label})",
+                {
+                    "aoai_endpoint": agent_config["endpoint"],
+                    "aoai_deployment": agent_config["deployment"],
+                    "agent_name": agent_config["name"]
+                },
+                level=logging.INFO
+            )
+            _token_provider = _build_mi_token_provider(agent_config.get("endpoint"))
+            chat_service = AzureChatCompletion(
+                service_id=service_id,
+                deployment_name=agent_config["deployment"],
+                endpoint=agent_config["endpoint"],
+                ad_token_provider=_token_provider,
+                api_version=agent_config["api_version"],
             )
         else:
             log_event(
@@ -1521,7 +1575,16 @@ def load_semantic_kernel(kernel: Kernel, settings):
             agent_config = resolve_agent_config(agent_cfg, settings)
             chat_service = None
             service_id = f"aoai-chat-{agent_config['name'].replace(' ', '').lower()}"
-            if AzureChatCompletion and agent_config["endpoint"] and agent_config["key"] and agent_config["deployment"]:
+            _ma_auth_type = settings.get('azure_openai_gpt_authentication_type', '')
+            _ma_apim_enabled = settings.get("enable_gpt_apim", False)
+            _ma_use_mi = (
+                _ma_auth_type == 'managed_identity'
+                and not _ma_apim_enabled
+                and not agent_config.get("key")
+                and bool(DefaultAzureCredential)
+                and not agent_config.get("endpoint_is_user_supplied", False)
+            )
+            if AzureChatCompletion and agent_config["endpoint"] and (agent_config["key"] or _ma_use_mi) and agent_config["deployment"]:
                 try:
                     try:
                         chat_service = kernel.get_service(service_id=service_id)
@@ -1547,6 +1610,15 @@ def load_semantic_kernel(kernel: Kernel, settings):
                                 api_key=agent_config["key"],
                                 api_version=agent_config["api_version"],
                                 # default_headers={"Ocp-Apim-Subscription-Key": agent_config["key"]}
+                            )
+                        elif _ma_use_mi:
+                            _token_provider = _build_mi_token_provider(agent_config.get("endpoint"))
+                            chat_service = AzureChatCompletion(
+                                service_id=service_id,
+                                deployment_name=agent_config["deployment"],
+                                endpoint=agent_config["endpoint"],
+                                ad_token_provider=_token_provider,
+                                api_version=agent_config["api_version"],
                             )
                         else:
                             chat_service = AzureChatCompletion(
@@ -1631,7 +1703,16 @@ def load_semantic_kernel(kernel: Kernel, settings):
                 orchestrator_config = resolve_agent_config(orchestrator_cfg, settings)
                 service_id = f"aoai-chat-{orchestrator_config['name']}"
                 chat_service = None
-                if AzureChatCompletion and orchestrator_config["endpoint"] and orchestrator_config["key"] and orchestrator_config["deployment"]:
+                _orch_auth_type = settings.get('azure_openai_gpt_authentication_type', '')
+                _orch_apim_enabled = settings.get("enable_gpt_apim", False)
+                _orch_use_mi = (
+                    _orch_auth_type == 'managed_identity'
+                    and not _orch_apim_enabled
+                    and not orchestrator_config.get("key")
+                    and bool(DefaultAzureCredential)
+                    and not orchestrator_config.get("endpoint_is_user_supplied", False)
+                )
+                if AzureChatCompletion and orchestrator_config["endpoint"] and (orchestrator_config["key"] or _orch_use_mi) and orchestrator_config["deployment"]:
                     try:
                         chat_service = kernel.get_service(service_id=service_id)
                     except Exception:
@@ -1656,6 +1737,15 @@ def load_semantic_kernel(kernel: Kernel, settings):
                                 api_key=orchestrator_config["key"],
                                 api_version=orchestrator_config["api_version"],
                                 # default_headers={"Ocp-Apim-Subscription-Key": orchestrator_config["key"]}
+                            )
+                        elif _orch_use_mi:
+                            _token_provider = _build_mi_token_provider(orchestrator_config.get("endpoint"))
+                            chat_service = AzureChatCompletion(
+                                service_id=service_id,
+                                deployment_name=orchestrator_config["deployment"],
+                                endpoint=orchestrator_config["endpoint"],
+                                ad_token_provider=_token_provider,
+                                api_version=orchestrator_config["api_version"],
                             )
                         else:
                             chat_service = AzureChatCompletion(
