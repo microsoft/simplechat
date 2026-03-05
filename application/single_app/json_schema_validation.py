@@ -43,9 +43,10 @@ def validate_plugin(plugin):
         plugin_copy['endpoint'] = f'sql://{plugin_type}'
     
     # First run schema validation
-    # Use RefResolver so $ref pointers (e.g. #/definitions/AuthType) resolve against the full schema
-    resolver = RefResolver.from_schema(schema)
-    validator = Draft7Validator(schema['definitions']['Plugin'], resolver=resolver)
+    if schema.get("$ref") and schema.get("definitions"):
+        validator = Draft7Validator(schema, resolver=RefResolver.from_schema(schema))
+    else:
+        validator = Draft7Validator(schema)
     errors = sorted(validator.iter_errors(plugin_copy), key=lambda e: e.path)
     if errors:
         return '; '.join([f"{plugin.get('name', '<Unknown>')}: {e.message}" for e in errors])
