@@ -21,14 +21,18 @@ def register_route_frontend_chats(app):
     @user_required
     def chats():
         user_id = get_current_user_id()
+        if not user_id:
+            return redirect(url_for('login'))
+
         settings = get_settings()
         user_settings = get_user_settings(user_id)
+        user_settings_dict = user_settings.get("settings", {}) if isinstance(user_settings, dict) else {}
         public_settings = sanitize_settings_for_user(settings)
         enable_user_feedback = public_settings.get("enable_user_feedback", False)
         enable_enhanced_citations = public_settings.get("enable_enhanced_citations", False)
         enable_document_classification = public_settings.get("enable_document_classification", False)
         enable_extract_meta_data = public_settings.get("enable_extract_meta_data", False)
-        active_group_id = user_settings["settings"].get("activeGroupOid", "")
+        active_group_id = user_settings_dict.get("activeGroupOid", "")
         active_group_name = ""
         if active_group_id:
             group_doc = find_group_by_id(active_group_id)
@@ -36,12 +40,9 @@ def register_route_frontend_chats(app):
                 active_group_name = group_doc.get("name", "")
         
         # Get active public workspace ID from user settings
-        active_public_workspace_id = user_settings["settings"].get("activePublicWorkspaceOid", "")
+        active_public_workspace_id = user_settings_dict.get("activePublicWorkspaceOid", "")
         
         categories_list = public_settings.get("document_classification_categories","")
-
-        if not user_id:
-            return redirect(url_for('login'))
 
         # Get user display name from user settings
         user_display_name = user_settings.get('display_name', '')

@@ -246,6 +246,9 @@
                     <button class="btn btn-danger btn-sm me-2" id="delete-selected-btn" style="display: none;" title="Delete selected conversations">
                         <i class="bi bi-trash"></i>
                     </button>
+                    <button class="btn btn-info btn-sm me-2" id="export-selected-btn" style="display: none;" title="Export selected conversations">
+                        <i class="bi bi-download"></i>
+                    </button>
                     <!-- Dock toggle button removed: sidebar is always docked -->
                     <button class="btn btn-primary btn-sm ms-2" id="new-conversation-btn" title="Start a new chat">
                         <i class="bi bi-plus-lg"></i>
@@ -948,6 +951,38 @@
     </div>
 </div>
 
+<!-- Export Wizard Modal -->
+<div class="modal fade" id="export-wizard-modal" tabindex="-1" aria-labelledby="export-wizard-modal-label" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="export-wizard-modal-label">
+                    <i class="bi bi-download me-2"></i>Export Conversations
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Step indicators -->
+                <div id="export-steps-container" class="d-flex justify-content-center mb-4">
+                    <!-- Populated dynamically by chat-export.js -->
+                </div>
+                <!-- Step content -->
+                <div id="export-wizard-body">
+                    <!-- Populated dynamically by chat-export.js -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" id="export-prev-btn" style="display: none;">
+                    <i class="bi bi-arrow-left me-1"></i>Previous
+                </button>
+                <button type="button" class="btn btn-primary" id="export-next-btn">
+                    Next<i class="bi bi-arrow-right ms-1"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="toast-container position-fixed top-0 end-0 p-3" id="toast-container"></div>
 
 <!-- Scope Lock/Unlock Modal (dual-mode: content set dynamically by JS) -->
@@ -1038,6 +1073,7 @@
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-search-modal.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-reasoning.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-retry.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/chat/chat-export.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-onload.js') }}"></script>
 {% if settings.enable_semantic_kernel %}
     <script type="module" src="{{ url_for('static', filename='js/chat/chat-agents.js') }}"></script>

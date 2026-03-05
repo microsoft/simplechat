@@ -43,5 +43,5 @@ flask_session
 **/sample_pie.csv
 **/sample_stacked_column.csv
 tmp**cwd
-tmp_images
+/tmp_images
 nul

@@ -304,6 +304,22 @@ body.sidebar-nav-enabled.has-classification-banner .container-fluid {
 #conversations-actions {
   opacity: 1;
   transition: opacity 0.2s ease;
+  flex-shrink: 0;
+  gap: 2px;
+}
+
+/* Compact action buttons in selection mode */
+#conversations-actions .btn {
+  padding: 2px 4px !important;
+  font-size: 0.7rem !important;
+  margin-right: 0 !important;
+  line-height: 1;
+}
+
+/* Reduce toggle row padding when selection actions are visible */
+#conversations-toggle.selection-active {
+  padding-left: 0.5rem !important;
+  padding-right: 0.25rem !important;
 }
 
 #sidebar-delete-selected-btn {
