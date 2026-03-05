@@ -1,6 +1,4 @@
-// static/js/public_workspace.js
-import { showToast } from "./chat/chat-toast.js";
-
+// public_workspace.js
 'use strict';
 
 // --- Global State ---

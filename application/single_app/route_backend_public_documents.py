@@ -196,8 +196,8 @@ def register_route_backend_public_documents(app):
             param_count += 1
 
         if tags_filter:
-            from functions_documents import normalize_tag
-            tags_list = [normalize_tag(t.strip()) for t in tags_filter.split(',') if t.strip()]
+            from functions_documents import sanitize_tags_for_filter
+            tags_list = sanitize_tags_for_filter(tags_filter)
             if tags_list:
                 for idx, tag in enumerate(tags_list):
                     param_name = f"@tag_{param_count}_{idx}"

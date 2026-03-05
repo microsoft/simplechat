@@ -551,15 +551,22 @@ def get_user_settings(user_id):
     from flask import session
     try:
         doc = cosmos_user_settings_container.read_item(item=user_id, partition_key=user_id)
+        updated = False
+
         # Ensure the settings key exists for consistency downstream
-        if 'settings' not in doc:
+        if 'settings' not in doc or not isinstance(doc.get('settings'), dict):
+            previous_type = type(doc.get('settings')).__name__ if 'settings' in doc else 'missing'
             doc['settings'] = {}
+            updated = True
+            log_event("[UserSettings] Malformed settings repaired", {
+                "user_id": user_id,
+                "previous_type": previous_type,
+            })
         
         # Try to update email/display_name if missing and available in session
         user = session.get("user", {})
         email = user.get("preferred_username") or user.get("email")
         display_name = user.get("name")
-        updated = False
         if email and doc.get("email") != email:
             doc["email"] = email
             updated = True
