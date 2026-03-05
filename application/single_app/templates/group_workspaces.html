@@ -324,22 +324,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
       </button>
     </li>
     {% endif %}
-    {% if app_settings.enable_retention_policy_group %}
-    <li class="nav-item d-none" role="presentation" id="group-settings-tab-nav">
-      <button
-        class="nav-link"
-        id="group-settings-tab-btn"
-        data-bs-toggle="tab"
-        data-bs-target="#group-settings-tab"
-        type="button"
-        role="tab"
-        aria-controls="group-settings-tab"
-        aria-selected="false"
-      >
-        Settings
-      </button>
-    </li>
-    {% endif %}
   </ul>
 
   <!-- Tab Panes -->
@@ -2481,7 +2465,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
     // Update UI elements dependent on role (applies to both tabs potentially)
     updateRoleDisplay();
     updateGroupPromptsRoleUI(); // This is specific to prompts tab UI elements
-    loadGroupRetentionSettings(); // Load retention settings
   }
 
   function updateRoleDisplay() {
@@ -2512,13 +2495,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
     if (uploadSection)
       uploadSection.style.display = showUpload ? "block" : "none";
     if (uploadHr) uploadHr.style.display = showUpload ? "block" : "none";
-
-    // Control visibility of Settings tab (only for Owners and Admins)
-    const settingsTabNav = document.getElementById('group-settings-tab-nav');
-    const canManageSettings = ['Owner', 'Admin'].includes(userRoleInActiveGroup);
-    if (settingsTabNav) {
-      settingsTabNav.classList.toggle('d-none', !canManageSettings);
-    }
 
     notifyGroupWorkspaceContext();
   }
