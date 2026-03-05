@@ -1,0 +1,195 @@
+openapi: 3.0.0
+info:
+  title: ServiceNow Asset Update API
+  description: ServiceNow REST API for updating existing assets
+  version: 1.0.0
+  contact:
+    name: ServiceNow API Support
+    url: https://developer.servicenow.com
+servers:
+  - url: https://YOUR-INSTANCE.service-now.com/api/now
+    description: ServiceNow Instance
+security:
+  - bearerAuth: []
+components:
+  schemas:
+    AssetUpdateRequest:
+      properties:
+        assigned_to:
+          description: Update assigned user — MUST be the exact display name of an existing sys_user record in ServiceNow. If the name does not match, ServiceNow will silently blank the field.
+          example: Bob Johnson
+          type: string
+        assignment_group:
+          description: Update assignment group
+          example: IT Support
+          type: string
+        comments:
+          description: Update or add comments
+          example: Reassigned to Engineering team
+          type: string
+        cost:
+          description: Update cost
+          example: '1800.00'
+          type: string
+        department:
+          description: Update department
+          example: Engineering
+          type: string
+        install_status:
+          description: 'Update status: 1=In use, 6=In stock, 7=Retired'
+          enum:
+            - '1'
+            - '6'
+            - '7'
+          example: '1'
+          type: string
+        location:
+          description: Update location — MUST be the exact display name of an existing location record in ServiceNow cmn_location table. If the name does not match an existing record, ServiceNow will silently blank the field.
+          example: 8306 Mills Drive, Miami,FL
+          type: string
+        managed_by:
+          description: Update manager
+          example: New Manager
+          type: string
+        owned_by:
+          description: Update owner
+          example: Engineering Department
+          type: string
+        serial_number:
+          description: Update serial number
+          example: SN999888777
+          type: string
+        substatus:
+          description: Update substatus
+          example: in_use
+          type: string
+        warranty_expiration:
+          description: Update warranty expiration (YYYY-MM-DD)
+          example: '2028-01-15'
+          format: date
+          type: string
+      type: object
+    AssetUpdateResponse:
+      properties:
+        result:
+          properties:
+            asset_tag:
+              description: Asset tag
+              type: string
+            sys_id:
+              description: Asset sys_id
+              type: string
+            sys_updated_on:
+              description: Last update timestamp
+              format: date-time
+              type: string
+          type: object
+      type: object
+  securitySchemes:
+    bearerAuth:
+      bearerFormat: JWT
+      description: OAuth 2.0 Bearer Token authentication. Obtain token via ServiceNow OAuth endpoint using Resource Owner Password Credentials grant.
+      scheme: bearer
+      type: http
+paths:
+  /table/alm_asset/{sys_id}:
+    patch:
+      description: |-
+        Update asset fields
+
+        ⚠️ CRITICAL: YOU MUST QUERY FOR sys_id FIRST - DO NOT USE CACHED VALUES ⚠️
+
+        This operation requires the sys_id (NOT the asset tag).
+        - sys_id is a unique identifier like "32ac0eaec326361067d91a2ed40131a7"
+        - Asset tag is like "P1000234"
+
+        REQUIRED EXECUTION PATTERN:
+
+        When user asks to update asset P1000234:
+
+        CALL 1 - Query to Get sys_id:
+        1. Call queryAssets(sysparm_query="asset_tag=P1000234", sysparm_fields="sys_id,asset_tag")
+        2. Extract sys_id from result
+        3. Verify you got exactly 1 result
+
+        CALL 2 - Update with Retrieved sys_id:
+        1. Call updateAsset(sys_id="32ac0eaec326361067d91a2ed40131a7", ...fields)
+        2. This will succeed because you have the correct sys_id
+
+        Updatable Fields:
+        - assigned_to: User assignment (MUST match exact existing sys_user display name)
+        - assignment_group: Group assignment (MUST match exact existing group name)
+        - location: Physical location (MUST match exact existing cmn_location record name; freeform strings silently blank the field)
+        - install_status: Status (1=In use, 6=In stock, 7=Retired)
+        - substatus: Substatus
+        - serial_number: Serial number
+        - warranty_expiration: Warranty date
+        - cost: Asset cost
+        - department: Department
+        - managed_by: Manager
+        - owned_by: Owner
+        - comments: Notes
+
+        NOTE: display_name is computed (read-only) and cannot be updated via the API.
+      operationId: updateAsset
+      parameters:
+        - description: The unique sys_id of the asset to update (obtain via queryAssets first)
+          example: 32ac0eaec326361067d91a2ed40131a7
+          in: path
+          name: sys_id
+          required: true
+          schema:
+            type: string
+        - description: MUST BE true. Tells ServiceNow to accept display name strings for reference fields (location, assigned_to, department, etc.) instead of requiring sys_ids. Without this, passing a location name string will silently blank the field.
+          in: query
+          name: sysparm_input_display_value
+          required: true
+          schema:
+            default: true
+            type: boolean
+      requestBody:
+        content:
+          application/json:
+            examples:
+              reassign:
+                summary: Reassign asset to new user
+                value:
+                  assigned_to: Bob Johnson
+                  comments: Reassigned to Bob
+                  install_status: '1'
+              relocate:
+                summary: Move asset to new location
+                value:
+                  comments: Moved to new office
+                  location: Building B, Floor 5
+              retire:
+                summary: Retire asset
+                value:
+                  assigned_to: ''
+                  comments: Asset retired - end of life
+                  install_status: '7'
+              update_warranty:
+                summary: Extend warranty
+                value:
+                  comments: Warranty extended
+                  warranty_expiration: '2028-12-31'
+            schema:
+              $ref: '#/components/schemas/AssetUpdateRequest'
+        description: Fields to update (only include fields you want to change)
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssetUpdateResponse'
+          description: Asset updated successfully
+        '400':
+          description: Bad Request - Invalid field values
+        '401':
+          description: Unauthorized - Invalid or missing authentication token
+        '404':
+          description: Asset not found - Invalid sys_id
+      security:
+        - bearerAuth: []
+      summary: Update asset

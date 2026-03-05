@@ -1,0 +1,229 @@
+openapi: 3.0.0
+info:
+  title: ServiceNow Asset Query API
+  description: ServiceNow REST API for querying assets and retrieving asset details
+  version: 1.0.0
+  contact:
+    name: ServiceNow API Support
+    url: https://developer.servicenow.com
+servers:
+  - url: https://YOUR-INSTANCE.service-now.com/api/now
+    description: ServiceNow Instance
+security:
+  - bearerAuth: []
+components:
+  schemas:
+    Asset:
+      properties:
+        asset_tag:
+          description: Asset tag/identifier
+          example: P1000234
+          type: string
+        assigned_to:
+          description: User assigned to the asset
+          example: John Doe
+          type: string
+        assignment_group:
+          description: Assignment group
+          example: IT Support
+          type: string
+        cost:
+          description: Asset cost
+          example: '1200.00'
+          type: string
+        display_name:
+          description: Display name of the asset
+          example: John Doe's Laptop
+          type: string
+        install_status:
+          description: 'Installation status: 1=In use, 6=In stock, 7=Retired'
+          example: '1'
+          type: string
+        location:
+          description: Physical location
+          example: Building A, Floor 3
+          type: string
+        model:
+          description: Asset model
+          example: Dell Latitude 5420
+          type: string
+        model_category:
+          description: Model category
+          example: Computer
+          type: string
+        purchase_date:
+          description: Purchase date
+          example: '2023-01-15'
+          format: date
+          type: string
+        serial_number:
+          description: Serial number
+          example: SN123456789
+          type: string
+        substatus:
+          description: Substatus of the asset
+          example: available
+          type: string
+        sys_created_on:
+          description: Creation timestamp
+          example: '2023-01-15T10:30:00'
+          format: date-time
+          type: string
+        sys_id:
+          description: Unique system identifier
+          example: abc123xyz789
+          type: string
+        sys_updated_on:
+          description: Last update timestamp
+          example: '2023-06-20T14:22:00'
+          format: date-time
+          type: string
+        warranty_expiration:
+          description: Warranty expiration date
+          example: '2026-01-15'
+          format: date
+          type: string
+      type: object
+  securitySchemes:
+    bearerAuth:
+      bearerFormat: JWT
+      description: OAuth 2.0 Bearer Token authentication. Obtain token via ServiceNow OAuth endpoint using Resource Owner Password Credentials grant.
+      scheme: bearer
+      type: http
+paths:
+  /table/alm_asset:
+    get:
+      description: |-
+        Retrieve assets from ServiceNow based on query parameters and filters
+
+        Parameters:
+        - sysparm_query (optional): Encoded query string for filtering results. Examples:
+          - By asset tag: asset_tag=P1000234
+          - By assigned user: assigned_to.name=John Doe
+          - By model: model.display_name=Dell Latitude
+          - By install status: install_status=1 (1=In use, 6=In stock, 7=Retired)
+          - Combined: install_status=1^assigned_to.name=John Doe
+
+        - sysparm_limit (optional): Maximum number of records to return
+        - sysparm_offset (optional): Number of records to skip for pagination
+        - sysparm_fields (optional): Comma-separated list of fields to return.
+          CRITICAL: Always include sys_id field - it's required for follow-up queries.
+          DEFAULT FIELDS TO ALWAYS REQUEST: sys_id,asset_tag,display_name,model_category,serial_number,assigned_to,location,install_status,substatus,asset_function,sys_class_name
+
+        - sysparm_display_value (required): ALWAYS set to true. Without this, reference fields like assigned_to and location return sys_id links instead of human-readable names. NEVER omit this parameter.
+      operationId: queryAssets
+      parameters:
+        - description: Encoded query string for filtering
+          example: install_status=1
+          in: query
+          name: sysparm_query
+          required: false
+          schema:
+            type: string
+        - description: Maximum number of records to return
+          example: 50
+          in: query
+          name: sysparm_limit
+          required: false
+          schema:
+            type: integer
+        - description: Number of records to skip for pagination
+          example: 0
+          in: query
+          name: sysparm_offset
+          required: false
+          schema:
+            type: integer
+        - description: 'Comma-separated list of fields to return. Always include sys_id. Default set: sys_id,asset_tag,display_name,model_category,serial_number,assigned_to,location,install_status,substatus,asset_function,sys_class_name'
+          example: sys_id,asset_tag,display_name,model_category,serial_number,assigned_to,location,install_status,substatus,asset_function,sys_class_name
+          in: query
+          name: sysparm_fields
+          required: false
+          schema:
+            type: string
+        - description: MUST be true. Makes reference fields (assigned_to, location, model_category, etc.) return display names instead of sys_id links. Without this, those fields return unusable link objects.
+          example: true
+          in: query
+          name: sysparm_display_value
+          required: false
+          schema:
+            default: true
+            type: boolean
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  result:
+                    items:
+                      $ref: '#/components/schemas/Asset'
+                    type: array
+                type: object
+          description: Assets retrieved successfully
+        '400':
+          description: Bad Request - Invalid query parameters
+        '401':
+          description: Unauthorized - Invalid or missing authentication token
+      security:
+        - bearerAuth: []
+      summary: Query assets
+  /table/alm_asset/{sys_id}:
+    get:
+      description: |-
+        Retrieve details of a specific asset.
+
+        CRITICAL: This operation requires the sys_id (NOT the asset tag).
+        - sys_id is a unique identifier like "9d385017c611228701d22104cc95c371"
+        - Asset tag is like "P1000234"
+
+        When user asks about an asset by tag:
+        1. First use queryAssets with sysparm_query=asset_tag=P1000234
+        2. Get the sys_id from the result
+        3. Then call getAssetDetails with that sys_id
+
+        Parameters:
+        - sys_id (required): The sys_id of the asset
+        - sysparm_fields (optional): Comma-separated list of fields to return
+        - sysparm_display_value (optional): Return display values
+      operationId: getAssetDetails
+      parameters:
+        - description: The unique sys_id of the asset
+          example: 9d385017c611228701d22104cc95c371
+          in: path
+          name: sys_id
+          required: true
+          schema:
+            type: string
+        - description: Comma-separated list of fields to return
+          example: sys_id,asset_tag,display_name,model_category,serial_number,assigned_to,location,install_status,substatus,asset_function,sys_class_name,purchase_date,warranty_expiration,cost
+          in: query
+          name: sysparm_fields
+          required: false
+          schema:
+            type: string
+        - description: MUST be true. Makes reference fields (assigned_to, location, model_category, etc.) return display names instead of sys_id links.
+          example: true
+          in: query
+          name: sysparm_display_value
+          required: false
+          schema:
+            default: true
+            type: boolean
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  result:
+                    $ref: '#/components/schemas/Asset'
+                type: object
+          description: Asset details retrieved successfully
+        '401':
+          description: Unauthorized
+        '404':
+          description: Asset not found
+      security:
+        - bearerAuth: []
+      summary: Get asset details

@@ -17,7 +17,7 @@ info:
 
 servers:
   - url: https://YOUR-INSTANCE.service-now.com
-    description: ServiceNow instance (replace YOUR-INSTANCE with your instance name)
+    description: ServiceNow Instance
 
 security:
   - bearerAuth: []

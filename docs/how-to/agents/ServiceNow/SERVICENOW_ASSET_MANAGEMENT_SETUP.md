@@ -118,7 +118,7 @@ When creating each action (query, create, update, delete), use the same authenti
 **Description:** `Query assets and retrieve asset details from ServiceNow`  
 **Type:** `openapi`
 
-**OpenAPI Specification:** See [servicenow_query_assets_openapi.json](servicenow_query_assets_openapi.json)
+**OpenAPI Specification:** See [sample_servicenow_query_assets_openapi.yaml](open_api_specs/sample_servicenow_query_assets_openapi.yaml)
 
 **Key Operations:**
 - `queryAssets` - Search and filter assets with query parameters
@@ -139,7 +139,7 @@ When creating each action (query, create, update, delete), use the same authenti
 **Description:** `Create new assets in ServiceNow`  
 **Type:** `openapi`
 
-**OpenAPI Specification:** See [servicenow_create_asset_openapi.json](servicenow_create_asset_openapi.json)
+**OpenAPI Specification:** See [sample_servicenow_create_asset_openapi.yaml](open_api_specs/sample_servicenow_create_asset_openapi.yaml)
 
 **Key Operation:**
 - `createAsset` - Create new asset with required fields (asset_tag, display_name)
@@ -161,7 +161,7 @@ When creating each action (query, create, update, delete), use the same authenti
 **Description:** `Update existing assets in ServiceNow`  
 **Type:** `openapi`
 
-**OpenAPI Specification:** See [servicenow_update_asset_openapi.json](servicenow_update_asset_openapi.json)
+**OpenAPI Specification:** See [sample_servicenow_update_asset_openapi.yaml](open_api_specs/sample_servicenow_update_asset_openapi.yaml)
 
 **Key Operation:**
 - `updateAsset` - Update asset fields using PATCH method
@@ -181,7 +181,7 @@ When creating each action (query, create, update, delete), use the same authenti
 **Description:** `Delete assets from ServiceNow`  
 **Type:** `openapi`
 
-**OpenAPI Specification:** See [servicenow_delete_asset_openapi.json](servicenow_delete_asset_openapi.json)
+**OpenAPI Specification:** See [sample_servicenow_delete_asset_openapi.yaml](open_api_specs/sample_servicenow_delete_asset_openapi.yaml)
 
 **Key Operation:**
 - `deleteAsset` - Permanently delete an asset from ServiceNow

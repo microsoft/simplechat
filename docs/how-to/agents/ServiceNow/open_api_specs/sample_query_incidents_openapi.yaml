@@ -303,113 +303,49 @@ paths:
 components:
   securitySchemes:
     bearerAuth:
-      type: http
-      scheme: bearer
       bearerFormat: JWT
       description: OAuth 2.0 Bearer Token authentication. Obtain token via ServiceNow OAuth endpoint using Resource Owner Password Credentials grant.
+      scheme: bearer
+      type: http
 
   schemas:
     Incident:
       type: object
       properties:
-        sys_id:
+        assigned_to:
           type: string
-          description: Unique system identifier (required for getIncidentDetails calls)
-          example: "9d385017c611228701d22104cc95c371"
-
-        number:
-          type: string
-          description: Incident number
-          example: "INC0000018"
-
-        short_description:
-          type: string
-          description: Brief summary of the incident
-          example: "Sales forecast spreadsheet is READ ONLY"
-
-        description:
-          type: string
-          description: Detailed description of the incident
-          example: "Spreadsheet opened by Finance team shows as read-only"
-
-        caller_id:
-          type: string
-          description: User who reported the incident (display name when sysparm_display_value=true)
-          example: "Taylor Vreeland"
-
-        priority:
-          type: string
-          description: "Priority: 1=Critical, 2=High, 3=Moderate, 4=Low, 5=Planning"
-          example: "1 - Critical"
-
-        urgency:
-          type: string
-          description: "Urgency: 1=High, 2=Medium, 3=Low"
-          example: "1"
-
-        impact:
-          type: string
-          description: "Impact: 1=High, 2=Medium, 3=Low"
-          example: "2"
-
-        state:
-          type: string
-          description: "State: 1=New, 2=In Progress, 3=On Hold, 6=Resolved, 7=Closed, 8=Canceled"
-          example: "In Progress"
-
-        category:
-          type: string
-          description: Incident category
-          example: "Email"
-
-        subcategory:
-          type: string
-          description: Incident subcategory
-          example: "Server"
-
-        business_service:
-          type: string
-          description: Business service affected (display name when sysparm_display_value=true)
-          example: ""
+          description: Assigned user (display name when sysparm_display_value=true)
+          example: "ITIL User"
 
         assignment_group:
           type: string
           description: Assignment group (display name when sysparm_display_value=true)
           example: "IT Support"
 
-        assigned_to:
+        business_duration:
           type: string
-          description: Assigned user (display name when sysparm_display_value=true)
-          example: "ITIL User"
+          description: Business hours duration to resolve
+          example: "2 hours 30 minutes"
 
-        sys_created_on:
+        business_service:
           type: string
-          format: date-time
-          description: Creation timestamp
-          example: "2025-10-23 10:30:00"
+          description: Business service affected (display name when sysparm_display_value=true)
+          example: ""
 
-        sys_updated_on:
+        caller_id:
           type: string
-          format: date-time
-          description: Last update timestamp
-          example: "2025-10-23 12:37:49"
+          description: User who reported the incident (display name when sysparm_display_value=true)
+          example: "Taylor Vreeland"
 
-        sys_updated_by:
+        category:
           type: string
-          description: User who last updated the record
-          example: "admin"
+          description: Incident category
+          example: "Email"
 
-        opened_at:
+        close_notes:
           type: string
-          format: date-time
-          description: When incident was opened
-          example: "2025-10-23 10:30:00"
-
-        resolved_at:
-          type: string
-          format: date-time
-          description: Resolution timestamp
-          example: "2025-10-23 16:45:00"
+          description: Resolution notes
+          example: "Issue resolved by restarting email service"
 
         closed_at:
           type: string
@@ -417,17 +353,81 @@ components:
           description: Closure timestamp
           example: "2025-10-24 09:00:00"
 
-        close_notes:
+        description:
           type: string
-          description: Resolution notes
-          example: "Issue resolved by restarting email service"
+          description: Detailed description of the incident
+          example: "Spreadsheet opened by Finance team shows as read-only"
+
+        impact:
+          type: string
+          description: "Impact: 1=High, 2=Medium, 3=Low"
+          example: "2"
+
+        number:
+          type: string
+          description: Incident number
+          example: "INC0000018"
+
+        opened_at:
+          type: string
+          format: date-time
+          description: When incident was opened
+          example: "2025-10-23 10:30:00"
+
+        priority:
+          type: string
+          description: "Priority: 1=Critical, 2=High, 3=Moderate, 4=Low, 5=Planning"
+          example: "1 - Critical"
+
+        resolved_at:
+          type: string
+          format: date-time
+          description: Resolution timestamp
+          example: "2025-10-23 16:45:00"
+
+        short_description:
+          type: string
+          description: Brief summary of the incident
+          example: "Sales forecast spreadsheet is READ ONLY"
+
+        state:
+          type: string
+          description: "State: 1=New, 2=In Progress, 3=On Hold, 6=Resolved, 7=Closed, 8=Canceled"
+          example: "In Progress"
+
+        subcategory:
+          type: string
+          description: Incident subcategory
+          example: "Server"
+
+        sys_created_on:
+          type: string
+          format: date-time
+          description: Creation timestamp
+          example: "2025-10-23 10:30:00"
+
+        sys_id:
+          type: string
+          description: Unique system identifier (required for getIncidentDetails calls)
+          example: "9d385017c611228701d22104cc95c371"
+
+        sys_updated_by:
+          type: string
+          description: User who last updated the record
+          example: "admin"
+
+        sys_updated_on:
+          type: string
+          format: date-time
+          description: Last update timestamp
+          example: "2025-10-23 12:37:49"
+
+        urgency:
+          type: string
+          description: "Urgency: 1=High, 2=Medium, 3=Low"
+          example: "1"
 
         work_notes:
           type: string
           description: Internal work notes (journal field — always empty in GET responses; visible in ServiceNow UI only)
           example: ""
-
-        business_duration:
-          type: string
-          description: Business hours duration to resolve
-          example: "2 hours 30 minutes"

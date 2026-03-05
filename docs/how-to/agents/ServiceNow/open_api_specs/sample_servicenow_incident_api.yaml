@@ -290,6 +290,18 @@ paths:
             type: string
           description: The sys_id of the incident to update (must query by incident number first if only number is known)
           example: "abc123xyz789"
+        
+        - name: sysparm_input_display_value
+          in: query
+          required: true
+          schema:
+            type: string
+            default: "true"
+          description: |
+            MUST be set to "true" for all update calls. This tells ServiceNow to resolve reference
+            field values by display name (e.g., assigned_to="Beth Aguilin") rather than treating
+            them as sys_ids. Without this, passing a user/group name will silently blank the field.
+          example: "true"
 
       requestBody:
         required: true
@@ -298,10 +310,75 @@ paths:
             schema:
               type: object
               properties:
+                assigned_to:
+                  type: string
+                  description: |
+                    Assigned user display name. Must exactly match an existing sys_user record in ServiceNow.
+                    Requires sysparm_input_display_value=true on the request.
+                    If the name does not match an existing user, ServiceNow will silently blank the field.
+                  example: "Beth Aguilin"
+                
+                assignment_group:
+                  type: string
+                  description: |
+                    Assignment group display name. Must exactly match an existing group in ServiceNow.
+                    Requires sysparm_input_display_value=true on the request.
+                  example: "Software"
+                
+                caller_id:
+                  type: string
+                  description: |
+                    User reporting the incident. Must exactly match an existing sys_user display name.
+                    Requires sysparm_input_display_value=true on the request.
+                  example: "Jonathon Waldall"
+                
+                category:
+                  type: string
+                  description: Incident category (e.g., Email, Network, Hardware, Software)
+                  example: "Email"
+                
+                close_notes:
+                  type: string
+                  description: Resolution notes (for closing)
+                  example: "Email server restarted. Service restored."
+                
+                description:
+                  type: string
+                  description: Updated detailed description
+                  example: "Users in Finance cannot access email. SMTP timeout errors observed."
+                
+                impact:
+                  type: string
+                  enum: ["1", "2", "3"]
+                  description: "Impact: 1=High, 2=Medium, 3=Low"
+                  example: "2"
+                
+                priority:
+                  type: string
+                  enum: ["1", "2", "3", "4", "5"]
+                  description: "Priority: 1=Critical, 2=High, 3=Moderate, 4=Low, 5=Planning"
+                  example: "3"
+                
+                short_description:
+                  type: string
+                  description: Updated brief summary of the incident
+                  example: "Email server not responding for Finance team"
+                
                 state:
                   type: string
                   description: "State: 1=New, 2=In Progress, 3=On Hold, 6=Resolved, 7=Closed, 8=Canceled"
                   example: "6"
+                
+                subcategory:
+                  type: string
+                  description: Incident subcategory
+                  example: "Server"
+                
+                urgency:
+                  type: string
+                  enum: ["1", "2", "3"]
+                  description: "Urgency: 1=High, 2=Medium, 3=Low"
+                  example: "2"
                 
                 work_notes:
                   type: string
@@ -322,28 +399,7 @@ paths:
                     - Tell user: "Work note added to incident journal successfully"
                     - Add: "(Note: Work notes are visible in ServiceNow UI, not in API GET responses)"
                     - The note WAS added even though field shows empty
-                    
-                    EXAMPLE:
-                    You send: PATCH incident/abc123 with body {"work_notes": "Investigating issue"}
-                    API returns: HTTP 200 success with updated incident ✅
-                    You query: GET incident/abc123
-                    Result: work_notes="" ← EMPTY is NORMAL, note was still written!
                   example: "Investigating email server logs. Found timeout errors in SMTP connector."
-                
-                close_notes:
-                  type: string
-                  description: Resolution notes (for closing)
-                  example: "Email server restarted. Service restored."
-                
-                priority:
-                  type: string
-                  description: Updated priority
-                  example: "3"
-                
-                assigned_to:
-                  type: string
-                  description: Reassign to user (name or sys_id)
-                  example: ""
 
       responses:
         '200':

@@ -1,0 +1,193 @@
+openapi: 3.0.0
+info:
+  title: ServiceNow Asset Creation API
+  description: ServiceNow REST API for creating new assets
+  version: 1.0.0
+  contact:
+    name: ServiceNow API Support
+    url: https://developer.servicenow.com
+servers:
+  - url: https://YOUR-INSTANCE.service-now.com/api/now
+    description: ServiceNow Instance
+security:
+  - bearerAuth: []
+components:
+  schemas:
+    AssetCreateRequest:
+      properties:
+        asset_tag:
+          description: Unique asset tag identifier (required)
+          example: P1000500
+          type: string
+        assigned_to:
+          description: User assigned to the asset (sys_id or name)
+          example: Jane Smith
+          type: string
+        assignment_group:
+          description: Assignment group (sys_id or name)
+          example: IT Support
+          type: string
+        comments:
+          description: Additional comments or notes
+          example: Purchased for new hire
+          type: string
+        cost:
+          description: Asset cost in dollars
+          example: '1500.00'
+          type: string
+        department:
+          description: Department (sys_id or name)
+          example: IT
+          type: string
+        display_name:
+          description: Display name for the asset (required)
+          example: Jane's Laptop
+          type: string
+        install_status:
+          description: 'Installation status: 1=In use, 6=In stock, 7=Retired'
+          enum:
+            - '1'
+            - '6'
+            - '7'
+          example: '6'
+          type: string
+        location:
+          description: Physical location (sys_id or name)
+          example: Building A, Floor 3
+          type: string
+        managed_by:
+          description: Manager of the asset (sys_id or name)
+          example: John Manager
+          type: string
+        model:
+          description: Model reference (sys_id or display name)
+          example: Dell Latitude 5420
+          type: string
+        model_category:
+          description: Model category (sys_id or name)
+          example: Computer
+          type: string
+        owned_by:
+          description: Owner of the asset (sys_id or name)
+          example: IT Department
+          type: string
+        purchase_date:
+          description: Purchase date (YYYY-MM-DD)
+          example: '2024-01-15'
+          format: date
+          type: string
+        serial_number:
+          description: Serial number of the asset
+          example: SN987654321
+          type: string
+        substatus:
+          description: Substatus of the asset
+          example: available
+          type: string
+        warranty_expiration:
+          description: Warranty expiration date (YYYY-MM-DD)
+          example: '2027-01-15'
+          format: date
+          type: string
+      required:
+        - asset_tag
+        - display_name
+      type: object
+    AssetCreateResponse:
+      properties:
+        result:
+          properties:
+            asset_tag:
+              description: Asset tag
+              type: string
+            display_name:
+              description: Display name
+              type: string
+            sys_created_on:
+              description: Creation timestamp
+              format: date-time
+              type: string
+            sys_id:
+              description: Newly created asset sys_id
+              type: string
+          type: object
+      type: object
+  securitySchemes:
+    bearerAuth:
+      bearerFormat: JWT
+      description: OAuth 2.0 Bearer Token authentication. Obtain token via ServiceNow OAuth endpoint using Resource Owner Password Credentials grant.
+      scheme: bearer
+      type: http
+paths:
+  /table/alm_asset:
+    post:
+      description: |-
+        Create a new asset in ServiceNow
+
+        Required fields:
+        - asset_tag: Unique asset identifier
+        - display_name: Display name for the asset
+
+        Optional fields:
+        - model: Model reference (sys_id or display name)
+        - serial_number: Serial number
+        - assigned_to: User reference (sys_id or name)
+        - location: Location reference (sys_id or name)
+        - install_status: Status (1=In use, 6=In stock, 7=Retired)
+        - purchase_date: Purchase date (YYYY-MM-DD)
+        - warranty_expiration: Warranty date (YYYY-MM-DD)
+        - cost: Asset cost
+        - department: Department reference
+        - managed_by: Manager reference
+        - owned_by: Owner reference
+        - comments: Additional notes
+
+        The API will return the newly created asset with its sys_id.
+      operationId: createAsset
+      requestBody:
+        content:
+          application/json:
+            examples:
+              laptop:
+                summary: Create laptop asset
+                value:
+                  asset_tag: P1000500
+                  assigned_to: Jane Smith
+                  cost: '1500.00'
+                  display_name: Jane's Laptop
+                  install_status: '6'
+                  location: Building A, Floor 3
+                  model: Dell Latitude 5420
+                  purchase_date: '2024-01-15'
+                  serial_number: SN987654321
+                  warranty_expiration: '2027-01-15'
+              monitor:
+                summary: Create monitor asset
+                value:
+                  asset_tag: M2000100
+                  cost: '550.00'
+                  display_name: Conference Room Monitor
+                  install_status: '1'
+                  location: Conference Room A
+                  model: Dell U2720Q
+                  serial_number: MON123456
+            schema:
+              $ref: '#/components/schemas/AssetCreateRequest'
+        description: Asset data to create
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssetCreateResponse'
+          description: Asset created successfully
+        '400':
+          description: Bad Request - Missing required fields or invalid data
+        '401':
+          description: Unauthorized - Invalid or missing authentication token
+        '409':
+          description: Conflict - Asset tag already exists
+      security:
+        - bearerAuth: []
+      summary: Create new asset

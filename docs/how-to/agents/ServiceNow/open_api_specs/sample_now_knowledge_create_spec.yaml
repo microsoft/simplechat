@@ -18,7 +18,7 @@ info:
 
 servers:
   - url: https://YOUR-INSTANCE.service-now.com
-    description: ServiceNow instance (replace YOUR-INSTANCE with your instance name)
+    description: ServiceNow Instance
 
 security:
   - bearerAuth: []
@@ -253,6 +253,12 @@ components:
           type: string
           description: Original source URL
           example: "https://support.microsoft.com/article"
+        
+        valid_to:
+          type: string
+          format: date-time
+          description: Article expiration date
+          example: "2027-12-31T23:59:59Z"
         
         article_type:
           type: string
