@@ -44,12 +44,7 @@ def get_user_details_from_graph(user_id):
         if not token:
             return {"displayName": "", "email": ""}
 
-        if AZURE_ENVIRONMENT == "usgovernment":
-            user_endpoint = f"https://graph.microsoft.us/v1.0/users/{user_id}"
-        elif AZURE_ENVIRONMENT == "custom":
-            user_endpoint = f"{CUSTOM_GRAPH_URL_VALUE}/{user_id}"
-        else:
-            user_endpoint = f"https://graph.microsoft.com/v1.0/users/{user_id}"
+        user_endpoint = get_graph_endpoint(f"/users/{user_id}")
             
         headers = {
             "Authorization": f"Bearer {token}",
