@@ -62,7 +62,7 @@
     {% else %}
         {% if session.get('user') %}
             <p class="lead">
-                {{ (app_settings.access_denied_message or 'You are logged in but do not have the required permissions to access this application.\nPlease contact an administrator for access.') | nl2br }}
+                {{ app_settings.access_denied_message | nl2br }}
             </p>
         {% else %}
             <div>
