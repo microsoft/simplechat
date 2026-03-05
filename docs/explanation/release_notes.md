@@ -2,7 +2,9 @@
 
 # Feature Release
 
-### Bug Fixes
+### **(v0.239.003)**
+
+#### Bug Fixes
 
 *   **Docker Customization: CA Certificate and pip.conf**
     *   Fixed Docker customization issues related to custom CA certificate handling and `pip.conf` configuration.
