@@ -3,7 +3,7 @@ pandas==2.2.3
 azure-monitor-query==1.4.1
 Flask==2.2.5
 Flask-WTF==1.2.1
-gunicorn
+gunicorn>=23.0.0
 Werkzeug==3.1.5
 requests==2.32.4
 openai>=1.98.0,<2.0.0
@@ -22,7 +22,7 @@ threadpoolctl==3.5.0
 azure-search-documents==11.5.3
 python-dotenv==0.21.0
 azure-ai-formrecognizer==3.3.3
-pyjwt==2.9.0
+pyjwt>=2.9.0
 markdown2==2.5.3
 azure-mgmt-cognitiveservices==13.6.0
 azure-identity==1.23.0
@@ -41,7 +41,7 @@ xlrd==2.0.1
 pillow==11.1.0
 ffmpeg-binaries-compat==1.0.1
 ffmpeg-python==0.2.0
-semantic-kernel>=1.39.2
+semantic-kernel>=1.39.4
 redis>=5.0,<6.0
 pyodbc>=4.0.0
 PyMySQL>=1.0.0

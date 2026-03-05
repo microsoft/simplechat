@@ -15,6 +15,12 @@ import docx
 import fitz # PyMuPDF
 import math
 import mimetypes
+# Register font MIME types so Flask serves them correctly (required for
+# X-Content-Type-Options: nosniff to not block Bootstrap Icons)
+mimetypes.add_type('font/woff', '.woff')
+mimetypes.add_type('font/woff2', '.woff2')
+mimetypes.add_type('font/ttf', '.ttf')
+mimetypes.add_type('font/otf', '.otf')
 import openpyxl
 import xlrd
 import traceback
@@ -88,7 +94,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.238.024"
+VERSION = "0.239.004"
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
@@ -170,12 +176,14 @@ MAX_CONTENT_LENGTH = 5000 * 1024 * 1024  # 5000 MB AKA 5 GB
 
 # Add Support for Custom Azure Environments
 CUSTOM_GRAPH_URL_VALUE = os.getenv("CUSTOM_GRAPH_URL_VALUE", "")
+CUSTOM_GRAPH_AUTHORITY_URL_VALUE = os.getenv("CUSTOM_GRAPH_AUTHORITY_URL_VALUE", "")
 CUSTOM_IDENTITY_URL_VALUE = os.getenv("CUSTOM_IDENTITY_URL_VALUE", "")
 CUSTOM_RESOURCE_MANAGER_URL_VALUE = os.getenv("CUSTOM_RESOURCE_MANAGER_URL_VALUE", "")
 CUSTOM_BLOB_STORAGE_URL_VALUE = os.getenv("CUSTOM_BLOB_STORAGE_URL_VALUE", "")
 CUSTOM_COGNITIVE_SERVICES_URL_VALUE = os.getenv("CUSTOM_COGNITIVE_SERVICES_URL_VALUE", "")
 CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE = os.getenv("CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE", "")
 CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE = os.getenv("CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE", "")
+CUSTOM_OIDC_METADATA_URL_VALUE = os.getenv("CUSTOM_OIDC_METADATA_URL_VALUE", "")
 
 
 # Azure AD Configuration
@@ -187,40 +195,39 @@ SCOPE = ["User.Read", "User.ReadBasic.All", "People.Read.All", "Group.Read.All"]
 MICROSOFT_PROVIDER_AUTHENTICATION_SECRET = os.getenv("MICROSOFT_PROVIDER_AUTHENTICATION_SECRET")
 LOGIN_REDIRECT_URL = os.getenv("LOGIN_REDIRECT_URL")
 HOME_REDIRECT_URL = os.getenv("HOME_REDIRECT_URL")  # Front Door URL for home page
-
-OIDC_METADATA_URL = f"https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration"
 AZURE_ENVIRONMENT = os.getenv("AZURE_ENVIRONMENT", "public") # public, usgovernment, custom
-
-if AZURE_ENVIRONMENT == "custom":
-    AUTHORITY = f"{CUSTOM_IDENTITY_URL_VALUE}/{TENANT_ID}"
-elif AZURE_ENVIRONMENT == "usgovernment":
-    AUTHORITY = f"https://login.microsoftonline.us/{TENANT_ID}"
-else:
-    AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
 
 WORD_CHUNK_SIZE = 400
 
-if AZURE_ENVIRONMENT == "usgovernment":
+if AZURE_ENVIRONMENT == "custom" or CUSTOM_IDENTITY_URL_VALUE or CUSTOM_GRAPH_AUTHORITY_URL_VALUE:
+    AUTHORITY = f"{CUSTOM_IDENTITY_URL_VALUE}/{TENANT_ID}"
+    authority = CUSTOM_GRAPH_AUTHORITY_URL_VALUE or CUSTOM_IDENTITY_URL_VALUE or AUTHORITY.rstrip(f'/{TENANT_ID}')
+elif AZURE_ENVIRONMENT == "usgovernment":
+    AUTHORITY = f"https://login.microsoftonline.us/{TENANT_ID}"
+    authority = AzureAuthorityHosts.AZURE_GOVERNMENT
+else:
+    AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
+    authority = AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
+
+if AZURE_ENVIRONMENT == "custom":
+    OIDC_METADATA_URL = CUSTOM_OIDC_METADATA_URL_VALUE or f"https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration"
+    resource_manager = CUSTOM_RESOURCE_MANAGER_URL_VALUE
+    video_indexer_endpoint = os.getenv("CUSTOM_VIDEO_INDEXER_ENDPOINT", "https://api.videoindexer.ai")
+    credential_scopes=[resource_manager + "/.default"]
+    cognitive_services_scope = CUSTOM_COGNITIVE_SERVICES_URL_VALUE  
+    search_resource_manager = CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE
+    KEY_VAULT_DOMAIN = os.getenv("KEY_VAULT_DOMAIN", ".vault.azure.net")
+elif AZURE_ENVIRONMENT == "usgovernment":
     OIDC_METADATA_URL = f"https://login.microsoftonline.us/{TENANT_ID}/v2.0/.well-known/openid-configuration"
     resource_manager = "https://management.usgovcloudapi.net"
-    authority = AzureAuthorityHosts.AZURE_GOVERNMENT
     credential_scopes=[resource_manager + "/.default"]
     cognitive_services_scope = "https://cognitiveservices.azure.us/.default"
     video_indexer_endpoint = "https://api.videoindexer.ai.azure.us"
     search_resource_manager = "https://search.azure.us"
     KEY_VAULT_DOMAIN = ".vault.usgovcloudapi.net"
-
-elif AZURE_ENVIRONMENT == "custom":
-    resource_manager = CUSTOM_RESOURCE_MANAGER_URL_VALUE
-    authority = CUSTOM_IDENTITY_URL_VALUE
-    credential_scopes=[resource_manager + "/.default"]
-    cognitive_services_scope = CUSTOM_COGNITIVE_SERVICES_URL_VALUE  
-    search_resource_manager = CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE
-    KEY_VAULT_DOMAIN = os.getenv("KEY_VAULT_DOMAIN", ".vault.azure.net")
 else:
     OIDC_METADATA_URL = f"https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration"
     resource_manager = "https://management.azure.com"
-    authority = AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
     credential_scopes=[resource_manager + "/.default"]
     cognitive_services_scope = "https://cognitiveservices.azure.com/.default"
     video_indexer_endpoint = "https://api.videoindexer.ai"
