@@ -1,0 +1,433 @@
+openapi: 3.0.0
+info:
+  title: ServiceNow Incident Query API
+  description: ServiceNow REST API for querying and retrieving incidents. READ-ONLY — no create or update operations.
+  version: 1.0.0
+  contact:
+    name: ServiceNow API Support
+    url: https://developer.servicenow.com
+
+servers:
+  - url: https://YOUR-INSTANCE.service-now.com/api/now
+    description: ServiceNow instance base URL (replace YOUR-INSTANCE with your instance name)
+
+security:
+  - bearerAuth: []
+
+paths:
+  /table/incident:
+    get:
+      operationId: queryIncidents
+      summary: Query incidents with filters
+      description: |
+        Retrieve incidents from ServiceNow based on query parameters and filters.
+
+        AGENT INSTRUCTIONS:
+        - ALWAYS include sysparm_display_value=true so reference fields return names instead of sys_ids
+        - ALWAYS include sysparm_fields with the standard field list
+        - ALWAYS include sysparm_limit (default to 10 when user doesn't specify)
+        - Standard sysparm_fields for incident list queries:
+          number,short_description,description,caller_id,priority,state,business_service,assignment_group,assigned_to,sys_updated_on,sys_updated_by
+
+        QUERY SYNTAX EXAMPLES:
+        - Open incidents:          state=1^ORstate=2
+        - By priority:             priority=1
+        - By state:                state=6
+        - Created today:           sys_created_onONToday
+        - Created last 7 days:     sys_created_onONLast 7 days@gs.daysAgoStart(7)
+        - Description contains:    descriptionLIKEemail
+        - Combined:                priority=1^state=1
+        - Open + created today:    state=1^ORstate=2^sys_created_onONToday
+
+        STATE VALUES: 1=New, 2=In Progress, 3=On Hold, 6=Resolved, 7=Closed, 8=Canceled
+        PRIORITY VALUES: 1=Critical, 2=High, 3=Moderate, 4=Low, 5=Planning
+
+      parameters:
+        - name: sysparm_query
+          in: query
+          required: false
+          schema:
+            type: string
+          description: |
+            Encoded query string for filtering results.
+            - Open incidents: state=1^ORstate=2
+            - By priority: priority=1
+            - Last 7 days: sys_created_onONLast 7 days@gs.daysAgoStart(7)
+            - Combined: priority=1^state=1^sys_created_onONLast 30 days@gs.daysAgoStart(30)
+            - Description contains text: descriptionLIKEemail
+          example: "state=1^ORstate=2"
+
+        - name: sysparm_limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 10
+            maximum: 10000
+          description: |
+            Maximum number of records to return.
+            Default to 10 when user does not specify a count.
+            Honor the exact number the user requests (e.g., "show 200" → sysparm_limit=200).
+          example: 10
+
+        - name: sysparm_offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+          description: Number of records to skip for pagination
+          example: 0
+
+        - name: sysparm_fields
+          in: query
+          required: false
+          schema:
+            type: string
+          description: |
+            Comma-separated list of fields to return.
+            ALWAYS use this standard set for list queries:
+            number,short_description,description,caller_id,priority,state,business_service,assignment_group,assigned_to,sys_updated_on,sys_updated_by
+            Include sys_id only when a follow-up getIncidentDetails call is needed.
+          example: "number,short_description,description,caller_id,priority,state,business_service,assignment_group,assigned_to,sys_updated_on,sys_updated_by"
+
+        - name: sysparm_display_value
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["true", "false", "all"]
+            default: "true"
+          description: |
+            MUST be set to "true" for all list queries. Makes reference fields (caller_id,
+            assigned_to, assignment_group, business_service) return human-readable display
+            names instead of sys_id link objects.
+          example: "true"
+
+      responses:
+        '200':
+          description: Incidents retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Incident'
+              example:
+                result:
+                  - sys_id: "9d385017c611228701d22104cc95c371"
+                    number: "INC0000018"
+                    short_description: "Sales forecast spreadsheet is READ ONLY"
+                    description: "Spreadsheet opened by Finance team shows as read-only"
+                    caller_id: "Taylor Vreeland"
+                    priority: "1 - Critical"
+                    state: "In Progress"
+                    business_service: ""
+                    assignment_group: ""
+                    assigned_to: "ITIL User"
+                    sys_updated_on: "2025-10-23 12:37:49"
+                    sys_updated_by: "admin"
+
+        '401':
+          description: Unauthorized - Invalid credentials
+        '403':
+          description: Forbidden - Insufficient permissions
+
+  /table/incident/{sys_id}:
+    get:
+      operationId: getIncidentDetails
+      summary: Get full incident details by sys_id
+      description: |
+        Retrieve all details of a specific incident by its sys_id.
+
+        CRITICAL: This operation requires the sys_id (NOT the incident number like INC0000018).
+        sys_id is an internal identifier like "9d385017c611228701d22104cc95c371".
+
+        WHEN USER ASKS FOR DETAILS OF AN INCIDENT BY NUMBER:
+        1. Call queryIncidents(sysparm_query="number=INC0000018", sysparm_fields="sys_id,number", sysparm_display_value=true)
+        2. Extract sys_id from the result
+        3. Then call getIncidentDetails(sys_id="...", sysparm_display_value=true)
+
+      parameters:
+        - name: sys_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The sys_id of the incident (NOT the incident number)
+          example: "9d385017c611228701d22104cc95c371"
+
+        - name: sysparm_fields
+          in: query
+          required: false
+          schema:
+            type: string
+          description: |
+            Comma-separated list of fields to return. For detail view, include all relevant fields:
+            number,short_description,description,caller_id,priority,urgency,impact,state,category,
+            subcategory,assignment_group,assigned_to,business_service,sys_created_on,sys_updated_on,
+            sys_updated_by,opened_at,resolved_at,closed_at,close_notes,work_notes
+          example: "number,short_description,description,caller_id,priority,urgency,impact,state,category,subcategory,assignment_group,assigned_to,business_service,sys_created_on,sys_updated_on,sys_updated_by,opened_at,resolved_at,closed_at,close_notes"
+
+        - name: sysparm_display_value
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["true", "false", "all"]
+            default: "true"
+          description: |
+            MUST be set to "true". Makes reference fields (caller_id, assigned_to,
+            assignment_group, business_service) return display names instead of sys_id link objects.
+          example: "true"
+
+      responses:
+        '200':
+          description: Incident details retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    $ref: '#/components/schemas/Incident'
+
+        '404':
+          description: Incident not found
+        '401':
+          description: Unauthorized
+
+  /stats/incident:
+    get:
+      operationId: getIncidentStats
+      summary: Get aggregated incident statistics
+      description: |
+        Retrieve aggregated counts and metrics for incidents.
+        Use for statistics requests like "how many incidents last month", "incident breakdown by category", etc.
+
+        COMMON USE CASES:
+        - Total count: sysparm_count=true (no group_by)
+        - By category: sysparm_group_by=category
+        - By priority: sysparm_group_by=priority
+        - By state: sysparm_group_by=state
+        - By assigned group: sysparm_group_by=assignment_group
+
+      parameters:
+        - name: sysparm_query
+          in: query
+          required: false
+          schema:
+            type: string
+          description: |
+            Query filter to scope the statistics.
+            - Last 30 days: sys_created_onONLast 30 days@gs.daysAgoStart(30)
+            - Last month: sys_created_onONLast month@gs.beginningOfLastMonth()@gs.endOfLastMonth()
+            - This year: sys_created_onONThis year@gs.beginningOfThisYear()@gs.endOfThisYear()
+          example: "sys_created_onONLast 30 days@gs.daysAgoStart(30)"
+
+        - name: sysparm_count
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: true
+          description: Include count in results
+          example: true
+
+        - name: sysparm_group_by
+          in: query
+          required: false
+          schema:
+            type: string
+          description: |
+            Field to group results by.
+            Common values: category, priority, state, assignment_group, assigned_to
+          example: "category"
+
+        - name: sysparm_avg_fields
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Comma-separated fields to calculate average (e.g., business_duration)
+          example: "business_duration"
+
+        - name: sysparm_sum_fields
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Comma-separated fields to sum
+          example: ""
+
+      responses:
+        '200':
+          description: Statistics retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        groupby_value:
+                          type: string
+                          description: The group value (e.g., "Email", "Network")
+                        count:
+                          type: string
+                          description: Number of incidents in this group
+                        avg:
+                          type: object
+                          description: Average values for requested fields
+                        sum:
+                          type: object
+                          description: Sum values for requested fields
+              example:
+                result:
+                  - groupby_value: "Email"
+                    count: "45"
+                  - groupby_value: "Network"
+                    count: "32"
+                  - groupby_value: "Hardware"
+                    count: "18"
+
+        '401':
+          description: Unauthorized
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: OAuth 2.0 Bearer Token authentication. Obtain token via ServiceNow OAuth endpoint using Resource Owner Password Credentials grant.
+
+  schemas:
+    Incident:
+      type: object
+      properties:
+        sys_id:
+          type: string
+          description: Unique system identifier (required for getIncidentDetails calls)
+          example: "9d385017c611228701d22104cc95c371"
+
+        number:
+          type: string
+          description: Incident number
+          example: "INC0000018"
+
+        short_description:
+          type: string
+          description: Brief summary of the incident
+          example: "Sales forecast spreadsheet is READ ONLY"
+
+        description:
+          type: string
+          description: Detailed description of the incident
+          example: "Spreadsheet opened by Finance team shows as read-only"
+
+        caller_id:
+          type: string
+          description: User who reported the incident (display name when sysparm_display_value=true)
+          example: "Taylor Vreeland"
+
+        priority:
+          type: string
+          description: "Priority: 1=Critical, 2=High, 3=Moderate, 4=Low, 5=Planning"
+          example: "1 - Critical"
+
+        urgency:
+          type: string
+          description: "Urgency: 1=High, 2=Medium, 3=Low"
+          example: "1"
+
+        impact:
+          type: string
+          description: "Impact: 1=High, 2=Medium, 3=Low"
+          example: "2"
+
+        state:
+          type: string
+          description: "State: 1=New, 2=In Progress, 3=On Hold, 6=Resolved, 7=Closed, 8=Canceled"
+          example: "In Progress"
+
+        category:
+          type: string
+          description: Incident category
+          example: "Email"
+
+        subcategory:
+          type: string
+          description: Incident subcategory
+          example: "Server"
+
+        business_service:
+          type: string
+          description: Business service affected (display name when sysparm_display_value=true)
+          example: ""
+
+        assignment_group:
+          type: string
+          description: Assignment group (display name when sysparm_display_value=true)
+          example: "IT Support"
+
+        assigned_to:
+          type: string
+          description: Assigned user (display name when sysparm_display_value=true)
+          example: "ITIL User"
+
+        sys_created_on:
+          type: string
+          format: date-time
+          description: Creation timestamp
+          example: "2025-10-23 10:30:00"
+
+        sys_updated_on:
+          type: string
+          format: date-time
+          description: Last update timestamp
+          example: "2025-10-23 12:37:49"
+
+        sys_updated_by:
+          type: string
+          description: User who last updated the record
+          example: "admin"
+
+        opened_at:
+          type: string
+          format: date-time
+          description: When incident was opened
+          example: "2025-10-23 10:30:00"
+
+        resolved_at:
+          type: string
+          format: date-time
+          description: Resolution timestamp
+          example: "2025-10-23 16:45:00"
+
+        closed_at:
+          type: string
+          format: date-time
+          description: Closure timestamp
+          example: "2025-10-24 09:00:00"
+
+        close_notes:
+          type: string
+          description: Resolution notes
+          example: "Issue resolved by restarting email service"
+
+        work_notes:
+          type: string
+          description: Internal work notes (journal field — always empty in GET responses; visible in ServiceNow UI only)
+          example: ""
+
+        business_duration:
+          type: string
+          description: Business hours duration to resolve
+          example: "2 hours 30 minutes"
