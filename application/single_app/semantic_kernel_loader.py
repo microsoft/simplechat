@@ -300,26 +300,32 @@ def resolve_agent_config(agent, settings):
         debug_print(f"[SK Loader] Using user APIM with global fallback")
         merged = merge_fields(u_apim, g_apim if global_apim_enabled and any_filled(*g_apim) else (None, None, None, None))
         endpoint, key, deployment, api_version = merged
+        endpoint_is_user_supplied = True
     # 2. User APIM enabled but no user APIM values, and global APIM enabled and present: use global APIM
     elif user_apim_enabled and global_apim_enabled and any_filled(*g_apim):
         debug_print(f"[SK Loader] Using global APIM (user APIM enabled but not present)")
         endpoint, key, deployment, api_version = g_apim
+        endpoint_is_user_supplied = False
     # 3. User GPT config is FULLY filled: use user GPT (all fields filled)
     elif all_filled(*u_gpt) and can_use_agent_endpoints:
         debug_print(f"[SK Loader] Using agent GPT config (all fields filled)")
         endpoint, key, deployment, api_version = u_gpt
+        endpoint_is_user_supplied = True
     # 4. User GPT config is PARTIALLY filled, global APIM is NOT enabled: merge user GPT with global GPT
     elif any_filled(*u_gpt) and not global_apim_enabled and can_use_agent_endpoints:
         debug_print(f"[SK Loader] Using agent GPT config (partially filled, merging with global GPT, global APIM not enabled)")
         endpoint, key, deployment, api_version = merge_fields(u_gpt, g_gpt)
+        endpoint_is_user_supplied = True
     # 5. Global APIM enabled and present: use global APIM
     elif global_apim_enabled and any_filled(*g_apim):
         debug_print(f"[SK Loader] Using global APIM (fallback)")
         endpoint, key, deployment, api_version = g_apim
+        endpoint_is_user_supplied = False
     # 6. Fallback to global GPT config
     else:
         debug_print(f"[SK Loader] Using global GPT config (fallback)")
         endpoint, key, deployment, api_version = g_gpt
+        endpoint_is_user_supplied = False
 
     result = {
         "endpoint": endpoint,
@@ -342,6 +348,9 @@ def resolve_agent_config(agent, settings):
         "max_completion_tokens": agent.get("max_completion_tokens", -1),  # -1 meant use model default determined by the service, 35-trubo is 4096, 4o is 16384, 4.1 is at least 32768
         "agent_type": agent_type or "local",
         "other_settings": other_settings,
+        # Security: track whether the endpoint was user/agent-supplied vs system-controlled.
+        # Managed identity must NOT be used with user-supplied endpoints to prevent token theft.
+        "endpoint_is_user_supplied": endpoint_is_user_supplied,
     }
 
     print(f"[SK Loader] Final resolved config for {agent.get('name')}: endpoint={bool(endpoint)}, key={bool(key)}, deployment={deployment}")
@@ -769,6 +778,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
         and not apim_enabled
         and not agent_config.get("key")
         and bool(DefaultAzureCredential)
+        and not agent_config.get("endpoint_is_user_supplied", False)
     )
     if AzureChatCompletion and agent_config["endpoint"] and (agent_config["key"] or use_managed_identity) and agent_config["deployment"]:
         print(f"[SK Loader] Azure config valid for {agent_config['name']}, creating chat service...")
@@ -1559,6 +1569,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
                 and not _ma_apim_enabled
                 and not agent_config.get("key")
                 and bool(DefaultAzureCredential)
+                and not agent_config.get("endpoint_is_user_supplied", False)
             )
             if AzureChatCompletion and agent_config["endpoint"] and (agent_config["key"] or _ma_use_mi) and agent_config["deployment"]:
                 try:
@@ -1687,6 +1698,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
                     and not _orch_apim_enabled
                     and not orchestrator_config.get("key")
                     and bool(DefaultAzureCredential)
+                    and not orchestrator_config.get("endpoint_is_user_supplied", False)
                 )
                 if AzureChatCompletion and orchestrator_config["endpoint"] and (orchestrator_config["key"] or _orch_use_mi) and orchestrator_config["deployment"]:
                     try:
