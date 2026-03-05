@@ -764,7 +764,12 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
     log_event(f"[SK Loader] Agent config resolved for {agent_cfg.get('name')} - endpoint: {bool(agent_config.get('endpoint'))}, key: {bool(agent_config.get('key'))}, deployment: {agent_config.get('deployment')}, max_completion_tokens: {agent_config.get('max_completion_tokens')}", level=logging.INFO)
     
     auth_type = settings.get('azure_openai_gpt_authentication_type', '')
-    use_managed_identity = (auth_type == 'managed_identity') and not apim_enabled and not agent_config.get("key")
+    use_managed_identity = (
+        auth_type == 'managed_identity'
+        and not apim_enabled
+        and not agent_config.get("key")
+        and bool(DefaultAzureCredential)
+    )
     if AzureChatCompletion and agent_config["endpoint"] and (agent_config["key"] or use_managed_identity) and agent_config["deployment"]:
         print(f"[SK Loader] Azure config valid for {agent_config['name']}, creating chat service...")
         if apim_enabled:
@@ -1549,7 +1554,12 @@ def load_semantic_kernel(kernel: Kernel, settings):
             service_id = f"aoai-chat-{agent_config['name'].replace(' ', '').lower()}"
             _ma_auth_type = settings.get('azure_openai_gpt_authentication_type', '')
             _ma_apim_enabled = settings.get("enable_gpt_apim", False)
-            _ma_use_mi = (_ma_auth_type == 'managed_identity') and not _ma_apim_enabled and not agent_config.get("key")
+            _ma_use_mi = (
+                _ma_auth_type == 'managed_identity'
+                and not _ma_apim_enabled
+                and not agent_config.get("key")
+                and bool(DefaultAzureCredential)
+            )
             if AzureChatCompletion and agent_config["endpoint"] and (agent_config["key"] or _ma_use_mi) and agent_config["deployment"]:
                 try:
                     try:
@@ -1672,7 +1682,12 @@ def load_semantic_kernel(kernel: Kernel, settings):
                 chat_service = None
                 _orch_auth_type = settings.get('azure_openai_gpt_authentication_type', '')
                 _orch_apim_enabled = settings.get("enable_gpt_apim", False)
-                _orch_use_mi = (_orch_auth_type == 'managed_identity') and not _orch_apim_enabled and not orchestrator_config.get("key")
+                _orch_use_mi = (
+                    _orch_auth_type == 'managed_identity'
+                    and not _orch_apim_enabled
+                    and not orchestrator_config.get("key")
+                    and bool(DefaultAzureCredential)
+                )
                 if AzureChatCompletion and orchestrator_config["endpoint"] and (orchestrator_config["key"] or _orch_use_mi) and orchestrator_config["deployment"]:
                     try:
                         chat_service = kernel.get_service(service_id=service_id)
