@@ -278,7 +278,29 @@ def resolve_agent_config(agent, settings):
             return custom_authority
         return AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
 
-    def build_token_provider(auth_settings):
+    def resolve_foundry_scope(auth_settings, endpoint=None):
+        custom_scope = (auth_settings.get("foundry_scope") or "").strip()
+        if custom_scope:
+            return custom_scope
+
+        management_cloud = (auth_settings.get("management_cloud") or "public").lower()
+        if management_cloud in ("government", "usgovernment", "usgov"):
+            return "https://ai.azure.us/.default"
+        if management_cloud == "china":
+            return "https://ai.azure.cn/.default"
+        if management_cloud == "germany":
+            return "https://ai.azure.de/.default"
+
+        endpoint_value = (endpoint or "").lower()
+        if "azure.us" in endpoint_value:
+            return "https://ai.azure.us/.default"
+        if "azure.cn" in endpoint_value:
+            return "https://ai.azure.cn/.default"
+        if "azure.de" in endpoint_value:
+            return "https://ai.azure.de/.default"
+        return "https://ai.azure.com/.default"
+
+    def build_token_provider(auth_settings, provider="aoai", endpoint=None):
         auth_type = (auth_settings.get("type") or "managed_identity").lower()
         authority = resolve_authority(auth_settings)
         if auth_type == "service_principal":
@@ -294,7 +316,38 @@ def resolve_agent_config(agent, settings):
                 managed_identity_client_id=managed_identity_client_id,
                 authority=authority,
             )
-        return get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default")
+
+        scope = "https://cognitiveservices.azure.com/.default"
+        if provider == "aifoundry":
+            scope = resolve_foundry_scope(auth_settings, endpoint=endpoint)
+
+        return get_bearer_token_provider(credential, scope)
+
+    def resolve_global_gpt_token_provider(global_key):
+        auth_type = (settings.get("azure_openai_gpt_authentication_type") or "key").lower()
+        if auth_type in ("key", "api_key"):
+            return None
+        if global_key:
+            return None
+        if auth_type in ("managed_identity", "service_principal"):
+            auth_settings = {
+                "type": auth_type,
+                "tenant_id": settings.get("azure_openai_gpt_tenant_id") or settings.get("azure_openai_tenant_id"),
+                "client_id": settings.get("azure_openai_gpt_client_id") or settings.get("azure_openai_client_id"),
+                "client_secret": settings.get("azure_openai_gpt_client_secret") or settings.get("azure_openai_client_secret"),
+                "managed_identity_client_id": settings.get("azure_openai_gpt_managed_identity_client_id") or settings.get("azure_openai_managed_identity_client_id"),
+                "management_cloud": settings.get("management_cloud") or settings.get("azure_management_cloud") or "public",
+                "custom_authority": settings.get("custom_authority") or settings.get("azure_custom_authority") or "",
+            }
+            try:
+                return build_token_provider(auth_settings, provider="aoai")
+            except Exception as e:
+                log_event(
+                    f"[SK Loader] Failed to build global GPT token provider: {e}",
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
+        return None
 
     def resolve_multi_endpoint_agent_config():
         endpoint_id = (agent.get("model_endpoint_id") or "").strip()
@@ -416,15 +469,16 @@ def resolve_agent_config(agent, settings):
     if not per_user_enabled:
         try:
             token_provider = None
-            if multi_endpoint_config and multi_endpoint_config.get("provider") == "aoai":
+            if multi_endpoint_config and multi_endpoint_config.get("provider") in ("aoai", "aifoundry"):
                 auth = multi_endpoint_config.get("auth", {}) or {}
                 auth_type = (auth.get("type") or "managed_identity").lower()
+                provider = multi_endpoint_config.get("provider")
                 endpoint = multi_endpoint_config.get("endpoint")
                 deployment = multi_endpoint_config.get("deployment")
                 api_version = multi_endpoint_config.get("api_version")
                 key = auth.get("api_key") or ""
                 if auth_type != "api_key":
-                    token_provider = build_token_provider(auth)
+                    token_provider = build_token_provider(auth, provider=provider, endpoint=endpoint)
                 return {
                     "endpoint": endpoint,
                     "key": key,
@@ -449,7 +503,7 @@ def resolve_agent_config(agent, settings):
                     "token_provider": token_provider,
                     "model_endpoint_id": agent.get("model_endpoint_id", ""),
                     "model_id": agent.get("model_id", ""),
-                    "model_provider": agent.get("model_provider", ""),
+                    "model_provider": provider,
                 }
             if global_apim_enabled:
                 g_apim = get_global_apim()
@@ -457,6 +511,7 @@ def resolve_agent_config(agent, settings):
             else:
                 g_gpt = get_global_gpt()
                 endpoint, key, deployment, api_version = g_gpt
+                token_provider = resolve_global_gpt_token_provider(key)
             return {
                 "endpoint": endpoint,
                 "key": key,
@@ -478,6 +533,7 @@ def resolve_agent_config(agent, settings):
                 "max_completion_tokens": agent.get("max_completion_tokens", -1),
                 "agent_type": agent_type or "local",
                 "other_settings": other_settings,
+                "token_provider": token_provider,
             }
         except Exception as e:
             log_event(f"[SK Loader] Error resolving agent config: {e}", level=logging.ERROR, exceptionTraceback=True)
@@ -490,16 +546,17 @@ def resolve_agent_config(agent, settings):
     can_use_agent_endpoints = allow_custom_agent_endpoints
     user_apim_allowed = user_apim_enabled and can_use_agent_endpoints
 
-    if multi_endpoint_config and multi_endpoint_config.get("provider") == "aoai":
+    if multi_endpoint_config and multi_endpoint_config.get("provider") in ("aoai", "aifoundry"):
         auth = multi_endpoint_config.get("auth", {}) or {}
         auth_type = (auth.get("type") or "managed_identity").lower()
+        provider = multi_endpoint_config.get("provider")
         endpoint = multi_endpoint_config.get("endpoint")
         deployment = multi_endpoint_config.get("deployment")
         api_version = multi_endpoint_config.get("api_version")
         key = auth.get("api_key") or ""
         token_provider = None
         if auth_type != "api_key":
-            token_provider = build_token_provider(auth)
+            token_provider = build_token_provider(auth, provider=provider, endpoint=endpoint)
         result = {
             "endpoint": endpoint,
             "key": key,
@@ -524,7 +581,7 @@ def resolve_agent_config(agent, settings):
             "token_provider": token_provider,
             "model_endpoint_id": agent.get("model_endpoint_id", ""),
             "model_id": agent.get("model_id", ""),
-            "model_provider": agent.get("model_provider", ""),
+            "model_provider": provider,
         }
         return result
 
@@ -554,6 +611,8 @@ def resolve_agent_config(agent, settings):
         debug_print(f"[SK Loader] Using global GPT config (fallback)")
         endpoint, key, deployment, api_version = g_gpt
 
+    token_provider = resolve_global_gpt_token_provider(key)
+
     result = {
         "endpoint": endpoint,
         "key": key,
@@ -575,9 +634,13 @@ def resolve_agent_config(agent, settings):
         "max_completion_tokens": agent.get("max_completion_tokens", -1),  # -1 meant use model default determined by the service, 35-trubo is 4096, 4o is 16384, 4.1 is at least 32768
         "agent_type": agent_type or "local",
         "other_settings": other_settings,
+        "token_provider": token_provider,
     }
 
-    print(f"[SK Loader] Final resolved config for {agent.get('name')}: endpoint={bool(endpoint)}, key={bool(key)}, deployment={deployment}")
+    print(
+        f"[SK Loader] Final resolved config for {agent.get('name')}: "
+        f"endpoint={bool(endpoint)}, key={bool(key)}, token_provider={bool(token_provider)}, deployment={deployment}"
+    )
     return result
 
 def load_time_plugin(kernel: Kernel):
@@ -982,13 +1045,14 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
 
     def create_chat_completion_service():
         token_provider = agent_config.get("token_provider")
+        resolved_api_key = agent_config.get("key") or ""
         if token_provider:
             try:
                 return AzureChatCompletion(
                     service_id=service_id,
                     deployment_name=agent_config["deployment"],
                     endpoint=agent_config["endpoint"],
-                    api_key=agent_config["key"],
+                    api_key=resolved_api_key,
                     api_version=agent_config["api_version"],
                     azure_ad_token_provider=token_provider,
                 )
@@ -998,7 +1062,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                         service_id=service_id,
                         deployment_name=agent_config["deployment"],
                         endpoint=agent_config["endpoint"],
-                        api_key=agent_config["key"],
+                        api_key=resolved_api_key,
                         api_version=agent_config["api_version"],
                         ad_token_provider=token_provider,
                     )
@@ -1013,7 +1077,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
             service_id=service_id,
             deployment_name=agent_config["deployment"],
             endpoint=agent_config["endpoint"],
-            api_key=agent_config["key"],
+            api_key=resolved_api_key,
             api_version=agent_config["api_version"],
         )
 
@@ -1049,7 +1113,10 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
 
     log_event(f"[SK Loader] Agent config resolved for {agent_cfg.get('name')} - endpoint: {bool(agent_config.get('endpoint'))}, key: {bool(agent_config.get('key'))}, deployment: {agent_config.get('deployment')}, max_completion_tokens: {agent_config.get('max_completion_tokens')}", level=logging.INFO)
     
-    if AzureChatCompletion and agent_config["endpoint"] and agent_config["key"] and agent_config["deployment"]:
+    token_provider_present = bool(agent_config.get("token_provider"))
+    has_auth = bool(agent_config.get("key")) or token_provider_present
+
+    if AzureChatCompletion and agent_config["endpoint"] and has_auth and agent_config["deployment"]:
         print(f"[SK Loader] Azure config valid for {agent_config['name']}, creating chat service...")
         if apim_enabled:
             log_event(
@@ -1107,6 +1174,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
         print(f"  - AzureChatCompletion available: {bool(AzureChatCompletion)}")
         print(f"  - endpoint: {bool(agent_config.get('endpoint'))}")
         print(f"  - key: {bool(agent_config.get('key'))}")
+        print(f"  - token_provider: {token_provider_present}")
         print(f"  - deployment: {bool(agent_config.get('deployment'))}")
         log_event(
             f"[SK Loader] AzureChatCompletion or configuration not resolved for agent: {agent_config['name']} ({mode_label})",
@@ -1114,6 +1182,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 "agent_name": agent_config["name"],
                 "aoai_endpoint": agent_config["endpoint"],
                 "aoai_key": f"{agent_config['key'][:3]}..." if agent_config["key"] else None,
+                "token_provider": token_provider_present,
                 "aoai_deployment": agent_config["deployment"],
             },
             level=logging.ERROR,
