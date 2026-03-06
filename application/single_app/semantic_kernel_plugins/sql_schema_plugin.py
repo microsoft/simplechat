@@ -165,11 +165,11 @@ class SQLSchemaPlugin(BasePlugin):
         user_desc = self._metadata.get("description", f"SQL Schema plugin for {self.database_type} database")
         api_desc = (
             "This plugin connects to SQL databases and extracts schema information including tables, columns, "
-            "data types, primary keys, foreign keys, and relationships. It supports SQL Server, PostgreSQL, "
-            "MySQL, and SQLite databases. The plugin provides structured schema data that can be used by "
-            "AI agents to understand database structure and generate appropriate SQL queries. "
-            "Authentication supports connection strings, username/password, and integrated authentication. "
-            "The plugin handles database-specific SQL variations for schema extraction."
+            "data types, primary keys, foreign keys, and relationships. WORKFLOW: ALWAYS call get_database_schema "
+            "or get_table_list FIRST before executing any SQL queries via the SQL Query plugin. This ensures "
+            "you have accurate table names, column names, and relationship information to construct valid queries. "
+            "It supports SQL Server, PostgreSQL, MySQL, and SQLite databases. "
+            "Authentication supports connection strings, username/password, and integrated authentication."
         )
         full_desc = f"{user_desc}\n\n{api_desc}"
         
@@ -219,7 +219,7 @@ class SQLSchemaPlugin(BasePlugin):
         return ["get_database_schema", "get_table_schema", "get_table_list", "get_relationships"]
 
     @plugin_function_logger("SQLSchemaPlugin")
-    @kernel_function(description="Get complete database schema including all tables, columns, and relationships")
+    @kernel_function(description="Get complete database schema including all tables, columns, data types, primary keys, foreign keys, and relationships. ALWAYS call this function FIRST before executing any SQL queries to understand the database structure. This ensures you generate correct table names, column names, and JOIN conditions. The returned schema should be used to construct valid SQL queries with the correct fully-qualified table names (e.g., dbo.TableName) and column references.")
     def get_database_schema(
         self, 
         include_system_tables: bool = False,
@@ -333,7 +333,7 @@ class SQLSchemaPlugin(BasePlugin):
             log_event(f"[SQLSchemaPlugin] Error getting database schema: {e}")
             raise
 
-    @kernel_function(description="Get detailed schema for a specific table")
+    @kernel_function(description="Get the detailed schema (column names, data types, constraints) for a specific table. Call this after discovering tables via get_database_schema or get_table_list to verify exact column names and data types before constructing queries, ensuring that all column names used in queries are correct and exist in the table.")
     @plugin_function_logger("SQLSchemaPlugin")
     def get_table_schema(self, table_name: str) -> ResultWithMetadata:
         """Get detailed schema for a specific table"""
@@ -350,7 +350,7 @@ class SQLSchemaPlugin(BasePlugin):
             log_event(f"[SQLSchemaPlugin] Error getting table schema for {table_name}: {e}")
             raise
 
-    @kernel_function(description="Get list of all tables in the database")
+    @kernel_function(description="Return the names of all tables in the database. Use this function first to discover which tables are available before attempting to query or get schemas for specific tables. This is a lightweight alternative to get_database_schema when you only need table names.")
     @plugin_function_logger("SQLSchemaPlugin")
     def get_table_list(
         self, 
@@ -385,7 +385,7 @@ class SQLSchemaPlugin(BasePlugin):
             log_event(f"[SQLSchemaPlugin] Error getting table list: {e}")
             raise
 
-    @kernel_function(description="Get foreign key relationships between tables")
+    @kernel_function(description="Get foreign key relationships between tables. Use this to understand how tables connect via JOIN conditions before writing multi-table queries. This returns parent/child table and column pairs that define the relationships.")
     def get_relationships(self, table_name: Optional[str] = None) -> ResultWithMetadata:
         """Get foreign key relationships between tables"""
         try:

@@ -117,8 +117,8 @@ class LoggedPluginLoader:
             return self._create_openapi_plugin(manifest)
         elif plugin_type == 'python':
             return self._create_python_plugin(manifest)
-        #elif plugin_type in ['sql_schema', 'sql_query']:
-        #    return self._create_sql_plugin(manifest)
+        elif plugin_type in ['sql_schema', 'sql_query']:
+            return self._create_sql_plugin(manifest)
         else:
             try:
                 debug_print(f"[Logged Plugin Loader] Attempting to discover plugin type: {plugin_type}")
