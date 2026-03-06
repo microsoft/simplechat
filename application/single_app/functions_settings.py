@@ -206,6 +206,9 @@ def get_settings(use_cosmos=False):
         'require_member_of_feedback_admin': False,
         'enable_conversation_archiving': False,
 
+        # Processing Thoughts
+        'enable_thoughts': False,
+
         # Search and Extract
         'azure_ai_search_endpoint': '',
         'azure_ai_search_key': '',

@@ -811,9 +811,10 @@ def register_route_frontend_admin_settings(app):
                 'require_member_of_safety_violation_admin': require_member_of_safety_violation_admin, # ADDED
                 'require_member_of_feedback_admin': require_member_of_feedback_admin, # ADDED
 
-                # Feedback & Archiving
+                # Feedback, Archiving & Thoughts
                 'enable_user_feedback': form_data.get('enable_user_feedback') == 'on',
                 'enable_conversation_archiving': form_data.get('enable_conversation_archiving') == 'on',
+                'enable_thoughts': form_data.get('enable_thoughts') == 'on',
 
                 # Search (Web Search via Azure AI Foundry agent)
                 'enable_web_search': enable_web_search,

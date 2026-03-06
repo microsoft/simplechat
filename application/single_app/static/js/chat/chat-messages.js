@@ -20,6 +20,7 @@ import { saveUserSetting } from "./chat-layout.js";
 import { isStreamingEnabled, sendMessageWithStreaming } from "./chat-streaming.js";
 import { getCurrentReasoningEffort, isReasoningEffortEnabled } from './chat-reasoning.js';
 import { areAgentsEnabled } from './chat-agents.js';
+import { createThoughtsToggleHtml, attachThoughtsToggleListener, startThoughtPolling, stopThoughtPolling } from './chat-thoughts.js';
 
 // Conditionally import TTS if enabled
 let ttsModule = null;
@@ -743,11 +744,13 @@ export function appendMessage(
 
     const metadataContainerId = `metadata-${messageId || Date.now()}`;
     const metadataContainerHtml = `<div class="metadata-container mt-2 pt-2 border-top" id="${metadataContainerId}" style="display: none;"><div class="text-muted">Loading metadata...</div></div>`;
-    
+
+    const thoughtsHtml = createThoughtsToggleHtml(messageId);
+
     const footerContentHtml = `<div class="message-footer d-flex justify-content-between align-items-center mt-2">
       <div class="d-flex align-items-center">${copyAndFeedbackHtml}</div>
       <div class="d-flex align-items-center"></div>
-      <div class="d-flex align-items-center gap-2">${citationToggleHtml}<button class="btn btn-sm btn-link text-muted metadata-info-btn" data-message-id="${messageId}" title="Show metadata" aria-expanded="false" aria-controls="${metadataContainerId}">
+      <div class="d-flex align-items-center gap-2">${thoughtsHtml.toggleHtml}${citationToggleHtml}<button class="btn btn-sm btn-link text-muted metadata-info-btn" data-message-id="${messageId}" title="Show metadata" aria-expanded="false" aria-controls="${metadataContainerId}">
         <i class="bi bi-info-circle"></i>
       </button></div>
     </div>`;
@@ -760,6 +763,7 @@ export function appendMessage(
                     <div class="message-sender">${senderLabel}</div>
                     ${mainMessageHtml}
                     ${citationContentContainerHtml}
+                    ${thoughtsHtml.containerHtml}
                     ${metadataContainerHtml}
                     ${footerContentHtml}
                 </div>
@@ -816,6 +820,9 @@ export function appendMessage(
         }
       });
     }
+
+    // Attach thoughts toggle listener
+    attachThoughtsToggleListener(messageDiv, messageId, currentConversationId);
     
     const maskBtn = messageDiv.querySelector(".mask-btn");
     if (maskBtn) {
@@ -1516,6 +1523,7 @@ export function actuallySendMessage(finalMessageToSend) {
   }
   
   // Regular non-streaming fetch
+  startThoughtPolling(currentConversationId);
   fetch("/api/chat", {
     method: "POST",
     headers: {
@@ -1547,6 +1555,7 @@ export function actuallySendMessage(finalMessageToSend) {
     })
     .then((data) => {
       // Only successful responses reach here
+      stopThoughtPolling();
       hideLoadingIndicatorInChatbox();
 
       console.log("--- Data received from /api/chat ---");
@@ -1688,6 +1697,7 @@ export function actuallySendMessage(finalMessageToSend) {
       }
     })
     .catch((error) => {
+      stopThoughtPolling();
       hideLoadingIndicatorInChatbox();
       console.error("Error sending message:", error);
 

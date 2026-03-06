@@ -1,10 +1,14 @@
 // workspace_plugins.js (refactored to use plugin_common.js and new multi-step modal)
-import { renderPluginsTable, ensurePluginsTableInRoot, validatePluginManifest } from '../plugin_common.js';
+import { renderPluginsTable, renderPluginsGrid, ensurePluginsTableInRoot, validatePluginManifest } from '../plugin_common.js';
 import { showToast } from "../chat/chat-toast.js"
+import {
+    setupViewToggle, switchViewContainers, openViewModal
+} from './view-utils.js';
 
 const root = document.getElementById('workspace-plugins-root');
 let plugins = [];
 let filteredPlugins = [];
+let currentViewMode = 'list';
 
 function renderLoading() {
   root.innerHTML = `<div class="text-center p-4"><div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div></div>`;
@@ -12,6 +16,22 @@ function renderLoading() {
 
 function renderError(msg) {
   root.innerHTML = `<div class="alert alert-danger">${msg}</div>`;
+}
+
+function getViewHandlers() {
+  return {
+    onEdit: name => openPluginModal(plugins.find(p => p.name === name)),
+    onDelete: name => deletePlugin(name),
+    onView: name => {
+      const plugin = plugins.find(p => p.name === name);
+      if (plugin) {
+        openViewModal(plugin, 'action', {
+          onEdit: (item) => openPluginModal(item),
+          onDelete: (item) => deletePlugin(item.name)
+        });
+      }
+    }
+  };
 }
 
 function filterPlugins(searchTerm) {
@@ -26,14 +46,18 @@ function filterPlugins(searchTerm) {
     });
   }
   
-  // Ensure table template is in place
   ensurePluginsTableInRoot();
+  const handlers = getViewHandlers();
   
   renderPluginsTable({
     plugins: filteredPlugins,
     tbodySelector: '#plugins-table-body',
-    onEdit: name => openPluginModal(plugins.find(p => p.name === name)),
-    onDelete: name => deletePlugin(name)
+    ...handlers
+  });
+  renderPluginsGrid({
+    plugins: filteredPlugins,
+    containerSelector: '#plugins-grid-view',
+    ...handlers
   });
 }
 
@@ -47,12 +71,26 @@ async function fetchPlugins() {
     
     // Ensure table template is in place
     ensurePluginsTableInRoot();
+    const handlers = getViewHandlers();
     
     renderPluginsTable({
       plugins: filteredPlugins,
       tbodySelector: '#plugins-table-body',
-      onEdit: name => openPluginModal(plugins.find(p => p.name === name)),
-      onDelete: name => deletePlugin(name)
+      ...handlers
+    });
+    renderPluginsGrid({
+      plugins: filteredPlugins,
+      containerSelector: '#plugins-grid-view',
+      ...handlers
+    });
+    
+    // Set up view toggle (only once after template is in DOM)
+    setupViewToggle('plugins', 'pluginsViewPreference', (mode) => {
+      currentViewMode = mode;
+      switchViewContainers(mode,
+        document.getElementById('plugins-list-view'),
+        document.getElementById('plugins-grid-view')
+      );
     });
     
     // Set up the create action button

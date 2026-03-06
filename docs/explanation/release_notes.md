@@ -13,6 +13,37 @@
     *   (Ref: `route_backend_chats.py`, `run_tabular_sk_analysis()`, `collect_tabular_sk_citations()`)
 
 ---
+### **(v0.239.013)**
+
+#### New Features
+
+*   **Agent & Action User Tracking (created_by / modified_by)**
+    *   All agent and action documents (personal, group, and global) now include `created_by`, `created_at`, `modified_by`, and `modified_at` fields that track which user created or last modified the entity.
+    *   On updates, the original `created_by` and `created_at` values are preserved while `modified_by` and `modified_at` are refreshed with the current user and timestamp.
+    *   New optional `user_id` parameter added to `save_group_agent`, `save_global_agent`, `save_group_action`, and `save_global_action` for caller-supplied user tracking (backward-compatible, defaults to `None`).
+    *   (Ref: `functions_personal_agents.py`, `functions_group_agents.py`, `functions_global_agents.py`, `functions_personal_actions.py`, `functions_group_actions.py`, `functions_global_actions.py`)
+
+*   **Activity Logging for Agent & Action CRUD Operations**
+    *   Every create, update, and delete operation on agents and actions now generates an activity log record in the `activity_logs` Cosmos DB container and Application Insights.
+    *   Six new logging functions: `log_agent_creation`, `log_agent_update`, `log_agent_deletion`, `log_action_creation`, `log_action_update`, `log_action_deletion`.
+    *   Activity records include: `user_id`, `activity_type`, `entity_type` (agent/action), `operation` (create/update/delete), `workspace_type` (personal/group/global), and `workspace_context` (group_id when applicable).
+    *   Logging is fire-and-forget — failures never break the CRUD operation.
+    *   All personal, group, and admin routes for both agents and actions are wired up.
+    *   (Ref: `functions_activity_logging.py`, `route_backend_agents.py`, `route_backend_plugins.py`)
+
+### **(v0.239.008)**
+
+#### User Interface Enhancements
+
+*   **List/Grid View Toggle for Agents and Actions**
+    *   Added a list/grid view toggle to all four workspace areas: personal agents, personal actions, group agents, and group actions.
+    *   **Grid View**: Large cards with type icon, humanized name, truncated description, and action buttons (Chat, View, Edit, Delete as applicable).
+    *   **List View**: Improved table layout with fixed column widths (28%/47%/25%), humanized display names, and truncated descriptions with hover tooltips for full text.
+    *   **View Button**: New eye-icon button on every agent and action that opens a read-only detail modal with gradient-header summary cards (Basic Information, Model Configuration, Instructions for agents; Basic Information, Configuration for actions).
+    *   **Name Humanization**: Display names are now automatically parsed — underscores and camelCase/PascalCase boundaries are converted to properly spaced, title-cased words (e.g., `myCustomAgent` → `My Custom Agent`).
+    *   **Persistent Preference**: View mode selection (list/grid) is saved per area in localStorage and restored on page load.
+    *   New shared utility module `view-utils.js` provides reusable functions for all four workspace areas.
+    *   (Ref: `view-utils.js`, `workspace_agents.js`, `workspace_plugins.js`, `plugin_common.js`, `group_agents.js`, `group_plugins.js`, `workspace.html`, `group_workspaces.html`, `styles.css`)
 
 ### **(v0.239.007)**
 
@@ -48,6 +79,45 @@
     *   (Ref: `_df_cache`, `asyncio.to_thread`, pre-dispatch schema injection in `run_tabular_sk_analysis()`)
 
 ---
+*   **Chat with Agent Button for Group Agents**
+    *   Added a "Chat" button to each group agent row, allowing users to quickly select a group agent and navigate to the chat page.
+    *   (Ref: `group_agents.js`, `group_workspaces.html`)
+
+### **(v0.239.006)**
+
+#### User Interface Enhancements
+
+*   **Hidden Deprecated Action Types**
+    *   Deprecated action types (`sql_schema`, `ui_test`, `queue_storage`, `blob_storage`, `embedding_model`) are now hidden from the action creation wizard type selector. Existing actions of these types remain functional.
+    *   (Ref: `plugin_modal_stepper.js`)
+
+### **(v0.239.005)**
+
+#### Bug Fixes
+
+*   **Group SQL Action/Plugin Save Failure**
+    *   Fixed group SQL actions (sql_query and sql_schema types) failing to save correctly due to missing endpoint placeholder. Group routes now apply the same `sql://sql_query` / `sql://sql_schema` endpoint logic as personal action routes.
+    *   Fixed Step 4 (Advanced) dynamic fields overwriting Step 3 (Configuration) SQL values with empty strings during form data collection. SQL types now skip the dynamic field merge entirely since Step 3 already provides all necessary configuration.
+    *   Fixed auth type definition schemas (`sql_query.definition.json`, `sql_schema.definition.json`) only allowing `connection_string` auth type, blocking `user`, `identity`, and `servicePrincipal` types that the UI and runtime support.
+    *   Fixed `__Secret` key suffix mismatch in additional settings schemas where `connection_string__Secret` and `password__Secret` didn't match the runtime's expected `connection_string` and `password` field names. Also removed duplicate `azuresql` enum value.
+    *   (Ref: `route_backend_plugins.py`, `plugin_modal_stepper.js`, `sql_query.definition.json`, `sql_schema.definition.json`, `sql_query_plugin.additional_settings.schema.json`, `sql_schema_plugin.additional_settings.schema.json`)
+
+#### New Features
+
+*   **SQL Test Connection Button**
+    *   Added a "Test Connection" button to the SQL Database Configuration section (Step 3) of the action wizard, allowing users to validate database connectivity before saving.
+    *   Supports all database types: SQL Server, Azure SQL (with managed identity), PostgreSQL, MySQL, and SQLite.
+    *   Shows inline success/failure alerts with a 15-second timeout cap and sanitized error messages.
+    *   New backend endpoint: `POST /api/plugins/test-sql-connection`.
+    *   (Ref: `route_backend_plugins.py`, `plugin_modal_stepper.js`, `_plugin_modal.html`)
+
+#### User Interface Enhancements
+
+*   **Advanced Settings Collapse Toggle**
+    *   Step 4 (Advanced) content is now hidden behind a collapsible toggle button ("Show Advanced Settings") instead of being displayed by default. Reduces visual noise for most users.
+    *   For SQL action types, the redundant additional fields UI in Step 4 is hidden entirely since all SQL configuration is already handled in Step 3.
+    *   Step 5 (Summary) no longer shows the raw additional fields JSON dump for SQL types, since that data is already shown in the SQL Database Configuration summary card.
+    *   (Ref: `_plugin_modal.html`, `plugin_modal_stepper.js`)
 
 ### **(v0.239.001)**
 
