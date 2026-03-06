@@ -4,16 +4,23 @@
 import { showToast } from "../chat/chat-toast.js";
 import * as agentsCommon from "../agents_common.js";
 import { AgentModalStepper } from "../agent_modal_stepper.js";
+import {
+  humanizeName, truncateDescription, escapeHtml as escapeHtmlUtil,
+  setupViewToggle, switchViewContainers, openViewModal, createAgentCard
+} from './view-utils.js';
 
 const tableBody = document.getElementById("group-agents-table-body");
 const errorContainer = document.getElementById("group-agents-error");
 const searchInput = document.getElementById("group-agents-search");
 const createButton = document.getElementById("create-group-agent-btn");
 const permissionWarning = document.getElementById("group-agents-permission-warning");
+const agentsListView = document.getElementById("group-agents-list-view");
+const agentsGridView = document.getElementById("group-agents-grid-view");
 
 let agents = [];
 let filteredAgents = [];
 let agentStepper = null;
+let currentViewMode = 'list';
 let currentContext = window.groupWorkspaceContext || {
   activeGroupId: null,
   activeGroupName: "",
@@ -21,14 +28,7 @@ let currentContext = window.groupWorkspaceContext || {
 };
 
 function escapeHtml(value) {
-  if (!value) return "";
-  return value.replace(/[&<>"']/g, (char) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;"
-  }[char] || char));
+  return escapeHtmlUtil(value);
 }
 
 function canManageAgents() {
@@ -46,6 +46,7 @@ function groupAllowsModifications() {
 }
 
 function truncateName(name, maxLength = 18) {
+  // Kept for backward compat; prefer humanizeName for display
   if (!name || name.length <= maxLength) return name || "";
   return `${name.substring(0, maxLength)}…`;
 }
@@ -114,29 +115,58 @@ function renderAgentsTable(list) {
 
   list.forEach((agent) => {
     const tr = document.createElement("tr");
-    const displayName = truncateName(agent.display_name || agent.displayName || agent.name || "");
-    const description = escapeHtml(agent.description || "No description available.");
+    const rawName = agent.display_name || agent.displayName || agent.name || "";
+    const displayName = humanizeName(rawName);
+    const fullDesc = agent.description || "No description available.";
+    const shortDesc = truncateDescription(fullDesc, 90);
 
     let actionsHtml = `
+        <button type="button" class="btn btn-sm btn-outline-info me-1 view-group-agent-btn" data-agent-name="${escapeHtml(agent.name || '')}" title="View details">
+          <i class="bi bi-eye"></i>
+        </button>
         <button type="button" class="btn btn-sm btn-primary me-1 chat-group-agent-btn" data-agent-name="${escapeHtml(agent.name || '')}" title="Chat with this agent">
           <i class="bi bi-chat-dots me-1"></i>Chat
         </button>`;
     if (canManage) {
       actionsHtml += `
-        <button type="button" class="btn btn-sm btn-outline-secondary me-1 edit-group-agent-btn" data-agent-id="${escapeHtml(agent.id || agent.name || "")}">
+        <button type="button" class="btn btn-sm btn-outline-secondary me-1 edit-group-agent-btn" data-agent-id="${escapeHtml(agent.id || agent.name || '')}">
           <i class="bi bi-pencil"></i>
         </button>
-        <button type="button" class="btn btn-sm btn-outline-danger delete-group-agent-btn" data-agent-id="${escapeHtml(agent.id || agent.name || "")}">
+        <button type="button" class="btn btn-sm btn-outline-danger delete-group-agent-btn" data-agent-id="${escapeHtml(agent.id || agent.name || '')}">
           <i class="bi bi-trash"></i>
         </button>`;
     }
 
     tr.innerHTML = `
-      <td><strong title="${escapeHtml(agent.display_name || agent.displayName || agent.name || "")}">${escapeHtml(displayName)}</strong></td>
-      <td class="text-muted small">${description}</td>
+      <td><strong title="${escapeHtml(rawName)}">${escapeHtml(displayName)}</strong></td>
+      <td class="text-muted small" title="${escapeHtml(fullDesc)}">${escapeHtml(shortDesc)}</td>
       <td>${actionsHtml}</td>`;
 
     tableBody.appendChild(tr);
+  });
+}
+
+function renderAgentsGrid(list) {
+  if (!agentsGridView) return;
+  agentsGridView.innerHTML = '';
+
+  if (!list.length) {
+    agentsGridView.innerHTML = '<div class="col-12 text-center text-muted p-4">No group agents found.</div>';
+    return;
+  }
+
+  const canManage = canManageAgents() && groupAllowsModifications();
+  list.forEach(agent => {
+    const col = createAgentCard(agent, {
+      onChat: a => chatWithGroupAgent(a.name || a),
+      onView: a => openGroupAgentViewModal(a),
+      onEdit: canManage ? a => {
+        const found = agents.find(x => x.id === (a.id || a.name || a) || x.name === (a.name || a));
+        openAgentModal(found || null);
+      } : null,
+      onDelete: canManage ? a => deleteGroupAgent(a.id || a.name || a) : null
+    });
+    agentsGridView.appendChild(col);
   });
 }
 
@@ -152,6 +182,23 @@ function filterAgents(term) {
     });
   }
   renderAgentsTable(filteredAgents);
+  renderAgentsGrid(filteredAgents);
+}
+
+// Open the view modal for a group agent with Chat/Edit/Delete actions
+function openGroupAgentViewModal(agent) {
+  const canManage = canManageAgents() && groupAllowsModifications();
+  const callbacks = {
+    onChat: (a) => chatWithGroupAgent(a.name)
+  };
+  if (canManage) {
+    callbacks.onEdit = (a) => {
+      const found = agents.find(x => x.id === a.id || x.name === a.name);
+      openAgentModal(found || a);
+    };
+    callbacks.onDelete = (a) => deleteGroupAgent(a.id || a.name);
+  }
+  openViewModal(agent, 'agent', callbacks);
 }
 
 function overrideAgentStepper(stepper) {
@@ -382,6 +429,14 @@ async function chatWithGroupAgent(agentName) {
 }
 
 function handleTableClick(event) {
+  const viewBtn = event.target.closest(".view-group-agent-btn");
+  if (viewBtn) {
+    const agentName = viewBtn.dataset.agentName;
+    const agent = agents.find(a => a.name === agentName);
+    if (agent) openGroupAgentViewModal(agent);
+    return;
+  }
+
   const chatBtn = event.target.closest(".chat-group-agent-btn");
   if (chatBtn) {
     const agentName = chatBtn.dataset.agentName;
@@ -428,6 +483,11 @@ function bindEventHandlers() {
 function initialize() {
   updatePermissionUI();
   bindEventHandlers();
+
+  setupViewToggle('groupAgents', 'groupAgentsViewPreference', (mode) => {
+    currentViewMode = mode;
+    switchViewContainers(mode, agentsListView, agentsGridView);
+  });
 
   if (document.getElementById("group-agents-tab-btn")?.classList.contains("active")) {
     fetchGroupAgents();

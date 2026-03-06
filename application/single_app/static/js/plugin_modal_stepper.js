@@ -1,6 +1,7 @@
 // plugin_modal_stepper.js
 // Multi-step modal functionality for action/plugin creation
 import { showToast } from "./chat/chat-toast.js";
+import { getTypeIcon } from "./workspace/view-utils.js";
 
 // Action types hidden from the creation UI (backend plugins remain intact)
 const HIDDEN_ACTION_TYPES = ['sql_schema', 'ui_test', 'queue_storage', 'blob_storage', 'embedding_model'];
@@ -282,10 +283,15 @@ export class PluginModalStepper {
       description.substring(0, maxLength) + '...' : description;
     const needsTruncation = description.length > maxLength;
     
+    const iconClass = getTypeIcon(type.type || type.name);
+
     col.innerHTML = `
       <div class="card action-type-card h-100" data-type="${type.type || type.name}">
         <div class="card-body">
-          <h6 class="card-title">${this.escapeHtml(displayName)}</h6>
+          <div class="d-flex align-items-center mb-2">
+            <i class="bi ${iconClass} me-2" style="font-size: 1.25rem; color: #0d6efd;"></i>
+            <h6 class="card-title mb-0">${this.escapeHtml(displayName)}</h6>
+          </div>
           <p class="card-text">
             <span class="description-short">${this.escapeHtml(truncatedDescription)}</span>
             ${needsTruncation ? `

@@ -32,6 +32,11 @@ from functions_keyvault import SecretReturnType
 
 from functions_debug import debug_print
 from json_schema_validation import validate_plugin
+from functions_activity_logging import (
+    log_action_creation,
+    log_action_update,
+    log_action_deletion,
+)
 
 def discover_plugin_types():
     # Dynamically discover allowed plugin types from available plugin classes.
@@ -345,6 +350,19 @@ def set_user_plugins():
     except Exception as e:
         debug_print(f"Error saving personal actions for user {user_id}: {e}")
         return jsonify({'error': 'Failed to save plugins'}), 500
+
+    # Log individual action activities
+    for plugin in filtered_plugins:
+        p_name = plugin.get('name', '')
+        p_id = plugin.get('id', '')
+        p_type = plugin.get('type', '')
+        if p_name in current_action_names:
+            log_action_update(user_id=user_id, action_id=p_id, action_name=p_name, action_type=p_type, scope='personal')
+        else:
+            log_action_creation(user_id=user_id, action_id=p_id, action_name=p_name, action_type=p_type, scope='personal')
+    for plugin_name in (current_action_names - new_plugin_names):
+        log_action_deletion(user_id=user_id, action_id=plugin_name, action_name=plugin_name, scope='personal')
+
     log_event("User plugins updated", extra={"user_id": user_id, "plugins_count": len(filtered_plugins)})
     return jsonify({'success': True})
 
@@ -360,6 +378,7 @@ def delete_user_plugin(plugin_name):
     if not deleted:
         return jsonify({'error': 'Plugin not found.'}), 404
     
+    log_action_deletion(user_id=user_id, action_id=plugin_name, action_name=plugin_name, scope='personal')
     log_event("User plugin deleted", extra={"user_id": user_id, "plugin_name": plugin_name})
     return jsonify({'success': True})
 
@@ -474,11 +493,12 @@ def create_group_action_route():
     payload['additionalFields'] = merged.get('additionalFields', payload.get('additionalFields', {}))
 
     try:
-        saved = save_group_action(active_group, payload)
+        saved = save_group_action(active_group, payload, user_id=user_id)
     except Exception as exc:
         debug_print('Failed to save group action: %s', exc)
         return jsonify({'error': 'Unable to save action'}), 500
 
+    log_action_creation(user_id=user_id, action_id=saved.get('id', ''), action_name=saved.get('name', ''), action_type=saved.get('type', ''), scope='group', group_id=active_group)
     return jsonify(saved), 201
 
 
@@ -542,11 +562,12 @@ def update_group_action_route(action_id):
     merged['additionalFields'] = schema_merged.get('additionalFields', merged.get('additionalFields', {}))
 
     try:
-        saved = save_group_action(active_group, merged)
+        saved = save_group_action(active_group, merged, user_id=user_id)
     except Exception as exc:
         debug_print('Failed to update group action %s: %s', action_id, exc)
         return jsonify({'error': 'Unable to update action'}), 500
 
+    log_action_update(user_id=user_id, action_id=action_id, action_name=saved.get('name', ''), action_type=saved.get('type', ''), scope='group', group_id=active_group)
     return jsonify(saved), 200
 
 
@@ -577,6 +598,7 @@ def delete_group_action_route(action_id):
 
     if not removed:
         return jsonify({'error': 'Action not found'}), 404
+    log_action_deletion(user_id=user_id, action_id=action_id, action_name=action_id, scope='group', group_id=active_group)
     return jsonify({'message': 'Action deleted'}), 200
 
 @bpap.route('/api/user/plugins/types', methods=['GET'])
@@ -706,9 +728,10 @@ def add_plugin():
         new_plugin['id'] = plugin_id
         
         # Save to global actions container
-        save_global_action(new_plugin)
+        save_global_action(new_plugin, user_id=str(get_current_user_id()))
         
-        log_event("Plugin added", extra={"action": "add", "plugin": new_plugin, "user": str(getattr(request, 'user', 'unknown'))})
+        log_action_creation(user_id=str(get_current_user_id()), action_id=plugin_id, action_name=new_plugin.get('name', ''), action_type=new_plugin.get('type', ''), scope='global')
+        log_event("Plugin added", extra={"action": "add", "plugin": new_plugin, "user": str(get_current_user_id())})
         
         # --- HOT RELOAD TRIGGER ---
         setattr(builtins, "kernel_reload_needed", True)
@@ -767,9 +790,10 @@ def edit_plugin(plugin_name):
             # Delete old and save updated
             if 'id' in found_plugin:
                 delete_global_action(found_plugin['id'])
-            save_global_action(updated_plugin)
+            save_global_action(updated_plugin, user_id=str(get_current_user_id()))
             
-            log_event("Plugin edited", extra={"action": "edit", "plugin": updated_plugin, "user": str(getattr(request, 'user', 'unknown'))})
+            log_action_update(user_id=str(get_current_user_id()), action_id=updated_plugin.get('id', ''), action_name=plugin_name, action_type=updated_plugin.get('type', ''), scope='global')
+            log_event("Plugin edited", extra={"action": "edit", "plugin": updated_plugin, "user": str(get_current_user_id())})
             # --- HOT RELOAD TRIGGER ---
             setattr(builtins, "kernel_reload_needed", True)
             return jsonify({'success': True})
@@ -810,7 +834,8 @@ def delete_plugin(plugin_name):
         if 'id' in plugin_to_delete:
             delete_global_action(plugin_to_delete['id'])
         
-        log_event("Plugin deleted", extra={"action": "delete", "plugin_name": plugin_name, "user": str(getattr(request, 'user', 'unknown'))})
+        log_action_deletion(user_id=str(get_current_user_id()), action_id=plugin_to_delete.get('id', ''), action_name=plugin_name, action_type=plugin_to_delete.get('type', ''), scope='global')
+        log_event("Plugin deleted", extra={"action": "delete", "plugin_name": plugin_name, "user": str(get_current_user_id())})
         # --- HOT RELOAD TRIGGER ---
         setattr(builtins, "kernel_reload_needed", True)
         return jsonify({'success': True})

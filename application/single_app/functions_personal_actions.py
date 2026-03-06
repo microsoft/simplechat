@@ -113,15 +113,26 @@ def save_personal_action(user_id, action_data):
             existing_action = get_personal_action(user_id, action_data['name'])
         
         # Preserve existing ID if updating, or generate new ID if creating
+        now = datetime.utcnow().isoformat()
         if existing_action:
-            # Update existing action - preserve the original ID
+            # Update existing action - preserve the original ID and creation tracking
             action_data['id'] = existing_action['id']
+            action_data['created_by'] = existing_action.get('created_by', user_id)
+            action_data['created_at'] = existing_action.get('created_at', now)
         elif 'id' not in action_data or not action_data['id']:
             # New action - generate UUID for ID
             action_data['id'] = str(uuid.uuid4())
-            
+            action_data['created_by'] = user_id
+            action_data['created_at'] = now
+        else:
+            # Has an ID but no existing action found - treat as new
+            action_data['created_by'] = user_id
+            action_data['created_at'] = now
+        action_data['modified_by'] = user_id
+        action_data['modified_at'] = now
+
         action_data['user_id'] = user_id
-        action_data['last_updated'] = datetime.utcnow().isoformat()
+        action_data['last_updated'] = now
         
         # Validate required fields
         required_fields = ['name', 'displayName', 'type', 'description']
