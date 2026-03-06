@@ -44,12 +44,7 @@ def get_user_details_from_graph(user_id):
         if not token:
             return {"displayName": "", "email": ""}
 
-        if AZURE_ENVIRONMENT == "usgovernment":
-            user_endpoint = f"https://graph.microsoft.us/v1.0/users/{user_id}"
-        elif AZURE_ENVIRONMENT == "custom":
-            user_endpoint = f"{CUSTOM_GRAPH_URL_VALUE}/{user_id}"
-        else:
-            user_endpoint = f"https://graph.microsoft.com/v1.0/users/{user_id}"
+        user_endpoint = get_graph_endpoint(f"/users/{user_id}")
             
         headers = {
             "Authorization": f"Bearer {token}",
@@ -297,15 +292,8 @@ def register_route_backend_public_workspaces(app):
         if not ws:
             return jsonify({"error": "Workspace not found"}), 404
 
-        # verify membership
-        is_member = (
-            ws["owner"]["userId"] == user_id or
-            user_id in ws.get("admins", []) or
-            any(dm["userId"] == user_id for dm in ws.get("documentManagers", []))
-        )
-        if not is_member:
-            return jsonify({"error": "Not a member"}), 403
-
+        # Public workspaces are accessible to all authenticated users for chat.
+        # No membership check needed — any user can set a public workspace as active.
         update_active_public_workspace_for_user(user_id, ws_id)
         return jsonify({"message": f"Active set to {ws_id}"}), 200
 

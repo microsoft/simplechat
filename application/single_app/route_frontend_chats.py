@@ -1,14 +1,18 @@
 # route_frontend_chats.py
 
+import logging
 from config import *
 from functions_authentication import *
 from functions_content import *
 from functions_settings import *
 from functions_documents import *
-from functions_group import find_group_by_id
+from functions_group import find_group_by_id, get_user_groups
+from functions_public_workspaces import find_public_workspace_by_id, get_user_visible_public_workspace_ids_from_settings
 from functions_appinsights import log_event
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_debug import debug_print
+
+logger = logging.getLogger(__name__)
 
 def register_route_frontend_chats(app):
     @app.route('/chats', methods=['GET'])
@@ -17,14 +21,18 @@ def register_route_frontend_chats(app):
     @user_required
     def chats():
         user_id = get_current_user_id()
+        if not user_id:
+            return redirect(url_for('login'))
+
         settings = get_settings()
         user_settings = get_user_settings(user_id)
+        user_settings_dict = user_settings.get("settings", {}) if isinstance(user_settings, dict) else {}
         public_settings = sanitize_settings_for_user(settings)
         enable_user_feedback = public_settings.get("enable_user_feedback", False)
         enable_enhanced_citations = public_settings.get("enable_enhanced_citations", False)
         enable_document_classification = public_settings.get("enable_document_classification", False)
         enable_extract_meta_data = public_settings.get("enable_extract_meta_data", False)
-        active_group_id = user_settings["settings"].get("activeGroupOid", "")
+        active_group_id = user_settings_dict.get("activeGroupOid", "")
         active_group_name = ""
         if active_group_id:
             group_doc = find_group_by_id(active_group_id)
@@ -32,16 +40,32 @@ def register_route_frontend_chats(app):
                 active_group_name = group_doc.get("name", "")
         
         # Get active public workspace ID from user settings
-        active_public_workspace_id = user_settings["settings"].get("activePublicWorkspaceOid", "")
+        active_public_workspace_id = user_settings_dict.get("activePublicWorkspaceOid", "")
         
         categories_list = public_settings.get("document_classification_categories","")
 
-        if not user_id:
-            return redirect(url_for('login'))
-        
         # Get user display name from user settings
         user_display_name = user_settings.get('display_name', '')
-        
+
+        # Get all groups the user belongs to (for multi-scope selector)
+        user_groups_simple = []
+        try:
+            user_groups_raw = get_user_groups(user_id)
+            user_groups_simple = [{'id': g['id'], 'name': g.get('name', 'Unnamed')} for g in user_groups_raw]
+        except Exception as e:
+            logger.warning(f"Failed to load user groups for chats page: {e}")
+
+        # Get visible public workspaces with names (for multi-scope selector)
+        user_visible_public_workspaces = []
+        try:
+            visible_ws_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
+            for ws_id in visible_ws_ids:
+                ws_doc = find_public_workspace_by_id(ws_id)
+                if ws_doc:
+                    user_visible_public_workspaces.append({'id': ws_id, 'name': ws_doc.get('name', 'Unknown')})
+        except Exception as e:
+            logger.warning(f"Failed to load visible public workspaces for chats page: {e}")
+
         return render_template(
             'chats.html',
             settings=public_settings,
@@ -55,6 +79,8 @@ def register_route_frontend_chats(app):
             enable_extract_meta_data=enable_extract_meta_data,
             user_id=user_id,
             user_display_name=user_display_name,
+            user_groups=user_groups_simple,
+            user_visible_public_workspaces=user_visible_public_workspaces,
         )
     
     @app.route('/upload', methods=['POST'])
