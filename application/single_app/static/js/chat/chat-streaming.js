@@ -5,6 +5,7 @@ import { loadUserSettings, saveUserSetting } from './chat-layout.js';
 import { showToast } from './chat-toast.js';
 import { updateSidebarConversationTitle } from './chat-sidebar-conversations.js';
 import { applyScopeLock } from './chat-documents.js';
+import { handleStreamingThought } from './chat-thoughts.js';
 
 let streamingEnabled = false;
 let currentEventSource = null;
@@ -207,8 +208,11 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
                                 handleStreamError(tempAiMessageId, data.partial_content || accumulatedContent, data.error);
                                 return;
                             }
-                            
-                            if (data.content) {
+
+                            if (data.type === 'thought') {
+                                handleStreamingThought(data);
+                                // Continue reading — don't fall through to content handling
+                            } else if (data.content) {
                                 // Append chunk to accumulated content
                                 accumulatedContent += data.content;
                                 updateStreamingMessage(tempAiMessageId, accumulatedContent);

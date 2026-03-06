@@ -28,6 +28,7 @@ from functions_debug import debug_print
 from functions_activity_logging import log_chat_activity, log_conversation_creation, log_token_usage
 from flask import current_app
 from swagger_wrapper import swagger_route, get_auth_security
+from functions_thoughts import ThoughtTracker
 
 
 def get_kernel():
@@ -668,6 +669,18 @@ def register_route_backend_chats(app):
 
                 conversation_item['last_updated'] = datetime.utcnow().isoformat()
                 cosmos_conversations_container.upsert_item(conversation_item) # Update timestamp and potentially title
+
+                # Generate assistant_message_id early for thought tracking
+                assistant_message_id = f"{conversation_id}_assistant_{int(time.time())}_{random.randint(1000,9999)}"
+
+                # Initialize thought tracker
+                thought_tracker = ThoughtTracker(
+                    conversation_id=conversation_id,
+                    message_id=assistant_message_id,
+                    thread_id=current_user_thread_id,
+                    user_id=user_id
+                )
+
         # region 3 - Content Safety
             # ---------------------------------------------------------------------
             # 3) Check Content Safety (but DO NOT return 403).
@@ -679,6 +692,7 @@ def register_route_backend_chats(app):
             blocklist_matches = []
 
             if settings.get('enable_content_safety') and "content_safety_client" in CLIENTS:
+                thought_tracker.add_thought('content_safety', 'Checking content safety...')
                 try:
                     content_safety_client = CLIENTS["content_safety_client"]
                     request_obj = AnalyzeTextOptions(text=user_message)
@@ -836,6 +850,7 @@ def register_route_backend_chats(app):
 
 
                 # Perform the search
+                thought_tracker.add_thought('search', f"Searching {document_scope or 'personal'} workspace documents for '{(search_query or user_message)[:50]}'")
                 try:
                     # Prepare search arguments
                     # Set default and maximum values for top_n
@@ -899,6 +914,8 @@ def register_route_backend_chats(app):
                     }), 500
 
                 if search_results:
+                    unique_doc_names = set(doc.get('file_name', 'Unknown') for doc in search_results)
+                    thought_tracker.add_thought('search', f"Found {len(search_results)} results from {len(unique_doc_names)} documents")
                     retrieved_texts = []
                     combined_documents = []
                     classifications_found = set(conversation_item.get('classification', [])) # Load existing
@@ -1489,6 +1506,7 @@ def register_route_backend_chats(app):
                     }), status_code
 
             if web_search_enabled:
+                thought_tracker.add_thought('web_search', f"Searching the web for '{(search_query or user_message)[:50]}'")
                 perform_web_search(
                     settings=settings,
                     conversation_id=conversation_id,
@@ -1504,7 +1522,9 @@ def register_route_backend_chats(app):
                     agent_citations_list=agent_citations_list,
                     web_search_citations_list=web_search_citations_list,
                 )
-            
+                if web_search_citations_list:
+                    thought_tracker.add_thought('web_search', f"Got {len(web_search_citations_list)} web search results")
+
         # region 5 - FINAL conversation history preparation
             # ---------------------------------------------------------------------
             # 5) Prepare FINAL conversation history for GPT (including summarization)
@@ -2110,6 +2130,23 @@ def register_route_backend_chats(app):
                     })
 
                 if selected_agent:
+                    thought_tracker.add_thought('agent_tool_call', f"Sending to agent '{getattr(selected_agent, 'display_name', getattr(selected_agent, 'name', 'unknown'))}'")
+
+                    # Register callback to write plugin thoughts to Cosmos in real-time
+                    callback_key = f"{user_id}:{conversation_id}"
+                    plugin_logger = get_plugin_logger()
+
+                    def on_plugin_invocation(inv):
+                        duration_str = f" ({int(inv.duration_ms)}ms)" if inv.duration_ms else ""
+                        tool_name = f"{inv.plugin_name}.{inv.function_name}"
+                        thought_tracker.add_thought(
+                            'agent_tool_call',
+                            f"Agent called {tool_name}{duration_str}",
+                            detail=f"success={inv.success}"
+                        )
+
+                    plugin_logger.register_callback(callback_key, on_plugin_invocation)
+
                     def invoke_selected_agent():
                         return asyncio.run(run_sk_call(
                             selected_agent.invoke,
@@ -2120,16 +2157,18 @@ def register_route_backend_chats(app):
                         msg = str(result)
                         notice = None
                         agent_used = getattr(selected_agent, 'name', 'All Plugins')
-                        
+
+                        # Deregister real-time thought callback
+                        plugin_logger.deregister_callbacks(callback_key)
+
                         # Get the actual model deployment used by the agent
                         actual_model_deployment = getattr(selected_agent, 'deployment_name', None) or agent_used
                         debug_print(f"Agent '{agent_used}' using deployment: {actual_model_deployment}")
-                        
+
                         # Extract detailed plugin invocations for enhanced agent citations
-                        plugin_logger = get_plugin_logger()
-                        # CRITICAL FIX: Filter by user_id and conversation_id to prevent cross-conversation contamination
+                        # (Thoughts already written to Cosmos in real-time by callback)
                         plugin_invocations = plugin_logger.get_invocations_for_conversation(user_id, conversation_id)
-                        
+
                         # Convert plugin invocations to citation format with detailed information
                         detailed_citations = []
                         for inv in plugin_invocations:
@@ -2204,6 +2243,7 @@ def register_route_backend_chats(app):
                             )
                         return (msg, actual_model_deployment, "agent", notice)
                     def agent_error(e):
+                        plugin_logger.deregister_callbacks(callback_key)
                         debug_print(f"Error during Semantic Kernel Agent invocation: {str(e)}")
                         log_event(
                             f"Error during Semantic Kernel Agent invocation: {str(e)}",
@@ -2244,8 +2284,17 @@ def register_route_backend_chats(app):
                                 or agent_used
                             )
 
+                            # Deregister real-time thought callback
+                            plugin_logger.deregister_callbacks(callback_key)
+
                             foundry_citations = getattr(selected_agent, 'last_run_citations', []) or []
                             if foundry_citations:
+                                # Emit thoughts for Foundry agent citations/tool calls
+                                for citation in foundry_citations:
+                                    thought_tracker.add_thought(
+                                        'agent_tool_call',
+                                        f"Agent retrieved citation from Azure AI Foundry"
+                                    )
                                 for citation in foundry_citations:
                                     try:
                                         serializable = json.loads(json.dumps(citation, default=str))
@@ -2282,6 +2331,7 @@ def register_route_backend_chats(app):
                             return (msg, actual_model_deployment, 'agent', notice)
 
                         def foundry_agent_error(e):
+                            plugin_logger.deregister_callbacks(callback_key)
                             log_event(
                                 f"Error during Azure AI Foundry agent invocation: {str(e)}",
                                 extra={
@@ -2360,6 +2410,7 @@ def register_route_backend_chats(app):
                         'on_error': kernel_error
                     })
 
+            thought_tracker.add_thought('generation', 'Generating response...')
             def invoke_gpt_fallback():
                 if not conversation_history_for_api:
                     raise Exception('Cannot generate response: No conversation history available.')
@@ -2510,8 +2561,8 @@ def register_route_backend_chats(app):
                 if hasattr(selected_agent, 'name'):
                     agent_name = selected_agent.name
             
-            assistant_message_id = f"{conversation_id}_assistant_{int(time.time())}_{random.randint(1000,9999)}"
-            
+            # assistant_message_id was generated earlier for thought tracking
+
             # Get user_info and thread_id from the user message for ownership tracking and threading
             user_info_for_assistant = None
             user_thread_id = None
@@ -2672,7 +2723,8 @@ def register_route_backend_chats(app):
                 'web_search_citations': web_search_citations_list,
                 'agent_citations': agent_citations_list,
                 'reload_messages': reload_messages_required,
-                'kernel_fallback_notice': kernel_fallback_notice
+                'kernel_fallback_notice': kernel_fallback_notice,
+                'thoughts_enabled': thought_tracker.enabled
             }), 200
         
         except Exception as e:
@@ -3111,10 +3163,27 @@ def register_route_backend_chats(app):
                 
                 conversation_item['last_updated'] = datetime.utcnow().isoformat()
                 cosmos_conversations_container.upsert_item(conversation_item)
-                
+
+                # Generate assistant_message_id early for thought tracking
+                assistant_message_id = f"{conversation_id}_assistant_{int(time.time())}_{random.randint(1000,9999)}"
+
+                # Initialize thought tracker for streaming path
+                thought_tracker = ThoughtTracker(
+                    conversation_id=conversation_id,
+                    message_id=assistant_message_id,
+                    thread_id=current_user_thread_id,
+                    user_id=user_id
+                )
+
+                def emit_thought(step_type, content, detail=None):
+                    """Add a thought to Cosmos and return an SSE event string."""
+                    thought_tracker.add_thought(step_type, content, detail)
+                    return f"data: {json.dumps({'type': 'thought', 'step_index': thought_tracker.current_index - 1, 'step_type': step_type, 'content': content})}\n\n"
+
                 # Hybrid search (if enabled)
                 combined_documents = []
                 if hybrid_search_enabled:
+                    yield emit_thought('search', f"Searching {document_scope or 'personal'} workspace documents for '{(search_query or user_message)[:50]}'")
                     try:
                         search_args = {
                             "query": search_query,
@@ -3144,8 +3213,10 @@ def register_route_backend_chats(app):
                         search_results = hybrid_search(**search_args)
                     except Exception as e:
                         debug_print(f"Error during hybrid search: {e}")
-                    
+
                     if search_results:
+                        unique_doc_names_stream = set(doc.get('file_name', 'Unknown') for doc in search_results)
+                        yield emit_thought('search', f"Found {len(search_results)} results from {len(unique_doc_names_stream)} documents")
                         retrieved_texts = []
                         
                         for doc in search_results:
@@ -3324,6 +3395,7 @@ def register_route_backend_chats(app):
                         hybrid_citations_list.sort(key=lambda x: x.get('page_number', 0), reverse=True)
                 
                 if web_search_enabled:
+                    yield emit_thought('web_search', f"Searching the web for '{(search_query or user_message)[:50]}'")
                     perform_web_search(
                         settings=settings,
                         conversation_id=conversation_id,
@@ -3339,6 +3411,8 @@ def register_route_backend_chats(app):
                         agent_citations_list=agent_citations_list,
                         web_search_citations_list=web_search_citations_list,
                     )
+                    if web_search_citations_list:
+                        yield emit_thought('web_search', f"Got {len(web_search_citations_list)} web search results")
 
                 # Update message chat type
                 message_chat_type = None
@@ -3472,7 +3546,7 @@ def register_route_backend_chats(app):
                 # Stream the response
                 accumulated_content = ""
                 token_usage_data = None  # Will be populated from final stream chunk
-                assistant_message_id = f"{conversation_id}_assistant_{int(time.time())}_{random.randint(1000,9999)}"
+                # assistant_message_id was generated earlier for thought tracking
                 final_model_used = gpt_model  # Default to gpt_model, will be overridden if agent is used
                 
                 # DEBUG: Check agent streaming decision
@@ -3482,8 +3556,23 @@ def register_route_backend_chats(app):
                 try:
                     if use_agent_streaming and selected_agent:
                         # Stream from agent using invoke_stream
+                        yield emit_thought('agent_tool_call', f"Sending to agent '{agent_display_name_used or agent_name_used}'")
                         debug_print(f"--- Streaming from Agent: {agent_name_used} ---")
-                        
+
+                        # Register callback to persist plugin thoughts to Cosmos in real-time
+                        callback_key = f"{user_id}:{conversation_id}"
+                        plugin_logger_cb = get_plugin_logger()
+
+                        def on_plugin_invocation_streaming(inv):
+                            duration_str = f" ({int(inv.duration_ms)}ms)" if inv.duration_ms else ""
+                            tool_name = f"{inv.plugin_name}.{inv.function_name}"
+                            thought_tracker.add_thought(
+                                'agent_tool_call',
+                                f"Agent called {tool_name}{duration_str}"
+                            )
+
+                        plugin_logger_cb.register_callback(callback_key, on_plugin_invocation_streaming)
+
                         # Import required classes
                         from semantic_kernel.contents.chat_message_content import ChatMessageContent
                         
@@ -3539,36 +3628,49 @@ def register_route_backend_chats(app):
                         try:
                             # Run streaming and collect chunks and usage
                             chunks, stream_usage = loop.run_until_complete(stream_agent_async())
-                            
-                            # Yield chunks to frontend
-                            for chunk_content in chunks:
-                                accumulated_content += chunk_content
-                                yield f"data: {json.dumps({'content': chunk_content})}\n\n"
-                            
-                            # Try to capture token usage from stream metadata
-                            if stream_usage:
-                                # stream_usage is a CompletionUsage object, not a dict
-                                prompt_tokens = getattr(stream_usage, 'prompt_tokens', 0)
-                                completion_tokens = getattr(stream_usage, 'completion_tokens', 0)
-                                total_tokens = getattr(stream_usage, 'total_tokens', None)
-                                
-                                # Calculate total if not provided
-                                if total_tokens is None or total_tokens == 0:
-                                    total_tokens = prompt_tokens + completion_tokens
-                                
-                                token_usage_data = {
-                                    'prompt_tokens': prompt_tokens,
-                                    'completion_tokens': completion_tokens,
-                                    'total_tokens': total_tokens,
-                                    'captured_at': datetime.utcnow().isoformat()
-                                }
-                                debug_print(f"[Agent Streaming Tokens] From metadata - prompt: {prompt_tokens}, completion: {completion_tokens}, total: {total_tokens}")
                         except Exception as stream_error:
+                            plugin_logger_cb.deregister_callbacks(callback_key)
                             debug_print(f"❌ Agent streaming error: {stream_error}")
                             import traceback
                             traceback.print_exc()
                             yield f"data: {json.dumps({'error': f'Agent streaming failed: {str(stream_error)}'})}\n\n"
                             return
+
+                        # Deregister callback (agent completed successfully)
+                        plugin_logger_cb.deregister_callbacks(callback_key)
+
+                        # Emit SSE-only events for streaming UI (Cosmos writes already done by callback)
+                        agent_plugin_invocations = plugin_logger_cb.get_invocations_for_conversation(user_id, conversation_id)
+                        for inv in agent_plugin_invocations:
+                            duration_str = f" ({int(inv.duration_ms)}ms)" if inv.duration_ms else ""
+                            tool_name = f"{inv.plugin_name}.{inv.function_name}"
+                            content = f"Agent called {tool_name}{duration_str}"
+                            yield f"data: {json.dumps({'type': 'thought', 'step_index': thought_tracker.current_index, 'step_type': 'agent_tool_call', 'content': content})}\n\n"
+                            thought_tracker.current_index += 1
+
+                        # Yield chunks to frontend
+                        for chunk_content in chunks:
+                            accumulated_content += chunk_content
+                            yield f"data: {json.dumps({'content': chunk_content})}\n\n"
+
+                        # Try to capture token usage from stream metadata
+                        if stream_usage:
+                            # stream_usage is a CompletionUsage object, not a dict
+                            prompt_tokens = getattr(stream_usage, 'prompt_tokens', 0)
+                            completion_tokens = getattr(stream_usage, 'completion_tokens', 0)
+                            total_tokens = getattr(stream_usage, 'total_tokens', None)
+
+                            # Calculate total if not provided
+                            if total_tokens is None or total_tokens == 0:
+                                total_tokens = prompt_tokens + completion_tokens
+
+                            token_usage_data = {
+                                'prompt_tokens': prompt_tokens,
+                                'completion_tokens': completion_tokens,
+                                'total_tokens': total_tokens,
+                                'captured_at': datetime.utcnow().isoformat()
+                            }
+                            debug_print(f"[Agent Streaming Tokens] From metadata - prompt: {prompt_tokens}, completion: {completion_tokens}, total: {total_tokens}")
                         
                         # Collect token usage from kernel services if not captured from stream
                         if not token_usage_data:
@@ -3650,6 +3752,7 @@ def register_route_backend_chats(app):
                     
                     else:
                         # Stream from regular GPT model (non-agent)
+                        yield emit_thought('generation', 'Generating response...')
                         debug_print(f"--- Streaming from GPT ({gpt_model}) ---")
                         
                         # Prepare stream parameters
@@ -3818,7 +3921,8 @@ def register_route_backend_chats(app):
                         'agent_citations': agent_citations_list,
                         'agent_display_name': agent_display_name_used if use_agent_streaming else None,
                         'agent_name': agent_name_used if use_agent_streaming else None,
-                        'full_content': accumulated_content
+                        'full_content': accumulated_content,
+                        'thoughts_enabled': thought_tracker.enabled
                     }
                     yield f"data: {json.dumps(final_data)}\n\n"
                     

@@ -75,6 +75,7 @@ from route_backend_public_documents import *
 from route_backend_public_prompts import *
 from route_backend_user_agreement import register_route_backend_user_agreement
 from route_backend_conversation_export import register_route_backend_conversation_export
+from route_backend_thoughts import register_route_backend_thoughts
 from route_backend_speech import register_route_backend_speech
 from route_backend_tts import register_route_backend_tts
 from route_enhanced_citations import register_enhanced_citations_routes
@@ -640,6 +641,9 @@ register_route_backend_public_prompts(app)
 
 # ------------------- API User Agreement Routes ----------
 register_route_backend_user_agreement(app)
+
+# ------------------- API Thoughts Routes ----------------
+register_route_backend_thoughts(app)
 
 # ------------------- Extenral Health Routes ----------
 register_route_external_health(app)
