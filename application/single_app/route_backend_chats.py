@@ -3022,6 +3022,7 @@ def register_route_backend_chats(app):
         """
         from flask import Response, stream_with_context
         import json
+        from queue import Queue, Empty
         
         # IMPORTANT: Parse JSON and get user_id BEFORE entering the generator
         # because request context may not be available inside the generator
@@ -3031,15 +3032,45 @@ def register_route_backend_chats(app):
             settings = get_settings()
         except Exception as e:
             return jsonify({'error': f'Failed to parse request: {str(e)}'}), 400
+
+        raw_keepalive_enabled = settings.get('enable_stream_keepalive', True)
+        if isinstance(raw_keepalive_enabled, str):
+            stream_keepalive_enabled = raw_keepalive_enabled.lower() == 'true'
+        else:
+            stream_keepalive_enabled = bool(raw_keepalive_enabled)
+
+        try:
+            stream_keepalive_interval_seconds = int(settings.get('stream_keepalive_interval_seconds', 20))
+        except (TypeError, ValueError):
+            stream_keepalive_interval_seconds = 20
+        stream_keepalive_interval_seconds = max(5, min(stream_keepalive_interval_seconds, 120))  # Clamp between 5 and 120 seconds
         
         def generate():
             try:
                 # Import debug_print for use in generator
                 from functions_debug import debug_print
+
+                last_keepalive_at = time.monotonic()
+
+                def maybe_emit_keepalive(force=False):
+                    nonlocal last_keepalive_at
+                    if not stream_keepalive_enabled:
+                        return None
+
+                    now = time.monotonic()
+                    if force or (now - last_keepalive_at) >= stream_keepalive_interval_seconds:
+                        last_keepalive_at = now
+                        return f": keepalive {datetime.utcnow().isoformat()}\n\n"
+
+                    return None
                 
                 if not user_id:
                     yield f"data: {json.dumps({'error': 'User not authenticated'})}\n\n"
                     return
+
+                initial_keepalive = maybe_emit_keepalive(force=True)
+                if initial_keepalive:
+                    yield initial_keepalive
                 
                 # Extract request parameters (same as non-streaming endpoint)
                 user_message = data.get('message', '')
@@ -3242,6 +3273,10 @@ def register_route_backend_chats(app):
                 except Exception as e:
                     yield f"data: {json.dumps({'error': f'Model initialization failed: {str(e)}'})}\n\n"
                     return
+
+                keepalive_frame = maybe_emit_keepalive()
+                if keepalive_frame:
+                    yield keepalive_frame
                 
                 # Load or create conversation (simplified)
                 if not conversation_id:
@@ -3461,6 +3496,9 @@ def register_route_backend_chats(app):
                 # Hybrid search (if enabled)
                 combined_documents = []
                 if hybrid_search_enabled:
+                    keepalive_frame = maybe_emit_keepalive()
+                    if keepalive_frame:
+                        yield keepalive_frame
                     try:
                         search_args = {
                             "query": search_query,
@@ -3670,6 +3708,9 @@ def register_route_backend_chats(app):
                         hybrid_citations_list.sort(key=lambda x: x.get('page_number', 0), reverse=True)
                 
                 if web_search_enabled:
+                    keepalive_frame = maybe_emit_keepalive()
+                    if keepalive_frame:
+                        yield keepalive_frame
                     perform_web_search(
                         settings=settings,
                         conversation_id=conversation_id,
@@ -3739,6 +3780,10 @@ def register_route_backend_chats(app):
                 except Exception as e:
                     yield f"data: {json.dumps({'error': f'History error: {str(e)}'})}\n\n"
                     return
+
+                keepalive_frame = maybe_emit_keepalive()
+                if keepalive_frame:
+                    yield keepalive_frame
                 
                 # Add system prompt
                 default_system_prompt = settings.get('default_system_prompt', '').strip()
@@ -3883,8 +3928,36 @@ def register_route_backend_chats(app):
                             asyncio.set_event_loop(loop)
                         
                         try:
-                            # Run streaming and collect chunks and usage
-                            chunks, stream_usage = loop.run_until_complete(stream_agent_async())
+                            # Run streaming in a worker thread so we can emit keepalives while waiting.
+                            agent_stream_queue = Queue()
+
+                            def _agent_stream_worker():
+                                try:
+                                    result = loop.run_until_complete(stream_agent_async())
+                                    agent_stream_queue.put(('result', result))
+                                except Exception as worker_exc:
+                                    agent_stream_queue.put(('error', worker_exc))
+
+                            worker_thread = threading.Thread(target=_agent_stream_worker, daemon=True)
+                            worker_thread.start()
+
+                            chunks = []
+                            stream_usage = None
+                            while True:
+                                try:
+                                    queue_type, queue_payload = agent_stream_queue.get(timeout=1)
+                                except Empty:
+                                    keepalive_frame = maybe_emit_keepalive()
+                                    if keepalive_frame:
+                                        yield keepalive_frame
+                                    continue
+
+                                if queue_type == 'error':
+                                    raise queue_payload
+
+                                if queue_type == 'result':
+                                    chunks, stream_usage = queue_payload
+                                    break
                             
                             # Yield chunks to frontend
                             for chunk_content in chunks:
@@ -4012,6 +4085,10 @@ def register_route_backend_chats(app):
                             debug_print(f"Using reasoning effort: {reasoning_effort}")
                         
                         final_model_used = gpt_model
+
+                        keepalive_frame = maybe_emit_keepalive()
+                        if keepalive_frame:
+                            yield keepalive_frame
                         
                         try:
                             stream = gpt_client.chat.completions.create(**stream_params)
@@ -4036,6 +4113,14 @@ def register_route_backend_chats(app):
                                 if delta.content:
                                     accumulated_content += delta.content
                                     yield f"data: {json.dumps({'content': delta.content})}\n\n"
+                                else:
+                                    keepalive_frame = maybe_emit_keepalive()
+                                    if keepalive_frame:
+                                        yield keepalive_frame
+                            else:
+                                keepalive_frame = maybe_emit_keepalive()
+                                if keepalive_frame:
+                                    yield keepalive_frame
                             
                             # Capture token usage from final chunk with stream_options
                             if hasattr(chunk, 'usage') and chunk.usage:
