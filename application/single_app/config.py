@@ -1,4 +1,5 @@
 # config.py
+
 import logging
 import os
 import requests
@@ -12,15 +13,17 @@ import base64
 import markdown2
 import re
 import docx
-import fitz # PyMuPDF
+import fitz  # PyMuPDF
 import math
 import mimetypes
+
 # Register font MIME types so Flask serves them correctly (required for
 # X-Content-Type-Options: nosniff to not block Bootstrap Icons)
 mimetypes.add_type('font/woff', '.woff')
 mimetypes.add_type('font/woff2', '.woff2')
 mimetypes.add_type('font/ttf', '.ttf')
 mimetypes.add_type('font/otf', '.otf')
+
 import openpyxl
 import xlrd
 import traceback
@@ -36,16 +39,16 @@ import pandas
 from dotenv import load_dotenv
 
 from flask import (
-    Flask, 
-    flash, 
-    request, 
-    jsonify, 
-    render_template, 
-    redirect, 
-    url_for, 
-    session, 
-    send_from_directory, 
-    send_file, 
+    Flask,
+    flash,
+    request,
+    jsonify,
+    render_template,
+    redirect,
+    url_for,
+    session,
+    send_from_directory,
+    send_file,
     Markup,
     current_app
 )
@@ -69,7 +72,6 @@ from langchain_text_splitters import (
 from PIL import Image
 from io import BytesIO
 from typing import List
-
 from azure.cosmos import CosmosClient, PartitionKey, exceptions
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from azure.core.credentials import AzureKeyCredential
@@ -94,8 +96,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.239.004"
-
+VERSION = "0.239.002"
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
 # Security Headers Configuration
@@ -141,17 +142,16 @@ VIDEO_EXTENSIONS = {
     'mp4', 'mov', 'avi', 'mkv', 'flv', 'mxf', 'gxf', 'ts', 'ps', '3gp', '3gpp',
     'mpg', 'wmv', 'asf', 'm4v', 'isma', 'ismv', 'dvr-ms', 'webm', 'mpeg'
 }
-
 AUDIO_EXTENSIONS = {'mp3', 'wav', 'ogg', 'aac', 'flac', 'm4a'}
 
 def get_allowed_extensions(enable_video=False, enable_audio=False):
     """
     Get allowed file extensions based on feature flags.
-    
+
     Args:
         enable_video: Whether video file support is enabled
         enable_audio: Whether audio file support is enabled
-        
+
     Returns:
         set: Allowed file extensions
     """
@@ -159,87 +159,84 @@ def get_allowed_extensions(enable_video=False, enable_audio=False):
     extensions.update(DOCUMENT_EXTENSIONS)
     extensions.update(IMAGE_EXTENSIONS)
     extensions.update(TABULAR_EXTENSIONS)
-
     if enable_video:
         extensions.update(VIDEO_EXTENSIONS)
-
     if enable_audio:
         extensions.update(AUDIO_EXTENSIONS)
-
     return extensions
 
 ALLOWED_EXTENSIONS = get_allowed_extensions(enable_video=True, enable_audio=True)
 
 # Admin UI specific extensions (for logo/favicon uploads)
 ALLOWED_EXTENSIONS_IMG = {'png', 'jpg', 'jpeg'}
+
 MAX_CONTENT_LENGTH = 5000 * 1024 * 1024  # 5000 MB AKA 5 GB
 
 # Add Support for Custom Azure Environments
 CUSTOM_GRAPH_URL_VALUE = os.getenv("CUSTOM_GRAPH_URL_VALUE", "")
-CUSTOM_GRAPH_AUTHORITY_URL_VALUE = os.getenv("CUSTOM_GRAPH_AUTHORITY_URL_VALUE", "")
 CUSTOM_IDENTITY_URL_VALUE = os.getenv("CUSTOM_IDENTITY_URL_VALUE", "")
 CUSTOM_RESOURCE_MANAGER_URL_VALUE = os.getenv("CUSTOM_RESOURCE_MANAGER_URL_VALUE", "")
 CUSTOM_BLOB_STORAGE_URL_VALUE = os.getenv("CUSTOM_BLOB_STORAGE_URL_VALUE", "")
 CUSTOM_COGNITIVE_SERVICES_URL_VALUE = os.getenv("CUSTOM_COGNITIVE_SERVICES_URL_VALUE", "")
 CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE = os.getenv("CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE", "")
 CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE = os.getenv("CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE", "")
-CUSTOM_OIDC_METADATA_URL_VALUE = os.getenv("CUSTOM_OIDC_METADATA_URL_VALUE", "")
-
 
 # Azure AD Configuration
 CLIENT_ID = os.getenv("CLIENT_ID")
 APP_URI = f"api://{CLIENT_ID}"
 CLIENT_SECRET = os.getenv("MICROSOFT_PROVIDER_AUTHENTICATION_SECRET")
 TENANT_ID = os.getenv("TENANT_ID")
-SCOPE = ["User.Read", "User.ReadBasic.All", "People.Read.All", "Group.Read.All"] # Adjust scope according to your needs
+SCOPE = ["User.Read", "User.ReadBasic.All", "People.Read.All", "Group.Read.All"]  # Adjust scope according to your needs
 MICROSOFT_PROVIDER_AUTHENTICATION_SECRET = os.getenv("MICROSOFT_PROVIDER_AUTHENTICATION_SECRET")
 LOGIN_REDIRECT_URL = os.getenv("LOGIN_REDIRECT_URL")
 HOME_REDIRECT_URL = os.getenv("HOME_REDIRECT_URL")  # Front Door URL for home page
-AZURE_ENVIRONMENT = os.getenv("AZURE_ENVIRONMENT", "public") # public, usgovernment, custom
+OIDC_METADATA_URL = f"https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration"
+
+AZURE_ENVIRONMENT = os.getenv("AZURE_ENVIRONMENT", "public")  # public, usgovernment, custom
+
+if AZURE_ENVIRONMENT == "custom":
+    AUTHORITY = f"{CUSTOM_IDENTITY_URL_VALUE}/{TENANT_ID}"
+elif AZURE_ENVIRONMENT == "usgovernment":
+    AUTHORITY = f"https://login.microsoftonline.us/{TENANT_ID}"
+else:
+    AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
 
 WORD_CHUNK_SIZE = 400
 
-if AZURE_ENVIRONMENT == "custom" or CUSTOM_IDENTITY_URL_VALUE or CUSTOM_GRAPH_AUTHORITY_URL_VALUE:
-    AUTHORITY = f"{CUSTOM_IDENTITY_URL_VALUE}/{TENANT_ID}"
-    authority = CUSTOM_GRAPH_AUTHORITY_URL_VALUE or CUSTOM_IDENTITY_URL_VALUE or AUTHORITY.rstrip(f'/{TENANT_ID}')
-elif AZURE_ENVIRONMENT == "usgovernment":
-    AUTHORITY = f"https://login.microsoftonline.us/{TENANT_ID}"
-    authority = AzureAuthorityHosts.AZURE_GOVERNMENT
-else:
-    AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
-    authority = AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
-
-if AZURE_ENVIRONMENT == "custom":
-    OIDC_METADATA_URL = CUSTOM_OIDC_METADATA_URL_VALUE or f"https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration"
-    resource_manager = CUSTOM_RESOURCE_MANAGER_URL_VALUE
-    video_indexer_endpoint = os.getenv("CUSTOM_VIDEO_INDEXER_ENDPOINT", "https://api.videoindexer.ai")
-    credential_scopes=[resource_manager + "/.default"]
-    cognitive_services_scope = CUSTOM_COGNITIVE_SERVICES_URL_VALUE  
-    search_resource_manager = CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE
-    KEY_VAULT_DOMAIN = os.getenv("KEY_VAULT_DOMAIN", ".vault.azure.net")
-elif AZURE_ENVIRONMENT == "usgovernment":
+if AZURE_ENVIRONMENT == "usgovernment":
     OIDC_METADATA_URL = f"https://login.microsoftonline.us/{TENANT_ID}/v2.0/.well-known/openid-configuration"
     resource_manager = "https://management.usgovcloudapi.net"
-    credential_scopes=[resource_manager + "/.default"]
+    authority = AzureAuthorityHosts.AZURE_GOVERNMENT
+    credential_scopes = [resource_manager + "/.default"]
     cognitive_services_scope = "https://cognitiveservices.azure.us/.default"
     video_indexer_endpoint = "https://api.videoindexer.ai.azure.us"
     search_resource_manager = "https://search.azure.us"
     KEY_VAULT_DOMAIN = ".vault.usgovcloudapi.net"
+elif AZURE_ENVIRONMENT == "custom":
+    resource_manager = CUSTOM_RESOURCE_MANAGER_URL_VALUE
+    authority = CUSTOM_IDENTITY_URL_VALUE
+    video_indexer_endpoint = os.getenv("CUSTOM_VIDEO_INDEXER_ENDPOINT", "https://api.videoindexer.ai")
+    credential_scopes = [resource_manager + "/.default"]
+    cognitive_services_scope = CUSTOM_COGNITIVE_SERVICES_URL_VALUE
+    search_resource_manager = CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE
+    KEY_VAULT_DOMAIN = os.getenv("KEY_VAULT_DOMAIN", ".vault.azure.net")
 else:
     OIDC_METADATA_URL = f"https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration"
     resource_manager = "https://management.azure.com"
-    credential_scopes=[resource_manager + "/.default"]
+    authority = AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
+    credential_scopes = [resource_manager + "/.default"]
     cognitive_services_scope = "https://cognitiveservices.azure.com/.default"
     video_indexer_endpoint = "https://api.videoindexer.ai"
     KEY_VAULT_DOMAIN = ".vault.azure.net"
 
+
 def get_redis_cache_infrastructure_endpoint(redis_hostname: str) -> str:
     """
     Get the appropriate Redis cache infrastructure endpoint based on Azure environment.
-    
+
     Args:
         redis_hostname (str): The hostname of the Redis cache instance
-        
+
     Returns:
         str: The complete endpoint URL for Redis cache infrastructure token acquisition
     """
@@ -252,7 +249,7 @@ def get_redis_cache_infrastructure_endpoint(redis_hostname: str) -> str:
     else:
         # Default to Azure Public Cloud
         return f"https://{redis_hostname}.cacheinfra.windows.net:10225/appid"
-    
+
 
 storage_account_user_documents_container_name = "user-documents"
 storage_account_group_documents_container_name = "group-documents"
@@ -261,7 +258,7 @@ storage_account_public_documents_container_name = "public-documents"
 # Initialize Azure Cosmos DB client
 cosmos_endpoint = os.getenv("AZURE_COSMOS_ENDPOINT")
 cosmos_key = os.getenv("AZURE_COSMOS_KEY")
-cosmos_authentication_type = os.getenv("AZURE_COSMOS_AUTHENTICATION_TYPE", "key") #key or managed_identity
+cosmos_authentication_type = os.getenv("AZURE_COSMOS_AUTHENTICATION_TYPE", "key")  # key or managed_identity
 
 if cosmos_authentication_type == "managed_identity":
     cosmos_client = CosmosClient(cosmos_endpoint, credential=DefaultAzureCredential(), consistency_level="Session")
@@ -459,6 +456,7 @@ cosmos_approvals_container = cosmos_database.create_container_if_not_exists(
     default_ttl=-1  # TTL disabled by default, enabled per-document for auto-cleanup
 )
 
+
 def ensure_custom_logo_file_exists(app, settings):
     """
     If custom_logo_base64 or custom_logo_dark_base64 is present in settings, ensure the appropriate
@@ -487,12 +485,10 @@ def ensure_custom_logo_file_exists(app, settings):
         try:
             # Decode the current base64 string
             decoded = base64.b64decode(custom_logo_b64)
-
             # Write the decoded data to the file, overwriting if it exists
             with open(logo_path, 'wb') as f:
                 f.write(decoded)
             print(f"Ensured {logo_filename} exists and matches current settings.")
-
         except (base64.binascii.Error, TypeError, OSError) as ex:
             print(f"Failed to write/overwrite {logo_filename}: {ex}")
         except Exception as ex:
@@ -516,16 +512,15 @@ def ensure_custom_logo_file_exists(app, settings):
         try:
             # Decode the current base64 string
             decoded = base64.b64decode(custom_logo_dark_b64)
-
             # Write the decoded data to the file, overwriting if it exists
             with open(logo_dark_path, 'wb') as f:
                 f.write(decoded)
             print(f"Ensured {logo_dark_filename} exists and matches current settings.")
-
         except (base64.binascii.Error, TypeError, OSError) as ex:
             print(f"Failed to write/overwrite {logo_dark_filename}: {ex}")
         except Exception as ex:
             print(f"Unexpected error writing {logo_dark_filename}: {ex}")
+
 
 def ensure_custom_favicon_file_exists(app, settings):
     """
@@ -534,6 +529,7 @@ def ensure_custom_favicon_file_exists(app, settings):
     If base64 is empty/missing, uses the default favicon.
     """
     custom_favicon_b64 = settings.get('custom_favicon_base64', '')
+
     # Ensure the filename is consistent
     favicon_filename = 'favicon.ico'
     favicon_path = os.path.join(app.root_path, 'static', 'images', favicon_filename)
@@ -550,16 +546,15 @@ def ensure_custom_favicon_file_exists(app, settings):
     try:
         # Decode the current base64 string
         decoded = base64.b64decode(custom_favicon_b64)
-
         # Write the decoded data to the file, overwriting if it exists
         with open(favicon_path, 'wb') as f:
             f.write(decoded)
         print(f"Ensured {favicon_filename} exists and matches current settings.")
-
-    except (base64.binascii.Error, TypeError, OSError) as ex: # Catch specific errors
+    except (base64.binascii.Error, TypeError, OSError) as ex:  # Catch specific errors
         print(f"Failed to write/overwrite {favicon_filename}: {ex}")
-    except Exception as ex: # Catch any other unexpected errors
-         print(f"Unexpected error during favicon file write for {favicon_filename}: {ex}")
+    except Exception as ex:  # Catch any other unexpected errors
+        print(f"Unexpected error during favicon file write for {favicon_filename}: {ex}")
+
 
 def initialize_clients(settings):
     """
@@ -730,7 +725,6 @@ def initialize_clients(settings):
             if "content_safety_client" in CLIENTS:
                 del CLIENTS["content_safety_client"]
 
-
         try:
             if enable_enhanced_citations:
                 blob_service_client = None
@@ -740,15 +734,15 @@ def initialize_clients(settings):
                 elif settings.get("office_docs_authentication_type") == "managed_identity":
                     blob_service_client = BlobServiceClient(account_url=settings.get("office_docs_storage_account_blob_endpoint"), credential=DefaultAzureCredential())
                     CLIENTS["storage_account_office_docs_client"] = blob_service_client
-                
+
                 # Create containers if they don't exist
                 # This addresses the issue where the application assumes containers exist
                 if blob_service_client:
                     for container_name in [
-                        storage_account_user_documents_container_name, 
-                        storage_account_group_documents_container_name, 
+                        storage_account_user_documents_container_name,
+                        storage_account_group_documents_container_name,
                         storage_account_public_documents_container_name
-                        ]:
+                    ]:
                         try:
                             container_client = blob_service_client.get_container_client(container_name)
                             if not container_client.exists():
