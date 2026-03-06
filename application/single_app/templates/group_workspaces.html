@@ -763,33 +763,42 @@ app_settings.app_title }} {% endblock %} {% block head %}
         <div id="group-agents-permission-warning" class="alert alert-warning d-none">
           You do not have permission to manage group agents.
         </div>
-        <div class="mb-3">
+        <div class="d-flex align-items-center gap-2 mb-3">
           <input
             type="search"
             class="form-control"
             id="group-agents-search"
             placeholder="Search group agents by name or description..."
           />
+          <div class="btn-group btn-group-sm" role="group" aria-label="View toggle">
+            <input type="radio" class="btn-check" name="groupAgentsViewToggle" id="groupAgents-view-list" value="list" autocomplete="off" checked>
+            <label class="btn btn-outline-secondary" for="groupAgents-view-list" title="List view"><i class="bi bi-list-ul"></i></label>
+            <input type="radio" class="btn-check" name="groupAgentsViewToggle" id="groupAgents-view-grid" value="grid" autocomplete="off">
+            <label class="btn btn-outline-secondary" for="groupAgents-view-grid" title="Grid view"><i class="bi bi-grid-3x3-gap"></i></label>
+          </div>
         </div>
-        <table class="table table-striped" id="group-agents-table">
-          <thead>
-            <tr>
-              <th>Display Name</th>
-              <th>Description</th>
-              <th style="width: 160px;">Actions</th>
-            </tr>
-          </thead>
-          <tbody id="group-agents-table-body">
-            <tr class="table-loading-row">
-              <td colspan="3">
-                <div class="spinner-border spinner-border-sm me-2" role="status">
-                  <span class="visually-hidden">Loading...</span>
-                </div>
-                Select a group to load agents.
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <div id="group-agents-list-view">
+          <table class="table table-striped item-list-table" id="group-agents-table">
+            <thead>
+              <tr>
+                <th>Display Name</th>
+                <th>Description</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="group-agents-table-body">
+              <tr class="table-loading-row">
+                <td colspan="3">
+                  <div class="spinner-border spinner-border-sm me-2" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                  </div>
+                  Select a group to load agents.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div id="group-agents-grid-view" class="row g-3 d-none"></div>
       </div>
       <div id="group-agents-error"></div>
     </div>
@@ -813,33 +822,42 @@ app_settings.app_title }} {% endblock %} {% block head %}
           <div class="d-flex justify-content-between align-items-center mb-2">
             <button class="btn btn-success btn-sm" id="create-group-plugin-btn">New Action</button>
           </div>
-          <div class="mb-3">
+          <div class="d-flex align-items-center gap-2 mb-3">
             <input
               type="search"
               class="form-control"
               id="group-plugins-search"
               placeholder="Search group actions by name or description..."
             />
+            <div class="btn-group btn-group-sm" role="group" aria-label="View toggle">
+              <input type="radio" class="btn-check" name="groupPluginsViewToggle" id="groupPlugins-view-list" value="list" autocomplete="off" checked>
+              <label class="btn btn-outline-secondary" for="groupPlugins-view-list" title="List view"><i class="bi bi-list-ul"></i></label>
+              <input type="radio" class="btn-check" name="groupPluginsViewToggle" id="groupPlugins-view-grid" value="grid" autocomplete="off">
+              <label class="btn btn-outline-secondary" for="groupPlugins-view-grid" title="Grid view"><i class="bi bi-grid-3x3-gap"></i></label>
+            </div>
           </div>
-          <table class="table table-striped" id="group-plugins-table">
-            <thead>
-              <tr>
-                <th>Display Name</th>
-                <th>Description</th>
-                <th style="width: 140px;">Actions</th>
-              </tr>
-            </thead>
-            <tbody id="group-plugins-table-body">
-              <tr class="table-loading-row">
-                <td colspan="3">
-                  <div class="spinner-border spinner-border-sm me-2" role="status">
-                    <span class="visually-hidden">Loading...</span>
-                  </div>
-                  Select a group to load actions.
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <div id="group-plugins-list-view">
+            <table class="table table-striped item-list-table" id="group-plugins-table">
+              <thead>
+                <tr>
+                  <th>Display Name</th>
+                  <th>Description</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="group-plugins-table-body">
+                <tr class="table-loading-row">
+                  <td colspan="3">
+                    <div class="spinner-border spinner-border-sm me-2" role="status">
+                      <span class="visually-hidden">Loading...</span>
+                    </div>
+                    Select a group to load actions.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div id="group-plugins-grid-view" class="row g-3 d-none"></div>
         </div>
       </template>
     </div>
@@ -850,6 +868,22 @@ app_settings.app_title }} {% endblock %} {% block head %}
   <!-- End Tab Content -->
 </div>
 <!-- End Container -->
+
+<!-- Item View Modal (shared by agents & actions grid/list view buttons) -->
+<div class="modal fade" id="item-view-modal" tabindex="-1" aria-labelledby="item-view-modal-title" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="item-view-modal-title">View Item</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="item-view-modal-body"></div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- Loading Modal (Keep As Is - Used by Upload) -->
 <div
