@@ -2,6 +2,19 @@
 
 # Feature Release
 
+### **(v0.239.014)**
+
+#### Bug Fixes
+
+*   **SQL Query Plugin Schema Awareness**
+    *   Fixed agents connected to SQL databases asking users for clarification about table/column names instead of querying the database directly.
+    *   Root cause: SQL Query and SQL Schema plugin `@kernel_function` descriptions were generic with no workflow guidance, agent instructions had no database schema context, and the two plugins operated independently with no linkage.
+    *   Rewrote all `@kernel_function` descriptions in both SQL plugins to be prescriptive workflow guides (modeled after the working LogAnalyticsPlugin), explicitly instructing the LLM to discover schema first before generating queries.
+    *   Added auto-injection of database schema into agent instructions at load time — when SQL Schema plugins are detected, the full schema (tables, columns, types, relationships) is fetched and appended to the agent's system prompt.
+    *   Added new `query_database(question, query)` convenience function to `SQLQueryPlugin` for intent-aligned tool calling.
+    *   Enabled the SQL-specific plugin creation path in `logged_plugin_loader.py` (was previously commented out).
+    *   (Ref: `sql_query_plugin.py`, `sql_schema_plugin.py`, `semantic_kernel_loader.py`, `logged_plugin_loader.py`)
+
 ### **(v0.239.013)**
 
 #### New Features
