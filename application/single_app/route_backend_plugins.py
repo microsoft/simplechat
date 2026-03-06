@@ -624,6 +624,8 @@ def get_core_plugin_settings():
         'enable_text_plugin': bool(settings.get('enable_text_plugin', True)),
         'enable_default_embedding_model_plugin': bool(settings.get('enable_default_embedding_model_plugin', True)),
         'enable_fact_memory_plugin': bool(settings.get('enable_fact_memory_plugin', True)),
+        'enable_tabular_processing_plugin': bool(settings.get('enable_tabular_processing_plugin', False)),
+        'enable_enhanced_citations': bool(settings.get('enable_enhanced_citations', False)),
         'enable_semantic_kernel': bool(settings.get('enable_semantic_kernel', False)),
         'allow_user_plugins': bool(settings.get('allow_user_plugins', True)),
         'allow_group_plugins': bool(settings.get('allow_group_plugins', True)),
@@ -646,6 +648,7 @@ def update_core_plugin_settings():
         'enable_text_plugin',
         'enable_default_embedding_model_plugin',
         'enable_fact_memory_plugin',
+        'enable_tabular_processing_plugin',
         'allow_user_plugins',
         'allow_group_plugins'
     ]
@@ -663,6 +666,11 @@ def update_core_plugin_settings():
             return jsonify({'error': f"Field '{key}' must be a boolean."}), 400
         updates[key] = data[key]
     logging.info("Validated plugin settings: %s", updates)
+    # Dependency: tabular processing requires enhanced citations
+    if updates.get('enable_tabular_processing_plugin', False):
+        full_settings = get_settings()
+        if not full_settings.get('enable_enhanced_citations', False):
+            return jsonify({'error': 'Tabular Processing requires Enhanced Citations to be enabled.'}), 400
     # Update settings
     success = update_settings(updates)
     if success:

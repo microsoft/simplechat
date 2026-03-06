@@ -257,6 +257,8 @@ def get_redis_cache_infrastructure_endpoint(redis_hostname: str) -> str:
 storage_account_user_documents_container_name = "user-documents"
 storage_account_group_documents_container_name = "group-documents"
 storage_account_public_documents_container_name = "public-documents"
+storage_account_personal_chat_container_name = "personal-chat"
+storage_account_group_chat_container_name = "group-chat"
 
 # Initialize Azure Cosmos DB client
 cosmos_endpoint = os.getenv("AZURE_COSMOS_ENDPOINT")
@@ -757,9 +759,11 @@ def initialize_clients(settings):
                 # This addresses the issue where the application assumes containers exist
                 if blob_service_client:
                     for container_name in [
-                        storage_account_user_documents_container_name, 
-                        storage_account_group_documents_container_name, 
-                        storage_account_public_documents_container_name
+                        storage_account_user_documents_container_name,
+                        storage_account_group_documents_container_name,
+                        storage_account_public_documents_container_name,
+                        storage_account_personal_chat_container_name,
+                        storage_account_group_chat_container_name
                         ]:
                         try:
                             container_client = blob_service_client.get_container_client(container_name)

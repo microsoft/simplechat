@@ -19,6 +19,7 @@ from semantic_kernel_plugins.text_plugin import TextPlugin
 from semantic_kernel.functions.kernel_plugin import KernelPlugin
 from semantic_kernel_plugins.embedding_model_plugin import EmbeddingModelPlugin
 from semantic_kernel_plugins.fact_memory_plugin import FactMemoryPlugin
+from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
 from functions_settings import get_settings, get_user_settings
 from foundry_agent_runtime import AzureAIFoundryChatCompletionAgent
 from functions_appinsights import log_event, get_appinsights_logger
@@ -408,6 +409,13 @@ def load_embedding_model_plugin(kernel: Kernel, settings):
             description="Provides text embedding functions using the configured embedding model."
         )
 
+def load_tabular_processing_plugin(kernel: Kernel):
+    kernel.add_plugin(
+        TabularProcessingPlugin(),
+        plugin_name="tabular_processing",
+        description="Provides data analysis on tabular files (CSV, XLSX) stored in blob storage. Can list files, describe schemas, aggregate columns, filter rows, run queries, and perform group-by operations."
+    )
+
 def load_core_plugins_only(kernel: Kernel, settings):
     """Load only core plugins for model-only conversations without agents."""
     debug_print(f"[SK Loader] Loading core plugins only for model-only mode...")
@@ -428,6 +436,10 @@ def load_core_plugins_only(kernel: Kernel, settings):
     if settings.get('enable_text_plugin', True):
         load_text_plugin(kernel)
         log_event("[SK Loader] Loaded Text plugin.", level=logging.INFO)
+
+    if settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
+        load_tabular_processing_plugin(kernel)
+        log_event("[SK Loader] Loaded Tabular Processing plugin.", level=logging.INFO)
 
 # =================== Semantic Kernel Initialization ===================
 def initialize_semantic_kernel(user_id: str=None, redis_client=None):
@@ -1132,6 +1144,14 @@ def load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="glob
         except Exception as e:
             log_event(f"[SK Loader] Failed to load Fact Memory Plugin: {e}", level=logging.WARNING)
 
+    # Register Tabular Processing Plugin if enabled (requires enhanced citations)
+    if settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
+        try:
+            load_tabular_processing_plugin(kernel)
+            log_event("[SK Loader] Loaded Tabular Processing plugin.", level=logging.INFO)
+        except Exception as e:
+            log_event(f"[SK Loader] Failed to load Tabular Processing plugin: {e}", level=logging.WARNING)
+
     # Conditionally load static embedding model plugin
     if settings.get('enable_default_embedding_model_plugin', True):
         try:
@@ -1476,7 +1496,11 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
         load_embedding_model_plugin(kernel, settings)
         print(f"[SK Loader] Loaded Default Embedding Model plugin.")
         log_event("[SK Loader] Loaded Default Embedding Model plugin.", level=logging.INFO)
-    
+
+    if settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
+        load_tabular_processing_plugin(kernel)
+        log_event("[SK Loader] Loaded Tabular Processing plugin.", level=logging.INFO)
+
     # Get selected agent from user settings (this still needs to be in user settings for UI state)
     user_settings = get_user_settings(user_id).get('settings', {})
     selected_agent = user_settings.get('selected_agent')
