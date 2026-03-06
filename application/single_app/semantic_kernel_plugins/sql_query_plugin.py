@@ -233,7 +233,7 @@ class SQLQueryPlugin(BasePlugin):
     def get_functions(self) -> List[str]:
         return ["execute_query", "execute_scalar", "validate_query", "query_database"]
 
-    @kernel_function(description="Execute a SQL query against the database and return results as structured data with columns and rows. IMPORTANT: Before calling this function, you MUST first call get_database_schema or get_table_list from the SQL Schema plugin to discover available tables, column names, data types, and relationships. Use the discovered schema to construct valid SQL queries with correct table and column names. Always use fully qualified table names (e.g., dbo.TableName) when available. Results are limited by max_rows to prevent excessive data transfer.")
+    @kernel_function(description="Execute a SQL query against the database and return results as structured data with columns and rows. If the database schema is provided in your instructions, use those exact table and column names to construct valid SQL queries. If no schema is available in your instructions, call get_database_schema or get_table_list from the SQL Schema plugin to discover tables first. Always use fully qualified table names (e.g., dbo.TableName) when available. Results are limited by max_rows to prevent excessive data transfer.")
     @plugin_function_logger("SQLQueryPlugin")
     def execute_query(
         self, 
@@ -312,7 +312,7 @@ class SQLQueryPlugin(BasePlugin):
             }
             return ResultWithMetadata(error_result, self.metadata)
 
-    @kernel_function(description="Execute a query that returns a single scalar value (e.g., COUNT, SUM, MAX, MIN). You MUST first discover the database schema using get_database_schema or get_table_list before calling this function to ensure correct table and column references.")
+    @kernel_function(description="Execute a query that returns a single scalar value (e.g., COUNT, SUM, MAX, MIN). If the database schema is provided in your instructions, use it directly to construct the query. Otherwise, call get_database_schema from the SQL Schema plugin first to discover table and column names.")
     @plugin_function_logger("SQLQueryPlugin")
     def execute_scalar(
         self, 
@@ -391,7 +391,7 @@ class SQLQueryPlugin(BasePlugin):
             }
             return ResultWithMetadata(error_result, self.metadata)
 
-    @kernel_function(description="Execute a SQL query to answer a question about the database. This is a convenience function that executes a SQL query and returns results along with the original question for context. IMPORTANT: Before calling this function, you MUST first call get_database_schema or get_table_list from the SQL Schema plugin to discover available tables, column names, data types, and relationships. Then construct the appropriate SQL query using the discovered schema and provide it along with the original question.")
+    @kernel_function(description="Execute a SQL query to answer a question about the database. This is a convenience function that executes a SQL query and returns results along with the original question for context. If the database schema is provided in your instructions, use those table and column names directly to construct the query. Otherwise, first call get_database_schema from the SQL Schema plugin to discover the schema. Then construct the appropriate SQL query and provide it along with the original question.")
     @plugin_function_logger("SQLQueryPlugin")
     def query_database(
         self,

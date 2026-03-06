@@ -2,6 +2,41 @@
 
 # Feature Release
 
+### **(v0.239.017)**
+
+#### Bug Fixes
+
+*   **SQL Schema Plugin — Eliminate Redundant Schema Calls**
+    *   Fixed agent calling `get_database_schema` twice per query even though the full schema was already injected into the agent's instructions at load time.
+    *   Root cause: The `@kernel_function` descriptions in `sql_schema_plugin.py` said "ALWAYS call this function FIRST," which overrode the schema context already available in the instructions.
+    *   Updated all four function descriptions (`get_database_schema`, `get_table_schema`, `get_table_list`, `get_relationships`) to use the resilient pattern: "If the database schema is already provided in your instructions, use that directly and do NOT call this function."
+    *   This eliminates ~400ms+ of unnecessary database round trips per query and aligns with the same pattern already used in `sql_query_plugin.py` since v0.239.015.
+    *   (Ref: `sql_schema_plugin.py`, `@kernel_function` descriptions, schema injection)
+
+### **(v0.239.016)**
+
+#### Bug Fixes
+
+*   **SQL Schema Plugin — Empty Tables from INFORMATION_SCHEMA**
+    *   Fixed `get_database_schema` returning `'tables': {}` (empty) despite the database having tables, while relationships were returned correctly.
+    *   Root cause: SQL Server table/column enumeration used `INFORMATION_SCHEMA.TABLES` and `INFORMATION_SCHEMA.COLUMNS` views, which returned empty results in the Azure SQL environment. Meanwhile, the relationships query used `sys.foreign_keys`/`sys.tables`/`sys.columns` catalog views which worked perfectly.
+    *   Migrated all SQL Server schema queries to use `sys.*` catalog views consistently: `sys.tables`/`sys.schemas` for table enumeration, `sys.columns` with `TYPE_NAME()` for column details, and `sys.indexes`/`sys.index_columns` for primary key detection.
+    *   Fixed `pyodbc.Row` handling throughout the plugin — removed all `isinstance(table, tuple)` checks that could fail with pyodbc Row objects, replaced with robust try/except indexing.
+    *   This enables the full schema (tables, columns, types, PKs, FKs) to be injected into agent instructions, allowing agents to construct complex multi-table JOINs for analytical queries.
+    *   (Ref: `sql_schema_plugin.py`, `sys.tables`, `sys.columns`, `sys.indexes`, pyodbc.Row handling)
+
+### **(v0.239.015)**
+
+#### Bug Fixes
+
+*   **SQL Query Plugin — Auto-Create Companion Schema Plugin**
+    *   Fixed the remaining issue where SQL-connected agents still asked for clarification instead of querying the database, even after v0.239.014 description improvements.
+    *   Root cause: Agents configured with only a `sql_query` action never had a `SQLSchemaPlugin` loaded in the kernel. The v0.239.014 descriptions demanded calling `get_database_schema` — a function that didn't exist — creating an impossible dependency that caused the LLM to ask for clarification.
+    *   `LoggedPluginLoader` now automatically creates a companion `SQLSchemaPlugin` whenever a `SQLQueryPlugin` is loaded, using the same connection details. This ensures schema discovery is always available.
+    *   Updated `@kernel_function` descriptions to be resilient: "If the database schema is provided in your instructions, use it directly. Otherwise, call get_database_schema." This dual-path approach works whether schema is injected via instructions or available via plugin functions.
+    *   Added fallback in `_extract_sql_schema_for_instructions()` to also detect `SQLQueryPlugin` instances and create a temporary schema extractor if no `SQLSchemaPlugin` is found.
+    *   (Ref: `logged_plugin_loader.py`, `sql_query_plugin.py`, `semantic_kernel_loader.py`)
+
 ### **(v0.239.014)**
 
 #### Bug Fixes

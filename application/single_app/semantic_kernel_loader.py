@@ -828,6 +828,97 @@ def _extract_sql_schema_for_instructions(kernel) -> str:
         log_event(f"[SK Loader] Error iterating kernel plugins for SQL schema: {e}",
                  extra={"error": str(e)}, level=logging.WARNING)
     
+    # Fallback: If no SQLSchemaPlugin was found, check for SQLQueryPlugin instances
+    # and create a temporary SQLSchemaPlugin from their connection config to extract schema
+    if not schema_parts:
+        from semantic_kernel_plugins.sql_query_plugin import SQLQueryPlugin as _SQLQueryPlugin
+        
+        try:
+            for plugin_name, plugin in kernel.plugins.items():
+                query_obj = None
+                
+                if isinstance(plugin, _SQLQueryPlugin):
+                    query_obj = plugin
+                elif hasattr(plugin, '_plugin_instance'):
+                    if isinstance(plugin._plugin_instance, _SQLQueryPlugin):
+                        query_obj = plugin._plugin_instance
+                else:
+                    for func_name, func in plugin.functions.items():
+                        if hasattr(func, 'method') and hasattr(func.method, '__self__'):
+                            if isinstance(func.method.__self__, _SQLQueryPlugin):
+                                query_obj = func.method.__self__
+                                break
+                
+                if query_obj is not None:
+                    print(f"[SK Loader] Fallback: Found SQLQueryPlugin '{plugin_name}', creating temporary schema extractor...")
+                    try:
+                        temp_manifest = {
+                            'type': 'sql_schema',
+                            'name': f'{plugin_name}_temp_schema',
+                            'database_type': getattr(query_obj, 'database_type', 'azure_sql'),
+                            'server': getattr(query_obj, 'server', ''),
+                            'database': getattr(query_obj, 'database', ''),
+                            'username': getattr(query_obj, 'username', ''),
+                            'password': getattr(query_obj, 'password', ''),
+                            'driver': getattr(query_obj, 'driver', ''),
+                            'connection_string': getattr(query_obj, 'connection_string', ''),
+                        }
+                        temp_schema = SQLSchemaPlugin(temp_manifest)
+                        schema_result = temp_schema.get_database_schema()
+                        if schema_result and hasattr(schema_result, 'data'):
+                            schema_data = schema_result.data
+                        else:
+                            schema_data = schema_result
+                        
+                        if isinstance(schema_data, dict) and "tables" in schema_data:
+                            db_name = schema_data.get("database_name", "Unknown")
+                            db_type = schema_data.get("database_type", "Unknown")
+                            
+                            schema_text = f"### Database: {db_name} ({db_type})\n\n"
+                            
+                            for table_name, table_info in schema_data["tables"].items():
+                                schema_name = table_info.get("schema_name", "dbo")
+                                qualified_name = f"{schema_name}.{table_name}" if schema_name else table_name
+                                schema_text += f"**Table: {qualified_name}**\n"
+                                
+                                columns = table_info.get("columns", [])
+                                if columns:
+                                    schema_text += "| Column | Type | Nullable |\n|--------|------|----------|\n"
+                                    for col in columns:
+                                        col_name = col.get("column_name", "?")
+                                        col_type = col.get("data_type", "?")
+                                        nullable = "Yes" if col.get("is_nullable", True) else "No"
+                                        schema_text += f"| {col_name} | {col_type} | {nullable} |\n"
+                                
+                                pks = table_info.get("primary_keys", [])
+                                if pks:
+                                    schema_text += f"Primary Key(s): {', '.join(pks)}\n"
+                                
+                                schema_text += "\n"
+                            
+                            relationships = schema_data.get("relationships", [])
+                            if relationships:
+                                schema_text += "**Relationships (Foreign Keys):**\n"
+                                for rel in relationships:
+                                    parent = rel.get("parent_table", "?")
+                                    parent_col = rel.get("parent_column", "?")
+                                    ref = rel.get("referenced_table", "?")
+                                    ref_col = rel.get("referenced_column", "?")
+                                    schema_text += f"- {parent}.{parent_col} → {ref}.{ref_col}\n"
+                                schema_text += "\n"
+                            
+                            schema_parts.append(schema_text)
+                            print(f"[SK Loader] Fallback: Successfully extracted schema from SQLQueryPlugin '{plugin_name}': {len(schema_data['tables'])} tables")
+                    except Exception as e:
+                        print(f"[SK Loader] Fallback: Failed to extract schema from SQLQueryPlugin '{plugin_name}': {e}")
+                        log_event(f"[SK Loader] Fallback schema extraction failed",
+                                 extra={"plugin_name": plugin_name, "error": str(e)},
+                                 level=logging.WARNING)
+        except Exception as e:
+            print(f"[SK Loader] Warning: Error in fallback SQL schema extraction: {e}")
+            log_event(f"[SK Loader] Error in fallback SQL schema extraction: {e}",
+                     extra={"error": str(e)}, level=logging.WARNING)
+    
     return "\n".join(schema_parts)
 
 
