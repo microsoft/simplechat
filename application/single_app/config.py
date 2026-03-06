@@ -459,6 +459,18 @@ cosmos_approvals_container = cosmos_database.create_container_if_not_exists(
     default_ttl=-1  # TTL disabled by default, enabled per-document for auto-cleanup
 )
 
+cosmos_thoughts_container_name = "thoughts"
+cosmos_thoughts_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_thoughts_container_name,
+    partition_key=PartitionKey(path="/user_id")
+)
+
+cosmos_archived_thoughts_container_name = "archive_thoughts"
+cosmos_archived_thoughts_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_archived_thoughts_container_name,
+    partition_key=PartitionKey(path="/user_id")
+)
+
 def ensure_custom_logo_file_exists(app, settings):
     """
     If custom_logo_base64 or custom_logo_dark_base64 is present in settings, ensure the appropriate

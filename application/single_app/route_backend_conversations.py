@@ -8,6 +8,7 @@ from flask import Response, request
 from functions_debug import debug_print
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_activity_logging import log_conversation_creation, log_conversation_deletion, log_conversation_archival
+from functions_thoughts import archive_thoughts_for_conversation, delete_thoughts_for_conversation
 
 def register_route_backend_conversations(app):
 
@@ -430,7 +431,14 @@ def register_route_backend_conversations(app):
                 cosmos_archived_messages_container.upsert_item(archived_doc)
 
             cosmos_messages_container.delete_item(doc['id'], partition_key=conversation_id)
-        
+
+        # Archive/delete thoughts for conversation
+        user_id_for_thoughts = conversation_item.get('user_id')
+        if archiving_enabled:
+            archive_thoughts_for_conversation(conversation_id, user_id_for_thoughts)
+        else:
+            delete_thoughts_for_conversation(conversation_id, user_id_for_thoughts)
+
         # Log conversation deletion before actual deletion
         log_conversation_deletion(
             user_id=conversation_item.get('user_id'),
@@ -530,7 +538,13 @@ def register_route_backend_conversations(app):
                         cosmos_archived_messages_container.upsert_item(archived_message)
                     
                     cosmos_messages_container.delete_item(message['id'], partition_key=conversation_id)
-                
+
+                # Archive/delete thoughts for conversation
+                if archiving_enabled:
+                    archive_thoughts_for_conversation(conversation_id, user_id)
+                else:
+                    delete_thoughts_for_conversation(conversation_id, user_id)
+
                 # Log conversation deletion before actual deletion
                 log_conversation_deletion(
                     user_id=user_id,
