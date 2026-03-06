@@ -230,7 +230,7 @@ def register_route_frontend_authentication(app):
         else:
             logout_uri = url_for('index', _external=True, _scheme='https')
 
-        print(f"{user_name} locally logged out. Redirecting to {logout_uri}.")
+        # print(f"{user_name} locally logged out. Redirecting to {logout_uri}.")
         return redirect(logout_uri)
 
     @app.route('/logout')

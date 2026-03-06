@@ -9,6 +9,7 @@
         warningMinutes: 28,
         heartbeatUrl: '/api/session/heartbeat',
         localLogoutUrl: '/logout/local',
+        fullSsoLogoutUrl: '/logout',
         logoutUrl: '/logout'
     };
 
@@ -111,7 +112,7 @@
         function logoutNow() {
             clearTimers();
             stopCountdown();
-            const logoutTarget = mergedConfig.localLogoutUrl || mergedConfig.logoutUrl;
+            const logoutTarget = mergedConfig.localLogoutUrl || mergedConfig.fullSsoLogoutUrl || mergedConfig.logoutUrl;
             window.location.href = logoutTarget;
         }
 

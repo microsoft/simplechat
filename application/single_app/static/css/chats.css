@@ -1046,7 +1046,7 @@ a.citation-link:hover {
 .message-content {
   display: flex;
   align-items: flex-end;
-  overflow: auto; /* Preserving higher level visible property while allowing response message scroll if needed */
+  overflow: auto; /* Make message content scrollable when it overflows while minimizing effects elsewhere. */
 }
 
 .message-content.flex-row-reverse {

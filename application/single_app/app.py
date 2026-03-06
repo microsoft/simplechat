@@ -412,7 +412,7 @@ def before_first_request():
 
 def get_idle_timeout_settings(settings=None):
     if settings is None:
-        settings = get_settings() or {}
+        settings = get_request_settings()
 
     timeout_raw = settings.get('idle_timeout_minutes', 30)
     warning_raw = settings.get('idle_warning_minutes', 28)
@@ -435,9 +435,17 @@ def get_idle_timeout_settings(settings=None):
 
     return timeout_minutes, warning_minutes
 
+
+def get_request_settings():
+    request_settings = getattr(g, 'request_settings', None)
+    if request_settings is None:
+        request_settings = get_settings() or {}
+        g.request_settings = request_settings
+    return request_settings
+
 @app.context_processor
 def inject_settings():
-    settings = get_settings()
+    settings = get_request_settings()
     public_settings = sanitize_settings_for_user(settings)
     idle_timeout_minutes, idle_warning_minutes = get_idle_timeout_settings(settings)
     # Inject per-user settings if logged in
@@ -500,6 +508,20 @@ def _is_idle_timeout_exempt(path):
     if path in IDLE_TIMEOUT_EXEMPT_PATHS:
         return True
     return any(path.startswith(prefix) for prefix in IDLE_TIMEOUT_EXEMPT_PREFIXES)
+
+
+@app.before_request
+def load_request_settings_cache():
+    g.request_settings = None
+
+    if request.method == 'OPTIONS' or _is_idle_timeout_exempt(request.path):
+        return None
+
+    if 'user' not in session:
+        return None
+
+    g.request_settings = get_settings() or {}
+    return None
 
 @app.before_request
 def enforce_idle_session_timeout():
@@ -631,7 +653,7 @@ def acceptable_use_policy():
 def session_heartbeat():
     session['last_activity_epoch'] = int(time.time())
     session.modified = True
-    idle_timeout_minutes, _ = get_idle_timeout_settings()
+    idle_timeout_minutes, _ = get_idle_timeout_settings(get_request_settings())
     return jsonify({
         'message': 'Session refreshed',
         'idle_timeout_minutes': idle_timeout_minutes
