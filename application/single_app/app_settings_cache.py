@@ -5,6 +5,7 @@ ALWAYS import app_settings_cache and use app_settings_cache.get_settings_cache()
 This supports the dynamic selection of redis or in-memory caching of settings.
 """
 import json
+import logging
 from redis import Redis
 from azure.identity import DefaultAzureCredential
 
@@ -30,7 +31,7 @@ def configure_app_cache(settings, redis_cache_endpoint=None):
         redis_url = settings.get('redis_url', '').strip()
         redis_auth_type = settings.get('redis_auth_type', 'key').strip().lower()
         if redis_auth_type == 'managed_identity':
-            log_event("[ASC] Redis enabled using Managed Identity", level="INFO")
+            log_event("[ASC] Redis enabled using Managed Identity", level=logging.INFO)
             credential = DefaultAzureCredential()
             cache_endpoint = redis_cache_endpoint
             token = credential.get_token(cache_endpoint)
@@ -42,7 +43,7 @@ def configure_app_cache(settings, redis_cache_endpoint=None):
                 ssl=True
             )
         elif redis_auth_type == 'key_vault':
-            log_event("[ASC] Redis enabled using Key Vault Secret", level="INFO")
+            log_event("[ASC] Redis enabled using Key Vault Secret", level=logging.INFO)
             # Local import to avoid circular dependency: functions_keyvault imports app_settings_cache.
             from functions_keyvault import retrieve_secret_direct
             redis_key_secret_name = settings.get('redis_key', '').strip()
@@ -52,9 +53,9 @@ def configure_app_cache(settings, redis_cache_endpoint=None):
                 redis_password = retrieve_secret_direct(redis_key_secret_name, settings=settings)
                 if redis_password:
                     redis_password = redis_password.strip()
-                log_event("[ASC] Redis key retrieved from Key Vault successfully", level="INFO")
+                log_event("[ASC] Redis key retrieved from Key Vault successfully", level=logging.INFO)
             except Exception as kv_err:
-                log_event(f"[ASC] ERROR: Failed to retrieve Redis key from Key Vault: {kv_err}", level="ERROR")
+                log_event(f"[ASC] ERROR: Failed to retrieve Redis key from Key Vault: {kv_err}", level=logging.ERROR, exceptionTraceback=True)
                 raise
 
             redis_client = Redis(
@@ -66,7 +67,7 @@ def configure_app_cache(settings, redis_cache_endpoint=None):
             )
         else:
             redis_key = settings.get('redis_key', '').strip()
-            log_event("[ASC] Redis enabled using Access Key", level="INFO")
+            log_event("[ASC] Redis enabled using Access Key", level=logging.INFO)
             redis_client = Redis(
                 host=redis_url,
                 port=6380,

@@ -160,7 +160,7 @@ def configure_sessions(settings):
                 redis_client = None
                 try:
                     if redis_auth_type == 'managed_identity':
-                        print("Redis enabled using Managed Identity")
+                        log_event("Redis enabled using Managed Identity", level=logging.INFO)
                         from config import get_redis_cache_infrastructure_endpoint
                         credential = DefaultAzureCredential()
                         redis_hostname = redis_url.split('.')[0]
@@ -176,7 +176,7 @@ def configure_sessions(settings):
                             socket_timeout=5
                         )
                     elif redis_auth_type == 'key_vault':
-                        print("Redis enabled using Key Vault Secret")
+                        log_event("Redis enabled using Key Vault Secret", level=logging.INFO)
                         from functions_keyvault import retrieve_secret_direct
                         redis_key_secret_name = settings.get('redis_key', '').strip()
                         redis_password = retrieve_secret_direct(redis_key_secret_name)
@@ -193,7 +193,7 @@ def configure_sessions(settings):
                         )
                     else:
                         redis_key = settings.get('redis_key', '').strip()
-                        print("Redis enabled using Access Key")
+                        log_event("Redis enabled using Access Key", level=logging.INFO)
                         redis_client = Redis(
                             host=redis_url,
                             port=6380,
@@ -206,7 +206,7 @@ def configure_sessions(settings):
                     
                     # Test the connection
                     redis_client.ping()
-                    print("✅ Redis connection successful")
+                    log_event("✅ Redis connection successful", level=logging.INFO)
                     app.config['SESSION_TYPE'] = 'redis'
                     app.config['SESSION_REDIS'] = redis_client
                     

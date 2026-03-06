@@ -1877,17 +1877,17 @@ function setupToggles() {
 
         // Set initial state on load
         if (redisKeyContainer) {
-            redisKeyContainer.style.display = (redisAuthType.value === 'key' || redisAuthType.value === 'key_vault') ? 'block' : 'none';
+            redisKeyContainer.classList.toggle('d-none', !(redisAuthType.value === 'key' || redisAuthType.value === 'key_vault'));
         }
         updateRedisKeyLabel(redisAuthType.value);
 
         redisAuthType.addEventListener('change', function () {
             if (redisKeyContainer) {
-                redisKeyContainer.style.display = (this.value === 'key' || this.value === 'key_vault') ? 'block' : 'none';
+                redisKeyContainer.classList.toggle('d-none', !(this.value === 'key' || this.value === 'key_vault'));
             }
             const redisKeyVaultHint = document.getElementById('redis_key_vault_hint');
             if (redisKeyVaultHint) {
-                redisKeyVaultHint.style.display = (this.value === 'key_vault') ? 'block' : 'none';
+                redisKeyVaultHint.classList.toggle('d-none', this.value !== 'key_vault');
             }
             updateRedisKeyLabel(this.value);
             markFormAsModified();
