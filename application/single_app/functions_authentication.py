@@ -52,11 +52,12 @@ def _save_cache(cache):
             # Decide how to handle this, maybe clear cache or log extensively
             # session.pop("token_cache", None) # Option: Clear on serialization failure
 
-def _build_msal_app(cache=None):
+def _build_msal_app(cache=None, authority_override=None):
     """Builds the MSAL ConfidentialClientApplication, optionally initializing with a cache."""
+    authority = authority_override or AUTHORITY
     return ConfidentialClientApplication(
         CLIENT_ID,
-        authority=AUTHORITY,
+        authority=authority,
         client_credential=CLIENT_SECRET,
         token_cache=cache  # Pass the cache instance here
     )
@@ -88,7 +89,7 @@ def get_valid_access_token(scopes=None):
 
     required_scopes = scopes or SCOPE # Use default SCOPE if none provided
 
-    msal_app = _build_msal_app(cache=_load_cache())
+    msal_app = _build_msal_app(cache=_load_cache(), authority_override=get_graph_authority())
     user_info = session.get("user", {})
     # MSAL uses home_account_id which combines oid and tid
     # Construct it carefully based on your id_token_claims structure
@@ -160,7 +161,7 @@ def get_valid_access_token_for_plugins(scopes=None):
 
     required_scopes = scopes or SCOPE # Use default SCOPE if none provided
 
-    msal_app = _build_msal_app(cache=_load_cache())
+    msal_app = _build_msal_app(cache=_load_cache(), authority_override=get_graph_authority())
     user_info = session.get("user", {})
     # MSAL uses home_account_id which combines oid and tid
     # Construct it carefully based on your id_token_claims structure
@@ -844,6 +845,103 @@ def get_current_user_info():
         "displayName": user.get("name")
     }
 
+
+def _normalize_authority(authority_base, tenant_id):
+    """Normalize an authority URL and append tenant when appropriate."""
+    base = (authority_base or "").strip().rstrip("/")
+    tenant = (tenant_id or "").strip()
+
+    if not base or not tenant:
+        return base
+
+    lowered = base.lower()
+    tenant_lower = tenant.lower()
+
+    if lowered.endswith(f"/{tenant_lower}"):
+        return base
+
+    if lowered.endswith("/common") or lowered.endswith("/organizations") or lowered.endswith("/consumers"):
+        return base
+
+    return f"{base}/{tenant}"
+
+
+def get_graph_authority():
+    """
+    Resolve authority for Graph token acquisition, independent of general Azure environment defaults.
+
+    Precedence:
+    1. CUSTOM_GRAPH_AUTHORITY_URL_VALUE if provided
+    2. Custom cloud identity authority for AZURE_ENVIRONMENT=custom
+    3. Gov/Public cloud authority based on AZURE_ENVIRONMENT
+    """
+    custom_graph_authority = (CUSTOM_GRAPH_AUTHORITY_URL_VALUE or "").strip()
+    if custom_graph_authority:
+        return _normalize_authority(custom_graph_authority, TENANT_ID)
+
+    if AZURE_ENVIRONMENT == "custom":
+        return _normalize_authority(CUSTOM_IDENTITY_URL_VALUE, TENANT_ID)
+
+    if AZURE_ENVIRONMENT == "usgovernment":
+        return f"https://login.microsoftonline.us/{TENANT_ID}"
+
+    return f"https://login.microsoftonline.com/{TENANT_ID}"
+
+
+def get_graph_base_url():
+    """
+    Resolve the Microsoft Graph base URL for this deployment.
+
+    Precedence:
+    1. CUSTOM_GRAPH_URL_VALUE if provided (works in any AZURE_ENVIRONMENT mode)
+    2. Azure Gov Graph for usgovernment
+    3. Public Graph by default
+
+    Returns:
+        str: Normalized Graph base URL ending with /v1.0
+    """
+    custom_graph_url = (CUSTOM_GRAPH_URL_VALUE or "").strip().rstrip("/")
+    if custom_graph_url:
+        normalized = custom_graph_url
+        lowered = normalized.lower()
+
+        # Allow legacy values such as https://.../v1.0/users
+        if lowered.endswith("/users"):
+            normalized = normalized[:-6].rstrip("/")
+            lowered = normalized.lower()
+
+        if "/v1.0" not in lowered:
+            normalized = f"{normalized}/v1.0"
+
+        return normalized
+
+    if AZURE_ENVIRONMENT == "usgovernment":
+        return "https://graph.microsoft.us/v1.0"
+
+    return "https://graph.microsoft.com/v1.0"
+
+
+def get_graph_endpoint(path=""):
+    """
+    Build a full Graph endpoint from a relative path.
+
+    Args:
+        path (str): Relative Graph path (for example: "/users" or "users/{id}")
+
+    Returns:
+        str: Fully qualified Microsoft Graph URL
+    """
+    base_url = get_graph_base_url().rstrip("/")
+    path = (path or "").strip()
+
+    if not path:
+        return base_url
+
+    if not path.startswith("/"):
+        path = f"/{path}"
+
+    return f"{base_url}{path}"
+
 def get_user_profile_image():
     """
     Fetches the user's profile image from Microsoft Graph and returns it as base64.
@@ -854,13 +952,7 @@ def get_user_profile_image():
         debug_print("get_user_profile_image: Could not acquire access token")
         return None
 
-    # Determine the correct Graph endpoint based on Azure environment
-    if AZURE_ENVIRONMENT == "usgovernment":
-        profile_image_endpoint = "https://graph.microsoft.us/v1.0/me/photo/$value"
-    elif AZURE_ENVIRONMENT == "custom":
-        profile_image_endpoint = f"{CUSTOM_GRAPH_URL_VALUE}/me/photo/$value"
-    else:
-        profile_image_endpoint = "https://graph.microsoft.com/v1.0/me/photo/$value"
+    profile_image_endpoint = get_graph_endpoint("/me/photo/$value")
     
     headers = {
         "Authorization": f"Bearer {token}",
