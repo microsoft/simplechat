@@ -1677,3 +1677,159 @@ mark.search-highlight {
         transform: scale(1.05);
     }
 }
+
+/* =============================================
+   Processing Thoughts
+   ============================================= */
+
+/* Loading indicator thought text */
+.thought-live-text {
+    font-style: italic;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 300px;
+}
+
+/* Toggle button in message footer */
+.thoughts-toggle-btn {
+    font-size: 0.9rem;
+    color: #6c757d;
+    padding: 0 0.25rem;
+    border: none;
+    background: none;
+    cursor: pointer;
+    transition: color 0.15s ease-in-out;
+}
+
+.thoughts-toggle-btn:hover {
+    color: #ffc107;
+}
+
+/* Collapsible container inside message bubble */
+.thoughts-container {
+    max-height: 300px;
+    overflow-y: auto;
+    font-size: 0.85rem;
+}
+
+/* Timeline wrapper */
+.thoughts-list {
+    position: relative;
+    padding-left: 1.25rem;
+}
+
+/* Vertical timeline line */
+.thoughts-list::before {
+    content: '';
+    position: absolute;
+    left: 0.5rem;
+    top: 0.25rem;
+    bottom: 0.25rem;
+    width: 2px;
+    background: linear-gradient(to bottom, #0d6efd, #6ea8fe);
+    border-radius: 1px;
+}
+
+/* Individual thought step */
+.thought-step {
+    display: flex;
+    align-items: flex-start;
+    padding-left: 0.75rem;
+    padding-top: 0.25rem;
+    padding-bottom: 0.25rem;
+    position: relative;
+}
+
+/* Timeline node dot */
+.thought-step::before {
+    content: '';
+    position: absolute;
+    left: -1rem;
+    top: 0.55rem;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: #0d6efd;
+    border: 2px solid #fff;
+    box-shadow: 0 0 0 1px #0d6efd;
+    z-index: 1;
+}
+
+/* Last thought step gets a slightly different dot */
+.thought-step:last-child::before {
+    background-color: #198754;
+    box-shadow: 0 0 0 1px #198754;
+}
+
+.thought-step i {
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+
+/* Streaming cursor thought badge pulse animation */
+.animate-pulse {
+    animation: thought-pulse 1.5s ease-in-out infinite;
+}
+
+/* Streaming thought display (before content arrives) */
+.streaming-thought-display {
+    display: flex;
+    align-items: center;
+    padding: 0.5rem 0;
+}
+
+/* Light mode: use darker, more readable colors */
+.streaming-thought-display .badge {
+    background-color: rgba(13, 110, 253, 0.08) !important;
+    color: #0a58ca !important;
+    border-color: rgba(13, 110, 253, 0.25) !important;
+}
+
+/* Dark mode: lighter accent colors */
+[data-bs-theme="dark"] .streaming-thought-display .badge {
+    background-color: rgba(13, 202, 240, 0.15) !important;
+    color: #6edff6 !important;
+    border-color: rgba(13, 202, 240, 0.3) !important;
+}
+
+@keyframes thought-pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.6;
+    }
+}
+
+/* Dark mode overrides */
+[data-bs-theme="dark"] .thoughts-toggle-btn {
+    color: #adb5bd;
+}
+
+[data-bs-theme="dark"] .thoughts-toggle-btn:hover {
+    color: #ffc107;
+}
+
+[data-bs-theme="dark"] .thought-step {
+    /* Dark mode dot border matches dark background */
+}
+
+[data-bs-theme="dark"] .thought-step::before {
+    border-color: #212529;
+    background-color: #6ea8fe;
+    box-shadow: 0 0 0 1px #6ea8fe;
+}
+
+[data-bs-theme="dark"] .thought-step:last-child::before {
+    background-color: #75b798;
+    box-shadow: 0 0 0 1px #75b798;
+}
+
+[data-bs-theme="dark"] .thoughts-list::before {
+    background: linear-gradient(to bottom, #6ea8fe, #9ec5fe);
+}
+
+[data-bs-theme="dark"] .thoughts-container {
+    border-top-color: #495057 !important;
+}

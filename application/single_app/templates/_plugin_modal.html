@@ -425,21 +425,46 @@
                 </div>
               </div>
             </div>
+
+            <!-- Test Connection Button -->
+            <div class="mt-4 pt-3 border-top" id="sql-test-connection-section">
+              <div class="d-flex align-items-center gap-3">
+                <button type="button" class="btn btn-outline-primary" id="sql-test-connection-btn">
+                  <i class="bi bi-plug me-2"></i>Test Connection
+                </button>
+                <div id="sql-test-connection-status" class="d-none">
+                  <span id="sql-test-connection-spinner" class="spinner-border spinner-border-sm me-2 d-none" role="status" aria-hidden="true"></span>
+                  <span id="sql-test-connection-message"></span>
+                </div>
+              </div>
+              <div id="sql-test-connection-result" class="mt-2 d-none">
+                <div class="alert mb-0 py-2 px-3 small" id="sql-test-connection-alert" role="alert"></div>
+              </div>
+            </div>
           </div>
         </div>
 
         <!-- Step 4: Advanced -->
         <div class="plugin-step d-none" id="plugin-step-4">
           <h6 class="mb-3">Advanced</h6>
+          <p class="text-muted small mb-3">Advanced settings are typically not required. Expand below if you need to customize metadata or additional fields.</p>
           <div class="mb-3">
-            <label for="plugin-metadata" class="form-label">Metadata (JSON)</label>
-            <textarea class="form-control" id="plugin-metadata" rows="4" placeholder="{}"></textarea>
-            <div class="form-text">Optional metadata for this action.</div>
+            <button class="btn btn-sm btn-outline-secondary w-100 d-flex align-items-center justify-content-between" type="button" data-bs-toggle="collapse" data-bs-target="#plugin-advanced-collapse" aria-expanded="false" aria-controls="plugin-advanced-collapse">
+              <span><i class="bi bi-gear me-2"></i>Show Advanced Settings</span>
+              <i class="bi bi-chevron-down" id="plugin-advanced-toggle-icon"></i>
+            </button>
           </div>
-          <div class="mb-3" id="plugin-additional-fields-div">
-            <label for="plugin-additional-fields" class="form-label">Additional Fields (JSON)</label>
-            <textarea class="form-control" id="plugin-additional-fields" rows="6" placeholder="{}"></textarea>
-            <div class="form-text">Additional configuration fields specific to this action type.</div>
+          <div class="collapse" id="plugin-advanced-collapse">
+            <div class="mb-3">
+              <label for="plugin-metadata" class="form-label">Metadata (JSON)</label>
+              <textarea class="form-control" id="plugin-metadata" rows="4" placeholder="{}"></textarea>
+              <div class="form-text">Optional metadata for this action.</div>
+            </div>
+            <div class="mb-3" id="plugin-additional-fields-div">
+              <label for="plugin-additional-fields" class="form-label">Additional Fields (JSON)</label>
+              <textarea class="form-control" id="plugin-additional-fields" rows="6" placeholder="{}"></textarea>
+              <div class="form-text">Additional configuration fields specific to this action type.</div>
+            </div>
           </div>
         </div>
 
@@ -775,6 +800,15 @@
   border-radius: 8px;
   padding: 1rem;
   background-color: #f8f9fa;
+}
+
+/* Advanced toggle chevron animation */
+#plugin-advanced-toggle-icon {
+  transition: transform 0.3s ease;
+}
+#plugin-advanced-collapse.show ~ .mb-3 #plugin-advanced-toggle-icon,
+[aria-expanded="true"] #plugin-advanced-toggle-icon {
+  transform: rotate(180deg);
 }
 
 .sql-connection-config, 

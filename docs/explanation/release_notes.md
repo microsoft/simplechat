@@ -2,6 +2,123 @@
 
 # Feature Release
 
+### **(v0.239.008)**
+
+#### Bug Fixes
+
+*   **Chat-Uploaded Tabular Files Now Trigger SK Mini-Agent in Model-Only Mode**
+    *   Fixed an issue where tabular files (CSV, XLSX, XLS, XLSM) uploaded directly to a chat conversation were not analyzed by the SK mini-agent when no agent was selected. The model would describe what analysis it would perform instead of returning actual computed results.
+    *   **Root Cause**: The mini SK agent only triggered from search results, but chat-uploaded files are stored in blob storage and not indexed in Azure AI Search. Additionally, the streaming path completely ignored `file` role messages in conversation history.
+    *   **Fix**: Both streaming and non-streaming chat paths now detect chat-uploaded tabular files during conversation history building and trigger `run_tabular_sk_analysis(source_hint="chat")` to pre-compute results. The streaming path also now properly handles `file` role messages (tabular and non-tabular) matching the non-streaming path's behavior.
+    *   (Ref: `route_backend_chats.py`, `run_tabular_sk_analysis()`, `collect_tabular_sk_citations()`)
+
+---
+### **(v0.239.013)**
+
+#### New Features
+
+*   **Agent & Action User Tracking (created_by / modified_by)**
+    *   All agent and action documents (personal, group, and global) now include `created_by`, `created_at`, `modified_by`, and `modified_at` fields that track which user created or last modified the entity.
+    *   On updates, the original `created_by` and `created_at` values are preserved while `modified_by` and `modified_at` are refreshed with the current user and timestamp.
+    *   New optional `user_id` parameter added to `save_group_agent`, `save_global_agent`, `save_group_action`, and `save_global_action` for caller-supplied user tracking (backward-compatible, defaults to `None`).
+    *   (Ref: `functions_personal_agents.py`, `functions_group_agents.py`, `functions_global_agents.py`, `functions_personal_actions.py`, `functions_group_actions.py`, `functions_global_actions.py`)
+
+*   **Activity Logging for Agent & Action CRUD Operations**
+    *   Every create, update, and delete operation on agents and actions now generates an activity log record in the `activity_logs` Cosmos DB container and Application Insights.
+    *   Six new logging functions: `log_agent_creation`, `log_agent_update`, `log_agent_deletion`, `log_action_creation`, `log_action_update`, `log_action_deletion`.
+    *   Activity records include: `user_id`, `activity_type`, `entity_type` (agent/action), `operation` (create/update/delete), `workspace_type` (personal/group/global), and `workspace_context` (group_id when applicable).
+    *   Logging is fire-and-forget — failures never break the CRUD operation.
+    *   All personal, group, and admin routes for both agents and actions are wired up.
+    *   (Ref: `functions_activity_logging.py`, `route_backend_agents.py`, `route_backend_plugins.py`)
+
+### **(v0.239.008)**
+
+#### User Interface Enhancements
+
+*   **List/Grid View Toggle for Agents and Actions**
+    *   Added a list/grid view toggle to all four workspace areas: personal agents, personal actions, group agents, and group actions.
+    *   **Grid View**: Large cards with type icon, humanized name, truncated description, and action buttons (Chat, View, Edit, Delete as applicable).
+    *   **List View**: Improved table layout with fixed column widths (28%/47%/25%), humanized display names, and truncated descriptions with hover tooltips for full text.
+    *   **View Button**: New eye-icon button on every agent and action that opens a read-only detail modal with gradient-header summary cards (Basic Information, Model Configuration, Instructions for agents; Basic Information, Configuration for actions).
+    *   **Name Humanization**: Display names are now automatically parsed — underscores and camelCase/PascalCase boundaries are converted to properly spaced, title-cased words (e.g., `myCustomAgent` → `My Custom Agent`).
+    *   **Persistent Preference**: View mode selection (list/grid) is saved per area in localStorage and restored on page load.
+    *   New shared utility module `view-utils.js` provides reusable functions for all four workspace areas.
+    *   (Ref: `view-utils.js`, `workspace_agents.js`, `workspace_plugins.js`, `plugin_common.js`, `group_agents.js`, `group_plugins.js`, `workspace.html`, `group_workspaces.html`, `styles.css`)
+
+### **(v0.239.007)**
+
+#### New Features
+
+*   **Tabular Data Analysis — SK Mini-Agent for Normal Chat**
+    *   Tabular files (CSV, XLSX, XLS, XLSM) detected in search results now trigger a lightweight Semantic Kernel mini-agent that pre-computes data analysis before the main LLM response. This brings the same analytical depth previously only available in full agent mode to every normal chat conversation.
+    *   **Automatic Detection**: When AI Search results include tabular files from any workspace (personal, group, or public) or chat-uploaded documents, the system automatically identifies them via the `TABULAR_EXTENSIONS` configuration and routes the query through the SK mini-agent pipeline.
+    *   **Unified Workspace and Chat Handling**: Tabular files are processed identically regardless of their storage location. The plugin resolves blob paths across all four container types (`user-documents`, `group-documents`, `public-documents`, `personal-chat`) with automatic fallback resolution if the primary source lookup fails. A user asking about an Excel file in their personal workspace gets the same analytical treatment as one asking about a CSV uploaded directly to a chat.
+    *   **Six Data Analysis Functions**: The `TabularProcessingPlugin` exposes `describe_tabular_file`, `aggregate_column` (sum, mean, count, min, max, median, std, nunique, value_counts), `filter_rows` (==, !=, >, <, >=, <=, contains, startswith, endswith), `query_tabular_data` (pandas query syntax), `group_by_aggregate`, and `list_tabular_files` — all registered as Semantic Kernel functions that the mini-agent orchestrates autonomously.
+    *   **Pre-Computed Results Injected as Context**: The mini-agent's computed analysis (exact numerical results, aggregations, filtered data) is injected into the main LLM's system context so it can present accurate, citation-backed answers without hallucinating numbers.
+    *   **Graceful Degradation**: If the mini-agent analysis fails for any reason, the system falls back to instructing the main LLM to use the tabular processing plugin functions directly, preserving full functionality.
+    *   **Non-Streaming and Streaming Support**: Both chat modes are supported. The mini-agent runs synchronously before the main LLM call in both paths.
+    *   **Requires Enhanced Citations**: The tabular processing plugin depends on the blob storage client initialized by the enhanced citations system. The `enable_enhanced_citations` admin setting must be enabled for tabular data analysis to activate.
+    *   **Files Modified**: `route_backend_chats.py`, `semantic_kernel_plugins/tabular_processing_plugin.py`, `config.py`.
+    *   (Ref: `run_tabular_sk_analysis()`, `TabularProcessingPlugin`, `collect_tabular_sk_citations()`, `TABULAR_EXTENSIONS`)
+
+*   **Tabular Tool Execution Citations**
+    *   Every tool call made by the SK mini-agent during tabular analysis is captured and surfaced as an agent citation, providing full transparency into the data analysis pipeline.
+    *   **Automatic Capture**: The existing `@plugin_function_logger` decorator on all `TabularProcessingPlugin` functions records each invocation including function name, input parameters, returned results, execution duration, and success/failure status.
+    *   **Citation Format**: Tool execution citations appear in the same "Agent Tool Execution" modal used by full agent mode, showing `tool_name` (e.g., `TabularProcessingPlugin.aggregate_column`), `function_arguments` (the exact parameters passed), and `function_result` (the computed data returned).
+    *   **End-to-End Auditability**: Users can verify exactly which aggregations, filters, or queries were run against their data, what parameters were used, and what raw results were returned — before the LLM summarized them into the final response.
+    *   **Files Modified**: `route_backend_chats.py`.
+    *   (Ref: `collect_tabular_sk_citations()`, `plugin_invocation_logger.py`)
+
+*   **SK Mini-Agent Performance Optimization**
+    *   Reduced typical tabular analysis time from ~74 seconds to an estimated ~30-33 seconds (55-60% reduction) through three complementary optimizations.
+    *   **DataFrame Caching**: Per-request in-memory cache eliminates redundant blob downloads. Previously, each of the ~8 tool calls in a typical analysis downloaded and parsed the same file independently. Now the file is downloaded once and subsequent calls read from cache. Cache is automatically scoped to the request (new plugin instance per analysis) and garbage-collected afterward.
+    *   **Pre-Dispatch Schema Injection**: File schemas (columns, data types, row counts, and a 3-row preview) are pre-loaded and injected into the SK mini-agent's system prompt before execution begins. This eliminates 2 LLM round-trips that were previously spent on file discovery (`list_tabular_files`) and schema inspection (`describe_tabular_file`), allowing the model to jump directly to analysis tool calls.
+    *   **Async Plugin Functions**: All six `@kernel_function` methods converted to `async def` using `asyncio.to_thread()`. This enables Semantic Kernel's built-in `asyncio.gather()` to truly parallelize batched tool calls (e.g., 3 simultaneous `aggregate_column` calls) instead of executing them serially on the event loop.
+    *   **Batching Instructions**: The system prompt now instructs the model to batch multiple independent function calls in a single response, reducing LLM round-trips further.
+    *   **Files Modified**: `tabular_processing_plugin.py`, `route_backend_chats.py`, `config.py`.
+    *   (Ref: `_df_cache`, `asyncio.to_thread`, pre-dispatch schema injection in `run_tabular_sk_analysis()`)
+
+---
+*   **Chat with Agent Button for Group Agents**
+    *   Added a "Chat" button to each group agent row, allowing users to quickly select a group agent and navigate to the chat page.
+    *   (Ref: `group_agents.js`, `group_workspaces.html`)
+
+### **(v0.239.006)**
+
+#### User Interface Enhancements
+
+*   **Hidden Deprecated Action Types**
+    *   Deprecated action types (`sql_schema`, `ui_test`, `queue_storage`, `blob_storage`, `embedding_model`) are now hidden from the action creation wizard type selector. Existing actions of these types remain functional.
+    *   (Ref: `plugin_modal_stepper.js`)
+
+### **(v0.239.005)**
+
+#### Bug Fixes
+
+*   **Group SQL Action/Plugin Save Failure**
+    *   Fixed group SQL actions (sql_query and sql_schema types) failing to save correctly due to missing endpoint placeholder. Group routes now apply the same `sql://sql_query` / `sql://sql_schema` endpoint logic as personal action routes.
+    *   Fixed Step 4 (Advanced) dynamic fields overwriting Step 3 (Configuration) SQL values with empty strings during form data collection. SQL types now skip the dynamic field merge entirely since Step 3 already provides all necessary configuration.
+    *   Fixed auth type definition schemas (`sql_query.definition.json`, `sql_schema.definition.json`) only allowing `connection_string` auth type, blocking `user`, `identity`, and `servicePrincipal` types that the UI and runtime support.
+    *   Fixed `__Secret` key suffix mismatch in additional settings schemas where `connection_string__Secret` and `password__Secret` didn't match the runtime's expected `connection_string` and `password` field names. Also removed duplicate `azuresql` enum value.
+    *   (Ref: `route_backend_plugins.py`, `plugin_modal_stepper.js`, `sql_query.definition.json`, `sql_schema.definition.json`, `sql_query_plugin.additional_settings.schema.json`, `sql_schema_plugin.additional_settings.schema.json`)
+
+#### New Features
+
+*   **SQL Test Connection Button**
+    *   Added a "Test Connection" button to the SQL Database Configuration section (Step 3) of the action wizard, allowing users to validate database connectivity before saving.
+    *   Supports all database types: SQL Server, Azure SQL (with managed identity), PostgreSQL, MySQL, and SQLite.
+    *   Shows inline success/failure alerts with a 15-second timeout cap and sanitized error messages.
+    *   New backend endpoint: `POST /api/plugins/test-sql-connection`.
+    *   (Ref: `route_backend_plugins.py`, `plugin_modal_stepper.js`, `_plugin_modal.html`)
+
+#### User Interface Enhancements
+
+*   **Advanced Settings Collapse Toggle**
+    *   Step 4 (Advanced) content is now hidden behind a collapsible toggle button ("Show Advanced Settings") instead of being displayed by default. Reduces visual noise for most users.
+    *   For SQL action types, the redundant additional fields UI in Step 4 is hidden entirely since all SQL configuration is already handled in Step 3.
+    *   Step 5 (Summary) no longer shows the raw additional fields JSON dump for SQL types, since that data is already shown in the SQL Database Configuration summary card.
+    *   (Ref: `_plugin_modal.html`, `plugin_modal_stepper.js`)
+
 ### **(v0.239.001)**
 
 #### New Features
