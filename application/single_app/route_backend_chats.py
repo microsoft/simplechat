@@ -226,6 +226,7 @@ def register_route_backend_chats(app):
     @user_required
     def chat_api():
         try:
+            request_start_time = time.time()
             settings = get_settings()
             data = request.get_json()
             user_id = get_current_user_id()
@@ -2426,7 +2427,9 @@ def register_route_backend_chats(app):
                     })
 
                 if selected_agent:
+                    agent_deployment_name = getattr(selected_agent, 'deployment_name', None) or gpt_model
                     thought_tracker.add_thought('agent_tool_call', f"Sending to agent '{getattr(selected_agent, 'display_name', getattr(selected_agent, 'name', 'unknown'))}'")
+                    thought_tracker.add_thought('generation', f"Sending to '{agent_deployment_name}'")
 
                     # Register callback to write plugin thoughts to Cosmos in real-time
                     callback_key = f"{user_id}:{conversation_id}"
@@ -2443,6 +2446,9 @@ def register_route_backend_chats(app):
 
                     plugin_logger.register_callback(callback_key, on_plugin_invocation)
 
+                    thought_tracker.add_thought('generation', 'Generating response...')
+                    agent_invoke_start_time = time.time()
+
                     def invoke_selected_agent():
                         return asyncio.run(run_sk_call(
                             selected_agent.invoke,
@@ -2453,6 +2459,10 @@ def register_route_backend_chats(app):
                         msg = str(result)
                         notice = None
                         agent_used = getattr(selected_agent, 'name', 'All Plugins')
+
+                        # Emit responded thought with total duration from user message
+                        agent_total_duration_s = round(time.time() - request_start_time, 1)
+                        thought_tracker.add_thought('generation', f"'{agent_deployment_name}' responded ({agent_total_duration_s}s from initial message)")
 
                         # Deregister real-time thought callback
                         plugin_logger.deregister_callbacks(callback_key)
@@ -2579,6 +2589,10 @@ def register_route_backend_chats(app):
                                 or getattr(selected_agent, 'deployment_name', None)
                                 or agent_used
                             )
+
+                            # Emit responded thought with total duration from user message
+                            foundry_total_duration_s = round(time.time() - request_start_time, 1)
+                            thought_tracker.add_thought('generation', f"'{actual_model_deployment}' responded ({foundry_total_duration_s}s from initial message)")
 
                             # Deregister real-time thought callback
                             plugin_logger.deregister_callbacks(callback_key)
@@ -3061,6 +3075,7 @@ def register_route_backend_chats(app):
             data = request.get_json()
             user_id = get_current_user_id()
             settings = get_settings()
+            request_start_time = time.time()
         except Exception as e:
             return jsonify({'error': f'Failed to parse request: {str(e)}'}), 400
         
@@ -3475,6 +3490,101 @@ def register_route_backend_chats(app):
                     """Add a thought to Cosmos and return an SSE event string."""
                     thought_tracker.add_thought(step_type, content, detail)
                     return f"data: {json.dumps({'type': 'thought', 'step_index': thought_tracker.current_index - 1, 'step_type': step_type, 'content': content})}\n\n"
+
+                # Content Safety check (matching non-streaming path)
+                blocked = False
+                if settings.get('enable_content_safety') and "content_safety_client" in CLIENTS:
+                    yield emit_thought('content_safety', 'Checking content safety...')
+                    try:
+                        content_safety_client = CLIENTS["content_safety_client"]
+                        request_obj = AnalyzeTextOptions(text=user_message)
+                        cs_response = content_safety_client.analyze_text(request_obj)
+
+                        max_severity = 0
+                        triggered_categories = []
+                        blocklist_matches = []
+                        block_reasons = []
+
+                        for cat_result in cs_response.categories_analysis:
+                            triggered_categories.append({
+                                "category": cat_result.category,
+                                "severity": cat_result.severity
+                            })
+                            if cat_result.severity > max_severity:
+                                max_severity = cat_result.severity
+
+                        if cs_response.blocklists_match:
+                            for match in cs_response.blocklists_match:
+                                blocklist_matches.append({
+                                    "blocklistName": match.blocklist_name,
+                                    "blocklistItemId": match.blocklist_item_id,
+                                    "blocklistItemText": match.blocklist_item_text
+                                })
+
+                        if max_severity >= 4:
+                            blocked = True
+                            block_reasons.append("Max severity >= 4")
+                        if len(blocklist_matches) > 0:
+                            blocked = True
+                            block_reasons.append("Blocklist match")
+
+                        if blocked:
+                            # Upsert to safety container
+                            safety_item = {
+                                'id': str(uuid.uuid4()),
+                                'user_id': user_id,
+                                'conversation_id': conversation_id,
+                                'message': user_message,
+                                'triggered_categories': triggered_categories,
+                                'blocklist_matches': blocklist_matches,
+                                'timestamp': datetime.utcnow().isoformat(),
+                                'reason': "; ".join(block_reasons),
+                                'metadata': {}
+                            }
+                            cosmos_safety_container.upsert_item(safety_item)
+
+                            # Build blocked message
+                            blocked_msg_content = (
+                                "Your message was blocked by Content Safety.\n\n"
+                                f"**Reason**: {', '.join(block_reasons)}\n"
+                                "Triggered categories:\n"
+                            )
+                            for cat in triggered_categories:
+                                blocked_msg_content += (
+                                    f" - {cat['category']} (severity={cat['severity']})\n"
+                                )
+                            if blocklist_matches:
+                                blocked_msg_content += (
+                                    "\nBlocklist Matches:\n" +
+                                    "\n".join([f" - {m['blocklistItemText']} (in {m['blocklistName']})"
+                                            for m in blocklist_matches])
+                                )
+
+                            # Insert safety message
+                            safety_message_id = f"{conversation_id}_safety_{int(time.time())}_{random.randint(1000,9999)}"
+                            safety_doc = {
+                                'id': safety_message_id,
+                                'conversation_id': conversation_id,
+                                'role': 'safety',
+                                'content': blocked_msg_content.strip(),
+                                'timestamp': datetime.utcnow().isoformat(),
+                                'model_deployment_name': None,
+                                'metadata': {},
+                            }
+                            cosmos_messages_container.upsert_item(safety_doc)
+
+                            conversation_item['last_updated'] = datetime.utcnow().isoformat()
+                            cosmos_conversations_container.upsert_item(conversation_item)
+
+                            # Stream the blocked response and stop
+                            yield f"data: {json.dumps({'content': blocked_msg_content.strip(), 'blocked': True})}\n\n"
+                            yield "data: [DONE]\n\n"
+                            return
+
+                    except HttpResponseError as e:
+                        debug_print(f"[Content Safety Error - Streaming] {e}")
+                    except Exception as ex:
+                        debug_print(f"[Content Safety - Streaming] Unexpected error: {ex}")
 
                 # Hybrid search (if enabled)
                 combined_documents = []
@@ -3994,6 +4104,7 @@ def register_route_backend_chats(app):
                     if use_agent_streaming and selected_agent:
                         # Stream from agent using invoke_stream
                         yield emit_thought('agent_tool_call', f"Sending to agent '{agent_display_name_used or agent_name_used}'")
+                        yield emit_thought('generation', f"Sending to '{actual_model_used}'")
                         debug_print(f"--- Streaming from Agent: {agent_name_used} ---")
 
                         # Register callback to persist plugin thoughts to Cosmos in real-time
@@ -4023,6 +4134,9 @@ def register_route_backend_chats(app):
                             for msg in conversation_history_for_api
                         ]
                         
+                        yield emit_thought('generation', 'Generating response...')
+                        agent_stream_start_time = time.time()
+
                         # Stream agent responses - collect chunks first then yield
                         async def stream_agent_async():
                             """Collect all streaming chunks from agent"""
@@ -4071,6 +4185,10 @@ def register_route_backend_chats(app):
                             traceback.print_exc()
                             yield f"data: {json.dumps({'error': f'Agent streaming failed: {str(stream_error)}'})}\n\n"
                             return
+
+                        # Emit responded thought with total duration from user message
+                        agent_stream_total_duration_s = round(time.time() - request_start_time, 1)
+                        yield emit_thought('generation', f"'{actual_model_used}' responded ({agent_stream_total_duration_s}s from initial message)")
 
                         # Deregister callback (agent completed successfully)
                         plugin_logger_cb.deregister_callbacks(callback_key)
