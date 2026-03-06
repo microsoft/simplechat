@@ -436,6 +436,18 @@ def get_idle_timeout_settings(settings=None):
     return timeout_minutes, warning_minutes
 
 
+def is_idle_timeout_enabled(settings=None):
+    if settings is None:
+        settings = get_request_settings()
+
+    enabled_raw = settings.get('enable_idle_timeout', True)
+
+    if isinstance(enabled_raw, str):
+        return enabled_raw.strip().lower() in ('1', 'true', 'yes', 'on')
+
+    return bool(enabled_raw)
+
+
 def get_request_settings():
     request_settings = getattr(g, 'request_settings', None)
     if request_settings is None:
@@ -447,6 +459,7 @@ def get_request_settings():
 def inject_settings():
     settings = get_request_settings()
     public_settings = sanitize_settings_for_user(settings)
+    idle_timeout_enabled = is_idle_timeout_enabled(settings)
     idle_timeout_minutes, idle_warning_minutes = get_idle_timeout_settings(settings)
     # Inject per-user settings if logged in
     user_settings = {}
@@ -462,6 +475,7 @@ def inject_settings():
     return dict(
         app_settings=public_settings,
         user_settings=user_settings,
+        idle_timeout_enabled=idle_timeout_enabled,
         idle_timeout_minutes=idle_timeout_minutes,
         idle_warning_minutes=idle_warning_minutes
     )
@@ -531,8 +545,14 @@ def enforce_idle_session_timeout():
     if request.method == 'OPTIONS' or _is_idle_timeout_exempt(request.path):
         return None
 
-    idle_timeout_minutes, _ = get_idle_timeout_settings()
     now_epoch = int(time.time())
+    request_settings = get_request_settings()
+    if not is_idle_timeout_enabled(request_settings):
+        session['last_activity_epoch'] = now_epoch
+        session.modified = True
+        return None
+
+    idle_timeout_minutes, _ = get_idle_timeout_settings(request_settings)
     last_activity_epoch = session.get('last_activity_epoch')
 
     if last_activity_epoch is not None:

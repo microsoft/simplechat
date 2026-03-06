@@ -2,6 +2,36 @@
 
 # Feature Release
 
+### **(v0.239.008)**
+
+#### Bug Fixes
+
+*   **Idle Timeout Re-Enable Immediate Logout Fix**
+    *   Fixed an issue where users could be logged out immediately after an admin re-enabled idle timeout.
+    *   **Root Cause**: While idle timeout was disabled, `last_activity_epoch` was not refreshed on requests, allowing stale inactivity duration to accumulate.
+    *   **Fix**: Requests now refresh `last_activity_epoch` even when timeout enforcement is disabled, so re-enabling the feature starts from current activity instead of stale idle time.
+    *   Updated functional test version markers to reflect the fix release.
+    *   (Ref: `application/single_app/app.py`, `application/single_app/config.py`, `functional_tests/test_idle_logout_timeout.py`)
+
+### **(v0.239.007)**
+
+#### New Features
+
+*   **Idle Timeout Feature Toggle in Admin Settings**
+    *   Added a new admin switch to enable or disable idle session timeout and warning behavior without changing environment variables.
+    *   Timeout and warning inputs are now grouped under a toggleable section in General > System Settings.
+    *   Server-side timeout enforcement now respects the toggle so inactivity auto-logout can be centrally turned on or off.
+    *   Frontend idle warning script now reads the server-provided enabled flag instead of using a hardcoded value.
+    *   (Ref: `application/single_app/templates/admin_settings.html`, `application/single_app/static/js/admin/admin_settings.js`, `application/single_app/route_frontend_admin_settings.py`, `application/single_app/functions_settings.py`, `application/single_app/app.py`, `application/single_app/templates/base.html`)
+
+#### Bug Fixes
+
+*   **Idle Logout Config Key Alignment**
+    *   Resolved config drift between template and client script by explicitly supporting `fullSsoLogoutUrl` while retaining backward compatibility with legacy `logoutUrl`.
+    *   Logout target resolution now uses `localLogoutUrl` first, then `fullSsoLogoutUrl`, then `logoutUrl`.
+    *   Updated functional test markers to validate the new key precedence and runtime wiring.
+    *   (Ref: `application/single_app/static/js/idle-logout-warning.js`, `application/single_app/templates/base.html`, `functional_tests/test_idle_logout_timeout.py`)
+
 ### **(v0.239.005)**
 
 #### New Features

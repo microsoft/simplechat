@@ -298,6 +298,7 @@ def register_route_frontend_admin_settings(app):
             app_title = form_data.get('app_title', 'AI Chat Application')
             max_file_size_mb = int(form_data.get('max_file_size_mb', 16))
             conversation_history_limit = int(form_data.get('conversation_history_limit', 10))
+            enable_idle_timeout = form_data.get('enable_idle_timeout') == 'on'
             idle_timeout_minutes = max(1, safe_int(form_data.get('idle_timeout_minutes'), settings.get('idle_timeout_minutes', 30)))
             idle_warning_minutes = max(0, safe_int(form_data.get('idle_warning_minutes'), settings.get('idle_warning_minutes', 28)))
             if idle_warning_minutes >= idle_timeout_minutes:
@@ -878,6 +879,7 @@ def register_route_frontend_admin_settings(app):
                 # Other
                 'max_file_size_mb': max_file_size_mb,
                 'conversation_history_limit': conversation_history_limit,
+                'enable_idle_timeout': enable_idle_timeout,
                 'idle_timeout_minutes': idle_timeout_minutes,
                 'idle_warning_minutes': idle_warning_minutes,
                 'default_system_prompt': form_data.get('default_system_prompt', '').strip(),
