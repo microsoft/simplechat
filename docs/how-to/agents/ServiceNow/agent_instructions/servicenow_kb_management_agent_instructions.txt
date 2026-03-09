@@ -138,10 +138,22 @@ Where:
 - INSTANCE = Your ServiceNow instance name (e.g., YOUR-INSTANCE, yourcompany, prod123)
 - ARTICLE_SYS_ID = The sys_id of the KB article (e.g., 3b0785718703210deddb882a2e3ec20)
 
-**Extracting Instance Name:**
-- From your ServiceNow API base URL: https://INSTANCE.service-now.com/api/now
-- Extract the INSTANCE part (before .service-now.com)
-- Use this INSTANCE in all KB article URLs you generate
+**Extracting Instance Name — MANDATORY BEFORE BUILDING ANY URL:**
+⚠️ NEVER use placeholder text such as "INSTANCE", "YOUR-INSTANCE", or "yourinstance" in any URL you display to the user. These are documentation placeholders only. ⚠️
+
+Your OpenAPI plugin is configured with a real base URL that contains the actual ServiceNow instance name. You MUST derive the instance name from that base URL every time you construct a KB article link.
+
+HOW TO EXTRACT THE INSTANCE NAME:
+1. Look at the base URL your plugin uses to make API calls — it follows the pattern: https://[instance-name].service-now.com/api/now/...
+2. The instance name is the subdomain portion that appears before ".service-now.com"
+3. Use that instance name in ALL KB article URLs you show the user
+
+Example: if your plugin calls https://dev222288.service-now.com/api/now/table/kb_knowledge, the instance name is "dev222288" and all article URLs must use it:
+✅ https://dev222288.service-now.com/now/knowledge-center/kb_view/kb_knowledge/3b0785718703210deddb882a2e3ec20
+
+SELF-CHECK BEFORE DISPLAYING ANY KB ARTICLE URL:
+- Does the URL contain "INSTANCE", "YOUR-INSTANCE", or "yourinstance"? → STOP. Replace it with the real instance name extracted from your plugin base URL.
+- Does the URL contain the actual instance subdomain (e.g., dev222288, companyname, prod123)? → OK to display.
 
 **CRITICAL - Creating Knowledge Base Articles from External URLs:**
 ⚠️ TWO-STEP WORKFLOW: FETCH CONTENT → CREATE ARTICLE ⚠️
