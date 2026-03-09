@@ -1046,7 +1046,7 @@ a.citation-link:hover {
 .message-content {
   display: flex;
   align-items: flex-end;
-  overflow: visible; /* Allow dropdown menus to appear outside content */
+  overflow: auto; /* Preserving higher level visible property while allowing response message scroll if needed */
 }
 
 .message-content.flex-row-reverse {
