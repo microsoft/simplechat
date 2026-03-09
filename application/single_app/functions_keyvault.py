@@ -66,10 +66,10 @@ def retrieve_secret_from_key_vault(secret_name, scope_value, scope="global", sou
         Exception: If retrieval fails or configuration is invalid.
     """
     if source not in supported_sources:
-        logging.error(f"Source '{source}' is not supported. Supported sources: {supported_sources}")
+        log_event(f"Source '{source}' is not supported. Supported sources: {supported_sources}", level=logging.ERROR)
         raise ValueError(f"Source '{source}' is not supported. Supported sources: {supported_sources}")
     if scope not in supported_scopes:
-        logging.error(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}")
+        log_event(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}", level=logging.ERROR)
         raise ValueError(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}")
 
     full_secret_name = build_full_secret_name(secret_name, scope_value, source, scope)
@@ -104,12 +104,59 @@ def retrieve_secret_from_key_vault_by_full_name(full_secret_name):
         secret_client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
 
         retrieved_secret = secret_client.get_secret(full_secret_name)
-        print(f"Secret '{full_secret_name}' retrieved successfully from Key Vault.")
+        log_event(f"Secret '{full_secret_name}' retrieved successfully from Key Vault.", level=logging.INFO)
         return retrieved_secret.value
     except Exception as e:
-        logging.error(f"Failed to retrieve secret '{full_secret_name}' from Key Vault: {str(e)}")
+        log_event(f"Failed to retrieve secret '{full_secret_name}' from Key Vault: {str(e)}", level=logging.ERROR, exceptionTraceback=True)
         return full_secret_name
         
+def retrieve_secret_direct(secret_name, settings=None):
+    """
+    Retrieve a secret directly from Key Vault by its exact name, bypassing source/scope name
+    validation and the enable_key_vault_secret_storage guard. Use this for infrastructure
+    secrets (e.g. Redis key) where the secret name is arbitrary and not controlled by the
+    scope_value--source--scope--secret_name convention.
+
+    Args:
+        secret_name (str): The exact Key Vault secret name.
+        settings (dict, optional): Settings dict to use directly. If None, falls back to
+            app_settings_cache.get_settings_cache(). Pass settings explicitly when calling
+            before the cache is initialised (e.g. during configure_app_cache bootstrap).
+
+    Returns:
+        str: The secret value.
+
+    Raises:
+        ValueError: If Key Vault is not configured in settings.
+        Exception: If the secret cannot be retrieved.
+    """
+    # Use provided settings directly when supplied (e.g. during bootstrap before the
+    # settings cache is initialised), otherwise fall back to the cache.
+    if settings is None:
+        settings = app_settings_cache.get_settings_cache()
+
+    
+    enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
+
+    if not enable_key_vault_secret_storage:
+        raise ValueError("Key Vault secret storage is not enabled in settings.")
+
+    key_vault_name = settings.get("key_vault_name", "").strip()
+    if not key_vault_name:
+        raise ValueError("Key Vault name is not configured in settings (key_vault_name).")
+    if not secret_name:
+        raise ValueError("secret_name must not be empty.")
+
+    try:
+        key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+        # Pass settings through so get_keyvault_credential doesn't call the uninitialised cache.
+        secret_client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential(settings=settings))
+        retrieved = secret_client.get_secret(secret_name)
+        log_event(f"Secret '{secret_name}' retrieved successfully from Key Vault.", level=logging.INFO)
+        return retrieved.value
+    except Exception as e:
+        log_event(f"Failed to retrieve secret '{secret_name}' from Key Vault: {str(e)}", level=logging.ERROR, exceptionTraceback=True)
+        raise
 
 def store_secret_in_key_vault(secret_name, secret_value, scope_value, source="global", scope="global"):
     """
@@ -130,21 +177,20 @@ def store_secret_in_key_vault(secret_name, secret_value, scope_value, source="gl
     settings = app_settings_cache.get_settings_cache()
     enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
     if not enable_key_vault_secret_storage:
-        logging.warn(f"Key Vault secret storage is not enabled.")
+        log_event("Key Vault secret storage is not enabled.", level=logging.WARNING)
         return secret_value
 
     key_vault_name = settings.get("key_vault_name", None)
     if not key_vault_name:
-        logging.warn(f"Key Vault name is not configured.")
+        log_event("Key Vault name is not configured.", level=logging.WARNING)
         return secret_value
 
     if source not in supported_sources:
-        logging.error(f"Source '{source}' is not supported. Supported sources: {supported_sources}")
+        log_event(f"Source '{source}' is not supported. Supported sources: {supported_sources}", level=logging.ERROR)
         raise ValueError(f"Source '{source}' is not supported. Supported sources: {supported_sources}")
     if scope not in supported_scopes:
-        logging.error(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}")
+        log_event(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}", level=logging.ERROR)
         raise ValueError(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}")
-
 
     full_secret_name = build_full_secret_name(secret_name, scope_value, source, scope)
 
@@ -152,10 +198,10 @@ def store_secret_in_key_vault(secret_name, secret_value, scope_value, source="gl
         key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
         secret_client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
         secret_client.set_secret(full_secret_name, secret_value)
-        print(f"Secret '{full_secret_name}' stored successfully in Key Vault.")
+        log_event(f"Secret '{full_secret_name}' stored successfully in Key Vault.", level=logging.INFO)
         return full_secret_name
     except Exception as e:
-        logging.error(f"Failed to store secret '{full_secret_name}' in Key Vault: {str(e)}")
+        log_event(f"Failed to store secret '{full_secret_name}' in Key Vault: {str(e)}", level=logging.ERROR, exceptionTraceback=True)
         return secret_value
 
 def build_full_secret_name(secret_name, scope_value, source, scope):
@@ -175,7 +221,7 @@ def build_full_secret_name(secret_name, scope_value, source, scope):
     """
     full_secret_name = f"{clean_name_for_keyvault(scope_value)}--{source}--{scope}--{clean_name_for_keyvault(secret_name)}"
     if not validate_secret_name_dynamic(full_secret_name):
-        logging.error(f"The full secret name '{full_secret_name}' is invalid.")
+        log_event(f"The full secret name '{full_secret_name}' is invalid.", level=logging.ERROR)
         raise ValueError(f"The full secret name '{full_secret_name}' is invalid.")
     return full_secret_name
 
@@ -240,10 +286,10 @@ def keyvault_agent_save_helper(agent_dict, scope_value, scope="global"):
                 full_secret_name = store_secret_in_key_vault(secret_name, value, scope_value, source=source, scope=scope)
                 updated[key] = full_secret_name
             except Exception as e:
-                logging.error(f"Failed to store agent key '{key}' in Key Vault: {e}")
+                log_event(f"Failed to store agent key '{key}' in Key Vault: {e}", level=logging.ERROR, exceptionTraceback=True)
                 raise Exception(f"Failed to store agent key '{key}' in Key Vault: {e}")
     else:
-        log_event(f"Agent key '{key}' not found while APIM is '{use_apim}' or empty in agent '{agent_name}'. No action taken.", level="INFO")
+        log_event(f"Agent key '{key}' not found while APIM is '{use_apim}' or empty in agent '{agent_name}'. No action taken.", level=logging.INFO)
     return updated
 
 def keyvault_agent_get_helper(agent_dict, scope_value, scope="global", return_type=SecretReturnType.TRIGGER):
@@ -283,7 +329,7 @@ def keyvault_agent_get_helper(agent_dict, scope_value, scope="global", return_ty
                 else:
                     updated[key] = ui_trigger_word
             except Exception as e:
-                logging.error(f"Failed to retrieve agent key '{key}' for agent '{agent_name}' from Key Vault: {e}")
+                log_event(f"Failed to retrieve agent key '{key}' for agent '{agent_name}' from Key Vault: {e}", level=logging.ERROR, exceptionTraceback=True)
                 return updated
     return updated
 
@@ -307,7 +353,7 @@ def keyvault_plugin_save_helper(plugin_dict, scope_value, scope="global"):
         This allows plugin writers to dynamically store secrets without custom code.
     """
     if scope not in supported_scopes:
-        logging.error(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}")
+        log_event(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}", level=logging.ERROR)
         raise ValueError(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}")
     source = "action"  # Use 'action' for plugins per app convention
     updated = dict(plugin_dict)
@@ -330,10 +376,10 @@ def keyvault_plugin_save_helper(plugin_dict, scope_value, scope="global"):
                     new_auth['key'] = full_secret_name
                     updated['auth'] = new_auth
                 except Exception as e:
-                    logging.error(f"Failed to store plugin key in Key Vault: {e}")
+                    log_event(f"Failed to store plugin key in Key Vault: {e}", level=logging.ERROR, exceptionTraceback=True)
                     raise Exception(f"Failed to store plugin key in Key Vault: {e}")
         else:
-            print(f"Auth type '{auth_type}' does not require Key Vault storage. Does not match ")
+            log_event(f"Auth type '{auth_type}' does not require Key Vault storage for plugin '{plugin_name}'.", level=logging.INFO)
 
     # Handle additionalFields dynamic secrets
     additional_fields = updated.get('additionalFields', {})
@@ -356,7 +402,7 @@ def keyvault_plugin_save_helper(plugin_dict, scope_value, scope="global"):
                         full_secret_name = store_secret_in_key_vault(akv_key, v, scope_value, source=addset_source, scope=scope)
                         new_additional_fields[k] = full_secret_name
                     except Exception as e:
-                        logging.error(f"Failed to store plugin additionalField secret '{k}' in Key Vault: {e}")
+                        log_event(f"Failed to store plugin additionalField secret '{k}' in Key Vault: {e}", level=logging.ERROR, exceptionTraceback=True)
                         raise Exception(f"Failed to store plugin additionalField secret '{k}' in Key Vault: {e}")
         updated['additionalFields'] = new_additional_fields
     return updated
@@ -375,7 +421,7 @@ def keyvault_plugin_get_helper(plugin_dict, scope_value, scope="global", return_
         dict: A new plugin dict with sensitive values replaced by ui_trigger_word if stored in Key Vault.
     """
     if scope not in supported_scopes:
-        logging.error(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}")
+        log_event(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}", level=logging.ERROR)
         raise ValueError(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}")
     updated = dict(plugin_dict)
     plugin_name = updated.get('name', 'plugin')
@@ -399,7 +445,7 @@ def keyvault_plugin_get_helper(plugin_dict, scope_value, scope="global", return_
                         new_auth['key'] = ui_trigger_word
                         updated['auth'] = new_auth
                 except Exception as e:
-                    logging.error(f"Failed to retrieve action {plugin_name} key from Key Vault: {e}")
+                    log_event(f"Failed to retrieve action {plugin_name} key from Key Vault: {e}", level=logging.ERROR, exceptionTraceback=True)
                     raise Exception(f"Failed to retrieve action {plugin_name} key from Key Vault: {e}")
 
     additional_fields = updated.get('additionalFields', {})
@@ -419,7 +465,7 @@ def keyvault_plugin_get_helper(plugin_dict, scope_value, scope="global", return_
                     else:
                         new_additional_fields[k] = ui_trigger_word
                 except Exception as e:
-                    logging.error(f"Failed to retrieve action additionalField secret '{k}' from Key Vault: {e}")
+                    log_event(f"Failed to retrieve action additionalField secret '{k}' from Key Vault: {e}", level=logging.ERROR, exceptionTraceback=True)
                     raise Exception(f"Failed to retrieve action additionalField secret '{k}' from Key Vault: {e}")
         updated['additionalFields'] = new_additional_fields
     return updated
@@ -439,13 +485,13 @@ def keyvault_plugin_delete_helper(plugin_dict, scope_value, scope="global"):
     Raises:
     """
     if scope not in supported_scopes:
-        log_event(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}", level="WARNING")
+        log_event(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}", level=logging.WARNING)
         raise ValueError(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}")
     settings = app_settings_cache.get_settings_cache()
     enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
     key_vault_name = settings.get("key_vault_name", None)
     if not enable_key_vault_secret_storage or not key_vault_name:
-        log_event(f"Key Vault secret storage is not enabled or key vault name is missing.", level="WARNING")
+        log_event("Key Vault secret storage is not enabled or key vault name is missing.", level=logging.WARNING)
         return plugin_dict
     source = "action"
     plugin_name = plugin_dict.get('name', 'plugin')
@@ -456,11 +502,11 @@ def keyvault_plugin_delete_helper(plugin_dict, scope_value, scope="global"):
             if validate_secret_name_dynamic(secret_name):
                 try:
                     key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
-                    log_event(f"Deleting action secret '{secret_name}' for action '{plugin_name}' for '{scope}' '{scope_value}'", level="INFO")
+                    log_event(f"Deleting action secret '{secret_name}' for action '{plugin_name}' for '{scope}' '{scope_value}'", level=logging.INFO)
                     client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
                     client.begin_delete_secret(secret_name)
                 except Exception as e:
-                    logging.error(f"Error deleting action secret '{secret_name}' for action '{plugin_name}': {e}")
+                    log_event(f"Error deleting action secret '{secret_name}' for action '{plugin_name}': {e}", level=logging.ERROR, exceptionTraceback=True)
                     raise Exception(f"Error deleting action secret '{secret_name}' for action '{plugin_name}': {e}")
 
     additional_fields = plugin_dict.get('additionalFields', {})
@@ -473,11 +519,11 @@ def keyvault_plugin_delete_helper(plugin_dict, scope_value, scope="global"):
                 try:
                     keyvault_secret_name = build_full_secret_name(akv_key, scope_value, addset_source, scope)
                     key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
-                    log_event(f"Deleting action additionalField secret '{k}' for action '{plugin_name}' for '{scope}' '{scope_value}'", level="INFO")
+                    log_event(f"Deleting action additionalField secret '{k}' for action '{plugin_name}' for '{scope}' '{scope_value}'", level=logging.INFO)
                     client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
                     client.begin_delete_secret(keyvault_secret_name)
                 except Exception as e:
-                    logging.error(f"Error deleting action additionalField secret '{k}' for action '{plugin_name}': {e}")
+                    log_event(f"Error deleting action additionalField secret '{k}' for action '{plugin_name}': {e}", level=logging.ERROR, exceptionTraceback=True)
                     raise Exception(f"Error deleting action additionalField secret '{k}' for action '{plugin_name}': {e}")
     return plugin_dict
 
@@ -511,22 +557,29 @@ def keyvault_agent_delete_helper(agent_dict, scope_value, scope="global"):
             if validate_secret_name_dynamic(secret_name):
                 try:
                     key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
-                    log_event(f"Deleting agent secret '{secret_name}' for agent '{agent_name}' for '{scope}' '{scope_value}'", level="INFO")
+                    log_event(f"Deleting agent secret '{secret_name}' for agent '{agent_name}' for '{scope}' '{scope_value}'", level=logging.INFO)
                     client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
                     client.begin_delete_secret(secret_name)
                 except Exception as e:
-                    logging.error(f"Error deleting secret '{secret_name}' for agent '{agent_name}': {e}")
+                    log_event(f"Error deleting secret '{secret_name}' for agent '{agent_name}': {e}", level=logging.ERROR, exceptionTraceback=True)
                     raise Exception(f"Error deleting secret '{secret_name}' for agent '{agent_name}': {e}")
     return agent_dict
 
-def get_keyvault_credential():
+def get_keyvault_credential(settings=None):
     """
     Get the Key Vault credential using DefaultAzureCredential, optionally with a managed identity client ID.
+
+    Args:
+        settings (dict, optional): Settings dict to use directly. If None, falls back to
+            app_settings_cache.get_settings_cache(). Pass settings explicitly when calling
+            before the cache is initialised (e.g. during configure_app_cache bootstrap).
 
     Returns:
         DefaultAzureCredential: The credential object for Key Vault access.
     """
-    settings = app_settings_cache.get_settings_cache()
+    if settings is None:
+        settings = app_settings_cache.get_settings_cache()
+
     key_vault_identity = settings.get("key_vault_identity", None)
     if key_vault_identity is not None:
         credential = DefaultAzureCredential(managed_identity_client_id=key_vault_identity)

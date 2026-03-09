@@ -706,9 +706,18 @@ def _test_redis_connection(payload):
             cache_endpoint = get_redis_cache_infrastructure_endpoint(redis_hostname)
             token = credential.get_token(cache_endpoint)
             redis_password = token.token
+        elif redis_auth_type == 'key_vault':
+            if not redis_key:
+                return jsonify({'error': 'Key Vault secret name is required for Key Vault authentication'}), 400
+            try:
+                from functions_keyvault import retrieve_secret_direct
+                redis_password = retrieve_secret_direct(redis_key)
+            except Exception as kv_err:
+                log_event(f"[REDIS_TEST] Key Vault retrieval failed for secret '{redis_key}': {str(kv_err)}", level="error")
+                return jsonify({'error': 'Failed to retrieve Redis key from Key Vault. Check Application Insights using "[REDIS_TEST]" for details.'}), 500
         else:
             if not redis_key:
-                return jsonify({'error': 'Redis key is required for key auth'}), 400
+                return jsonify({'error': 'Redis key is required for key authentication'}), 400
             redis_password = redis_key
 
         r = redis.Redis(
@@ -1043,4 +1052,4 @@ def _test_key_vault_connection(payload):
 
     except Exception as e:
         log_event(f"[AKV_TEST] Key Vault connection error: {str(e)}", level="error")
-        return jsonify({'error': f'Key Vault connection error. Check Application Insights using "[AKV_TEST]" for details.'}), 500
+        return jsonify({'error': 'Key Vault connection failed. Check Application Insights using "[AKV_TEST]" for details.'}), 500
