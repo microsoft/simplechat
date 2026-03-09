@@ -2446,7 +2446,6 @@ def register_route_backend_chats(app):
 
                     plugin_logger.register_callback(callback_key, on_plugin_invocation)
 
-                    thought_tracker.add_thought('generation', 'Generating response...')
                     agent_invoke_start_time = time.time()
 
                     def invoke_selected_agent():
@@ -2720,7 +2719,7 @@ def register_route_backend_chats(app):
                         'on_error': kernel_error
                     })
 
-            thought_tracker.add_thought('generation', 'Generating response...')
+            thought_tracker.add_thought('generation', f"Sending to '{gpt_model}'")
             def invoke_gpt_fallback():
                 if not conversation_history_for_api:
                     raise Exception('Cannot generate response: No conversation history available.')
@@ -2804,12 +2803,18 @@ def register_route_backend_chats(app):
             })
 
             fallback_result = try_fallback_chain(fallback_steps)
+
             # Unpack result - handle both 4-tuple (SK) and 5-tuple (GPT with tokens)
             if len(fallback_result) == 5:
                 ai_message, final_model_used, chat_mode, kernel_fallback_notice, token_usage_data = fallback_result
             else:
                 ai_message, final_model_used, chat_mode, kernel_fallback_notice = fallback_result
                 token_usage_data = None
+
+            # Emit responded thought for non-agent paths (agent paths emit their own inside callbacks)
+            if not selected_agent:
+                gpt_total_duration_s = round(time.time() - request_start_time, 1)
+                thought_tracker.add_thought('generation', f"'{final_model_used}' responded ({gpt_total_duration_s}s from initial message)")
             
             # Collect token usage from Semantic Kernel services if available
             if kernel and not token_usage_data:
@@ -4134,7 +4139,6 @@ def register_route_backend_chats(app):
                             for msg in conversation_history_for_api
                         ]
                         
-                        yield emit_thought('generation', 'Generating response...')
                         agent_stream_start_time = time.time()
 
                         # Stream agent responses - collect chunks first then yield
@@ -4306,7 +4310,7 @@ def register_route_backend_chats(app):
                     
                     else:
                         # Stream from regular GPT model (non-agent)
-                        yield emit_thought('generation', 'Generating response...')
+                        yield emit_thought('generation', f"Sending to '{gpt_model}'")
                         debug_print(f"--- Streaming from GPT ({gpt_model}) ---")
                         
                         # Prepare stream parameters
@@ -4357,6 +4361,10 @@ def register_route_backend_chats(app):
                                     'captured_at': datetime.utcnow().isoformat()
                                 }
                                 debug_print(f"[Streaming Tokens] Captured usage - prompt: {chunk.usage.prompt_tokens}, completion: {chunk.usage.completion_tokens}, total: {chunk.usage.total_tokens}")
+
+                        # Emit responded thought for regular LLM streaming
+                        gpt_stream_total_duration_s = round(time.time() - request_start_time, 1)
+                        yield emit_thought('generation', f"'{gpt_model}' responded ({gpt_stream_total_duration_s}s from initial message)")
                     
                     # Stream complete - save message and send final metadata
                     # Get user thread info to maintain thread consistency
