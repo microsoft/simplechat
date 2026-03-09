@@ -4,16 +4,6 @@
 
 ### **(v0.239.031)**
 
-#### Bug Fixes
-
-*   **On-Demand Summary Generation — Content Normalization Fix**
-    *   Fixed the `POST /api/conversations/<id>/summary` endpoint failing with an error when generating summaries from the conversation details modal.
-    *   Root cause: message `content` in Cosmos DB can be a list of content parts (e.g., `[{type: "text", text: "..."}]`) rather than a plain string. The endpoint was passing the raw list as `content_text`, which either stringified incorrectly or produced empty transcript text.
-    *   Now uses `_normalize_content()` to properly flatten list/dict content into plain text, matching the export pipeline's behavior.
-    *   (Ref: `route_backend_conversations.py`, `_normalize_content`, `generate_conversation_summary`)
-
-### **(v0.239.030)**
-
 #### New Features
 
 *   **Persistent Conversation Summaries**
@@ -26,64 +16,6 @@
     *   Extracted `generate_conversation_summary()` as a shared helper used by both the export pipeline and the new API endpoint.
     *   (Ref: `route_backend_conversation_export.py`, `route_backend_conversations.py`, `chat-conversation-details.js`, `functions_conversation_metadata.py`)
 
-### **(v0.239.029)**
-
-#### Bug Fixes
-
-*   **Export Summary — Remove Token Constraints**
-    *   Removed all `max_tokens` / `max_completion_tokens` caps from the export summary API call. The model now decides output length naturally based on the prompt, matching how chat calls work in `route_backend_chats.py`.
-    *   Rewrote the system prompt to instruct the model to judge length itself: one paragraph for short conversations, two for longer ones.
-    *   This fixes reasoning models (gpt-5, o1, o3) exhausting their token budget on internal thinking with nothing left for visible output.
-    *   (Ref: `route_backend_conversation_export.py`, `_build_summary_intro`)
-
-### **(v0.239.028)**
-
-#### Bug Fixes
-
-*   **Export Summary Token Budget for Reasoning Models**
-    *   Fixed export summary returning empty content with reasoning models (gpt-5, o1, o3) that was caused by internal thinking tokens consuming the entire `max_completion_tokens` budget of 512, leaving nothing for output (`finish_reason=length` with empty content).
-    *   Increased `max_completion_tokens` to 16384 for reasoning models to accommodate thinking tokens; standard models use `max_tokens=1024`.
-    *   Added null-safe content extraction to prevent crashes when reasoning models return `None` content.
-    *   (Ref: `route_backend_conversation_export.py`, `_build_summary_intro`, reasoning model token budgets)
-
-### **(v0.239.027)**
-
-#### Bug Fixes
-
-*   **Export Summary Generation Rewrite**
-    *   Fixed export summary returning empty responses with reasoning models (gpt-5, o1, o3) by using the `developer` role instead of `system` for instruction messages.
-    *   Summary now includes ALL messages (user, assistant, system, file, image analysis) instead of only user/assistant transcript messages, giving the model full conversation context.
-    *   Simplified the summary prompt to produce 1-2 factual paragraphs instead of bullet points, with increased token limit (512).
-    *   Added detailed debug logging showing message count, character count, model name, role, finish reason.
-    *   (Ref: `route_backend_conversation_export.py`, `_build_summary_intro`, `developer` vs `system` role selection)
-
-### **(v0.239.025)**
-
-#### Bug Fixes
-
-*   **Export Tag/Classification Rendering Fix**
-    *   Fixed conversation tags and classifications rendering as raw Python dicts (e.g., `{'category': 'model', 'value': 'gpt-5'}`) in both Markdown and PDF exports.
-    *   Tags now display as readable `category: value` strings, with smart handling for participant names, document titles, and generic category/value pairs.
-    *   (Ref: `route_backend_conversation_export.py`, `_format_tag` helper, Markdown/PDF metadata rendering)
-
-*   **Export Summary Error Visibility**
-    *   Added `debug_print` and `log_event` logging to all summary generation error paths, including the empty-response path that previously failed silently.
-    *   The actual error detail is now shown in both Markdown and PDF exports when summary generation fails, replacing the generic "could not be generated" message.
-    *   (Ref: `route_backend_conversation_export.py`, `_build_summary_intro`, export error rendering)
-
-### **(v0.239.024)**
-
-#### Bug Fixes
-
-*   **Export Summary Model Compatibility Fix**
-    *   Fixed export intro summary generation failing with a 400 error when using reasoning-series (o1, o3) or gpt-5 models, which require `max_completion_tokens` instead of `max_tokens`.
-    *   The export summary API call now detects the model type and uses the correct token-limit parameter, matching the pattern used elsewhere in the codebase.
-    *   (Ref: `route_backend_conversation_export.py`, `max_completion_tokens` vs `max_tokens` parameter handling)
-
-### **(v0.239.023)**
-
-#### New Features
-
 *   **PDF Conversation Export**
     *   Added PDF as a third export format option alongside JSON and Markdown, giving users a print-ready, visually styled conversation archive.
     *   PDF output renders chat messages with colored bubbles that mirror the live chat UI: blue for user messages, gray for assistant messages, green for file messages, and amber for system messages.
@@ -94,27 +26,11 @@
     *   Frontend format step updated to a 3-column card grid with a new PDF card using the `bi-filetype-pdf` icon.
     *   (Ref: `route_backend_conversation_export.py`, `chat-export.js`, PyMuPDF Story API, conversation export workflow)
 
-### **(v0.239.022)**
-
-#### New Features
-
 *   **Conversation Export Intro Summaries**
     *   Added an optional AI-generated intro summary step to the conversation export workflow, so each exported chat can begin with a short abstract before the full transcript.
     *   Summary model selection now reuses the same model list shown in the chat composer, keeping the export flow aligned with the main chat experience.
     *   Works for both JSON and Markdown exports, including ZIP exports where each conversation keeps its own summary metadata.
     *   (Ref: `route_backend_conversation_export.py`, `chat-export.js`, conversation export workflow)
-
-#### Bug Fixes
-
-*   **Conversation Export Schema and Markdown Refresh**
-    *   Fixed conversation exports lagging behind the live chat schema. JSON exports now include processing thoughts, normalized citations, and the raw document/web/tool citation buckets stored with assistant messages.
-    *   Fixed Markdown exports being too flat and text-heavy by reorganizing them into a transcript-first layout with appendices for metadata, message details, references, thoughts, and supplemental records.
-    *   Fixed exported conversations including content that no longer matched the visible chat by filtering deleted messages and inactive-thread retries, then reapplying thread-aware ordering before export.
-    *   (Ref: `route_backend_conversation_export.py`, `test_conversation_export.py`, conversation export rendering)
-
-### **(v0.239.021)**
-
-#### New Features
 
 *   **Agent & Action User Tracking (created_by / modified_by)**
     *   All agent and action documents (personal, group, and global) now include `created_by`, `created_at`, `modified_by`, and `modified_at` fields that track which user created or last modified the entity.
@@ -164,6 +80,34 @@
     *   (Ref: `route_backend_plugins.py`, `plugin_modal_stepper.js`, `_plugin_modal.html`)
 
 #### Bug Fixes
+
+*   **On-Demand Summary Generation — Content Normalization Fix**
+    *   Fixed the `POST /api/conversations/<id>/summary` endpoint failing with an error when generating summaries from the conversation details modal.
+    *   Root cause: message `content` in Cosmos DB can be a list of content parts (e.g., `[{type: "text", text: "..."}]`) rather than a plain string. The endpoint was passing the raw list as `content_text`, which either stringified incorrectly or produced empty transcript text.
+    *   Now uses `_normalize_content()` to properly flatten list/dict content into plain text, matching the export pipeline's behavior.
+    *   (Ref: `route_backend_conversations.py`, `_normalize_content`, `generate_conversation_summary`)
+
+*   **Export Summary Reasoning-Model Compatibility**
+    *   Fixed export intro summary generation failing or returning empty content with reasoning-series models (gpt-5, o1, o3) through a series of incremental fixes: using `developer` role instead of `system` for instruction messages, removing all `max_tokens` / `max_completion_tokens` caps so the model decides output length naturally, and adding null-safe content extraction for `None` responses.
+    *   Summary now includes ALL messages (user, assistant, system, file, image analysis) for full context, with a simplified prompt producing 1-2 factual paragraphs.
+    *   Added detailed debug logging showing message count, character count, model name, role, and finish reason.
+    *   (Ref: `route_backend_conversation_export.py`, `_build_summary_intro`, `generate_conversation_summary`)
+
+*   **Conversation Export Schema and Markdown Refresh**
+    *   Fixed conversation exports lagging behind the live chat schema. JSON exports now include processing thoughts, normalized citations, and the raw document/web/tool citation buckets stored with assistant messages.
+    *   Fixed Markdown exports being too flat and text-heavy by reorganizing them into a transcript-first layout with appendices for metadata, message details, references, thoughts, and supplemental records.
+    *   Fixed exported conversations including content that no longer matched the visible chat by filtering deleted messages and inactive-thread retries, then reapplying thread-aware ordering before export.
+    *   (Ref: `route_backend_conversation_export.py`, `test_conversation_export.py`, conversation export rendering)
+
+*   **Export Tag/Classification Rendering Fix**
+    *   Fixed conversation tags and classifications rendering as raw Python dicts (e.g., `{'category': 'model', 'value': 'gpt-5'}`) in both Markdown and PDF exports.
+    *   Tags now display as readable `category: value` strings, with smart handling for participant names, document titles, and generic category/value pairs.
+    *   (Ref: `route_backend_conversation_export.py`, `_format_tag` helper, Markdown/PDF metadata rendering)
+
+*   **Export Summary Error Visibility**
+    *   Added `debug_print` and `log_event` logging to all summary generation error paths, including the empty-response path that previously failed silently.
+    *   The actual error detail is now shown in both Markdown and PDF exports when summary generation fails, replacing the generic "could not be generated" message.
+    *   (Ref: `route_backend_conversation_export.py`, `_build_summary_intro`, export error rendering)
 
 *   **Content Safety for Streaming Chat Path**
     *   Added full Azure AI Content Safety checking to the streaming (`/api/chat/stream`) SSE path, matching the existing non-streaming (`/api/chat`) implementation.
@@ -225,7 +169,7 @@
     *   A `request_start_time` is now captured at the top of both the non-streaming and streaming chat handlers, so the duration reflects the full request lifecycle — including content safety, hybrid search, and agent invocation — not just the model response time.
     *   Applies to all three agent paths: local SK agents (non-streaming), Azure AI Foundry agents, and streaming SK agents.
     *   (Ref: `route_backend_chats.py`, `request_start_time`, agent responded thoughts)
-    
+
 *   **Enhanced Agent Execution Thoughts**
     *   Added detailed model-level status messages during agent execution, giving users full visibility into each stage of the AI pipeline.
     *   **Model Identification**: A new "Sending to '{deployment_name}'" thought appears immediately after "Sending to agent", showing the exact model deployment being used (e.g., `gpt-5-nano`).
