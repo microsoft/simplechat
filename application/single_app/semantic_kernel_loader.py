@@ -315,7 +315,10 @@ def resolve_agent_config(agent, settings):
     elif any_filled(*u_gpt) and not global_apim_enabled and can_use_agent_endpoints:
         debug_print(f"[SK Loader] Using agent GPT config (partially filled, merging with global GPT, global APIM not enabled)")
         endpoint, key, deployment, api_version = merge_fields(u_gpt, g_gpt)
-        endpoint_is_user_supplied = True
+        # Only treat as user-supplied if the agent itself provided an endpoint.
+        # If the endpoint was filled in via global fallback (agent's own endpoint is empty),
+        # it is the system-controlled global endpoint and managed identity remains safe to use.
+        endpoint_is_user_supplied = bool(u_gpt[0])
     # 5. Global APIM enabled and present: use global APIM
     elif global_apim_enabled and any_filled(*g_apim):
         debug_print(f"[SK Loader] Using global APIM (fallback)")
