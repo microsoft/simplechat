@@ -30,16 +30,13 @@ function getMessageMarkdown(messageDiv, role) {
 }
 
 /**
- * Get the sender label and timestamp from a message div.
+ * Get the sender label from a message div.
  */
 function getMessageMeta(messageDiv, role) {
     const senderEl = messageDiv.querySelector('.message-sender');
     const sender = senderEl ? senderEl.innerText.trim() : (role === 'assistant' ? 'Assistant' : 'User');
 
-    const timestampEl = messageDiv.querySelector('.message-timestamp');
-    const timestamp = timestampEl ? timestampEl.innerText.trim() : '';
-
-    return { sender, timestamp };
+    return { sender };
 }
 
 /**
@@ -76,13 +73,10 @@ export function exportMessageAsMarkdown(messageDiv, messageId, role) {
         return;
     }
 
-    const { sender, timestamp } = getMessageMeta(messageDiv, role);
+    const { sender } = getMessageMeta(messageDiv, role);
 
     const lines = [];
     lines.push(`### ${sender}`);
-    if (timestamp) {
-        lines.push(`*${timestamp}*`);
-    }
     lines.push('');
     lines.push(content);
     lines.push('');

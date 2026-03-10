@@ -8,7 +8,7 @@
 
 *   **Per-Message Export**
     *   Added export and action options to the three-dots dropdown menu on individual chat messages (both AI and user messages).
-    *   **Export to Markdown**: Downloads the message as a `.md` file with role/timestamp header. Entirely client-side.
+    *   **Export to Markdown**: Downloads the message as a `.md` file with a role header. Entirely client-side.
     *   **Export to Word**: Generates a styled `.docx` document via a new backend endpoint (`POST /api/message/export-word`). Includes Markdown-to-Word formatting (headings, bold, italic, code blocks, lists) and a citations section when present.
     *   **Use as Prompt**: Inserts the raw message content directly into the chat input box for reuse — no clipboard, one click and it's ready to edit and send.
     *   **Open in Email**: Opens the user's default email client with the message pre-filled in the subject and body via `mailto:`.
