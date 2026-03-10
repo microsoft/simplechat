@@ -1,8 +1,6 @@
 // chat-message-export.js
 import { showToast } from "./chat-toast.js";
 
-'use strict';
-
 /**
  * Per-message export module.
  *
