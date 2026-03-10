@@ -2,6 +2,34 @@
 
 # Feature Release
 
+### **(v0.239.013)**
+
+#### Bug Fixes
+
+*   **Idle Timeout Route Documentation Standardization**
+    *   Added method comments/docstrings to new idle timeout methods for clearer maintenance and handoff.
+    *   (Ref: `application/single_app/app.py`, `application/single_app/route_frontend_admin_settings.py`, `application/single_app/route_frontend_authentication.py`, `application/single_app/config.py`, `functional_tests/test_idle_logout_timeout.py`)
+
+### **(v0.239.011)**
+
+#### Bug Fixes
+
+*   **Idle Timeout Input Validation Logging Enhancements**
+    *   Added structured `log_event` telemetry for idle-timeout parsing and normalization in runtime settings resolution, including fallback defaults and warning/timeout boundary adjustments.
+    *   Added structured `log_event` telemetry to admin settings integer parsing (`safe_int`) so invalid submitted values are captured with field context and fallback values.
+    *   Improves diagnostics and traceability for misconfigured timeout values without changing existing idle-timeout behavior.
+    *   (Ref: `application/single_app/app.py`, `application/single_app/route_frontend_admin_settings.py`, `application/single_app/config.py`, `functional_tests/test_idle_logout_timeout.py`)
+
+### **(v0.239.009)**
+
+#### Bug Fixes
+
+*   **Settings Cache Source Diagnostics for Request Path**
+    *   Added source-aware settings retrieval diagnostics to confirm whether request settings were served from app settings cache or required Cosmos DB fallback.
+    *   Added per-request source capture and thread-safe counters in the idle-timeout settings path to improve troubleshooting of cache behavior.
+    *   Updated functional test markers and version metadata to validate the new diagnostics wiring.
+    *   (Ref: `application/single_app/functions_settings.py`, `application/single_app/app.py`, `application/single_app/config.py`, `functional_tests/test_idle_logout_timeout.py`)
+
 ### **(v0.239.008)**
 
 #### Bug Fixes

@@ -288,10 +288,33 @@ def register_route_frontend_admin_settings(app):
             form_data = request.form # Use a variable for easier access
             user_id = get_current_user_id()
 
-            def safe_int(raw_value, fallback_value):
+            def safe_int(raw_value, fallback_value, field_name="unknown"):
+                """
+                Safely convert an admin form value to an integer with fallback handling.
+
+                Args:
+                    raw_value (object): The submitted form value to parse.
+                    fallback_value (int): The value to use when parsing fails.
+                    field_name (str): The admin settings field name being parsed.
+
+                Returns:
+                    int: The parsed integer value or the fallback value when invalid.
+                Raises:
+                    None.
+                """
                 try:
                     return int(raw_value)
                 except (TypeError, ValueError):
+                    log_event(
+                        "Invalid admin settings integer input detected; using fallback value.",
+                        extra={
+                            "field": field_name,
+                            "raw_value": str(raw_value),
+                            "fallback_value": fallback_value,
+                            "user_id": user_id
+                        },
+                        level=logging.WARNING
+                    )
                     return fallback_value
 
             # --- Fetch all other form data as before ---
@@ -299,8 +322,8 @@ def register_route_frontend_admin_settings(app):
             max_file_size_mb = int(form_data.get('max_file_size_mb', 16))
             conversation_history_limit = int(form_data.get('conversation_history_limit', 10))
             enable_idle_timeout = form_data.get('enable_idle_timeout') == 'on'
-            idle_timeout_minutes = max(1, safe_int(form_data.get('idle_timeout_minutes'), settings.get('idle_timeout_minutes', 30)))
-            idle_warning_minutes = max(0, safe_int(form_data.get('idle_warning_minutes'), settings.get('idle_warning_minutes', 28)))
+            idle_timeout_minutes = max(1, safe_int(form_data.get('idle_timeout_minutes'), settings.get('idle_timeout_minutes', 30), 'idle_timeout_minutes'))
+            idle_warning_minutes = max(0, safe_int(form_data.get('idle_warning_minutes'), settings.get('idle_warning_minutes', 28), 'idle_warning_minutes'))
             if idle_warning_minutes >= idle_timeout_minutes:
                 idle_warning_minutes = max(0, idle_timeout_minutes - 1)
             # ... (fetch all other fields using form_data.get) ...

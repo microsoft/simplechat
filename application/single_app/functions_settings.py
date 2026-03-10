@@ -5,7 +5,7 @@ from functions_appinsights import log_event
 import app_settings_cache
 import inspect
 
-def get_settings(use_cosmos=False):
+def get_settings(use_cosmos=False, include_source=False):
     import secrets
     default_settings = {
         # External health check
@@ -326,6 +326,11 @@ def get_settings(use_cosmos=False):
         'default_retention_document_public': 'none',
     }
 
+    def _format_result(settings_payload, source):
+        if include_source:
+            return settings_payload, source
+        return settings_payload
+
     try:
         # Attempt to read the existing doc
         if use_cosmos:
@@ -333,17 +338,35 @@ def get_settings(use_cosmos=False):
                 item="app_settings",
                 partition_key="app_settings"
             )
+            settings_source = "cosmos_forced"
+            log_event(
+                "App settings loaded from Cosmos DB (forced).",
+                extra={
+                    "settings_source": settings_source,
+                    "use_cosmos": True
+                },
+                level=logging.INFO
+            )
         else:
             settings_item = None
+            settings_source = "cache"
 
             cache_accessor = getattr(app_settings_cache, "get_settings_cache", None)
             if callable(cache_accessor):
                 try:
                     settings_item = cache_accessor()
-                except Exception:
+                except Exception as cache_error:
                     settings_item = None
+                    log_event(
+                        "Error reading app settings from cache accessor.",
+                        extra={
+                            "error": str(cache_error)
+                        },
+                        level=logging.WARNING
+                    )
 
             if not settings_item:
+                settings_source = "cosmos_fallback"
                 settings_item = cosmos_settings_container.read_item(
                     item="app_settings",
                     partition_key="app_settings"
@@ -361,10 +384,27 @@ def get_settings(use_cosmos=False):
                         "Warning: Failed to get settings from cache, read from Cosmos DB instead. "
                         f"Called from {caller_file}:{caller_line} in {caller_func}()."
                     )
+                    log_event(
+                        "App settings cache miss. Falling back to Cosmos DB.",
+                        extra={
+                            "settings_source": settings_source,
+                            "caller_file": caller_file,
+                            "caller_line": caller_line,
+                            "caller_func": caller_func
+                        },
+                        level=logging.WARNING
+                    )
                 else:
                     print(
                         "Warning: Failed to get settings from cache, "
                         "read from Cosmos DB instead. (no caller frame)"
+                    )
+                    log_event(
+                        "App settings cache miss. Falling back to Cosmos DB (no caller frame).",
+                        extra={
+                            "settings_source": settings_source
+                        },
+                        level=logging.WARNING
                     )
         #print("Successfully retrieved settings from Cosmos DB.")
 
@@ -375,19 +415,42 @@ def get_settings(use_cosmos=False):
         if merged != settings_item:
             cosmos_settings_container.upsert_item(merged)
             print("App Settings had missing keys and was updated in Cosmos DB.")
-            return merged
+            log_event(
+                "App settings missing keys were merged and persisted to Cosmos DB.",
+                extra={
+                    "settings_source": settings_source
+                },
+                level=logging.INFO
+            )
+            return _format_result(merged, settings_source)
         else:
             # If merged is unchanged, no new keys needed
-            return merged
+            return _format_result(merged, settings_source)
 
     except CosmosResourceNotFoundError:
         cosmos_settings_container.create_item(body=default_settings)
         print("Default settings created in Cosmos and returned.")
-        return default_settings
+        log_event(
+            "App settings document not found. Default settings created in Cosmos DB.",
+            extra={
+                "settings_source": "cosmos_default_created"
+            },
+            level=logging.WARNING
+        )
+        return _format_result(default_settings, "cosmos_default_created")
 
     except Exception as e:
         print(f"Error retrieving settings: {str(e)}")
-        return None
+        log_event(
+            "Error retrieving app settings.",
+            extra={
+                "error": str(e),
+                "use_cosmos": use_cosmos
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
+        return _format_result(None, "error")
 
 def update_settings(new_settings):
     try:

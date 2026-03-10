@@ -94,7 +94,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.239.008"
+VERSION = "0.239.013"
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
@@ -559,7 +559,7 @@ def ensure_custom_favicon_file_exists(app, settings):
     except (base64.binascii.Error, TypeError, OSError) as ex: # Catch specific errors
         print(f"Failed to write/overwrite {favicon_filename}: {ex}")
     except Exception as ex: # Catch any other unexpected errors
-         print(f"Unexpected error during favicon file write for {favicon_filename}: {ex}")
+        print(f"Unexpected error during favicon file write for {favicon_filename}: {ex}")
 
 def initialize_clients(settings):
     """

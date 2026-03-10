@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for idle session auto-logout.
-Version: 0.239.008
-Implemented in: 0.239.008
+Version: 0.239.013
+Implemented in: 0.239.013
 
 This test ensures that server-side idle timeout enforcement and
 client-side warning/logout wiring are present and sourced from admin settings.
@@ -36,6 +36,10 @@ def test_server_idle_timeout_wiring():
     required_app_markers = [
         "def get_idle_timeout_settings(settings=None):",
         "def is_idle_timeout_enabled(settings=None):",
+        "settings_source_counters = {}",
+        "def record_request_settings_source(source):",
+        "get_settings(include_source=True)",
+        "record_request_settings_source(settings_source)",
         "settings.get('idle_timeout_minutes', 30)",
         "settings.get('idle_warning_minutes', 28)",
         "def enforce_idle_session_timeout():",
@@ -53,7 +57,7 @@ def test_server_idle_timeout_wiring():
     assert not missing_app_markers, f"Missing backend markers in app.py: {missing_app_markers}"
 
     required_config_markers = [
-        "VERSION = \"0.239.008\""
+        "VERSION = \"0.239.013\""
     ]
 
     missing_config_markers = [marker for marker in required_config_markers if marker not in config_content]

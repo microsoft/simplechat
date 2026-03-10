@@ -212,6 +212,17 @@ def register_route_frontend_authentication(app):
     @app.route('/logout/local')
     @swagger_route(security=get_auth_security())
     def local_logout():
+        """
+        Clear the local Flask session and redirect to the configured home destination.
+
+        Args:
+            None.
+
+        Returns:
+            Response: A redirect response to the local or Front Door home URL.
+        Raises:
+            None.
+        """
         user_name = session.get("user", {}).get("name", "User")
         session.clear()
 
