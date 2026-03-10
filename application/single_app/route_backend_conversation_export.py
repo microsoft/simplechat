@@ -11,6 +11,7 @@ from functions_settings import *
 from flask import Response, jsonify, request, make_response
 from functions_debug import debug_print
 from swagger_wrapper import swagger_route, get_auth_security
+from docx import Document as DocxDocument
 
 
 def register_route_backend_conversation_export(app):
@@ -303,8 +304,6 @@ def register_route_backend_conversation_export(app):
             message_id (str): ID of the message to export.
             conversation_id (str): ID of the conversation the message belongs to.
         """
-        from docx import Document as DocxDocument
-
         user_id = get_current_user_id()
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
