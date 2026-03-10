@@ -135,8 +135,7 @@ export async function exportMessageAsWord(messageDiv, messageId, role) {
 /**
  * Insert the message content as a formatted prompt directly into the chat
  * input box so the user can review, edit, and send it.
- * For AI messages, wraps with instructions to continue/build on the response.
- * For user messages, inserts the raw content as a reusable prompt.
+ * The raw message content is inserted unchanged for both user and AI messages.
  */
 export function copyAsPrompt(messageDiv, messageId, role) {
     const content = getMessageMarkdown(messageDiv, role);
