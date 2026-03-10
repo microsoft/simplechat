@@ -304,9 +304,6 @@ def register_route_backend_conversation_export(app):
             conversation_id (str): ID of the conversation the message belongs to.
         """
         from docx import Document as DocxDocument
-        from docx.shared import Pt, RGBColor
-        from docx.enum.text import WD_ALIGN_PARAGRAPH
-        import re as _re
 
         user_id = get_current_user_id()
         if not user_id:
