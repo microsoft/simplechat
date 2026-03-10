@@ -38,7 +38,7 @@ The server verifies user ownership of the conversation, fetches the specific mes
 ### Export to Markdown
 - **Location:** Three-dots dropdown → "Export to Markdown"
 - **Icon:** `bi-markdown`
-- **Behavior:** Entirely client-side. Grabs the message content from the existing hidden textarea (AI messages) or `.message-text` element (user messages), wraps it with a role/timestamp header, and triggers a `.md` file download via Blob URL.
+- **Behavior:** Entirely client-side. Grabs the message content from the existing hidden textarea (AI messages) or `.message-text` element (user messages), wraps it with a role header, and triggers a `.md` file download via Blob URL.
 - **Filename pattern:** `message_export_YYYYMMDD_HHMMSS.md`
 
 ### Export to Word
@@ -46,7 +46,7 @@ The server verifies user ownership of the conversation, fetches the specific mes
 - **Icon:** `bi-file-earmark-word`
 - **Behavior:** POSTs to `/api/message/export-word`. The backend generates a styled `.docx` document with:
   - Title heading ("Message Export")
-  - Role and timestamp metadata
+  - Role metadata
   - Message content with Markdown formatting preserved (headings, bold, italic, code blocks, lists)
   - Citations section (if present on the message)
 - **Filename pattern:** `message_export_YYYYMMDD_HHMMSS.docx`
