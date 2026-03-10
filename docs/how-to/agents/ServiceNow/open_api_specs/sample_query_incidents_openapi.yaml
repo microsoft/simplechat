@@ -33,11 +33,15 @@ paths:
         - Open incidents:          state=1^ORstate=2
         - By priority:             priority=1
         - By state:                state=6
-        - Created today:           sys_created_onONToday
-        - Created last 7 days:     sys_created_onONLast 7 days@gs.daysAgoStart(7)
-        - Description contains:    descriptionLIKEemail
+        - Created today:           sys_created_on>=2026-03-09  (use current date in YYYY-MM-DD)
+        - Created last 7 days:     sys_created_on>=2026-03-02  (use date 7 days ago in YYYY-MM-DD)
+        - Text search (BOTH fields): short_descriptionLIKEemail^ORdescriptionLIKEemail
         - Combined:                priority=1^state=1
-        - Open + created today:    state=1^ORstate=2^sys_created_onONToday
+        - Open + created today:    state=1^ORstate=2^sys_created_on>=2026-03-09
+
+        TEXT SEARCH RULE: ALWAYS search both short_description AND description:
+        - "email" → short_descriptionLIKEemail^ORdescriptionLIKEemail
+        - NEVER use descriptionLIKEemail alone — misses incidents where text is only in short_description
 
         STATE VALUES: 1=New, 2=In Progress, 3=On Hold, 6=Resolved, 7=Closed, 8=Canceled
         PRIORITY VALUES: 1=Critical, 2=High, 3=Moderate, 4=Low, 5=Planning
@@ -52,9 +56,9 @@ paths:
             Encoded query string for filtering results.
             - Open incidents: state=1^ORstate=2
             - By priority: priority=1
-            - Last 7 days: sys_created_onONLast 7 days@gs.daysAgoStart(7)
-            - Combined: priority=1^state=1^sys_created_onONLast 30 days@gs.daysAgoStart(30)
-            - Description contains text: descriptionLIKEemail
+            - Last 7 days: sys_created_on>=2026-03-02  (use date 7 days ago in YYYY-MM-DD)
+            - Combined: priority=1^state=1^sys_created_on>=2026-03-02
+            - Text search (both fields): short_descriptionLIKEemail^ORdescriptionLIKEemail
           example: "state=1^ORstate=2"
 
         - name: sysparm_limit
@@ -208,6 +212,17 @@ paths:
         Retrieve aggregated counts and metrics for incidents.
         Use for statistics requests like "how many incidents last month", "incident breakdown by category", etc.
 
+        IMPORTANT: Use `opened_at` (NOT `sys_created_on`) for all date filters.
+        `opened_at` matches the "Opened" date shown in the ServiceNow portal.
+        `sys_created_on` is the internal DB timestamp and will NOT match portal counts.
+
+        ALWAYS call this endpoint TWICE for any breakdown:
+        1. Without sysparm_group_by — to get grand total
+        2. With sysparm_group_by — to get grouped rows
+        This accounts for records where the grouped field is null (excluded from group-by results).
+
+        If grouped response contains a row with blank groupby_value: label it "(No category)" in output.
+
         COMMON USE CASES:
         - Total count: sysparm_count=true (no group_by)
         - By category: sysparm_group_by=category
@@ -222,19 +237,22 @@ paths:
           schema:
             type: string
           description: |
-            Query filter to scope the statistics.
-            - Last 30 days: sys_created_onONLast 30 days@gs.daysAgoStart(30)
-            - Last month: sys_created_onONLast month@gs.beginningOfLastMonth()@gs.endOfLastMonth()
-            - This year: sys_created_onONThis year@gs.beginningOfThisYear()@gs.endOfThisYear()
-          example: "sys_created_onONLast 30 days@gs.daysAgoStart(30)"
+            Query filter to scope the statistics. ALWAYS use `opened_at` (not sys_created_on).
+            - Last 30 days: opened_atONLast 30 days@gs.daysAgoStart(30)
+            - Last month: opened_atONLast month@gs.beginningOfLastMonth()@gs.endOfLastMonth()
+            - This year (current): opened_atONThis year@gs.beginningOfThisYear()@gs.endOfThisYear()
+            - Specific year 2025: opened_at>=2025-01-01^opened_at<2026-01-01
+            - Specific year 2026: opened_at>=2026-01-01^opened_at<2027-01-01
+            NOTE: When user names a specific year, ALWAYS use the YYYY-MM-DD range form, NOT "This year".
+          example: "opened_at>=2025-01-01^opened_at<2026-01-01"
 
         - name: sysparm_count
           in: query
-          required: false
+          required: true
           schema:
             type: boolean
             default: true
-          description: Include count in results
+          description: REQUIRED — must be true in every stats call or the API returns an error
           example: true
 
         - name: sysparm_group_by
