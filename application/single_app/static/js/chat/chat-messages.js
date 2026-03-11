@@ -34,6 +34,143 @@ if (typeof window.appSettings !== 'undefined' && window.appSettings.enable_text_
 }
 
 /**
+ * Ensures markdown table content has proper separator lines.
+ * This fixes cases where LLM output has pipe-delimited rows but is missing
+ * the separator line (|---|---|) needed for marked.js to recognize it as a table.
+ * 
+ * @param {string} content - The markdown content to process
+ * @returns {string} - Content with table separators ensured
+ */
+function ensureMarkdownTableSeparators(content) {
+  const lines = content.split('\n');
+  const result = [];
+  let insideTable = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    result.push(line);
+
+    const trimmed = line.trim();
+
+    // Track if this line is a separator line
+    if (/^\|[\s\-:|]+\|$/.test(trimmed) && trimmed.includes('-')) {
+      insideTable = true;
+      continue;
+    }
+
+    // Check if this line is a pipe-delimited row
+    if (!trimmed.startsWith('|') || !trimmed.endsWith('|')) {
+      insideTable = false;
+      continue;
+    }
+    const cells = trimmed.split('|').filter(c => c.trim() !== '');
+    if (cells.length < 2) {
+      insideTable = false;
+      continue;
+    }
+
+    // If we're already inside a table (past the separator), don't add more separators
+    if (insideTable) continue;
+
+    // Check next line
+    if (i + 1 >= lines.length) continue;
+    const nextLine = lines[i + 1].trim();
+
+    // If next line is already a separator, mark inside table and skip
+    if (/^\|[\s\-:|]+\|$/.test(nextLine) && nextLine.includes('-')) continue;
+
+    // If next line is another table row with same column count, insert separator
+    if (!nextLine.startsWith('|') || !nextLine.endsWith('|')) continue;
+    const nextCells = nextLine.split('|').filter(c => c.trim() !== '');
+    if (nextCells.length !== cells.length) continue;
+
+    const sep = '|' + cells.map(() => ' --- ').join('|') + '|';
+    result.push(sep);
+    insideTable = true;
+    console.log('🔧 Inserted missing table separator after:', trimmed.substring(0, 80));
+  }
+
+  return result.join('\n');
+}
+
+/**
+ * Converts loose pipe-separated text into proper markdown table syntax.
+ * Handles LLM output like:
+ *   Year | Population
+ *   2020 | 779,094
+ *   2010 | 672,591
+ * Where rows use pipe as a delimiter but lack leading/trailing pipes
+ * and the separator line required by GFM.
+ *
+ * @param {string} content - The content to process
+ * @returns {string} - Content with loose pipe tables converted to markdown
+ */
+function convertLoosePipeTableToMarkdown(content) {
+  const lines = content.split('\n');
+  let i = 0;
+  const result = [];
+
+  while (i < lines.length) {
+    const trimmed = lines[i].trim();
+
+    // Detect a potential loose-pipe row: contains | but does NOT start with |
+    // and is not a markdown separator line and not inside a code block marker
+    if (
+      trimmed.includes('|') &&
+      !trimmed.startsWith('|') &&
+      !trimmed.startsWith('```') &&
+      !/^[\s|\-:]+$/.test(trimmed)
+    ) {
+      const headerCells = trimmed.split('|').map(c => c.trim());
+      const colCount = headerCells.length;
+
+      // Need at least 2 columns to be a table
+      if (colCount >= 2) {
+        // Look ahead to collect consecutive rows with the same column count
+        const tableRows = [headerCells];
+        let j = i + 1;
+
+        while (j < lines.length) {
+          const nextTrimmed = lines[j].trim();
+          // Stop at blank lines or lines without pipes or lines that already start with |
+          if (!nextTrimmed || !nextTrimmed.includes('|') || nextTrimmed.startsWith('|') || nextTrimmed.startsWith('```')) break;
+          // Skip if it looks like a separator
+          if (/^[\s|\-:]+$/.test(nextTrimmed)) { j++; continue; }
+
+          const cells = nextTrimmed.split('|').map(c => c.trim());
+          if (cells.length !== colCount) break;
+          tableRows.push(cells);
+          j++;
+        }
+
+        // Require at least a header + 1 data row to treat as a table
+        if (tableRows.length >= 2) {
+          console.log('🔧 Converting loose pipe table:', colCount, 'cols,', tableRows.length, 'rows');
+          let mdTable = '\n';
+          // Header
+          mdTable += '| ' + tableRows[0].join(' | ') + ' |\n';
+          // Separator
+          mdTable += '|' + tableRows[0].map(() => ' --- ').join('|') + '|\n';
+          // Data rows
+          for (let r = 1; r < tableRows.length; r++) {
+            mdTable += '| ' + tableRows[r].join(' | ') + ' |\n';
+          }
+          mdTable += '\n';
+          result.push(mdTable);
+          i = j;
+          continue;
+        }
+      }
+    }
+
+    result.push(lines[i]);
+    i++;
+  }
+
+  return result.join('\n');
+}
+
+/**
  * Unwraps markdown tables that are mistakenly wrapped in code blocks.
  * This fixes the issue where AI responses contain tables in code blocks,
  * preventing them from being rendered as proper HTML tables.
@@ -318,6 +455,23 @@ function convertASCIIDashTableToMarkdown(content) {
     console.error('Error converting ASCII dash table:', error);
     return content;
   }
+}
+
+/**
+ * Runs the full table preprocessing pipeline on raw markdown content.
+ * Exported so the streaming path can also render tables properly.
+ *
+ * @param {string} content - Raw markdown content
+ * @returns {string} - Content with all table formats converted to GFM markdown
+ */
+export function preprocessTableContent(content) {
+  let result = unwrapTablesFromCodeBlocks(content);
+  result = convertUnicodeTableToMarkdown(result);
+  result = convertPSVCodeBlockToMarkdown(result);
+  result = convertASCIIDashTableToMarkdown(result);
+  result = convertLoosePipeTableToMarkdown(result);
+  result = ensureMarkdownTableSeparators(result);
+  return result;
 }
 
 export const userInput = document.getElementById("user-input");
@@ -612,12 +766,19 @@ export function appendMessage(
     let cleaned = messageContent.trim().replace(/\n{3,}/g, "\n\n");
     cleaned = cleaned.replace(/(\bhttps?:\/\/\S+)(%5D|\])+/gi, (_, url) => url);
     const withInlineCitations = parseCitations(cleaned);
-    const withUnwrappedTables = unwrapTablesFromCodeBlocks(withInlineCitations);
-    const withMarkdownTables = convertUnicodeTableToMarkdown(withUnwrappedTables);
-    const withPSVTables = convertPSVCodeBlockToMarkdown(withMarkdownTables);
-    const withASCIITables = convertASCIIDashTableToMarkdown(withPSVTables);
-    const sanitizedHtml = DOMPurify.sanitize(marked.parse(withASCIITables));
+    const withTableSeparators = preprocessTableContent(withInlineCitations);
+    const sanitizedHtml = DOMPurify.sanitize(marked.parse(withTableSeparators));
     const htmlContent = addTargetBlankToExternalLinks(sanitizedHtml);
+
+    // Diagnostic logging for table rendering
+    const hasTablePipes = /\|.+\|/.test(withTableSeparators);
+    const hasHtmlTable = sanitizedHtml.includes('<table');
+    if (hasTablePipes) {
+      console.log(`📊 Table diagnostic (msg ${messageId}): pipes=${hasTablePipes}, htmlTable=${hasHtmlTable}`);
+      if (!hasHtmlTable) {
+        console.warn('⚠️ Content has pipe chars but no <table> was generated. Content preview:', withTableSeparators.substring(0, 300));
+      }
+    }
 
     const mainMessageHtml = `<div class="message-text">${htmlContent}</div>`; // Renamed for clarity
 
@@ -792,6 +953,7 @@ export function appendMessage(
 
     // --- Attach Event Listeners specifically for AI message ---
     attachCodeBlockCopyButtons(messageDiv.querySelector(".message-text"));
+    attachTableCopyButtons(messageDiv);
     
     const metadataBtn = messageDiv.querySelector(".metadata-info-btn");
     if (metadataBtn) {
@@ -1810,6 +1972,62 @@ function attachCodeBlockCopyButtons(parentElement) {
         });
     });
     pre.appendChild(copyBtn);
+  });
+}
+
+function attachTableCopyButtons(containerElement) {
+  if (!containerElement) return;
+  const tables = containerElement.querySelectorAll('.message-text table');
+  tables.forEach(table => {
+    // Skip if copy toolbar already exists
+    if (table.previousElementSibling && table.previousElementSibling.classList.contains('table-copy-toolbar')) return;
+
+    // Helper to create a copy button bound to this table
+    function createCopyBtn() {
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-sm btn-outline-secondary';
+      btn.title = 'Copy table to clipboard';
+      btn.innerHTML = '<i class="bi bi-clipboard"></i> Copy table';
+
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const rows = table.querySelectorAll('tr');
+        let tsv = '';
+        rows.forEach(row => {
+          const cells = row.querySelectorAll('th, td');
+          const rowData = Array.from(cells).map(cell => cell.textContent.trim());
+          tsv += rowData.join('\t') + '\n';
+        });
+
+        navigator.clipboard.writeText(tsv.trim()).then(() => {
+          // Update both buttons
+          topBtn.innerHTML = '<i class="bi bi-check-lg text-success"></i> Copied!';
+          bottomBtn.innerHTML = '<i class="bi bi-check-lg text-success"></i> Copied!';
+          setTimeout(() => {
+            topBtn.innerHTML = '<i class="bi bi-clipboard"></i> Copy table';
+            bottomBtn.innerHTML = '<i class="bi bi-clipboard"></i> Copy table';
+          }, 2000);
+        }).catch(err => {
+          console.error('Failed to copy table:', err);
+        });
+      });
+      return btn;
+    }
+
+    const topBtn = createCopyBtn();
+    const bottomBtn = createCopyBtn();
+
+    // Top toolbar
+    const topToolbar = document.createElement('div');
+    topToolbar.className = 'table-copy-toolbar table-copy-toolbar-top';
+    topToolbar.appendChild(topBtn);
+    table.insertAdjacentElement('beforebegin', topToolbar);
+
+    // Bottom toolbar
+    const bottomToolbar = document.createElement('div');
+    bottomToolbar.className = 'table-copy-toolbar table-copy-toolbar-bottom';
+    bottomToolbar.appendChild(bottomBtn);
+    table.insertAdjacentElement('afterend', bottomToolbar);
   });
 }
 

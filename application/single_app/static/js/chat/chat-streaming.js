@@ -1,5 +1,5 @@
 // chat-streaming.js
-import { appendMessage, updateUserMessageId } from './chat-messages.js';
+import { appendMessage, updateUserMessageId, preprocessTableContent } from './chat-messages.js';
 import { hideLoadingIndicatorInChatbox, showLoadingIndicatorInChatbox } from './chat-loading-indicator.js';
 import { loadUserSettings, saveUserSetting } from './chat-layout.js';
 import { showToast } from './chat-toast.js';
@@ -266,7 +266,8 @@ function updateStreamingMessage(messageId, content) {
     if (contentElement) {
         // Render markdown during streaming for proper formatting
         if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
-            const renderedContent = DOMPurify.sanitize(marked.parse(content));
+            const preprocessed = preprocessTableContent(content);
+            const renderedContent = DOMPurify.sanitize(marked.parse(preprocessed));
             contentElement.innerHTML = renderedContent;
         } else {
             contentElement.textContent = content;
