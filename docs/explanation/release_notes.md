@@ -2,80 +2,31 @@
 
 # Feature Release
 
-<<<<<<< HEAD
-### **(v0.239.013)**
-
-#### Bug Fixes
-
-*   **Idle Timeout Route Documentation Standardization**
-    *   Added method comments/docstrings to new idle timeout methods for clearer maintenance and handoff.
-    *   (Ref: `application/single_app/app.py`, `application/single_app/route_frontend_admin_settings.py`, `application/single_app/route_frontend_authentication.py`, `application/single_app/config.py`, `functional_tests/test_idle_logout_timeout.py`)
-
-### **(v0.239.011)**
-
-#### Bug Fixes
-
-*   **Idle Timeout Input Validation Logging Enhancements**
-    *   Added structured `log_event` telemetry for idle-timeout parsing and normalization in runtime settings resolution, including fallback defaults and warning/timeout boundary adjustments.
-    *   Added structured `log_event` telemetry to admin settings integer parsing (`safe_int`) so invalid submitted values are captured with field context and fallback values.
-    *   Improves diagnostics and traceability for misconfigured timeout values without changing existing idle-timeout behavior.
-    *   (Ref: `application/single_app/app.py`, `application/single_app/route_frontend_admin_settings.py`, `application/single_app/config.py`, `functional_tests/test_idle_logout_timeout.py`)
-
-### **(v0.239.009)**
-
-#### Bug Fixes
-
-*   **Settings Cache Source Diagnostics for Request Path**
-    *   Added source-aware settings retrieval diagnostics to confirm whether request settings were served from app settings cache or required Cosmos DB fallback.
-    *   Added per-request source capture and thread-safe counters in the idle-timeout settings path to improve troubleshooting of cache behavior.
-    *   Updated functional test markers and version metadata to validate the new diagnostics wiring.
-    *   (Ref: `application/single_app/functions_settings.py`, `application/single_app/app.py`, `application/single_app/config.py`, `functional_tests/test_idle_logout_timeout.py`)
-
-### **(v0.239.008)**
-
-#### Bug Fixes
-
-*   **Idle Timeout Re-Enable Immediate Logout Fix**
-    *   Fixed an issue where users could be logged out immediately after an admin re-enabled idle timeout.
-    *   **Root Cause**: While idle timeout was disabled, `last_activity_epoch` was not refreshed on requests, allowing stale inactivity duration to accumulate.
-    *   **Fix**: Requests now refresh `last_activity_epoch` even when timeout enforcement is disabled, so re-enabling the feature starts from current activity instead of stale idle time.
-    *   Updated functional test version markers to reflect the fix release.
-    *   (Ref: `application/single_app/app.py`, `application/single_app/config.py`, `functional_tests/test_idle_logout_timeout.py`)
-
-### **(v0.239.007)**
+### **(v0.239.006)**
 
 #### New Features
 
-*   **Idle Timeout Feature Toggle in Admin Settings**
-    *   Added a new admin switch to enable or disable idle session timeout and warning behavior without changing environment variables.
-    *   Timeout and warning inputs are now grouped under a toggleable section in General > System Settings.
-    *   Server-side timeout enforcement now respects the toggle so inactivity auto-logout can be centrally turned on or off.
-    *   Frontend idle warning script now reads the server-provided enabled flag instead of using a hardcoded value.
-    *   (Ref: `application/single_app/templates/admin_settings.html`, `application/single_app/static/js/admin/admin_settings.js`, `application/single_app/route_frontend_admin_settings.py`, `application/single_app/functions_settings.py`, `application/single_app/app.py`, `application/single_app/templates/base.html`)
+*   **Idle Session Timeout Feature**
+    *   Added a new idle timer that auto clears the user session after a configurable set time and redirects to the main chat login page.
+    *   Added a frontend idle warning modal that pops up after a configurable set time, but disappears if the user mouses over the chat window or interacts with the app in any way.
+    *   Default values are used if the idle logout and warning values are not set. 
+    *   Idle logout and idle warning values are validated and auto-fixed as needed.
+    *   Added a new admin switch to enable or disable idle session timeout and warning behavior.
+    *   Timeout and warning inputs are grouped under a toggleable section in General > System Settings.
+    *   (Ref: `application/single_app/templates/admin_settings.html`, `application/single_app/static/js/admin/admin_settings.js`, `application/single_app/route_frontend_admin_settings.py`, `application/single_app/functions_settings.py`, `application/single_app/app.py`, `application/single_app/templates/base.html`, `application/single_app/static/js/idle-logout-warning.js`, `application/single_app/config.py`, `functional_tests/test_idle_logout_timeout.py`, `application/single_app/route_frontend_authentication.py`,)
 
 #### Bug Fixes
 
-*   **Idle Logout Config Key Alignment**
-    *   Resolved config drift between template and client script by explicitly supporting `fullSsoLogoutUrl` while retaining backward compatibility with legacy `logoutUrl`.
-    *   Logout target resolution now uses `localLogoutUrl` first, then `fullSsoLogoutUrl`, then `logoutUrl`.
-    *   Updated functional test markers to validate the new key precedence and runtime wiring.
-    *   (Ref: `application/single_app/static/js/idle-logout-warning.js`, `application/single_app/templates/base.html`, `functional_tests/test_idle_logout_timeout.py`)
-
-=======
->>>>>>> Development
+*   **Settings Default Merge Persistence Fix**
+    *   Fixed app settings merge detection in `get_settings()` where `deep_merge_dicts()` mutates the existing settings object in place, causing change detection to always evaluate as unchanged.
+    *   Added pre-merge snapshot comparison with `copy.deepcopy()` so missing default keys correctly trigger `upsert_item()` and are persisted back to Cosmos DB.
+    *   Added a functional regression test to validate the merge detection and persistence markers.
+    *   (Ref: `application/single_app/functions_settings.py`, `application/single_app/config.py`, `functional_tests/test_settings_deep_merge_persistence_fix.py`)
+    
 ### **(v0.239.005)**
 
 #### New Features
 
-<<<<<<< HEAD
-*   **Admin-Managed Idle Session Timeout Settings**
-    *   Added idle session configuration variables to Admin Settings so timeout values are managed in-app and persisted in Cosmos DB.
-    *   Added configurable fields for idle logout timeout and warning lead time in the General > System Settings section.
-    *   Updated runtime enforcement and heartbeat responses to read these values from persisted settings with safe bounds validation.
-    *   Includes version update to align configuration and release metadata.
-    *   (Ref: `application/single_app/functions_settings.py`, `application/single_app/route_frontend_admin_settings.py`, `application/single_app/templates/admin_settings.html`, `application/single_app/app.py`, `application/single_app/config.py`, `functional_tests/test_idle_logout_timeout.py`)
-
-=======
 *   **Redis Key Vault Authentication**
     *   Added a new `key_vault` authentication type for Redis, allowing the Redis access key to be retrieved securely from Azure Key Vault at runtime rather than stored directly in settings.
     *   Applies across all Redis usage paths: app settings cache (`app_settings_cache.py`), session management (`app.py`), and the Redis test connection flow (`route_backend_settings.py`).
@@ -124,7 +75,7 @@
     *   Ensures Python package installation works reliably in environments requiring custom certificate trust and pip configuration.
     *   (Ref: Docker customization, CA cert setup, `pip.conf` handling)
     
->>>>>>> Development
+
 ### **(v0.239.001)**
 
 #### New Features
@@ -1149,8 +1100,6 @@
         *   More than 3 workspaces: `"Public: [Name1], [Name2], [Name3], 3+"`
     *   **Benefits**: Improved workspace identification, consistent with Group scope naming pattern, better navigation between workspace scopes.
     *   (Ref: `chat-documents.js`, scope label updates, dynamic workspace display)
-
-=======
 
 ##### User Interface and Content Rendering Fixes
 

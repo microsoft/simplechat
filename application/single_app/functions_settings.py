@@ -4,6 +4,7 @@ from config import *
 from functions_appinsights import log_event
 import app_settings_cache
 import inspect
+import copy
 
 def get_settings(use_cosmos=False, include_source=False):
     import secrets
@@ -408,11 +409,13 @@ def get_settings(use_cosmos=False, include_source=False):
                     )
         #print("Successfully retrieved settings from Cosmos DB.")
 
+        original_settings_item = copy.deepcopy(settings_item)
+
         # Merge default_settings in, to fill in any missing or nested keys
         merged = deep_merge_dicts(default_settings, settings_item)
 
         # If merging added anything new, upsert back to Cosmos so future reads remain up to date
-        if merged != settings_item:
+        if merged != original_settings_item:
             cosmos_settings_container.upsert_item(merged)
             print("App Settings had missing keys and was updated in Cosmos DB.")
             log_event(

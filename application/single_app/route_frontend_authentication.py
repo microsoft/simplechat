@@ -223,7 +223,6 @@ def register_route_frontend_authentication(app):
         Raises:
             None.
         """
-        user_name = session.get("user", {}).get("name", "User")
         session.clear()
 
         from functions_settings import get_settings
@@ -241,7 +240,6 @@ def register_route_frontend_authentication(app):
         else:
             logout_uri = url_for('index', _external=True, _scheme='https')
 
-        # print(f"{user_name} locally logged out. Redirecting to {logout_uri}.")
         return redirect(logout_uri)
 
     @app.route('/logout')
