@@ -458,11 +458,190 @@ function convertASCIIDashTableToMarkdown(content) {
 }
 
 /**
- * Runs the full table preprocessing pipeline on raw markdown content.
- * Exported so the streaming path can also render tables properly.
+ * Detects unfenced code blocks in LLM output and wraps them in fenced code blocks.
+ * Many LLMs return code without triple-backtick fences, so marked.js treats them
+ * as plain text. This function identifies consecutive lines that look like code
+ * and wraps them in ``` fences.
+ *
+ * @param {string} content - The markdown content to process
+ * @returns {string} - Content with unfenced code blocks wrapped in fences
+ */
+function wrapUnfencedCodeBlocks(content) {
+  try {
+    const lines = content.split('\n');
+    const result = [];
+    let inFencedBlock = false;
+    let codeBuffer = [];
+    let inDocstring = false; // Track Python triple-quote docstrings
+
+    // Patterns that strongly indicate a line IS code
+    const codeStartPatterns = [
+      // C-family, Java, C#, JS/TS keywords
+      /^\s*(public|private|protected|internal|static|class|struct|enum|interface|namespace|using)\b/,
+      /^\s*(function|func|fn|async\s+function|async\s+def)\b/,
+      /^\s*(let|const|var|val|int|float|double|string|bool|boolean|void|char|long|short|byte)\s+\w/,
+      /^\s*(return|throw|new|yield|await)\b/,
+      /^\s*(if|else if|elif|else|for|foreach|while|do|switch|case|default|break|continue)\b.*[:{]/,
+      /^\s*(try|catch|except|finally|raise)\b/,
+      /^\s*(import|from\s+\w+\s+import|require|include)\b/,
+      /^\s*(export|module)\b/,
+      // Python-specific
+      /^\s*def\s+\w+\s*\(/,         // def function_name(
+      /^\s*class\s+\w+/,            // class ClassName
+      /^\s*@\w+/,                    // decorators
+      /^\s*(print|input|len|range|enumerate|zip|map|filter|sorted|isinstance|type)\s*\(/,
+      /^\s*\w+\s*=\s*.+/,           // variable assignment (name = value)
+      /^\s*(self|cls)\.\w+/,        // self.attribute or cls.attribute
+      /^\s*"""/,                     // docstring start/end
+      /^\s*'''/,                     // docstring start/end (single quotes)
+      // Method/function calls
+      /^\s*\w+\.\w+\s*\(/,          // obj.method(
+      // C-family structural
+      /[{};]\s*$/,                   // lines ending in { } or ;
+      /^\s*\}\s*$/,                  // closing brace only
+      /^\s*\{\s*$/,                  // opening brace only
+      /=>\s*\{?\s*$/,               // arrow functions
+      // Comments that appear in code
+      /^\s*\/\/\s/,                  // // comment
+      /^\s*#(?!#)\s/,               // # comment (but not ## markdown header)
+      /^\s*\/\*|\s*\*\//,           // /* */ block comments
+      // C/C++ preprocessor
+      /^\s*#\s*(include|define|pragma|ifdef|ifndef|endif)\b/,
+      // Attributes/annotations
+      /^\s*\[[\w\s,()]+\]\s*$/,     // C# attributes [HttpGet]
+    ];
+
+    function isClearlyProse(line) {
+      const trimmed = line.trim();
+      if (!trimmed) return false;
+      // Markdown headers with ## or more (# alone could be a Python comment)
+      if (/^#{2,}\s/.test(trimmed)) return true;
+      // Markdown bold/italic headers like **Optional:**
+      if (/^\*{1,2}[A-Z]/.test(trimmed)) return true;
+      // Lines starting with common English sentence patterns without code indicators
+      if (/^(Here['']?s|This is|The |You can|To |In this|Note:|For example|An? |It |We |They |I )/i.test(trimmed) 
+          && !trimmed.includes('{') && !trimmed.includes(';') && !trimmed.includes('(') && !/=\s/.test(trimmed)) return true;
+      // Markdown blockquotes and unordered lists (not indented code)
+      if (/^[>]/.test(trimmed)) return true;
+      // Markdown bullet lists at start
+      if (/^[-*+]\s/.test(trimmed) && !trimmed.includes('{') && !trimmed.includes(';')) return true;
+      return false;
+    }
+
+    function looksLikeCode(line) {
+      const trimmed = line.trim();
+      if (!trimmed) return false;
+      if (isClearlyProse(line)) return false;
+      return codeStartPatterns.some(p => p.test(line));
+    }
+
+    function looksLikeCodeContinuation(line) {
+      // When we're already collecting code, these lines should stay in the buffer
+      const trimmed = line.trim();
+      if (!trimmed) return false;
+      if (isClearlyProse(line)) return false;
+      // Indented lines (4+ spaces or tab) continuing a code block
+      if (/^(\s{4,}|\t)/.test(line) && trimmed.length > 0) return true;
+      // Docstring content (inside triple quotes)
+      if (inDocstring) return true;
+      // Lines with parentheses, brackets, operators common in code
+      if (/[()[\]{}=<>+\-*/%]/.test(trimmed) && !/^[#>*\-+]\s/.test(trimmed)) return true;
+      // Looks like a parameter/type annotation line (common in docstrings and signatures)
+      if (/^\s*\w+\s*[\(:]/i.test(trimmed) && codeBuffer.length > 0) return true;
+      return false;
+    }
+
+    function flushCodeBuffer() {
+      // Trim trailing blank lines from buffer
+      while (codeBuffer.length > 0 && codeBuffer[codeBuffer.length - 1].trim() === '') {
+        result.push(codeBuffer.pop());
+      }
+      if (codeBuffer.length >= 2) {
+        const lang = detectLanguageHint(codeBuffer);
+        console.log(`🔧 Wrapping ${codeBuffer.length} unfenced code lines as \`\`\`${lang}`);
+        result.push('```' + lang);
+        result.push(...codeBuffer);
+        result.push('```');
+      } else {
+        result.push(...codeBuffer);
+      }
+      codeBuffer = [];
+      inDocstring = false;
+    }
+
+    function detectLanguageHint(codeLines) {
+      const joined = codeLines.join('\n');
+      if (/\busing\s+System\b|\bnamespace\b.*{|\bConsole\.\w+/.test(joined)) return 'csharp';
+      if (/\bimport\s+java\.|public\s+static\s+void\s+main\b/.test(joined)) return 'java';
+      if (/\bdef\s+\w+\s*\(|\bimport\s+\w+|\bprint\s*\(|\bself\./.test(joined)) return 'python';
+      if (/\b(const|let|var)\s+\w+\s*=|\bfunction\s+\w+\s*\(|\bconsole\.log\b|=>\s*\{/.test(joined)) return 'javascript';
+      if (/\b(interface|type)\s+\w+\s*[{=]|:\s*(string|number|boolean)\b/.test(joined)) return 'typescript';
+      if (/\bfunc\s+\w+\s*\(|\bfmt\./.test(joined)) return 'go';
+      if (/\bfn\s+\w+\s*\(|\blet\s+mut\b|\bimpl\b/.test(joined)) return 'rust';
+      if (/\b#include\s*<|std::|cout\s*<<|cin\s*>>/.test(joined)) return 'cpp';
+      return '';
+    }
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmed = line.trim();
+
+      // Track fenced code block state
+      if (trimmed.startsWith('```')) {
+        if (inFencedBlock) {
+          inFencedBlock = false;
+        } else {
+          flushCodeBuffer();
+          inFencedBlock = true;
+        }
+        result.push(line);
+        continue;
+      }
+
+      if (inFencedBlock) {
+        result.push(line);
+        continue;
+      }
+
+      // Track Python docstrings (triple quotes toggle)
+      if (codeBuffer.length > 0) {
+        const tripleQuoteMatches = (trimmed.match(/"""/g) || []).length + (trimmed.match(/'''/g) || []).length;
+        if (tripleQuoteMatches % 2 !== 0) {
+          inDocstring = !inDocstring;
+        }
+      }
+
+      // Check if this line looks like code
+      if (looksLikeCode(line)) {
+        codeBuffer.push(line);
+      } else if (codeBuffer.length > 0 && trimmed === '') {
+        // Blank line inside potential code – include it
+        codeBuffer.push(line);
+      } else if (codeBuffer.length > 0 && looksLikeCodeContinuation(line)) {
+        // Continuation of code (indented, has operators, inside docstring, etc.)
+        codeBuffer.push(line);
+      } else {
+        // Non-code line – flush any accumulated code buffer
+        flushCodeBuffer();
+        result.push(line);
+      }
+    }
+
+    flushCodeBuffer();
+    return result.join('\n');
+
+  } catch (error) {
+    console.error('Error wrapping unfenced code blocks:', error);
+    return content;
+  }
+}
+
+/**
+ * Runs the full content preprocessing pipeline on raw markdown content.
+ * Exported so the streaming path can also render content properly.
  *
  * @param {string} content - Raw markdown content
- * @returns {string} - Content with all table formats converted to GFM markdown
+ * @returns {string} - Content with all table/code formats normalized
  */
 export function preprocessTableContent(content) {
   let result = unwrapTablesFromCodeBlocks(content);
@@ -471,6 +650,7 @@ export function preprocessTableContent(content) {
   result = convertASCIIDashTableToMarkdown(result);
   result = convertLoosePipeTableToMarkdown(result);
   result = ensureMarkdownTableSeparators(result);
+  result = wrapUnfencedCodeBlocks(result);
   return result;
 }
 

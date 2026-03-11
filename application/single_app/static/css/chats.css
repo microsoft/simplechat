@@ -1085,6 +1085,8 @@ pre[class*="language-"] {
   display: block;
   /* Optional: prevent code from wrapping */
   white-space: pre;
+  position: relative;
+  padding-top: 2.2rem; /* Make room for the copy button */
 }
 
 /* Code element inside pre: don't expand parent */
