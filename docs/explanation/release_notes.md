@@ -2,6 +2,7 @@
 
 # Feature Release
 
+<<<<<<< HEAD
 ### **(v0.239.013)**
 
 #### Bug Fixes
@@ -60,10 +61,13 @@
     *   Updated functional test markers to validate the new key precedence and runtime wiring.
     *   (Ref: `application/single_app/static/js/idle-logout-warning.js`, `application/single_app/templates/base.html`, `functional_tests/test_idle_logout_timeout.py`)
 
+=======
+>>>>>>> Development
 ### **(v0.239.005)**
 
 #### New Features
 
+<<<<<<< HEAD
 *   **Admin-Managed Idle Session Timeout Settings**
     *   Added idle session configuration variables to Admin Settings so timeout values are managed in-app and persisted in Cosmos DB.
     *   Added configurable fields for idle logout timeout and warning lead time in the General > System Settings section.
@@ -71,6 +75,56 @@
     *   Includes version update to align configuration and release metadata.
     *   (Ref: `application/single_app/functions_settings.py`, `application/single_app/route_frontend_admin_settings.py`, `application/single_app/templates/admin_settings.html`, `application/single_app/app.py`, `application/single_app/config.py`, `functional_tests/test_idle_logout_timeout.py`)
 
+=======
+*   **Redis Key Vault Authentication**
+    *   Added a new `key_vault` authentication type for Redis, allowing the Redis access key to be retrieved securely from Azure Key Vault at runtime rather than stored directly in settings.
+    *   Applies across all Redis usage paths: app settings cache (`app_settings_cache.py`), session management (`app.py`), and the Redis test connection flow (`route_backend_settings.py`).
+    *   Uses `retrieve_secret_direct()` from `functions_keyvault.py` to fetch the Redis key by its Key Vault secret name. Respects `key_vault_identity` for a user-assigned managed identity on the Key Vault client.
+    *   New admin setting fields: `redis_auth_type` (values: `key`, `managed_identity`, `key_vault`) and `redis_key` (used as the Key Vault secret name when `key_vault` auth type is selected).
+    *   **Files Modified**: `app_settings_cache.py`, `app.py` `configure_sessions`, `route_backend_settings.py` `_test_redis_connection`, `functions_keyvault.py` `retrieve_secret_direct`
+
+#### Bug Fixes
+
+*   **Key Vault Bootstrap Circular Dependency Fix**
+    *   Fixed `TypeError: 'NoneType' object is not callable` crash on startup when `redis_auth_type` is set to `key_vault`. The error occurred because `retrieve_secret_direct()` called `app_settings_cache.get_settings_cache()` while `configure_app_cache()` was still initialising, leaving `get_settings_cache` as `None`.
+    *   **Root Cause**: `app_settings_cache.configure_app_cache()` calls `retrieve_secret_direct()` before `get_settings_cache` is assigned. Both `retrieve_secret_direct()` and `get_keyvault_credential()` attempted to resolve settings via the cache at call time.
+    *   **Solution**: Added an optional `settings` parameter to both `retrieve_secret_direct()` and `get_keyvault_credential()`. When `settings` is passed explicitly, the cache is bypassed entirely. `configure_app_cache()` now passes `settings=settings` to avoid touching the uninitialised cache.
+    *   **Files Modified**: `functions_keyvault.py` (`retrieve_secret_direct`, `get_keyvault_credential`), `app_settings_cache.py` (`configure_app_cache`).
+    *   (Ref: `retrieve_secret_direct`, `get_keyvault_credential`, bootstrap initialisation order, circular dependency)
+
+*   **Key Vault Logging Consistency Fix**
+    *   Replaced all remaining `print()` calls and `logging.error()` / `logging.warning()` calls throughout `functions_keyvault.py` with `log_event()` from `functions_appinsights.py`, consistent with the project logging standard.
+    *   Previously, duplicate log output appeared on startup (e.g. `[Log] ... -- None` and `[LOG] ...`) because some code paths used `print()` or the standard `logging` module alongside `log_event()`.
+    *   **Files Modified**: `functions_keyvault.py` (all helper functions: `retrieve_secret_from_key_vault`, `store_secret_in_key_vault`, `build_full_secret_name`, `keyvault_agent_save_helper`, `keyvault_plugin_save_helper`, `keyvault_plugin_get_helper`, `keyvault_plugin_delete_helper`, `keyvault_agent_delete_helper`).
+    *   (Ref: `log_event`, logging consistency, duplicate startup log output)
+
+*   **Legacy Conversation `chat_type` Default Fix**
+    *   Fixed an issue where conversation details failed to load properly for legacy conversations that were created before the `chat_type` field was introduced.
+    *   **Root Cause**: The metadata API returned `None` for `chat_type` on older conversation documents that pre-date the field, causing downstream consumers to behave incorrectly when determining conversation context.
+    *   **Solution**: Added a default value of `'personal'` to the `chat_type` field in the conversation metadata response: `conversation_item.get('chat_type', 'personal')`.
+    *   **Files Modified**: `route_backend_conversations.py`
+    *   (Ref: `get_conversation_metadata_api`, legacy conversation schema compatibility)
+
+*   **Chat Message Content Overflow / Word-Wrap Fix**
+    *   Fixed an issue where long AI responses with overflowing content (e.g. wide code blocks or tables) were not scrollable, and word-wrap was not functioning correctly within message bubbles.
+    *   **Root Cause**: `.message-content` had `overflow: visible`, which prevented the browser from applying horizontal scroll bars to overflowing child elements.
+    *   **Solution**: Changed `.message-content` to `overflow: auto`, enabling proper word-wrap behaviour and horizontal scrolling for overflowing content while preserving existing layout.
+    *   **Files Modified**: `chats.css`
+    *   (Ref: `.message-content` overflow property)
+
+*   **SimpleMDE Prompt Editor Toolbar Icons Fix**
+    *   Fixed missing/invisible toolbar icons in the SimpleMDE Markdown editor used in the New Prompt dialog, for both light and dark mode themes.
+    *   **Root Cause**: SimpleMDE uses Font Awesome icon classes (e.g. `fa-bold`) on toolbar buttons, but the app does not load Font Awesome — only Bootstrap Icons. This caused all toolbar buttons to render as blank or invisible squares.
+    *   **Solution**: Added CSS rules in `styles.css` to intercept SimpleMDE's Font Awesome class selectors and replace them with the correct Bootstrap Icons Unicode codepoints via `::before` pseudo-elements. Full dark mode styling (toolbar background, icon colours, active state, CodeMirror editor area, preview pane, and statusbar) was also added.
+    *   **Files Modified**:`styles.css`
+    *   (Ref: `.editor-toolbar`, SimpleMDE Bootstrap Icons replacement, dark mode CodeMirror overrides)
+
+*   **Docker Customization: CA Certificate and pip.conf**
+    *   Fixed Docker customization issues related to custom CA certificate handling and `pip.conf` configuration.
+    *   Ensures Python package installation works reliably in environments requiring custom certificate trust and pip configuration.
+    *   (Ref: Docker customization, CA cert setup, `pip.conf` handling)
+    
+>>>>>>> Development
 ### **(v0.239.001)**
 
 #### New Features
