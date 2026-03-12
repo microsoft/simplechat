@@ -332,6 +332,9 @@ def test_idle_warning_javascript_wiring():
         "idleStaySignedInButton",
         "let lastServerHeartbeatAt = 0",
         "const HEARTBEAT_MIN_INTERVAL_MS = Math.min(60000, timeoutMs / 2)",
+        "response.status === 401 || response.status === 403",
+        "const responseBody = await response.clone().json()",
+        "responseBody && responseBody.requires_reauth",
         "fetch(mergedConfig.heartbeatUrl",
         "const logoutTarget = mergedConfig.localLogoutUrl || mergedConfig.fullSsoLogoutUrl || mergedConfig.logoutUrl",
         "window.location.href = logoutTarget"

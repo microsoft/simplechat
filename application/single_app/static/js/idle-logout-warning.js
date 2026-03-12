@@ -150,7 +150,18 @@
                 });
 
                 if (!response.ok) {
-                    if (forceLogoutOnFailure) {
+                    let requiresReauth = response.status === 401 || response.status === 403;
+
+                    if (!requiresReauth) {
+                        try {
+                            const responseBody = await response.clone().json();
+                            requiresReauth = Boolean(responseBody && responseBody.requires_reauth);
+                        } catch (_parseError) {
+                            requiresReauth = false;
+                        }
+                    }
+
+                    if (forceLogoutOnFailure || requiresReauth) {
                         logoutNow();
                     }
                     return;
