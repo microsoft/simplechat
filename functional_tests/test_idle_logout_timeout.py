@@ -178,8 +178,46 @@ def test_server_idle_timeout_wiring():
         ):
             has_local_logout_redirect = True
 
+    has_api_activity_seed_assignment = False
+    for node in ast.walk(enforce_idle_timeout_def):
+        if not isinstance(node, ast.If):
+            continue
+
+        test_node = node.test
+        is_api_path_check = (
+            isinstance(test_node, ast.Call)
+            and isinstance(test_node.func, ast.Attribute)
+            and isinstance(test_node.func.value, ast.Attribute)
+            and isinstance(test_node.func.value.value, ast.Name)
+            and test_node.func.value.value.id == "request"
+            and test_node.func.value.attr == "path"
+            and test_node.func.attr == "startswith"
+            and len(test_node.args) == 1
+            and isinstance(test_node.args[0], ast.Constant)
+            and test_node.args[0].value == "/api/"
+        )
+        if not is_api_path_check:
+            continue
+
+        has_seed_assign_in_api_block = any(
+            isinstance(inner_node, ast.Assign)
+            and len(inner_node.targets) == 1
+            and isinstance(inner_node.targets[0], ast.Subscript)
+            and isinstance(inner_node.targets[0].value, ast.Name)
+            and inner_node.targets[0].value.id == "session"
+            and isinstance(inner_node.targets[0].slice, ast.Constant)
+            and inner_node.targets[0].slice.value == "last_activity_epoch"
+            and isinstance(inner_node.value, ast.Name)
+            and inner_node.value.id == "now_epoch"
+            for inner_node in ast.walk(node)
+        )
+        if has_seed_assign_in_api_block:
+            has_api_activity_seed_assignment = True
+            break
+
     assert has_is_idle_timeout_enabled_guard, "Missing 'if not is_idle_timeout_enabled(request_settings)' guard"
     assert has_local_logout_redirect, "Missing redirect(url_for('local_logout')) in enforce_idle_session_timeout"
+    assert has_api_activity_seed_assignment, "Missing API-path last_activity_epoch seeding in enforce_idle_session_timeout"
 
     session_heartbeat_def = _find_top_level_function(app_tree, "session_heartbeat")
     has_heartbeat_refresh_call = False

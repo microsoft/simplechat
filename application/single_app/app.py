@@ -777,10 +777,13 @@ def enforce_idle_session_timeout():
 
     idle_timeout_minutes, _ = get_idle_timeout_settings(request_settings)
     last_activity_epoch = session.get('last_activity_epoch')
+    has_valid_last_activity_epoch = False
 
     if last_activity_epoch is not None:
         try:
-            idle_seconds = now_epoch - int(float(last_activity_epoch))
+            parsed_last_activity_epoch = int(float(last_activity_epoch))
+            has_valid_last_activity_epoch = True
+            idle_seconds = now_epoch - parsed_last_activity_epoch
             if idle_seconds >= (idle_timeout_minutes * 60):
                 user_id = session.get('user', {}).get('oid') or session.get('user', {}).get('sub')
                 session.clear()
@@ -802,6 +805,9 @@ def enforce_idle_session_timeout():
             log_event(f"Idle timeout evaluation failed: {e}", level=logging.WARNING)
 
     if request.path.startswith('/api/'):
+        if not has_valid_last_activity_epoch:
+            session['last_activity_epoch'] = now_epoch
+            session.modified = True
         return None
 
     session['last_activity_epoch'] = now_epoch
