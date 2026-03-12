@@ -54,9 +54,9 @@
         let logoutDeadlineMs = null;
         let isRefreshingSession = false;
         let lastActivityResetAt = 0;
-        let lastServerHeartbeatAt = Date.now();
+        let lastServerHeartbeatAt = 0;
 
-        const HEARTBEAT_MIN_INTERVAL_MS = 60000;
+        const HEARTBEAT_MIN_INTERVAL_MS = Math.min(60000, timeoutMs / 2);
 
         const activityEvents = [
             'mousedown',

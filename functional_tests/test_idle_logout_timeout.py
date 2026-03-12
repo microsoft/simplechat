@@ -330,6 +330,8 @@ def test_idle_warning_javascript_wiring():
         "scheduleIdleTimers",
         "idleTimeoutWarningModal",
         "idleStaySignedInButton",
+        "let lastServerHeartbeatAt = 0",
+        "const HEARTBEAT_MIN_INTERVAL_MS = Math.min(60000, timeoutMs / 2)",
         "fetch(mergedConfig.heartbeatUrl",
         "const logoutTarget = mergedConfig.localLogoutUrl || mergedConfig.fullSsoLogoutUrl || mergedConfig.logoutUrl",
         "window.location.href = logoutTarget"
