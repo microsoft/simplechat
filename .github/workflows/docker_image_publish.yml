@@ -15,11 +15,11 @@ jobs:
       uses: Azure/docker-login@v2
       with:
         # Container registry username
-        username: ${{ secrets.MAIN_ACR_USERNAME }}
+        username: ${{ secrets.ACR_USERNAME }}
         # Container registry password
-        password: ${{ secrets.MAIN_ACR_PASSWORD }}
+        password: ${{ secrets.ACR_PASSWORD }}
         # Container registry server url
-        login-server: ${{ secrets.MAIN_ACR_LOGIN_SERVER }}
+        login-server: ${{ secrets.ACR_LOGIN_SERVER }}
     - name: Normalize branch name for tag
       run: |
         REF="${GITHUB_REF_NAME}"
