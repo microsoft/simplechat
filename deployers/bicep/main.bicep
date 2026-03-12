@@ -6,8 +6,8 @@ targetScope = 'subscription'
 param location string
 
 @description('''The target Azure Cloud environment.
-- Accepted values are: AzureCloud, AzureUSGovernment
-- Default is AzureCloud''')
+- Accepted values are: AzureCloud, AzureUSGovernment, public, usgovernment, custom
+- Default is based on the ARM cloud name''')
 @allowed([
   'AzureCloud'        // public, keep allowed values for backwards compatibility
   'AzureUSGovernment' // usgovernment
