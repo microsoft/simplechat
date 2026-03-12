@@ -2,6 +2,23 @@
 
 # Feature Release
 
+### **(v0.239.011)**
+
+#### New Features
+
+*   **LLM Table Rendering in Chat Messages**
+    *   LLM-generated tables now render as proper HTML tables in the chat message area, even when the model returns non-standard formats.
+    *   Added preprocessing pipeline that handles multiple table formats: loose pipe tables (no leading/trailing `|`), tables missing separator lines (`|---|---|`), Unicode box-drawing tables, PSV code blocks, and ASCII em-dash tables.
+    *   Tables render correctly during both streaming and non-streaming chat modes — no more flash of raw pipe text during streaming.
+    *   (Ref: `chat-messages.js` `preprocessTableContent`, `convertLoosePipeTableToMarkdown`, `ensureMarkdownTableSeparators`, `chat-streaming.js`)
+
+*   **Table Copy Buttons**
+    *   Each rendered table now displays a "Copy table" button both above and below the table.
+    *   Copies table data as tab-separated values (TSV) for easy pasting into Excel, Google Sheets, or other spreadsheet applications.
+    *   Both buttons show synchronized "Copied!" feedback.
+    *   (Ref: `chat-messages.js` `attachTableCopyButtons`, `chats.css` `.table-copy-toolbar`)
+
+
 ### **(v0.239.005)**
 
 #### New Features

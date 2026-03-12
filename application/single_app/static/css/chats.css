@@ -1085,6 +1085,8 @@ pre[class*="language-"] {
   display: block;
   /* Optional: prevent code from wrapping */
   white-space: pre;
+  position: relative;
+  padding-top: 2.2rem; /* Make room for the copy button */
 }
 
 /* Code element inside pre: don't expand parent */
@@ -1460,6 +1462,36 @@ ol {
 
 [data-bs-theme="dark"] .message-text table tbody tr:hover {
   background-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Table copy toolbar */
+.table-copy-toolbar {
+  text-align: right;
+}
+
+.table-copy-toolbar-top {
+  margin-bottom: 2px;
+}
+
+.table-copy-toolbar-bottom {
+  margin-top: 2px;
+  margin-bottom: 8px;
+}
+
+.table-copy-toolbar .btn {
+  font-size: 0.7rem;
+  padding: 1px 6px;
+  opacity: 0.5;
+  transition: opacity 0.2s;
+}
+
+.table-copy-toolbar .btn:hover {
+  opacity: 1;
+}
+
+[data-bs-theme="dark"] .table-copy-toolbar .btn {
+  color: #adb5bd;
+  border-color: #495057;
 }
 
 /* Code blocks within tables */
