@@ -13,6 +13,7 @@ import builtins
 import asyncio, types
 import ast
 import json
+import os
 import re
 from typing import Any, Dict, List, Mapping, Optional
 from config import *
@@ -31,14 +32,143 @@ from swagger_wrapper import swagger_route, get_auth_security
 from functions_thoughts import ThoughtTracker
 
 
+TABULAR_DISCOVERY_FUNCTION_NAMES = {
+    'list_tabular_files',
+    'describe_tabular_file',
+}
+TABULAR_ANALYSIS_FUNCTION_NAMES = {
+    'aggregate_column',
+    'filter_rows',
+    'query_tabular_data',
+    'group_by_aggregate',
+    'group_by_datetime_component',
+}
+TABULAR_THOUGHT_EXCLUDED_PARAMETER_NAMES = {
+    'user_id',
+    'conversation_id',
+    'group_id',
+    'public_workspace_id',
+}
+
+
 def get_kernel():
     return getattr(g, 'kernel', None) or getattr(builtins, 'kernel', None)
+
 
 def get_kernel_agents():
     g_agents = getattr(g, 'kernel_agents', None)
     builtins_agents = getattr(builtins, 'kernel_agents', None)
     log_event(f"[SKChat] get_kernel_agents - g.kernel_agents: {type(g_agents)} ({len(g_agents) if g_agents else 0} agents), builtins.kernel_agents: {type(builtins_agents)} ({len(builtins_agents) if builtins_agents else 0} agents)", level=logging.INFO)
     return g_agents or builtins_agents
+
+
+def get_new_plugin_invocations(invocations, baseline_count):
+    """Return only the plugin invocations created after the baseline count."""
+    if not invocations:
+        return []
+
+    if baseline_count <= 0:
+        return list(invocations)
+
+    if baseline_count >= len(invocations):
+        return []
+
+    return list(invocations[baseline_count:])
+
+
+def split_tabular_plugin_invocations(invocations):
+    """Split tabular plugin invocations into discovery and analytical categories."""
+    discovery_invocations = []
+    analytical_invocations = []
+    other_invocations = []
+
+    for invocation in invocations or []:
+        function_name = getattr(invocation, 'function_name', '')
+
+        if function_name in TABULAR_DISCOVERY_FUNCTION_NAMES:
+            discovery_invocations.append(invocation)
+        elif function_name in TABULAR_ANALYSIS_FUNCTION_NAMES:
+            analytical_invocations.append(invocation)
+        else:
+            other_invocations.append(invocation)
+
+    return discovery_invocations, analytical_invocations, other_invocations
+
+
+def filter_tabular_citation_invocations(invocations):
+    """Hide discovery-only citation noise when analytical tabular calls exist."""
+    if not invocations:
+        return []
+
+    _, analytical_invocations, _ = split_tabular_plugin_invocations(invocations)
+    if not analytical_invocations:
+        return list(invocations)
+
+    return [
+        invocation for invocation in invocations
+        if getattr(invocation, 'function_name', '') not in TABULAR_DISCOVERY_FUNCTION_NAMES
+    ]
+
+
+def format_tabular_thought_parameter_value(value):
+    """Render a concise parameter value for tabular thought details."""
+    if value is None:
+        return None
+
+    if isinstance(value, (dict, list, tuple)):
+        rendered_value = json.dumps(value, default=str)
+    else:
+        rendered_value = str(value)
+
+    if not rendered_value:
+        return None
+
+    if len(rendered_value) > 120:
+        rendered_value = rendered_value[:117] + '...'
+
+    return rendered_value
+
+
+def get_tabular_tool_thought_payloads(invocations):
+    """Convert tabular plugin invocations into user-visible thought payloads."""
+    thought_payloads = []
+
+    for invocation in invocations or []:
+        function_name = getattr(invocation, 'function_name', 'unknown_tool')
+        duration_ms = getattr(invocation, 'duration_ms', None)
+        success = getattr(invocation, 'success', True)
+        parameters = getattr(invocation, 'parameters', {}) or {}
+
+        filename = parameters.get('filename')
+        duration_suffix = f" ({int(duration_ms)}ms)" if duration_ms else ""
+        content = f"Tabular tool {function_name}{duration_suffix}"
+        if filename:
+            content = f"Tabular tool {function_name} on {filename}{duration_suffix}"
+        if not success:
+            content = f"{content} failed"
+
+        detail_parts = []
+        for parameter_name, parameter_value in parameters.items():
+            if parameter_name in TABULAR_THOUGHT_EXCLUDED_PARAMETER_NAMES:
+                continue
+
+            rendered_value = format_tabular_thought_parameter_value(parameter_value)
+            if rendered_value is None:
+                continue
+
+            detail_parts.append(f"{parameter_name}={rendered_value}")
+
+        error_message = format_tabular_thought_parameter_value(
+            getattr(invocation, 'error_message', None)
+        )
+        if error_message:
+            detail_parts.append(f"error={error_message}")
+
+        detail_parts.append(f"success={success}")
+        detail = "; ".join(detail_parts) if detail_parts else None
+        thought_payloads.append((content, detail))
+
+    return thought_payloads
 
 async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                                    conversation_id, gpt_model, settings,
@@ -58,6 +188,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
     from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
 
     try:
+        plugin_logger = get_plugin_logger()
         log_event(f"[Tabular SK Analysis] Starting analysis for files: {tabular_filenames}", level=logging.INFO)
 
         # 1. Create lightweight kernel with only tabular plugin
@@ -104,6 +235,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
             source_context += f", public_workspace_id='{public_workspace_id}'"
 
         schema_parts = []
+        preloaded_dataframes = {}
         for fname in tabular_filenames:
             try:
                 container, blob_path = tabular_plugin._resolve_blob_location_with_fallback(
@@ -112,6 +244,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 )
                 df = tabular_plugin._read_tabular_blob_to_dataframe(container, blob_path)
                 df_numeric = tabular_plugin._try_numeric_conversion(df.copy())
+                preloaded_dataframes[fname] = df_numeric.copy()
                 schema_info = {
                     "filename": fname,
                     "row_count": len(df),
@@ -127,44 +260,277 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
 
         schema_context = "\n".join(schema_parts)
 
-        # 4. Build chat history with pre-loaded schemas
-        chat_history = SKChatHistory()
-        chat_history.add_system_message(
-            "You are a data analyst. Use the tabular_processing plugin functions to "
-            "analyze the data and answer the user's question.\n\n"
-            f"FILE SCHEMAS (pre-loaded — do NOT call list_tabular_files or describe_tabular_file):\n"
-            f"{schema_context}\n\n"
-            "IMPORTANT: Batch multiple independent function calls in a SINGLE response. "
-            "For example, call multiple aggregate_column or group_by_aggregate functions "
-            "at once rather than one at a time.\n\n"
-            "Return the computed results clearly."
-        )
+        def build_system_prompt(force_tool_use=False):
+            retry_prefix = ""
+            if force_tool_use:
+                retry_prefix = (
+                    "RETRY MODE: Your previous attempt did not execute the data-analysis tools. "
+                    "You MUST call one or more tabular_processing plugin functions before writing any answer text. "
+                    "Do not say the analysis still needs to be run — run it now.\n\n"
+                )
 
-        chat_history.add_user_message(
-            f"Analyze the tabular data to answer: {user_question}\n"
-            f"Use user_id='{user_id}', conversation_id='{conversation_id}', {source_context}."
-        )
+            return (
+                "You are a data analyst. The full dataset is available through the "
+                "tabular_processing plugin functions. You MUST use one or more "
+                "tabular_processing plugin functions before answering. Never answer from "
+                "the schema preview alone. Never say that you would need to run the "
+                "analysis later — run it now.\n\n"
+                f"{retry_prefix}"
+                f"FILE SCHEMAS (pre-loaded — do NOT call list_tabular_files or describe_tabular_file):\n"
+                f"{schema_context}\n\n"
+                "AVAILABLE FUNCTIONS: aggregate_column, filter_rows, query_tabular_data, "
+                "group_by_aggregate, and group_by_datetime_component for hour/day/week/month trend analysis.\n\n"
+                "IMPORTANT:\n"
+                "1. Use the pre-loaded schema context to pick the correct columns, then call the plugin functions.\n"
+                "2. For time-based questions on datetime columns, use group_by_datetime_component.\n"
+                "3. For threshold, ranking, comparison, or correlation-like questions, first filter/query the relevant rows, then compute grouped metrics.\n"
+                "4. Batch multiple independent function calls in a SINGLE response whenever possible.\n"
+                "5. If you need more than 100 filtered rows, explicitly set max_rows higher.\n"
+                "6. Calls to list_tabular_files or describe_tabular_file do not count as analysis and will be rejected.\n"
+                "7. For analytical questions, prefer query/filter plus aggregate/grouped computations over raw row or preview output.\n"
+                "8. Return only computed findings and name the strongest drivers clearly."
+            )
 
-        # 5. Execute with auto function calling
-        execution_settings = AzureChatPromptExecutionSettings(
-            service_id="tabular-analysis",
-            function_choice_behavior=FunctionChoiceBehavior.Auto(
-                maximum_auto_invoke_attempts=5
-            ),
-        )
+        def infer_datetime_component(question_text):
+            normalized_question = (question_text or '').lower()
+            if any(keyword in normalized_question for keyword in ['hour', 'hours', 'time of day']):
+                return 'hour'
+            if any(keyword in normalized_question for keyword in ['day of week', 'weekday']):
+                return 'day_name'
+            if any(keyword in normalized_question for keyword in ['month', 'monthly']):
+                return 'month'
+            if any(keyword in normalized_question for keyword in ['quarter', 'quarterly']):
+                return 'quarter'
+            if any(keyword in normalized_question for keyword in ['week', 'weekly']):
+                return 'week'
+            if any(keyword in normalized_question for keyword in ['date', 'daily', 'day']):
+                return 'date'
+            return None
 
-        result = await chat_service.get_chat_message_contents(
-            chat_history, execution_settings, kernel=kernel
-        )
+        def format_component_label(component, raw_value):
+            normalized_component = tabular_plugin._normalize_datetime_component(component)
+            if normalized_component == 'hour':
+                try:
+                    hour_value = int(raw_value)
+                    return f"{hour_value:02d}:00-{hour_value:02d}:59"
+                except (TypeError, ValueError):
+                    return str(raw_value)
+            return str(raw_value)
 
-        if result and result[0].content:
-            analysis = result[0].content
-            # Cap at 20k characters to stay within token budget
-            if len(analysis) > 20000:
-                analysis = analysis[:20000] + "\n[Analysis truncated]"
-            log_event(f"[Tabular SK Analysis] Analysis complete, {len(analysis)} chars", level=logging.INFO)
-            return analysis
-        log_event("[Tabular SK Analysis] No content in SK response", level=logging.WARNING)
+        def score_datetime_column(column_name, question_text, parsed_ratio):
+            normalized_question = (question_text or '').lower()
+            normalized_column = column_name.lower()
+            score = parsed_ratio
+
+            if 'depart' in normalized_question and 'depart' in normalized_column:
+                score += 5
+            if 'arriv' in normalized_question and 'arriv' in normalized_column:
+                score += 5
+            if 'actual' in normalized_question and 'actual' in normalized_column:
+                score += 4
+            if 'scheduled' in normalized_question and 'scheduled' in normalized_column:
+                score += 4
+            if 'actual' in normalized_column and 'scheduled' not in normalized_question:
+                score += 2
+            if any(keyword in normalized_column for keyword in ['time', 'date', 'timestamp']):
+                score += 1
+
+            return score
+
+        def select_metric_columns(df, question_text):
+            normalized_question = (question_text or '').lower()
+            scored_columns = []
+
+            for column_name in df.columns:
+                if not pandas.api.types.is_numeric_dtype(df[column_name]):
+                    continue
+
+                normalized_column = column_name.lower()
+                score = 0
+                if 'queue' in normalized_question and 'queue' in normalized_column:
+                    score += 8
+                if 'delay' in normalized_question and 'delay' in normalized_column:
+                    score += 8
+                if 'wait' in normalized_question and 'wait' in normalized_column:
+                    score += 8
+                if 'length' in normalized_column:
+                    score += 3
+                if any(keyword in normalized_column for keyword in ['minutes', 'minute', 'count', 'volume', 'traffic']):
+                    score += 2
+                if any(keyword in normalized_column for keyword in ['queue', 'delay', 'length', 'count', 'minutes']):
+                    score += 1
+                scored_columns.append((score, column_name))
+
+            scored_columns.sort(key=lambda item: (item[0], item[1]), reverse=True)
+            return [column_name for _, column_name in scored_columns]
+
+        def infer_metric_operation(question_text):
+            normalized_question = (question_text or '').lower()
+            if any(keyword in normalized_question for keyword in ['sum', 'total']):
+                return 'sum'
+            if any(keyword in normalized_question for keyword in ['maximum', 'max', 'highest single']):
+                return 'max'
+            if any(keyword in normalized_question for keyword in ['count', 'how many', 'number of']):
+                return 'count'
+            return 'mean'
+
+        async def try_direct_datetime_component_fallback():
+            datetime_component = infer_datetime_component(user_question)
+            if not datetime_component:
+                return None
+
+            for filename, df_numeric in preloaded_dataframes.items():
+                datetime_candidates = []
+                for column_name in df_numeric.columns:
+                    parsed_series = tabular_plugin._parse_datetime_like_series(df_numeric[column_name])
+                    parsed_ratio = (parsed_series.notna().sum() / len(parsed_series)) if len(parsed_series) else 0
+                    if parsed_ratio < 0.6:
+                        continue
+                    datetime_candidates.append((
+                        score_datetime_column(column_name, user_question, parsed_ratio),
+                        column_name,
+                    ))
+
+                datetime_candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+                if not datetime_candidates:
+                    continue
+
+                datetime_column = datetime_candidates[0][1]
+                aggregate_candidates = select_metric_columns(df_numeric, user_question)
+                operation = infer_metric_operation(user_question)
+                aggregate_column = ''
+
+                if operation != 'count':
+                    if not aggregate_candidates:
+                        continue
+                    aggregate_column = aggregate_candidates[0]
+
+                result_json = await tabular_plugin.group_by_datetime_component(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    filename=filename,
+                    datetime_column=datetime_column,
+                    datetime_component=datetime_component,
+                    aggregate_column=aggregate_column,
+                    operation=operation,
+                    source=source_hint,
+                    top_n='5',
+                    sort_descending='true',
+                    group_id=group_id,
+                    public_workspace_id=public_workspace_id,
+                )
+
+                try:
+                    result_payload = json.loads(result_json)
+                except Exception:
+                    continue
+
+                if result_payload.get('error'):
+                    continue
+
+                top_results = result_payload.get('top_results') or {}
+                if not top_results:
+                    continue
+
+                summary_lines = []
+                for component_value, metric_value in top_results.items():
+                    summary_lines.append(
+                        f"- {format_component_label(datetime_component, component_value)}: {metric_value}"
+                    )
+
+                basis = 'row count'
+                if aggregate_column:
+                    basis = f"{operation} {aggregate_column}"
+
+                return (
+                    f"Computed direct datetime analysis from {filename}. "
+                    f"Grouped {basis} by the {datetime_component} extracted from {datetime_column}.\n"
+                    f"Top {datetime_component} values:\n"
+                    + "\n".join(summary_lines)
+                )
+
+        baseline_invocations = plugin_logger.get_invocations_for_conversation(
+            user_id,
+            conversation_id,
+            limit=1000
+        )
+        baseline_invocation_count = len(baseline_invocations)
+
+        for attempt_number, force_tool_use in enumerate((False, True), start=1):
+            # 4. Build chat history with pre-loaded schemas
+            chat_history = SKChatHistory()
+            chat_history.add_system_message(build_system_prompt(force_tool_use=force_tool_use))
+
+            chat_history.add_user_message(
+                f"Analyze the tabular data to answer: {user_question}\n"
+                f"Use user_id='{user_id}', conversation_id='{conversation_id}', {source_context}."
+            )
+
+            # 5. Execute with auto function calling
+            execution_settings = AzureChatPromptExecutionSettings(
+                service_id="tabular-analysis",
+                function_choice_behavior=FunctionChoiceBehavior.Auto(
+                    maximum_auto_invoke_attempts=10 if force_tool_use else 7
+                ),
+            )
+
+            result = await chat_service.get_chat_message_contents(
+                chat_history, execution_settings, kernel=kernel
+            )
+
+            invocations_after = plugin_logger.get_invocations_for_conversation(
+                user_id,
+                conversation_id,
+                limit=1000
+            )
+            new_invocations = get_new_plugin_invocations(invocations_after, baseline_invocation_count)
+            new_invocation_count = len(new_invocations)
+            discovery_invocations, analytical_invocations, _ = split_tabular_plugin_invocations(new_invocations)
+
+            if result and result[0].content:
+                analysis = result[0].content.strip()
+                if len(analysis) > 20000:
+                    analysis = analysis[:20000] + "\n[Analysis truncated]"
+
+                if analytical_invocations:
+                    log_event(
+                        f"[Tabular SK Analysis] Analysis complete via {len(analytical_invocations)} analytical tool call(s) on attempt {attempt_number}",
+                        level=logging.INFO
+                    )
+                    return analysis
+
+                if discovery_invocations:
+                    discovery_function_names = sorted({
+                        invocation.function_name for invocation in discovery_invocations
+                    })
+                    log_event(
+                        f"[Tabular SK Analysis] Attempt {attempt_number} used only discovery tool(s) {discovery_function_names}; retrying",
+                        level=logging.WARNING
+                    )
+                elif new_invocation_count > 0:
+                    log_event(
+                        f"[Tabular SK Analysis] Attempt {attempt_number} used unsupported tool(s) without computed analysis; retrying",
+                        level=logging.WARNING
+                    )
+                else:
+                    log_event(
+                        f"[Tabular SK Analysis] Attempt {attempt_number} returned narrative without tool use; retrying",
+                        level=logging.WARNING
+                    )
+            else:
+                log_event(
+                    f"[Tabular SK Analysis] Attempt {attempt_number} returned no content",
+                    level=logging.WARNING
+                )
+
+            baseline_invocation_count = len(invocations_after)
+
+        direct_datetime_fallback = await try_direct_datetime_component_fallback()
+        if direct_datetime_fallback:
+            log_event("[Tabular SK Analysis] Direct datetime fallback succeeded", level=logging.INFO)
+            return direct_datetime_fallback
+
+        log_event("[Tabular SK Analysis] Unable to obtain computed tool-backed results", level=logging.WARNING)
         return None
 
     except Exception as e:
@@ -177,6 +543,7 @@ def collect_tabular_sk_citations(user_id, conversation_id):
 
     plugin_logger = get_plugin_logger()
     plugin_invocations = plugin_logger.get_invocations_for_conversation(user_id, conversation_id)
+    plugin_invocations = filter_tabular_citation_invocations(plugin_invocations)
 
     if not plugin_invocations:
         return []
@@ -218,6 +585,96 @@ def collect_tabular_sk_citations(user_id, conversation_id):
 
     log_event(f"[Tabular SK Citations] Collected {len(citations)} tool execution citations", level=logging.INFO)
     return citations
+
+
+def is_tabular_filename(filename):
+    """Return True when the filename has a supported tabular extension."""
+    if not filename or not isinstance(filename, str):
+        return False
+
+    _, extension = os.path.splitext(filename.strip().lower())
+    return extension.lstrip('.') in TABULAR_EXTENSIONS
+
+
+def get_document_container_for_scope(document_scope):
+    """Return the Cosmos documents container that matches the workspace scope."""
+    if document_scope == 'group':
+        return cosmos_group_documents_container
+    if document_scope == 'public':
+        return cosmos_public_documents_container
+    return cosmos_user_documents_container
+
+
+def get_selected_workspace_tabular_filenames(selected_document_ids=None, selected_document_id=None, document_scope='personal'):
+    """Resolve explicitly selected workspace documents and return tabular filenames."""
+    selected_ids = list(selected_document_ids or [])
+    if not selected_ids and selected_document_id and selected_document_id != 'all':
+        selected_ids = [selected_document_id]
+
+    if not selected_ids:
+        return set()
+
+    cosmos_container = get_document_container_for_scope(document_scope)
+    tabular_filenames = set()
+
+    for doc_id in selected_ids:
+        if not doc_id or doc_id == 'all':
+            continue
+
+        try:
+            doc_query = (
+                "SELECT TOP 1 c.file_name, c.title "
+                "FROM c WHERE c.id = @doc_id "
+                "ORDER BY c.version DESC"
+            )
+            doc_params = [{"name": "@doc_id", "value": doc_id}]
+            doc_results = list(cosmos_container.query_items(
+                query=doc_query,
+                parameters=doc_params,
+                enable_cross_partition_query=True
+            ))
+
+            if not doc_results:
+                continue
+
+            file_name = doc_results[0].get('file_name') or doc_results[0].get('title')
+            if is_tabular_filename(file_name):
+                tabular_filenames.add(file_name)
+        except Exception as e:
+            log_event(
+                f"[Tabular SK Analysis] Failed to resolve selected document '{doc_id}': {e}",
+                level=logging.WARNING
+            )
+
+    return tabular_filenames
+
+
+def collect_workspace_tabular_filenames(combined_documents=None, selected_document_ids=None,
+                                        selected_document_id=None, document_scope='personal'):
+    """Collect tabular filenames from search results and explicit workspace selection."""
+    tabular_filenames = set()
+
+    for source_doc in combined_documents or []:
+        file_name = source_doc.get('file_name', '')
+        if is_tabular_filename(file_name):
+            tabular_filenames.add(file_name)
+
+    tabular_filenames.update(get_selected_workspace_tabular_filenames(
+        selected_document_ids=selected_document_ids,
+        selected_document_id=selected_document_id,
+        document_scope=document_scope,
+    ))
+
+    return tabular_filenames
+
+
+def determine_tabular_source_hint(document_scope, active_group_id=None, active_public_workspace_id=None):
+    """Map workspace scope metadata to the tabular plugin source hint."""
+    if document_scope == 'group' and active_group_id:
+        return 'group'
+    if document_scope == 'public' and active_public_workspace_id:
+        return 'public'
+    return 'workspace'
 
 def register_route_backend_chats(app):
     @app.route('/api/chat', methods=['POST'])
@@ -1093,11 +1550,11 @@ def register_route_backend_chats(app):
                         'error': 'There was an issue with the embedding process. Please check with an admin on embedding configuration.'
                     }), 500
 
+                combined_documents = []
                 if search_results:
                     unique_doc_names = set(doc.get('file_name', 'Unknown') for doc in search_results)
                     thought_tracker.add_thought('search', f"Found {len(search_results)} results from {len(unique_doc_names)} documents")
                     retrieved_texts = []
-                    combined_documents = []
                     classifications_found = set(conversation_item.get('classification', [])) # Load existing
 
                     for doc in search_results:
@@ -1149,70 +1606,6 @@ def register_route_backend_chats(app):
                         'content': system_prompt_search,
                         'documents': combined_documents # Keep track of docs used
                     })
-
-                    # Auto-detect tabular files in search results and prompt the LLM to use the plugin
-                    if settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
-                        tabular_files_in_results = set()
-                        for source_doc in combined_documents:
-                            fname = source_doc.get('file_name', '')
-                            if fname and any(fname.lower().endswith(ext) for ext in TABULAR_EXTENSIONS):
-                                tabular_files_in_results.add(fname)
-
-                        if tabular_files_in_results:
-                            # Determine source based on document_scope, not just active IDs
-                            if document_scope == 'group' and active_group_id:
-                                tabular_source_hint = "group"
-                            elif document_scope == 'public' and active_public_workspace_id:
-                                tabular_source_hint = "public"
-                            else:
-                                tabular_source_hint = "workspace"
-
-                            tabular_filenames_str = ", ".join(tabular_files_in_results)
-
-                            # Run SK tabular analysis to pre-compute results
-                            tabular_analysis = asyncio.run(run_tabular_sk_analysis(
-                                user_question=user_message,
-                                tabular_filenames=tabular_files_in_results,
-                                user_id=user_id,
-                                conversation_id=conversation_id,
-                                gpt_model=gpt_model,
-                                settings=settings,
-                                source_hint=tabular_source_hint,
-                                group_id=active_group_id if tabular_source_hint == "group" else None,
-                                public_workspace_id=active_public_workspace_id if tabular_source_hint == "public" else None,
-                            ))
-
-                            if tabular_analysis:
-                                # Inject pre-computed analysis results as context
-                                tabular_system_msg = (
-                                    f"The following analysis was computed from the tabular file(s) "
-                                    f"{tabular_filenames_str} using data analysis functions:\n\n"
-                                    f"{tabular_analysis}\n\n"
-                                    f"Use these computed results to answer the user's question accurately."
-                                )
-                            else:
-                                # Fallback: instruct LLM to use plugin functions (for agent mode)
-                                tabular_system_msg = (
-                                    f"IMPORTANT: The search results include data from tabular file(s): {tabular_filenames_str}. "
-                                    f"The search results contain only a schema summary (column names and a few sample rows), NOT the full data. "
-                                    f"You MUST use the tabular_processing plugin functions to answer ANY question about these files. "
-                                    f"Do NOT attempt to answer using the schema summary alone — it is incomplete. "
-                                    f"Available functions: describe_tabular_file, aggregate_column, filter_rows, query_tabular_data, group_by_aggregate. "
-                                    f"Use source='{tabular_source_hint}'"
-                                    + (f" and group_id='{active_group_id}'" if tabular_source_hint == "group" else "")
-                                    + (f" and public_workspace_id='{active_public_workspace_id}'" if tabular_source_hint == "public" else "")
-                                    + "."
-                                )
-                            system_messages_for_augmentation.append({
-                                'role': 'system',
-                                'content': tabular_system_msg
-                            })
-
-                            # Collect tool execution citations from SK tabular analysis
-                            if tabular_analysis:
-                                tabular_sk_citations = collect_tabular_sk_citations(user_id, conversation_id)
-                                if tabular_sk_citations:
-                                    agent_citations_list.extend(tabular_sk_citations)
 
                     # Loop through each source document/chunk used for this message
                     for source_doc in combined_documents:
@@ -1749,6 +2142,82 @@ def register_route_backend_chats(app):
                         'error': user_friendly_message
                     }), status_code
 
+            workspace_tabular_files = set()
+            if hybrid_search_enabled and settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
+                workspace_tabular_files = collect_workspace_tabular_filenames(
+                    combined_documents=combined_documents,
+                    selected_document_ids=selected_document_ids,
+                    selected_document_id=selected_document_id,
+                    document_scope=document_scope,
+                )
+
+            if hybrid_search_enabled and workspace_tabular_files and settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
+                tabular_source_hint = determine_tabular_source_hint(
+                    document_scope,
+                    active_group_id=active_group_id,
+                    active_public_workspace_id=active_public_workspace_id,
+                )
+                tabular_filenames_str = ", ".join(sorted(workspace_tabular_files))
+                plugin_logger = get_plugin_logger()
+                baseline_tabular_invocation_count = len(
+                    plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
+                )
+
+                tabular_analysis = asyncio.run(run_tabular_sk_analysis(
+                    user_question=user_message,
+                    tabular_filenames=workspace_tabular_files,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    gpt_model=gpt_model,
+                    settings=settings,
+                    source_hint=tabular_source_hint,
+                    group_id=active_group_id if tabular_source_hint == 'group' else None,
+                    public_workspace_id=active_public_workspace_id if tabular_source_hint == 'public' else None,
+                ))
+                tabular_invocations = get_new_plugin_invocations(
+                    plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000),
+                    baseline_tabular_invocation_count
+                )
+                tabular_thought_payloads = get_tabular_tool_thought_payloads(tabular_invocations)
+                for thought_content, thought_detail in tabular_thought_payloads:
+                    thought_tracker.add_thought('tabular_analysis', thought_content, thought_detail)
+
+                if tabular_analysis:
+                    tabular_system_msg = (
+                        f"The following analysis was computed from the tabular file(s) "
+                        f"{tabular_filenames_str} using data analysis functions:\n\n"
+                        f"{tabular_analysis}\n\n"
+                        f"Use these computed results to answer the user's question accurately."
+                    )
+                else:
+                    tabular_system_msg = (
+                        f"IMPORTANT: The selected workspace tabular file(s) are {tabular_filenames_str}. "
+                        f"The search results contain only a schema summary (column names and a few sample rows), NOT the full data. "
+                        f"You MUST use the tabular_processing plugin functions to answer ANY question about these files. "
+                        f"Do NOT attempt to answer using the schema summary alone — it is incomplete. "
+                        f"Available functions: describe_tabular_file, aggregate_column, filter_rows, query_tabular_data, group_by_aggregate, group_by_datetime_component. "
+                        f"Use source='{tabular_source_hint}'"
+                        + (f" and group_id='{active_group_id}'" if tabular_source_hint == 'group' else "")
+                        + (f" and public_workspace_id='{active_public_workspace_id}'" if tabular_source_hint == 'public' else "")
+                        + "."
+                    )
+
+                system_messages_for_augmentation.append({
+                    'role': 'system',
+                    'content': tabular_system_msg
+                })
+
+                if tabular_analysis:
+                    tabular_sk_citations = collect_tabular_sk_citations(user_id, conversation_id)
+                    if tabular_sk_citations:
+                        agent_citations_list.extend(tabular_sk_citations)
+                else:
+                    thought_tracker.add_thought(
+                        'tabular_analysis',
+                        "Tabular analysis could not compute results; using schema context instead",
+                        detail=f"files={tabular_filenames_str}"
+                    )
+
             if web_search_enabled:
                 thought_tracker.add_thought('web_search', f"Searching the web for '{(search_query or user_message)[:50]}'")
                 perform_web_search(
@@ -1960,7 +2429,7 @@ def register_route_backend_chats(app):
                                 'content': f"[User uploaded a tabular data file named '{filename}'. "
                                     f"The file is stored in blob storage and available for analysis. "
                                     f"Use the tabular_processing plugin functions (list_tabular_files, describe_tabular_file, "
-                                    f"aggregate_column, filter_rows, query_tabular_data, group_by_aggregate) to analyze this data. "
+                                    f"aggregate_column, filter_rows, query_tabular_data, group_by_aggregate, group_by_datetime_component) to analyze this data. "
                                     f"The file source is 'chat'.]"
                             })
                         else:
@@ -2052,6 +2521,10 @@ def register_route_backend_chats(app):
                         f"[Chat Tabular SK] Detected {len(chat_tabular_files)} tabular file(s) uploaded to chat: {chat_tabular_filenames_str}",
                         level=logging.INFO
                     )
+                    plugin_logger = get_plugin_logger()
+                    baseline_tabular_invocation_count = len(
+                        plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
+                    )
 
                     chat_tabular_analysis = asyncio.run(run_tabular_sk_analysis(
                         user_question=user_message,
@@ -2062,6 +2535,13 @@ def register_route_backend_chats(app):
                         settings=settings,
                         source_hint="chat",
                     ))
+                    chat_tabular_invocations = get_new_plugin_invocations(
+                        plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000),
+                        baseline_tabular_invocation_count
+                    )
+                    chat_tabular_thought_payloads = get_tabular_tool_thought_payloads(chat_tabular_invocations)
+                    for thought_content, thought_detail in chat_tabular_thought_payloads:
+                        thought_tracker.add_thought('tabular_analysis', thought_content, thought_detail)
 
                     if chat_tabular_analysis:
                         # Inject pre-computed analysis results as context
@@ -2082,6 +2562,11 @@ def register_route_backend_chats(app):
 
                         debug_print(f"[Chat Tabular SK] Analysis injected, {len(chat_tabular_analysis)} chars")
                     else:
+                        thought_tracker.add_thought(
+                            'tabular_analysis',
+                            "Tabular analysis could not compute results; using existing chat file context",
+                            detail=f"files={chat_tabular_filenames_str}"
+                        )
                         debug_print("[Chat Tabular SK] Analysis returned None, relying on existing file context messages")
 
                 # Ensure the very last message is the current user's message (it should be if fetched correctly)
@@ -3802,57 +4287,85 @@ def register_route_backend_chats(app):
                             'documents': combined_documents
                         })
 
-                        # Auto-detect tabular files in search results and run SK analysis
-                        if settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
-                            tabular_files_in_results = set()
-                            for source_doc in combined_documents:
-                                fname = source_doc.get('file_name', '')
-                                if fname and any(fname.lower().endswith(ext) for ext in TABULAR_EXTENSIONS):
-                                    tabular_files_in_results.add(fname)
-
-                            if tabular_files_in_results:
-                                # Determine source based on document_scope, not just active IDs
-                                if document_scope == 'group' and active_group_id:
-                                    tabular_source_hint = "group"
-                                elif document_scope == 'public' and active_public_workspace_id:
-                                    tabular_source_hint = "public"
-                                else:
-                                    tabular_source_hint = "workspace"
-
-                                tabular_filenames_str = ", ".join(tabular_files_in_results)
-
-                                # Run SK tabular analysis to pre-compute results
-                                tabular_analysis = asyncio.run(run_tabular_sk_analysis(
-                                    user_question=user_message,
-                                    tabular_filenames=tabular_files_in_results,
-                                    user_id=user_id,
-                                    conversation_id=conversation_id,
-                                    gpt_model=gpt_model,
-                                    settings=settings,
-                                    source_hint=tabular_source_hint,
-                                    group_id=active_group_id if tabular_source_hint == "group" else None,
-                                    public_workspace_id=active_public_workspace_id if tabular_source_hint == "public" else None,
-                                ))
-
-                                if tabular_analysis:
-                                    system_messages_for_augmentation.append({
-                                        'role': 'system',
-                                        'content': (
-                                            f"The following analysis was computed from the tabular file(s) "
-                                            f"{tabular_filenames_str} using data analysis functions:\n\n"
-                                            f"{tabular_analysis}\n\n"
-                                            f"Use these computed results to answer the user's question accurately."
-                                        )
-                                    })
-
-                                    # Collect tool execution citations from SK tabular analysis
-                                    tabular_sk_citations = collect_tabular_sk_citations(user_id, conversation_id)
-                                    if tabular_sk_citations:
-                                        agent_citations_list.extend(tabular_sk_citations)
-
                         # Reorder hybrid citations list in descending order based on page_number
                         hybrid_citations_list.sort(key=lambda x: x.get('page_number', 0), reverse=True)
                 
+                workspace_tabular_files = set()
+                if hybrid_search_enabled and settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
+                    workspace_tabular_files = collect_workspace_tabular_filenames(
+                        combined_documents=combined_documents,
+                        selected_document_ids=selected_document_ids,
+                        selected_document_id=selected_document_id,
+                        document_scope=document_scope,
+                    )
+
+                if hybrid_search_enabled and workspace_tabular_files and settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
+                    tabular_source_hint = determine_tabular_source_hint(
+                        document_scope,
+                        active_group_id=active_group_id,
+                        active_public_workspace_id=active_public_workspace_id,
+                    )
+                    tabular_filenames_str = ", ".join(sorted(workspace_tabular_files))
+                    plugin_logger = get_plugin_logger()
+                    baseline_tabular_invocation_count = len(
+                        plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
+                    )
+
+                    tabular_analysis = asyncio.run(run_tabular_sk_analysis(
+                        user_question=user_message,
+                        tabular_filenames=workspace_tabular_files,
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        gpt_model=gpt_model,
+                        settings=settings,
+                        source_hint=tabular_source_hint,
+                        group_id=active_group_id if tabular_source_hint == 'group' else None,
+                        public_workspace_id=active_public_workspace_id if tabular_source_hint == 'public' else None,
+                    ))
+                    tabular_invocations = get_new_plugin_invocations(
+                        plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000),
+                        baseline_tabular_invocation_count
+                    )
+                    tabular_thought_payloads = get_tabular_tool_thought_payloads(tabular_invocations)
+                    for thought_content, thought_detail in tabular_thought_payloads:
+                        yield emit_thought('tabular_analysis', thought_content, thought_detail)
+
+                    if tabular_analysis:
+                        system_messages_for_augmentation.append({
+                            'role': 'system',
+                            'content': (
+                                f"The following analysis was computed from the tabular file(s) "
+                                f"{tabular_filenames_str} using data analysis functions:\n\n"
+                                f"{tabular_analysis}\n\n"
+                                f"Use these computed results to answer the user's question accurately."
+                            )
+                        })
+
+                        tabular_sk_citations = collect_tabular_sk_citations(user_id, conversation_id)
+                        if tabular_sk_citations:
+                            agent_citations_list.extend(tabular_sk_citations)
+                    else:
+                        system_messages_for_augmentation.append({
+                            'role': 'system',
+                            'content': (
+                                f"IMPORTANT: The selected workspace tabular file(s) are {tabular_filenames_str}. "
+                                f"The search results contain only a schema summary (column names and a few sample rows), NOT the full data. "
+                                f"You MUST use the tabular_processing plugin functions to answer ANY question about these files. "
+                                f"Do NOT attempt to answer using the schema summary alone — it is incomplete. "
+                                f"Available functions: describe_tabular_file, aggregate_column, filter_rows, query_tabular_data, group_by_aggregate, group_by_datetime_component. "
+                                f"Use source='{tabular_source_hint}'"
+                                + (f" and group_id='{active_group_id}'" if tabular_source_hint == 'group' else "")
+                                + (f" and public_workspace_id='{active_public_workspace_id}'" if tabular_source_hint == 'public' else "")
+                                + "."
+                            )
+                        })
+
+                        yield emit_thought(
+                            'tabular_analysis',
+                            "Tabular analysis could not compute results; using schema context instead",
+                            detail=f"files={tabular_filenames_str}"
+                        )
+
                 if web_search_enabled:
                     yield emit_thought('web_search', f"Searching the web for '{(search_query or user_message)[:50]}'")
                     perform_web_search(
@@ -3945,7 +4458,7 @@ def register_route_backend_chats(app):
                                         f"The file is stored in blob storage and available for analysis. "
                                         f"Use the tabular_processing plugin functions (list_tabular_files, "
                                         f"describe_tabular_file, aggregate_column, filter_rows, "
-                                        f"query_tabular_data, group_by_aggregate) to analyze this data. "
+                                        f"query_tabular_data, group_by_aggregate, group_by_datetime_component) to analyze this data. "
                                         f"The file source is 'chat'.]"
                                     )
                                 })
@@ -3985,6 +4498,10 @@ def register_route_backend_chats(app):
                             f"[Chat Tabular SK] Streaming: Detected {len(chat_tabular_files)} tabular file(s) uploaded to chat: {chat_tabular_filenames_str}",
                             level=logging.INFO
                         )
+                        plugin_logger = get_plugin_logger()
+                        baseline_tabular_invocation_count = len(
+                            plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
+                        )
 
                         chat_tabular_analysis = asyncio.run(run_tabular_sk_analysis(
                             user_question=user_message,
@@ -3995,6 +4512,13 @@ def register_route_backend_chats(app):
                             settings=settings,
                             source_hint="chat",
                         ))
+                        chat_tabular_invocations = get_new_plugin_invocations(
+                            plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000),
+                            baseline_tabular_invocation_count
+                        )
+                        chat_tabular_thought_payloads = get_tabular_tool_thought_payloads(chat_tabular_invocations)
+                        for thought_content, thought_detail in chat_tabular_thought_payloads:
+                            yield emit_thought('tabular_analysis', thought_content, thought_detail)
 
                         if chat_tabular_analysis:
                             conversation_history_for_api.append({
@@ -4014,6 +4538,11 @@ def register_route_backend_chats(app):
 
                             debug_print(f"[Chat Tabular SK] Streaming: Analysis injected, {len(chat_tabular_analysis)} chars")
                         else:
+                            yield emit_thought(
+                                'tabular_analysis',
+                                "Tabular analysis could not compute results; using existing chat file context",
+                                detail=f"files={chat_tabular_filenames_str}"
+                            )
                             debug_print("[Chat Tabular SK] Streaming: Analysis returned None, relying on existing file context")
 
                 except Exception as e:

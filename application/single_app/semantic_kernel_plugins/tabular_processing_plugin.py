@@ -29,6 +29,29 @@ class TabularProcessingPlugin:
     """Provides data analysis functions on tabular files stored in blob storage."""
 
     SUPPORTED_EXTENSIONS = {'.csv', '.xlsx', '.xls', '.xlsm'}
+    DAY_NAME_ORDER = [
+        'Monday',
+        'Tuesday',
+        'Wednesday',
+        'Thursday',
+        'Friday',
+        'Saturday',
+        'Sunday'
+    ]
+    MONTH_NAME_ORDER = [
+        'January',
+        'February',
+        'March',
+        'April',
+        'May',
+        'June',
+        'July',
+        'August',
+        'September',
+        'October',
+        'November',
+        'December'
+    ]
 
     def __init__(self):
         self._df_cache = {}  # Per-instance cache: (container, blob_name) -> DataFrame
@@ -85,6 +108,149 @@ class TabularProcessingPlugin:
             except (ValueError, TypeError):
                 pass
         return df
+
+    def _parse_datetime_like_series(self, series: pandas.Series) -> pandas.Series:
+        """Best-effort parsing for datetime and time-like values."""
+        cleaned_series = series.astype(str).str.strip()
+        cleaned_series = cleaned_series.replace({
+            '': None,
+            'nan': None,
+            'NaN': None,
+            'nat': None,
+            'NaT': None,
+            'none': None,
+            'None': None,
+        })
+
+        parsed = pandas.to_datetime(cleaned_series, errors='coerce')
+
+        remaining_mask = parsed.isna() & cleaned_series.notna()
+        if remaining_mask.any():
+            digits = cleaned_series[remaining_mask].str.replace(r'[^0-9]', '', regex=True)
+
+            hhmm_mask = digits.str.match(r'^\d{3,4}$', na=False)
+            if hhmm_mask.any():
+                hhmm_values = digits[hhmm_mask].str.zfill(4)
+                parsed.loc[hhmm_values.index] = pandas.to_datetime(
+                    hhmm_values,
+                    format='%H%M',
+                    errors='coerce'
+                )
+
+            remaining_mask = parsed.isna() & cleaned_series.notna()
+            if remaining_mask.any():
+                digits = cleaned_series[remaining_mask].str.replace(r'[^0-9]', '', regex=True)
+                hhmmss_mask = digits.str.match(r'^\d{5,6}$', na=False)
+                if hhmmss_mask.any():
+                    hhmmss_values = digits[hhmmss_mask].str.zfill(6)
+                    parsed.loc[hhmmss_values.index] = pandas.to_datetime(
+                        hhmmss_values,
+                        format='%H%M%S',
+                        errors='coerce'
+                    )
+
+        return parsed
+
+    def _normalize_datetime_component(self, component: str) -> str:
+        """Normalize datetime component aliases to a canonical value."""
+        normalized = (component or '').strip().lower()
+        aliases = {
+            'years': 'year',
+            'months': 'month',
+            'monthname': 'month_name',
+            'month_name': 'month_name',
+            'days': 'day',
+            'dayofmonth': 'day',
+            'dates': 'date',
+            'hours': 'hour',
+            'hour_of_day': 'hour',
+            'timeofday': 'hour',
+            'time_of_day': 'hour',
+            'minutes': 'minute',
+            'dayofweek': 'day_name',
+            'day_of_week': 'day_name',
+            'weekday': 'day_name',
+            'weekday_name': 'day_name',
+            'day_name': 'day_name',
+            'weekdaynumber': 'weekday_number',
+            'weekday_number': 'weekday_number',
+            'quarters': 'quarter',
+        }
+        return aliases.get(normalized, normalized)
+
+    def _extract_datetime_component(self, parsed_series: pandas.Series, component: str) -> pandas.Series:
+        """Extract a supported datetime component from a parsed datetime series."""
+        normalized = self._normalize_datetime_component(component)
+
+        if normalized == 'year':
+            return parsed_series.dt.year
+        if normalized == 'month':
+            return parsed_series.dt.month
+        if normalized == 'month_name':
+            month_names = parsed_series.dt.month_name()
+            ordered_months = pandas.Categorical(
+                month_names,
+                categories=self.MONTH_NAME_ORDER,
+                ordered=True
+            )
+            return pandas.Series(ordered_months, index=parsed_series.index)
+        if normalized == 'day':
+            return parsed_series.dt.day
+        if normalized == 'date':
+            return parsed_series.dt.strftime('%Y-%m-%d')
+        if normalized == 'hour':
+            return parsed_series.dt.hour
+        if normalized == 'minute':
+            return parsed_series.dt.minute
+        if normalized == 'day_name':
+            day_names = parsed_series.dt.day_name()
+            ordered_days = pandas.Categorical(
+                day_names,
+                categories=self.DAY_NAME_ORDER,
+                ordered=True
+            )
+            return pandas.Series(ordered_days, index=parsed_series.index)
+        if normalized == 'weekday_number':
+            return parsed_series.dt.dayofweek
+        if normalized == 'quarter':
+            return parsed_series.dt.quarter
+        if normalized == 'week':
+            return parsed_series.dt.isocalendar().week.astype(int)
+
+        raise ValueError(
+            f"Unsupported datetime component '{component}'. "
+            "Use year, month, month_name, day, date, hour, minute, day_name, weekday_number, quarter, or week."
+        )
+
+    def _parse_boolean_argument(self, value, default=True) -> bool:
+        """Parse common string boolean values for plugin inputs."""
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+
+        normalized = str(value).strip().lower()
+        if normalized in {'true', '1', 'yes', 'y', 'on'}:
+            return True
+        if normalized in {'false', '0', 'no', 'n', 'off'}:
+            return False
+        return default
+
+    def _ordered_grouped_results(self, grouped: pandas.Series, component: str) -> pandas.Series:
+        """Return grouped results in a natural chronological order where possible."""
+        normalized = self._normalize_datetime_component(component)
+        if normalized == 'day_name':
+            return grouped.reindex([day for day in self.DAY_NAME_ORDER if day in grouped.index])
+        if normalized == 'month_name':
+            return grouped.reindex([month for month in self.MONTH_NAME_ORDER if month in grouped.index])
+        return grouped.sort_index()
+
+    def _series_to_json_dict(self, series: pandas.Series) -> dict:
+        """Convert a pandas Series into a JSON-safe dictionary."""
+        safe_dict = {}
+        for index, value in series.items():
+            safe_dict[str(index)] = value.item() if hasattr(value, 'item') else value
+        return safe_dict
 
     def _resolve_blob_location(self, user_id: str, conversation_id: str, filename: str, source: str,
                                group_id: str = None, public_workspace_id: str = None) -> tuple:
@@ -511,5 +677,124 @@ class TabularProcessingPlugin:
                 }, indent=2, default=str)
             except Exception as e:
                 log_event(f"[TabularProcessingPlugin] Error in group-by: {e}", level=logging.WARNING)
+                return json.dumps({"error": str(e)})
+        return await asyncio.to_thread(_sync_work)
+
+    @kernel_function(
+        description=(
+            "Group a tabular file by a component extracted from a datetime-like column and aggregate a metric. "
+            "Use this for time-based questions such as peak hours, busiest weekdays, or monthly trends. "
+            "Supported datetime components: year, month, month_name, day, date, hour, minute, day_name, "
+            "weekday_number, quarter, week. Supported operations: count, sum, mean, min, max, median, std. "
+            "An optional pandas query filter can be applied before grouping."
+        ),
+        name="group_by_datetime_component"
+    )
+    @plugin_function_logger("TabularProcessingPlugin")
+    async def group_by_datetime_component(
+        self,
+        user_id: Annotated[str, "The user ID (from Scope ID in Conversation Metadata)"],
+        conversation_id: Annotated[str, "The conversation ID (from Conversation Metadata)"],
+        filename: Annotated[str, "The filename of the tabular file"],
+        datetime_column: Annotated[str, "The datetime-like column to extract a component from"],
+        datetime_component: Annotated[str, "Component: year, month, month_name, day, date, hour, minute, day_name, weekday_number, quarter, or week"],
+        aggregate_column: Annotated[Optional[str], "The numeric column to aggregate. Leave empty and use operation='count' to count rows."] = "",
+        operation: Annotated[str, "Aggregation operation: count, sum, mean, min, max, median, std"] = "count",
+        source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
+        filter_expression: Annotated[Optional[str], "Optional pandas query filter applied before grouping"] = "",
+        top_n: Annotated[str, "How many top groups to return in descending order"] = "10",
+        sort_descending: Annotated[str, "Whether top_results should be sorted descending (true/false)"] = "true",
+        group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
+        public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
+    ) -> Annotated[str, "JSON result of the datetime component grouping analysis"]:
+        """Group data by a datetime component and aggregate a metric."""
+        def _sync_work():
+            try:
+                container, blob_path = self._resolve_blob_location(
+                    user_id,
+                    conversation_id,
+                    filename,
+                    source,
+                    group_id=group_id,
+                    public_workspace_id=public_workspace_id
+                )
+                df = self._read_tabular_blob_to_dataframe(container, blob_path)
+                df = self._try_numeric_conversion(df)
+
+                if filter_expression:
+                    try:
+                        df = df.query(filter_expression)
+                    except Exception as query_error:
+                        return json.dumps({
+                            "error": f"Filter query error: {query_error}. Ensure column names and values are correct."
+                        })
+
+                if datetime_column not in df.columns:
+                    return json.dumps({
+                        "error": f"Column '{datetime_column}' not found. Available: {list(df.columns)}"
+                    })
+
+                parsed_datetime = self._parse_datetime_like_series(df[datetime_column])
+                valid_mask = parsed_datetime.notna()
+                if not valid_mask.any():
+                    return json.dumps({
+                        "error": (
+                            f"Could not parse any datetime values from column '{datetime_column}'. "
+                            "Try a different datetime column or inspect the file schema preview."
+                        )
+                    })
+
+                filtered_df = df.loc[valid_mask].copy()
+                parsed_datetime = parsed_datetime.loc[valid_mask]
+                component_values = self._extract_datetime_component(parsed_datetime, datetime_component)
+
+                component_column_name = f"__datetime_component_{self._normalize_datetime_component(datetime_component)}"
+                filtered_df[component_column_name] = component_values
+
+                op = (operation or 'count').strip().lower()
+                if op not in {'count', 'sum', 'mean', 'min', 'max', 'median', 'std'}:
+                    return json.dumps({
+                        "error": "Unsupported operation. Use count, sum, mean, min, max, median, or std."
+                    })
+
+                aggregate_column_name = (aggregate_column or '').strip()
+                if op == 'count' and not aggregate_column_name:
+                    grouped = filtered_df.groupby(component_column_name).size()
+                else:
+                    if not aggregate_column_name:
+                        return json.dumps({
+                            "error": "aggregate_column is required unless operation='count'."
+                        })
+                    if aggregate_column_name not in filtered_df.columns:
+                        return json.dumps({
+                            "error": f"Column '{aggregate_column_name}' not found. Available: {list(filtered_df.columns)}"
+                        })
+                    grouped = filtered_df.groupby(component_column_name)[aggregate_column_name].agg(op)
+
+                grouped = grouped.dropna()
+                if grouped.empty:
+                    return json.dumps({
+                        "error": "No grouped results were produced after filtering and datetime parsing."
+                    })
+
+                top_limit = max(1, int(top_n))
+                descending = self._parse_boolean_argument(sort_descending, default=True)
+                top_results = grouped.sort_values(ascending=not descending).head(top_limit)
+                ordered_results = self._ordered_grouped_results(grouped, datetime_component)
+
+                return json.dumps({
+                    "datetime_column": datetime_column,
+                    "datetime_component": self._normalize_datetime_component(datetime_component),
+                    "aggregate_column": aggregate_column_name or None,
+                    "operation": op,
+                    "filter_expression": filter_expression or None,
+                    "parsed_rows": int(valid_mask.sum()),
+                    "dropped_rows": int((~valid_mask).sum()),
+                    "groups": int(len(grouped)),
+                    "top_results": self._series_to_json_dict(top_results),
+                    "result": self._series_to_json_dict(ordered_results),
+                }, indent=2, default=str)
+            except Exception as e:
+                log_event(f"[TabularProcessingPlugin] Error in datetime component grouping: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
         return await asyncio.to_thread(_sync_work)
