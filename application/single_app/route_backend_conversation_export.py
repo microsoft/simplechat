@@ -107,7 +107,7 @@ def register_route_backend_conversation_export(app):
 
         except Exception as e:
             debug_print(f"Export error: {str(e)}")
-            return jsonify({'error': f'Export failed: {str(e)}'}), 500
+            return jsonify({'error': 'Export failed due to a server error. Please try again later.'}), 500
 
     def _sanitize_conversation(conv):
         """Return only user-facing conversation fields."""
@@ -398,7 +398,7 @@ def register_route_backend_conversation_export(app):
 
         except Exception as e:
             debug_print(f"Message export error: {str(e)}")
-            return jsonify({'error': f'Export failed: {str(e)}'}), 500
+            return jsonify({'error': 'Export failed due to a server error. Please try again later.'}), 500
 
     def _add_markdown_content_to_doc(doc, content):
         """Convert markdown content to Word document elements with basic formatting."""
