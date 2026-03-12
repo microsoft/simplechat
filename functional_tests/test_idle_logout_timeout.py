@@ -10,6 +10,7 @@ client-side warning/logout wiring are present and sourced from admin settings.
 
 import os
 import sys
+import ast
 import traceback
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -25,36 +26,175 @@ def _read_file(*path_parts):
         return file_handle.read()
 
 
+def _parse_python_file(*path_parts):
+    """Read and parse a Python source file into AST."""
+    source = _read_file(*path_parts)
+    return source, ast.parse(source)
+
+
+def _find_top_level_function(module_tree, function_name):
+    """Find a top-level function definition by name."""
+    for node in module_tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == function_name:
+            return node
+    return None
+
+
+def _find_nested_function(parent_function, function_name):
+    """Find a nested function definition by name in a parent function body."""
+    for node in parent_function.body:
+        if isinstance(node, ast.FunctionDef) and node.name == function_name:
+            return node
+    return None
+
+
 def test_server_idle_timeout_wiring():
     """Validate idle-timeout and heartbeat backend wiring exists."""
     print("🔍 Testing server-side idle-timeout wiring...")
 
-    app_content = _read_file("application", "single_app", "app.py")
+    _, app_tree = _parse_python_file("application", "single_app", "app.py")
     config_content = _read_file("application", "single_app", "config.py")
-    auth_route_content = _read_file("application", "single_app", "route_frontend_authentication.py")
+    _, auth_tree = _parse_python_file("application", "single_app", "route_frontend_authentication.py")
 
-    required_app_markers = [
-        "def get_idle_timeout_settings(settings=None):",
-        "def is_idle_timeout_enabled(settings=None):",
-        "settings_source_counters = {}",
-        "def record_request_settings_source(source):",
-        "get_settings(include_source=True)",
-        "record_request_settings_source(settings_source)",
-        "settings.get('idle_timeout_minutes', 30)",
-        "settings.get('idle_warning_minutes', 28)",
-        "def enforce_idle_session_timeout():",
-        "if not is_idle_timeout_enabled(request_settings):",
-        "last_activity_epoch",
-        "IDLE_TIMEOUT_EXEMPT_PATHS",
-        "'/logout/local'",
-        "redirect(url_for('local_logout'))",
-        "@app.route('/api/session/heartbeat', methods=['POST'])",
-        "def session_heartbeat():",
-        "idle_timeout_minutes, _ = get_idle_timeout_settings(request_settings)"
+    required_app_functions = [
+        "get_idle_timeout_settings",
+        "is_idle_timeout_enabled",
+        "record_request_settings_source",
+        "get_request_settings",
+        "load_request_settings_cache",
+        "enforce_idle_session_timeout",
+        "session_heartbeat"
     ]
+    missing_app_functions = [
+        function_name for function_name in required_app_functions
+        if _find_top_level_function(app_tree, function_name) is None
+    ]
+    assert not missing_app_functions, f"Missing backend functions in app.py: {missing_app_functions}"
 
-    missing_app_markers = [marker for marker in required_app_markers if marker not in app_content]
-    assert not missing_app_markers, f"Missing backend markers in app.py: {missing_app_markers}"
+    has_settings_source_counter_dict = any(
+        isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "settings_source_counters" for target in node.targets)
+        and isinstance(node.value, ast.Dict)
+        and len(node.value.keys) == 0
+        for node in app_tree.body
+    )
+    assert has_settings_source_counter_dict, "Missing settings_source_counters = {} assignment"
+
+    idle_settings_def = _find_top_level_function(app_tree, "get_idle_timeout_settings")
+    has_idle_timeout_default_get = False
+    has_idle_warning_default_get = False
+    for node in ast.walk(idle_settings_def):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "settings"
+            and node.func.attr == "get"
+            and len(node.args) >= 2
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[1], ast.Constant)
+        ):
+            if node.args[0].value == "idle_timeout_minutes" and node.args[1].value == 30:
+                has_idle_timeout_default_get = True
+            if node.args[0].value == "idle_warning_minutes" and node.args[1].value == 28:
+                has_idle_warning_default_get = True
+
+    assert has_idle_timeout_default_get, "Missing settings.get('idle_timeout_minutes', 30) in get_idle_timeout_settings"
+    assert has_idle_warning_default_get, "Missing settings.get('idle_warning_minutes', 28) in get_idle_timeout_settings"
+
+    has_include_source_get_settings = False
+    has_record_settings_source_call = False
+    for node in ast.walk(app_tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "get_settings"
+            and any(
+                isinstance(keyword, ast.keyword)
+                and keyword.arg == "include_source"
+                and isinstance(keyword.value, ast.Constant)
+                and keyword.value.value is True
+                for keyword in node.keywords
+            )
+        ):
+            has_include_source_get_settings = True
+
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "record_request_settings_source"
+            and len(node.args) == 1
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id == "settings_source"
+        ):
+            has_record_settings_source_call = True
+
+    assert has_include_source_get_settings, "Missing get_settings(include_source=True) wiring in app.py"
+    assert has_record_settings_source_call, "Missing record_request_settings_source(settings_source) wiring in app.py"
+
+    has_idle_timeout_exempt_logout_local = False
+    for node in app_tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "IDLE_TIMEOUT_EXEMPT_PATHS"
+            for target in node.targets
+        ):
+            if isinstance(node.value, ast.Set):
+                has_idle_timeout_exempt_logout_local = any(
+                    isinstance(element, ast.Constant) and element.value == "/logout/local"
+                    for element in node.value.elts
+                )
+
+    assert has_idle_timeout_exempt_logout_local, "Missing '/logout/local' in IDLE_TIMEOUT_EXEMPT_PATHS"
+
+    enforce_idle_timeout_def = _find_top_level_function(app_tree, "enforce_idle_session_timeout")
+    has_is_idle_timeout_enabled_guard = False
+    has_local_logout_redirect = False
+    for node in ast.walk(enforce_idle_timeout_def):
+        if isinstance(node, ast.If):
+            test_node = node.test
+            if (
+                isinstance(test_node, ast.UnaryOp)
+                and isinstance(test_node.op, ast.Not)
+                and isinstance(test_node.operand, ast.Call)
+                and isinstance(test_node.operand.func, ast.Name)
+                and test_node.operand.func.id == "is_idle_timeout_enabled"
+                and len(test_node.operand.args) == 1
+                and isinstance(test_node.operand.args[0], ast.Name)
+                and test_node.operand.args[0].id == "request_settings"
+            ):
+                has_is_idle_timeout_enabled_guard = True
+
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "redirect"
+            and len(node.args) == 1
+            and isinstance(node.args[0], ast.Call)
+            and isinstance(node.args[0].func, ast.Name)
+            and node.args[0].func.id == "url_for"
+            and len(node.args[0].args) == 1
+            and isinstance(node.args[0].args[0], ast.Constant)
+            and node.args[0].args[0].value == "local_logout"
+        ):
+            has_local_logout_redirect = True
+
+    assert has_is_idle_timeout_enabled_guard, "Missing 'if not is_idle_timeout_enabled(request_settings)' guard"
+    assert has_local_logout_redirect, "Missing redirect(url_for('local_logout')) in enforce_idle_session_timeout"
+
+    session_heartbeat_def = _find_top_level_function(app_tree, "session_heartbeat")
+    has_heartbeat_refresh_call = False
+    for node in ast.walk(session_heartbeat_def):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "get_idle_timeout_settings"
+            and len(node.args) == 1
+            and isinstance(node.args[0], ast.Call)
+            and isinstance(node.args[0].func, ast.Name)
+            and node.args[0].func.id == "get_request_settings"
+        ):
+            has_heartbeat_refresh_call = True
+    assert has_heartbeat_refresh_call, "Missing get_idle_timeout_settings(get_request_settings()) in session_heartbeat"
 
     required_config_markers = [
         "VERSION = \"0.239.006\""
@@ -63,13 +203,51 @@ def test_server_idle_timeout_wiring():
     missing_config_markers = [marker for marker in required_config_markers if marker not in config_content]
     assert not missing_config_markers, f"Missing config markers: {missing_config_markers}"
 
-    required_auth_markers = [
-        "session.pop(\"last_activity_epoch\", None)",
-        "session[\"last_activity_epoch\"] = int(time.time())"
-    ]
+    auth_register_def = _find_top_level_function(auth_tree, "register_route_frontend_authentication")
+    assert auth_register_def is not None, "Missing register_route_frontend_authentication function"
 
-    missing_auth_markers = [marker for marker in required_auth_markers if marker not in auth_route_content]
-    assert not missing_auth_markers, f"Missing authentication flow markers: {missing_auth_markers}"
+    login_def = _find_nested_function(auth_register_def, "login")
+    authorized_def = _find_nested_function(auth_register_def, "authorized")
+    assert login_def is not None, "Missing login route function in authentication route"
+    assert authorized_def is not None, "Missing authorized route function in authentication route"
+
+    has_last_activity_pop = False
+    for node in ast.walk(login_def):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "session"
+            and node.func.attr == "pop"
+            and len(node.args) >= 1
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value == "last_activity_epoch"
+        ):
+            has_last_activity_pop = True
+    assert has_last_activity_pop, "Missing session.pop('last_activity_epoch', ...) in login flow"
+
+    has_last_activity_assignment = False
+    for node in ast.walk(authorized_def):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+            if (
+                isinstance(target, ast.Subscript)
+                and isinstance(target.value, ast.Name)
+                and target.value.id == "session"
+                and isinstance(target.slice, ast.Constant)
+                and target.slice.value == "last_activity_epoch"
+                and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Name)
+                and node.value.func.id == "int"
+                and len(node.value.args) == 1
+                and isinstance(node.value.args[0], ast.Call)
+                and isinstance(node.value.args[0].func, ast.Attribute)
+                and isinstance(node.value.args[0].func.value, ast.Name)
+                and node.value.args[0].func.value.id == "time"
+                and node.value.args[0].func.attr == "time"
+            ):
+                has_last_activity_assignment = True
+    assert has_last_activity_assignment, "Missing session['last_activity_epoch'] = int(time.time()) in authorized flow"
 
     print("✅ Server-side idle-timeout wiring is present")
 

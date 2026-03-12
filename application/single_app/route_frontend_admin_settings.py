@@ -8,6 +8,7 @@ from functions_activity_logging import log_web_search_consent_acceptance
 from functions_logging import *
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta
+from admin_settings_int_utils import safe_int_with_source
 
 def allowed_file(filename, allowed_extensions):
     return '.' in filename and \
@@ -288,40 +289,36 @@ def register_route_frontend_admin_settings(app):
             form_data = request.form # Use a variable for easier access
             user_id = get_current_user_id()
 
-            def safe_int(raw_value, fallback_value, field_name="unknown", hard_default=0):
+            def parse_admin_int(raw_value, fallback_value, field_name="unknown", hard_default=0):
                 """
-                Safely convert an admin form value to an integer with fallback handling.
+                Parse an admin form value to an integer with structured fallback diagnostics.
 
                 Args:
                     raw_value (object): The submitted form value to parse.
                     fallback_value (object): The fallback value to parse when input conversion fails.
                     field_name (str): The admin settings field name being parsed.
-                    hard_default (int): The guaranteed integer fallback used when both values are invalid.
+                    hard_default (int): Final integer default when both input and fallback are invalid.
 
                 Returns:
                     int: A valid integer derived from input, fallback, or hard default.
                 Raises:
                     None.
                 """
-                try:
-                    return int(raw_value)
-                except (TypeError, ValueError):
-                    try:
-                        parsed_fallback = int(fallback_value)
-                    except (TypeError, ValueError):
-                        log_event(
-                            "Invalid admin settings integer input and fallback detected; using hard default value.",
-                            extra={
-                                "field": field_name,
-                                "raw_value": str(raw_value),
-                                "fallback_value": str(fallback_value),
-                                "hard_default": hard_default,
-                                "user_id": user_id
-                            },
-                            level=logging.WARNING
-                        )
-                        return int(hard_default)
+                parsed_value, parse_source = safe_int_with_source(raw_value, fallback_value, hard_default)
 
+                if parse_source == "hard_default":
+                    log_event(
+                        "Invalid admin settings integer input and fallback detected; using hard default value.",
+                        extra={
+                            "field": field_name,
+                            "raw_value": str(raw_value),
+                            "fallback_value": str(fallback_value),
+                            "hard_default": hard_default,
+                            "user_id": user_id
+                        },
+                        level=logging.WARNING
+                    )
+                elif parse_source == "fallback":
                     log_event(
                         "Invalid admin settings integer input detected; using fallback value.",
                         extra={
@@ -332,15 +329,16 @@ def register_route_frontend_admin_settings(app):
                         },
                         level=logging.WARNING
                     )
-                    return parsed_fallback
+
+                return parsed_value
 
             # --- Fetch all other form data as before ---
             app_title = form_data.get('app_title', 'AI Chat Application')
             max_file_size_mb = int(form_data.get('max_file_size_mb', 16))
             conversation_history_limit = int(form_data.get('conversation_history_limit', 10))
             enable_idle_timeout = form_data.get('enable_idle_timeout') == 'on'
-            idle_timeout_minutes = max(1, safe_int(form_data.get('idle_timeout_minutes'), settings.get('idle_timeout_minutes', 30), 'idle_timeout_minutes', 30))
-            idle_warning_minutes = max(0, safe_int(form_data.get('idle_warning_minutes'), settings.get('idle_warning_minutes', 28), 'idle_warning_minutes', 28))
+            idle_timeout_minutes = max(1, parse_admin_int(form_data.get('idle_timeout_minutes'), settings.get('idle_timeout_minutes', 30), 'idle_timeout_minutes', 30))
+            idle_warning_minutes = max(0, parse_admin_int(form_data.get('idle_warning_minutes'), settings.get('idle_warning_minutes', 28), 'idle_warning_minutes', 28))
             if idle_warning_minutes >= idle_timeout_minutes:
                 idle_warning_minutes = max(0, idle_timeout_minutes - 1)
             # ... (fetch all other fields using form_data.get) ...

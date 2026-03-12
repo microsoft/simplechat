@@ -586,7 +586,7 @@ def record_request_settings_source(source):
                 "cosmos_forced_hits": cosmos_forced_hits,
                 "unknown_hits": unknown_hits
             },
-            level=logging.WARNING
+            level=logging.INFO
         )
 
 

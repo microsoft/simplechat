@@ -12,6 +12,7 @@
 ### Files Modified
 
 - `application/single_app/route_frontend_admin_settings.py`
+- `application/single_app/admin_settings_int_utils.py`
 - `application/single_app/config.py`
 - `functional_tests/test_admin_settings_safe_int_fallback_fix.py`
 - `functional_tests/test_idle_logout_timeout.py`
@@ -19,14 +20,13 @@
 
 ### Code Changes Summary
 
-- Hardened `safe_int()` to always return an integer.
-- Added fallback coercion (`int(fallback_value)`) before returning fallback.
-- Added guaranteed hard default path when both raw value and fallback are invalid.
-- Updated idle-timeout call sites to pass explicit hard defaults (`30` and `28`).
+- Extracted integer parsing into module-level helper functions (`safe_int`, `safe_int_with_source`) in `admin_settings_int_utils.py`.
+- Updated admin settings route to use the extracted helper while preserving existing fallback and hard-default `log_event` diagnostics.
+- Kept idle-timeout call sites using explicit hard defaults (`30` and `28`).
 
 ### Testing Approach
 
-- Added `functional_tests/test_admin_settings_safe_int_fallback_fix.py` to validate hardening markers and version alignment.
+- Refactored `functional_tests/test_admin_settings_safe_int_fallback_fix.py` to behavior-level helper tests (malformed raw and fallback values) plus AST route wiring validation.
 - Kept existing functional tests version-aligned with release version.
 
 ### Impact Analysis
