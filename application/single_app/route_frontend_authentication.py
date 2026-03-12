@@ -71,6 +71,7 @@ def register_route_frontend_authentication(app):
             return render_template('login.html', 
                                  client_id=CLIENT_ID,
                                  enable_teams_sso=ENABLE_TEAMS_SSO,
+                                 custom_teams_origins=CUSTOM_TERAMS_ORIGINS,
                                  app_settings=sanitize_settings_for_user(settings))
         
         # Clear potentially stale cache/user info before starting new login

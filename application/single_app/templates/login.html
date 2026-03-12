@@ -145,6 +145,7 @@
     <script>
         const ENABLE_TEAMS_SSO = {{ enable_teams_sso|tojson }};
         const CLIENT_ID = {{ client_id|tojson }};
+        const CUSTOM_TEAMS_ORIGINS = {{ custom_teams_origins|tojson}}
 
         function updateStatus(message, detail = '') {
             document.getElementById('status-message').textContent = message;
@@ -156,7 +157,11 @@
                 updateStatus('Detecting environment...', 'Checking if running in Microsoft Teams');
                 
                 // Try to initialize Teams SDK
-                await microsoftTeams.app.initialize();
+                if (CUSTOM_TEAMS_ORIGINS && CUSTOM_TEAMS_ORIGINS.length > 0) {
+                    await microsoftTeams.app.initialize(CUSTOM_TEAMS_ORIGINS);
+                } else {
+                    await microsoftTeams.app.initialize();
+                }
                 
                 // Check if we're actually in Teams
                 updateStatus('Teams detected', 'Retrieving Teams context');
