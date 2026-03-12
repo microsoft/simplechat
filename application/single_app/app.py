@@ -503,6 +503,16 @@ def markdown_filter(text):
 # Add the filter to the Jinja environment
 app.jinja_env.filters['markdown'] = markdown_filter
 
+# Register a custom Jinja filter for nl2br (newline to <br>)
+def nl2br_filter(value):
+    """Escape HTML then convert newline characters to <br> tags."""
+    from markupsafe import escape, Markup
+    if not value:
+        return Markup('')
+    return Markup(str(escape(value)).replace('\n', '<br>\n'))
+
+app.jinja_env.filters['nl2br'] = nl2br_filter
+
 # =================== Default Routes =====================
 @app.route('/')
 @swagger_route(security=get_auth_security())
