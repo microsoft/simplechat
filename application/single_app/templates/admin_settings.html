@@ -2036,13 +2036,25 @@
                             <select class="form-select" id="redis_auth_type" name="redis_auth_type">
                                 <option value="key" {% if settings.redis_auth_type == 'key' or not settings.redis_auth_type %}selected{% endif %}>Key</option>
                                 <option value="managed_identity" {% if settings.redis_auth_type == 'managed_identity' %}selected{% endif %}>Managed Identity</option>
+                                <option value="key_vault" {% if settings.redis_auth_type == 'key_vault' %}selected{% endif %}>Key Vault</option>
                             </select>
                         </div>
-                        <div class="mb-3" id="redis_key_container" {% if settings.redis_auth_type != 'key' and settings.redis_auth_type %}style="display: none;"{% endif %}>
-                            <label for="redis_key" class="form-label">Redis Access Key</label>
+                        <div class="mb-3 {% if settings.redis_auth_type == 'managed_identity' %}d-none{% endif %}" id="redis_key_container">
+                            <label for="redis_key" class="form-label" id="redis_key_label">
+                                {%- if settings.redis_auth_type == 'key_vault' -%}
+                                    Key Vault Secret Name
+                                {%- else -%}
+                                    Redis Access Key
+                                {%- endif -%}
+                            </label>
                             <div class="input-group">
                                 <input type="password" class="form-control" id="redis_key" name="redis_key" value="{{ settings.redis_key or '' }}">
                                 <button type="button" class="btn btn-outline-secondary" id="toggle_redis_key">Show</button>
+                            </div>
+                            <div id="redis_key_vault_hint" class="form-text text-muted {% if settings.redis_auth_type != 'key_vault' %}d-none{% endif %}">
+                                Enter the full Key Vault secret name. <a href="#security" onclick="switchTab(event, 'security-tab')">
+                                Enable Key Vault for Agent and Action Secrets
+                            </a> must be enabled and configured.
                             </div>
                         </div>
                         <button type="button" class="btn btn-secondary mt-3" id="test_redis_button">
@@ -2173,6 +2185,24 @@
                         </div>
                         <p class="text-muted small mb-0">
                             If enabled, only users who are members of the 'CreateGroups' role (defined in your App registration) can create new groups. If disabled, any authenticated user can create groups (provided 'Enable My Groups' is active).
+                        </p>
+
+                        <hr>
+
+                        <!-- Require Owner to Manage Group Agents and Actions -->
+                        <div class="form-group form-check form-switch mb-2">
+                            <input type="checkbox"
+                                class="form-check-input"
+                                id="require_owner_for_group_agent_management"
+                                name="require_owner_for_group_agent_management"
+                                {% if settings.require_owner_for_group_agent_management %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="require_owner_for_group_agent_management">
+                                Require Owner to Manage Group Agents and Actions
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, only the group Owner can create, edit, and delete group agents and actions. Group Admins will have read-only access."></i>
+                        </div>
+                        <p class="text-muted small mb-0">
+                            If enabled, only the group Owner can create, edit, and delete group agents and group actions. Admins and other roles will only be able to view them.
                         </p>
                     </div>
                     
@@ -2670,6 +2700,27 @@
                     <div class="alert alert-warning mt-3" role="alert">
                         <i class="bi bi-exclamation-triangle me-2"></i>
                         <strong>Important:</strong> Deleted items respect your archiving settings. If conversation archiving is enabled, items will be archived before deletion. Activity logs are created for all deletions.
+                    </div>
+                </div>
+
+                <!-- Workspace Scope Lock Section -->
+                <div class="card mb-3 p-3" id="workspace-scope-lock-section">
+                    <h5>
+                        <i class="bi bi-lock me-2"></i>Workspace Scope Lock
+                    </h5>
+                    <p class="text-muted">
+                        Control whether users can unlock workspace scope in chat conversations. When scope is locked, conversations are restricted to the workspaces that produced search results, preventing accidental cross-contamination with other data sources.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enforce_workspace_scope_lock"
+                            name="enforce_workspace_scope_lock"
+                            {% if settings.enforce_workspace_scope_lock %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enforce_workspace_scope_lock">
+                            Enforce Workspace Scope Lock
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, users cannot unlock the workspace scope on conversations. Scope automatically locks after the first AI search and remains locked. Disable this to allow users to manually unlock scope."></i>
                     </div>
                 </div>
 

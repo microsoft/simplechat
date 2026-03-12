@@ -62,7 +62,8 @@ hooks:
             
             echo ""
             echo "[2/4] Installing Python dependencies..."
-            if python3 -m pip install --user -r ./bicep/requirements.txt > /dev/null 2>&1; then
+
+            if python3 -m venv .venv && .venv/bin/pip install -r ./bicep/requirements.txt > /dev/null 2>&1; then
                 echo "✓ Dependencies installed successfully"
             else
                 echo "✗ ERROR: Failed to install Python dependencies" >&2
@@ -71,7 +72,7 @@ hooks:
             
             echo ""
             echo "[3/4] Running post-deployment configuration..."
-            if python3 ./bicep/postconfig.py; then
+            if .venv/bin/python3 ./bicep/postconfig.py; then
                 echo "✓ Post-deployment configuration completed"
             else
                 echo "✗ ERROR: Post-deployment configuration failed" >&2

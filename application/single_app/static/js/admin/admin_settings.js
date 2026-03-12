@@ -1867,14 +1867,30 @@ function setupToggles() {
     const redisAuthType = document.getElementById('redis_auth_type');
     if (redisAuthType) {
         const redisKeyContainer = document.getElementById('redis_key_container');
+        const redisKeyLabel = document.getElementById('redis_key_label');
+
+        // Helper to update the label text based on auth type
+        function updateRedisKeyLabel(authTypeValue) {
+            if (!redisKeyLabel) return;
+            redisKeyLabel.textContent = authTypeValue === 'key_vault' ? 'Key Vault Secret Name' : 'Redis Access Key';
+        }
+
         // Set initial state on load
         if (redisKeyContainer) {
-            redisKeyContainer.style.display = (redisAuthType.value === 'key') ? 'block' : 'none';
+            redisKeyContainer.classList.toggle('d-none', !(redisAuthType.value === 'key' || redisAuthType.value === 'key_vault'));
         }
+        updateRedisKeyLabel(redisAuthType.value);
+
         redisAuthType.addEventListener('change', function () {
             if (redisKeyContainer) {
-                redisKeyContainer.style.display = (this.value === 'key') ? 'block' : 'none';
+                redisKeyContainer.classList.toggle('d-none', !(this.value === 'key' || this.value === 'key_vault'));
             }
+            const redisKeyVaultHint = document.getElementById('redis_key_vault_hint');
+            if (redisKeyVaultHint) {
+                redisKeyVaultHint.classList.toggle('d-none', this.value !== 'key_vault');
+            }
+            updateRedisKeyLabel(this.value);
+            markFormAsModified();
         });
     }
 
@@ -2179,7 +2195,8 @@ function setupTestButtons() {
             const payload = {
                 test_type: 'redis',
                 endpoint: document.getElementById('redis_url').value,
-                key: document.getElementById('redis_key').value
+                key: document.getElementById('redis_key').value,
+                auth_type: document.getElementById('redis_auth_type').value
             };
 
             try {
@@ -2751,8 +2768,34 @@ document.addEventListener('DOMContentLoaded', () => {
         return r.json();
       })
       .then(response => {
-        if (response.missingFields && response.missingFields.length > 0) {
+        if (response.autoFixed) {
+          // Fields were automatically fixed
+          console.log(`✅ Auto-fixed ${type} index: added ${response.fieldsAdded.length} field(s):`, response.fieldsAdded.join(', '));
+          if (warnDiv) {
+            warnDiv.className = 'alert alert-success';
+            missingSpan.textContent = `Automatically added ${response.fieldsAdded.length} field(s): ${response.fieldsAdded.join(', ')}`;
+            warnDiv.style.display = 'block';
+            if (fixBtn) fixBtn.style.display = 'none';
+            
+            // Hide success message after 5 seconds
+            setTimeout(() => {
+              warnDiv.style.display = 'none';
+            }, 5000);
+          }
+        } else if (response.autoFixFailed) {
+          // Auto-fix failed, show manual button
+          console.warn(`Auto-fix failed for ${type} index:`, response.error);
+          missingSpan.textContent = response.missingFields.join(', ') + ' (Auto-fix failed - please fix manually)';
+          warnDiv.className = 'alert alert-warning';
+          warnDiv.style.display = 'block';
+          if (fixBtn) {
+            fixBtn.textContent = `Fix ${type} Index Fields`;
+            fixBtn.style.display = 'inline-block';
+          }
+        } else if (response.missingFields && response.missingFields.length > 0) {
+          // Missing fields but auto-fix was disabled
           missingSpan.textContent = response.missingFields.join(', ');
+          warnDiv.className = 'alert alert-warning';
           warnDiv.style.display = 'block';
           if (fixBtn) {
             fixBtn.textContent = `Fix ${type} Index Fields`;
