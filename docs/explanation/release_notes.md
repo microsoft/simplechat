@@ -2,13 +2,13 @@
 
 # Feature Release
 
-### **(v0.239.006)**
+### **(v0.239.012)**
 
 #### New Features
 
 *   **Idle Session Timeout Feature**
-    *   Added a new idle timer that auto clears the user session after a configurable set time and redirects to the main chat login page.
-    *   Added a frontend idle warning modal that pops up after a configurable set time, but disappears if the user mouses over the chat window or interacts with the app in any way.
+    *   Added a new idle timer that automatically clears the user session after a configurable set time and redirects to the main chat login page.
+    *   Added a frontend idle warning modal that pops up after a configurable set time, but disappears if the user moves the mouse over the chat window or interacts with the app in any way.
     *   Default values are used if the idle logout and warning values are not set. 
     *   Idle logout and idle warning values are validated and auto-fixed as needed.
     *   Added a new admin switch to enable or disable idle session timeout and warning behavior.
@@ -23,9 +23,31 @@
     *   Added a functional regression test to validate the merge detection and persistence markers.
     *   (Ref: `application/single_app/functions_settings.py`, `application/single_app/config.py`, `functional_tests/test_settings_deep_merge_persistence_fix.py`)
     
+### **(v0.239.007)**
+
+#### New Features
+
+*   **Per-Message Export**
+    *   Added export and action options to the three-dots dropdown menu on individual chat messages (both AI and user messages).
+    *   **Export to Markdown**: Downloads the message as a `.md` file with a role header. Entirely client-side.
+    *   **Export to Word**: Generates a styled `.docx` document via a new backend endpoint (`POST /api/message/export-word`). Includes Markdown-to-Word formatting (headings, bold, italic, code blocks, lists) and a citations section when present.
+    *   **Use as Prompt**: Inserts the raw message content directly into the chat input box for reuse — no clipboard, one click and it's ready to edit and send.
+    *   **Open in Email**: Opens the user's default email client with the message pre-filled in the subject and body via `mailto:`.
+    *   New options appear below a divider in the dropdown, preserving existing actions (Delete, Retry, Edit, Feedback).
+    *   (Ref: `chat-message-export.js`, `chat-messages.js`, `route_backend_conversation_export.py`, per-message export)
+
 ### **(v0.239.005)**
 
 #### New Features
+
+*   **Custom Azure Environment Support in Bicep Deployment**
+    *   Added `custom` as a supported `cloudEnvironment` value alongside `public` and `usgovernment`, enabling deployment to sovereign or custom Azure environments via Bicep.
+    *   New Bicep parameters for custom environments: `customBlobStorageSuffix`, `customGraphUrl`, `customIdentityUrl`, `customResourceManagerUrl`, `customCognitiveServicesScope`, and `customSearchResourceUrl`. All of these are automatically populated from `az.environment()` defaults except `customGraphUrl`, which must be explicitly provided for custom cloud environments and can be overridden as needed.
+    *   The `cloudEnvironment` parameter now defaults intelligently based on `az.environment().name`, and legacy values (`AzureCloud`, `AzureUSGovernment`) are mapped to SimpleChat's expected values (`public`, `usgovernment`).
+    *   Custom environment app settings (`CUSTOM_GRAPH_URL_VALUE`, `CUSTOM_IDENTITY_URL_VALUE`, `CUSTOM_RESOURCE_MANAGER_URL_VALUE`, etc.) are conditionally injected only when `azurePlatform == 'custom'`.
+    *   Replaced hardcoded ACR domain logic and auth issuer URLs with dynamic `az.environment()` lookups for better cross-cloud compatibility.
+    *   Fixed trailing slash handling in `AUTHORITY` URL construction in `config.py` using `rstrip('/')`.
+    *   (Ref: `deployers/bicep/main.bicep`, `deployers/bicep/modules/appService.bicep`, `config.py`, sovereign cloud support)
 
 *   **Redis Key Vault Authentication**
     *   Added a new `key_vault` authentication type for Redis, allowing the Redis access key to be retrieved securely from Azure Key Vault at runtime rather than stored directly in settings.

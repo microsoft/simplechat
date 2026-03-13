@@ -921,6 +921,7 @@ def register_route_frontend_admin_settings(app):
                 'idle_timeout_minutes': idle_timeout_minutes,
                 'idle_warning_minutes': idle_warning_minutes,
                 'default_system_prompt': form_data.get('default_system_prompt', '').strip(),
+                'access_denied_message': form_data.get('access_denied_message', settings.get('access_denied_message', '')).strip(),
 
                 # Video file settings with Azure Video Indexer Settings
                 'video_indexer_endpoint': form_data.get('video_indexer_endpoint', video_indexer_endpoint).strip(),
