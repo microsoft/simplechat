@@ -663,6 +663,11 @@ export function appendMessage(
                     <li><a class="dropdown-item dropdown-delete-btn" href="#" data-message-id="${messageId}"><i class="bi bi-trash me-2"></i>Delete</a></li>
                     <li><a class="dropdown-item dropdown-retry-btn" href="#" data-message-id="${messageId}"><i class="bi bi-arrow-clockwise me-2"></i>Retry</a></li>
                     ${feedbackHtml}
+                    <li><hr class="dropdown-divider"></li>
+                    <li><a class="dropdown-item dropdown-export-md-btn" href="#" data-message-id="${messageId}"><i class="bi bi-markdown me-2"></i>Export to Markdown</a></li>
+                    <li><a class="dropdown-item dropdown-export-word-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-word me-2"></i>Export to Word</a></li>
+                    <li><a class="dropdown-item dropdown-copy-prompt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-clipboard-plus me-2"></i>Use as Prompt</a></li>
+                    <li><a class="dropdown-item dropdown-open-email-btn" href="#" data-message-id="${messageId}"><i class="bi bi-envelope me-2"></i>Open in Email</a></li>
                 </ul>
             </div>
         `;
@@ -849,6 +854,50 @@ export function appendMessage(
         const currentMessageId = messageDiv.getAttribute('data-message-id');
         console.log(`🔄 AI Retry button clicked - using message ID from DOM: ${currentMessageId}`);
         handleRetryButtonClick(messageDiv, currentMessageId, 'assistant');
+      });
+    }
+
+    const dropdownExportMdBtn = messageDiv.querySelector(".dropdown-export-md-btn");
+    if (dropdownExportMdBtn) {
+      dropdownExportMdBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        const currentMessageId = messageDiv.getAttribute('data-message-id');
+        import('./chat-message-export.js').then(module => {
+          module.exportMessageAsMarkdown(messageDiv, currentMessageId, 'assistant');
+        }).catch(err => console.error('Error loading message export module:', err));
+      });
+    }
+
+    const dropdownExportWordBtn = messageDiv.querySelector(".dropdown-export-word-btn");
+    if (dropdownExportWordBtn) {
+      dropdownExportWordBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        const currentMessageId = messageDiv.getAttribute('data-message-id');
+        import('./chat-message-export.js').then(module => {
+          module.exportMessageAsWord(messageDiv, currentMessageId, 'assistant');
+        }).catch(err => console.error('Error loading message export module:', err));
+      });
+    }
+
+    const dropdownCopyPromptBtn = messageDiv.querySelector(".dropdown-copy-prompt-btn");
+    if (dropdownCopyPromptBtn) {
+      dropdownCopyPromptBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        const currentMessageId = messageDiv.getAttribute('data-message-id');
+        import('./chat-message-export.js').then(module => {
+          module.copyAsPrompt(messageDiv, currentMessageId, 'assistant');
+        }).catch(err => console.error('Error loading message export module:', err));
+      });
+    }
+
+    const dropdownOpenEmailBtn = messageDiv.querySelector(".dropdown-open-email-btn");
+    if (dropdownOpenEmailBtn) {
+      dropdownOpenEmailBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        const currentMessageId = messageDiv.getAttribute('data-message-id');
+        import('./chat-message-export.js').then(module => {
+          module.openInEmail(messageDiv, currentMessageId, 'assistant');
+        }).catch(err => console.error('Error loading message export module:', err));
       });
     }
     
@@ -1076,6 +1125,11 @@ export function appendMessage(
                 <li><a class="dropdown-item dropdown-edit-btn" href="#" data-message-id="${messageId}"><i class="bi bi-pencil me-2"></i>Edit</a></li>
                 <li><a class="dropdown-item dropdown-delete-btn" href="#" data-message-id="${messageId}"><i class="bi bi-trash me-2"></i>Delete</a></li>
                 <li><a class="dropdown-item dropdown-retry-btn" href="#" data-message-id="${messageId}"><i class="bi bi-arrow-clockwise me-2"></i>Retry</a></li>
+                <li><hr class="dropdown-divider"></li>
+                <li><a class="dropdown-item dropdown-export-md-btn" href="#" data-message-id="${messageId}"><i class="bi bi-markdown me-2"></i>Export to Markdown</a></li>
+                <li><a class="dropdown-item dropdown-export-word-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-word me-2"></i>Export to Word</a></li>
+                <li><a class="dropdown-item dropdown-copy-prompt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-clipboard-plus me-2"></i>Use as Prompt</a></li>
+                <li><a class="dropdown-item dropdown-open-email-btn" href="#" data-message-id="${messageId}"><i class="bi bi-envelope me-2"></i>Open in Email</a></li>
               </ul>
             </div>
             <button class="btn btn-sm btn-link text-muted copy-user-btn" data-message-id="${messageId}" title="Copy message">
@@ -1985,6 +2039,50 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
       }).catch(err => {
         console.error('❌ Error loading chat-edit module:', err);
       });
+    });
+  }
+
+  const dropdownExportMdBtn = messageDiv.querySelector(".dropdown-export-md-btn");
+  if (dropdownExportMdBtn) {
+    dropdownExportMdBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      const currentMessageId = messageDiv.getAttribute('data-message-id');
+      import('./chat-message-export.js').then(module => {
+        module.exportMessageAsMarkdown(messageDiv, currentMessageId, 'user');
+      }).catch(err => console.error('Error loading message export module:', err));
+    });
+  }
+
+  const dropdownExportWordBtn = messageDiv.querySelector(".dropdown-export-word-btn");
+  if (dropdownExportWordBtn) {
+    dropdownExportWordBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      const currentMessageId = messageDiv.getAttribute('data-message-id');
+      import('./chat-message-export.js').then(module => {
+        module.exportMessageAsWord(messageDiv, currentMessageId, 'user');
+      }).catch(err => console.error('Error loading message export module:', err));
+    });
+  }
+
+  const dropdownCopyPromptBtn = messageDiv.querySelector(".dropdown-copy-prompt-btn");
+  if (dropdownCopyPromptBtn) {
+    dropdownCopyPromptBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      const currentMessageId = messageDiv.getAttribute('data-message-id');
+      import('./chat-message-export.js').then(module => {
+        module.copyAsPrompt(messageDiv, currentMessageId, 'user');
+      }).catch(err => console.error('Error loading message export module:', err));
+    });
+  }
+
+  const dropdownOpenEmailBtn = messageDiv.querySelector(".dropdown-open-email-btn");
+  if (dropdownOpenEmailBtn) {
+    dropdownOpenEmailBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      const currentMessageId = messageDiv.getAttribute('data-message-id');
+      import('./chat-message-export.js').then(module => {
+        module.openInEmail(messageDiv, currentMessageId, 'user');
+      }).catch(err => console.error('Error loading message export module:', err));
     });
   }
   
