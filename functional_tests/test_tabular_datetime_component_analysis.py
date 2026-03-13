@@ -2,12 +2,12 @@
 # test_tabular_datetime_component_analysis.py
 """
 Functional test for tabular datetime component analysis fix.
-Version: 0.239.033
-Implemented in: 0.239.033
+Version: 0.239.038
+Implemented in: 0.239.038
 
 This test ensures that time-based tabular questions can be computed by grouping
-on datetime-derived components such as hour-of-day, reducing schema-only
-fallbacks for questions like peak departure queue hours.
+on datetime-derived components such as hour-of-day and year, reducing schema-only
+fallbacks and discouraging speculative summaries about failed trend analysis.
 """
 
 import asyncio
@@ -123,6 +123,51 @@ def test_hour_grouping_with_hhmm_values():
         return False
 
 
+def test_year_grouping_with_excel_style_dates():
+    """Verify yearly grouping works with workbook-style datetime values."""
+    print("🔍 Testing yearly grouping...")
+
+    try:
+        dataframe = pd.DataFrame({
+            'Order Date': pd.to_datetime([
+                '2021-01-05',
+                '2021-07-10',
+                '2022-03-11',
+                '2022-09-22',
+                '2023-01-01',
+            ]),
+            'Profit': [10.0, 15.0, 20.0, 25.0, 5.0],
+        })
+
+        plugin = build_plugin_with_dataframe(dataframe)
+        result_json = asyncio.run(plugin.group_by_datetime_component(
+            user_id='test-user',
+            conversation_id='test-conversation',
+            filename='superstore.xlsx',
+            datetime_column='Order Date',
+            datetime_component='year',
+            aggregate_column='Profit',
+            operation='sum',
+            source='workspace',
+            top_n='2',
+        ))
+        payload = json.loads(result_json)
+
+        assert 'error' not in payload, f"Unexpected error payload: {payload}"
+        assert payload['datetime_component'] == 'year', 'Expected year grouping.'
+        assert float(payload['result']['2021']) == 25.0, 'Year 2021 profit should sum to 25.0.'
+        assert float(payload['top_results']['2022']) == 45.0, 'Year 2022 should be the highest yearly profit.'
+
+        print("✅ Yearly grouping passed")
+        return True
+
+    except Exception as exc:
+        print(f"❌ Test failed: {exc}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def test_route_and_plugin_integration_text():
     """Verify the chat route references datetime grouping support and fallback guidance."""
     print("🔍 Testing route/plugin integration text...")
@@ -136,6 +181,9 @@ def test_route_and_plugin_integration_text():
         checks = {
             'plugin function exists': 'def group_by_datetime_component(' in plugin_content,
             'route prompt mentions datetime grouping': 'For time-based questions on datetime columns, use group_by_datetime_component.' in route_content,
+            'route prompt mentions yearly trends': 'group_by_datetime_component for year/quarter/month/week/day/hour trend analysis.' in route_content,
+            'route prompt blocks speculative failure narration': 'Do not mention hypothetical follow-up analyses, parser errors, or failed attempts' in route_content,
+            'route year inference keywords exist': "['year', 'years', 'yearly', 'annual', 'annually']" in route_content,
             'route direct fallback exists': 'Direct datetime fallback succeeded' in route_content,
             'file guidance mentions datetime grouping': 'group_by_datetime_component) to analyze this data.' in route_content,
         }
@@ -157,6 +205,7 @@ if __name__ == '__main__':
     tests = [
         test_hour_grouping_with_iso_datetimes,
         test_hour_grouping_with_hhmm_values,
+        test_year_grouping_with_excel_style_dates,
         test_route_and_plugin_integration_text,
     ]
 

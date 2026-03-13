@@ -25,6 +25,9 @@ TARGET_ASSIGNMENTS = {
 }
 TARGET_FUNCTIONS = {
     'get_new_plugin_invocations',
+    'get_tabular_invocation_result_payload',
+    'get_tabular_invocation_error_message',
+    'split_tabular_analysis_invocations',
     'split_tabular_plugin_invocations',
     'filter_tabular_citation_invocations',
 }
@@ -64,7 +67,7 @@ def test_discovery_only_calls_trigger_retry_guardrails():
         checks = {
             'prompt rejects discovery-only calls': 'Calls to list_tabular_files or describe_tabular_file do not count as analysis and will be rejected.' in route_content,
             'retry logging mentions discovery tools': 'used only discovery tool(s)' in route_content,
-            'success logging counts analytical tools': 'Analysis complete via {len(analytical_invocations)} analytical tool call(s)' in route_content,
+            'success logging counts successful analytical tools': 'Analysis complete via {len(successful_analytical_invocations)} analytical tool call(s)' in route_content,
         }
 
         failed_checks = [name for name, passed in checks.items() if not passed]

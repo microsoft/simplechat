@@ -41,6 +41,8 @@ def load_tabular_thought_helpers():
             if 'TABULAR_THOUGHT_EXCLUDED_PARAMETER_NAMES' in target_names:
                 selected_nodes.append(node)
         elif isinstance(node, ast.FunctionDef) and node.name in {
+            'get_tabular_invocation_result_payload',
+            'get_tabular_invocation_error_message',
             'format_tabular_thought_parameter_value',
             'get_tabular_tool_thought_payloads',
         }:

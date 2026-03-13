@@ -10,6 +10,7 @@ import asyncio
 import io
 import json
 import logging
+import warnings
 import pandas
 from typing import Annotated, Optional, List
 from semantic_kernel.functions import kernel_function
@@ -103,6 +104,8 @@ class TabularProcessingPlugin:
     def _try_numeric_conversion(self, df: pandas.DataFrame) -> pandas.DataFrame:
         """Attempt to convert string columns to numeric where possible."""
         for col in df.columns:
+            if pandas.api.types.is_datetime64_any_dtype(df[col]) or pandas.api.types.is_timedelta64_dtype(df[col]):
+                continue
             try:
                 df[col] = pandas.to_numeric(df[col])
             except (ValueError, TypeError):
@@ -111,6 +114,9 @@ class TabularProcessingPlugin:
 
     def _parse_datetime_like_series(self, series: pandas.Series) -> pandas.Series:
         """Best-effort parsing for datetime and time-like values."""
+        if pandas.api.types.is_datetime64_any_dtype(series):
+            return pandas.to_datetime(series, errors='coerce')
+
         cleaned_series = series.astype(str).str.strip()
         cleaned_series = cleaned_series.replace({
             '': None,
@@ -122,7 +128,31 @@ class TabularProcessingPlugin:
             'None': None,
         })
 
-        parsed = pandas.to_datetime(cleaned_series, errors='coerce')
+        parsed = pandas.Series(pandas.NaT, index=series.index, dtype='datetime64[ns]')
+
+        common_formats = [
+            '%m/%d/%Y %I:%M:%S %p',
+            '%m/%d/%Y %I:%M %p',
+            '%m/%d/%Y %H:%M:%S',
+            '%m/%d/%Y %H:%M',
+            '%Y-%m-%d %H:%M:%S',
+            '%Y-%m-%d %H:%M',
+            '%Y-%m-%dT%H:%M:%S',
+            '%Y-%m-%dT%H:%M:%S.%f',
+            '%Y-%m-%d',
+            '%m/%d/%Y',
+        ]
+
+        for datetime_format in common_formats:
+            remaining_mask = parsed.isna() & cleaned_series.notna()
+            if not remaining_mask.any():
+                break
+
+            parsed.loc[remaining_mask] = pandas.to_datetime(
+                cleaned_series[remaining_mask],
+                format=datetime_format,
+                errors='coerce'
+            )
 
         remaining_mask = parsed.isna() & cleaned_series.notna()
         if remaining_mask.any():
@@ -146,6 +176,15 @@ class TabularProcessingPlugin:
                     parsed.loc[hhmmss_values.index] = pandas.to_datetime(
                         hhmmss_values,
                         format='%H%M%S',
+                        errors='coerce'
+                    )
+
+            remaining_mask = parsed.isna() & cleaned_series.notna()
+            if remaining_mask.any():
+                with warnings.catch_warnings():
+                    warnings.simplefilter('ignore', UserWarning)
+                    parsed.loc[remaining_mask] = pandas.to_datetime(
+                        cleaned_series[remaining_mask],
                         errors='coerce'
                     )
 
@@ -251,6 +290,34 @@ class TabularProcessingPlugin:
         for index, value in series.items():
             safe_dict[str(index)] = value.item() if hasattr(value, 'item') else value
         return safe_dict
+
+    def _scalar_to_json_value(self, value):
+        """Convert a scalar value to a JSON-safe representation."""
+        if pandas.isna(value):
+            return None
+        return value.item() if hasattr(value, 'item') else value
+
+    def _build_grouped_summary(self, grouped: pandas.Series) -> dict:
+        """Build generic summary fields for grouped metric outputs."""
+        if grouped.empty:
+            return {}
+
+        descending_values = grouped.sort_values(ascending=False)
+        ascending_values = grouped.sort_values(ascending=True)
+        summary = {
+            'highest_group': str(descending_values.index[0]),
+            'highest_value': self._scalar_to_json_value(descending_values.iloc[0]),
+            'lowest_group': str(ascending_values.index[0]),
+            'lowest_value': self._scalar_to_json_value(ascending_values.iloc[0]),
+            'average_group_value': self._scalar_to_json_value(grouped.mean()),
+            'median_group_value': self._scalar_to_json_value(grouped.median()),
+        }
+
+        if len(descending_values) > 1:
+            summary['second_highest_group'] = str(descending_values.index[1])
+            summary['second_highest_value'] = self._scalar_to_json_value(descending_values.iloc[1])
+
+        return summary
 
     def _resolve_blob_location(self, user_id: str, conversation_id: str, filename: str, source: str,
                                group_id: str = None, public_workspace_id: str = None) -> tuple:
@@ -635,7 +702,8 @@ class TabularProcessingPlugin:
         description=(
             "Perform a group-by aggregation on a tabular file. "
             "Groups data by one column and aggregates another column. "
-            "Supported operations: sum, mean, count, min, max."
+            "Supported operations: sum, mean, count, min, max, median, std. "
+            "Returns top grouped results plus highest and lowest group summary fields."
         ),
         name="group_by_aggregate"
     )
@@ -647,8 +715,10 @@ class TabularProcessingPlugin:
         filename: Annotated[str, "The filename of the tabular file"],
         group_by_column: Annotated[str, "The column to group by"],
         aggregate_column: Annotated[str, "The column to aggregate"],
-        operation: Annotated[str, "Aggregation operation: sum, mean, count, min, max"],
+        operation: Annotated[str, "Aggregation operation: sum, mean, count, min, max, median, std"],
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
+        top_n: Annotated[str, "How many top groups to return in descending or ascending order"] = "10",
+        sort_descending: Annotated[str, "Whether top_results should be sorted descending (true/false)"] = "true",
         group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
         public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
     ) -> Annotated[str, "JSON result of the group-by aggregation"]:
@@ -667,13 +737,30 @@ class TabularProcessingPlugin:
                         return json.dumps({"error": f"Column '{col}' not found. Available: {list(df.columns)}"})
 
                 op = operation.lower().strip()
+                if op not in {'count', 'sum', 'mean', 'min', 'max', 'median', 'std'}:
+                    return json.dumps({
+                        "error": "Unsupported operation. Use count, sum, mean, min, max, median, or std."
+                    })
+
                 grouped = df.groupby(group_by_column)[aggregate_column].agg(op)
+                grouped = grouped.dropna()
+                if grouped.empty:
+                    return json.dumps({"error": "No grouped results were produced."})
+
+                top_limit = max(1, int(top_n))
+                descending = self._parse_boolean_argument(sort_descending, default=True)
+                top_results = grouped.sort_values(ascending=not descending).head(top_limit)
+                ordered_results = grouped.sort_index()
+                summary = self._build_grouped_summary(grouped)
+
                 return json.dumps({
                     "group_by": group_by_column,
                     "aggregate_column": aggregate_column,
                     "operation": op,
                     "groups": len(grouped),
-                    "result": grouped.to_dict()
+                    "top_results": self._series_to_json_dict(top_results),
+                    "result": self._series_to_json_dict(ordered_results),
+                    **summary,
                 }, indent=2, default=str)
             except Exception as e:
                 log_event(f"[TabularProcessingPlugin] Error in group-by: {e}", level=logging.WARNING)
@@ -686,7 +773,7 @@ class TabularProcessingPlugin:
             "Use this for time-based questions such as peak hours, busiest weekdays, or monthly trends. "
             "Supported datetime components: year, month, month_name, day, date, hour, minute, day_name, "
             "weekday_number, quarter, week. Supported operations: count, sum, mean, min, max, median, std. "
-            "An optional pandas query filter can be applied before grouping."
+            "An optional pandas query filter can be applied before grouping. Returns top grouped results plus highest and lowest summary fields."
         ),
         name="group_by_datetime_component"
     )
@@ -781,6 +868,7 @@ class TabularProcessingPlugin:
                 descending = self._parse_boolean_argument(sort_descending, default=True)
                 top_results = grouped.sort_values(ascending=not descending).head(top_limit)
                 ordered_results = self._ordered_grouped_results(grouped, datetime_component)
+                summary = self._build_grouped_summary(grouped)
 
                 return json.dumps({
                     "datetime_column": datetime_column,
@@ -793,6 +881,7 @@ class TabularProcessingPlugin:
                     "groups": int(len(grouped)),
                     "top_results": self._series_to_json_dict(top_results),
                     "result": self._series_to_json_dict(ordered_results),
+                    **summary,
                 }, indent=2, default=str)
             except Exception as e:
                 log_event(f"[TabularProcessingPlugin] Error in datetime component grouping: {e}", level=logging.WARNING)

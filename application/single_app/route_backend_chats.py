@@ -95,19 +95,83 @@ def split_tabular_plugin_invocations(invocations):
     return discovery_invocations, analytical_invocations, other_invocations
 
 
+def get_tabular_invocation_result_payload(invocation):
+    """Parse a tabular invocation result payload when it is JSON-like."""
+    result = getattr(invocation, 'result', None)
+    if isinstance(result, dict):
+        return result
+    if not isinstance(result, str):
+        return None
+
+    try:
+        payload = json.loads(result)
+    except Exception:
+        return None
+
+    return payload if isinstance(payload, dict) else None
+
+
+def get_tabular_invocation_error_message(invocation):
+    """Return an error message for a tabular invocation, including JSON error payloads."""
+    explicit_error_message = getattr(invocation, 'error_message', None)
+    if explicit_error_message:
+        return str(explicit_error_message)
+
+    result_payload = get_tabular_invocation_result_payload(invocation)
+    if result_payload and result_payload.get('error'):
+        return str(result_payload['error'])
+
+    return None
+
+
+def split_tabular_analysis_invocations(invocations):
+    """Split analytical tabular invocations into successful and failed calls."""
+    successful_invocations = []
+    failed_invocations = []
+
+    for invocation in invocations or []:
+        function_name = getattr(invocation, 'function_name', '')
+        if function_name not in TABULAR_ANALYSIS_FUNCTION_NAMES:
+            continue
+
+        if get_tabular_invocation_error_message(invocation):
+            failed_invocations.append(invocation)
+        else:
+            successful_invocations.append(invocation)
+
+    return successful_invocations, failed_invocations
+
+
+def summarize_tabular_invocation_errors(invocations):
+    """Return a stable list of unique tabular tool error messages."""
+    unique_errors = []
+    seen_errors = set()
+
+    for invocation in invocations or []:
+        error_message = get_tabular_invocation_error_message(invocation)
+        if not error_message:
+            continue
+
+        normalized_error_message = error_message.strip()
+        if not normalized_error_message or normalized_error_message in seen_errors:
+            continue
+
+        seen_errors.add(normalized_error_message)
+        unique_errors.append(normalized_error_message)
+
+    return unique_errors
+
+
 def filter_tabular_citation_invocations(invocations):
     """Hide discovery-only citation noise when analytical tabular calls exist."""
     if not invocations:
         return []
 
-    _, analytical_invocations, _ = split_tabular_plugin_invocations(invocations)
-    if not analytical_invocations:
-        return list(invocations)
+    successful_analytical_invocations, _ = split_tabular_analysis_invocations(invocations)
+    if successful_analytical_invocations:
+        return successful_analytical_invocations
 
-    return [
-        invocation for invocation in invocations
-        if getattr(invocation, 'function_name', '') not in TABULAR_DISCOVERY_FUNCTION_NAMES
-    ]
+    return []
 
 
 def format_tabular_thought_parameter_value(value):
@@ -136,7 +200,8 @@ def get_tabular_tool_thought_payloads(invocations):
     for invocation in invocations or []:
         function_name = getattr(invocation, 'function_name', 'unknown_tool')
         duration_ms = getattr(invocation, 'duration_ms', None)
-        success = getattr(invocation, 'success', True)
+        error_message = get_tabular_invocation_error_message(invocation)
+        success = getattr(invocation, 'success', True) and not error_message
         parameters = getattr(invocation, 'parameters', {}) or {}
 
         filename = parameters.get('filename')
@@ -158,17 +223,42 @@ def get_tabular_tool_thought_payloads(invocations):
 
             detail_parts.append(f"{parameter_name}={rendered_value}")
 
-        error_message = format_tabular_thought_parameter_value(
-            getattr(invocation, 'error_message', None)
-        )
-        if error_message:
-            detail_parts.append(f"error={error_message}")
+        rendered_error_message = format_tabular_thought_parameter_value(error_message)
+        if rendered_error_message:
+            detail_parts.append(f"error={rendered_error_message}")
 
         detail_parts.append(f"success={success}")
         detail = "; ".join(detail_parts) if detail_parts else None
         thought_payloads.append((content, detail))
 
     return thought_payloads
+
+
+def get_tabular_status_thought_payloads(invocations, analysis_succeeded):
+    """Return additional tabular status thoughts for retries and fallbacks."""
+    successful_analytical_invocations, failed_analytical_invocations = split_tabular_analysis_invocations(invocations)
+    if not failed_analytical_invocations:
+        return []
+
+    error_messages = summarize_tabular_invocation_errors(failed_analytical_invocations)
+    detail = "; ".join(error_messages) if error_messages else None
+
+    if analysis_succeeded and successful_analytical_invocations:
+        return [(
+            "Tabular analysis recovered after retrying tool errors",
+            detail,
+        )]
+
+    if analysis_succeeded:
+        return [(
+            "Tabular analysis recovered via internal fallback after tool errors",
+            detail,
+        )]
+
+    return [(
+        "Tabular analysis encountered tool errors before fallback",
+        detail,
+    )]
 
 async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                                    conversation_id, gpt_model, settings,
@@ -260,13 +350,24 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
 
         schema_context = "\n".join(schema_parts)
 
-        def build_system_prompt(force_tool_use=False):
+        def build_system_prompt(force_tool_use=False, tool_error_messages=None):
             retry_prefix = ""
             if force_tool_use:
                 retry_prefix = (
                     "RETRY MODE: Your previous attempt did not execute the data-analysis tools. "
                     "You MUST call one or more tabular_processing plugin functions before writing any answer text. "
                     "Do not say the analysis still needs to be run — run it now.\n\n"
+                )
+
+            tool_error_feedback = ""
+            if tool_error_messages:
+                rendered_errors = "\n".join(
+                    f"- {error_message}" for error_message in tool_error_messages
+                )
+                tool_error_feedback = (
+                    "PREVIOUS TOOL ERRORS:\n"
+                    f"{rendered_errors}\n"
+                    "Correct the function arguments and try again. If the operation is not 'count', provide an aggregate_column.\n\n"
                 )
 
             return (
@@ -276,10 +377,11 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 "the schema preview alone. Never say that you would need to run the "
                 "analysis later — run it now.\n\n"
                 f"{retry_prefix}"
+                f"{tool_error_feedback}"
                 f"FILE SCHEMAS (pre-loaded — do NOT call list_tabular_files or describe_tabular_file):\n"
                 f"{schema_context}\n\n"
                 "AVAILABLE FUNCTIONS: aggregate_column, filter_rows, query_tabular_data, "
-                "group_by_aggregate, and group_by_datetime_component for hour/day/week/month trend analysis.\n\n"
+                "group_by_aggregate, and group_by_datetime_component for year/quarter/month/week/day/hour trend analysis.\n\n"
                 "IMPORTANT:\n"
                 "1. Use the pre-loaded schema context to pick the correct columns, then call the plugin functions.\n"
                 "2. For time-based questions on datetime columns, use group_by_datetime_component.\n"
@@ -288,7 +390,9 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 "5. If you need more than 100 filtered rows, explicitly set max_rows higher.\n"
                 "6. Calls to list_tabular_files or describe_tabular_file do not count as analysis and will be rejected.\n"
                 "7. For analytical questions, prefer query/filter plus aggregate/grouped computations over raw row or preview output.\n"
-                "8. Return only computed findings and name the strongest drivers clearly."
+                "8. For peak, busiest, highest, or lowest questions, use grouped functions and inspect the highest_group, highest_value, lowest_group, and lowest_value summary fields.\n"
+                "9. Return only computed findings and name the strongest drivers clearly.\n"
+                "10. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report."
             )
 
         def infer_datetime_component(question_text):
@@ -297,6 +401,8 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 return 'hour'
             if any(keyword in normalized_question for keyword in ['day of week', 'weekday']):
                 return 'day_name'
+            if any(keyword in normalized_question for keyword in ['year', 'years', 'yearly', 'annual', 'annually']):
+                return 'year'
             if any(keyword in normalized_question for keyword in ['month', 'monthly']):
                 return 'month'
             if any(keyword in normalized_question for keyword in ['quarter', 'quarterly']):
@@ -455,11 +561,15 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
             limit=1000
         )
         baseline_invocation_count = len(baseline_invocations)
+        previous_tool_error_messages = []
 
         for attempt_number, force_tool_use in enumerate((False, True), start=1):
             # 4. Build chat history with pre-loaded schemas
             chat_history = SKChatHistory()
-            chat_history.add_system_message(build_system_prompt(force_tool_use=force_tool_use))
+            chat_history.add_system_message(build_system_prompt(
+                force_tool_use=force_tool_use,
+                tool_error_messages=previous_tool_error_messages,
+            ))
 
             chat_history.add_user_message(
                 f"Analyze the tabular data to answer: {user_question}\n"
@@ -486,20 +596,36 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
             new_invocations = get_new_plugin_invocations(invocations_after, baseline_invocation_count)
             new_invocation_count = len(new_invocations)
             discovery_invocations, analytical_invocations, _ = split_tabular_plugin_invocations(new_invocations)
+            successful_analytical_invocations, failed_analytical_invocations = split_tabular_analysis_invocations(new_invocations)
 
             if result and result[0].content:
                 analysis = result[0].content.strip()
                 if len(analysis) > 20000:
                     analysis = analysis[:20000] + "\n[Analysis truncated]"
 
-                if analytical_invocations:
+                if successful_analytical_invocations:
                     log_event(
-                        f"[Tabular SK Analysis] Analysis complete via {len(analytical_invocations)} analytical tool call(s) on attempt {attempt_number}",
+                        f"[Tabular SK Analysis] Analysis complete via {len(successful_analytical_invocations)} analytical tool call(s) on attempt {attempt_number}",
                         level=logging.INFO
                     )
                     return analysis
 
-                if discovery_invocations:
+                if failed_analytical_invocations:
+                    previous_tool_error_messages = summarize_tabular_invocation_errors(failed_analytical_invocations)
+                    log_event(
+                        f"[Tabular SK Analysis] Attempt {attempt_number} used analytical tool(s) but all returned errors; retrying",
+                        extra={
+                            'tool_errors': previous_tool_error_messages,
+                            'failed_tool_count': len(failed_analytical_invocations),
+                        },
+                        level=logging.WARNING
+                    )
+                elif analytical_invocations:
+                    log_event(
+                        f"[Tabular SK Analysis] Attempt {attempt_number} used analytical tool(s) without usable computed results; retrying",
+                        level=logging.WARNING
+                    )
+                elif discovery_invocations:
                     discovery_function_names = sorted({
                         invocation.function_name for invocation in discovery_invocations
                     })
@@ -517,11 +643,23 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                         f"[Tabular SK Analysis] Attempt {attempt_number} returned narrative without tool use; retrying",
                         level=logging.WARNING
                     )
+
             else:
-                log_event(
-                    f"[Tabular SK Analysis] Attempt {attempt_number} returned no content",
-                    level=logging.WARNING
-                )
+                if failed_analytical_invocations:
+                    previous_tool_error_messages = summarize_tabular_invocation_errors(failed_analytical_invocations)
+                    log_event(
+                        f"[Tabular SK Analysis] Attempt {attempt_number} returned no content after tool errors; retrying",
+                        extra={
+                            'tool_errors': previous_tool_error_messages,
+                            'failed_tool_count': len(failed_analytical_invocations),
+                        },
+                        level=logging.WARNING
+                    )
+                else:
+                    log_event(
+                        f"[Tabular SK Analysis] Attempt {attempt_number} returned no content",
+                        level=logging.WARNING
+                    )
 
             baseline_invocation_count = len(invocations_after)
 
@@ -2181,6 +2319,12 @@ def register_route_backend_chats(app):
                 tabular_thought_payloads = get_tabular_tool_thought_payloads(tabular_invocations)
                 for thought_content, thought_detail in tabular_thought_payloads:
                     thought_tracker.add_thought('tabular_analysis', thought_content, thought_detail)
+                tabular_status_thought_payloads = get_tabular_status_thought_payloads(
+                    tabular_invocations,
+                    analysis_succeeded=bool(tabular_analysis),
+                )
+                for thought_content, thought_detail in tabular_status_thought_payloads:
+                    thought_tracker.add_thought('tabular_analysis', thought_content, thought_detail)
 
                 if tabular_analysis:
                     tabular_system_msg = (
@@ -2541,6 +2685,12 @@ def register_route_backend_chats(app):
                     )
                     chat_tabular_thought_payloads = get_tabular_tool_thought_payloads(chat_tabular_invocations)
                     for thought_content, thought_detail in chat_tabular_thought_payloads:
+                        thought_tracker.add_thought('tabular_analysis', thought_content, thought_detail)
+                    chat_tabular_status_thought_payloads = get_tabular_status_thought_payloads(
+                        chat_tabular_invocations,
+                        analysis_succeeded=bool(chat_tabular_analysis),
+                    )
+                    for thought_content, thought_detail in chat_tabular_status_thought_payloads:
                         thought_tracker.add_thought('tabular_analysis', thought_content, thought_detail)
 
                     if chat_tabular_analysis:
@@ -4329,6 +4479,12 @@ def register_route_backend_chats(app):
                     tabular_thought_payloads = get_tabular_tool_thought_payloads(tabular_invocations)
                     for thought_content, thought_detail in tabular_thought_payloads:
                         yield emit_thought('tabular_analysis', thought_content, thought_detail)
+                    tabular_status_thought_payloads = get_tabular_status_thought_payloads(
+                        tabular_invocations,
+                        analysis_succeeded=bool(tabular_analysis),
+                    )
+                    for thought_content, thought_detail in tabular_status_thought_payloads:
+                        yield emit_thought('tabular_analysis', thought_content, thought_detail)
 
                     if tabular_analysis:
                         system_messages_for_augmentation.append({
@@ -4518,6 +4674,12 @@ def register_route_backend_chats(app):
                         )
                         chat_tabular_thought_payloads = get_tabular_tool_thought_payloads(chat_tabular_invocations)
                         for thought_content, thought_detail in chat_tabular_thought_payloads:
+                            yield emit_thought('tabular_analysis', thought_content, thought_detail)
+                        chat_tabular_status_thought_payloads = get_tabular_status_thought_payloads(
+                            chat_tabular_invocations,
+                            analysis_succeeded=bool(chat_tabular_analysis),
+                        )
+                        for thought_content, thought_detail in chat_tabular_status_thought_payloads:
                             yield emit_thought('tabular_analysis', thought_content, thought_detail)
 
                         if chat_tabular_analysis:
