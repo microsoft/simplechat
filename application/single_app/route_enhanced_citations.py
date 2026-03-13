@@ -325,6 +325,8 @@ def register_enhanced_citations_routes(app):
         Reads the file into a pandas DataFrame and returns columns + rows as JSON.
         """
         doc_id = request.args.get("doc_id")
+        sheet_name = request.args.get("sheet_name")
+        sheet_index = request.args.get("sheet_index")
         max_rows = min(request.args.get("max_rows", 200, type=int), 500)
         if not doc_id:
             return jsonify({"error": "doc_id is required"}), 400
@@ -361,12 +363,72 @@ def register_enhanced_citations_routes(app):
             # Read into DataFrame, limiting rows for preview efficiency
             # Read max_rows + 1 so we can detect truncation without loading the full file
             nrows_limit = max_rows + 1
+            selected_sheet = None
+            sheet_names = []
             if ext == 'csv':
                 df = pandas.read_csv(io.BytesIO(data), keep_default_na=False, dtype=str, nrows=nrows_limit)
             elif ext in ('xlsx', 'xlsm'):
-                df = pandas.read_excel(io.BytesIO(data), engine='openpyxl', keep_default_na=False, dtype=str, nrows=nrows_limit)
+                excel_file = pandas.ExcelFile(io.BytesIO(data), engine='openpyxl')
+                sheet_names = list(excel_file.sheet_names)
+                if not sheet_names:
+                    return jsonify({"error": "Workbook does not contain any readable sheets"}), 400
+
+                if sheet_name:
+                    requested_sheet_name = sheet_name.strip()
+                    matching_sheet_name = next(
+                        (candidate for candidate in sheet_names if candidate.lower() == requested_sheet_name.lower()),
+                        None,
+                    )
+                    if not matching_sheet_name:
+                        return jsonify({
+                            "error": f"Sheet '{requested_sheet_name}' was not found. Available sheets: {sheet_names}"
+                        }), 400
+                    selected_sheet = matching_sheet_name
+                elif sheet_index not in (None, ''):
+                    try:
+                        resolved_sheet_index = int(sheet_index)
+                    except ValueError:
+                        return jsonify({"error": "sheet_index must be an integer"}), 400
+                    if resolved_sheet_index < 0 or resolved_sheet_index >= len(sheet_names):
+                        return jsonify({
+                            "error": f"sheet_index {resolved_sheet_index} is out of range. Available sheets: {sheet_names}"
+                        }), 400
+                    selected_sheet = sheet_names[resolved_sheet_index]
+                else:
+                    selected_sheet = sheet_names[0]
+
+                df = excel_file.parse(selected_sheet, keep_default_na=False, dtype=str, nrows=nrows_limit)
             elif ext == 'xls':
-                df = pandas.read_excel(io.BytesIO(data), engine='xlrd', keep_default_na=False, dtype=str, nrows=nrows_limit)
+                excel_file = pandas.ExcelFile(io.BytesIO(data), engine='xlrd')
+                sheet_names = list(excel_file.sheet_names)
+                if not sheet_names:
+                    return jsonify({"error": "Workbook does not contain any readable sheets"}), 400
+
+                if sheet_name:
+                    requested_sheet_name = sheet_name.strip()
+                    matching_sheet_name = next(
+                        (candidate for candidate in sheet_names if candidate.lower() == requested_sheet_name.lower()),
+                        None,
+                    )
+                    if not matching_sheet_name:
+                        return jsonify({
+                            "error": f"Sheet '{requested_sheet_name}' was not found. Available sheets: {sheet_names}"
+                        }), 400
+                    selected_sheet = matching_sheet_name
+                elif sheet_index not in (None, ''):
+                    try:
+                        resolved_sheet_index = int(sheet_index)
+                    except ValueError:
+                        return jsonify({"error": "sheet_index must be an integer"}), 400
+                    if resolved_sheet_index < 0 or resolved_sheet_index >= len(sheet_names):
+                        return jsonify({
+                            "error": f"sheet_index {resolved_sheet_index} is out of range. Available sheets: {sheet_names}"
+                        }), 400
+                    selected_sheet = sheet_names[resolved_sheet_index]
+                else:
+                    selected_sheet = sheet_names[0]
+
+                df = excel_file.parse(selected_sheet, keep_default_na=False, dtype=str, nrows=nrows_limit)
             else:
                 return jsonify({"error": f"Unsupported file type: {ext}"}), 400
 
@@ -376,6 +438,9 @@ def register_enhanced_citations_routes(app):
 
             return jsonify({
                 "filename": file_name,
+                "selected_sheet": selected_sheet,
+                "sheet_names": sheet_names,
+                "sheet_count": len(sheet_names),
                 "total_rows": total_rows if not truncated else None,
                 "total_columns": len(df.columns),
                 "columns": list(df.columns),

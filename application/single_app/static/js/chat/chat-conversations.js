@@ -28,6 +28,7 @@ let allConversations = []; // Store all conversations for client-side filtering
 let isLoadingConversations = false; // Prevent concurrent loads
 let showQuickSearch = false; // Track if quick search input is visible
 let quickSearchTerm = ""; // Current search term
+let pendingConversationCreation = null; // Reuse a single in-flight create request
 
 // Clear selected conversations when loading the page
 document.addEventListener('DOMContentLoaded', () => {
@@ -1067,7 +1068,21 @@ export function deleteConversation(conversationId) {
 }
 
 // Create a new conversation via API
-export async function createNewConversation(callback) {
+export async function createNewConversation(callback, options = {}) {
+    if (pendingConversationCreation) {
+      try {
+        await pendingConversationCreation;
+        if (typeof callback === "function") {
+          callback();
+        }
+      } catch (error) {
+        // The original caller already surfaced the creation failure.
+      }
+      return;
+    }
+
+  const { preserveSelections = false } = options;
+
     // Disable new button? Show loading?
     if (newConversationBtn) newConversationBtn.disabled = true;
     
@@ -1079,54 +1094,61 @@ export async function createNewConversation(callback) {
     }
     
   try {
-    const response = await fetch("/api/create_conversation", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      credentials: "same-origin",
-    });
-    if (!response.ok) {
-      const errData = await response.json().catch(() => ({}));
-      throw new Error(errData.error || "Failed to create conversation");
-    }
-    const data = await response.json();
-    if (!data.conversation_id) {
-      throw new Error("No conversation_id returned from server.");
-    }
+    pendingConversationCreation = (async () => {
+      const response = await fetch("/api/create_conversation", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "same-origin",
+      });
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to create conversation");
+      }
+      const data = await response.json();
+      if (!data.conversation_id) {
+        throw new Error("No conversation_id returned from server.");
+      }
 
-    currentConversationId = data.conversation_id;
-    // Reset scope lock for new conversation
-    resetScopeLock();
-    // Add to list (pass empty classifications for new convo)
-    addConversationToList(data.conversation_id, data.title /* Use title from API if provided */, []);
-    
-    // Don't call selectConversation here if we're about to send a message
-    // because selectConversation clears the chatbox, which would remove
-    // the user message that's about to be appended by actuallySendMessage
-    // Instead, just update the UI elements directly
-    window.currentConversationId = data.conversation_id;
-    const titleEl = document.getElementById("current-conversation-title");
-    if (titleEl) {
-      titleEl.textContent = data.title || "New Conversation";
-    }
-    // Clear classification/tag badges from previous conversation
-    if (currentConversationClassificationsEl) {
-      currentConversationClassificationsEl.innerHTML = "";
-    }
-    updateConversationUrl(data.conversation_id);
-    console.log('[createNewConversation] Created conversation without reload:', data.conversation_id);
+      currentConversationId = data.conversation_id;
+      // Reset scope lock for new conversation
+      resetScopeLock({ preserveSelections });
+      // Add to list (pass empty classifications for new convo)
+      addConversationToList(data.conversation_id, data.title /* Use title from API if provided */, []);
+
+      // Don't call selectConversation here if we're about to send a message
+      // because selectConversation clears the chatbox, which would remove
+      // the user message that's about to be appended by actuallySendMessage
+      // Instead, just update the UI elements directly
+      window.currentConversationId = data.conversation_id;
+      const titleEl = document.getElementById("current-conversation-title");
+      if (titleEl) {
+        titleEl.textContent = data.title || "New Conversation";
+      }
+      // Clear classification/tag badges from previous conversation
+      if (currentConversationClassificationsEl) {
+        currentConversationClassificationsEl.innerHTML = "";
+      }
+      updateConversationUrl(data.conversation_id);
+      console.log('[createNewConversation] Created conversation without reload:', data.conversation_id);
+
+      return data;
+    })();
+
+    const data = await pendingConversationCreation;
 
     // Execute callback if provided (e.g., to send the first message)
     if (typeof callback === "function") {
       callback();
     }
 
-
+    return data;
   } catch (error) {
     console.error("Error creating conversation:", error);
     showToast(`Failed to create a new conversation: ${error.message}`, "danger");
   } finally {
+      pendingConversationCreation = null;
       if (newConversationBtn) newConversationBtn.disabled = false;
   }
 }

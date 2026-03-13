@@ -1,6 +1,6 @@
 // chat-onload.js
 
-import { loadConversations, selectConversation, ensureConversationPresent } from "./chat-conversations.js";
+import { loadConversations, selectConversation, ensureConversationPresent, createNewConversation } from "./chat-conversations.js";
 // Import handleDocumentSelectChange
 import { loadAllDocs, populateDocumentSelectScope, handleDocumentSelectChange, loadTagsForScope, filterDocumentsBySelectedTags, setScopeFromUrlParam } from "./chat-documents.js";
 import { getUrlParameter } from "./chat-utils.js"; // Assuming getUrlParameter is in chat-utils.js now
@@ -44,7 +44,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   if (userInput && newConversationBtn) {
     userInput.addEventListener("focus", () => {
       if (!currentConversationId) {
-        newConversationBtn.click();
+                createNewConversation(null, { preserveSelections: true });
       }
     });
   }
@@ -55,7 +55,7 @@ window.addEventListener('DOMContentLoaded', async () => {
       if (!currentConversationId) {
         // Optionally prevent the default action if it does something immediately
         // event.preventDefault(); 
-        newConversationBtn.click();
+                createNewConversation(null, { preserveSelections: true });
 
         // (Optional) If you need the prompt UI to appear *after* the conversation is created,
         // you can open the prompt UI programmatically in a small setTimeout or callback.
@@ -69,7 +69,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     fileBtn.addEventListener("click", (event) => {
       if (!currentConversationId) {
         // event.preventDefault(); // If file dialog should only open once conversation is created
-        newConversationBtn.click();
+                createNewConversation(null, { preserveSelections: true });
 
         // (Optional) If you want the file dialog to appear *after* the conversation is created,
         // do it in a short setTimeout or callback:

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # test_tabular_analysis_rejects_discovery_only.py
 """
-Functional test for tabular computed analysis enforcement fix.
-Version: 0.239.034
-Implemented in: 0.239.034
+Functional test for tabular analytical-only orchestration fix.
+Version: 0.239.111
+Implemented in: 0.239.111
 
-This test ensures that discovery-only tabular tool calls such as
-`describe_tabular_file` are not accepted as completed analysis for analytical
-questions, and that citation filtering prefers computed tabular operations.
+This test ensures that discovery-only tabular tool calls are not accepted as
+completed analysis for analytical questions, and that the tabular SK pass is
+restricted to analytical tools on retry attempts.
 """
 
 import ast
@@ -65,7 +65,9 @@ def test_discovery_only_calls_trigger_retry_guardrails():
         _, route_content = load_tabular_route_helpers()
 
         checks = {
-            'prompt rejects discovery-only calls': 'Calls to list_tabular_files or describe_tabular_file do not count as analysis and will be rejected.' in route_content,
+            'prompt disables discovery tools in analysis pass': 'Discovery functions are not available in this analysis run because schema context is already pre-loaded.' in route_content,
+            'analysis run filters callable functions': 'included_functions' in route_content,
+            'retry path requires analytical tools': 'FunctionChoiceBehavior.Required(' in route_content,
             'retry logging mentions discovery tools': 'used only discovery tool(s)' in route_content,
             'success logging counts successful analytical tools': 'Analysis complete via {len(successful_analytical_invocations)} analytical tool call(s)' in route_content,
         }
@@ -94,6 +96,7 @@ def test_citation_filter_prefers_analytical_calls():
 
         invocations = [
             SimpleNamespace(function_name='describe_tabular_file'),
+            SimpleNamespace(function_name='lookup_value'),
             SimpleNamespace(function_name='group_by_datetime_component'),
             SimpleNamespace(function_name='query_tabular_data'),
         ]
@@ -103,9 +106,9 @@ def test_citation_filter_prefers_analytical_calls():
         filtered_function_names = [invocation.function_name for invocation in filtered_invocations]
 
         assert len(discovery_invocations) == 1, 'Expected one discovery invocation.'
-        assert len(analytical_invocations) == 2, 'Expected two analytical invocations.'
+        assert len(analytical_invocations) == 3, 'Expected three analytical invocations.'
         assert len(other_invocations) == 0, 'Did not expect other invocation types.'
-        assert filtered_function_names == ['group_by_datetime_component', 'query_tabular_data'], (
+        assert filtered_function_names == ['lookup_value', 'group_by_datetime_component', 'query_tabular_data'], (
             f"Expected only analytical citations, got: {filtered_function_names}"
         )
 

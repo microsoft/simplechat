@@ -373,9 +373,12 @@ function createCitationsHtml(
     hybridCitations.forEach((cite, index) => {
       const citationId =
         cite.citation_id || `${cite.chunk_id}_${cite.page_number || index}`; // Fallback ID
-      const displayText = `${escapeHtml(cite.file_name)}, Page ${
-        cite.page_number || "N/A"
-      }`;
+      const locationLabel = cite.location_label || (cite.sheet_name ? 'Sheet' : 'Page');
+      const locationValue = cite.location_value || cite.sheet_name || cite.page_number || 'N/A';
+      const displayText = `${escapeHtml(cite.file_name)}, ${escapeHtml(locationLabel)}: ${escapeHtml(locationValue)}`;
+      const sheetNameAttribute = cite.sheet_name
+        ? `data-sheet-name="${escapeHtml(cite.sheet_name)}"`
+        : '';
 
       // Check if this is a metadata citation
       const isMetadata = cite.metadata_type ? true : false;
@@ -386,6 +389,7 @@ function createCitationsHtml(
               <a href="#"
                  class="btn btn-sm citation-button hybrid-citation-link ${isMetadata ? 'metadata-citation' : ''}"
                  data-citation-id="${escapeHtml(citationId)}"
+                  ${sheetNameAttribute}
                  data-is-metadata="${isMetadata}"
                  data-metadata-type="${escapeHtml(metadataType)}"
                  data-metadata-content="${escapeHtml(metadataContent)}"
@@ -1331,7 +1335,7 @@ export function sendMessage() {
   if (!currentConversationId) {
     createNewConversation(() => {
       actuallySendMessage(combinedMessage);
-    });
+    }, { preserveSelections: true });
   } else {
     actuallySendMessage(combinedMessage);
   }

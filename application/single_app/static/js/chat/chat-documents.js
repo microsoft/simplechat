@@ -160,9 +160,18 @@ export function restoreScopeLockState(lockState, contexts) {
  * Reset scope lock for a new conversation.
  * Resets to "All" with no lock.
  */
-export function resetScopeLock() {
+export function resetScopeLock(options = {}) {
+  const { preserveSelections = false } = options;
+
   scopeLocked = null;
   lockedContexts = [];
+
+  if (preserveSelections) {
+    buildScopeDropdown();
+    updateScopeLockIcon();
+    updateHeaderLockIcon();
+    return;
+  }
 
   const groups = window.userGroups || [];
   const publicWorkspaces = window.userVisiblePublicWorkspaces || [];

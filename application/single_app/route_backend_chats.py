@@ -37,6 +37,7 @@ TABULAR_DISCOVERY_FUNCTION_NAMES = {
     'describe_tabular_file',
 }
 TABULAR_ANALYSIS_FUNCTION_NAMES = {
+    'lookup_value',
     'aggregate_column',
     'filter_rows',
     'query_tabular_data',
@@ -205,10 +206,13 @@ def get_tabular_tool_thought_payloads(invocations):
         parameters = getattr(invocation, 'parameters', {}) or {}
 
         filename = parameters.get('filename')
+        sheet_name = parameters.get('sheet_name')
         duration_suffix = f" ({int(duration_ms)}ms)" if duration_ms else ""
         content = f"Tabular tool {function_name}{duration_suffix}"
         if filename:
             content = f"Tabular tool {function_name} on {filename}{duration_suffix}"
+        if filename and sheet_name:
+            content = f"Tabular tool {function_name} on {filename} [{sheet_name}]{duration_suffix}"
         if not success:
             content = f"{content} failed"
 
@@ -259,6 +263,65 @@ def get_tabular_status_thought_payloads(invocations, analysis_succeeded):
         "Tabular analysis encountered tool errors before fallback",
         detail,
     )]
+
+
+def _normalize_tabular_sheet_token(token):
+    """Normalize question and sheet-name tokens for lightweight matching."""
+    normalized = re.sub(r'[^a-z0-9]+', '', str(token or '').lower())
+    if len(normalized) > 4 and normalized.endswith('ies'):
+        return normalized[:-3] + 'y'
+    if len(normalized) > 3 and normalized.endswith('s') and not normalized.endswith('ss'):
+        return normalized[:-1]
+    return normalized
+
+
+def _tokenize_tabular_sheet_text(text):
+    """Tokenize free text into normalized sheet-matching tokens."""
+    tokens = []
+    for raw_token in re.split(r'[^a-z0-9]+', str(text or '').lower()):
+        normalized_token = _normalize_tabular_sheet_token(raw_token)
+        if normalized_token and len(normalized_token) > 1:
+            tokens.append(normalized_token)
+    return tokens
+
+
+def _select_likely_workbook_sheet(sheet_names, question_text):
+    """Return a likely sheet name when the user question strongly matches one sheet."""
+    question_tokens = set(_tokenize_tabular_sheet_text(question_text))
+    question_phrase = ' '.join(_tokenize_tabular_sheet_text(question_text))
+    best_sheet = None
+    best_score = 0
+    runner_up_score = 0
+
+    for sheet_name in sheet_names or []:
+        sheet_tokens = _tokenize_tabular_sheet_text(sheet_name)
+        if not sheet_tokens:
+            continue
+
+        sheet_phrase = ' '.join(sheet_tokens)
+        score = 0
+
+        if sheet_phrase and sheet_phrase in question_phrase:
+            score += 8
+
+        token_matches = sum(1 for token in sheet_tokens if token in question_tokens)
+        score += token_matches * 3
+
+        if len(sheet_tokens) == 1 and sheet_tokens[0] in question_tokens:
+            score += 4
+
+        if score > best_score:
+            runner_up_score = best_score
+            best_score = score
+            best_sheet = sheet_name
+        elif score > runner_up_score:
+            runner_up_score = score
+
+    if best_score <= 0 or best_score == runner_up_score:
+        return None
+
+    return best_sheet
+
 
 async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                                    conversation_id, gpt_model, settings,
@@ -325,25 +388,69 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
             source_context += f", public_workspace_id='{public_workspace_id}'"
 
         schema_parts = []
-        preloaded_dataframes = {}
+        workbook_sheet_hints = {}
+        analysis_function_filters = {
+            'included_functions': [
+                f"tabular_processing-{function_name}"
+                for function_name in sorted(TABULAR_ANALYSIS_FUNCTION_NAMES)
+            ]
+        }
         for fname in tabular_filenames:
             try:
                 container, blob_path = tabular_plugin._resolve_blob_location_with_fallback(
                     user_id, conversation_id, fname, source_hint,
                     group_id=group_id, public_workspace_id=public_workspace_id
                 )
-                df = tabular_plugin._read_tabular_blob_to_dataframe(container, blob_path)
-                df_numeric = tabular_plugin._try_numeric_conversion(df.copy())
-                preloaded_dataframes[fname] = df_numeric.copy()
-                schema_info = {
-                    "filename": fname,
-                    "row_count": len(df),
-                    "columns": list(df.columns),
-                    "dtypes": {col: str(dtype) for col, dtype in df_numeric.dtypes.items()},
-                    "preview": df.head(3).to_dict(orient='records')
-                }
-                schema_parts.append(json.dumps(schema_info, indent=2, default=str))
-                log_event(f"[Tabular SK Analysis] Pre-loaded schema for {fname} ({len(df)} rows)", level=logging.DEBUG)
+                schema_info = tabular_plugin._build_workbook_schema_summary(
+                    container,
+                    blob_path,
+                    fname,
+                    preview_rows=2,
+                )
+
+                if schema_info.get('is_workbook') and schema_info.get('sheet_count', 0) > 1:
+                    # Build a compact sheet directory so the model can pick the
+                    # relevant sheet itself instead of us guessing.
+                    per_sheet = schema_info.get('per_sheet_schemas', {})
+                    likely_sheet = _select_likely_workbook_sheet(
+                        schema_info.get('sheet_names', []),
+                        user_question,
+                    )
+                    if likely_sheet:
+                        workbook_sheet_hints[fname] = likely_sheet
+                        tabular_plugin.set_default_sheet(container, blob_path, likely_sheet)
+
+                    sheet_directory = []
+                    for sname in schema_info.get('sheet_names', []):
+                        sheet_info = per_sheet.get(sname, {})
+                        sheet_directory.append({
+                            'sheet_name': sname,
+                            'row_count': sheet_info.get('row_count', 0),
+                            'columns': sheet_info.get('columns', []),
+                        })
+                    directory_schema = {
+                        'filename': fname,
+                        'is_workbook': True,
+                        'sheet_count': schema_info.get('sheet_count', 0),
+                        'likely_sheet': likely_sheet,
+                        'sheet_directory': sheet_directory,
+                    }
+                    schema_parts.append(json.dumps(directory_schema, indent=2, default=str))
+                    log_event(
+                        f"[Tabular SK Analysis] Pre-loaded workbook {fname} directory "
+                        f"({schema_info.get('sheet_count', 0)} sheets available)"
+                        + (f"; likely sheet '{likely_sheet}'" if likely_sheet else ''),
+                        level=logging.DEBUG,
+                    )
+                else:
+                    schema_parts.append(json.dumps(schema_info, indent=2, default=str))
+                    if schema_info.get('is_workbook'):
+                        # Single-sheet workbook — set default so the model needs no sheet arg
+                        single_sheet = (schema_info.get('sheet_names') or [None])[0]
+                        if single_sheet:
+                            tabular_plugin.set_default_sheet(container, blob_path, single_sheet)
+                    df = tabular_plugin._read_tabular_blob_to_dataframe(container, blob_path)
+                    log_event(f"[Tabular SK Analysis] Pre-loaded schema for {fname} ({len(df)} rows)", level=logging.DEBUG)
             except Exception as e:
                 log_event(f"[Tabular SK Analysis] Failed to pre-load schema for {fname}: {e}", level=logging.WARNING)
                 schema_parts.append(json.dumps({"filename": fname, "error": f"Could not pre-load: {str(e)}"}))
@@ -354,8 +461,8 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
             retry_prefix = ""
             if force_tool_use:
                 retry_prefix = (
-                    "RETRY MODE: Your previous attempt did not execute the data-analysis tools. "
-                    "You MUST call one or more tabular_processing plugin functions before writing any answer text. "
+                    "RETRY MODE: Your previous attempt did not execute a usable analytical tool call. "
+                    "You MUST call one or more analytical tabular_processing plugin functions before writing any answer text. "
                     "Do not say the analysis still needs to be run — run it now.\n\n"
                 )
 
@@ -370,6 +477,35 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     "Correct the function arguments and try again. If the operation is not 'count', provide an aggregate_column.\n\n"
                 )
 
+            missing_sheet_feedback = ""
+            if tool_error_messages and any(
+                'Specify sheet_name or sheet_index on analytical calls.' in error_message
+                for error_message in tool_error_messages
+            ):
+                guidance_lines = [
+                    "MULTI-SHEET RETRY: Your previous analytical call omitted sheet_name on a multi-sheet workbook.",
+                    "Retry immediately with sheet_name set to the most relevant worksheet from sheet_directory.",
+                    "For account/category lookup questions by month, use filter_rows or query_tabular_data on the label column first, then read the requested month column.",
+                    "Do not aggregate an entire month column unless the user explicitly asked for a total, sum, average, min, max, or count.",
+                ]
+                for workbook_name, hinted_sheet in workbook_sheet_hints.items():
+                    guidance_lines.append(
+                        f"Likely worksheet for {workbook_name} based on the question text: {hinted_sheet}."
+                    )
+                missing_sheet_feedback = "\n".join(guidance_lines) + "\n\n"
+
+            sheet_hint_feedback = ""
+            if workbook_sheet_hints:
+                rendered_hints = "\n".join(
+                    f"- {workbook_name}: likely worksheet '{hinted_sheet}'"
+                    for workbook_name, hinted_sheet in workbook_sheet_hints.items()
+                )
+                sheet_hint_feedback = (
+                    "LIKELY WORKSHEET HINTS:\n"
+                    f"{rendered_hints}\n"
+                    "Use the likely worksheet unless the question clearly refers to a different sheet.\n\n"
+                )
+
             return (
                 "You are a data analyst. The full dataset is available through the "
                 "tabular_processing plugin functions. You MUST use one or more "
@@ -378,182 +514,28 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 "analysis later — run it now.\n\n"
                 f"{retry_prefix}"
                 f"{tool_error_feedback}"
-                f"FILE SCHEMAS (pre-loaded — do NOT call list_tabular_files or describe_tabular_file):\n"
+                f"{sheet_hint_feedback}"
+                f"{missing_sheet_feedback}"
+                f"FILE SCHEMAS:\n"
                 f"{schema_context}\n\n"
-                "AVAILABLE FUNCTIONS: aggregate_column, filter_rows, query_tabular_data, "
+                "AVAILABLE FUNCTIONS: lookup_value, aggregate_column, filter_rows, query_tabular_data, "
                 "group_by_aggregate, and group_by_datetime_component for year/quarter/month/week/day/hour trend analysis.\n\n"
+                "Discovery functions are not available in this analysis run because schema context is already pre-loaded.\n\n"
                 "IMPORTANT:\n"
-                "1. Use the pre-loaded schema context to pick the correct columns, then call the plugin functions.\n"
-                "2. For time-based questions on datetime columns, use group_by_datetime_component.\n"
-                "3. For threshold, ranking, comparison, or correlation-like questions, first filter/query the relevant rows, then compute grouped metrics.\n"
-                "4. Batch multiple independent function calls in a SINGLE response whenever possible.\n"
-                "5. If you need more than 100 filtered rows, explicitly set max_rows higher.\n"
-                "6. Calls to list_tabular_files or describe_tabular_file do not count as analysis and will be rejected.\n"
-                "7. For analytical questions, prefer query/filter plus aggregate/grouped computations over raw row or preview output.\n"
-                "8. For peak, busiest, highest, or lowest questions, use grouped functions and inspect the highest_group, highest_value, lowest_group, and lowest_value summary fields.\n"
-                "9. Return only computed findings and name the strongest drivers clearly.\n"
-                "10. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report."
+                "1. Use the pre-loaded schema to pick the correct columns, then call the plugin functions.\n"
+                "2. For multi-sheet workbooks, review the sheet_directory to find the most relevant sheet for the question. Pass sheet_name='<name>' in every analytical tool call unless the likely_sheet already matches the question.\n"
+                "3. For account/category lookup questions at a specific period or metric, use lookup_value first. Provide lookup_column, lookup_value, and target_column.\n"
+                "4. If lookup_value is not sufficient, use filter_rows or query_tabular_data on the label column, then read the requested period column.\n"
+                "5. Only use aggregate_column when the user explicitly asks for a sum, average, min, max, or count across rows.\n"
+                "6. For time-based questions on datetime columns, use group_by_datetime_component.\n"
+                "7. For threshold, ranking, comparison, or correlation-like questions, first filter/query the relevant rows, then compute grouped metrics.\n"
+                "8. Batch multiple independent function calls in a SINGLE response whenever possible.\n"
+                "9. If you need more than 100 filtered rows, explicitly set max_rows higher.\n"
+                "10. For analytical questions, prefer lookup/filter/query plus aggregate/grouped computations over raw row or preview output.\n"
+                "11. For peak, busiest, highest, or lowest questions, use grouped functions and inspect the highest_group, highest_value, lowest_group, and lowest_value summary fields.\n"
+                "12. Return only computed findings and name the strongest drivers clearly.\n"
+                "13. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report."
             )
-
-        def infer_datetime_component(question_text):
-            normalized_question = (question_text or '').lower()
-            if any(keyword in normalized_question for keyword in ['hour', 'hours', 'time of day']):
-                return 'hour'
-            if any(keyword in normalized_question for keyword in ['day of week', 'weekday']):
-                return 'day_name'
-            if any(keyword in normalized_question for keyword in ['year', 'years', 'yearly', 'annual', 'annually']):
-                return 'year'
-            if any(keyword in normalized_question for keyword in ['month', 'monthly']):
-                return 'month'
-            if any(keyword in normalized_question for keyword in ['quarter', 'quarterly']):
-                return 'quarter'
-            if any(keyword in normalized_question for keyword in ['week', 'weekly']):
-                return 'week'
-            if any(keyword in normalized_question for keyword in ['date', 'daily', 'day']):
-                return 'date'
-            return None
-
-        def format_component_label(component, raw_value):
-            normalized_component = tabular_plugin._normalize_datetime_component(component)
-            if normalized_component == 'hour':
-                try:
-                    hour_value = int(raw_value)
-                    return f"{hour_value:02d}:00-{hour_value:02d}:59"
-                except (TypeError, ValueError):
-                    return str(raw_value)
-            return str(raw_value)
-
-        def score_datetime_column(column_name, question_text, parsed_ratio):
-            normalized_question = (question_text or '').lower()
-            normalized_column = column_name.lower()
-            score = parsed_ratio
-
-            if 'depart' in normalized_question and 'depart' in normalized_column:
-                score += 5
-            if 'arriv' in normalized_question and 'arriv' in normalized_column:
-                score += 5
-            if 'actual' in normalized_question and 'actual' in normalized_column:
-                score += 4
-            if 'scheduled' in normalized_question and 'scheduled' in normalized_column:
-                score += 4
-            if 'actual' in normalized_column and 'scheduled' not in normalized_question:
-                score += 2
-            if any(keyword in normalized_column for keyword in ['time', 'date', 'timestamp']):
-                score += 1
-
-            return score
-
-        def select_metric_columns(df, question_text):
-            normalized_question = (question_text or '').lower()
-            scored_columns = []
-
-            for column_name in df.columns:
-                if not pandas.api.types.is_numeric_dtype(df[column_name]):
-                    continue
-
-                normalized_column = column_name.lower()
-                score = 0
-                if 'queue' in normalized_question and 'queue' in normalized_column:
-                    score += 8
-                if 'delay' in normalized_question and 'delay' in normalized_column:
-                    score += 8
-                if 'wait' in normalized_question and 'wait' in normalized_column:
-                    score += 8
-                if 'length' in normalized_column:
-                    score += 3
-                if any(keyword in normalized_column for keyword in ['minutes', 'minute', 'count', 'volume', 'traffic']):
-                    score += 2
-                if any(keyword in normalized_column for keyword in ['queue', 'delay', 'length', 'count', 'minutes']):
-                    score += 1
-                scored_columns.append((score, column_name))
-
-            scored_columns.sort(key=lambda item: (item[0], item[1]), reverse=True)
-            return [column_name for _, column_name in scored_columns]
-
-        def infer_metric_operation(question_text):
-            normalized_question = (question_text or '').lower()
-            if any(keyword in normalized_question for keyword in ['sum', 'total']):
-                return 'sum'
-            if any(keyword in normalized_question for keyword in ['maximum', 'max', 'highest single']):
-                return 'max'
-            if any(keyword in normalized_question for keyword in ['count', 'how many', 'number of']):
-                return 'count'
-            return 'mean'
-
-        async def try_direct_datetime_component_fallback():
-            datetime_component = infer_datetime_component(user_question)
-            if not datetime_component:
-                return None
-
-            for filename, df_numeric in preloaded_dataframes.items():
-                datetime_candidates = []
-                for column_name in df_numeric.columns:
-                    parsed_series = tabular_plugin._parse_datetime_like_series(df_numeric[column_name])
-                    parsed_ratio = (parsed_series.notna().sum() / len(parsed_series)) if len(parsed_series) else 0
-                    if parsed_ratio < 0.6:
-                        continue
-                    datetime_candidates.append((
-                        score_datetime_column(column_name, user_question, parsed_ratio),
-                        column_name,
-                    ))
-
-                datetime_candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
-                if not datetime_candidates:
-                    continue
-
-                datetime_column = datetime_candidates[0][1]
-                aggregate_candidates = select_metric_columns(df_numeric, user_question)
-                operation = infer_metric_operation(user_question)
-                aggregate_column = ''
-
-                if operation != 'count':
-                    if not aggregate_candidates:
-                        continue
-                    aggregate_column = aggregate_candidates[0]
-
-                result_json = await tabular_plugin.group_by_datetime_component(
-                    user_id=user_id,
-                    conversation_id=conversation_id,
-                    filename=filename,
-                    datetime_column=datetime_column,
-                    datetime_component=datetime_component,
-                    aggregate_column=aggregate_column,
-                    operation=operation,
-                    source=source_hint,
-                    top_n='5',
-                    sort_descending='true',
-                    group_id=group_id,
-                    public_workspace_id=public_workspace_id,
-                )
-
-                try:
-                    result_payload = json.loads(result_json)
-                except Exception:
-                    continue
-
-                if result_payload.get('error'):
-                    continue
-
-                top_results = result_payload.get('top_results') or {}
-                if not top_results:
-                    continue
-
-                summary_lines = []
-                for component_value, metric_value in top_results.items():
-                    summary_lines.append(
-                        f"- {format_component_label(datetime_component, component_value)}: {metric_value}"
-                    )
-
-                basis = 'row count'
-                if aggregate_column:
-                    basis = f"{operation} {aggregate_column}"
-
-                return (
-                    f"Computed direct datetime analysis from {filename}. "
-                    f"Grouped {basis} by the {datetime_component} extracted from {datetime_column}.\n"
-                    f"Top {datetime_component} values:\n"
-                    + "\n".join(summary_lines)
-                )
 
         baseline_invocations = plugin_logger.get_invocations_for_conversation(
             user_id,
@@ -563,7 +545,8 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
         baseline_invocation_count = len(baseline_invocations)
         previous_tool_error_messages = []
 
-        for attempt_number, force_tool_use in enumerate((False, True), start=1):
+        for attempt_number in range(1, 4):
+            force_tool_use = attempt_number > 1
             # 4. Build chat history with pre-loaded schemas
             chat_history = SKChatHistory()
             chat_history.add_system_message(build_system_prompt(
@@ -579,8 +562,16 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
             # 5. Execute with auto function calling
             execution_settings = AzureChatPromptExecutionSettings(
                 service_id="tabular-analysis",
-                function_choice_behavior=FunctionChoiceBehavior.Auto(
-                    maximum_auto_invoke_attempts=10 if force_tool_use else 7
+                function_choice_behavior=(
+                    FunctionChoiceBehavior.Required(
+                        maximum_auto_invoke_attempts=8,
+                        filters=analysis_function_filters,
+                    )
+                    if force_tool_use else
+                    FunctionChoiceBehavior.Auto(
+                        maximum_auto_invoke_attempts=7,
+                        filters=analysis_function_filters,
+                    )
                 ),
             )
 
@@ -663,11 +654,6 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
 
             baseline_invocation_count = len(invocations_after)
 
-        direct_datetime_fallback = await try_direct_datetime_component_fallback()
-        if direct_datetime_fallback:
-            log_event("[Tabular SK Analysis] Direct datetime fallback succeeded", level=logging.INFO)
-            return direct_datetime_fallback
-
         log_event("[Tabular SK Analysis] Unable to obtain computed tool-backed results", level=logging.WARNING)
         return None
 
@@ -707,17 +693,28 @@ def collect_tabular_sk_citations(user_id, conversation_id):
             else:
                 timestamp_str = str(inv.timestamp)
 
+        parameters = getattr(inv, 'parameters', {}) or {}
+        sheet_name = parameters.get('sheet_name')
+        sheet_index = parameters.get('sheet_index')
+        tool_name = f"{inv.plugin_name}.{inv.function_name}"
+        if sheet_name:
+            tool_name = f"{tool_name} [{sheet_name}]"
+        elif sheet_index not in (None, ''):
+            tool_name = f"{tool_name} [sheet #{sheet_index}]"
+
         citation = {
-            'tool_name': f"{inv.plugin_name}.{inv.function_name}",
+            'tool_name': tool_name,
             'function_name': inv.function_name,
             'plugin_name': inv.plugin_name,
-            'function_arguments': make_json_serializable(inv.parameters),
+            'function_arguments': make_json_serializable(parameters),
             'function_result': make_json_serializable(inv.result),
             'duration_ms': inv.duration_ms,
             'timestamp': timestamp_str,
             'success': inv.success,
             'error_message': make_json_serializable(inv.error_message),
-            'user_id': inv.user_id
+            'user_id': inv.user_id,
+            'sheet_name': sheet_name,
+            'sheet_index': sheet_index,
         }
         citations.append(citation)
 
@@ -732,6 +729,21 @@ def is_tabular_filename(filename):
 
     _, extension = os.path.splitext(filename.strip().lower())
     return extension.lstrip('.') in TABULAR_EXTENSIONS
+
+
+def get_citation_location(file_name, page_number=None, chunk_text=None, sheet_name=None):
+    """Return a display label/value pair for a citation location."""
+    if sheet_name:
+        return 'Sheet', str(sheet_name)
+
+    normalized_chunk_text = (chunk_text or '').strip()
+    if is_tabular_filename(file_name) and (
+        normalized_chunk_text.startswith('Tabular workbook:')
+        or normalized_chunk_text.startswith('Tabular data file:')
+    ):
+        return 'Location', 'Workbook Schema'
+
+    return 'Page', str(page_number or 1)
 
 
 def get_document_container_for_scope(document_scope):
@@ -1707,13 +1719,23 @@ def register_route_backend_chats(app):
                         chunk_id = doc.get('chunk_id', str(uuid.uuid4())) # Ensure ID exists
                         score = doc.get('score', 0.0) # Add default score
                         group_id = doc.get('group_id', None) # Add default group ID
+                        sheet_name = doc.get('sheet_name')
+                        location_label, location_value = get_citation_location(
+                            file_name,
+                            page_number=page_number,
+                            chunk_text=chunk_text,
+                            sheet_name=sheet_name,
+                        )
 
-                        citation = f"(Source: {file_name}, Page: {page_number}) [#{citation_id}]"
+                        citation = f"(Source: {file_name}, {location_label}: {location_value}) [#{citation_id}]"
                         retrieved_texts.append(f"{chunk_text}\n{citation}")
                         combined_documents.append({
                             "file_name": file_name, 
                             "citation_id": citation_id, 
                             "page_number": page_number,
+                            "sheet_name": sheet_name,
+                            "location_label": location_label,
+                            "location_value": location_value,
                             "version": version, 
                             "classification": classification, 
                             "chunk_text": chunk_text,
@@ -4276,14 +4298,24 @@ def register_route_backend_chats(app):
                             chunk_id = doc.get('chunk_id', str(uuid.uuid4()))
                             score = doc.get('score', 0.0)
                             group_id = doc.get('group_id', None)
+                            sheet_name = doc.get('sheet_name')
+                            location_label, location_value = get_citation_location(
+                                file_name,
+                                page_number=page_number,
+                                chunk_text=chunk_text,
+                                sheet_name=sheet_name,
+                            )
                             
-                            citation = f"(Source: {file_name}, Page: {page_number}) [#{citation_id}]"
+                            citation = f"(Source: {file_name}, {location_label}: {location_value}) [#{citation_id}]"
                             retrieved_texts.append(f"{chunk_text}\n{citation}")
                             
                             combined_documents.append({
                                 "file_name": file_name,
                                 "citation_id": citation_id,
                                 "page_number": page_number,
+                                "sheet_name": sheet_name,
+                                "location_label": location_label,
+                                "location_value": location_value,
                                 "version": version,
                                 "classification": classification,
                                 "chunk_text": chunk_text,

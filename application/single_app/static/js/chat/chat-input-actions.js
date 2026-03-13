@@ -420,7 +420,7 @@ if (fileInputEl) {
         if (!currentConversationId) {
           createNewConversation(() => {
             uploadFileToConversation(file);
-          });
+          }, { preserveSelections: true });
         } else {
           uploadFileToConversation(file);
         }
@@ -469,7 +469,7 @@ if (uploadBtn) {
       if (!currentConversationId) {
         createNewConversation(() => {
           uploadFileToConversation(file);
-        });
+        }, { preserveSelections: true });
       } else {
         uploadFileToConversation(file);
       }

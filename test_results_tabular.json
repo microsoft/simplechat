@@ -1,0 +1,26 @@
+[
+  {
+    "file": "functional_tests/test_tabular_multisheet_workbook_support.py",
+    "exit_code": 0,
+    "summary": " Results: 7/7 tests passed",
+    "stderr_tail": "Plugin function executed successfully\n[Plugin Invocation] TabularProcessingPlugin.filter_rows\n[Plugin Function Logger] Function completed successfully\nPlugin function executed successfully\n[Plugin Invocation] TabularProcessingPlugin.group_by_aggregate"
+  },
+  {
+    "file": "functional_tests/test_tabular_datetime_component_analysis.py",
+    "exit_code": 0,
+    "summary": " Results: 4/4 tests passed",
+    "stderr_tail": "Plugin function executed successfully\n[Plugin Invocation] TabularProcessingPlugin.group_by_datetime_component\n[Plugin Function Logger] Function completed successfully\nPlugin function executed successfully\n[Plugin Invocation] TabularProcessingPlugin.group_by_datetime_component"
+  },
+  {
+    "file": "functional_tests/test_tabular_grouped_peak_summary.py",
+    "exit_code": 0,
+    "summary": " Results: 3/3 tests passed",
+    "stderr_tail": "Plugin function executed successfully\n[Plugin Invocation] TabularProcessingPlugin.group_by_datetime_component\n[Plugin Function Logger] Function completed successfully\nPlugin function executed successfully\n[Plugin Invocation] TabularProcessingPlugin.group_by_aggregate"
+  },
+  {
+    "file": "functional_tests/test_tabular_tool_error_retry_and_thoughts.py",
+    "exit_code": 0,
+    "summary": " Results: 3/3 tests passed",
+    "stderr_tail": ""
+  }
+]

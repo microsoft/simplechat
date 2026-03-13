@@ -34,8 +34,9 @@ export function getFileType(fileName) {
  * @param {string} docId - Document ID
  * @param {string|number} pageNumberOrTimestamp - Page number for PDF or timestamp for video/audio
  * @param {string} citationId - Citation ID for fallback
+ * @param {string|null} initialSheetName - Workbook sheet to open initially for tabular files
  */
-export function showEnhancedCitationModal(docId, pageNumberOrTimestamp, citationId) {
+export function showEnhancedCitationModal(docId, pageNumberOrTimestamp, citationId, initialSheetName = null) {
     // Get document metadata to determine file type
     const docMetadata = getDocumentMetadata(docId);
     if (!docMetadata || !docMetadata.file_name) {
@@ -69,7 +70,7 @@ export function showEnhancedCitationModal(docId, pageNumberOrTimestamp, citation
             showAudioModal(docId, audioTimestamp, docMetadata.file_name);
             break;
         case 'tabular':
-            showTabularDownloadModal(docId, docMetadata.file_name);
+            showTabularDownloadModal(docId, docMetadata.file_name, initialSheetName);
             break;
         default:
             // Fall back to text citation for unsupported types
@@ -300,8 +301,9 @@ export function showAudioModal(docId, timestamp, fileName) {
  * Show tabular file preview modal with data table
  * @param {string} docId - Document ID
  * @param {string} fileName - File name
+ * @param {string|null} initialSheetName - Workbook sheet to open initially
  */
-export function showTabularDownloadModal(docId, fileName) {
+export function showTabularDownloadModal(docId, fileName, initialSheetName = null) {
     console.log(`Showing tabular preview modal for docId: ${docId}, fileName: ${fileName}`);
     showLoadingIndicator();
 
@@ -316,11 +318,15 @@ export function showTabularDownloadModal(docId, fileName) {
     const rowInfo = tabularModal.querySelector("#enhanced-tabular-row-info");
     const downloadBtn = tabularModal.querySelector("#enhanced-tabular-download");
     const errorContainer = tabularModal.querySelector("#enhanced-tabular-error");
+    const sheetControls = tabularModal.querySelector("#enhanced-tabular-sheet-controls");
+    const sheetSelect = tabularModal.querySelector("#enhanced-tabular-sheet-select");
 
     title.textContent = `Tabular Data: ${fileName}`;
     tableContainer.innerHTML = '<div class="text-center p-4"><div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div><p class="mt-2 text-muted">Loading data preview...</p></div>';
     rowInfo.textContent = '';
     errorContainer.classList.add('d-none');
+    sheetControls.classList.add('d-none');
+    sheetSelect.innerHTML = '';
 
     const downloadUrl = `/api/enhanced_citations/tabular_workspace?doc_id=${encodeURIComponent(docId)}`;
     downloadBtn.href = downloadUrl;
@@ -330,26 +336,67 @@ export function showTabularDownloadModal(docId, fileName) {
     const modalInstance = new bootstrap.Modal(tabularModal);
     modalInstance.show();
 
-    // Fetch preview data
-    const previewUrl = `/api/enhanced_citations/tabular_preview?doc_id=${encodeURIComponent(docId)}`;
-    fetch(previewUrl)
-        .then(response => {
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            return response.json();
-        })
-        .then(data => {
-            hideLoadingIndicator();
-            if (data.error) {
-                showTabularError(tableContainer, errorContainer, data.error);
-                return;
-            }
-            renderTabularPreview(tableContainer, rowInfo, data);
-        })
-        .catch(error => {
-            hideLoadingIndicator();
-            console.error('Error loading tabular preview:', error);
-            showTabularError(tableContainer, errorContainer, 'Could not load data preview.');
+    const escapeOptionValue = (value) => String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+
+    const loadTabularPreview = (selectedSheetName = null) => {
+        errorContainer.classList.add('d-none');
+
+        const params = new URLSearchParams({
+            doc_id: docId,
         });
+        if (selectedSheetName) {
+            params.set('sheet_name', selectedSheetName);
+        }
+
+        const previewUrl = `/api/enhanced_citations/tabular_preview?${params.toString()}`;
+        fetch(previewUrl)
+            .then(response => {
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                return response.json();
+            })
+            .then(data => {
+                hideLoadingIndicator();
+                if (data.error) {
+                    showTabularError(tableContainer, errorContainer, data.error);
+                    return;
+                }
+
+                title.textContent = data.selected_sheet
+                    ? `Tabular Data: ${fileName} [${data.selected_sheet}]`
+                    : `Tabular Data: ${fileName}`;
+
+                const sheetNames = Array.isArray(data.sheet_names) ? data.sheet_names : [];
+                if (sheetNames.length > 1) {
+                    sheetControls.classList.remove('d-none');
+                    sheetSelect.innerHTML = sheetNames
+                        .map(sheetName => {
+                            const isSelected = sheetName === data.selected_sheet ? ' selected' : '';
+                            return `<option value="${escapeOptionValue(sheetName)}"${isSelected}>${escapeOptionValue(sheetName)}</option>`;
+                        })
+                        .join('');
+                    sheetSelect.onchange = () => {
+                        showLoadingIndicator();
+                        loadTabularPreview(sheetSelect.value);
+                    };
+                } else {
+                    sheetControls.classList.add('d-none');
+                    sheetSelect.innerHTML = '';
+                }
+
+                renderTabularPreview(tableContainer, rowInfo, data);
+            })
+            .catch(error => {
+                hideLoadingIndicator();
+                console.error('Error loading tabular preview:', error);
+                showTabularError(tableContainer, errorContainer, 'Could not load data preview.');
+            });
+    };
+
+    loadTabularPreview(initialSheetName);
 }
 
 /**
@@ -359,7 +406,7 @@ export function showTabularDownloadModal(docId, fileName) {
  * @param {Object} data - Preview data from API
  */
 function renderTabularPreview(container, rowInfo, data) {
-    const { columns, rows, total_rows, truncated } = data;
+    const { columns, rows, total_rows, truncated, selected_sheet } = data;
 
     // Build table HTML
     let html = '<table class="table table-striped table-bordered table-sm table-hover mb-0">';
@@ -389,11 +436,14 @@ function renderTabularPreview(container, rowInfo, data) {
 
     // Row info
     const displayedRows = rows.length;
-    const totalFormatted = total_rows.toLocaleString();
+    const hasTotalRows = total_rows !== null && total_rows !== undefined;
+    const totalFormatted = hasTotalRows ? total_rows.toLocaleString() : displayedRows.toLocaleString();
+    const sheetPrefix = selected_sheet ? `Sheet ${selected_sheet} · ` : '';
     if (truncated) {
-        rowInfo.textContent = `Showing ${displayedRows.toLocaleString()} of ${totalFormatted} rows`;
+        const truncationSuffix = hasTotalRows ? `${totalFormatted} rows` : `${displayedRows.toLocaleString()}+ rows`;
+        rowInfo.textContent = `${sheetPrefix}Showing ${displayedRows.toLocaleString()} of ${truncationSuffix}`;
     } else {
-        rowInfo.textContent = `${totalFormatted} rows, ${columns.length} columns`;
+        rowInfo.textContent = `${sheetPrefix}${totalFormatted} rows, ${columns.length} columns`;
     }
 }
 
@@ -582,6 +632,10 @@ function createTabularModal() {
                 </div>
                 <div class="modal-body p-0">
                     <div id="enhanced-tabular-error" class="alert alert-warning m-3 d-none"></div>
+                    <div id="enhanced-tabular-sheet-controls" class="px-3 pt-3 d-none">
+                        <label for="enhanced-tabular-sheet-select" class="form-label small text-muted mb-1">Worksheet</label>
+                        <select id="enhanced-tabular-sheet-select" class="form-select form-select-sm"></select>
+                    </div>
                     <div id="enhanced-tabular-table-container" style="max-height: 60vh; overflow: auto;"></div>
                 </div>
                 <div class="modal-footer d-flex justify-content-between align-items-center">

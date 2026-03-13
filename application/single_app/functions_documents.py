@@ -4916,24 +4916,42 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
             if file_ext == '.csv':
                 df_preview = pandas.read_csv(temp_file_path, keep_default_na=False, dtype=str, nrows=5)
                 full_df = pandas.read_csv(temp_file_path, keep_default_na=False, dtype=str)
+                row_count = len(full_df)
+                columns = [str(column) for column in df_preview.columns]
+                preview_rows = df_preview.head(5).to_string(index=False)
+
+                schema_summary = (
+                    f"Tabular data file: {original_filename}\n"
+                    f"Columns ({len(columns)}): {', '.join(columns)}\n"
+                    f"Total rows: {row_count}\n"
+                    f"Preview (first 5 rows):\n{preview_rows}\n\n"
+                    f"This file is available for detailed analysis via the Tabular Processing plugin."
+                )
             elif file_ext in ('.xlsx', '.xls', '.xlsm'):
                 engine = 'openpyxl' if file_ext in ('.xlsx', '.xlsm') else 'xlrd'
-                df_preview = pandas.read_excel(temp_file_path, engine=engine, keep_default_na=False, dtype=str, nrows=5)
-                full_df = pandas.read_excel(temp_file_path, engine=engine, keep_default_na=False, dtype=str)
+                excel_file = pandas.ExcelFile(temp_file_path, engine=engine)
+                workbook_sections = []
+
+                for sheet_name in excel_file.sheet_names:
+                    df_preview = excel_file.parse(sheet_name, keep_default_na=False, dtype=str, nrows=3)
+                    full_df = excel_file.parse(sheet_name, keep_default_na=False, dtype=str)
+                    columns = [str(column) for column in df_preview.columns]
+                    preview_rows = df_preview.head(3).to_string(index=False)
+                    workbook_sections.append(
+                        f"Sheet: {sheet_name}\n"
+                        f"Columns ({len(columns)}): {', '.join(columns)}\n"
+                        f"Total rows: {len(full_df)}\n"
+                        f"Preview (first 3 rows):\n{preview_rows}"
+                    )
+
+                schema_summary = (
+                    f"Tabular workbook: {original_filename}\n"
+                    f"Sheets ({len(excel_file.sheet_names)}): {', '.join(excel_file.sheet_names)}\n\n"
+                    + "\n\n".join(workbook_sections)
+                    + "\n\nThis workbook is available for detailed analysis via the Tabular Processing plugin."
+                )
             else:
                 raise ValueError(f"Unsupported tabular file type: {file_ext}")
-
-            row_count = len(full_df)
-            columns = list(df_preview.columns)
-            preview_rows = df_preview.head(5).to_string(index=False)
-
-            schema_summary = (
-                f"Tabular data file: {original_filename}\n"
-                f"Columns ({len(columns)}): {', '.join(columns)}\n"
-                f"Total rows: {row_count}\n"
-                f"Preview (first 5 rows):\n{preview_rows}\n\n"
-                f"This file is available for detailed analysis via the Tabular Processing plugin."
-            )
 
             update_callback(number_of_pages=1, status=f"Indexing schema summary for {original_filename}...")
 

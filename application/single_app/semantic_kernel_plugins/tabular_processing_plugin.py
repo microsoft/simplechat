@@ -7,6 +7,8 @@ Works with workspace documents (user-documents, group-documents, public-document
 and chat-uploaded documents (personal-chat container).
 """
 import asyncio
+import copy
+from datetime import date, datetime
 import io
 import json
 import logging
@@ -55,7 +57,14 @@ class TabularProcessingPlugin:
     ]
 
     def __init__(self):
-        self._df_cache = {}  # Per-instance cache: (container, blob_name) -> DataFrame
+        self._df_cache = {}  # Per-instance cache: (container, blob_name, sheet_name) -> DataFrame
+        self._blob_data_cache = {}  # Per-instance cache: (container, blob_name) -> raw bytes
+        self._workbook_metadata_cache = {}  # Per-instance cache: (container, blob_name) -> workbook metadata
+        self._default_sheet_overrides = {}  # (container, blob_name) -> default sheet name
+
+    def set_default_sheet(self, container_name: str, blob_name: str, sheet_name: str):
+        """Set the default sheet for a workbook so the model doesn't need to specify it."""
+        self._default_sheet_overrides[(container_name, blob_name)] = sheet_name
 
     def _get_blob_service_client(self):
         """Get the blob service client from CLIENTS cache."""
@@ -75,30 +84,280 @@ class TabularProcessingPlugin:
                 blobs.append(blob['name'])
         return blobs
 
-    def _read_tabular_blob_to_dataframe(self, container_name: str, blob_name: str) -> pandas.DataFrame:
-        """Download a blob and read it into a pandas DataFrame. Uses per-instance cache."""
+    def _download_tabular_blob_bytes(self, container_name: str, blob_name: str) -> bytes:
+        """Download a blob once and reuse the raw bytes across sheet-aware operations."""
         cache_key = (container_name, blob_name)
-        if cache_key in self._df_cache:
-            log_event(f"[TabularProcessingPlugin] Cache hit for {blob_name}", level=logging.DEBUG)
-            return self._df_cache[cache_key].copy()
+        if cache_key in self._blob_data_cache:
+            return self._blob_data_cache[cache_key]
 
         client = self._get_blob_service_client()
         blob_client = client.get_blob_client(container=container_name, blob=blob_name)
         stream = blob_client.download_blob()
         data = stream.readall()
+        self._blob_data_cache[cache_key] = data
+        return data
+
+    def _get_excel_engine(self, blob_name: str) -> Optional[str]:
+        """Return the pandas Excel engine for a workbook, or None for CSV files."""
+        name_lower = blob_name.lower()
+        if name_lower.endswith('.xlsx') or name_lower.endswith('.xlsm'):
+            return 'openpyxl'
+        if name_lower.endswith('.xls'):
+            return 'xlrd'
+        return None
+
+    def _get_workbook_metadata(self, container_name: str, blob_name: str) -> dict:
+        """Return workbook metadata including available sheet names for Excel files."""
+        cache_key = (container_name, blob_name)
+        if cache_key in self._workbook_metadata_cache:
+            return copy.deepcopy(self._workbook_metadata_cache[cache_key])
+
+        engine = self._get_excel_engine(blob_name)
+        metadata = {
+            'is_workbook': bool(engine),
+            'sheet_names': [],
+            'sheet_count': 0,
+            'default_sheet': None,
+        }
+
+        if engine:
+            data = self._download_tabular_blob_bytes(container_name, blob_name)
+            excel_file = pandas.ExcelFile(io.BytesIO(data), engine=engine)
+            sheet_names = list(excel_file.sheet_names)
+            metadata.update({
+                'sheet_names': sheet_names,
+                'sheet_count': len(sheet_names),
+                'default_sheet': sheet_names[0] if sheet_names else None,
+            })
+
+        self._workbook_metadata_cache[cache_key] = copy.deepcopy(metadata)
+        return copy.deepcopy(metadata)
+
+    def _resolve_sheet_selection(
+        self,
+        container_name: str,
+        blob_name: str,
+        sheet_name: Optional[str] = None,
+        sheet_index: Optional[str] = None,
+        require_explicit_sheet: bool = False,
+    ) -> tuple:
+        """Resolve a workbook sheet selection and enforce explicit choice when required."""
+        workbook_metadata = self._get_workbook_metadata(container_name, blob_name)
+        if not workbook_metadata.get('is_workbook'):
+            return None, workbook_metadata
+
+        available_sheets = workbook_metadata.get('sheet_names', [])
+        if not available_sheets:
+            raise ValueError(f"Workbook '{blob_name}' does not contain any readable sheets.")
+
+        normalized_sheet_name = (sheet_name or '').strip()
+        if normalized_sheet_name:
+            for candidate in available_sheets:
+                if candidate == normalized_sheet_name:
+                    return candidate, workbook_metadata
+            for candidate in available_sheets:
+                if candidate.lower() == normalized_sheet_name.lower():
+                    return candidate, workbook_metadata
+            raise ValueError(
+                f"Sheet '{normalized_sheet_name}' was not found in workbook '{blob_name}'. "
+                f"Available sheets: {available_sheets}."
+            )
+
+        normalized_sheet_index = None if sheet_index is None else str(sheet_index).strip()
+        if normalized_sheet_index not in (None, ''):
+            try:
+                resolved_sheet_index = int(normalized_sheet_index)
+            except ValueError as exc:
+                raise ValueError(
+                    f"sheet_index must be an integer for workbook '{blob_name}'."
+                ) from exc
+
+            if resolved_sheet_index < 0 or resolved_sheet_index >= len(available_sheets):
+                raise ValueError(
+                    f"sheet_index {resolved_sheet_index} is out of range for workbook '{blob_name}'. "
+                    f"Available sheets: {available_sheets}."
+                )
+            return available_sheets[resolved_sheet_index], workbook_metadata
+
+        if len(available_sheets) == 1:
+            return available_sheets[0], workbook_metadata
+
+        # Use pre-selected default sheet if one was set by the orchestration layer
+        override_key = (container_name, blob_name)
+        if override_key in self._default_sheet_overrides:
+            override_sheet = self._default_sheet_overrides[override_key]
+            for candidate in available_sheets:
+                if candidate == override_sheet or candidate.lower() == override_sheet.lower():
+                    return candidate, workbook_metadata
+
+        if require_explicit_sheet:
+            raise ValueError(
+                f"Workbook '{blob_name}' has multiple sheets: {available_sheets}. "
+                "Specify sheet_name or sheet_index on analytical calls."
+            )
+
+        return workbook_metadata.get('default_sheet'), workbook_metadata
+
+    def _format_datetime_column_label(self, value) -> str:
+        """Render date-like Excel header labels into stable analysis-friendly strings."""
+        timestamp_value = pandas.Timestamp(value)
+
+        if (
+            timestamp_value.hour == 0
+            and timestamp_value.minute == 0
+            and timestamp_value.second == 0
+            and timestamp_value.microsecond == 0
+        ):
+            if timestamp_value.day == 1:
+                return timestamp_value.strftime('%b-%y')
+            return timestamp_value.strftime('%Y-%m-%d')
+
+        return timestamp_value.strftime('%Y-%m-%d %H:%M:%S')
+
+    def _normalize_column_label(self, label, fallback_index: int) -> str:
+        """Convert arbitrary DataFrame column labels into stable string names."""
+        if label is None or (not isinstance(label, str) and pandas.isna(label)):
+            return f"Column {fallback_index}"
+
+        if isinstance(label, pandas.Timestamp):
+            return self._format_datetime_column_label(label)
+
+        if isinstance(label, datetime):
+            return self._format_datetime_column_label(label)
+
+        if isinstance(label, date):
+            return self._format_datetime_column_label(datetime.combine(label, datetime.min.time()))
+
+        normalized_label = str(label).strip()
+        return normalized_label or f"Column {fallback_index}"
+
+    def _normalize_dataframe_columns(self, df: pandas.DataFrame) -> pandas.DataFrame:
+        """Rename DataFrame columns to unique, JSON-safe string labels."""
+        normalized_df = df.copy()
+        normalized_columns = []
+        normalized_label_counts = {}
+
+        for column_index, column_label in enumerate(normalized_df.columns, start=1):
+            base_label = self._normalize_column_label(column_label, column_index)
+            occurrence_count = normalized_label_counts.get(base_label, 0) + 1
+            normalized_label_counts[base_label] = occurrence_count
+
+            if occurrence_count == 1:
+                normalized_columns.append(base_label)
+            else:
+                normalized_columns.append(f"{base_label} ({occurrence_count})")
+
+        normalized_df.columns = normalized_columns
+        return normalized_df
+
+    def _build_sheet_schema_summary(self, df: pandas.DataFrame, sheet_name: Optional[str], preview_rows: int = 3) -> dict:
+        """Build a compact schema summary for a single table or worksheet."""
+        df = self._normalize_dataframe_columns(df)
+        df_numeric = self._try_numeric_conversion(df.copy())
+        return {
+            'selected_sheet': sheet_name,
+            'row_count': len(df),
+            'column_count': len(df.columns),
+            'columns': list(df.columns),
+            'dtypes': {col: str(dtype) for col, dtype in df_numeric.dtypes.items()},
+            'preview': df.head(preview_rows).to_dict(orient='records'),
+            'null_counts': df.isnull().sum().to_dict(),
+        }
+
+    def _build_workbook_schema_summary(self, container_name: str, blob_name: str, filename: str, preview_rows: int = 3) -> dict:
+        """Build a workbook-aware schema summary for prompt preload and file description."""
+        workbook_metadata = self._get_workbook_metadata(container_name, blob_name)
+        if not workbook_metadata.get('is_workbook'):
+            df = self._read_tabular_blob_to_dataframe(container_name, blob_name)
+            summary = self._build_sheet_schema_summary(df, None, preview_rows=preview_rows)
+            summary.update({
+                'filename': filename,
+                'is_workbook': False,
+                'sheet_names': [],
+                'sheet_count': 0,
+            })
+            return summary
+
+        per_sheet_schemas = {}
+        for workbook_sheet_name in workbook_metadata.get('sheet_names', []):
+            df = self._read_tabular_blob_to_dataframe(
+                container_name,
+                blob_name,
+                sheet_name=workbook_sheet_name,
+            )
+            per_sheet_schemas[workbook_sheet_name] = self._build_sheet_schema_summary(
+                df,
+                workbook_sheet_name,
+                preview_rows=preview_rows,
+            )
+
+        return {
+            'filename': filename,
+            'is_workbook': True,
+            'sheet_names': workbook_metadata.get('sheet_names', []),
+            'sheet_count': workbook_metadata.get('sheet_count', 0),
+            'selected_sheet': None,
+            'per_sheet_schemas': per_sheet_schemas,
+        }
+
+    def _read_tabular_blob_to_dataframe(
+        self,
+        container_name: str,
+        blob_name: str,
+        sheet_name: Optional[str] = None,
+        sheet_index: Optional[str] = None,
+        require_explicit_sheet: bool = False,
+    ) -> pandas.DataFrame:
+        """Download a blob and read it into a pandas DataFrame. Uses per-instance cache."""
+        resolved_sheet_name, workbook_metadata = self._resolve_sheet_selection(
+            container_name,
+            blob_name,
+            sheet_name=sheet_name,
+            sheet_index=sheet_index,
+            require_explicit_sheet=require_explicit_sheet,
+        )
+        sheet_cache_key = resolved_sheet_name or '__default__'
+        cache_key = (container_name, blob_name, sheet_cache_key)
+        if cache_key in self._df_cache:
+            log_event(
+                f"[TabularProcessingPlugin] Cache hit for {blob_name}"
+                + (f" [{resolved_sheet_name}]" if resolved_sheet_name else ''),
+                level=logging.DEBUG,
+            )
+            return self._df_cache[cache_key].copy()
+
+        data = self._download_tabular_blob_bytes(container_name, blob_name)
 
         name_lower = blob_name.lower()
         if name_lower.endswith('.csv'):
             df = pandas.read_csv(io.BytesIO(data), keep_default_na=False, dtype=str)
         elif name_lower.endswith('.xlsx') or name_lower.endswith('.xlsm'):
-            df = pandas.read_excel(io.BytesIO(data), engine='openpyxl', keep_default_na=False, dtype=str)
+            df = pandas.read_excel(
+                io.BytesIO(data),
+                engine='openpyxl',
+                keep_default_na=False,
+                dtype=str,
+                sheet_name=resolved_sheet_name,
+            )
         elif name_lower.endswith('.xls'):
-            df = pandas.read_excel(io.BytesIO(data), engine='xlrd', keep_default_na=False, dtype=str)
+            df = pandas.read_excel(
+                io.BytesIO(data),
+                engine='xlrd',
+                keep_default_na=False,
+                dtype=str,
+                sheet_name=resolved_sheet_name,
+            )
         else:
             raise ValueError(f"Unsupported tabular file type: {blob_name}")
 
+        df = self._normalize_dataframe_columns(df)
         self._df_cache[cache_key] = df
-        log_event(f"[TabularProcessingPlugin] Cached DataFrame for {blob_name} ({len(df)} rows)", level=logging.DEBUG)
+        log_event(
+            f"[TabularProcessingPlugin] Cached DataFrame for {blob_name}"
+            + (f" [{resolved_sheet_name}]" if resolved_sheet_name else '')
+            + f" ({len(df)} rows)",
+            level=logging.DEBUG,
+        )
         return df.copy()
 
     def _try_numeric_conversion(self, df: pandas.DataFrame) -> pandas.DataFrame:
@@ -408,11 +667,17 @@ class TabularProcessingPlugin:
                 )
                 for blob in workspace_blobs:
                     filename = blob.split('/')[-1]
+                    workbook_metadata = self._get_workbook_metadata(
+                        storage_account_user_documents_container_name,
+                        blob,
+                    )
                     results.append({
                         "filename": filename,
                         "blob_path": blob,
                         "source": "workspace",
-                        "container": storage_account_user_documents_container_name
+                        "container": storage_account_user_documents_container_name,
+                        "sheet_names": workbook_metadata.get('sheet_names', []),
+                        "sheet_count": workbook_metadata.get('sheet_count', 0),
                     })
             except Exception as e:
                 log_event(f"[TabularProcessingPlugin] Error listing workspace blobs: {e}", level=logging.WARNING)
@@ -424,11 +689,17 @@ class TabularProcessingPlugin:
                 )
                 for blob in chat_blobs:
                     filename = blob.split('/')[-1]
+                    workbook_metadata = self._get_workbook_metadata(
+                        storage_account_personal_chat_container_name,
+                        blob,
+                    )
                     results.append({
                         "filename": filename,
                         "blob_path": blob,
                         "source": "chat",
-                        "container": storage_account_personal_chat_container_name
+                        "container": storage_account_personal_chat_container_name,
+                        "sheet_names": workbook_metadata.get('sheet_names', []),
+                        "sheet_count": workbook_metadata.get('sheet_count', 0),
                     })
             except Exception as e:
                 log_event(f"[TabularProcessingPlugin] Error listing chat blobs: {e}", level=logging.WARNING)
@@ -441,11 +712,17 @@ class TabularProcessingPlugin:
                     )
                     for blob in group_blobs:
                         filename = blob.split('/')[-1]
+                        workbook_metadata = self._get_workbook_metadata(
+                            storage_account_group_documents_container_name,
+                            blob,
+                        )
                         results.append({
                             "filename": filename,
                             "blob_path": blob,
                             "source": "group",
-                            "container": storage_account_group_documents_container_name
+                            "container": storage_account_group_documents_container_name,
+                            "sheet_names": workbook_metadata.get('sheet_names', []),
+                            "sheet_count": workbook_metadata.get('sheet_count', 0),
                         })
                 except Exception as e:
                     log_event(f"[TabularProcessingPlugin] Error listing group blobs: {e}", level=logging.WARNING)
@@ -458,11 +735,17 @@ class TabularProcessingPlugin:
                     )
                     for blob in public_blobs:
                         filename = blob.split('/')[-1]
+                        workbook_metadata = self._get_workbook_metadata(
+                            storage_account_public_documents_container_name,
+                            blob,
+                        )
                         results.append({
                             "filename": filename,
                             "blob_path": blob,
                             "source": "public",
-                            "container": storage_account_public_documents_container_name
+                            "container": storage_account_public_documents_container_name,
+                            "sheet_names": workbook_metadata.get('sheet_names', []),
+                            "sheet_count": workbook_metadata.get('sheet_count', 0),
                         })
                 except Exception as e:
                     log_event(f"[TabularProcessingPlugin] Error listing public blobs: {e}", level=logging.WARNING)
@@ -483,6 +766,8 @@ class TabularProcessingPlugin:
         user_id: Annotated[str, "The user ID (from Scope ID in Conversation Metadata)"],
         conversation_id: Annotated[str, "The conversation ID (from Conversation Metadata)"],
         filename: Annotated[str, "The filename of the tabular file"],
+        sheet_name: Annotated[Optional[str], "Optional worksheet name for Excel files. When omitted on multi-sheet workbooks, the response returns workbook-level sheet schemas."] = None,
+        sheet_index: Annotated[Optional[str], "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
         group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
         public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
@@ -490,25 +775,133 @@ class TabularProcessingPlugin:
         """Get schema and preview of a tabular file."""
         def _sync_work():
             try:
-                container, blob_path = self._resolve_blob_location(
+                container, blob_path = self._resolve_blob_location_with_fallback(
                     user_id, conversation_id, filename, source,
                     group_id=group_id, public_workspace_id=public_workspace_id
                 )
-                df = self._read_tabular_blob_to_dataframe(container, blob_path)
-                df_numeric = self._try_numeric_conversion(df.copy())
+                workbook_metadata = self._get_workbook_metadata(container, blob_path)
 
-                summary = {
-                    "filename": filename,
-                    "row_count": len(df),
-                    "column_count": len(df.columns),
-                    "columns": list(df.columns),
-                    "dtypes": {col: str(dtype) for col, dtype in df_numeric.dtypes.items()},
-                    "preview": df.head(5).to_dict(orient='records'),
-                    "null_counts": df.isnull().sum().to_dict()
-                }
+                if workbook_metadata.get('is_workbook') and workbook_metadata.get('sheet_count', 0) > 1 and not (sheet_name or sheet_index):
+                    summary = self._build_workbook_schema_summary(
+                        container,
+                        blob_path,
+                        filename,
+                        preview_rows=3,
+                    )
+                else:
+                    selected_sheet, workbook_metadata = self._resolve_sheet_selection(
+                        container,
+                        blob_path,
+                        sheet_name=sheet_name,
+                        sheet_index=sheet_index,
+                        require_explicit_sheet=False,
+                    )
+                    df = self._read_tabular_blob_to_dataframe(
+                        container,
+                        blob_path,
+                        sheet_name=selected_sheet,
+                        require_explicit_sheet=False,
+                    )
+                    summary = self._build_sheet_schema_summary(df, selected_sheet, preview_rows=5)
+                    summary.update({
+                        "filename": filename,
+                        "is_workbook": workbook_metadata.get('is_workbook', False),
+                        "sheet_names": workbook_metadata.get('sheet_names', []),
+                        "sheet_count": workbook_metadata.get('sheet_count', 0),
+                    })
+
                 return json.dumps(summary, indent=2, default=str)
             except Exception as e:
                 log_event(f"[TabularProcessingPlugin] Error describing file: {e}", level=logging.WARNING)
+                return json.dumps({"error": str(e)})
+        return await asyncio.to_thread(_sync_work)
+
+    @kernel_function(
+        description=(
+            "Look up one or more rows by label/category in a tabular file and return the value from a target column. "
+            "Best for questions like 'What was Total Assets in Nov-25?' or 'What was Net Worth in Dec-25?'."
+        ),
+        name="lookup_value"
+    )
+    @plugin_function_logger("TabularProcessingPlugin")
+    async def lookup_value(
+        self,
+        user_id: Annotated[str, "The user ID (from Scope ID in Conversation Metadata)"],
+        conversation_id: Annotated[str, "The conversation ID (from Conversation Metadata)"],
+        filename: Annotated[str, "The filename of the tabular file"],
+        lookup_column: Annotated[str, "The label/category column to search, such as Accounts or Category"],
+        lookup_value: Annotated[str, "The row label/category value to search for, such as Total Assets"],
+        target_column: Annotated[str, "The target column containing the desired value, such as Nov-25"],
+        match_operator: Annotated[str, "Match operator: equals, contains, startswith, endswith"] = "equals",
+        sheet_name: Annotated[Optional[str], "Optional worksheet name for Excel files. Required for analytical calls on multi-sheet workbooks unless sheet_index is provided."] = None,
+        sheet_index: Annotated[Optional[str], "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
+        source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
+        max_rows: Annotated[str, "Maximum matching rows to return"] = "25",
+        group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
+        public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
+    ) -> Annotated[str, "JSON result containing matching rows and target-column values"]:
+        """Look up values from a target column for matching rows."""
+        def _sync_work():
+            try:
+                container, blob_path = self._resolve_blob_location_with_fallback(
+                    user_id, conversation_id, filename, source,
+                    group_id=group_id, public_workspace_id=public_workspace_id
+                )
+                selected_sheet, workbook_metadata = self._resolve_sheet_selection(
+                    container,
+                    blob_path,
+                    sheet_name=sheet_name,
+                    sheet_index=sheet_index,
+                    require_explicit_sheet=True,
+                )
+                df = self._read_tabular_blob_to_dataframe(
+                    container,
+                    blob_path,
+                    sheet_name=selected_sheet,
+                    require_explicit_sheet=True,
+                )
+                df = self._try_numeric_conversion(df)
+
+                if lookup_column not in df.columns:
+                    return json.dumps({"error": f"Column '{lookup_column}' not found. Available: {list(df.columns)}"})
+                if target_column not in df.columns:
+                    return json.dumps({"error": f"Column '{target_column}' not found. Available: {list(df.columns)}"})
+
+                series = df[lookup_column]
+                operator = (match_operator or 'equals').strip().lower()
+                normalized_lookup_value = str(lookup_value)
+
+                if operator in {'equals', '=='}:
+                    mask = series.astype(str).str.lower() == normalized_lookup_value.lower()
+                elif operator == 'contains':
+                    mask = series.astype(str).str.contains(normalized_lookup_value, case=False, na=False)
+                elif operator == 'startswith':
+                    mask = series.astype(str).str.lower().str.startswith(normalized_lookup_value.lower())
+                elif operator == 'endswith':
+                    mask = series.astype(str).str.lower().str.endswith(normalized_lookup_value.lower())
+                else:
+                    return json.dumps({"error": f"Unsupported match_operator: {match_operator}"})
+
+                limit = int(max_rows)
+                matches = df[mask].head(limit)
+                response = {
+                    "filename": filename,
+                    "selected_sheet": selected_sheet if workbook_metadata.get('is_workbook') else None,
+                    "lookup_column": lookup_column,
+                    "lookup_value": lookup_value,
+                    "target_column": target_column,
+                    "match_operator": operator,
+                    "total_matches": int(mask.sum()),
+                    "returned_rows": len(matches),
+                    "data": matches.to_dict(orient='records'),
+                }
+
+                if len(matches) == 1:
+                    response["value"] = matches.iloc[0][target_column]
+
+                return json.dumps(response, indent=2, default=str)
+            except Exception as e:
+                log_event(f"[TabularProcessingPlugin] Error looking up value: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
         return await asyncio.to_thread(_sync_work)
 
@@ -527,6 +920,8 @@ class TabularProcessingPlugin:
         filename: Annotated[str, "The filename of the tabular file"],
         column: Annotated[str, "The column name to aggregate"],
         operation: Annotated[str, "Aggregation: sum, mean, count, min, max, median, std, nunique, value_counts"],
+        sheet_name: Annotated[Optional[str], "Optional worksheet name for Excel files. Required for analytical calls on multi-sheet workbooks unless sheet_index is provided."] = None,
+        sheet_index: Annotated[Optional[str], "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
         group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
         public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
@@ -534,11 +929,23 @@ class TabularProcessingPlugin:
         """Execute an aggregation operation on a column."""
         def _sync_work():
             try:
-                container, blob_path = self._resolve_blob_location(
+                container, blob_path = self._resolve_blob_location_with_fallback(
                     user_id, conversation_id, filename, source,
                     group_id=group_id, public_workspace_id=public_workspace_id
                 )
-                df = self._read_tabular_blob_to_dataframe(container, blob_path)
+                selected_sheet, workbook_metadata = self._resolve_sheet_selection(
+                    container,
+                    blob_path,
+                    sheet_name=sheet_name,
+                    sheet_index=sheet_index,
+                    require_explicit_sheet=True,
+                )
+                df = self._read_tabular_blob_to_dataframe(
+                    container,
+                    blob_path,
+                    sheet_name=selected_sheet,
+                    require_explicit_sheet=True,
+                )
                 df = self._try_numeric_conversion(df)
 
                 if column not in df.columns:
@@ -564,11 +971,17 @@ class TabularProcessingPlugin:
                 elif op == 'nunique':
                     result = series.nunique()
                 elif op == 'value_counts':
-                    result = series.value_counts().to_dict()
+                    result = self._series_to_json_dict(series.value_counts())
                 else:
                     return json.dumps({"error": f"Unsupported operation: {operation}. Use sum, mean, count, min, max, median, std, nunique, value_counts."})
 
-                return json.dumps({"column": column, "operation": op, "result": result}, indent=2, default=str)
+                return json.dumps({
+                    "filename": filename,
+                    "selected_sheet": selected_sheet if workbook_metadata.get('is_workbook') else None,
+                    "column": column,
+                    "operation": op,
+                    "result": result,
+                }, indent=2, default=str)
             except Exception as e:
                 log_event(f"[TabularProcessingPlugin] Error aggregating column: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
@@ -590,6 +1003,8 @@ class TabularProcessingPlugin:
         column: Annotated[str, "The column to filter on"],
         operator: Annotated[str, "Operator: ==, !=, >, <, >=, <=, contains, startswith, endswith"],
         value: Annotated[str, "The value to compare against"],
+        sheet_name: Annotated[Optional[str], "Optional worksheet name for Excel files. Required for analytical calls on multi-sheet workbooks unless sheet_index is provided."] = None,
+        sheet_index: Annotated[Optional[str], "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
         max_rows: Annotated[str, "Maximum rows to return"] = "100",
         group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
@@ -598,11 +1013,23 @@ class TabularProcessingPlugin:
         """Filter rows based on a condition."""
         def _sync_work():
             try:
-                container, blob_path = self._resolve_blob_location(
+                container, blob_path = self._resolve_blob_location_with_fallback(
                     user_id, conversation_id, filename, source,
                     group_id=group_id, public_workspace_id=public_workspace_id
                 )
-                df = self._read_tabular_blob_to_dataframe(container, blob_path)
+                selected_sheet, workbook_metadata = self._resolve_sheet_selection(
+                    container,
+                    blob_path,
+                    sheet_name=sheet_name,
+                    sheet_index=sheet_index,
+                    require_explicit_sheet=True,
+                )
+                df = self._read_tabular_blob_to_dataframe(
+                    container,
+                    blob_path,
+                    sheet_name=selected_sheet,
+                    require_explicit_sheet=True,
+                )
                 df = self._try_numeric_conversion(df)
 
                 if column not in df.columns:
@@ -647,6 +1074,8 @@ class TabularProcessingPlugin:
                 limit = int(max_rows)
                 filtered = df[mask].head(limit)
                 return json.dumps({
+                    "filename": filename,
+                    "selected_sheet": selected_sheet if workbook_metadata.get('is_workbook') else None,
                     "total_matches": int(mask.sum()),
                     "returned_rows": len(filtered),
                     "data": filtered.to_dict(orient='records')
@@ -671,6 +1100,8 @@ class TabularProcessingPlugin:
         conversation_id: Annotated[str, "The conversation ID (from Conversation Metadata)"],
         filename: Annotated[str, "The filename of the tabular file"],
         query_expression: Annotated[str, "Pandas query expression (e.g. 'Age > 30 and State == \"CA\"')"],
+        sheet_name: Annotated[Optional[str], "Optional worksheet name for Excel files. Required for analytical calls on multi-sheet workbooks unless sheet_index is provided."] = None,
+        sheet_index: Annotated[Optional[str], "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
         max_rows: Annotated[str, "Maximum rows to return"] = "100",
         group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
@@ -679,16 +1110,30 @@ class TabularProcessingPlugin:
         """Execute a pandas query expression against a tabular file."""
         def _sync_work():
             try:
-                container, blob_path = self._resolve_blob_location(
+                container, blob_path = self._resolve_blob_location_with_fallback(
                     user_id, conversation_id, filename, source,
                     group_id=group_id, public_workspace_id=public_workspace_id
                 )
-                df = self._read_tabular_blob_to_dataframe(container, blob_path)
+                selected_sheet, workbook_metadata = self._resolve_sheet_selection(
+                    container,
+                    blob_path,
+                    sheet_name=sheet_name,
+                    sheet_index=sheet_index,
+                    require_explicit_sheet=True,
+                )
+                df = self._read_tabular_blob_to_dataframe(
+                    container,
+                    blob_path,
+                    sheet_name=selected_sheet,
+                    require_explicit_sheet=True,
+                )
                 df = self._try_numeric_conversion(df)
 
                 result_df = df.query(query_expression)
                 limit = int(max_rows)
                 return json.dumps({
+                    "filename": filename,
+                    "selected_sheet": selected_sheet if workbook_metadata.get('is_workbook') else None,
                     "total_matches": len(result_df),
                     "returned_rows": min(len(result_df), limit),
                     "data": result_df.head(limit).to_dict(orient='records')
@@ -716,6 +1161,8 @@ class TabularProcessingPlugin:
         group_by_column: Annotated[str, "The column to group by"],
         aggregate_column: Annotated[str, "The column to aggregate"],
         operation: Annotated[str, "Aggregation operation: sum, mean, count, min, max, median, std"],
+        sheet_name: Annotated[Optional[str], "Optional worksheet name for Excel files. Required for analytical calls on multi-sheet workbooks unless sheet_index is provided."] = None,
+        sheet_index: Annotated[Optional[str], "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
         top_n: Annotated[str, "How many top groups to return in descending or ascending order"] = "10",
         sort_descending: Annotated[str, "Whether top_results should be sorted descending (true/false)"] = "true",
@@ -725,11 +1172,23 @@ class TabularProcessingPlugin:
         """Group by one column and aggregate another."""
         def _sync_work():
             try:
-                container, blob_path = self._resolve_blob_location(
+                container, blob_path = self._resolve_blob_location_with_fallback(
                     user_id, conversation_id, filename, source,
                     group_id=group_id, public_workspace_id=public_workspace_id
                 )
-                df = self._read_tabular_blob_to_dataframe(container, blob_path)
+                selected_sheet, workbook_metadata = self._resolve_sheet_selection(
+                    container,
+                    blob_path,
+                    sheet_name=sheet_name,
+                    sheet_index=sheet_index,
+                    require_explicit_sheet=True,
+                )
+                df = self._read_tabular_blob_to_dataframe(
+                    container,
+                    blob_path,
+                    sheet_name=selected_sheet,
+                    require_explicit_sheet=True,
+                )
                 df = self._try_numeric_conversion(df)
 
                 for col in [group_by_column, aggregate_column]:
@@ -754,6 +1213,8 @@ class TabularProcessingPlugin:
                 summary = self._build_grouped_summary(grouped)
 
                 return json.dumps({
+                    "filename": filename,
+                    "selected_sheet": selected_sheet if workbook_metadata.get('is_workbook') else None,
                     "group_by": group_by_column,
                     "aggregate_column": aggregate_column,
                     "operation": op,
@@ -787,6 +1248,8 @@ class TabularProcessingPlugin:
         datetime_component: Annotated[str, "Component: year, month, month_name, day, date, hour, minute, day_name, weekday_number, quarter, or week"],
         aggregate_column: Annotated[Optional[str], "The numeric column to aggregate. Leave empty and use operation='count' to count rows."] = "",
         operation: Annotated[str, "Aggregation operation: count, sum, mean, min, max, median, std"] = "count",
+        sheet_name: Annotated[Optional[str], "Optional worksheet name for Excel files. Required for analytical calls on multi-sheet workbooks unless sheet_index is provided."] = None,
+        sheet_index: Annotated[Optional[str], "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
         filter_expression: Annotated[Optional[str], "Optional pandas query filter applied before grouping"] = "",
         top_n: Annotated[str, "How many top groups to return in descending order"] = "10",
@@ -797,7 +1260,7 @@ class TabularProcessingPlugin:
         """Group data by a datetime component and aggregate a metric."""
         def _sync_work():
             try:
-                container, blob_path = self._resolve_blob_location(
+                container, blob_path = self._resolve_blob_location_with_fallback(
                     user_id,
                     conversation_id,
                     filename,
@@ -805,7 +1268,19 @@ class TabularProcessingPlugin:
                     group_id=group_id,
                     public_workspace_id=public_workspace_id
                 )
-                df = self._read_tabular_blob_to_dataframe(container, blob_path)
+                selected_sheet, workbook_metadata = self._resolve_sheet_selection(
+                    container,
+                    blob_path,
+                    sheet_name=sheet_name,
+                    sheet_index=sheet_index,
+                    require_explicit_sheet=True,
+                )
+                df = self._read_tabular_blob_to_dataframe(
+                    container,
+                    blob_path,
+                    sheet_name=selected_sheet,
+                    require_explicit_sheet=True,
+                )
                 df = self._try_numeric_conversion(df)
 
                 if filter_expression:
@@ -871,6 +1346,8 @@ class TabularProcessingPlugin:
                 summary = self._build_grouped_summary(grouped)
 
                 return json.dumps({
+                    "filename": filename,
+                    "selected_sheet": selected_sheet if workbook_metadata.get('is_workbook') else None,
                     "datetime_column": datetime_column,
                     "datetime_component": self._normalize_datetime_component(datetime_component),
                     "aggregate_column": aggregate_column_name or None,
