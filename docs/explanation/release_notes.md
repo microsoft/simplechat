@@ -2,6 +2,27 @@
 
 # Feature Release
 
+### **(v0.239.012)**
+
+#### New Features
+
+*   **Idle Session Timeout Feature**
+    *   Added a new idle timer that automatically clears the user session after a configurable set time and redirects to the main chat login page.
+    *   Added a frontend idle warning modal that pops up after a configurable set time, but disappears if the user moves the mouse over the chat window or interacts with the app in any way.
+    *   Default values are used if the idle logout and warning values are not set. 
+    *   Idle logout and idle warning values are validated and auto-fixed as needed.
+    *   Added a new admin switch to enable or disable idle session timeout and warning behavior.
+    *   Timeout and warning inputs are grouped under a toggleable section in General > System Settings.
+    *   (Ref: `application/single_app/templates/admin_settings.html`, `application/single_app/static/js/admin/admin_settings.js`, `application/single_app/route_frontend_admin_settings.py`, `application/single_app/functions_settings.py`, `application/single_app/app.py`, `application/single_app/templates/base.html`, `application/single_app/static/js/idle-logout-warning.js`, `application/single_app/config.py`, `functional_tests/test_idle_logout_timeout.py`, `application/single_app/route_frontend_authentication.py`)
+
+#### Bug Fixes
+
+*   **Settings Default Merge Persistence Fix**
+    *   Fixed app settings merge detection in `get_settings()` where `deep_merge_dicts()` mutates the existing settings object in place, causing change detection to always evaluate as unchanged.
+    *   Added pre-merge snapshot comparison with `copy.deepcopy()` so missing default keys correctly trigger `upsert_item()` and are persisted back to Cosmos DB.
+    *   Added a functional regression test to validate the merge detection and persistence markers.
+    *   (Ref: `application/single_app/functions_settings.py`, `application/single_app/config.py`, `functional_tests/test_settings_deep_merge_persistence_fix.py`)
+    
 ### **(v0.239.007)**
 
 #### New Features
@@ -76,6 +97,7 @@
     *   Ensures Python package installation works reliably in environments requiring custom certificate trust and pip configuration.
     *   (Ref: Docker customization, CA cert setup, `pip.conf` handling)
     
+
 ### **(v0.239.001)**
 
 #### New Features
@@ -1100,8 +1122,6 @@
         *   More than 3 workspaces: `"Public: [Name1], [Name2], [Name3], 3+"`
     *   **Benefits**: Improved workspace identification, consistent with Group scope naming pattern, better navigation between workspace scopes.
     *   (Ref: `chat-documents.js`, scope label updates, dynamic workspace display)
-
-=======
 
 ##### User Interface and Content Rendering Fixes
 

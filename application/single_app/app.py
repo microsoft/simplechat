@@ -425,10 +425,212 @@ def before_first_request():
     # Unified session setup
     configure_sessions(settings)
 
+
+def get_idle_timeout_settings(settings=None):
+    """
+    Resolve and normalize idle timeout settings used for warning and logout enforcement.
+
+    Args:
+        settings (dict, optional): Settings dictionary to use. If None, uses request-scoped settings.
+
+    Returns:
+        tuple[int, int]: A tuple of (idle_timeout_minutes, idle_warning_minutes)
+                         after parsing, fallback handling, and boundary normalization.
+
+    Raises:
+        None: Invalid values are handled via fallback defaults and warning logs.
+    """
+    if settings is None:
+        settings = get_request_settings()
+
+    timeout_raw = settings.get('idle_timeout_minutes', 30)
+    warning_raw = settings.get('idle_warning_minutes', 28)
+
+    try:
+        timeout_minutes = int(timeout_raw)
+    except (TypeError, ValueError):
+        timeout_minutes = 30
+        log_event(
+            "Invalid idle timeout value detected; using default.",
+            extra={
+                "setting": "idle_timeout_minutes",
+                "raw_value": str(timeout_raw),
+                "fallback_value": 30
+            },
+            level=logging.WARNING
+        )
+
+    try:
+        warning_minutes = int(warning_raw)
+    except (TypeError, ValueError):
+        warning_minutes = 28
+        log_event(
+            "Invalid idle warning value detected; using default.",
+            extra={
+                "setting": "idle_warning_minutes",
+                "raw_value": str(warning_raw),
+                "fallback_value": 28
+            },
+            level=logging.WARNING
+        )
+
+    normalized_timeout = max(1, timeout_minutes)
+    if normalized_timeout != timeout_minutes:
+        log_event(
+            "Idle timeout value normalized to minimum allowed value.",
+            extra={
+                "setting": "idle_timeout_minutes",
+                "original_value": timeout_minutes,
+                "normalized_value": normalized_timeout
+            },
+            level=logging.WARNING
+        )
+    timeout_minutes = normalized_timeout
+
+    normalized_warning = max(0, warning_minutes)
+    if normalized_warning != warning_minutes:
+        log_event(
+            "Idle warning value normalized to minimum allowed value.",
+            extra={
+                "setting": "idle_warning_minutes",
+                "original_value": warning_minutes,
+                "normalized_value": normalized_warning
+            },
+            level=logging.WARNING
+        )
+    warning_minutes = normalized_warning
+
+    if warning_minutes >= timeout_minutes:
+        previous_warning_minutes = warning_minutes
+        warning_minutes = max(0, timeout_minutes - 1)
+        log_event(
+            "Idle warning value adjusted to remain below idle timeout.",
+            extra={
+                "idle_timeout_minutes": timeout_minutes,
+                "original_idle_warning_minutes": previous_warning_minutes,
+                "adjusted_idle_warning_minutes": warning_minutes
+            },
+            level=logging.WARNING
+        )
+
+    return timeout_minutes, warning_minutes
+
+
+def is_idle_timeout_enabled(settings=None):
+    """
+    Determine whether idle-timeout enforcement is enabled.
+
+    Args:
+        settings (dict, optional): Settings dictionary to use. If None, uses request-scoped settings.
+
+    Returns:
+        bool: True when idle-timeout enforcement should run; otherwise False.
+
+    Raises:
+        None: Unexpected values are coerced to boolean-compatible behavior.
+    """
+    if settings is None:
+        settings = get_request_settings()
+
+    enabled_raw = settings.get('enable_idle_timeout', True)
+
+    if isinstance(enabled_raw, str):
+        return enabled_raw.strip().lower() in ('1', 'true', 'yes', 'on')
+
+    return bool(enabled_raw)
+
+
+settings_source_counters = {}
+settings_source_counters_lock = threading.Lock()
+
+
+def record_request_settings_source(source):
+    """
+    Record and log the source used to resolve request settings.
+
+    Args:
+        source (str): Settings source label (for example: cache, cosmos_fallback, cosmos_forced).
+
+    Returns:
+        None: Updates in-memory counters and request context diagnostics.
+
+    Raises:
+        None: Counter updates and diagnostics are handled internally.
+    """
+    normalized_source = source or 'unknown'
+    with settings_source_counters_lock:
+        settings_source_counters[normalized_source] = settings_source_counters.get(normalized_source, 0) + 1
+        cache_hits = settings_source_counters.get('cache', 0)
+        cosmos_fallback_hits = settings_source_counters.get('cosmos_fallback', 0)
+        cosmos_forced_hits = settings_source_counters.get('cosmos_forced', 0)
+        unknown_hits = settings_source_counters.get('unknown', 0)
+
+    g.request_settings_source = normalized_source
+    debug_print(
+        f"[SETTINGS SOURCE] path={request.path} source={normalized_source}",
+        category="SETTINGS",
+        cache_hits=cache_hits,
+        cosmos_fallback_hits=cosmos_fallback_hits,
+        cosmos_forced_hits=cosmos_forced_hits,
+        unknown_hits=unknown_hits
+    )
+
+    if normalized_source != 'cache':
+        log_event(
+            "Request settings source is non-cache.",
+            extra={
+                "path": request.path,
+                "settings_source": normalized_source,
+                "cache_hits": cache_hits,
+                "cosmos_fallback_hits": cosmos_fallback_hits,
+                "cosmos_forced_hits": cosmos_forced_hits,
+                "unknown_hits": unknown_hits
+            },
+            level=logging.INFO
+        )
+
+
+def get_request_settings():
+    """
+    Get request-scoped settings, resolving and caching them when needed.
+
+    Args:
+        None
+
+    Returns:
+        dict: Request settings dictionary cached on Flask `g` for the current request.
+
+    Raises:
+        None: Unexpected resolver response shapes are logged and handled with safe fallbacks.
+    """
+    request_settings = getattr(g, 'request_settings', None)
+    if request_settings is None:
+        settings_result = get_settings(include_source=True)
+        if isinstance(settings_result, tuple) and len(settings_result) == 2:
+            request_settings, settings_source = settings_result
+        else:
+            request_settings = settings_result
+            settings_source = 'unknown'
+            log_event(
+                "Unexpected settings response shape in get_request_settings.",
+                extra={
+                    "path": request.path,
+                    "response_type": type(settings_result).__name__
+                },
+                level=logging.WARNING
+            )
+
+        request_settings = request_settings or {}
+        g.request_settings = request_settings
+        record_request_settings_source(settings_source)
+    return request_settings
+
 @app.context_processor
 def inject_settings():
-    settings = get_settings()
+    settings = get_request_settings()
     public_settings = sanitize_settings_for_user(settings)
+    idle_timeout_enabled = is_idle_timeout_enabled(settings)
+    idle_timeout_minutes, idle_warning_minutes = get_idle_timeout_settings(settings)
     # Inject per-user settings if logged in
     user_settings = {}
     try:
@@ -440,7 +642,13 @@ def inject_settings():
         print(f"Error injecting user settings: {e}")
         log_event(f"Error injecting user settings: {e}", level=logging.ERROR)
         user_settings = {}
-    return dict(app_settings=public_settings, user_settings=user_settings)
+    return dict(
+        app_settings=public_settings,
+        user_settings=user_settings,
+        idle_timeout_enabled=idle_timeout_enabled,
+        idle_timeout_minutes=idle_timeout_minutes,
+        idle_warning_minutes=idle_warning_minutes
+    )
 
 @app.template_filter('to_datetime')
 def to_datetime_filter(value):
@@ -463,6 +671,148 @@ def reload_kernel_if_needed():
         initialize_semantic_kernel()
         """
         setattr(builtins, "kernel_reload_needed", False)
+
+IDLE_TIMEOUT_EXEMPT_PATHS = {
+    '/login',
+    '/logout',
+    '/logout/local',
+    '/getAToken',
+    '/getATokenApi',
+    '/robots933456.txt',
+    '/favicon.ico'
+}
+
+IDLE_TIMEOUT_EXEMPT_PREFIXES = (
+    '/static/',
+    '/health',
+    '/api/health'
+)
+
+def _is_idle_timeout_exempt(path):
+    """
+    Check whether a request path is exempt from idle-timeout processing.
+
+    Args:
+        path (str): Request path to evaluate.
+
+    Returns:
+        bool: True if the path is exempt from idle-timeout checks; otherwise False.
+
+    Raises:
+        None
+    """
+    if path in IDLE_TIMEOUT_EXEMPT_PATHS:
+        return True
+    return any(path.startswith(prefix) for prefix in IDLE_TIMEOUT_EXEMPT_PREFIXES)
+
+
+@app.before_request
+def load_request_settings_cache():
+    """
+    Preload request-scoped settings for authenticated, non-exempt requests.
+
+    Args:
+        None
+
+    Returns:
+        None: Always returns None to continue Flask request processing.
+
+    Raises:
+        None: Unexpected settings resolver shapes are logged and converted to safe fallbacks.
+    """
+    g.request_settings = None
+    g.request_settings_source = None
+
+    if request.method == 'OPTIONS' or _is_idle_timeout_exempt(request.path):
+        return None
+
+    if 'user' not in session:
+        return None
+
+    settings_result = get_settings(include_source=True)
+    if isinstance(settings_result, tuple) and len(settings_result) == 2:
+        request_settings, settings_source = settings_result
+    else:
+        request_settings = settings_result
+        settings_source = 'unknown'
+        log_event(
+            "Unexpected settings response shape in load_request_settings_cache.",
+            extra={
+                "path": request.path,
+                "response_type": type(settings_result).__name__
+            },
+            level=logging.WARNING
+        )
+
+    g.request_settings = request_settings or {}
+    record_request_settings_source(settings_source)
+    return None
+
+@app.before_request
+def enforce_idle_session_timeout():
+    """
+    Enforce server-side idle session timeout for authenticated requests.
+
+    Args:
+        None
+
+    Returns:
+        Response | None: A redirect/401 response when timeout is exceeded; otherwise None.
+
+    Raises:
+        None: Runtime issues in timeout evaluation are logged and request processing continues safely.
+    """
+    if 'user' not in session:
+        return None
+
+    if request.method == 'OPTIONS' or _is_idle_timeout_exempt(request.path):
+        return None
+
+    now_epoch = int(time.time())
+    request_settings = get_request_settings()
+    if not is_idle_timeout_enabled(request_settings):
+        session['last_activity_epoch'] = now_epoch
+        session.modified = True
+        return None
+
+    idle_timeout_minutes, _ = get_idle_timeout_settings(request_settings)
+    last_activity_epoch = session.get('last_activity_epoch')
+    has_valid_last_activity_epoch = False
+
+    if last_activity_epoch is not None:
+        try:
+            parsed_last_activity_epoch = int(float(last_activity_epoch))
+            has_valid_last_activity_epoch = True
+            idle_seconds = now_epoch - parsed_last_activity_epoch
+            if idle_seconds >= (idle_timeout_minutes * 60):
+                user_id = session.get('user', {}).get('oid') or session.get('user', {}).get('sub')
+                session.clear()
+
+                log_event(
+                    f"Session expired due to {idle_timeout_minutes} minute inactivity timeout for user {user_id or 'unknown'}.",
+                    level=logging.INFO
+                )
+
+                if request.path.startswith('/api/'):
+                    return jsonify({
+                        'error': 'Session expired',
+                        'message': 'Your session expired due to inactivity. Please sign in again.',
+                        'requires_reauth': True
+                    }), 401
+
+                return redirect(url_for('local_logout'))
+        except Exception as e:
+            log_event(f"Idle timeout evaluation failed: {e}", level=logging.WARNING)
+
+    if request.path.startswith('/api/'):
+        if not has_valid_last_activity_epoch:
+            session['last_activity_epoch'] = now_epoch
+            session.modified = True
+        return None
+
+    session['last_activity_epoch'] = now_epoch
+    session.modified = True
+    return None
 
 @app.after_request
 def add_security_headers(response):
@@ -555,6 +905,30 @@ def serve_js_modules(filename):
 @swagger_route(security=get_auth_security())
 def acceptable_use_policy():
     return render_template('acceptable_use_policy.html')
+
+@app.route('/api/session/heartbeat', methods=['POST'])
+@swagger_route(security=get_auth_security())
+@login_required
+def session_heartbeat():
+    """
+    Refresh the authenticated session activity timestamp used by idle-timeout enforcement.
+
+    Args:
+        None
+
+    Returns:
+        tuple[Response, int]: JSON response containing refresh confirmation and timeout metadata.
+
+    Raises:
+        None
+    """
+    session['last_activity_epoch'] = int(time.time())
+    session.modified = True
+    idle_timeout_minutes, _ = get_idle_timeout_settings(get_request_settings())
+    return jsonify({
+        'message': 'Session refreshed',
+        'idle_timeout_minutes': idle_timeout_minutes
+    }), 200
 
 @app.route('/api/semantic-kernel/plugins')
 @swagger_route(security=get_auth_security())

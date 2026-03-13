@@ -35,6 +35,7 @@ def register_route_frontend_authentication(app):
         # Clear potentially stale cache/user info before starting new login
         session.pop("user", None)
         session.pop("token_cache", None)
+        session.pop("last_activity_epoch", None)
 
         # Use helper to build app (cache not strictly needed here, but consistent)
         msal_app = _build_msal_app()
@@ -121,6 +122,7 @@ def register_route_frontend_authentication(app):
         debug_print(f" [claims] User claims: {result.get('id_token_claims', {})}")
 
         session["user"] = result.get("id_token_claims")
+        session["last_activity_epoch"] = int(time.time())
 
         # --- CRITICAL: Save the entire cache (contains tokens) to session ---
         _save_cache(msal_app.token_cache)
@@ -206,6 +208,39 @@ def register_route_frontend_authentication(app):
             return f"Login failure: {error_description}", 500
 
         return jsonify(result, 200)
+
+    @app.route('/logout/local')
+    @swagger_route(security=get_auth_security())
+    def local_logout():
+        """
+        Clear the local Flask session and redirect to the configured home destination.
+
+        Args:
+            None.
+
+        Returns:
+            Response: A redirect response to the local or Front Door home URL.
+        Raises:
+            None.
+        """
+        session.clear()
+
+        from functions_settings import get_settings
+        settings = get_settings()
+
+        if settings.get('enable_front_door', False):
+            front_door_url = settings.get('front_door_url')
+            if front_door_url:
+                home_url, _ = build_front_door_urls(front_door_url)
+                logout_uri = home_url
+            elif HOME_REDIRECT_URL:
+                logout_uri = HOME_REDIRECT_URL
+            else:
+                logout_uri = url_for('index', _external=True, _scheme='https')
+        else:
+            logout_uri = url_for('index', _external=True, _scheme='https')
+
+        return redirect(logout_uri)
 
     @app.route('/logout')
     @swagger_route(security=get_auth_security())

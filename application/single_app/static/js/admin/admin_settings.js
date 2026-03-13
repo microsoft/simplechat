@@ -1538,6 +1538,16 @@ function setupToggles() {
         });
     }
 
+    const enableIdleTimeoutToggle = document.getElementById('enable_idle_timeout');
+    const idleTimeoutSettingsDiv = document.getElementById('idle_timeout_settings');
+    if (enableIdleTimeoutToggle && idleTimeoutSettingsDiv) {
+        idleTimeoutSettingsDiv.classList.toggle('d-none', !enableIdleTimeoutToggle.checked);
+        enableIdleTimeoutToggle.addEventListener('change', function () {
+            idleTimeoutSettingsDiv.classList.toggle('d-none', !this.checked);
+            markFormAsModified();
+        });
+    }
+
     const enableEnhancedCitation = document.getElementById('enable_enhanced_citations');
     if (enableEnhancedCitation) {
         toggleEnhancedCitation(enableEnhancedCitation.checked);

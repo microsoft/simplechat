@@ -351,11 +351,46 @@
   <script src="{{ url_for('static', filename='js/profile-image.js') }}"></script>
   <!-- Notifications JavaScript (for badge polling on all pages) -->
   <script src="{{ url_for('static', filename='js/notifications.js') }}"></script>
+  {% if session.get('user') %}
+  <script>
+    window.idleLogoutConfig = {
+      enabled: {{ idle_timeout_enabled | default(true) | tojson }},
+      timeoutMinutes: {{ idle_timeout_minutes | default(30) | int }},
+      warningMinutes: {{ idle_warning_minutes | default(28) | int }},
+      heartbeatUrl: "{{ url_for('session_heartbeat') }}",
+      localLogoutUrl: "{{ url_for('local_logout') }}",
+      fullSsoLogoutUrl: "{{ url_for('logout') }}"
+    };
+  </script>
+  <script src="{{ url_for('static', filename='js/idle-logout-warning.js') }}"></script>
+  {% endif %}
   <!-- User Agreement JavaScript (for file upload prompts) -->
   {% if app_settings.enable_user_agreement %}
   <script src="{{ url_for('static', filename='js/user-agreement.js') }}"></script>
   {% endif %}
   {% block scripts %}{% endblock %}
+
+  {% if session.get('user') %}
+  <div class="modal fade" id="idleTimeoutWarningModal" tabindex="-1" aria-labelledby="idleTimeoutWarningModalLabel" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header bg-primary text-white">
+          <h5 class="modal-title" id="idleTimeoutWarningModalLabel">
+            <i class="bi bi-clock me-2"></i>Session Expiring Soon
+          </h5>
+        </div>
+        <div class="modal-body">
+          <p class="mb-2">You've been inactive for a while.</p>
+          <p class="mb-0">You will be signed out in <strong><span id="idleTimeoutCountdown">60</span> seconds</strong> unless you continue your session.</p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" id="idleLogoutNowButton">Logout now</button>
+          <button type="button" class="btn btn-primary" id="idleStaySignedInButton">Stay signed in</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
 
   <!-- User Agreement Upload Modal (shown before file uploads when enabled) -->
   {% if app_settings.enable_user_agreement %}
