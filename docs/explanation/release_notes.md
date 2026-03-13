@@ -2,6 +2,15 @@
 
 # Feature Release
 
+### **(v0.239.112)**
+
+#### Bug Fixes
+
+*   **Agent Save Validation for Round-Tripped Metadata**
+    *   Fixed agent saves failing when an existing personal, group, or global agent was edited and the browser sent back backend-managed audit fields such as `created_at`, `created_by`, `modified_at`, and `modified_by`.
+    *   Agent payload sanitization now strips backend-managed audit and Cosmos metadata before schema validation, while preserving server-side tracking during persistence.
+    *   (Ref: `functions_agent_payload.py`, `route_backend_agents.py`, agent schema validation, functional test coverage)
+
 ### **(v0.239.104)**
 
 #### Bug Fixes
