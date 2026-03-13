@@ -11,6 +11,7 @@ import json
 import traceback
 from datetime import datetime
 from config import cosmos_global_actions_container
+from functions_authentication import get_current_user_id
 from functions_keyvault import keyvault_plugin_save_helper, keyvault_plugin_get_helper, keyvault_plugin_delete_helper, SecretReturnType
 
 def get_global_actions(return_type=SecretReturnType.TRIGGER):
@@ -72,6 +73,11 @@ def save_global_action(action_data, user_id=None):
         dict: Saved action data or None if failed
     """
     try:
+        if user_id is None:
+            user_id = get_current_user_id()
+        if not user_id:
+            user_id = "system"
+
         # Ensure required fields
         if 'id' not in action_data:
             action_data['id'] = str(uuid.uuid4())
@@ -90,8 +96,8 @@ def save_global_action(action_data, user_id=None):
             pass
 
         if existing_action:
-            action_data['created_by'] = existing_action.get('created_by', user_id)
-            action_data['created_at'] = existing_action.get('created_at', now)
+            action_data['created_by'] = existing_action.get('created_by') or user_id
+            action_data['created_at'] = existing_action.get('created_at') or now
         else:
             action_data['created_by'] = user_id
             action_data['created_at'] = now

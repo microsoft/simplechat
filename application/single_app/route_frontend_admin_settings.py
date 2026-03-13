@@ -789,6 +789,7 @@ def register_route_frontend_admin_settings(app):
                 'enable_enhanced_citations': enable_enhanced_citations,
                 'enable_enhanced_citations_mount': form_data.get('enable_enhanced_citations_mount') == 'on' and enable_enhanced_citations,
                 'enhanced_citations_mount': form_data.get('enhanced_citations_mount', '/view_documents').strip(),
+                'tabular_preview_max_blob_size_mb': int(form_data.get('tabular_preview_max_blob_size_mb', 200)),
                 'office_docs_storage_account_blob_endpoint': office_docs_storage_account_blob_endpoint,
                 'office_docs_storage_account_url': office_docs_storage_account_url,
                 'office_docs_authentication_type': form_data.get('office_docs_authentication_type', 'key'),

@@ -16,7 +16,7 @@ from functions_documents import get_document_metadata
 from functions_group import get_user_groups
 from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
 from swagger_wrapper import swagger_route, get_auth_security
-from config import CLIENTS, storage_account_user_documents_container_name, storage_account_group_documents_container_name, storage_account_public_documents_container_name, storage_account_personal_chat_container_name, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, AUDIO_EXTENSIONS, TABULAR_EXTENSIONS, cosmos_messages_container
+from config import CLIENTS, storage_account_user_documents_container_name, storage_account_group_documents_container_name, storage_account_public_documents_container_name, storage_account_personal_chat_container_name, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, AUDIO_EXTENSIONS, TABULAR_EXTENSIONS, cosmos_messages_container, cosmos_conversations_container
 from functions_debug import debug_print
 
 def register_enhanced_citations_routes(app):
@@ -205,6 +205,18 @@ def register_enhanced_citations_routes(app):
             return jsonify({"error": "User not authenticated"}), 401
 
         try:
+            # Verify the current user owns the conversation
+            try:
+                conversation = cosmos_conversations_container.read_item(
+                    item=conversation_id,
+                    partition_key=conversation_id
+                )
+            except Exception:
+                return jsonify({"error": "Conversation not found"}), 404
+
+            if conversation.get('user_id') != user_id:
+                return jsonify({"error": "Forbidden"}), 403
+
             # Look up the file message in Cosmos to get blob reference
             query_str = """
                 SELECT * FROM c
@@ -313,7 +325,7 @@ def register_enhanced_citations_routes(app):
         Reads the file into a pandas DataFrame and returns columns + rows as JSON.
         """
         doc_id = request.args.get("doc_id")
-        max_rows = min(int(request.args.get("max_rows", 200)), 500)
+        max_rows = min(request.args.get("max_rows", 200, type=int), 500)
         if not doc_id:
             return jsonify({"error": "doc_id is required"}), 400
 
@@ -332,35 +344,43 @@ def register_enhanced_citations_routes(app):
             if ext not in ('csv', 'xlsx', 'xls', 'xlsm'):
                 return jsonify({"error": "File is not a tabular file"}), 400
 
-            # Download blob
+            # Download blob with size cap to protect memory
+            settings = get_settings()
+            max_blob_size = int(settings.get('tabular_preview_max_blob_size_mb', 200)) * 1024 * 1024
             workspace_type, container_name = determine_workspace_type_and_container(raw_doc)
             blob_name = get_blob_name(raw_doc, workspace_type)
             blob_service_client = CLIENTS.get("storage_account_office_docs_client")
             if not blob_service_client:
                 return jsonify({"error": "Blob storage client not available"}), 500
             blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
+            blob_props = blob_client.get_blob_properties()
+            if blob_props.size > max_blob_size:
+                return jsonify({"error": "File is too large to preview"}), 400
             data = blob_client.download_blob().readall()
 
-            # Read into DataFrame
+            # Read into DataFrame, limiting rows for preview efficiency
+            # Read max_rows + 1 so we can detect truncation without loading the full file
+            nrows_limit = max_rows + 1
             if ext == 'csv':
-                df = pandas.read_csv(io.BytesIO(data), keep_default_na=False, dtype=str)
+                df = pandas.read_csv(io.BytesIO(data), keep_default_na=False, dtype=str, nrows=nrows_limit)
             elif ext in ('xlsx', 'xlsm'):
-                df = pandas.read_excel(io.BytesIO(data), engine='openpyxl', keep_default_na=False, dtype=str)
+                df = pandas.read_excel(io.BytesIO(data), engine='openpyxl', keep_default_na=False, dtype=str, nrows=nrows_limit)
             elif ext == 'xls':
-                df = pandas.read_excel(io.BytesIO(data), engine='xlrd', keep_default_na=False, dtype=str)
+                df = pandas.read_excel(io.BytesIO(data), engine='xlrd', keep_default_na=False, dtype=str, nrows=nrows_limit)
             else:
                 return jsonify({"error": f"Unsupported file type: {ext}"}), 400
 
             total_rows = len(df)
+            truncated = total_rows > max_rows
             preview = df.head(max_rows)
 
             return jsonify({
                 "filename": file_name,
-                "total_rows": total_rows,
+                "total_rows": total_rows if not truncated else None,
                 "total_columns": len(df.columns),
                 "columns": list(df.columns),
                 "rows": preview.values.tolist(),
-                "truncated": total_rows > max_rows
+                "truncated": truncated
             })
 
         except Exception as e:

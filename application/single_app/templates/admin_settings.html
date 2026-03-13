@@ -2951,6 +2951,23 @@
                             </div>
                         </div>
 
+                        <div class="card mb-3 p-3">
+                            <h6><strong>Tabular Preview Limits</strong></h6>
+                            <div class="mb-3">
+                                <label for="tabular_preview_max_blob_size_mb" class="form-label">
+                                    Maximum File Size for Tabular Preview (MB)
+                                </label>
+                                <input type="number" class="form-control" id="tabular_preview_max_blob_size_mb"
+                                    name="tabular_preview_max_blob_size_mb"
+                                    min="1" max="1024"
+                                    value="{{ settings.tabular_preview_max_blob_size_mb or 200 }}">
+                                <small class="form-text text-muted">
+                                    Maximum blob size (in MB) allowed for tabular file previews (CSV, XLSX). Files larger than this will not be previewed. 
+                                    Increase for larger files if your compute has sufficient memory, or decrease to protect smaller instances. Default: 200 MB.
+                                </small>
+                            </div>
+                        </div>
+
                         
                         <!-- <div class="card mb-3 p-3">
                             <h6><strong>Video Files</strong></h6>

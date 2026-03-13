@@ -2,6 +2,31 @@
 
 # Feature Release
 
+### **(v0.239.102)**
+
+#### Bug Fixes
+
+*   **Tabular Citation Conversation Ownership Check**
+    *   Fixed an IDOR vulnerability on `/api/enhanced_citations/tabular` where any authenticated user who could guess a `conversation_id` and `file_id` could download another user's chat-uploaded tabular files.
+    *   The endpoint now reads the conversation document from Cosmos DB and verifies that `conversation.user_id` matches the current user before serving the blob. Returns 403 Forbidden on mismatch and 404 if the conversation does not exist.
+    *   (Ref: `route_enhanced_citations.py`, `cosmos_conversations_container`)
+
+*   **Tabular Preview `max_rows` Parameter Validation**
+    *   The `max_rows` query parameter on `/api/enhanced_citations/tabular_preview` was parsed with bare `int()`, causing a 500 error on non-integer input. Switched to Flask's `request.args.get(..., type=int)` which silently falls back to the default on invalid input, matching the pattern used by other endpoints.
+    *   (Ref: `route_enhanced_citations.py`)
+
+#### New Features
+
+*   **Configurable Tabular Preview Blob Size Limit**
+    *   Added an admin-configurable maximum blob size for tabular file previews, replacing the previous hardcoded limit. Default is 200 MB.
+    *   New **Tabular Preview Limits** card in the Enhanced Citations section of Admin Settings (Citations tab) lets admins increase or decrease the limit based on their compute resources and user population.
+    *   Setting is stored as `tabular_preview_max_blob_size_mb` and accepts values from 1 to 1024 MB.
+    *   (Ref: `route_enhanced_citations.py`, `functions_settings.py`, `admin_settings.html`)
+
+*   **Tabular Preview Memory Optimization**
+    *   The `/api/enhanced_citations/tabular_preview` endpoint no longer loads entire files into a DataFrame. It now uses `nrows` limits in `pandas.read_csv`/`read_excel` to read only the rows needed for the preview, and checks blob size before downloading to reject oversized files early.
+    *   (Ref: `route_enhanced_citations.py`)
+
 ### **(v0.239.031)**
 
 #### New Features

@@ -55,11 +55,13 @@ export function updateLoadingIndicatorText(text, iconClass) {
   const textEl = document.getElementById("loading-indicator-text");
   if (!textEl) return;
 
+  textEl.textContent = "";
   if (iconClass) {
-    textEl.innerHTML = `<i class="bi ${iconClass} me-1"></i>${text}`;
-  } else {
-    textEl.textContent = text;
+    const icon = document.createElement("i");
+    icon.className = `bi ${iconClass} me-1`;
+    textEl.appendChild(icon);
   }
+  textEl.appendChild(document.createTextNode(text));
 
   // Scroll chatbox to keep indicator visible
   const chatbox = document.getElementById("chatbox");
