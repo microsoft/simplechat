@@ -32,6 +32,11 @@ from functions_keyvault import SecretReturnType
 
 from functions_debug import debug_print
 from json_schema_validation import validate_plugin
+from functions_activity_logging import (
+    log_action_creation,
+    log_action_update,
+    log_action_deletion,
+)
 
 def discover_plugin_types():
     # Dynamically discover allowed plugin types from available plugin classes.
@@ -345,6 +350,19 @@ def set_user_plugins():
     except Exception as e:
         debug_print(f"Error saving personal actions for user {user_id}: {e}")
         return jsonify({'error': 'Failed to save plugins'}), 500
+
+    # Log individual action activities
+    for plugin in filtered_plugins:
+        p_name = plugin.get('name', '')
+        p_id = plugin.get('id', '')
+        p_type = plugin.get('type', '')
+        if p_name in current_action_names:
+            log_action_update(user_id=user_id, action_id=p_id, action_name=p_name, action_type=p_type, scope='personal')
+        else:
+            log_action_creation(user_id=user_id, action_id=p_id, action_name=p_name, action_type=p_type, scope='personal')
+    for plugin_name in (current_action_names - new_plugin_names):
+        log_action_deletion(user_id=user_id, action_id=plugin_name, action_name=plugin_name, scope='personal')
+
     log_event("User plugins updated", extra={"user_id": user_id, "plugins_count": len(filtered_plugins)})
     return jsonify({'success': True})
 
@@ -360,6 +378,7 @@ def delete_user_plugin(plugin_name):
     if not deleted:
         return jsonify({'error': 'Plugin not found.'}), 404
     
+    log_action_deletion(user_id=user_id, action_id=plugin_name, action_name=plugin_name, scope='personal')
     log_event("User plugin deleted", extra={"user_id": user_id, "plugin_name": plugin_name})
     return jsonify({'success': True})
 
@@ -460,6 +479,13 @@ def create_group_action_route():
     for key in ('group_id', 'last_updated', 'user_id', 'is_global', 'is_group', 'scope'):
         payload.pop(key, None)
 
+    # Handle endpoint based on plugin type (same logic as personal plugins)
+    plugin_type = payload.get('type', '')
+    if plugin_type in ['sql_schema', 'sql_query']:
+        payload.setdefault('endpoint', f'sql://{plugin_type}')
+    elif plugin_type == 'msgraph':
+        payload.setdefault('endpoint', 'https://graph.microsoft.com')
+
     # Merge with schema to ensure all required fields are present (same as global actions)
     schema_dir = os.path.join(current_app.root_path, 'static', 'json', 'schemas')
     merged = get_merged_plugin_settings(payload.get('type'), payload, schema_dir)
@@ -467,11 +493,12 @@ def create_group_action_route():
     payload['additionalFields'] = merged.get('additionalFields', payload.get('additionalFields', {}))
 
     try:
-        saved = save_group_action(active_group, payload)
+        saved = save_group_action(active_group, payload, user_id=user_id)
     except Exception as exc:
         debug_print('Failed to save group action: %s', exc)
         return jsonify({'error': 'Unable to save action'}), 500
 
+    log_action_creation(user_id=user_id, action_id=saved.get('id', ''), action_name=saved.get('name', ''), action_type=saved.get('type', ''), scope='group', group_id=active_group)
     return jsonify(saved), 201
 
 
@@ -516,6 +543,13 @@ def update_group_action_route(action_id):
     merged['is_group'] = True
     merged['id'] = existing.get('id', action_id)
 
+    # Handle endpoint based on plugin type (same logic as personal plugins)
+    plugin_type = merged.get('type', '')
+    if plugin_type in ['sql_schema', 'sql_query']:
+        merged.setdefault('endpoint', f'sql://{plugin_type}')
+    elif plugin_type == 'msgraph':
+        merged.setdefault('endpoint', 'https://graph.microsoft.com')
+
     try:
         validate_group_action_payload(merged, partial=False)
     except ValueError as exc:
@@ -528,11 +562,12 @@ def update_group_action_route(action_id):
     merged['additionalFields'] = schema_merged.get('additionalFields', merged.get('additionalFields', {}))
 
     try:
-        saved = save_group_action(active_group, merged)
+        saved = save_group_action(active_group, merged, user_id=user_id)
     except Exception as exc:
         debug_print('Failed to update group action %s: %s', action_id, exc)
         return jsonify({'error': 'Unable to update action'}), 500
 
+    log_action_update(user_id=user_id, action_id=action_id, action_name=saved.get('name', ''), action_type=saved.get('type', ''), scope='group', group_id=active_group)
     return jsonify(saved), 200
 
 
@@ -563,6 +598,7 @@ def delete_group_action_route(action_id):
 
     if not removed:
         return jsonify({'error': 'Action not found'}), 404
+    log_action_deletion(user_id=user_id, action_id=action_id, action_name=action_id, scope='group', group_id=active_group)
     return jsonify({'message': 'Action deleted'}), 200
 
 @bpap.route('/api/user/plugins/types', methods=['GET'])
@@ -588,6 +624,8 @@ def get_core_plugin_settings():
         'enable_text_plugin': bool(settings.get('enable_text_plugin', True)),
         'enable_default_embedding_model_plugin': bool(settings.get('enable_default_embedding_model_plugin', True)),
         'enable_fact_memory_plugin': bool(settings.get('enable_fact_memory_plugin', True)),
+        'enable_tabular_processing_plugin': bool(settings.get('enable_tabular_processing_plugin', False)),
+        'enable_enhanced_citations': bool(settings.get('enable_enhanced_citations', False)),
         'enable_semantic_kernel': bool(settings.get('enable_semantic_kernel', False)),
         'allow_user_plugins': bool(settings.get('allow_user_plugins', True)),
         'allow_group_plugins': bool(settings.get('allow_group_plugins', True)),
@@ -610,6 +648,7 @@ def update_core_plugin_settings():
         'enable_text_plugin',
         'enable_default_embedding_model_plugin',
         'enable_fact_memory_plugin',
+        'enable_tabular_processing_plugin',
         'allow_user_plugins',
         'allow_group_plugins'
     ]
@@ -627,6 +666,11 @@ def update_core_plugin_settings():
             return jsonify({'error': f"Field '{key}' must be a boolean."}), 400
         updates[key] = data[key]
     logging.info("Validated plugin settings: %s", updates)
+    # Dependency: tabular processing requires enhanced citations
+    if updates.get('enable_tabular_processing_plugin', False):
+        full_settings = get_settings()
+        if not full_settings.get('enable_enhanced_citations', False):
+            return jsonify({'error': 'Tabular Processing requires Enhanced Citations to be enabled.'}), 400
     # Update settings
     success = update_settings(updates)
     if success:
@@ -692,9 +736,10 @@ def add_plugin():
         new_plugin['id'] = plugin_id
         
         # Save to global actions container
-        save_global_action(new_plugin)
+        save_global_action(new_plugin, user_id=str(get_current_user_id()))
         
-        log_event("Plugin added", extra={"action": "add", "plugin": new_plugin, "user": str(getattr(request, 'user', 'unknown'))})
+        log_action_creation(user_id=str(get_current_user_id()), action_id=plugin_id, action_name=new_plugin.get('name', ''), action_type=new_plugin.get('type', ''), scope='global')
+        log_event("Plugin added", extra={"action": "add", "plugin": new_plugin, "user": str(get_current_user_id())})
         
         # --- HOT RELOAD TRIGGER ---
         setattr(builtins, "kernel_reload_needed", True)
@@ -753,9 +798,10 @@ def edit_plugin(plugin_name):
             # Delete old and save updated
             if 'id' in found_plugin:
                 delete_global_action(found_plugin['id'])
-            save_global_action(updated_plugin)
+            save_global_action(updated_plugin, user_id=str(get_current_user_id()))
             
-            log_event("Plugin edited", extra={"action": "edit", "plugin": updated_plugin, "user": str(getattr(request, 'user', 'unknown'))})
+            log_action_update(user_id=str(get_current_user_id()), action_id=updated_plugin.get('id', ''), action_name=plugin_name, action_type=updated_plugin.get('type', ''), scope='global')
+            log_event("Plugin edited", extra={"action": "edit", "plugin": updated_plugin, "user": str(get_current_user_id())})
             # --- HOT RELOAD TRIGGER ---
             setattr(builtins, "kernel_reload_needed", True)
             return jsonify({'success': True})
@@ -796,7 +842,8 @@ def delete_plugin(plugin_name):
         if 'id' in plugin_to_delete:
             delete_global_action(plugin_to_delete['id'])
         
-        log_event("Plugin deleted", extra={"action": "delete", "plugin_name": plugin_name, "user": str(getattr(request, 'user', 'unknown'))})
+        log_action_deletion(user_id=str(get_current_user_id()), action_id=plugin_to_delete.get('id', ''), action_name=plugin_name, action_type=plugin_to_delete.get('type', ''), scope='global')
+        log_event("Plugin deleted", extra={"action": "delete", "plugin_name": plugin_name, "user": str(get_current_user_id())})
         # --- HOT RELOAD TRIGGER ---
         setattr(builtins, "kernel_reload_needed", True)
         return jsonify({'success': True})
@@ -928,4 +975,116 @@ def _merge_group_and_global_actions(group_actions, global_actions):
     return normalized_actions
 
 
+@bpap.route('/api/plugins/test-sql-connection', methods=['POST'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+def test_sql_connection():
+    """Test a SQL database connection using provided configuration."""
+    data = request.get_json(silent=True) or {}
+    database_type = (data.get('database_type') or 'sqlserver').lower()
+    connection_method = data.get('connection_method', 'parameters')
+    connection_string = data.get('connection_string', '')
+    server = data.get('server', '')
+    database = data.get('database', '')
+    port = data.get('port', '')
+    driver = data.get('driver', '')
+    username = data.get('username', '')
+    password = data.get('password', '')
+    auth_type = data.get('auth_type', 'username_password')
+    timeout = min(int(data.get('timeout', 10)), 15)  # Cap at 15 seconds for test
 
+    # Map azure_sql to sqlserver
+    if database_type in ('azure_sql', 'azuresql'):
+        database_type = 'sqlserver'
+
+    try:
+        if database_type == 'sqlserver':
+            import pyodbc
+            if connection_method == 'connection_string' and connection_string:
+                conn = pyodbc.connect(connection_string, timeout=timeout)
+            else:
+                if not server or not database:
+                    return jsonify({'success': False, 'error': 'Server and database are required for individual parameters connection.'}), 400
+                drv = driver or 'ODBC Driver 17 for SQL Server'
+                conn_str = f"DRIVER={{{drv}}};SERVER={server};DATABASE={database}"
+                if port:
+                    conn_str += f",{port}"
+                if auth_type == 'username_password' and username and password:
+                    conn_str += f";UID={username};PWD={password}"
+                elif auth_type == 'managed_identity':
+                    conn_str += ";Authentication=ActiveDirectoryMsi"
+                elif auth_type == 'integrated':
+                    conn_str += ";Trusted_Connection=yes"
+                conn = pyodbc.connect(conn_str, timeout=timeout)
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            cursor.close()
+            conn.close()
+            return jsonify({'success': True, 'message': f'Successfully connected to {data.get("database", "database")} on {data.get("server", "server")}.'})
+
+        elif database_type == 'postgresql':
+            import psycopg2
+            if connection_method == 'connection_string' and connection_string:
+                conn = psycopg2.connect(connection_string, connect_timeout=timeout)
+            else:
+                if not server or not database:
+                    return jsonify({'success': False, 'error': 'Server and database are required.'}), 400
+                conn_params = {'host': server, 'database': database, 'connect_timeout': timeout}
+                if port:
+                    conn_params['port'] = int(port)
+                if username:
+                    conn_params['user'] = username
+                if password:
+                    conn_params['password'] = password
+                conn = psycopg2.connect(**conn_params)
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            cursor.close()
+            conn.close()
+            return jsonify({'success': True, 'message': f'Successfully connected to PostgreSQL database {data.get("database", "")}.'})
+
+        elif database_type == 'mysql':
+            import pymysql
+            if connection_method == 'connection_string' and connection_string:
+                # pymysql doesn't natively parse connection strings, so use params
+                return jsonify({'success': False, 'error': 'MySQL test connection requires individual parameters, not a connection string.'}), 400
+            if not server or not database:
+                return jsonify({'success': False, 'error': 'Server and database are required.'}), 400
+            conn_params = {'host': server, 'database': database, 'connect_timeout': timeout}
+            if port:
+                conn_params['port'] = int(port)
+            if username:
+                conn_params['user'] = username
+            if password:
+                conn_params['password'] = password
+            conn = pymysql.connect(**conn_params)
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            cursor.close()
+            conn.close()
+            return jsonify({'success': True, 'message': f'Successfully connected to MySQL database {data.get("database", "")}.'})
+
+        elif database_type == 'sqlite':
+            import sqlite3
+            db_path = connection_string or database
+            if not db_path:
+                return jsonify({'success': False, 'error': 'Database path is required for SQLite.'}), 400
+            conn = sqlite3.connect(db_path, timeout=timeout)
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            cursor.close()
+            conn.close()
+            return jsonify({'success': True, 'message': f'Successfully connected to SQLite database.'})
+
+        else:
+            return jsonify({'success': False, 'error': f'Unsupported database type: {database_type}'}), 400
+
+    except ImportError as e:
+        return jsonify({'success': False, 'error': f'Database driver not installed: {str(e)}'}), 400
+    except Exception as e:
+        error_msg = str(e)
+        # Sanitize error message to avoid leaking sensitive details
+        if 'password' in error_msg.lower() or 'pwd' in error_msg.lower():
+            error_msg = 'Authentication failed. Please check your credentials.'
+        return jsonify({'success': False, 'error': f'Connection failed: {error_msg}'}), 400

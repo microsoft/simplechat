@@ -94,7 +94,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.239.005"
+VERSION = "0.239.100"
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
@@ -260,6 +260,8 @@ def get_redis_cache_infrastructure_endpoint(redis_hostname: str) -> str:
 storage_account_user_documents_container_name = "user-documents"
 storage_account_group_documents_container_name = "group-documents"
 storage_account_public_documents_container_name = "public-documents"
+storage_account_personal_chat_container_name = "personal-chat"
+storage_account_group_chat_container_name = "group-chat"
 
 # Initialize Azure Cosmos DB client
 cosmos_endpoint = os.getenv("AZURE_COSMOS_ENDPOINT")
@@ -460,6 +462,18 @@ cosmos_approvals_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_approvals_container_name,
     partition_key=PartitionKey(path="/group_id"),
     default_ttl=-1  # TTL disabled by default, enabled per-document for auto-cleanup
+)
+
+cosmos_thoughts_container_name = "thoughts"
+cosmos_thoughts_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_thoughts_container_name,
+    partition_key=PartitionKey(path="/user_id")
+)
+
+cosmos_archived_thoughts_container_name = "archive_thoughts"
+cosmos_archived_thoughts_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_archived_thoughts_container_name,
+    partition_key=PartitionKey(path="/user_id")
 )
 
 def ensure_custom_logo_file_exists(app, settings):
@@ -748,9 +762,11 @@ def initialize_clients(settings):
                 # This addresses the issue where the application assumes containers exist
                 if blob_service_client:
                     for container_name in [
-                        storage_account_user_documents_container_name, 
-                        storage_account_group_documents_container_name, 
-                        storage_account_public_documents_container_name
+                        storage_account_user_documents_container_name,
+                        storage_account_group_documents_container_name,
+                        storage_account_public_documents_container_name,
+                        storage_account_personal_chat_container_name,
+                        storage_account_group_chat_container_name
                         ]:
                         try:
                             container_client = blob_service_client.get_container_client(container_name)

@@ -58,6 +58,7 @@ return render_template('page.html', settings=public_settings)
 
 ## Version Management
 
+- Its important to update the version at the end of every plan
 - Version is stored in `config.py`: `VERSION = "X.XXX.XXX"`
 - When incrementing, only change the third segment (e.g., `0.238.024` -> `0.238.025`)
 - Include the current version in functional test file headers and documentation files
@@ -83,7 +84,7 @@ return render_template('page.html', settings=public_settings)
 
 ## Release Notes
 
-After completing code changes, offer to update `docs/explanation/release_notes.md`.
+After completing plans and code changes, offer to update `docs/explanation/release_notes.md`.
 
 - Add entries under the current version from `config.py`
 - If the version was bumped, create a new section at the top: `### **(vX.XXX.XXX)**`

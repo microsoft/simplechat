@@ -13,6 +13,7 @@ import builtins
 import asyncio, types
 import ast
 import json
+import os
 import re
 from typing import Any, Dict, List, Mapping, Optional
 from config import *
@@ -28,16 +29,790 @@ from functions_debug import debug_print
 from functions_activity_logging import log_chat_activity, log_conversation_creation, log_token_usage
 from flask import current_app
 from swagger_wrapper import swagger_route, get_auth_security
+from functions_thoughts import ThoughtTracker
+
+
+TABULAR_DISCOVERY_FUNCTION_NAMES = {
+    'list_tabular_files',
+    'describe_tabular_file',
+}
+TABULAR_ANALYSIS_FUNCTION_NAMES = {
+    'aggregate_column',
+    'filter_rows',
+    'query_tabular_data',
+    'group_by_aggregate',
+    'group_by_datetime_component',
+}
+TABULAR_THOUGHT_EXCLUDED_PARAMETER_NAMES = {
+    'user_id',
+    'conversation_id',
+    'group_id',
+    'public_workspace_id',
+}
 
 
 def get_kernel():
     return getattr(g, 'kernel', None) or getattr(builtins, 'kernel', None)
+
 
 def get_kernel_agents():
     g_agents = getattr(g, 'kernel_agents', None)
     builtins_agents = getattr(builtins, 'kernel_agents', None)
     log_event(f"[SKChat] get_kernel_agents - g.kernel_agents: {type(g_agents)} ({len(g_agents) if g_agents else 0} agents), builtins.kernel_agents: {type(builtins_agents)} ({len(builtins_agents) if builtins_agents else 0} agents)", level=logging.INFO)
     return g_agents or builtins_agents
+
+
+def get_new_plugin_invocations(invocations, baseline_count):
+    """Return only the plugin invocations created after the baseline count."""
+    if not invocations:
+        return []
+
+    if baseline_count <= 0:
+        return list(invocations)
+
+    if baseline_count >= len(invocations):
+        return []
+
+    return list(invocations[baseline_count:])
+
+
+def split_tabular_plugin_invocations(invocations):
+    """Split tabular plugin invocations into discovery and analytical categories."""
+    discovery_invocations = []
+    analytical_invocations = []
+    other_invocations = []
+
+    for invocation in invocations or []:
+        function_name = getattr(invocation, 'function_name', '')
+
+        if function_name in TABULAR_DISCOVERY_FUNCTION_NAMES:
+            discovery_invocations.append(invocation)
+        elif function_name in TABULAR_ANALYSIS_FUNCTION_NAMES:
+            analytical_invocations.append(invocation)
+        else:
+            other_invocations.append(invocation)
+
+    return discovery_invocations, analytical_invocations, other_invocations
+
+
+def get_tabular_invocation_result_payload(invocation):
+    """Parse a tabular invocation result payload when it is JSON-like."""
+    result = getattr(invocation, 'result', None)
+    if isinstance(result, dict):
+        return result
+    if not isinstance(result, str):
+        return None
+
+    try:
+        payload = json.loads(result)
+    except Exception:
+        return None
+
+    return payload if isinstance(payload, dict) else None
+
+
+def get_tabular_invocation_error_message(invocation):
+    """Return an error message for a tabular invocation, including JSON error payloads."""
+    explicit_error_message = getattr(invocation, 'error_message', None)
+    if explicit_error_message:
+        return str(explicit_error_message)
+
+    result_payload = get_tabular_invocation_result_payload(invocation)
+    if result_payload and result_payload.get('error'):
+        return str(result_payload['error'])
+
+    return None
+
+
+def split_tabular_analysis_invocations(invocations):
+    """Split analytical tabular invocations into successful and failed calls."""
+    successful_invocations = []
+    failed_invocations = []
+
+    for invocation in invocations or []:
+        function_name = getattr(invocation, 'function_name', '')
+        if function_name not in TABULAR_ANALYSIS_FUNCTION_NAMES:
+            continue
+
+        if get_tabular_invocation_error_message(invocation):
+            failed_invocations.append(invocation)
+        else:
+            successful_invocations.append(invocation)
+
+    return successful_invocations, failed_invocations
+
+
+def summarize_tabular_invocation_errors(invocations):
+    """Return a stable list of unique tabular tool error messages."""
+    unique_errors = []
+    seen_errors = set()
+
+    for invocation in invocations or []:
+        error_message = get_tabular_invocation_error_message(invocation)
+        if not error_message:
+            continue
+
+        normalized_error_message = error_message.strip()
+        if not normalized_error_message or normalized_error_message in seen_errors:
+            continue
+
+        seen_errors.add(normalized_error_message)
+        unique_errors.append(normalized_error_message)
+
+    return unique_errors
+
+
+def filter_tabular_citation_invocations(invocations):
+    """Hide discovery-only citation noise when analytical tabular calls exist."""
+    if not invocations:
+        return []
+
+    successful_analytical_invocations, _ = split_tabular_analysis_invocations(invocations)
+    if successful_analytical_invocations:
+        return successful_analytical_invocations
+
+    return []
+
+
+def format_tabular_thought_parameter_value(value):
+    """Render a concise parameter value for tabular thought details."""
+    if value is None:
+        return None
+
+    if isinstance(value, (dict, list, tuple)):
+        rendered_value = json.dumps(value, default=str)
+    else:
+        rendered_value = str(value)
+
+    if not rendered_value:
+        return None
+
+    if len(rendered_value) > 120:
+        rendered_value = rendered_value[:117] + '...'
+
+    return rendered_value
+
+
+def get_tabular_tool_thought_payloads(invocations):
+    """Convert tabular plugin invocations into user-visible thought payloads."""
+    thought_payloads = []
+
+    for invocation in invocations or []:
+        function_name = getattr(invocation, 'function_name', 'unknown_tool')
+        duration_ms = getattr(invocation, 'duration_ms', None)
+        error_message = get_tabular_invocation_error_message(invocation)
+        success = getattr(invocation, 'success', True) and not error_message
+        parameters = getattr(invocation, 'parameters', {}) or {}
+
+        filename = parameters.get('filename')
+        duration_suffix = f" ({int(duration_ms)}ms)" if duration_ms else ""
+        content = f"Tabular tool {function_name}{duration_suffix}"
+        if filename:
+            content = f"Tabular tool {function_name} on {filename}{duration_suffix}"
+        if not success:
+            content = f"{content} failed"
+
+        detail_parts = []
+        for parameter_name, parameter_value in parameters.items():
+            if parameter_name in TABULAR_THOUGHT_EXCLUDED_PARAMETER_NAMES:
+                continue
+
+            rendered_value = format_tabular_thought_parameter_value(parameter_value)
+            if rendered_value is None:
+                continue
+
+            detail_parts.append(f"{parameter_name}={rendered_value}")
+
+        rendered_error_message = format_tabular_thought_parameter_value(error_message)
+        if rendered_error_message:
+            detail_parts.append(f"error={rendered_error_message}")
+
+        detail_parts.append(f"success={success}")
+        detail = "; ".join(detail_parts) if detail_parts else None
+        thought_payloads.append((content, detail))
+
+    return thought_payloads
+
+
+def get_tabular_status_thought_payloads(invocations, analysis_succeeded):
+    """Return additional tabular status thoughts for retries and fallbacks."""
+    successful_analytical_invocations, failed_analytical_invocations = split_tabular_analysis_invocations(invocations)
+    if not failed_analytical_invocations:
+        return []
+
+    error_messages = summarize_tabular_invocation_errors(failed_analytical_invocations)
+    detail = "; ".join(error_messages) if error_messages else None
+
+    if analysis_succeeded and successful_analytical_invocations:
+        return [(
+            "Tabular analysis recovered after retrying tool errors",
+            detail,
+        )]
+
+    if analysis_succeeded:
+        return [(
+            "Tabular analysis recovered via internal fallback after tool errors",
+            detail,
+        )]
+
+    return [(
+        "Tabular analysis encountered tool errors before fallback",
+        detail,
+    )]
+
+async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
+                                   conversation_id, gpt_model, settings,
+                                   source_hint="workspace", group_id=None,
+                                   public_workspace_id=None):
+    """Run lightweight SK with TabularProcessingPlugin to analyze tabular data.
+
+    Creates a temporary Kernel with only the TabularProcessingPlugin, uses the
+    same chat model as the user's session, and returns computed analysis results.
+    Returns None on failure for graceful degradation.
+    """
+    from semantic_kernel import Kernel as SKKernel
+    from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
+    from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
+    from semantic_kernel.connectors.ai.open_ai.prompt_execution_settings.azure_chat_prompt_execution_settings import AzureChatPromptExecutionSettings
+    from semantic_kernel.contents.chat_history import ChatHistory as SKChatHistory
+    from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
+
+    try:
+        plugin_logger = get_plugin_logger()
+        log_event(f"[Tabular SK Analysis] Starting analysis for files: {tabular_filenames}", level=logging.INFO)
+
+        # 1. Create lightweight kernel with only tabular plugin
+        kernel = SKKernel()
+        tabular_plugin = TabularProcessingPlugin()
+        kernel.add_plugin(tabular_plugin, plugin_name="tabular_processing")
+
+        # 2. Create chat service using same config as main chat
+        enable_gpt_apim = settings.get('enable_gpt_apim', False)
+        if enable_gpt_apim:
+            chat_service = AzureChatCompletion(
+                service_id="tabular-analysis",
+                deployment_name=gpt_model,
+                endpoint=settings.get('azure_apim_gpt_endpoint'),
+                api_key=settings.get('azure_apim_gpt_subscription_key'),
+                api_version=settings.get('azure_apim_gpt_api_version'),
+            )
+        else:
+            auth_type = settings.get('azure_openai_gpt_authentication_type')
+            if auth_type == 'managed_identity':
+                token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
+                chat_service = AzureChatCompletion(
+                    service_id="tabular-analysis",
+                    deployment_name=gpt_model,
+                    endpoint=settings.get('azure_openai_gpt_endpoint'),
+                    api_version=settings.get('azure_openai_gpt_api_version'),
+                    ad_token_provider=token_provider,
+                )
+            else:
+                chat_service = AzureChatCompletion(
+                    service_id="tabular-analysis",
+                    deployment_name=gpt_model,
+                    endpoint=settings.get('azure_openai_gpt_endpoint'),
+                    api_key=settings.get('azure_openai_gpt_key'),
+                    api_version=settings.get('azure_openai_gpt_api_version'),
+                )
+        kernel.add_service(chat_service)
+
+        # 3. Pre-dispatch: load file schemas to eliminate discovery LLM rounds
+        source_context = f"source='{source_hint}'"
+        if group_id:
+            source_context += f", group_id='{group_id}'"
+        if public_workspace_id:
+            source_context += f", public_workspace_id='{public_workspace_id}'"
+
+        schema_parts = []
+        preloaded_dataframes = {}
+        for fname in tabular_filenames:
+            try:
+                container, blob_path = tabular_plugin._resolve_blob_location_with_fallback(
+                    user_id, conversation_id, fname, source_hint,
+                    group_id=group_id, public_workspace_id=public_workspace_id
+                )
+                df = tabular_plugin._read_tabular_blob_to_dataframe(container, blob_path)
+                df_numeric = tabular_plugin._try_numeric_conversion(df.copy())
+                preloaded_dataframes[fname] = df_numeric.copy()
+                schema_info = {
+                    "filename": fname,
+                    "row_count": len(df),
+                    "columns": list(df.columns),
+                    "dtypes": {col: str(dtype) for col, dtype in df_numeric.dtypes.items()},
+                    "preview": df.head(3).to_dict(orient='records')
+                }
+                schema_parts.append(json.dumps(schema_info, indent=2, default=str))
+                log_event(f"[Tabular SK Analysis] Pre-loaded schema for {fname} ({len(df)} rows)", level=logging.DEBUG)
+            except Exception as e:
+                log_event(f"[Tabular SK Analysis] Failed to pre-load schema for {fname}: {e}", level=logging.WARNING)
+                schema_parts.append(json.dumps({"filename": fname, "error": f"Could not pre-load: {str(e)}"}))
+
+        schema_context = "\n".join(schema_parts)
+
+        def build_system_prompt(force_tool_use=False, tool_error_messages=None):
+            retry_prefix = ""
+            if force_tool_use:
+                retry_prefix = (
+                    "RETRY MODE: Your previous attempt did not execute the data-analysis tools. "
+                    "You MUST call one or more tabular_processing plugin functions before writing any answer text. "
+                    "Do not say the analysis still needs to be run — run it now.\n\n"
+                )
+
+            tool_error_feedback = ""
+            if tool_error_messages:
+                rendered_errors = "\n".join(
+                    f"- {error_message}" for error_message in tool_error_messages
+                )
+                tool_error_feedback = (
+                    "PREVIOUS TOOL ERRORS:\n"
+                    f"{rendered_errors}\n"
+                    "Correct the function arguments and try again. If the operation is not 'count', provide an aggregate_column.\n\n"
+                )
+
+            return (
+                "You are a data analyst. The full dataset is available through the "
+                "tabular_processing plugin functions. You MUST use one or more "
+                "tabular_processing plugin functions before answering. Never answer from "
+                "the schema preview alone. Never say that you would need to run the "
+                "analysis later — run it now.\n\n"
+                f"{retry_prefix}"
+                f"{tool_error_feedback}"
+                f"FILE SCHEMAS (pre-loaded — do NOT call list_tabular_files or describe_tabular_file):\n"
+                f"{schema_context}\n\n"
+                "AVAILABLE FUNCTIONS: aggregate_column, filter_rows, query_tabular_data, "
+                "group_by_aggregate, and group_by_datetime_component for year/quarter/month/week/day/hour trend analysis.\n\n"
+                "IMPORTANT:\n"
+                "1. Use the pre-loaded schema context to pick the correct columns, then call the plugin functions.\n"
+                "2. For time-based questions on datetime columns, use group_by_datetime_component.\n"
+                "3. For threshold, ranking, comparison, or correlation-like questions, first filter/query the relevant rows, then compute grouped metrics.\n"
+                "4. Batch multiple independent function calls in a SINGLE response whenever possible.\n"
+                "5. If you need more than 100 filtered rows, explicitly set max_rows higher.\n"
+                "6. Calls to list_tabular_files or describe_tabular_file do not count as analysis and will be rejected.\n"
+                "7. For analytical questions, prefer query/filter plus aggregate/grouped computations over raw row or preview output.\n"
+                "8. For peak, busiest, highest, or lowest questions, use grouped functions and inspect the highest_group, highest_value, lowest_group, and lowest_value summary fields.\n"
+                "9. Return only computed findings and name the strongest drivers clearly.\n"
+                "10. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report."
+            )
+
+        def infer_datetime_component(question_text):
+            normalized_question = (question_text or '').lower()
+            if any(keyword in normalized_question for keyword in ['hour', 'hours', 'time of day']):
+                return 'hour'
+            if any(keyword in normalized_question for keyword in ['day of week', 'weekday']):
+                return 'day_name'
+            if any(keyword in normalized_question for keyword in ['year', 'years', 'yearly', 'annual', 'annually']):
+                return 'year'
+            if any(keyword in normalized_question for keyword in ['month', 'monthly']):
+                return 'month'
+            if any(keyword in normalized_question for keyword in ['quarter', 'quarterly']):
+                return 'quarter'
+            if any(keyword in normalized_question for keyword in ['week', 'weekly']):
+                return 'week'
+            if any(keyword in normalized_question for keyword in ['date', 'daily', 'day']):
+                return 'date'
+            return None
+
+        def format_component_label(component, raw_value):
+            normalized_component = tabular_plugin._normalize_datetime_component(component)
+            if normalized_component == 'hour':
+                try:
+                    hour_value = int(raw_value)
+                    return f"{hour_value:02d}:00-{hour_value:02d}:59"
+                except (TypeError, ValueError):
+                    return str(raw_value)
+            return str(raw_value)
+
+        def score_datetime_column(column_name, question_text, parsed_ratio):
+            normalized_question = (question_text or '').lower()
+            normalized_column = column_name.lower()
+            score = parsed_ratio
+
+            if 'depart' in normalized_question and 'depart' in normalized_column:
+                score += 5
+            if 'arriv' in normalized_question and 'arriv' in normalized_column:
+                score += 5
+            if 'actual' in normalized_question and 'actual' in normalized_column:
+                score += 4
+            if 'scheduled' in normalized_question and 'scheduled' in normalized_column:
+                score += 4
+            if 'actual' in normalized_column and 'scheduled' not in normalized_question:
+                score += 2
+            if any(keyword in normalized_column for keyword in ['time', 'date', 'timestamp']):
+                score += 1
+
+            return score
+
+        def select_metric_columns(df, question_text):
+            normalized_question = (question_text or '').lower()
+            scored_columns = []
+
+            for column_name in df.columns:
+                if not pandas.api.types.is_numeric_dtype(df[column_name]):
+                    continue
+
+                normalized_column = column_name.lower()
+                score = 0
+                if 'queue' in normalized_question and 'queue' in normalized_column:
+                    score += 8
+                if 'delay' in normalized_question and 'delay' in normalized_column:
+                    score += 8
+                if 'wait' in normalized_question and 'wait' in normalized_column:
+                    score += 8
+                if 'length' in normalized_column:
+                    score += 3
+                if any(keyword in normalized_column for keyword in ['minutes', 'minute', 'count', 'volume', 'traffic']):
+                    score += 2
+                if any(keyword in normalized_column for keyword in ['queue', 'delay', 'length', 'count', 'minutes']):
+                    score += 1
+                scored_columns.append((score, column_name))
+
+            scored_columns.sort(key=lambda item: (item[0], item[1]), reverse=True)
+            return [column_name for _, column_name in scored_columns]
+
+        def infer_metric_operation(question_text):
+            normalized_question = (question_text or '').lower()
+            if any(keyword in normalized_question for keyword in ['sum', 'total']):
+                return 'sum'
+            if any(keyword in normalized_question for keyword in ['maximum', 'max', 'highest single']):
+                return 'max'
+            if any(keyword in normalized_question for keyword in ['count', 'how many', 'number of']):
+                return 'count'
+            return 'mean'
+
+        async def try_direct_datetime_component_fallback():
+            datetime_component = infer_datetime_component(user_question)
+            if not datetime_component:
+                return None
+
+            for filename, df_numeric in preloaded_dataframes.items():
+                datetime_candidates = []
+                for column_name in df_numeric.columns:
+                    parsed_series = tabular_plugin._parse_datetime_like_series(df_numeric[column_name])
+                    parsed_ratio = (parsed_series.notna().sum() / len(parsed_series)) if len(parsed_series) else 0
+                    if parsed_ratio < 0.6:
+                        continue
+                    datetime_candidates.append((
+                        score_datetime_column(column_name, user_question, parsed_ratio),
+                        column_name,
+                    ))
+
+                datetime_candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+                if not datetime_candidates:
+                    continue
+
+                datetime_column = datetime_candidates[0][1]
+                aggregate_candidates = select_metric_columns(df_numeric, user_question)
+                operation = infer_metric_operation(user_question)
+                aggregate_column = ''
+
+                if operation != 'count':
+                    if not aggregate_candidates:
+                        continue
+                    aggregate_column = aggregate_candidates[0]
+
+                result_json = await tabular_plugin.group_by_datetime_component(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    filename=filename,
+                    datetime_column=datetime_column,
+                    datetime_component=datetime_component,
+                    aggregate_column=aggregate_column,
+                    operation=operation,
+                    source=source_hint,
+                    top_n='5',
+                    sort_descending='true',
+                    group_id=group_id,
+                    public_workspace_id=public_workspace_id,
+                )
+
+                try:
+                    result_payload = json.loads(result_json)
+                except Exception:
+                    continue
+
+                if result_payload.get('error'):
+                    continue
+
+                top_results = result_payload.get('top_results') or {}
+                if not top_results:
+                    continue
+
+                summary_lines = []
+                for component_value, metric_value in top_results.items():
+                    summary_lines.append(
+                        f"- {format_component_label(datetime_component, component_value)}: {metric_value}"
+                    )
+
+                basis = 'row count'
+                if aggregate_column:
+                    basis = f"{operation} {aggregate_column}"
+
+                return (
+                    f"Computed direct datetime analysis from {filename}. "
+                    f"Grouped {basis} by the {datetime_component} extracted from {datetime_column}.\n"
+                    f"Top {datetime_component} values:\n"
+                    + "\n".join(summary_lines)
+                )
+
+        baseline_invocations = plugin_logger.get_invocations_for_conversation(
+            user_id,
+            conversation_id,
+            limit=1000
+        )
+        baseline_invocation_count = len(baseline_invocations)
+        previous_tool_error_messages = []
+
+        for attempt_number, force_tool_use in enumerate((False, True), start=1):
+            # 4. Build chat history with pre-loaded schemas
+            chat_history = SKChatHistory()
+            chat_history.add_system_message(build_system_prompt(
+                force_tool_use=force_tool_use,
+                tool_error_messages=previous_tool_error_messages,
+            ))
+
+            chat_history.add_user_message(
+                f"Analyze the tabular data to answer: {user_question}\n"
+                f"Use user_id='{user_id}', conversation_id='{conversation_id}', {source_context}."
+            )
+
+            # 5. Execute with auto function calling
+            execution_settings = AzureChatPromptExecutionSettings(
+                service_id="tabular-analysis",
+                function_choice_behavior=FunctionChoiceBehavior.Auto(
+                    maximum_auto_invoke_attempts=10 if force_tool_use else 7
+                ),
+            )
+
+            result = await chat_service.get_chat_message_contents(
+                chat_history, execution_settings, kernel=kernel
+            )
+
+            invocations_after = plugin_logger.get_invocations_for_conversation(
+                user_id,
+                conversation_id,
+                limit=1000
+            )
+            new_invocations = get_new_plugin_invocations(invocations_after, baseline_invocation_count)
+            new_invocation_count = len(new_invocations)
+            discovery_invocations, analytical_invocations, _ = split_tabular_plugin_invocations(new_invocations)
+            successful_analytical_invocations, failed_analytical_invocations = split_tabular_analysis_invocations(new_invocations)
+
+            if result and result[0].content:
+                analysis = result[0].content.strip()
+                if len(analysis) > 20000:
+                    analysis = analysis[:20000] + "\n[Analysis truncated]"
+
+                if successful_analytical_invocations:
+                    log_event(
+                        f"[Tabular SK Analysis] Analysis complete via {len(successful_analytical_invocations)} analytical tool call(s) on attempt {attempt_number}",
+                        level=logging.INFO
+                    )
+                    return analysis
+
+                if failed_analytical_invocations:
+                    previous_tool_error_messages = summarize_tabular_invocation_errors(failed_analytical_invocations)
+                    log_event(
+                        f"[Tabular SK Analysis] Attempt {attempt_number} used analytical tool(s) but all returned errors; retrying",
+                        extra={
+                            'tool_errors': previous_tool_error_messages,
+                            'failed_tool_count': len(failed_analytical_invocations),
+                        },
+                        level=logging.WARNING
+                    )
+                elif analytical_invocations:
+                    log_event(
+                        f"[Tabular SK Analysis] Attempt {attempt_number} used analytical tool(s) without usable computed results; retrying",
+                        level=logging.WARNING
+                    )
+                elif discovery_invocations:
+                    discovery_function_names = sorted({
+                        invocation.function_name for invocation in discovery_invocations
+                    })
+                    log_event(
+                        f"[Tabular SK Analysis] Attempt {attempt_number} used only discovery tool(s) {discovery_function_names}; retrying",
+                        level=logging.WARNING
+                    )
+                elif new_invocation_count > 0:
+                    log_event(
+                        f"[Tabular SK Analysis] Attempt {attempt_number} used unsupported tool(s) without computed analysis; retrying",
+                        level=logging.WARNING
+                    )
+                else:
+                    log_event(
+                        f"[Tabular SK Analysis] Attempt {attempt_number} returned narrative without tool use; retrying",
+                        level=logging.WARNING
+                    )
+
+            else:
+                if failed_analytical_invocations:
+                    previous_tool_error_messages = summarize_tabular_invocation_errors(failed_analytical_invocations)
+                    log_event(
+                        f"[Tabular SK Analysis] Attempt {attempt_number} returned no content after tool errors; retrying",
+                        extra={
+                            'tool_errors': previous_tool_error_messages,
+                            'failed_tool_count': len(failed_analytical_invocations),
+                        },
+                        level=logging.WARNING
+                    )
+                else:
+                    log_event(
+                        f"[Tabular SK Analysis] Attempt {attempt_number} returned no content",
+                        level=logging.WARNING
+                    )
+
+            baseline_invocation_count = len(invocations_after)
+
+        direct_datetime_fallback = await try_direct_datetime_component_fallback()
+        if direct_datetime_fallback:
+            log_event("[Tabular SK Analysis] Direct datetime fallback succeeded", level=logging.INFO)
+            return direct_datetime_fallback
+
+        log_event("[Tabular SK Analysis] Unable to obtain computed tool-backed results", level=logging.WARNING)
+        return None
+
+    except Exception as e:
+        log_event(f"[Tabular SK Analysis] Error: {e}", level=logging.WARNING, exceptionTraceback=True)
+        return None
+
+def collect_tabular_sk_citations(user_id, conversation_id):
+    """Collect plugin invocations from the tabular SK analysis and convert to citation format."""
+    from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
+
+    plugin_logger = get_plugin_logger()
+    plugin_invocations = plugin_logger.get_invocations_for_conversation(user_id, conversation_id)
+    plugin_invocations = filter_tabular_citation_invocations(plugin_invocations)
+
+    if not plugin_invocations:
+        return []
+
+    def make_json_serializable(obj):
+        if obj is None:
+            return None
+        elif isinstance(obj, (str, int, float, bool)):
+            return obj
+        elif isinstance(obj, dict):
+            return {str(k): make_json_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [make_json_serializable(item) for item in obj]
+        else:
+            return str(obj)
+
+    citations = []
+    for inv in plugin_invocations:
+        timestamp_str = None
+        if inv.timestamp:
+            if hasattr(inv.timestamp, 'isoformat'):
+                timestamp_str = inv.timestamp.isoformat()
+            else:
+                timestamp_str = str(inv.timestamp)
+
+        citation = {
+            'tool_name': f"{inv.plugin_name}.{inv.function_name}",
+            'function_name': inv.function_name,
+            'plugin_name': inv.plugin_name,
+            'function_arguments': make_json_serializable(inv.parameters),
+            'function_result': make_json_serializable(inv.result),
+            'duration_ms': inv.duration_ms,
+            'timestamp': timestamp_str,
+            'success': inv.success,
+            'error_message': make_json_serializable(inv.error_message),
+            'user_id': inv.user_id
+        }
+        citations.append(citation)
+
+    log_event(f"[Tabular SK Citations] Collected {len(citations)} tool execution citations", level=logging.INFO)
+    return citations
+
+
+def is_tabular_filename(filename):
+    """Return True when the filename has a supported tabular extension."""
+    if not filename or not isinstance(filename, str):
+        return False
+
+    _, extension = os.path.splitext(filename.strip().lower())
+    return extension.lstrip('.') in TABULAR_EXTENSIONS
+
+
+def get_document_container_for_scope(document_scope):
+    """Return the Cosmos documents container that matches the workspace scope."""
+    if document_scope == 'group':
+        return cosmos_group_documents_container
+    if document_scope == 'public':
+        return cosmos_public_documents_container
+    return cosmos_user_documents_container
+
+
+def get_selected_workspace_tabular_filenames(selected_document_ids=None, selected_document_id=None, document_scope='personal'):
+    """Resolve explicitly selected workspace documents and return tabular filenames."""
+    selected_ids = list(selected_document_ids or [])
+    if not selected_ids and selected_document_id and selected_document_id != 'all':
+        selected_ids = [selected_document_id]
+
+    if not selected_ids:
+        return set()
+
+    cosmos_container = get_document_container_for_scope(document_scope)
+    tabular_filenames = set()
+
+    for doc_id in selected_ids:
+        if not doc_id or doc_id == 'all':
+            continue
+
+        try:
+            doc_query = (
+                "SELECT TOP 1 c.file_name, c.title "
+                "FROM c WHERE c.id = @doc_id "
+                "ORDER BY c.version DESC"
+            )
+            doc_params = [{"name": "@doc_id", "value": doc_id}]
+            doc_results = list(cosmos_container.query_items(
+                query=doc_query,
+                parameters=doc_params,
+                enable_cross_partition_query=True
+            ))
+
+            if not doc_results:
+                continue
+
+            file_name = doc_results[0].get('file_name') or doc_results[0].get('title')
+            if is_tabular_filename(file_name):
+                tabular_filenames.add(file_name)
+        except Exception as e:
+            log_event(
+                f"[Tabular SK Analysis] Failed to resolve selected document '{doc_id}': {e}",
+                level=logging.WARNING
+            )
+
+    return tabular_filenames
+
+
+def collect_workspace_tabular_filenames(combined_documents=None, selected_document_ids=None,
+                                        selected_document_id=None, document_scope='personal'):
+    """Collect tabular filenames from search results and explicit workspace selection."""
+    tabular_filenames = set()
+
+    for source_doc in combined_documents or []:
+        file_name = source_doc.get('file_name', '')
+        if is_tabular_filename(file_name):
+            tabular_filenames.add(file_name)
+
+    tabular_filenames.update(get_selected_workspace_tabular_filenames(
+        selected_document_ids=selected_document_ids,
+        selected_document_id=selected_document_id,
+        document_scope=document_scope,
+    ))
+
+    return tabular_filenames
+
+
+def determine_tabular_source_hint(document_scope, active_group_id=None, active_public_workspace_id=None):
+    """Map workspace scope metadata to the tabular plugin source hint."""
+    if document_scope == 'group' and active_group_id:
+        return 'group'
+    if document_scope == 'public' and active_public_workspace_id:
+        return 'public'
+    return 'workspace'
 
 def register_route_backend_chats(app):
     @app.route('/api/chat', methods=['POST'])
@@ -46,6 +821,7 @@ def register_route_backend_chats(app):
     @user_required
     def chat_api():
         try:
+            request_start_time = time.time()
             settings = get_settings()
             data = request.get_json()
             user_id = get_current_user_id()
@@ -668,6 +1444,18 @@ def register_route_backend_chats(app):
 
                 conversation_item['last_updated'] = datetime.utcnow().isoformat()
                 cosmos_conversations_container.upsert_item(conversation_item) # Update timestamp and potentially title
+
+                # Generate assistant_message_id early for thought tracking
+                assistant_message_id = f"{conversation_id}_assistant_{int(time.time())}_{random.randint(1000,9999)}"
+
+                # Initialize thought tracker
+                thought_tracker = ThoughtTracker(
+                    conversation_id=conversation_id,
+                    message_id=assistant_message_id,
+                    thread_id=current_user_thread_id,
+                    user_id=user_id
+                )
+
         # region 3 - Content Safety
             # ---------------------------------------------------------------------
             # 3) Check Content Safety (but DO NOT return 403).
@@ -679,6 +1467,7 @@ def register_route_backend_chats(app):
             blocklist_matches = []
 
             if settings.get('enable_content_safety') and "content_safety_client" in CLIENTS:
+                thought_tracker.add_thought('content_safety', 'Checking content safety...')
                 try:
                     content_safety_client = CLIENTS["content_safety_client"]
                     request_obj = AnalyzeTextOptions(text=user_message)
@@ -836,6 +1625,7 @@ def register_route_backend_chats(app):
 
 
                 # Perform the search
+                thought_tracker.add_thought('search', f"Searching {document_scope or 'personal'} workspace documents for '{(search_query or user_message)[:50]}'")
                 try:
                     # Prepare search arguments
                     # Set default and maximum values for top_n
@@ -898,9 +1688,11 @@ def register_route_backend_chats(app):
                         'error': 'There was an issue with the embedding process. Please check with an admin on embedding configuration.'
                     }), 500
 
+                combined_documents = []
                 if search_results:
+                    unique_doc_names = set(doc.get('file_name', 'Unknown') for doc in search_results)
+                    thought_tracker.add_thought('search', f"Found {len(search_results)} results from {len(unique_doc_names)} documents")
                     retrieved_texts = []
-                    combined_documents = []
                     classifications_found = set(conversation_item.get('classification', [])) # Load existing
 
                     for doc in search_results:
@@ -1138,8 +1930,8 @@ def register_route_backend_chats(app):
                                 """
                             # Update the system message with enhanced content and updated documents array
                             if system_messages_for_augmentation:
-                                system_messages_for_augmentation[-1]['content'] = system_prompt_search
-                                system_messages_for_augmentation[-1]['documents'] = combined_documents
+                                system_messages_for_augmentation[0]['content'] = system_prompt_search
+                                system_messages_for_augmentation[0]['documents'] = combined_documents
                     # --- END NEW METADATA CITATIONS ---
 
                     # Update conversation classifications if new ones were found
@@ -1488,7 +2280,90 @@ def register_route_backend_chats(app):
                         'error': user_friendly_message
                     }), status_code
 
+            workspace_tabular_files = set()
+            if hybrid_search_enabled and settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
+                workspace_tabular_files = collect_workspace_tabular_filenames(
+                    combined_documents=combined_documents,
+                    selected_document_ids=selected_document_ids,
+                    selected_document_id=selected_document_id,
+                    document_scope=document_scope,
+                )
+
+            if hybrid_search_enabled and workspace_tabular_files and settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
+                tabular_source_hint = determine_tabular_source_hint(
+                    document_scope,
+                    active_group_id=active_group_id,
+                    active_public_workspace_id=active_public_workspace_id,
+                )
+                tabular_filenames_str = ", ".join(sorted(workspace_tabular_files))
+                plugin_logger = get_plugin_logger()
+                baseline_tabular_invocation_count = len(
+                    plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
+                )
+
+                tabular_analysis = asyncio.run(run_tabular_sk_analysis(
+                    user_question=user_message,
+                    tabular_filenames=workspace_tabular_files,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    gpt_model=gpt_model,
+                    settings=settings,
+                    source_hint=tabular_source_hint,
+                    group_id=active_group_id if tabular_source_hint == 'group' else None,
+                    public_workspace_id=active_public_workspace_id if tabular_source_hint == 'public' else None,
+                ))
+                tabular_invocations = get_new_plugin_invocations(
+                    plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000),
+                    baseline_tabular_invocation_count
+                )
+                tabular_thought_payloads = get_tabular_tool_thought_payloads(tabular_invocations)
+                for thought_content, thought_detail in tabular_thought_payloads:
+                    thought_tracker.add_thought('tabular_analysis', thought_content, thought_detail)
+                tabular_status_thought_payloads = get_tabular_status_thought_payloads(
+                    tabular_invocations,
+                    analysis_succeeded=bool(tabular_analysis),
+                )
+                for thought_content, thought_detail in tabular_status_thought_payloads:
+                    thought_tracker.add_thought('tabular_analysis', thought_content, thought_detail)
+
+                if tabular_analysis:
+                    tabular_system_msg = (
+                        f"The following analysis was computed from the tabular file(s) "
+                        f"{tabular_filenames_str} using data analysis functions:\n\n"
+                        f"{tabular_analysis}\n\n"
+                        f"Use these computed results to answer the user's question accurately."
+                    )
+                else:
+                    tabular_system_msg = (
+                        f"IMPORTANT: The selected workspace tabular file(s) are {tabular_filenames_str}. "
+                        f"The search results contain only a schema summary (column names and a few sample rows), NOT the full data. "
+                        f"You MUST use the tabular_processing plugin functions to answer ANY question about these files. "
+                        f"Do NOT attempt to answer using the schema summary alone — it is incomplete. "
+                        f"Available functions: describe_tabular_file, aggregate_column, filter_rows, query_tabular_data, group_by_aggregate, group_by_datetime_component. "
+                        f"Use source='{tabular_source_hint}'"
+                        + (f" and group_id='{active_group_id}'" if tabular_source_hint == 'group' else "")
+                        + (f" and public_workspace_id='{active_public_workspace_id}'" if tabular_source_hint == 'public' else "")
+                        + "."
+                    )
+
+                system_messages_for_augmentation.append({
+                    'role': 'system',
+                    'content': tabular_system_msg
+                })
+
+                if tabular_analysis:
+                    tabular_sk_citations = collect_tabular_sk_citations(user_id, conversation_id)
+                    if tabular_sk_citations:
+                        agent_citations_list.extend(tabular_sk_citations)
+                else:
+                    thought_tracker.add_thought(
+                        'tabular_analysis',
+                        "Tabular analysis could not compute results; using schema context instead",
+                        detail=f"files={tabular_filenames_str}"
+                    )
+
             if web_search_enabled:
+                thought_tracker.add_thought('web_search', f"Searching the web for '{(search_query or user_message)[:50]}'")
                 perform_web_search(
                     settings=settings,
                     conversation_id=conversation_id,
@@ -1504,7 +2379,9 @@ def register_route_backend_chats(app):
                     agent_citations_list=agent_citations_list,
                     web_search_citations_list=web_search_citations_list,
                 )
-            
+                if web_search_citations_list:
+                    thought_tracker.add_thought('web_search', f"Got {len(web_search_citations_list)} web search results")
+
         # region 5 - FINAL conversation history preparation
             # ---------------------------------------------------------------------
             # 5) Prepare FINAL conversation history for GPT (including summarization)
@@ -1650,6 +2527,7 @@ def register_route_backend_chats(app):
                 allowed_roles_in_history = ['user', 'assistant'] # Add 'system' if you PERSIST general system messages not related to augmentation
                 max_file_content_length_in_history = 50000 # Increased limit for all file content in history
                 max_tabular_content_length_in_history = 50000 # Same limit for tabular data consistency
+                chat_tabular_files = set()  # Track tabular files uploaded directly to chat
 
                 for message in recent_messages:
                     role = message.get('role')
@@ -1685,25 +2563,38 @@ def register_route_backend_chats(app):
                         filename = message.get('filename', 'uploaded_file')
                         file_content = message.get('file_content', '') # Assuming file content is stored
                         is_table = message.get('is_table', False)
-                        
-                        # Use higher limit for tabular data that needs complete analysis
-                        content_limit = max_tabular_content_length_in_history if is_table else max_file_content_length_in_history
-                        
-                        display_content = file_content[:content_limit]
-                        if len(file_content) > content_limit:
-                            display_content += "..."
-                        
-                        # Enhanced message for tabular data
-                        if is_table:
+                        file_content_source = message.get('file_content_source', '')
+
+                        # Tabular files stored in blob (enhanced citations enabled) - reference plugin
+                        if is_table and file_content_source == 'blob':
+                            chat_tabular_files.add(filename)  # Track for mini SK analysis
                             conversation_history_for_api.append({
-                                'role': 'system', # Represent file as system info
-                                'content': f"[User uploaded a tabular data file named '{filename}'. This is CSV format data for analysis:\n{display_content}]\nThis is complete tabular data in CSV format. You can perform calculations, analysis, and data operations on this dataset."
+                                'role': 'system',
+                                'content': f"[User uploaded a tabular data file named '{filename}'. "
+                                    f"The file is stored in blob storage and available for analysis. "
+                                    f"Use the tabular_processing plugin functions (list_tabular_files, describe_tabular_file, "
+                                    f"aggregate_column, filter_rows, query_tabular_data, group_by_aggregate, group_by_datetime_component) to analyze this data. "
+                                    f"The file source is 'chat'.]"
                             })
                         else:
-                            conversation_history_for_api.append({
-                                'role': 'system', # Represent file as system info
-                                'content': f"[User uploaded a file named '{filename}'. Content preview:\n{display_content}]\nUse this file context if relevant."
-                            })
+                            # Use higher limit for tabular data that needs complete analysis
+                            content_limit = max_tabular_content_length_in_history if is_table else max_file_content_length_in_history
+
+                            display_content = file_content[:content_limit]
+                            if len(file_content) > content_limit:
+                                display_content += "..."
+
+                            # Enhanced message for tabular data
+                            if is_table:
+                                conversation_history_for_api.append({
+                                    'role': 'system', # Represent file as system info
+                                    'content': f"[User uploaded a tabular data file named '{filename}'. This is CSV format data for analysis:\n{display_content}]\nThis is complete tabular data in CSV format. You can perform calculations, analysis, and data operations on this dataset."
+                                })
+                            else:
+                                conversation_history_for_api.append({
+                                    'role': 'system', # Represent file as system info
+                                    'content': f"[User uploaded a file named '{filename}'. Content preview:\n{display_content}]\nUse this file context if relevant."
+                                })
                     elif role == 'image': # Handle image uploads with extracted text and vision analysis
                         filename = message.get('filename', 'uploaded_image')
                         is_user_upload = message.get('metadata', {}).get('is_user_upload', False)
@@ -1766,6 +2657,67 @@ def register_route_backend_chats(app):
                             })
 
                     # Ignored roles: 'safety', 'blocked', 'system' (if they are only for augmentation/summary)
+
+                # --- Mini SK analysis for tabular files uploaded directly to chat ---
+                if chat_tabular_files and settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
+                    chat_tabular_filenames_str = ", ".join(chat_tabular_files)
+                    log_event(
+                        f"[Chat Tabular SK] Detected {len(chat_tabular_files)} tabular file(s) uploaded to chat: {chat_tabular_filenames_str}",
+                        level=logging.INFO
+                    )
+                    plugin_logger = get_plugin_logger()
+                    baseline_tabular_invocation_count = len(
+                        plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
+                    )
+
+                    chat_tabular_analysis = asyncio.run(run_tabular_sk_analysis(
+                        user_question=user_message,
+                        tabular_filenames=chat_tabular_files,
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        gpt_model=gpt_model,
+                        settings=settings,
+                        source_hint="chat",
+                    ))
+                    chat_tabular_invocations = get_new_plugin_invocations(
+                        plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000),
+                        baseline_tabular_invocation_count
+                    )
+                    chat_tabular_thought_payloads = get_tabular_tool_thought_payloads(chat_tabular_invocations)
+                    for thought_content, thought_detail in chat_tabular_thought_payloads:
+                        thought_tracker.add_thought('tabular_analysis', thought_content, thought_detail)
+                    chat_tabular_status_thought_payloads = get_tabular_status_thought_payloads(
+                        chat_tabular_invocations,
+                        analysis_succeeded=bool(chat_tabular_analysis),
+                    )
+                    for thought_content, thought_detail in chat_tabular_status_thought_payloads:
+                        thought_tracker.add_thought('tabular_analysis', thought_content, thought_detail)
+
+                    if chat_tabular_analysis:
+                        # Inject pre-computed analysis results as context
+                        conversation_history_for_api.append({
+                            'role': 'system',
+                            'content': (
+                                f"The following analysis was computed from the chat-uploaded tabular file(s) "
+                                f"{chat_tabular_filenames_str} using data analysis functions:\n\n"
+                                f"{chat_tabular_analysis}\n\n"
+                                f"Use these computed results to answer the user's question accurately."
+                            )
+                        })
+
+                        # Collect tool execution citations from SK tabular analysis
+                        chat_tabular_sk_citations = collect_tabular_sk_citations(user_id, conversation_id)
+                        if chat_tabular_sk_citations:
+                            agent_citations_list.extend(chat_tabular_sk_citations)
+
+                        debug_print(f"[Chat Tabular SK] Analysis injected, {len(chat_tabular_analysis)} chars")
+                    else:
+                        thought_tracker.add_thought(
+                            'tabular_analysis',
+                            "Tabular analysis could not compute results; using existing chat file context",
+                            detail=f"files={chat_tabular_filenames_str}"
+                        )
+                        debug_print("[Chat Tabular SK] Analysis returned None, relying on existing file context messages")
 
                 # Ensure the very last message is the current user's message (it should be if fetched correctly)
                 if not conversation_history_for_api or conversation_history_for_api[-1]['role'] != 'user':
@@ -2110,6 +3062,27 @@ def register_route_backend_chats(app):
                     })
 
                 if selected_agent:
+                    agent_deployment_name = getattr(selected_agent, 'deployment_name', None) or gpt_model
+                    thought_tracker.add_thought('agent_tool_call', f"Sending to agent '{getattr(selected_agent, 'display_name', getattr(selected_agent, 'name', 'unknown'))}'")
+                    thought_tracker.add_thought('generation', f"Sending to '{agent_deployment_name}'")
+
+                    # Register callback to write plugin thoughts to Cosmos in real-time
+                    callback_key = f"{user_id}:{conversation_id}"
+                    plugin_logger = get_plugin_logger()
+
+                    def on_plugin_invocation(inv):
+                        duration_str = f" ({int(inv.duration_ms)}ms)" if inv.duration_ms else ""
+                        tool_name = f"{inv.plugin_name}.{inv.function_name}"
+                        thought_tracker.add_thought(
+                            'agent_tool_call',
+                            f"Agent called {tool_name}{duration_str}",
+                            detail=f"success={inv.success}"
+                        )
+
+                    plugin_logger.register_callback(callback_key, on_plugin_invocation)
+
+                    agent_invoke_start_time = time.time()
+
                     def invoke_selected_agent():
                         return asyncio.run(run_sk_call(
                             selected_agent.invoke,
@@ -2120,16 +3093,22 @@ def register_route_backend_chats(app):
                         msg = str(result)
                         notice = None
                         agent_used = getattr(selected_agent, 'name', 'All Plugins')
-                        
+
+                        # Emit responded thought with total duration from user message
+                        agent_total_duration_s = round(time.time() - request_start_time, 1)
+                        thought_tracker.add_thought('generation', f"'{agent_deployment_name}' responded ({agent_total_duration_s}s from initial message)")
+
+                        # Deregister real-time thought callback
+                        plugin_logger.deregister_callbacks(callback_key)
+
                         # Get the actual model deployment used by the agent
                         actual_model_deployment = getattr(selected_agent, 'deployment_name', None) or agent_used
                         debug_print(f"Agent '{agent_used}' using deployment: {actual_model_deployment}")
-                        
+
                         # Extract detailed plugin invocations for enhanced agent citations
-                        plugin_logger = get_plugin_logger()
-                        # CRITICAL FIX: Filter by user_id and conversation_id to prevent cross-conversation contamination
+                        # (Thoughts already written to Cosmos in real-time by callback)
                         plugin_invocations = plugin_logger.get_invocations_for_conversation(user_id, conversation_id)
-                        
+
                         # Convert plugin invocations to citation format with detailed information
                         detailed_citations = []
                         for inv in plugin_invocations:
@@ -2204,6 +3183,7 @@ def register_route_backend_chats(app):
                             )
                         return (msg, actual_model_deployment, "agent", notice)
                     def agent_error(e):
+                        plugin_logger.deregister_callbacks(callback_key)
                         debug_print(f"Error during Semantic Kernel Agent invocation: {str(e)}")
                         log_event(
                             f"Error during Semantic Kernel Agent invocation: {str(e)}",
@@ -2244,8 +3224,21 @@ def register_route_backend_chats(app):
                                 or agent_used
                             )
 
+                            # Emit responded thought with total duration from user message
+                            foundry_total_duration_s = round(time.time() - request_start_time, 1)
+                            thought_tracker.add_thought('generation', f"'{actual_model_deployment}' responded ({foundry_total_duration_s}s from initial message)")
+
+                            # Deregister real-time thought callback
+                            plugin_logger.deregister_callbacks(callback_key)
+
                             foundry_citations = getattr(selected_agent, 'last_run_citations', []) or []
                             if foundry_citations:
+                                # Emit thoughts for Foundry agent citations/tool calls
+                                for citation in foundry_citations:
+                                    thought_tracker.add_thought(
+                                        'agent_tool_call',
+                                        f"Agent retrieved citation from Azure AI Foundry"
+                                    )
                                 for citation in foundry_citations:
                                     try:
                                         serializable = json.loads(json.dumps(citation, default=str))
@@ -2282,6 +3275,7 @@ def register_route_backend_chats(app):
                             return (msg, actual_model_deployment, 'agent', notice)
 
                         def foundry_agent_error(e):
+                            plugin_logger.deregister_callbacks(callback_key)
                             log_event(
                                 f"Error during Azure AI Foundry agent invocation: {str(e)}",
                                 extra={
@@ -2360,6 +3354,7 @@ def register_route_backend_chats(app):
                         'on_error': kernel_error
                     })
 
+            thought_tracker.add_thought('generation', f"Sending to '{gpt_model}'")
             def invoke_gpt_fallback():
                 if not conversation_history_for_api:
                     raise Exception('Cannot generate response: No conversation history available.')
@@ -2443,12 +3438,18 @@ def register_route_backend_chats(app):
             })
 
             fallback_result = try_fallback_chain(fallback_steps)
+
             # Unpack result - handle both 4-tuple (SK) and 5-tuple (GPT with tokens)
             if len(fallback_result) == 5:
                 ai_message, final_model_used, chat_mode, kernel_fallback_notice, token_usage_data = fallback_result
             else:
                 ai_message, final_model_used, chat_mode, kernel_fallback_notice = fallback_result
                 token_usage_data = None
+
+            # Emit responded thought for non-agent paths (agent paths emit their own inside callbacks)
+            if not selected_agent:
+                gpt_total_duration_s = round(time.time() - request_start_time, 1)
+                thought_tracker.add_thought('generation', f"'{final_model_used}' responded ({gpt_total_duration_s}s from initial message)")
             
             # Collect token usage from Semantic Kernel services if available
             if kernel and not token_usage_data:
@@ -2510,8 +3511,8 @@ def register_route_backend_chats(app):
                 if hasattr(selected_agent, 'name'):
                     agent_name = selected_agent.name
             
-            assistant_message_id = f"{conversation_id}_assistant_{int(time.time())}_{random.randint(1000,9999)}"
-            
+            # assistant_message_id was generated earlier for thought tracking
+
             # Get user_info and thread_id from the user message for ownership tracking and threading
             user_info_for_assistant = None
             user_thread_id = None
@@ -2672,7 +3673,8 @@ def register_route_backend_chats(app):
                 'web_search_citations': web_search_citations_list,
                 'agent_citations': agent_citations_list,
                 'reload_messages': reload_messages_required,
-                'kernel_fallback_notice': kernel_fallback_notice
+                'kernel_fallback_notice': kernel_fallback_notice,
+                'thoughts_enabled': thought_tracker.enabled
             }), 200
         
         except Exception as e:
@@ -2713,6 +3715,7 @@ def register_route_backend_chats(app):
             data = request.get_json()
             user_id = get_current_user_id()
             settings = get_settings()
+            request_start_time = time.time()
         except Exception as e:
             return jsonify({'error': f'Failed to parse request: {str(e)}'}), 400
         
@@ -3111,10 +4114,122 @@ def register_route_backend_chats(app):
                 
                 conversation_item['last_updated'] = datetime.utcnow().isoformat()
                 cosmos_conversations_container.upsert_item(conversation_item)
-                
+
+                # Generate assistant_message_id early for thought tracking
+                assistant_message_id = f"{conversation_id}_assistant_{int(time.time())}_{random.randint(1000,9999)}"
+
+                # Initialize thought tracker for streaming path
+                thought_tracker = ThoughtTracker(
+                    conversation_id=conversation_id,
+                    message_id=assistant_message_id,
+                    thread_id=current_user_thread_id,
+                    user_id=user_id
+                )
+
+                def emit_thought(step_type, content, detail=None):
+                    """Add a thought to Cosmos and return an SSE event string."""
+                    thought_tracker.add_thought(step_type, content, detail)
+                    return f"data: {json.dumps({'type': 'thought', 'step_index': thought_tracker.current_index - 1, 'step_type': step_type, 'content': content})}\n\n"
+
+                # Content Safety check (matching non-streaming path)
+                blocked = False
+                if settings.get('enable_content_safety') and "content_safety_client" in CLIENTS:
+                    yield emit_thought('content_safety', 'Checking content safety...')
+                    try:
+                        content_safety_client = CLIENTS["content_safety_client"]
+                        request_obj = AnalyzeTextOptions(text=user_message)
+                        cs_response = content_safety_client.analyze_text(request_obj)
+
+                        max_severity = 0
+                        triggered_categories = []
+                        blocklist_matches = []
+                        block_reasons = []
+
+                        for cat_result in cs_response.categories_analysis:
+                            triggered_categories.append({
+                                "category": cat_result.category,
+                                "severity": cat_result.severity
+                            })
+                            if cat_result.severity > max_severity:
+                                max_severity = cat_result.severity
+
+                        if cs_response.blocklists_match:
+                            for match in cs_response.blocklists_match:
+                                blocklist_matches.append({
+                                    "blocklistName": match.blocklist_name,
+                                    "blocklistItemId": match.blocklist_item_id,
+                                    "blocklistItemText": match.blocklist_item_text
+                                })
+
+                        if max_severity >= 4:
+                            blocked = True
+                            block_reasons.append("Max severity >= 4")
+                        if len(blocklist_matches) > 0:
+                            blocked = True
+                            block_reasons.append("Blocklist match")
+
+                        if blocked:
+                            # Upsert to safety container
+                            safety_item = {
+                                'id': str(uuid.uuid4()),
+                                'user_id': user_id,
+                                'conversation_id': conversation_id,
+                                'message': user_message,
+                                'triggered_categories': triggered_categories,
+                                'blocklist_matches': blocklist_matches,
+                                'timestamp': datetime.utcnow().isoformat(),
+                                'reason': "; ".join(block_reasons),
+                                'metadata': {}
+                            }
+                            cosmos_safety_container.upsert_item(safety_item)
+
+                            # Build blocked message
+                            blocked_msg_content = (
+                                "Your message was blocked by Content Safety.\n\n"
+                                f"**Reason**: {', '.join(block_reasons)}\n"
+                                "Triggered categories:\n"
+                            )
+                            for cat in triggered_categories:
+                                blocked_msg_content += (
+                                    f" - {cat['category']} (severity={cat['severity']})\n"
+                                )
+                            if blocklist_matches:
+                                blocked_msg_content += (
+                                    "\nBlocklist Matches:\n" +
+                                    "\n".join([f" - {m['blocklistItemText']} (in {m['blocklistName']})"
+                                            for m in blocklist_matches])
+                                )
+
+                            # Insert safety message
+                            safety_message_id = f"{conversation_id}_safety_{int(time.time())}_{random.randint(1000,9999)}"
+                            safety_doc = {
+                                'id': safety_message_id,
+                                'conversation_id': conversation_id,
+                                'role': 'safety',
+                                'content': blocked_msg_content.strip(),
+                                'timestamp': datetime.utcnow().isoformat(),
+                                'model_deployment_name': None,
+                                'metadata': {},
+                            }
+                            cosmos_messages_container.upsert_item(safety_doc)
+
+                            conversation_item['last_updated'] = datetime.utcnow().isoformat()
+                            cosmos_conversations_container.upsert_item(conversation_item)
+
+                            # Stream the blocked response and stop
+                            yield f"data: {json.dumps({'content': blocked_msg_content.strip(), 'blocked': True})}\n\n"
+                            yield "data: [DONE]\n\n"
+                            return
+
+                    except HttpResponseError as e:
+                        debug_print(f"[Content Safety Error - Streaming] {e}")
+                    except Exception as ex:
+                        debug_print(f"[Content Safety - Streaming] Unexpected error: {ex}")
+
                 # Hybrid search (if enabled)
                 combined_documents = []
                 if hybrid_search_enabled:
+                    yield emit_thought('search', f"Searching {document_scope or 'personal'} workspace documents for '{(search_query or user_message)[:50]}'")
                     try:
                         search_args = {
                             "query": search_query,
@@ -3144,8 +4259,10 @@ def register_route_backend_chats(app):
                         search_results = hybrid_search(**search_args)
                     except Exception as e:
                         debug_print(f"Error during hybrid search: {e}")
-                    
+
                     if search_results:
+                        unique_doc_names_stream = set(doc.get('file_name', 'Unknown') for doc in search_results)
+                        yield emit_thought('search', f"Found {len(search_results)} results from {len(unique_doc_names_stream)} documents")
                         retrieved_texts = []
                         
                         for doc in search_results:
@@ -3319,11 +4436,94 @@ def register_route_backend_chats(app):
                             'content': system_prompt_search,
                             'documents': combined_documents
                         })
-                        
+
                         # Reorder hybrid citations list in descending order based on page_number
                         hybrid_citations_list.sort(key=lambda x: x.get('page_number', 0), reverse=True)
                 
+                workspace_tabular_files = set()
+                if hybrid_search_enabled and settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
+                    workspace_tabular_files = collect_workspace_tabular_filenames(
+                        combined_documents=combined_documents,
+                        selected_document_ids=selected_document_ids,
+                        selected_document_id=selected_document_id,
+                        document_scope=document_scope,
+                    )
+
+                if hybrid_search_enabled and workspace_tabular_files and settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
+                    tabular_source_hint = determine_tabular_source_hint(
+                        document_scope,
+                        active_group_id=active_group_id,
+                        active_public_workspace_id=active_public_workspace_id,
+                    )
+                    tabular_filenames_str = ", ".join(sorted(workspace_tabular_files))
+                    plugin_logger = get_plugin_logger()
+                    baseline_tabular_invocation_count = len(
+                        plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
+                    )
+
+                    tabular_analysis = asyncio.run(run_tabular_sk_analysis(
+                        user_question=user_message,
+                        tabular_filenames=workspace_tabular_files,
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        gpt_model=gpt_model,
+                        settings=settings,
+                        source_hint=tabular_source_hint,
+                        group_id=active_group_id if tabular_source_hint == 'group' else None,
+                        public_workspace_id=active_public_workspace_id if tabular_source_hint == 'public' else None,
+                    ))
+                    tabular_invocations = get_new_plugin_invocations(
+                        plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000),
+                        baseline_tabular_invocation_count
+                    )
+                    tabular_thought_payloads = get_tabular_tool_thought_payloads(tabular_invocations)
+                    for thought_content, thought_detail in tabular_thought_payloads:
+                        yield emit_thought('tabular_analysis', thought_content, thought_detail)
+                    tabular_status_thought_payloads = get_tabular_status_thought_payloads(
+                        tabular_invocations,
+                        analysis_succeeded=bool(tabular_analysis),
+                    )
+                    for thought_content, thought_detail in tabular_status_thought_payloads:
+                        yield emit_thought('tabular_analysis', thought_content, thought_detail)
+
+                    if tabular_analysis:
+                        system_messages_for_augmentation.append({
+                            'role': 'system',
+                            'content': (
+                                f"The following analysis was computed from the tabular file(s) "
+                                f"{tabular_filenames_str} using data analysis functions:\n\n"
+                                f"{tabular_analysis}\n\n"
+                                f"Use these computed results to answer the user's question accurately."
+                            )
+                        })
+
+                        tabular_sk_citations = collect_tabular_sk_citations(user_id, conversation_id)
+                        if tabular_sk_citations:
+                            agent_citations_list.extend(tabular_sk_citations)
+                    else:
+                        system_messages_for_augmentation.append({
+                            'role': 'system',
+                            'content': (
+                                f"IMPORTANT: The selected workspace tabular file(s) are {tabular_filenames_str}. "
+                                f"The search results contain only a schema summary (column names and a few sample rows), NOT the full data. "
+                                f"You MUST use the tabular_processing plugin functions to answer ANY question about these files. "
+                                f"Do NOT attempt to answer using the schema summary alone — it is incomplete. "
+                                f"Available functions: describe_tabular_file, aggregate_column, filter_rows, query_tabular_data, group_by_aggregate, group_by_datetime_component. "
+                                f"Use source='{tabular_source_hint}'"
+                                + (f" and group_id='{active_group_id}'" if tabular_source_hint == 'group' else "")
+                                + (f" and public_workspace_id='{active_public_workspace_id}'" if tabular_source_hint == 'public' else "")
+                                + "."
+                            )
+                        })
+
+                        yield emit_thought(
+                            'tabular_analysis',
+                            "Tabular analysis could not compute results; using schema context instead",
+                            detail=f"files={tabular_filenames_str}"
+                        )
+
                 if web_search_enabled:
+                    yield emit_thought('web_search', f"Searching the web for '{(search_query or user_message)[:50]}'")
                     perform_web_search(
                         settings=settings,
                         conversation_id=conversation_id,
@@ -3339,6 +4539,8 @@ def register_route_backend_chats(app):
                         agent_citations_list=agent_citations_list,
                         web_search_citations_list=web_search_citations_list,
                     )
+                    if web_search_citations_list:
+                        yield emit_thought('web_search', f"Got {len(web_search_citations_list)} web search results")
 
                 # Update message chat type
                 message_chat_type = None
@@ -3381,15 +4583,130 @@ def register_route_backend_chats(app):
                             'content': aug_msg['content']
                         })
                     
-                    # Add recent messages
+                    # Add recent messages (with file role handling)
                     allowed_roles_in_history = ['user', 'assistant']
+                    max_file_content_length_in_history = 50000
+                    max_tabular_content_length_in_history = 50000
+                    chat_tabular_files = set()  # Track tabular files uploaded directly to chat
+
                     for message in recent_messages:
-                        if message.get('role') in allowed_roles_in_history:
+                        role = message.get('role')
+                        content = message.get('content', '')
+
+                        if role in allowed_roles_in_history:
                             conversation_history_for_api.append({
-                                'role': message['role'],
-                                'content': message.get('content', '')
+                                'role': role,
+                                'content': content
                             })
-                    
+                        elif role == 'file':
+                            filename = message.get('filename', 'uploaded_file')
+                            file_content = message.get('file_content', '')
+                            is_table = message.get('is_table', False)
+                            file_content_source = message.get('file_content_source', '')
+
+                            # Tabular files stored in blob - track for mini SK analysis
+                            if is_table and file_content_source == 'blob':
+                                chat_tabular_files.add(filename)
+                                conversation_history_for_api.append({
+                                    'role': 'system',
+                                    'content': (
+                                        f"[User uploaded a tabular data file named '{filename}'. "
+                                        f"The file is stored in blob storage and available for analysis. "
+                                        f"Use the tabular_processing plugin functions (list_tabular_files, "
+                                        f"describe_tabular_file, aggregate_column, filter_rows, "
+                                        f"query_tabular_data, group_by_aggregate, group_by_datetime_component) to analyze this data. "
+                                        f"The file source is 'chat'.]"
+                                    )
+                                })
+                            else:
+                                content_limit = (
+                                    max_tabular_content_length_in_history if is_table
+                                    else max_file_content_length_in_history
+                                )
+                                display_content = file_content[:content_limit]
+                                if len(file_content) > content_limit:
+                                    display_content += "..."
+
+                                if is_table:
+                                    conversation_history_for_api.append({
+                                        'role': 'system',
+                                        'content': (
+                                            f"[User uploaded a tabular data file named '{filename}'. "
+                                            f"This is CSV format data for analysis:\n{display_content}]\n"
+                                            f"This is complete tabular data in CSV format. You can perform "
+                                            f"calculations, analysis, and data operations on this dataset."
+                                        )
+                                    })
+                                else:
+                                    conversation_history_for_api.append({
+                                        'role': 'system',
+                                        'content': (
+                                            f"[User uploaded a file named '{filename}'. "
+                                            f"Content preview:\n{display_content}]\n"
+                                            f"Use this file context if relevant."
+                                        )
+                                    })
+
+                    # --- Mini SK analysis for tabular files uploaded directly to chat ---
+                    if chat_tabular_files and settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
+                        chat_tabular_filenames_str = ", ".join(chat_tabular_files)
+                        log_event(
+                            f"[Chat Tabular SK] Streaming: Detected {len(chat_tabular_files)} tabular file(s) uploaded to chat: {chat_tabular_filenames_str}",
+                            level=logging.INFO
+                        )
+                        plugin_logger = get_plugin_logger()
+                        baseline_tabular_invocation_count = len(
+                            plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
+                        )
+
+                        chat_tabular_analysis = asyncio.run(run_tabular_sk_analysis(
+                            user_question=user_message,
+                            tabular_filenames=chat_tabular_files,
+                            user_id=user_id,
+                            conversation_id=conversation_id,
+                            gpt_model=gpt_model,
+                            settings=settings,
+                            source_hint="chat",
+                        ))
+                        chat_tabular_invocations = get_new_plugin_invocations(
+                            plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000),
+                            baseline_tabular_invocation_count
+                        )
+                        chat_tabular_thought_payloads = get_tabular_tool_thought_payloads(chat_tabular_invocations)
+                        for thought_content, thought_detail in chat_tabular_thought_payloads:
+                            yield emit_thought('tabular_analysis', thought_content, thought_detail)
+                        chat_tabular_status_thought_payloads = get_tabular_status_thought_payloads(
+                            chat_tabular_invocations,
+                            analysis_succeeded=bool(chat_tabular_analysis),
+                        )
+                        for thought_content, thought_detail in chat_tabular_status_thought_payloads:
+                            yield emit_thought('tabular_analysis', thought_content, thought_detail)
+
+                        if chat_tabular_analysis:
+                            conversation_history_for_api.append({
+                                'role': 'system',
+                                'content': (
+                                    f"The following analysis was computed from the chat-uploaded tabular file(s) "
+                                    f"{chat_tabular_filenames_str} using data analysis functions:\n\n"
+                                    f"{chat_tabular_analysis}\n\n"
+                                    f"Use these computed results to answer the user's question accurately."
+                                )
+                            })
+
+                            # Collect tool execution citations
+                            chat_tabular_sk_citations = collect_tabular_sk_citations(user_id, conversation_id)
+                            if chat_tabular_sk_citations:
+                                agent_citations_list.extend(chat_tabular_sk_citations)
+
+                            debug_print(f"[Chat Tabular SK] Streaming: Analysis injected, {len(chat_tabular_analysis)} chars")
+                        else:
+                            yield emit_thought(
+                                'tabular_analysis',
+                                "Tabular analysis could not compute results; using existing chat file context",
+                                detail=f"files={chat_tabular_filenames_str}"
+                            )
+                            debug_print("[Chat Tabular SK] Streaming: Analysis returned None, relying on existing file context")
+
                 except Exception as e:
                     yield f"data: {json.dumps({'error': f'History error: {str(e)}'})}\n\n"
                     return
@@ -3472,7 +4789,7 @@ def register_route_backend_chats(app):
                 # Stream the response
                 accumulated_content = ""
                 token_usage_data = None  # Will be populated from final stream chunk
-                assistant_message_id = f"{conversation_id}_assistant_{int(time.time())}_{random.randint(1000,9999)}"
+                # assistant_message_id was generated earlier for thought tracking
                 final_model_used = gpt_model  # Default to gpt_model, will be overridden if agent is used
                 
                 # DEBUG: Check agent streaming decision
@@ -3482,8 +4799,24 @@ def register_route_backend_chats(app):
                 try:
                     if use_agent_streaming and selected_agent:
                         # Stream from agent using invoke_stream
+                        yield emit_thought('agent_tool_call', f"Sending to agent '{agent_display_name_used or agent_name_used}'")
+                        yield emit_thought('generation', f"Sending to '{actual_model_used}'")
                         debug_print(f"--- Streaming from Agent: {agent_name_used} ---")
-                        
+
+                        # Register callback to persist plugin thoughts to Cosmos in real-time
+                        callback_key = f"{user_id}:{conversation_id}"
+                        plugin_logger_cb = get_plugin_logger()
+
+                        def on_plugin_invocation_streaming(inv):
+                            duration_str = f" ({int(inv.duration_ms)}ms)" if inv.duration_ms else ""
+                            tool_name = f"{inv.plugin_name}.{inv.function_name}"
+                            thought_tracker.add_thought(
+                                'agent_tool_call',
+                                f"Agent called {tool_name}{duration_str}"
+                            )
+
+                        plugin_logger_cb.register_callback(callback_key, on_plugin_invocation_streaming)
+
                         # Import required classes
                         from semantic_kernel.contents.chat_message_content import ChatMessageContent
                         
@@ -3497,6 +4830,8 @@ def register_route_backend_chats(app):
                             for msg in conversation_history_for_api
                         ]
                         
+                        agent_stream_start_time = time.time()
+
                         # Stream agent responses - collect chunks first then yield
                         async def stream_agent_async():
                             """Collect all streaming chunks from agent"""
@@ -3524,7 +4859,6 @@ def register_route_backend_chats(app):
                             return chunks, usage_data
                         
                         # Execute async streaming
-                        import asyncio
                         try:
                             # Try to get existing event loop
                             loop = asyncio.get_event_loop()
@@ -3539,36 +4873,53 @@ def register_route_backend_chats(app):
                         try:
                             # Run streaming and collect chunks and usage
                             chunks, stream_usage = loop.run_until_complete(stream_agent_async())
-                            
-                            # Yield chunks to frontend
-                            for chunk_content in chunks:
-                                accumulated_content += chunk_content
-                                yield f"data: {json.dumps({'content': chunk_content})}\n\n"
-                            
-                            # Try to capture token usage from stream metadata
-                            if stream_usage:
-                                # stream_usage is a CompletionUsage object, not a dict
-                                prompt_tokens = getattr(stream_usage, 'prompt_tokens', 0)
-                                completion_tokens = getattr(stream_usage, 'completion_tokens', 0)
-                                total_tokens = getattr(stream_usage, 'total_tokens', None)
-                                
-                                # Calculate total if not provided
-                                if total_tokens is None or total_tokens == 0:
-                                    total_tokens = prompt_tokens + completion_tokens
-                                
-                                token_usage_data = {
-                                    'prompt_tokens': prompt_tokens,
-                                    'completion_tokens': completion_tokens,
-                                    'total_tokens': total_tokens,
-                                    'captured_at': datetime.utcnow().isoformat()
-                                }
-                                debug_print(f"[Agent Streaming Tokens] From metadata - prompt: {prompt_tokens}, completion: {completion_tokens}, total: {total_tokens}")
                         except Exception as stream_error:
+                            plugin_logger_cb.deregister_callbacks(callback_key)
                             debug_print(f"❌ Agent streaming error: {stream_error}")
                             import traceback
                             traceback.print_exc()
                             yield f"data: {json.dumps({'error': f'Agent streaming failed: {str(stream_error)}'})}\n\n"
                             return
+
+                        # Emit responded thought with total duration from user message
+                        agent_stream_total_duration_s = round(time.time() - request_start_time, 1)
+                        yield emit_thought('generation', f"'{actual_model_used}' responded ({agent_stream_total_duration_s}s from initial message)")
+
+                        # Deregister callback (agent completed successfully)
+                        plugin_logger_cb.deregister_callbacks(callback_key)
+
+                        # Emit SSE-only events for streaming UI (Cosmos writes already done by callback)
+                        agent_plugin_invocations = plugin_logger_cb.get_invocations_for_conversation(user_id, conversation_id)
+                        for inv in agent_plugin_invocations:
+                            duration_str = f" ({int(inv.duration_ms)}ms)" if inv.duration_ms else ""
+                            tool_name = f"{inv.plugin_name}.{inv.function_name}"
+                            content = f"Agent called {tool_name}{duration_str}"
+                            yield f"data: {json.dumps({'type': 'thought', 'step_index': thought_tracker.current_index, 'step_type': 'agent_tool_call', 'content': content})}\n\n"
+                            thought_tracker.current_index += 1
+
+                        # Yield chunks to frontend
+                        for chunk_content in chunks:
+                            accumulated_content += chunk_content
+                            yield f"data: {json.dumps({'content': chunk_content})}\n\n"
+
+                        # Try to capture token usage from stream metadata
+                        if stream_usage:
+                            # stream_usage is a CompletionUsage object, not a dict
+                            prompt_tokens = getattr(stream_usage, 'prompt_tokens', 0)
+                            completion_tokens = getattr(stream_usage, 'completion_tokens', 0)
+                            total_tokens = getattr(stream_usage, 'total_tokens', None)
+
+                            # Calculate total if not provided
+                            if total_tokens is None or total_tokens == 0:
+                                total_tokens = prompt_tokens + completion_tokens
+
+                            token_usage_data = {
+                                'prompt_tokens': prompt_tokens,
+                                'completion_tokens': completion_tokens,
+                                'total_tokens': total_tokens,
+                                'captured_at': datetime.utcnow().isoformat()
+                            }
+                            debug_print(f"[Agent Streaming Tokens] From metadata - prompt: {prompt_tokens}, completion: {completion_tokens}, total: {total_tokens}")
                         
                         # Collect token usage from kernel services if not captured from stream
                         if not token_usage_data:
@@ -3650,6 +5001,7 @@ def register_route_backend_chats(app):
                     
                     else:
                         # Stream from regular GPT model (non-agent)
+                        yield emit_thought('generation', f"Sending to '{gpt_model}'")
                         debug_print(f"--- Streaming from GPT ({gpt_model}) ---")
                         
                         # Prepare stream parameters
@@ -3700,6 +5052,10 @@ def register_route_backend_chats(app):
                                     'captured_at': datetime.utcnow().isoformat()
                                 }
                                 debug_print(f"[Streaming Tokens] Captured usage - prompt: {chunk.usage.prompt_tokens}, completion: {chunk.usage.completion_tokens}, total: {chunk.usage.total_tokens}")
+
+                        # Emit responded thought for regular LLM streaming
+                        gpt_stream_total_duration_s = round(time.time() - request_start_time, 1)
+                        yield emit_thought('generation', f"'{gpt_model}' responded ({gpt_stream_total_duration_s}s from initial message)")
                     
                     # Stream complete - save message and send final metadata
                     # Get user thread info to maintain thread consistency
@@ -3818,7 +5174,8 @@ def register_route_backend_chats(app):
                         'agent_citations': agent_citations_list,
                         'agent_display_name': agent_display_name_used if use_agent_streaming else None,
                         'agent_name': agent_name_used if use_agent_streaming else None,
-                        'full_content': accumulated_content
+                        'full_content': accumulated_content,
+                        'thoughts_enabled': thought_tracker.enabled
                     }
                     yield f"data: {json.dumps(final_data)}\n\n"
                     

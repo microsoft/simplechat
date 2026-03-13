@@ -502,6 +502,95 @@ main {
     flex-grow: 1;
 }
 
+/* ============================================
+   Item cards (agents/actions grid view)
+   ============================================ */
+.item-card {
+    cursor: default;
+    transition: all 0.3s ease;
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+    background-color: #ffffff;
+}
+
+.item-card:hover {
+    border-color: #adb5bd;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.item-card .card-title {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: #212529;
+}
+
+.item-card .card-text {
+    color: #6c757d;
+    font-size: 0.8rem;
+    line-height: 1.4;
+}
+
+.item-card .item-card-icon {
+    color: #0d6efd;
+}
+
+.item-card .item-card-buttons {
+    border-top: 1px solid #f0f0f0;
+    padding-top: 0.5rem;
+}
+
+/* Dark mode for item cards */
+[data-bs-theme="dark"] .item-card {
+    background-color: #343a40;
+    border: 1px solid #495057;
+    color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .item-card:hover {
+    background-color: #3d444b;
+    border-color: #6c757d;
+}
+
+[data-bs-theme="dark"] .item-card .card-title {
+    color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .item-card .card-text {
+    color: #adb5bd;
+}
+
+[data-bs-theme="dark"] .item-card .item-card-icon {
+    color: #6ea8fe;
+}
+
+[data-bs-theme="dark"] .item-card .item-card-buttons {
+    border-top-color: #495057;
+}
+
+/* Improved table column layout for agents and actions */
+.item-list-table th:nth-child(1),
+.item-list-table td:nth-child(1) {
+    width: 28%;
+    min-width: 140px;
+}
+
+.item-list-table th:nth-child(2),
+.item-list-table td:nth-child(2) {
+    width: 47%;
+    max-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.item-list-table th:nth-child(3),
+.item-list-table td:nth-child(3) {
+    width: 25%;
+    min-width: 160px;
+    white-space: nowrap;
+}
+
 /* Connection type buttons */
 .connection-type-btn {
     border: 2px solid #dee2e6;
@@ -855,144 +944,170 @@ main {
     color: #b399ff !important; /* Purple-ish for visited links */
 }
 
-/* =============================================
-   SimpleMDE Prompt Content Toolbar - Bootstrap Icons replacement for Font Awesome
-   ============================================= */
-.editor-toolbar a[title] {
-    font-family: "bootstrap-icons" !important;
-    font-style: normal;
-    font-size: 1rem;
-    line-height: 30px;
+/* ============================================
+   Rendered Markdown — table & code block styles
+   Shared by agent detail view, template preview,
+   and any non-chat area that renders Markdown.
+   ============================================ */
+
+/* --- Tables --- */
+.rendered-markdown table {
+    width: 100%;
+    max-width: 100%;
+    margin: 0.75rem 0;
+    border-collapse: collapse;
+    border-spacing: 0;
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+    overflow: hidden;
+    background-color: var(--bs-body-bg);
+    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+    font-size: 0.875rem;
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
 }
 
-.editor-toolbar a.fa-bold::before          { content: "\f5f0"; } /* bi-type-bold */
-.editor-toolbar a.fa-italic::before        { content: "\f5f4"; } /* bi-type-italic */
-.editor-toolbar a.fa-strikethrough::before { content: "\f5f5"; } /* bi-type-strikethrough */
-.editor-toolbar a.fa-header::before        { content: "\f5f1"; } /* bi-type-h1 */
-.editor-toolbar a.fa-quote-left::before    { content: "\f190"; } /* bi-blockquote-left */
-.editor-toolbar a.fa-list-ul::before       { content: "\f478"; } /* bi-list-ul */
-.editor-toolbar a.fa-list-ol::before       { content: "\f475"; } /* bi-list-ol */
-.editor-toolbar a.fa-code::before          { content: "\f2c6"; } /* bi-code-slash */
-.editor-toolbar a.fa-link::before          { content: "\f470"; } /* bi-link-45deg */
-.editor-toolbar a.fa-picture-o::before     { content: "\f42a"; } /* bi-image */
-.editor-toolbar a.fa-table::before         { content: "\f5aa"; } /* bi-table */
-.editor-toolbar a.fa-minus::before         { content: "\f63b"; } /* bi-dash-lg */
-.editor-toolbar a.fa-eye::before           { content: "\f341"; } /* bi-eye */
-.editor-toolbar a.fa-columns::before       { content: "\f460"; } /* bi-layout-split */
-.editor-toolbar a.fa-arrows-alt::before    { content: "\f14d"; } /* bi-arrows-fullscreen */
-.editor-toolbar a.fa-undo::before          { content: "\f117"; } /* bi-arrow-counterclockwise */
-.editor-toolbar a.fa-repeat::before        { content: "\f116"; } /* bi-arrow-clockwise */
-.editor-toolbar a.fa-question-circle::before { content: "\f505"; } /* bi-question-circle */
-.editor-toolbar a.fa-eraser::before        { content: "\f331"; } /* bi-eraser */
-
-.editor-toolbar a::before {
-    font-family: "bootstrap-icons" !important;
-    font-style: normal;
-    font-weight: normal;
-    display: inline-block;
+@media (min-width: 768px) {
+    .rendered-markdown table {
+        display: table;
+        white-space: normal;
+    }
 }
 
-.editor-toolbar {
-    opacity: 1 !important;
+.rendered-markdown table th,
+.rendered-markdown table td {
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid #dee2e6;
+    border-right: 1px solid #dee2e6;
+    text-align: left;
+    vertical-align: top;
+    word-wrap: break-word;
+    line-height: 1.4;
 }
 
-.editor-toolbar a {
-    font-size: 0;
-    width: 30px;
-    height: 30px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+.rendered-markdown table th:last-child,
+.rendered-markdown table td:last-child {
+    border-right: none;
 }
 
-.editor-toolbar a::before {
-    font-size: 1rem;
+.rendered-markdown table thead th {
+    background-color: #f8f9fa;
+    font-weight: 600;
+    color: #495057;
+    border-bottom: 2px solid #dee2e6;
 }
 
-/* =============================================
-   SimpleMDE Dark Mode Overrides
-   ============================================= */
-[data-bs-theme="dark"] .editor-toolbar {
-    background-color: #343a40;
+.rendered-markdown table tbody tr:nth-child(even) {
+    background-color: rgba(0, 0, 0, 0.02);
+}
+
+.rendered-markdown table tbody tr:hover {
+    background-color: rgba(0, 0, 0, 0.04);
+    transition: background-color 0.15s ease-in-out;
+}
+
+.rendered-markdown table th[align="center"],
+.rendered-markdown table td[align="center"] {
+    text-align: center;
+}
+
+.rendered-markdown table th[align="right"],
+.rendered-markdown table td[align="right"] {
+    text-align: right;
+}
+
+/* Dark mode tables */
+[data-bs-theme="dark"] .rendered-markdown table {
+    border-color: #495057;
+    background-color: var(--bs-dark);
+    color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .rendered-markdown table th,
+[data-bs-theme="dark"] .rendered-markdown table td {
     border-color: #495057;
 }
 
-[data-bs-theme="dark"] .editor-toolbar a {
-    color: #adb5bd !important;
-}
-
-[data-bs-theme="dark"] .editor-toolbar a::before {
-    color: #adb5bd;
-}
-
-[data-bs-theme="dark"] .editor-toolbar a:hover,
-[data-bs-theme="dark"] .editor-toolbar a:focus {
-    background-color: #495057;
-    border-color: #6c757d;
-    color: #e9ecef !important;
-}
-
-[data-bs-theme="dark"] .editor-toolbar a:hover::before,
-[data-bs-theme="dark"] .editor-toolbar a:focus::before {
-    color: #e9ecef;
-}
-
-[data-bs-theme="dark"] .editor-toolbar a.active,
-[data-bs-theme="dark"] .editor-toolbar a.active::before {
-    color: #86b7fe !important;
-    background-color: #1e3a5f;
-}
-
-[data-bs-theme="dark"] .editor-toolbar i.separator {
-    border-left-color: #495057;
-    border-right-color: #495057;
-}
-
-[data-bs-theme="dark"] .CodeMirror {
-    background-color: #212529;
-    color: #e9ecef;
-    border-color: #495057;
-}
-
-[data-bs-theme="dark"] .CodeMirror-cursor {
-    border-left-color: #e9ecef;
-}
-
-[data-bs-theme="dark"] .CodeMirror .CodeMirror-selected {
-    background-color: #1e3a5f !important;
-}
-
-[data-bs-theme="dark"] .CodeMirror-focused .CodeMirror-selected {
-    background-color: #0d6efd !important;
-}
-
-[data-bs-theme="dark"] .CodeMirror .CodeMirror-line::selection,
-[data-bs-theme="dark"] .CodeMirror .CodeMirror-line > span::selection,
-[data-bs-theme="dark"] .CodeMirror .CodeMirror-line > span > span::selection {
-    background-color: #0d6efd !important;
-    color: #ffffff !important;
-}
-
-[data-bs-theme="dark"] .CodeMirror .CodeMirror-line::-moz-selection,
-[data-bs-theme="dark"] .CodeMirror .CodeMirror-line > span::-moz-selection,
-[data-bs-theme="dark"] .CodeMirror .CodeMirror-line > span > span::-moz-selection {
-    background-color: #0d6efd !important;
-    color: #ffffff !important;
-}
-
-[data-bs-theme="dark"] .editor-preview {
-    background-color: #2b3035;
-    color: #e9ecef;
-}
-
-[data-bs-theme="dark"] .editor-preview-side {
-    background-color: #2b3035;
-    color: #e9ecef;
-    border-left-color: #495057;
-}
-
-[data-bs-theme="dark"] .editor-statusbar {
+[data-bs-theme="dark"] .rendered-markdown table thead th {
     background-color: #343a40;
+    color: #e9ecef;
+    border-bottom-color: #495057;
+}
+
+[data-bs-theme="dark"] .rendered-markdown table tbody tr:nth-child(even) {
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+[data-bs-theme="dark"] .rendered-markdown table tbody tr:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.rendered-markdown table code {
+    background-color: rgba(0, 0, 0, 0.1);
+    padding: 0.125rem 0.25rem;
+    border-radius: 0.25rem;
+    font-size: 0.8em;
+}
+
+[data-bs-theme="dark"] .rendered-markdown table code {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+/* --- Code blocks --- */
+.rendered-markdown pre,
+.rendered-markdown pre[class*="language-"] {
+    overflow-x: auto;
+    max-width: 100%;
+    width: 100%;
+    box-sizing: border-box;
+    display: block;
+    white-space: pre;
+    background-color: #1e1e1e;
+    color: #d4d4d4;
+    border-radius: 0.375rem;
+    padding: 1rem;
+    margin: 0.75rem 0;
+    font-size: 0.85rem;
+    line-height: 1.5;
+}
+
+.rendered-markdown pre code {
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+    white-space: pre;
+    background: transparent;
+    color: inherit;
+    padding: 0;
+    font-size: inherit;
+}
+
+/* Inline code */
+.rendered-markdown code:not(pre code) {
+    background-color: rgba(0, 0, 0, 0.06);
+    padding: 0.15rem 0.35rem;
+    border-radius: 0.25rem;
+    font-size: 0.85em;
+    color: #d63384;
+}
+
+[data-bs-theme="dark"] .rendered-markdown code:not(pre code) {
+    background-color: rgba(255, 255, 255, 0.1);
+    color: #e685b5;
+}
+
+/* Blockquotes */
+.rendered-markdown blockquote {
+    border-left: 4px solid #dee2e6;
+    padding-left: 1em;
+    color: #6c757d;
+    margin: 0.75rem 0;
+}
+
+[data-bs-theme="dark"] .rendered-markdown blockquote {
+    border-left-color: #495057;
     color: #adb5bd;
-    border-top-color: #495057;
 }

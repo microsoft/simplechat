@@ -25,6 +25,7 @@ def get_settings(use_cosmos=False):
         'enable_text_plugin': True,
         'enable_default_embedding_model_plugin': False,
         'enable_fact_memory_plugin': True,
+        'enable_tabular_processing_plugin': False,
         'enable_multi_agent_orchestration': False,
         'max_rounds_per_agent': 1,
         'enable_semantic_kernel': False,
@@ -204,6 +205,9 @@ def get_settings(use_cosmos=False):
         'enable_user_feedback': True,
         'require_member_of_feedback_admin': False,
         'enable_conversation_archiving': False,
+
+        # Processing Thoughts
+        'enable_thoughts': False,
 
         # Search and Extract
         'azure_ai_search_endpoint': '',
@@ -394,6 +398,9 @@ def update_settings(new_settings):
         # always fetch the latest settings doc, which includes your merges
         settings_item = get_settings()
         settings_item.update(new_settings)
+        # Dependency enforcement: tabular processing requires enhanced citations
+        if not settings_item.get('enable_enhanced_citations', False):
+            settings_item['enable_tabular_processing_plugin'] = False
         cosmos_settings_container.upsert_item(settings_item)
         cache_updater = getattr(app_settings_cache, "update_settings_cache", None)
         if callable(cache_updater):

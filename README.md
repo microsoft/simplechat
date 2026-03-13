@@ -144,6 +144,7 @@ azd up
 - **Metadata Extraction (Optional)**: Apply an AI model (configurable GPT model via Admin Settings) to automatically generate keywords, two-sentence summaries, and infer author/date for uploaded documents. Allows manual override for richer search context.
 - **File Processing Logs (Optional)**: Enable verbose logging for all ingestion pipelines (workspaces and ephemeral chat uploads) to aid in debugging, monitoring, and auditing file processing steps.
 - **Redis Cache (Optional)**: Integrate Azure Cache for Redis to provide a distributed, high-performance session store. This enables true horizontal scaling and high availability by decoupling user sessions from individual app instances.
+- **SQL Database Agents (Optional)**: Connect agents to Azure SQL or other SQL databases through configurable SQL Query and SQL Schema plugins. Database schema is automatically discovered and injected into agent instructions at load time, enabling agents to answer natural language questions by generating and executing SQL queries without requiring users to know table or column names.
 - **Authentication & RBAC**: Secure access via Azure Active Directory (Entra ID) using MSAL. Supports Managed Identities for Azure service authentication, group-based controls, and custom application roles (`Admin`, `User`, `CreateGroup`, `SafetyAdmin`, `FeedbackAdmin`).
 - **Supported File Types**:
 

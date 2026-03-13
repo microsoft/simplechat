@@ -18,11 +18,13 @@ export function getFileType(fileName) {
     const imageExtensions = ['jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif'];
     const videoExtensions = ['mp4', 'mov', 'avi', 'mkv', 'flv', 'webm', 'wmv', 'm4v', '3gp'];
     const audioExtensions = ['mp3', 'wav', 'ogg', 'aac', 'flac', 'm4a'];
-    
+    const tabularExtensions = ['csv', 'xlsx', 'xls', 'xlsm'];
+
     if (imageExtensions.includes(ext)) return 'image';
     if (ext === 'pdf') return 'pdf';
     if (videoExtensions.includes(ext)) return 'video';
     if (audioExtensions.includes(ext)) return 'audio';
+    if (tabularExtensions.includes(ext)) return 'tabular';
     
     return 'other';
 }
@@ -65,6 +67,9 @@ export function showEnhancedCitationModal(docId, pageNumberOrTimestamp, citation
             // Convert to timestamp for seeking
             const audioTimestamp = convertTimestampToSeconds(pageNumberOrTimestamp);
             showAudioModal(docId, audioTimestamp, docMetadata.file_name);
+            break;
+        case 'tabular':
+            showTabularDownloadModal(docId, docMetadata.file_name);
             break;
         default:
             // Fall back to text citation for unsupported types
@@ -292,6 +297,119 @@ export function showAudioModal(docId, timestamp, fileName) {
 }
 
 /**
+ * Show tabular file preview modal with data table
+ * @param {string} docId - Document ID
+ * @param {string} fileName - File name
+ */
+export function showTabularDownloadModal(docId, fileName) {
+    console.log(`Showing tabular preview modal for docId: ${docId}, fileName: ${fileName}`);
+    showLoadingIndicator();
+
+    // Create or get tabular modal
+    let tabularModal = document.getElementById("enhanced-tabular-modal");
+    if (!tabularModal) {
+        tabularModal = createTabularModal();
+    }
+
+    const title = tabularModal.querySelector(".modal-title");
+    const tableContainer = tabularModal.querySelector("#enhanced-tabular-table-container");
+    const rowInfo = tabularModal.querySelector("#enhanced-tabular-row-info");
+    const downloadBtn = tabularModal.querySelector("#enhanced-tabular-download");
+    const errorContainer = tabularModal.querySelector("#enhanced-tabular-error");
+
+    title.textContent = `Tabular Data: ${fileName}`;
+    tableContainer.innerHTML = '<div class="text-center p-4"><div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div><p class="mt-2 text-muted">Loading data preview...</p></div>';
+    rowInfo.textContent = '';
+    errorContainer.classList.add('d-none');
+
+    const downloadUrl = `/api/enhanced_citations/tabular_workspace?doc_id=${encodeURIComponent(docId)}`;
+    downloadBtn.href = downloadUrl;
+    downloadBtn.download = fileName;
+
+    // Show modal immediately with loading state
+    const modalInstance = new bootstrap.Modal(tabularModal);
+    modalInstance.show();
+
+    // Fetch preview data
+    const previewUrl = `/api/enhanced_citations/tabular_preview?doc_id=${encodeURIComponent(docId)}`;
+    fetch(previewUrl)
+        .then(response => {
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return response.json();
+        })
+        .then(data => {
+            hideLoadingIndicator();
+            if (data.error) {
+                showTabularError(tableContainer, errorContainer, data.error);
+                return;
+            }
+            renderTabularPreview(tableContainer, rowInfo, data);
+        })
+        .catch(error => {
+            hideLoadingIndicator();
+            console.error('Error loading tabular preview:', error);
+            showTabularError(tableContainer, errorContainer, 'Could not load data preview.');
+        });
+}
+
+/**
+ * Render tabular data as an HTML table
+ * @param {HTMLElement} container - Table container element
+ * @param {HTMLElement} rowInfo - Row info display element
+ * @param {Object} data - Preview data from API
+ */
+function renderTabularPreview(container, rowInfo, data) {
+    const { columns, rows, total_rows, truncated } = data;
+
+    // Build table HTML
+    let html = '<table class="table table-striped table-bordered table-sm table-hover mb-0">';
+
+    // Header
+    html += '<thead class="table-dark sticky-top"><tr>';
+    for (const col of columns) {
+        const escaped = col.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        html += `<th class="text-nowrap">${escaped}</th>`;
+    }
+    html += '</tr></thead>';
+
+    // Body
+    html += '<tbody>';
+    for (const row of rows) {
+        html += '<tr>';
+        for (const cell of row) {
+            const val = cell === null || cell === undefined ? '' : String(cell);
+            const escaped = val.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            html += `<td>${escaped}</td>`;
+        }
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+
+    container.innerHTML = html;
+
+    // Row info
+    const displayedRows = rows.length;
+    const totalFormatted = total_rows.toLocaleString();
+    if (truncated) {
+        rowInfo.textContent = `Showing ${displayedRows.toLocaleString()} of ${totalFormatted} rows`;
+    } else {
+        rowInfo.textContent = `${totalFormatted} rows, ${columns.length} columns`;
+    }
+}
+
+/**
+ * Show error state in tabular modal with download fallback
+ * @param {HTMLElement} tableContainer - Table container element
+ * @param {HTMLElement} errorContainer - Error display element
+ * @param {string} message - Error message
+ */
+function showTabularError(tableContainer, errorContainer, message) {
+    tableContainer.innerHTML = '<div class="text-center p-4"><i class="bi bi-file-earmark-spreadsheet display-1 text-success"></i></div>';
+    errorContainer.textContent = message + ' You can still download the file below.';
+    errorContainer.classList.remove('d-none');
+}
+
+/**
  * Convert timestamp string to seconds
  * @param {string|number} timestamp - Timestamp in various formats
  * @returns {number} - Time in seconds
@@ -438,6 +556,39 @@ function createPdfModal() {
                     <iframe id="pdfFrame" class="w-100" style="height: 70vh; border: none;">
                         Your browser does not support PDF viewing.
                     </iframe>
+                </div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    return modal;
+}
+
+/**
+ * Create tabular file preview modal HTML structure
+ * @returns {HTMLElement} - Modal element
+ */
+function createTabularModal() {
+    const modal = document.createElement("div");
+    modal.id = "enhanced-tabular-modal";
+    modal.classList.add("modal", "fade");
+    modal.tabIndex = -1;
+    modal.innerHTML = `
+        <div class="modal-dialog modal-xl modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Tabular Data Citation</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body p-0">
+                    <div id="enhanced-tabular-error" class="alert alert-warning m-3 d-none"></div>
+                    <div id="enhanced-tabular-table-container" style="max-height: 60vh; overflow: auto;"></div>
+                </div>
+                <div class="modal-footer d-flex justify-content-between align-items-center">
+                    <span id="enhanced-tabular-row-info" class="text-muted small"></span>
+                    <a id="enhanced-tabular-download" class="btn btn-primary btn-sm" target="_blank" rel="noopener noreferrer">
+                        <i class="bi bi-download me-1"></i>Download File
+                    </a>
                 </div>
             </div>
         </div>
