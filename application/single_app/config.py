@@ -186,6 +186,23 @@ CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE = os.getenv("CUSTOM_REDIS_CACHE_INFR
 CUSTOM_OIDC_METADATA_URL_VALUE = os.getenv("CUSTOM_OIDC_METADATA_URL_VALUE", "")
 
 
+# Optional User Idle Timeout Configuration
+IDLE_TIMEOUT_EXEMPT_PATHS = {
+    '/login',
+    '/logout',
+    '/logout/local',
+    '/getAToken',
+    '/getATokenApi',
+    '/robots933456.txt',
+    '/favicon.ico'
+}
+
+IDLE_TIMEOUT_EXEMPT_PREFIXES = (
+    '/static/',
+    '/health',
+    '/api/health'
+)
+
 # Azure AD Configuration
 CLIENT_ID = os.getenv("CLIENT_ID")
 APP_URI = f"api://{CLIENT_ID}"

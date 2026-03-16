@@ -1429,13 +1429,13 @@
                             class="form-check-input"
                             id="enable_idle_timeout"
                             name="enable_idle_timeout"
-                            {% if settings.enable_idle_timeout is not defined or settings.enable_idle_timeout %}checked{% endif %}>
+                            {% if settings.enable_idle_timeout %}checked{% endif %}>
                         <label class="form-check-label ms-2" for="enable_idle_timeout">
                             Enable Idle Session Timeout and Warning
                         </label>
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, inactive users receive a warning and are automatically logged out after the configured timeout."></i>
                     </div>
-                    <div id="idle_timeout_settings" class="{% if settings.enable_idle_timeout is defined and not settings.enable_idle_timeout %}d-none{% endif %}">
+                    <div id="idle_timeout_settings" class="{% if settings.enable_idle_timeout is not defined or not settings.enable_idle_timeout %}d-none{% endif %}">
                         <div class="mb-3">
                             <label for="idle_timeout_minutes" class="form-label">Idle Logout Timeout (Minutes)</label>
                             <input

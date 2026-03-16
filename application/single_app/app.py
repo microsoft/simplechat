@@ -532,7 +532,7 @@ def is_idle_timeout_enabled(settings=None):
     if settings is None:
         settings = get_request_settings()
 
-    enabled_raw = settings.get('enable_idle_timeout', True)
+    enabled_raw = settings.get('enable_idle_timeout', False)
 
     if isinstance(enabled_raw, str):
         return enabled_raw.strip().lower() in ('1', 'true', 'yes', 'on')
@@ -672,21 +672,6 @@ def reload_kernel_if_needed():
         """
         setattr(builtins, "kernel_reload_needed", False)
 
-IDLE_TIMEOUT_EXEMPT_PATHS = {
-    '/login',
-    '/logout',
-    '/logout/local',
-    '/getAToken',
-    '/getATokenApi',
-    '/robots933456.txt',
-    '/favicon.ico'
-}
-
-IDLE_TIMEOUT_EXEMPT_PREFIXES = (
-    '/static/',
-    '/health',
-    '/api/health'
-)
 
 def _is_idle_timeout_exempt(path):
     """

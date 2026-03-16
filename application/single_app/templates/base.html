@@ -354,7 +354,7 @@
   {% if session.get('user') %}
   <script>
     window.idleLogoutConfig = {
-      enabled: {{ idle_timeout_enabled | default(true) | tojson }},
+      enabled: {{ idle_timeout_enabled | default(false) | tojson }},
       timeoutMinutes: {{ idle_timeout_minutes | default(30) | int }},
       warningMinutes: {{ idle_warning_minutes | default(28) | int }},
       heartbeatUrl: "{{ url_for('session_heartbeat') }}",

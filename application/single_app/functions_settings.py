@@ -260,7 +260,7 @@ def get_settings(use_cosmos=False, include_source=False):
         # Other
         'max_file_size_mb': 150,
         'conversation_history_limit': 10,
-        'enable_idle_timeout': True,
+        'enable_idle_timeout': False,
         'idle_timeout_minutes': 30,
         'idle_warning_minutes': 28,
         'default_system_prompt': '',

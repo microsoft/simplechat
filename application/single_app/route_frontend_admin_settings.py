@@ -204,6 +204,14 @@ def register_route_frontend_admin_settings(app):
         if 'multimodal_vision_model' not in settings:
             settings['multimodal_vision_model'] = ''
 
+        # --- Add defaults for user idle timeout ---
+        if 'enable_idle_timeout' not in settings:
+            settings['enable_idle_timeout'] = False
+        if 'idle_timeout_minutes' not in settings:
+            settings['idle_timeout_minutes'] = 30
+        if 'idle_warning_minutes' not in settings:
+            settings['idle_warning_minutes'] = 28
+            
         if request.method == 'GET':
             # --- Model fetching logic remains the same ---
             gpt_deployments = []
