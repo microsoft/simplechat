@@ -491,6 +491,7 @@ function renderPublicDocumentRow(doc) {
         <p class="mb-1"><strong>Citations:</strong> ${getCitationBadge(doc.enhanced_citations)}</p>
         <p class="mb-1"><strong>Publication Date:</strong> ${escapeHtml(doc.publication_date || 'N/A')}</p>
         <p class="mb-1"><strong>Keywords:</strong> ${escapeHtml(doc.keywords || 'N/A')}</p>
+        <p class="mb-1"><strong>Tags:</strong> ${renderPublicTagBadges(doc.tags || [])}</p>
         <p class="mb-0"><strong>Abstract:</strong> ${escapeHtml(doc.abstract || 'N/A')}</p>
         <hr class="my-2">
         <div class="d-flex flex-wrap gap-2">
@@ -1716,6 +1717,29 @@ function escapePublicHtml(text) {
   const d = document.createElement('div');
   d.textContent = text;
   return d.innerHTML;
+}
+
+function renderPublicTagBadges(tags, maxDisplay = 3) {
+  if (!Array.isArray(tags) || tags.length === 0) {
+    return '<span class="text-muted small">No tags</span>';
+  }
+
+  let html = '';
+  const displayTags = tags.slice(0, maxDisplay);
+
+  displayTags.forEach(tagName => {
+    const tag = publicWorkspaceTags.find(t => t.name === tagName);
+    const color = tag && tag.color ? tag.color : '#6c757d';
+    const textClass = isPublicColorLight(color) ? 'text-dark' : 'text-light';
+
+    html += `<span class="tag-badge ${textClass}" style="background-color:${color};" title="${escapePublicHtml(tagName)}">${escapePublicHtml(tagName)}</span>`;
+  });
+
+  if (tags.length > maxDisplay) {
+    html += `<span class="badge bg-secondary">+${tags.length - maxDisplay}</span>`;
+  }
+
+  return html;
 }
 
 // --- Tag Management Modal ---

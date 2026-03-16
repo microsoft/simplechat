@@ -2921,6 +2921,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
                     ? doc.keywords.join(", ")
                     : doc.keywords || "N/A"
                 )}</p>
+                <p class="mb-1"><strong>Tags:</strong> ${renderGroupTagBadges(doc.tags || [])}</p>
                 <p class="mb-0"><strong>Abstract:</strong> ${escapeHtml(
                   doc.abstract || "N/A"
                 )}</p>
@@ -4647,6 +4648,29 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const d = document.createElement('div');
     d.textContent = text;
     return d.innerHTML;
+  }
+
+  function renderGroupTagBadges(tags, maxDisplay = 3) {
+    if (!Array.isArray(tags) || tags.length === 0) {
+      return '<span class="text-muted small">No tags</span>';
+    }
+
+    let html = '';
+    const displayTags = tags.slice(0, maxDisplay);
+
+    displayTags.forEach(tagName => {
+      const tag = groupWorkspaceTags.find(t => t.name === tagName);
+      const color = tag && tag.color ? tag.color : '#6c757d';
+      const textClass = isGroupColorLight(color) ? 'text-dark' : 'text-light';
+
+      html += `<span class="tag-badge ${textClass}" style="background-color:${color};" title="${escapeGroupHtml(tagName)}">${escapeGroupHtml(tagName)}</span>`;
+    });
+
+    if (tags.length > maxDisplay) {
+      html += `<span class="badge bg-secondary">+${tags.length - maxDisplay}</span>`;
+    }
+
+    return html;
   }
 
   // --- Tag Management Modal ---

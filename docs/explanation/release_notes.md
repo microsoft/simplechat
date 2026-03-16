@@ -2,6 +2,15 @@
 
 # Feature Release
 
+### **(v0.239.113)**
+
+#### Bug Fixes
+
+*   **Group/Public Expanded Document Tags**
+    *   Fixed group and public workspace list views so expanding a document now shows its tags, matching the personal workspace experience.
+    *   The fix adds color-coded tag badges with a `No tags` fallback in expanded document details without changing the existing backend document APIs.
+    *   (Ref: `group_workspaces.html`, `public_workspace.js`, expanded document details, workspace tag rendering)
+
 ### **(v0.239.112)**
 
 #### Bug Fixes
