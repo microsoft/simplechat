@@ -45,3 +45,8 @@ flask_session
 tmp**cwd
 /tmp_images
 nul
+/gunger
+application/external_apps/mcp/logs/mcp_stderr.log
+.gitignore
+application/external_apps/mcp/.env.azure
+application/external_apps/mcp/logs/mcp_stdout.log

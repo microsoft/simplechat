@@ -38,6 +38,7 @@ from dotenv import load_dotenv
 from flask import (
     Flask, 
     flash, 
+    g,
     request, 
     jsonify, 
     render_template, 
@@ -94,7 +95,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.239.005"
+VERSION = "0.239.007"
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 

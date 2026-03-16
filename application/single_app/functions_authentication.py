@@ -464,17 +464,40 @@ def accesstoken_required(f):
         if not is_valid:
             return jsonify({"message": data}), 401
 
-        # Check for "ExternalApi" role in the token claims
+        # Check for required app roles in the token claims
         roles = data.get("roles") if isinstance(data, dict) else None
-        if not roles or "ExternalApi" not in roles:
-            return jsonify({"message": "Forbidden: ExternalApi role required"}), 403
+        allowed_external_roles = {"ExternalApi", "McpServerAccess"}
+        if not roles or not allowed_external_roles.intersection(roles):
+            debug_print(f"accesstoken_required: REJECTED - roles={roles}")
+            return jsonify({"message": "Forbidden: ExternalApi or McpServerAccess role required"}), 403
 
         debug_print("User is valid")
+
+        # Store validated claims on Flask's g object so downstream handlers can access them
+        g.user_claims = data
 
         # You can now access claims from `data`, e.g., data['sub'], data['name'], data['roles']
         #kwargs['user_claims'] = data # Pass claims to the decorated function # NOT NEEDED FOR NOW
         return f(*args, **kwargs)
     return decorated_function
+
+
+def is_external_api_authorized(claims):
+    if not isinstance(claims, dict):
+        return False
+
+    allowed_roles = {"ExternalApi", "McpServerAccess", "User", "Admin"}
+    roles = claims.get("roles")
+    normalized_roles = []
+    if isinstance(roles, list):
+        normalized_roles = [role for role in roles if isinstance(role, str)]
+    elif isinstance(roles, str):
+        normalized_roles = [roles]
+
+    if any(role in allowed_roles for role in normalized_roles):
+        return True
+
+    return False
 
 def login_required(f):
     @wraps(f)

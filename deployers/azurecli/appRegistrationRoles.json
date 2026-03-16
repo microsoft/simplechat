@@ -62,6 +62,14 @@
     "id": "6399b062-9114-49ec-a291-c445a0b2b33e",
     "isEnabled": true,
     "value": "ControlCenterDashboardReader"
+  },
+  {
+    "allowedMemberTypes": [ "User" ],
+    "description": "Allows MCP Server access to SimpleChat API.",
+    "displayName": "MCP Server Access",
+    "id": "a1c2d3e4-f5a6-47b8-89c0-d1e2f3a4b5c6",
+    "isEnabled": true,
+    "value": "McpServerAccess"
   }
 
 ]
