@@ -10,6 +10,20 @@ import { handleStreamingThought } from './chat-thoughts.js';
 let streamingEnabled = false;
 let currentEventSource = null;
 
+function parseSseEventPayload(eventBlock) {
+    const dataLines = eventBlock
+        .split('\n')
+        .filter(line => line.startsWith('data:'));
+
+    if (dataLines.length === 0) {
+        return null;
+    }
+
+    return dataLines
+        .map(line => line.substring(5).trimStart())
+        .join('\n');
+}
+
 export function initializeStreamingToggle() {
     const streamingToggleBtn = document.getElementById('streaming-toggle-btn');
     if (!streamingToggleBtn) {
@@ -149,8 +163,10 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
     // Create a unique message ID for the AI response
     const tempAiMessageId = `temp_ai_${Date.now()}`;
     let accumulatedContent = '';
+    let hasStreamedContent = false;
     let streamError = false;
     let streamErrorMessage = '';
+    let streamCompleted = false;
     
     // Create placeholder message with streaming indicator
     appendMessage('AI', '<span class="text-muted"><i class="bi bi-three-dots-vertical"></i> Streaming...</span>', null, tempAiMessageId);
@@ -184,57 +200,111 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
         // Read the streaming response
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
+        let sseBuffer = '';
+
+        function processStreamData(data) {
+            if (data.error) {
+                clearTimeout(streamTimeout);
+                streamError = true;
+                streamErrorMessage = data.error;
+                handleStreamError(tempAiMessageId, data.partial_content || accumulatedContent, data.error);
+                return true;
+            }
+
+            if (data.type === 'thought') {
+                if (!hasStreamedContent && !streamCompleted) {
+                    handleStreamingThought(data);
+                }
+                return false;
+            }
+
+            if (data.content) {
+                accumulatedContent += data.content;
+                hasStreamedContent = true;
+                updateStreamingMessage(tempAiMessageId, accumulatedContent);
+            }
+
+            if (data.done) {
+                clearTimeout(streamTimeout);
+                streamCompleted = true;
+
+                finalizeStreamingMessage(
+                    tempAiMessageId,
+                    tempUserMessageId,
+                    data
+                );
+
+                currentEventSource = null;
+                return true;
+            }
+
+            return false;
+        }
+
+        function processSseEventBlock(eventBlock) {
+            const jsonStr = parseSseEventPayload(eventBlock);
+            if (!jsonStr) {
+                return false;
+            }
+
+            try {
+                const data = JSON.parse(jsonStr);
+                return processStreamData(data);
+            } catch (error) {
+                console.error('Error parsing SSE data:', error);
+                return false;
+            }
+        }
+
+        function processSseBuffer(flush = false) {
+            let delimiterIndex = sseBuffer.indexOf('\n\n');
+
+            while (delimiterIndex !== -1) {
+                const eventBlock = sseBuffer.slice(0, delimiterIndex);
+                sseBuffer = sseBuffer.slice(delimiterIndex + 2);
+
+                if (processSseEventBlock(eventBlock)) {
+                    return true;
+                }
+
+                delimiterIndex = sseBuffer.indexOf('\n\n');
+            }
+
+            if (flush) {
+                const trailingBlock = sseBuffer.trim();
+                sseBuffer = '';
+
+                if (trailingBlock) {
+                    return processSseEventBlock(trailingBlock);
+                }
+            }
+
+            return false;
+        }
         
         function readStream() {
             reader.read().then(({ done, value }) => {
                 if (done) {
                     clearTimeout(streamTimeout);
+
+                    sseBuffer += decoder.decode();
+                    const processedFinalEvent = processSseBuffer(true);
+
+                    if (!processedFinalEvent && !streamCompleted && !streamError) {
+                        handleStreamError(
+                            tempAiMessageId,
+                            accumulatedContent,
+                            'Stream ended before completion metadata was received.'
+                        );
+                    }
+
                     return;
                 }
                 
-                const chunk = decoder.decode(value, { stream: true });
-                const lines = chunk.split('\n');
-                
-                for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                        try {
-                            const jsonStr = line.substring(6); // Remove 'data: '
-                            const data = JSON.parse(jsonStr);
-                            
-                            if (data.error) {
-                                clearTimeout(streamTimeout);
-                                streamError = true;
-                                streamErrorMessage = data.error;
-                                handleStreamError(tempAiMessageId, data.partial_content || accumulatedContent, data.error);
-                                return;
-                            }
+                sseBuffer += decoder.decode(value, { stream: true }).replace(/\r/g, '');
 
-                            if (data.type === 'thought') {
-                                handleStreamingThought(data);
-                                // Continue reading — don't fall through to content handling
-                            } else if (data.content) {
-                                // Append chunk to accumulated content
-                                accumulatedContent += data.content;
-                                updateStreamingMessage(tempAiMessageId, accumulatedContent);
-                            }
-                            
-                            if (data.done) {
-                                clearTimeout(streamTimeout);
-                                
-                                // Update with final metadata
-                                finalizeStreamingMessage(
-                                    tempAiMessageId,
-                                    tempUserMessageId,
-                                    data
-                                );
-                                
-                                currentEventSource = null;
-                                return;
-                            }
-                        } catch (e) {
-                            console.error('Error parsing SSE data:', e);
-                        }
-                    }
+                if (processSseBuffer() || streamCompleted || streamError) {
+                    return;
                 }
                 
                 readStream(); // Continue reading
@@ -265,6 +335,8 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
 function updateStreamingMessage(messageId, content) {
     const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
     if (!messageElement) return;
+
+    messageElement.dataset.streamingHasContent = 'true';
     
     const contentElement = messageElement.querySelector('.message-text');
     if (contentElement) {

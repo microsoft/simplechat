@@ -53,6 +53,71 @@ def get_tabular_thought_excluded_parameter_names():
     return TabularProcessingPlugin.get_thought_excluded_parameter_names()
 
 
+def is_tabular_schema_summary_question(user_question):
+    """Return True for workbook-structure questions that should use schema summary tooling."""
+    normalized_question = re.sub(r'\s+', ' ', str(user_question or '').strip().lower())
+    if not normalized_question:
+        return False
+
+    direct_phrases = (
+        'summarize this workbook',
+        'summarize the workbook',
+        'describe this workbook',
+        'describe the workbook',
+        'what worksheets',
+        'which worksheets',
+        'what sheets',
+        'which sheets',
+        'what tabs',
+        'which tabs',
+        'what does each worksheet represent',
+        'what does each sheet represent',
+        'what does each tab represent',
+        'what do the worksheets represent',
+        'what do the sheets represent',
+        'how are they related',
+        'how do they relate',
+        'workbook schema',
+        'worksheet schema',
+        'sheet schema',
+    )
+    if any(phrase in normalized_question for phrase in direct_phrases):
+        return True
+
+    structure_patterns = (
+        r'\bwhich sheet\b.*\b(contain|contains|has|holds)\b',
+        r'\bwhat sheet\b.*\b(contain|contains|has|holds)\b',
+        r'\bhow (are|do)\b.*\b(worksheets|sheets|tabs)\b.*\b(relate|related)\b',
+    )
+    return any(re.search(pattern, normalized_question) for pattern in structure_patterns)
+
+
+def get_tabular_execution_mode(user_question):
+    """Select the tabular orchestration mode for the user's question."""
+    return 'schema_summary' if is_tabular_schema_summary_question(user_question) else 'analysis'
+
+
+def build_tabular_fallback_system_message(tabular_filenames_str, execution_mode='analysis'):
+    """Build the final GPT fallback guidance after the mini SK pass fails."""
+    if execution_mode == 'schema_summary':
+        return (
+            f"IMPORTANT: The selected workspace tabular file(s) are {tabular_filenames_str}. "
+            "The search results include a workbook schema summary with worksheet names, columns, and sample rows, but they do not include the full data. "
+            "For workbook-structure questions such as what worksheets exist, what each worksheet represents, and how the sheets relate, answer from the schema summary only. "
+            "Do not mention running additional plugin tools or performing calculations that were not completed. "
+            "If a relationship is only implied by shared columns or names, describe it as an inferred relationship rather than a confirmed join."
+        )
+
+    return (
+        f"IMPORTANT: The selected workspace tabular file(s) are {tabular_filenames_str}. "
+        "The prior tabular tool pass could not compute tool-backed results. "
+        "The search results contain only a schema summary (column names and a few sample rows), NOT the full data. "
+        "Answer cautiously using only the schema summary already provided. "
+        "Do not invent numeric totals, claim that full-data analysis succeeded, or mention additional plugin calls that were not completed. "
+        "If the user's question requires computed values that are not present in the schema summary, say that the computation could not be completed from the available tool results."
+    )
+
+
 def get_kernel():
     return getattr(g, 'kernel', None) or getattr(builtins, 'kernel', None)
 
@@ -172,6 +237,17 @@ def filter_tabular_citation_invocations(invocations):
     successful_analytical_invocations, _ = split_tabular_analysis_invocations(invocations)
     if successful_analytical_invocations:
         return successful_analytical_invocations
+
+    successful_schema_summary_invocations = []
+    for invocation in invocations or []:
+        if getattr(invocation, 'function_name', '') != 'describe_tabular_file':
+            continue
+        if get_tabular_invocation_error_message(invocation):
+            continue
+        successful_schema_summary_invocations.append(invocation)
+
+    if successful_schema_summary_invocations:
+        return successful_schema_summary_invocations
 
     return []
 
@@ -327,7 +403,8 @@ def _select_likely_workbook_sheet(sheet_names, question_text):
 async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                                    conversation_id, gpt_model, settings,
                                    source_hint="workspace", group_id=None,
-                                   public_workspace_id=None):
+                                   public_workspace_id=None,
+                                   execution_mode='analysis'):
     """Run lightweight SK with TabularProcessingPlugin to analyze tabular data.
 
     Creates a temporary Kernel with only the TabularProcessingPlugin, uses the
@@ -343,7 +420,12 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
 
     try:
         plugin_logger = get_plugin_logger()
-        log_event(f"[Tabular SK Analysis] Starting analysis for files: {tabular_filenames}", level=logging.INFO)
+        execution_mode = execution_mode if execution_mode in {'analysis', 'schema_summary'} else 'analysis'
+        schema_summary_mode = execution_mode == 'schema_summary'
+        log_event(
+            f"[Tabular SK Analysis] Starting {execution_mode} analysis for files: {tabular_filenames}",
+            level=logging.INFO,
+        )
 
         # 1. Create lightweight kernel with only tabular plugin
         kernel = SKKernel()
@@ -390,10 +472,14 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
 
         schema_parts = []
         workbook_sheet_hints = {}
-        analysis_function_filters = {
+        allowed_function_filters = {
             'included_functions': [
                 f"tabular_processing-{function_name}"
-                for function_name in sorted(get_tabular_analysis_function_names())
+                for function_name in (
+                    ['describe_tabular_file']
+                    if schema_summary_mode else
+                    sorted(get_tabular_analysis_function_names())
+                )
             ]
         }
         for fname in tabular_filenames:
@@ -459,6 +545,46 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
         schema_context = "\n".join(schema_parts)
 
         def build_system_prompt(force_tool_use=False, tool_error_messages=None):
+            if schema_summary_mode:
+                retry_prefix = ""
+                if force_tool_use:
+                    retry_prefix = (
+                        "RETRY MODE: Your previous attempt did not execute a usable workbook-schema tool call. "
+                        "You MUST call describe_tabular_file before writing any answer text. "
+                        "Do not switch to aggregate, filter, query, lookup, or grouped-analysis tools for worksheet-summary questions.\n\n"
+                    )
+
+                tool_error_feedback = ""
+                if tool_error_messages:
+                    rendered_errors = "\n".join(
+                        f"- {error_message}" for error_message in tool_error_messages
+                    )
+                    tool_error_feedback = (
+                        "PREVIOUS TOOL ERRORS:\n"
+                        f"{rendered_errors}\n"
+                        "Correct the function arguments and retry describe_tabular_file immediately.\n\n"
+                    )
+
+                return (
+                    "You are a workbook schema analyst. The workbook structure is available through the "
+                    "tabular_processing plugin and the pre-loaded schema context. You MUST call "
+                    "describe_tabular_file before answering. Use the workbook-level response to identify "
+                    "worksheet names, what each worksheet represents, and the high-confidence relationships "
+                    "visible from shared identifiers, columns, and sheet purposes.\n\n"
+                    f"{retry_prefix}"
+                    f"{tool_error_feedback}"
+                    f"FILE SCHEMAS:\n"
+                    f"{schema_context}\n\n"
+                    "AVAILABLE FUNCTIONS: describe_tabular_file only.\n\n"
+                    "IMPORTANT:\n"
+                    "1. Call describe_tabular_file for each workbook you need to summarize.\n"
+                    "2. For multi-sheet workbooks, omit sheet_name so the tool returns workbook-level sheet schemas.\n"
+                    "3. Summarize the worksheet list, what each worksheet represents, and any cross-sheet relationships visible from shared identifiers or repeated business entities.\n"
+                    "4. Do not switch to aggregate, filter, query, lookup, or grouped-analysis tools for workbook-structure questions.\n"
+                    "5. If a relationship is not explicit, describe it as an inference from the schema rather than a confirmed join.\n"
+                    "6. Do not mention hypothetical follow-up analyses or failed attempts unless the user explicitly asked about failures."
+                )
+
             retry_prefix = ""
             if force_tool_use:
                 retry_prefix = (
@@ -566,12 +692,12 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 function_choice_behavior=(
                     FunctionChoiceBehavior.Required(
                         maximum_auto_invoke_attempts=8,
-                        filters=analysis_function_filters,
+                        filters=allowed_function_filters,
                     )
                     if force_tool_use else
                     FunctionChoiceBehavior.Auto(
                         maximum_auto_invoke_attempts=7,
-                        filters=analysis_function_filters,
+                        filters=allowed_function_filters,
                     )
                 ),
             )
@@ -589,55 +715,116 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
             new_invocation_count = len(new_invocations)
             discovery_invocations, analytical_invocations, _ = split_tabular_plugin_invocations(new_invocations)
             successful_analytical_invocations, failed_analytical_invocations = split_tabular_analysis_invocations(new_invocations)
+            successful_schema_summary_invocations = []
+            failed_schema_summary_invocations = []
+            for invocation in discovery_invocations:
+                if getattr(invocation, 'function_name', '') != 'describe_tabular_file':
+                    continue
+                if get_tabular_invocation_error_message(invocation):
+                    failed_schema_summary_invocations.append(invocation)
+                else:
+                    successful_schema_summary_invocations.append(invocation)
 
             if result and result[0].content:
                 analysis = result[0].content.strip()
                 if len(analysis) > 20000:
                     analysis = analysis[:20000] + "\n[Analysis truncated]"
 
-                if successful_analytical_invocations:
-                    log_event(
-                        f"[Tabular SK Analysis] Analysis complete via {len(successful_analytical_invocations)} analytical tool call(s) on attempt {attempt_number}",
-                        level=logging.INFO
-                    )
-                    return analysis
+                if schema_summary_mode:
+                    if successful_schema_summary_invocations:
+                        log_event(
+                            f"[Tabular SK Analysis] Schema summary complete via {len(successful_schema_summary_invocations)} workbook tool call(s) on attempt {attempt_number}",
+                            level=logging.INFO,
+                        )
+                        return analysis
 
-                if failed_analytical_invocations:
-                    previous_tool_error_messages = summarize_tabular_invocation_errors(failed_analytical_invocations)
-                    log_event(
-                        f"[Tabular SK Analysis] Attempt {attempt_number} used analytical tool(s) but all returned errors; retrying",
-                        extra={
-                            'tool_errors': previous_tool_error_messages,
-                            'failed_tool_count': len(failed_analytical_invocations),
-                        },
-                        level=logging.WARNING
-                    )
-                elif analytical_invocations:
-                    log_event(
-                        f"[Tabular SK Analysis] Attempt {attempt_number} used analytical tool(s) without usable computed results; retrying",
-                        level=logging.WARNING
-                    )
-                elif discovery_invocations:
-                    discovery_function_names = sorted({
-                        invocation.function_name for invocation in discovery_invocations
-                    })
-                    log_event(
-                        f"[Tabular SK Analysis] Attempt {attempt_number} used only discovery tool(s) {discovery_function_names}; retrying",
-                        level=logging.WARNING
-                    )
-                elif new_invocation_count > 0:
-                    log_event(
-                        f"[Tabular SK Analysis] Attempt {attempt_number} used unsupported tool(s) without computed analysis; retrying",
-                        level=logging.WARNING
-                    )
+                    if failed_schema_summary_invocations:
+                        previous_tool_error_messages = summarize_tabular_invocation_errors(failed_schema_summary_invocations)
+                        log_event(
+                            f"[Tabular SK Analysis] Attempt {attempt_number} used workbook schema tool(s) but all returned errors; retrying",
+                            extra={
+                                'tool_errors': previous_tool_error_messages,
+                                'failed_tool_count': len(failed_schema_summary_invocations),
+                            },
+                            level=logging.WARNING,
+                        )
+                    elif analytical_invocations:
+                        log_event(
+                            f"[Tabular SK Analysis] Attempt {attempt_number} used analytical tool(s) during schema-summary mode without usable workbook results; retrying",
+                            level=logging.WARNING,
+                        )
+                    elif discovery_invocations:
+                        discovery_function_names = sorted({
+                            invocation.function_name for invocation in discovery_invocations
+                        })
+                        log_event(
+                            f"[Tabular SK Analysis] Attempt {attempt_number} used only discovery tool(s) {discovery_function_names} without usable workbook summary; retrying",
+                            level=logging.WARNING,
+                        )
+                    elif new_invocation_count > 0:
+                        log_event(
+                            f"[Tabular SK Analysis] Attempt {attempt_number} used unsupported tool(s) without usable workbook results; retrying",
+                            level=logging.WARNING,
+                        )
+                    else:
+                        log_event(
+                            f"[Tabular SK Analysis] Attempt {attempt_number} returned narrative without workbook schema tool use; retrying",
+                            level=logging.WARNING,
+                        )
                 else:
-                    log_event(
-                        f"[Tabular SK Analysis] Attempt {attempt_number} returned narrative without tool use; retrying",
-                        level=logging.WARNING
-                    )
+                    if successful_analytical_invocations:
+                        log_event(
+                            f"[Tabular SK Analysis] Analysis complete via {len(successful_analytical_invocations)} analytical tool call(s) on attempt {attempt_number}",
+                            level=logging.INFO
+                        )
+                        return analysis
+
+                    if failed_analytical_invocations:
+                        previous_tool_error_messages = summarize_tabular_invocation_errors(failed_analytical_invocations)
+                        log_event(
+                            f"[Tabular SK Analysis] Attempt {attempt_number} used analytical tool(s) but all returned errors; retrying",
+                            extra={
+                                'tool_errors': previous_tool_error_messages,
+                                'failed_tool_count': len(failed_analytical_invocations),
+                            },
+                            level=logging.WARNING
+                        )
+                    elif analytical_invocations:
+                        log_event(
+                            f"[Tabular SK Analysis] Attempt {attempt_number} used analytical tool(s) without usable computed results; retrying",
+                            level=logging.WARNING
+                        )
+                    elif discovery_invocations:
+                        discovery_function_names = sorted({
+                            invocation.function_name for invocation in discovery_invocations
+                        })
+                        log_event(
+                            f"[Tabular SK Analysis] Attempt {attempt_number} used only discovery tool(s) {discovery_function_names} without computed analysis; retrying",
+                            level=logging.WARNING
+                        )
+                    elif new_invocation_count > 0:
+                        log_event(
+                            f"[Tabular SK Analysis] Attempt {attempt_number} used unsupported tool(s) without computed analysis; retrying",
+                            level=logging.WARNING
+                        )
+                    else:
+                        log_event(
+                            f"[Tabular SK Analysis] Attempt {attempt_number} returned narrative without tool use; retrying",
+                            level=logging.WARNING
+                        )
 
             else:
-                if failed_analytical_invocations:
+                if schema_summary_mode and failed_schema_summary_invocations:
+                    previous_tool_error_messages = summarize_tabular_invocation_errors(failed_schema_summary_invocations)
+                    log_event(
+                        f"[Tabular SK Analysis] Attempt {attempt_number} returned no content after workbook tool errors; retrying",
+                        extra={
+                            'tool_errors': previous_tool_error_messages,
+                            'failed_tool_count': len(failed_schema_summary_invocations),
+                        },
+                        level=logging.WARNING,
+                    )
+                elif failed_analytical_invocations:
                     previous_tool_error_messages = summarize_tabular_invocation_errors(failed_analytical_invocations)
                     log_event(
                         f"[Tabular SK Analysis] Attempt {attempt_number} returned no content after tool errors; retrying",
@@ -2318,6 +2505,7 @@ def register_route_backend_chats(app):
                     active_group_id=active_group_id,
                     active_public_workspace_id=active_public_workspace_id,
                 )
+                tabular_execution_mode = get_tabular_execution_mode(user_message)
                 tabular_filenames_str = ", ".join(sorted(workspace_tabular_files))
                 plugin_logger = get_plugin_logger()
                 baseline_tabular_invocation_count = len(
@@ -2334,6 +2522,7 @@ def register_route_backend_chats(app):
                     source_hint=tabular_source_hint,
                     group_id=active_group_id if tabular_source_hint == 'group' else None,
                     public_workspace_id=active_public_workspace_id if tabular_source_hint == 'public' else None,
+                    execution_mode=tabular_execution_mode,
                 ))
                 tabular_invocations = get_new_plugin_invocations(
                     plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000),
@@ -2351,22 +2540,15 @@ def register_route_backend_chats(app):
 
                 if tabular_analysis:
                     tabular_system_msg = (
-                        f"The following analysis was computed from the tabular file(s) "
-                        f"{tabular_filenames_str} using data analysis functions:\n\n"
+                        f"The following tabular results were computed from the file(s) "
+                        f"{tabular_filenames_str} using tabular_processing plugin functions:\n\n"
                         f"{tabular_analysis}\n\n"
                         f"Use these computed results to answer the user's question accurately."
                     )
                 else:
-                    tabular_system_msg = (
-                        f"IMPORTANT: The selected workspace tabular file(s) are {tabular_filenames_str}. "
-                        f"The search results contain only a schema summary (column names and a few sample rows), NOT the full data. "
-                        f"You MUST use the tabular_processing plugin functions to answer ANY question about these files. "
-                        f"Do NOT attempt to answer using the schema summary alone — it is incomplete. "
-                        f"Available functions: describe_tabular_file, aggregate_column, filter_rows, query_tabular_data, group_by_aggregate, group_by_datetime_component. "
-                        f"Use source='{tabular_source_hint}'"
-                        + (f" and group_id='{active_group_id}'" if tabular_source_hint == 'group' else "")
-                        + (f" and public_workspace_id='{active_public_workspace_id}'" if tabular_source_hint == 'public' else "")
-                        + "."
+                    tabular_system_msg = build_tabular_fallback_system_message(
+                        tabular_filenames_str,
+                        execution_mode=tabular_execution_mode,
                     )
 
                 system_messages_for_augmentation.append({
@@ -2684,6 +2866,7 @@ def register_route_backend_chats(app):
                 # --- Mini SK analysis for tabular files uploaded directly to chat ---
                 if chat_tabular_files and settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
                     chat_tabular_filenames_str = ", ".join(chat_tabular_files)
+                    chat_tabular_execution_mode = get_tabular_execution_mode(user_message)
                     log_event(
                         f"[Chat Tabular SK] Detected {len(chat_tabular_files)} tabular file(s) uploaded to chat: {chat_tabular_filenames_str}",
                         level=logging.INFO
@@ -2701,6 +2884,7 @@ def register_route_backend_chats(app):
                         gpt_model=gpt_model,
                         settings=settings,
                         source_hint="chat",
+                        execution_mode=chat_tabular_execution_mode,
                     ))
                     chat_tabular_invocations = get_new_plugin_invocations(
                         plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000),
@@ -2721,8 +2905,8 @@ def register_route_backend_chats(app):
                         conversation_history_for_api.append({
                             'role': 'system',
                             'content': (
-                                f"The following analysis was computed from the chat-uploaded tabular file(s) "
-                                f"{chat_tabular_filenames_str} using data analysis functions:\n\n"
+                                f"The following tabular results were computed from the chat-uploaded file(s) "
+                                f"{chat_tabular_filenames_str} using tabular_processing plugin functions:\n\n"
                                 f"{chat_tabular_analysis}\n\n"
                                 f"Use these computed results to answer the user's question accurately."
                             )
@@ -4488,6 +4672,7 @@ def register_route_backend_chats(app):
                         active_group_id=active_group_id,
                         active_public_workspace_id=active_public_workspace_id,
                     )
+                    tabular_execution_mode = get_tabular_execution_mode(user_message)
                     tabular_filenames_str = ", ".join(sorted(workspace_tabular_files))
                     plugin_logger = get_plugin_logger()
                     baseline_tabular_invocation_count = len(
@@ -4504,6 +4689,7 @@ def register_route_backend_chats(app):
                         source_hint=tabular_source_hint,
                         group_id=active_group_id if tabular_source_hint == 'group' else None,
                         public_workspace_id=active_public_workspace_id if tabular_source_hint == 'public' else None,
+                        execution_mode=tabular_execution_mode,
                     ))
                     tabular_invocations = get_new_plugin_invocations(
                         plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000),
@@ -4523,8 +4709,8 @@ def register_route_backend_chats(app):
                         system_messages_for_augmentation.append({
                             'role': 'system',
                             'content': (
-                                f"The following analysis was computed from the tabular file(s) "
-                                f"{tabular_filenames_str} using data analysis functions:\n\n"
+                                f"The following tabular results were computed from the file(s) "
+                                f"{tabular_filenames_str} using tabular_processing plugin functions:\n\n"
                                 f"{tabular_analysis}\n\n"
                                 f"Use these computed results to answer the user's question accurately."
                             )
@@ -4536,16 +4722,9 @@ def register_route_backend_chats(app):
                     else:
                         system_messages_for_augmentation.append({
                             'role': 'system',
-                            'content': (
-                                f"IMPORTANT: The selected workspace tabular file(s) are {tabular_filenames_str}. "
-                                f"The search results contain only a schema summary (column names and a few sample rows), NOT the full data. "
-                                f"You MUST use the tabular_processing plugin functions to answer ANY question about these files. "
-                                f"Do NOT attempt to answer using the schema summary alone — it is incomplete. "
-                                f"Available functions: describe_tabular_file, aggregate_column, filter_rows, query_tabular_data, group_by_aggregate, group_by_datetime_component. "
-                                f"Use source='{tabular_source_hint}'"
-                                + (f" and group_id='{active_group_id}'" if tabular_source_hint == 'group' else "")
-                                + (f" and public_workspace_id='{active_public_workspace_id}'" if tabular_source_hint == 'public' else "")
-                                + "."
+                            'content': build_tabular_fallback_system_message(
+                                tabular_filenames_str,
+                                execution_mode=tabular_execution_mode,
                             )
                         })
 
@@ -4683,6 +4862,7 @@ def register_route_backend_chats(app):
                     # --- Mini SK analysis for tabular files uploaded directly to chat ---
                     if chat_tabular_files and settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
                         chat_tabular_filenames_str = ", ".join(chat_tabular_files)
+                        chat_tabular_execution_mode = get_tabular_execution_mode(user_message)
                         log_event(
                             f"[Chat Tabular SK] Streaming: Detected {len(chat_tabular_files)} tabular file(s) uploaded to chat: {chat_tabular_filenames_str}",
                             level=logging.INFO
@@ -4700,6 +4880,7 @@ def register_route_backend_chats(app):
                             gpt_model=gpt_model,
                             settings=settings,
                             source_hint="chat",
+                            execution_mode=chat_tabular_execution_mode,
                         ))
                         chat_tabular_invocations = get_new_plugin_invocations(
                             plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000),
@@ -4719,8 +4900,8 @@ def register_route_backend_chats(app):
                             conversation_history_for_api.append({
                                 'role': 'system',
                                 'content': (
-                                    f"The following analysis was computed from the chat-uploaded tabular file(s) "
-                                    f"{chat_tabular_filenames_str} using data analysis functions:\n\n"
+                                    f"The following tabular results were computed from the chat-uploaded file(s) "
+                                    f"{chat_tabular_filenames_str} using tabular_processing plugin functions:\n\n"
                                     f"{chat_tabular_analysis}\n\n"
                                     f"Use these computed results to answer the user's question accurately."
                                 )

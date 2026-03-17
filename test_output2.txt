@@ -1,3 +1,0 @@
-functional_tests/test_tabular_datetime_component_analysis.py: 📊 Results: 4/4 tests passed
-functional_tests/test_tabular_grouped_peak_summary.py: 📊 Results: 3/3 tests passed
-functional_tests/test_tabular_tool_error_retry_and_thoughts.py: 📊 Results: 3/3 tests passed

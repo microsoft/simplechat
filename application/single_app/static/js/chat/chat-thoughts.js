@@ -81,6 +81,10 @@ export function handleStreamingThought(thoughtData) {
     const messageElement = document.querySelector('[data-message-id^="temp_ai_"]');
     if (!messageElement) return;
 
+    if (messageElement.dataset.streamingHasContent === 'true') {
+        return;
+    }
+
     const contentElement = messageElement.querySelector('.message-text');
     if (!contentElement) return;
 
