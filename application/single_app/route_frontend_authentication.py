@@ -28,31 +28,6 @@ def build_front_door_urls(front_door_url):
     
     return home_url, login_redirect_url
 
-def build_teams_consent_url(tenant_id=None):
-    """
-    Build the consent URL for Teams SSO when additional permissions are needed.
-    
-    Args:
-        tenant_id (str): Optional tenant ID override
-    
-    Returns:
-        str: The consent URL
-    """
-    tid = tenant_id or TENANT_ID
-    client_id = CLIENT_ID
-    
-    # Build scope string
-    scope_string = " ".join(SCOPE)
-    
-    consent_url = (
-        f"{AUTHORITY}/adminconsent"
-        f"?client_id={client_id}"
-        f"&redirect_uri={quote(url_for('index', _external=True, _scheme='https'))}"
-        f"&scope={quote(scope_string)}"
-    )
-    
-    return consent_url
-
 def register_route_frontend_authentication(app):
     @app.route('/login')
     @swagger_route(security=get_auth_security())
