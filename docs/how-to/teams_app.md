@@ -12,7 +12,7 @@ SimpleChat supports Teams SSO using the On-Behalf-Of (OBO) flow. When embedded i
 - Access to Azure Portal with appropriate permissions
 - Teams Admin access to upload custom apps
 
-## Azure AD App Registration Configuration
+## Azure AD App Registration Configuration for Teams SSO
 
 ### 1. Expose an API
 
@@ -27,7 +27,6 @@ Configure your app to expose an API for Teams SSO:
 1. Click **Set** next to "Application ID URI"
 2. Set it to: `api://{your-app-domain}/{CLIENT_ID}`
    - Example: `api://myapp.azurewebsites.net/12345678-1234-1234-1234-123456789abc`
-   - For Teams: `api://teams.myapp.com/12345678-1234-1234-1234-123456789abc`
 3. Click **Save**
 
 #### Add a Scope
@@ -71,34 +70,6 @@ To enable SSO without additional consent prompts, pre-authorize Teams clients:
    - Check the `access_as_user` scope
    - Click **Add application**
 
-### 3. API Permissions
-
-Ensure your app has the necessary Microsoft Graph permissions:
-
-1. Go to **API permissions**
-2. Verify/Add these **Delegated permissions** for Microsoft Graph:
-   - `User.Read` (Sign in and read user profile)
-   - `User.ReadBasic.All` (Read all users' basic profiles)
-   - `People.Read.All` (Read all users' relevant people lists)
-   - `Group.Read.All` (Read all groups)
-
-3. Click **Grant admin consent for {your tenant}** if you have admin rights
-
-### 4. Authentication Configuration
-
-1. Go to **Authentication**
-2. Verify your redirect URIs include:
-   - Web: `https://{your-app-domain}/getAToken`
-   - Web: `https://{your-app-domain}/login`
-
-3. Under **Implicit grant and hybrid flows**, ensure:
-   - ✅ Access tokens (used for implicit flows)
-   - ✅ ID tokens (used for implicit and hybrid flows)
-
-4. Under **Supported account types**, ensure it's set to:
-   - **Accounts in this organizational directory only** (Single tenant)
-   - Or **Accounts in any organizational directory** (Multi-tenant)
-
 ## Environment Variables
 
 Ensure these environment variables are set:
@@ -110,98 +81,26 @@ TENANT_ID=your-azure-ad-tenant-id
 MICROSOFT_PROVIDER_AUTHENTICATION_SECRET=your-client-secret
 
 # Teams SSO Configuration
-TEAMS_APP_ID=your-azure-ad-client-id  # Usually same as CLIENT_ID
 ENABLE_TEAMS_SSO=true
+
+# AirGap Origin Configuration (adjust domains)
+TEAMS_FRAME_ANCESTORS=https://teams.microsoft.com https://*.teams.microsoft.com https://*.cloud.microsoft
+CUSTOM_TEAMS_ORIGINS=["https://teams.microsoft.com", "https://*.teams.microsoft.com", "https://*.cloud.microsoft"]
 ```
+
+## Disable App Service Authentication
+
+App Service Authentication (EasyAuth) must be disabled for Teams SSO to work in the thick client due to login.microsoftonline.com frame restrictions.
 
 ## Teams App Manifest Configuration
 
-Create or update your Teams app manifest (`manifest.json`):
-
-```json
-{
-  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
-  "manifestVersion": "1.16",
-  "version": "1.0.0",
-  "id": "{TEAMS_APP_ID}",
-  "packageName": "com.yourcompany.simplechat",
-  "developer": {
-    "name": "Your Company Name",
-    "websiteUrl": "https://your-website.com",
-    "privacyUrl": "https://your-website.com/privacy",
-    "termsOfUseUrl": "https://your-website.com/terms"
-  },
-  "icons": {
-    "color": "color.png",
-    "outline": "outline.png"
-  },
-  "name": {
-    "short": "SimpleChat",
-    "full": "SimpleChat AI Assistant"
-  },
-  "description": {
-    "short": "AI-powered chat assistant",
-    "full": "SimpleChat brings AI-powered conversations to Microsoft Teams"
-  },
-  "accentColor": "#6264A7",
-  "configurableTabs": [
-    {
-      "configurationUrl": "https://{your-app-domain}/teams/config",
-      "canUpdateConfiguration": true,
-      "scopes": ["team", "groupchat"]
-    }
-  ],
-  "staticTabs": [
-    {
-      "entityId": "simplechat-tab",
-      "name": "SimpleChat",
-      "contentUrl": "https://{your-app-domain}/login?teams=true",
-      "websiteUrl": "https://{your-app-domain}",
-      "scopes": ["personal"]
-    }
-  ],
-  "permissions": [
-    "identity",
-    "messageTeamMembers"
-  ],
-  "validDomains": [
-    "{your-app-domain}",
-    "login.microsoftonline.com",
-    "login.microsoftonline.us",
-    "login.microsoftonline.com"
-  ],
-  "webApplicationInfo": {
-    "id": "{CLIENT_ID}",
-    "resource": "api://{your-app-domain}/{CLIENT_ID}"
-  }
-}
-```
+Create or update your Teams app manifest (`manifest.json`), see (teams_app)[../../applications/teams_app] folder for template.
 
 ### Key Manifest Fields for SSO
 
 - **webApplicationInfo.id**: Your Azure AD Client ID
 - **webApplicationInfo.resource**: The Application ID URI from Azure AD (must match exactly)
 - **validDomains**: Include your app domain and Azure AD login domains
-- **staticTabs.contentUrl**: Point to `/login?teams=true` for automatic Teams detection
-
-## Content Security Policy
-
-Ensure your `config.py` includes Teams domains in the Content Security Policy:
-
-```python
-'Content-Security-Policy': (
-    "default-src 'self'; "
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
-    "style-src 'self' 'unsafe-inline'; "
-    "img-src 'self' data: https: blob:; "
-    "font-src 'self'; "
-    "connect-src 'self' https: wss: ws:; "
-    "media-src 'self' blob:; "
-    "object-src 'none'; "
-    "frame-ancestors 'self' https://teams.microsoft.com https://*.teams.microsoft.com https://*.cloud.microsoft; "
-    "base-uri 'self';"
-)
-```
 
 ## Testing Teams SSO
 
