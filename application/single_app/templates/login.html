@@ -69,7 +69,6 @@
             font-size: 0.9rem;
         }
         .error-section {
-            display: none;
         }
         .error-icon {
             font-size: 3rem;
@@ -127,7 +126,7 @@
         </div>
         
         <!-- Error Section -->
-        <div id="error-section" class="error-section">
+        <div id="error-section" class="error-section d-none">
             <div class="error-icon">
                 <i class="bi bi-exclamation-circle-fill"></i>
             </div>
@@ -261,8 +260,8 @@
         }
 
         function showError(message, title = 'Authentication Error') {
-            document.getElementById('loading-section').style.display = 'none';
-            document.getElementById('error-section').style.display = 'block';
+            document.getElementById('loading-section').classList.add('d-none');
+            document.getElementById('error-section').classList.remove('d-none');
             
             const errorTitleElement = document.querySelector('.error-title');
             if (errorTitleElement) {
