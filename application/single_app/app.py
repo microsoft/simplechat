@@ -690,49 +690,6 @@ def _is_idle_timeout_exempt(path):
         return True
     return any(path.startswith(prefix) for prefix in IDLE_TIMEOUT_EXEMPT_PREFIXES)
 
-
-@app.before_request
-def load_request_settings_cache():
-    """
-    Preload request-scoped settings for authenticated, non-exempt requests.
-
-    Args:
-        None
-
-    Returns:
-        None: Always returns None to continue Flask request processing.
-
-    Raises:
-        None: Unexpected settings resolver shapes are logged and converted to safe fallbacks.
-    """
-    g.request_settings = None
-    g.request_settings_source = None
-
-    if request.method == 'OPTIONS' or _is_idle_timeout_exempt(request.path):
-        return None
-
-    if 'user' not in session:
-        return None
-
-    settings_result = get_settings(include_source=True)
-    if isinstance(settings_result, tuple) and len(settings_result) == 2:
-        request_settings, settings_source = settings_result
-    else:
-        request_settings = settings_result
-        settings_source = 'unknown'
-        log_event(
-            "Unexpected settings response shape in load_request_settings_cache.",
-            extra={
-                "path": request.path,
-                "response_type": type(settings_result).__name__
-            },
-            level=logging.WARNING
-        )
-
-    g.request_settings = request_settings or {}
-    record_request_settings_source(settings_source)
-    return None
-
 @app.before_request
 def enforce_idle_session_timeout():
     """

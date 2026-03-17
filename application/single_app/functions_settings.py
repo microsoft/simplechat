@@ -420,6 +420,19 @@ def get_settings(use_cosmos=False, include_source=False):
         # If merging added anything new, upsert back to Cosmos so future reads remain up to date
         if merged != original_settings_item:
             cosmos_settings_container.upsert_item(merged)
+            cache_updater = getattr(app_settings_cache, "update_settings_cache", None)
+            if callable(cache_updater):
+                try:
+                    cache_updater(copy.deepcopy(merged))
+                except Exception as cache_error:
+                    log_event(
+                        "App settings cache update failed after merge upsert.",
+                        extra={
+                            "settings_source": settings_source,
+                            "error": str(cache_error)
+                        },
+                        level=logging.WARNING
+                    )
             print("App Settings had missing keys and was updated in Cosmos DB.")
             log_event(
                 "App settings missing keys were merged and persisted to Cosmos DB.",

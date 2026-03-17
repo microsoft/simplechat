@@ -109,7 +109,6 @@ def test_server_idle_timeout_wiring():
         "is_idle_timeout_enabled",
         "record_request_settings_source",
         "get_request_settings",
-        "load_request_settings_cache",
         "enforce_idle_session_timeout",
         "session_heartbeat"
     ]
@@ -118,6 +117,17 @@ def test_server_idle_timeout_wiring():
         if _find_top_level_function(app_tree, function_name) is None
     ]
     assert not missing_app_functions, f"Missing backend functions in app.py: {missing_app_functions}"
+
+    removed_app_functions = [
+        "load_request_settings_cache"
+    ]
+    unexpected_app_functions = [
+        function_name for function_name in removed_app_functions
+        if _find_top_level_function(app_tree, function_name) is not None
+    ]
+    assert not unexpected_app_functions, (
+        f"Unexpected removed backend functions in app.py: {unexpected_app_functions}"
+    )
 
     has_settings_source_counter_dict = any(
         isinstance(node, ast.Assign)
