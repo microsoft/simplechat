@@ -192,7 +192,8 @@ else:
 # Teams SSO Configuration
 TEAMS_APP_ID = os.getenv("TEAMS_APP_ID", CLIENT_ID)  # Can be same as CLIENT_ID or different
 TEAMS_FRAME_ANCESTORS = os.getenv("TEAMS_FRAME_ANCESTORS", "") # e.g. "https://teams.microsoft.com https://*.teams.microsoft.com" - should be set to Teams domains if in airgap, otherwise can be left blank to allow from any domain since we validate the origin in the frontend against allowed Teams domains
-CUSTOM_TEAMS_ORIGINS = os.getenv("CUSTOM_TEAMS_ORIGINS", "")  # JSON array of valid domains for Teams SSO if in airgap, otherwise this is pulled from Teams, e.g. ["https://teams.microsoft.com", "https://*.teams.microsoft.com"]
+CUSTOM_TEAMS_ORIGINS_RAW = os.getenv("CUSTOM_TEAMS_ORIGINS", "")  # JSON array of valid domains for Teams SSO if in airgap, otherwise this is pulled from Teams, e.g. ["https://teams.microsoft.com", "https://*.teams.microsoft.com"]
+CUSTOM_TEAMS_ORIGINS = json.loads(CUSTOM_TEAMS_ORIGINS_RAW) if CUSTOM_TEAMS_ORIGINS_RAW else []
 
 if AZURE_ENVIRONMENT == "custom":
     OIDC_METADATA_URL = CUSTOM_OIDC_METADATA_URL_VALUE or f"https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration"
