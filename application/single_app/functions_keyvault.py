@@ -44,11 +44,125 @@ supported_action_auth_types = [
 ]
 
 ui_trigger_word = "Stored_In_KeyVault"
+SQL_PLUGIN_TYPES = {"sql_query", "sql_schema"}
+SQL_PLUGIN_SENSITIVE_ADDITIONAL_FIELDS = {"connection_string", "password"}
+SQL_PLUGIN_SENSITIVE_AUTH_FIELDS = {"client_secret"}
+REDACTED_SECRET_VALUE = "***REDACTED***"
 
 class SecretReturnType(Enum):
     VALUE = "value"
     TRIGGER = "trigger"
     NAME = "name"
+
+
+def _get_nested_dict_value(data, path):
+    """Return a nested dictionary value, or None when the path is missing."""
+    current = data
+    for key in path:
+        if not isinstance(current, dict) or key not in current:
+            return None
+        current = current.get(key)
+    return current
+
+
+def _set_nested_dict_value(data, path, value):
+    """Set a nested dictionary value while preserving dictionary copies."""
+    current = data
+    for key in path[:-1]:
+        nested = current.get(key)
+        if not isinstance(nested, dict):
+            nested = {}
+        else:
+            nested = dict(nested)
+        current[key] = nested
+        current = nested
+    current[path[-1]] = value
+
+
+def _get_existing_secret_reference(existing_plugin, path):
+    """Return an existing Key Vault reference for the provided path, when present."""
+    existing_value = _get_nested_dict_value(existing_plugin or {}, path)
+    if isinstance(existing_value, str) and validate_secret_name_dynamic(existing_value):
+        return existing_value
+    return None
+
+
+def _build_plugin_additional_field_secret_name(plugin_name, field_name):
+    """Build a stable Key Vault secret base name for plugin additional fields."""
+    return f"{plugin_name}-{field_name}".replace("__", "-")
+
+
+def _is_sql_plugin(plugin_dict):
+    """Return True when the plugin manifest is a SQL action."""
+    plugin_type = (plugin_dict or {}).get("type", "")
+    return isinstance(plugin_type, str) and plugin_type.lower() in SQL_PLUGIN_TYPES
+
+
+def _is_sql_sensitive_additional_field(plugin_dict, field_name):
+    """Return True when the additional field should be treated as a SQL secret."""
+    return _is_sql_plugin(plugin_dict) and field_name in SQL_PLUGIN_SENSITIVE_ADDITIONAL_FIELDS
+
+
+def _store_plugin_secret_reference(updated_plugin, existing_plugin, path, secret_name, scope_value, source, scope):
+    """Store or preserve a plugin secret reference for the provided nested path."""
+    value = _get_nested_dict_value(updated_plugin, path)
+    if not value:
+        return
+
+    existing_reference = _get_existing_secret_reference(existing_plugin, path)
+
+    if value == ui_trigger_word:
+        if existing_reference:
+            _set_nested_dict_value(updated_plugin, path, existing_reference)
+            return
+        _set_nested_dict_value(
+            updated_plugin,
+            path,
+            build_full_secret_name(secret_name, scope_value, source, scope),
+        )
+        return
+
+    if validate_secret_name_dynamic(value):
+        _set_nested_dict_value(updated_plugin, path, value)
+        return
+
+    full_secret_name = store_secret_in_key_vault(
+        secret_name,
+        value,
+        scope_value,
+        source=source,
+        scope=scope,
+    )
+    _set_nested_dict_value(updated_plugin, path, full_secret_name)
+
+
+def redact_plugin_secret_values(plugin_dict, redaction_value=REDACTED_SECRET_VALUE):
+    """Return a copy of the plugin manifest with secret-bearing values redacted."""
+    if not isinstance(plugin_dict, dict):
+        return plugin_dict
+
+    redacted = dict(plugin_dict)
+    auth = redacted.get("auth", {})
+    if isinstance(auth, dict):
+        new_auth = dict(auth)
+        if new_auth.get("key"):
+            new_auth["key"] = redaction_value
+        for auth_field in SQL_PLUGIN_SENSITIVE_AUTH_FIELDS:
+            if new_auth.get(auth_field):
+                new_auth[auth_field] = redaction_value
+        redacted["auth"] = new_auth
+
+    additional_fields = redacted.get("additionalFields", {})
+    if isinstance(additional_fields, dict):
+        new_additional_fields = dict(additional_fields)
+        for key, value in additional_fields.items():
+            if not value:
+                continue
+            if key.endswith("__Secret") or _is_sql_sensitive_additional_field(redacted, key):
+                new_additional_fields[key] = redaction_value
+        redacted["additionalFields"] = new_additional_fields
+
+    return redacted
 
 def retrieve_secret_from_key_vault(secret_name, scope_value, scope="global", source="global"):
     """
@@ -333,15 +447,17 @@ def keyvault_agent_get_helper(agent_dict, scope_value, scope="global", return_ty
                 return updated
     return updated
 
-def keyvault_plugin_save_helper(plugin_dict, scope_value, scope="global"):
+def keyvault_plugin_save_helper(plugin_dict, scope_value, scope="global", existing_plugin=None):
     """
     For plugin dicts, store the auth.key in Key Vault if auth.type is 'key', 'servicePrincipal', 'basic', or 'connection_string',
-    and replace its value with the Key Vault secret name. Also supports dynamic secret storage for any additionalFields key ending with '__Secret'.
+    and replace its value with the Key Vault secret name. Also supports dynamic secret storage for any additionalFields key ending with '__Secret',
+    along with SQL plugin secret-bearing additional fields such as connection strings and passwords.
 
     Args:
         plugin_dict (dict): The plugin dictionary to process.
         scope_value (str): The value for the scope (e.g., plugin id).
         scope (str): The scope (e.g., 'user', 'global').
+        existing_plugin (dict, optional): Existing stored plugin manifest used to preserve Key Vault references during edit flows.
 
     Returns:
         dict: A new plugin dict with sensitive values replaced by Key Vault references.
@@ -360,51 +476,91 @@ def keyvault_plugin_save_helper(plugin_dict, scope_value, scope="global"):
     plugin_name = updated.get('name', 'plugin')
     auth = updated.get('auth', {})
     if isinstance(auth, dict):
+        auth = dict(auth)
+        updated['auth'] = auth
         auth_type = auth.get('type', None)
         if auth_type in supported_action_auth_types and 'key' in auth and auth['key']:
-            value = auth['key']
-            if value == ui_trigger_word:
-                auth['key'] = build_full_secret_name(plugin_name, scope_value, source, scope)
-                updated['auth'] = auth
-            elif validate_secret_name_dynamic(value):
-                auth['key'] = build_full_secret_name(plugin_name, scope_value, source, scope)
-                updated['auth'] = auth
-            else:
-                try:
-                    full_secret_name = store_secret_in_key_vault(plugin_name, value, scope_value, source=source, scope=scope)
-                    new_auth = dict(auth)
-                    new_auth['key'] = full_secret_name
-                    updated['auth'] = new_auth
-                except Exception as e:
-                    log_event(f"Failed to store plugin key in Key Vault: {e}", level=logging.ERROR, exceptionTraceback=True)
-                    raise Exception(f"Failed to store plugin key in Key Vault: {e}")
+            try:
+                _store_plugin_secret_reference(
+                    updated,
+                    existing_plugin,
+                    ('auth', 'key'),
+                    plugin_name,
+                    scope_value,
+                    source,
+                    scope,
+                )
+            except Exception as e:
+                log_event(f"Failed to store plugin key in Key Vault: {e}", level=logging.ERROR, exceptionTraceback=True)
+                raise Exception(f"Failed to store plugin key in Key Vault: {e}")
         else:
             log_event(f"Auth type '{auth_type}' does not require Key Vault storage for plugin '{plugin_name}'.", level=logging.INFO)
+
+        for auth_field in SQL_PLUGIN_SENSITIVE_AUTH_FIELDS:
+            if auth.get(auth_field):
+                try:
+                    _store_plugin_secret_reference(
+                        updated,
+                        existing_plugin,
+                        ('auth', auth_field),
+                        f"{plugin_name}-{auth_field}",
+                        scope_value,
+                        source,
+                        scope,
+                    )
+                except Exception as e:
+                    log_event(
+                        f"Failed to store plugin auth secret '{auth_field}' in Key Vault: {e}",
+                        level=logging.ERROR,
+                        exceptionTraceback=True,
+                    )
+                    raise Exception(f"Failed to store plugin auth secret '{auth_field}' in Key Vault: {e}")
 
     # Handle additionalFields dynamic secrets
     additional_fields = updated.get('additionalFields', {})
     if isinstance(additional_fields, dict):
         new_additional_fields = dict(additional_fields)
+        updated['additionalFields'] = new_additional_fields
         for k, v in additional_fields.items():
-            if k.endswith('__Secret') and v:
+            if not v:
+                continue
+            if k.endswith('__Secret'):
                 addset_source = 'action-addset'
                 base_field = k[:-8]  # Remove '__Secret'
-                akv_key = f"{plugin_name}-{base_field}".replace('__', '-')
-                full_secret_name = build_full_secret_name(akv_key, scope_value, addset_source, scope)
-                if v == ui_trigger_word:
-                    new_additional_fields[k] = full_secret_name
-                    continue
-                elif validate_secret_name_dynamic(v):
-                    new_additional_fields[k] = full_secret_name
-                    continue
-                else:
-                    try:
-                        full_secret_name = store_secret_in_key_vault(akv_key, v, scope_value, source=addset_source, scope=scope)
-                        new_additional_fields[k] = full_secret_name
-                    except Exception as e:
-                        log_event(f"Failed to store plugin additionalField secret '{k}' in Key Vault: {e}", level=logging.ERROR, exceptionTraceback=True)
-                        raise Exception(f"Failed to store plugin additionalField secret '{k}' in Key Vault: {e}")
-        updated['additionalFields'] = new_additional_fields
+                akv_key = _build_plugin_additional_field_secret_name(plugin_name, base_field)
+                try:
+                    _store_plugin_secret_reference(
+                        updated,
+                        existing_plugin,
+                        ('additionalFields', k),
+                        akv_key,
+                        scope_value,
+                        addset_source,
+                        scope,
+                    )
+                except Exception as e:
+                    log_event(f"Failed to store plugin additionalField secret '{k}' in Key Vault: {e}", level=logging.ERROR, exceptionTraceback=True)
+                    raise Exception(f"Failed to store plugin additionalField secret '{k}' in Key Vault: {e}")
+            elif _is_sql_sensitive_additional_field(updated, k):
+                addset_source = 'action-addset'
+                akv_key = _build_plugin_additional_field_secret_name(plugin_name, k)
+                try:
+                    _store_plugin_secret_reference(
+                        updated,
+                        existing_plugin,
+                        ('additionalFields', k),
+                        akv_key,
+                        scope_value,
+                        addset_source,
+                        scope,
+                    )
+                except Exception as e:
+                    log_event(
+                        f"Failed to store SQL plugin additionalField secret '{k}' in Key Vault: {e}",
+                        level=logging.ERROR,
+                        exceptionTraceback=True,
+                    )
+                    raise Exception(f"Failed to store SQL plugin additionalField secret '{k}' in Key Vault: {e}")
     return updated
 # Helper to retrieve plugin secrets from Key Vault
 def keyvault_plugin_get_helper(plugin_dict, scope_value, scope="global", return_type=SecretReturnType.TRIGGER):
@@ -427,39 +583,33 @@ def keyvault_plugin_get_helper(plugin_dict, scope_value, scope="global", return_
     plugin_name = updated.get('name', 'plugin')
     auth = updated.get('auth', {})
     if isinstance(auth, dict):
-        if 'key' in auth and auth['key']:
-            value = auth['key']
-            if validate_secret_name_dynamic(value):
+        new_auth = dict(auth)
+        auth_updated = False
+        for auth_field in ('key', *SQL_PLUGIN_SENSITIVE_AUTH_FIELDS):
+            value = auth.get(auth_field)
+            if value and validate_secret_name_dynamic(value):
                 try:
                     if return_type == SecretReturnType.VALUE:
-                        actual_key = retrieve_secret_from_key_vault_by_full_name(value)
-                        new_auth = dict(auth)
-                        new_auth['key'] = actual_key
-                        updated['auth'] = new_auth
+                        new_auth[auth_field] = retrieve_secret_from_key_vault_by_full_name(value)
                     elif return_type == SecretReturnType.NAME:
-                        new_auth = dict(auth)
-                        new_auth['key'] = value
-                        updated['auth'] = new_auth
+                        new_auth[auth_field] = value
                     else:
-                        new_auth = dict(auth)
-                        new_auth['key'] = ui_trigger_word
-                        updated['auth'] = new_auth
+                        new_auth[auth_field] = ui_trigger_word
+                    auth_updated = True
                 except Exception as e:
-                    log_event(f"Failed to retrieve action {plugin_name} key from Key Vault: {e}", level=logging.ERROR, exceptionTraceback=True)
-                    raise Exception(f"Failed to retrieve action {plugin_name} key from Key Vault: {e}")
+                    log_event(f"Failed to retrieve action {plugin_name} auth field '{auth_field}' from Key Vault: {e}", level=logging.ERROR, exceptionTraceback=True)
+                    raise Exception(f"Failed to retrieve action {plugin_name} auth field '{auth_field}' from Key Vault: {e}")
+        if auth_updated:
+            updated['auth'] = new_auth
 
     additional_fields = updated.get('additionalFields', {})
     if isinstance(additional_fields, dict):
         new_additional_fields = dict(additional_fields)
         for k, v in additional_fields.items():
-            if k.endswith('__Secret') and v and validate_secret_name_dynamic(v):
-                addset_source = 'action-addset'
-                base_field = k[:-8]  # Remove '__Secret'
-                akv_key = f"{plugin_name}-{base_field}".replace('__', '-')
+            if (k.endswith('__Secret') or _is_sql_sensitive_additional_field(updated, k)) and v and validate_secret_name_dynamic(v):
                 try:
                     if return_type == SecretReturnType.VALUE:
-                        actual_secret = retrieve_secret_from_key_vault(f"{akv_key}", scope_value, scope, addset_source)
-                        new_additional_fields[k] = actual_secret
+                        new_additional_fields[k] = retrieve_secret_from_key_vault_by_full_name(v)
                     elif return_type == SecretReturnType.NAME:
                         new_additional_fields[k] = v
                     else:
@@ -497,31 +647,27 @@ def keyvault_plugin_delete_helper(plugin_dict, scope_value, scope="global"):
     plugin_name = plugin_dict.get('name', 'plugin')
     auth = plugin_dict.get('auth', {})
     if isinstance(auth, dict):
-        if 'key' in auth and auth['key']:
-            secret_name = auth['key']
-            if validate_secret_name_dynamic(secret_name):
+        for auth_field in ('key', *SQL_PLUGIN_SENSITIVE_AUTH_FIELDS):
+            secret_name = auth.get(auth_field)
+            if secret_name and validate_secret_name_dynamic(secret_name):
                 try:
                     key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
-                    log_event(f"Deleting action secret '{secret_name}' for action '{plugin_name}' for '{scope}' '{scope_value}'", level=logging.INFO)
+                    log_event(f"Deleting action auth secret '{auth_field}' for action '{plugin_name}' for '{scope}' '{scope_value}'", level=logging.INFO)
                     client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
                     client.begin_delete_secret(secret_name)
                 except Exception as e:
-                    log_event(f"Error deleting action secret '{secret_name}' for action '{plugin_name}': {e}", level=logging.ERROR, exceptionTraceback=True)
-                    raise Exception(f"Error deleting action secret '{secret_name}' for action '{plugin_name}': {e}")
+                    log_event(f"Error deleting action auth secret '{auth_field}' for action '{plugin_name}': {e}", level=logging.ERROR, exceptionTraceback=True)
+                    raise Exception(f"Error deleting action auth secret '{auth_field}' for action '{plugin_name}': {e}")
 
     additional_fields = plugin_dict.get('additionalFields', {})
     if isinstance(additional_fields, dict):
         for k, v in additional_fields.items():
-            if k.endswith('__Secret') and v and validate_secret_name_dynamic(v):
-                addset_source = 'action-addset'
-                base_field = k[:-8]  # Remove '__Secret'
-                akv_key = f"{plugin_name}-{base_field}".replace('__', '-')
+            if (k.endswith('__Secret') or _is_sql_sensitive_additional_field(plugin_dict, k)) and v and validate_secret_name_dynamic(v):
                 try:
-                    keyvault_secret_name = build_full_secret_name(akv_key, scope_value, addset_source, scope)
                     key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
                     log_event(f"Deleting action additionalField secret '{k}' for action '{plugin_name}' for '{scope}' '{scope_value}'", level=logging.INFO)
                     client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
-                    client.begin_delete_secret(keyvault_secret_name)
+                    client.begin_delete_secret(v)
                 except Exception as e:
                     log_event(f"Error deleting action additionalField secret '{k}' for action '{plugin_name}': {e}", level=logging.ERROR, exceptionTraceback=True)
                     raise Exception(f"Error deleting action additionalField secret '{k}' for action '{plugin_name}': {e}")

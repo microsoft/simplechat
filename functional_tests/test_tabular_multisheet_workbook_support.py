@@ -2,7 +2,7 @@
 # test_tabular_multisheet_workbook_support.py
 """
 Functional test for multi-sheet workbook analytical orchestration fix.
-Version: 0.239.111
+Version: 0.239.114
 Implemented in: 0.239.111
 
 This test ensures that multi-sheet workbook analysis can select the likely
@@ -35,9 +35,9 @@ PLUGIN_FILE = os.path.join(
 )
 
 TARGET_ASSIGNMENTS = {
-    'TABULAR_ANALYSIS_FUNCTION_NAMES',
 }
 TARGET_FUNCTIONS = {
+    'get_tabular_analysis_function_names',
     '_normalize_tabular_sheet_token',
     '_tokenize_tabular_sheet_text',
     '_select_likely_workbook_sheet',
@@ -53,13 +53,7 @@ def load_tabular_route_helpers():
     selected_nodes = []
 
     for node in parsed.body:
-        if isinstance(node, ast.Assign):
-            target_names = {
-                target.id for target in node.targets if isinstance(target, ast.Name)
-            }
-            if target_names & TARGET_ASSIGNMENTS:
-                selected_nodes.append(node)
-        elif isinstance(node, ast.FunctionDef) and node.name in TARGET_FUNCTIONS:
+        if isinstance(node, ast.FunctionDef) and node.name in TARGET_FUNCTIONS:
             selected_nodes.append(node)
 
     module = ast.Module(body=selected_nodes, type_ignores=[])
@@ -196,7 +190,7 @@ def test_likely_sheet_helper_handles_pluralized_question_text():
     try:
         helpers, _ = load_tabular_route_helpers()
         select_likely_sheet = helpers['_select_likely_workbook_sheet']
-        analytical_functions = helpers['TABULAR_ANALYSIS_FUNCTION_NAMES']
+        analytical_functions = helpers['get_tabular_analysis_function_names']()
 
         likely_sheet = select_likely_sheet(
             ['Balance', 'Budget', 'Assets', 'Liabilities'],

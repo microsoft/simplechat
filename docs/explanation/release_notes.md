@@ -2,6 +2,27 @@
 
 # Feature Release
 
+### **(v0.239.116)**
+
+#### Bug Fixes
+
+*   **Embedding Retry-After Wait Time Handling**
+    *   Fixed embedding retries so `429 Too Many Requests` responses now honor server-provided wait times from `Retry-After` style headers instead of always using local backoff timing.
+    *   This reduces avoidable repeat throttling during document processing, batched embedding generation, and search embedding requests when Azure OpenAI asks the client to wait.
+    *   The existing exponential backoff behavior remains in place as a fallback when the service does not provide a usable retry delay.
+    *   (Ref: `functions_content.py`, embedding retry logic, `test_embedding_rate_limit_wait_time.py`)
+
+### **(v0.239.114)**
+
+#### Bug Fixes
+
+*   **SQL Plugin Key Vault Secret Storage**
+    *   New and updated SQL Query and SQL Schema actions now store sensitive values such as connection strings and passwords in Azure Key Vault when Key Vault secret storage is enabled.
+    *   Editing an existing SQL action now preserves stored Key Vault-backed credentials, including the SQL test connection flow, so users do not need to re-enter unchanged secrets just to validate or save the action.
+    *   Personal, group, and global action flows now preserve existing secret references during updates, clean them up correctly on delete, and redact secret-bearing plugin values from logs.
+    *   Existing plaintext SQL action credentials are not backfilled automatically; they move to Key Vault the next time the action is saved while Key Vault storage is enabled.
+    *   (Ref: `functions_keyvault.py`, `route_backend_plugins.py`, `plugin_modal_stepper.js`, `workspace_plugins.js`, SQL action configuration)
+
 ### **(v0.239.113)**
 
 #### Bug Fixes

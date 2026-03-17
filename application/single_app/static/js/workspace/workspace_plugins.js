@@ -175,6 +175,8 @@ function setupSaveHandler(plugin, modal) {
 }
 
 async function savePlugin(pluginData, existingPlugin = null) {
+  const payload = existingPlugin?.id ? { ...pluginData, id: existingPlugin.id } : { ...pluginData };
+
   // Get all plugins first
   const res = await fetch('/api/user/plugins');
 
@@ -183,11 +185,19 @@ async function savePlugin(pluginData, existingPlugin = null) {
   let plugins = await res.json();
   
   // Update or add the plugin
-  const existingIndex = plugins.findIndex(p => p.name === pluginData.name);
+  const existingIndex = plugins.findIndex(p => {
+    if (payload.id && p.id === payload.id) {
+      return true;
+    }
+    if (existingPlugin?.name && p.name === existingPlugin.name) {
+      return true;
+    }
+    return p.name === payload.name;
+  });
   if (existingIndex >= 0) {
-    plugins[existingIndex] = pluginData;
+    plugins[existingIndex] = payload;
   } else {
-    plugins.push(pluginData);
+    plugins.push(payload);
   }
   
   // Save back to server

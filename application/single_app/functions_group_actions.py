@@ -129,7 +129,12 @@ def save_group_action(group_id: str, action_data: Dict[str, Any], user_id: Optio
 
     payload.pop("user_id", None)
 
-    payload = keyvault_plugin_save_helper(payload, scope_value=group_id, scope="group")
+    payload = keyvault_plugin_save_helper(
+        payload,
+        scope_value=group_id,
+        scope="group",
+        existing_plugin=existing_action,
+    )
 
     try:
         stored = cosmos_group_actions_container.upsert_item(body=payload)

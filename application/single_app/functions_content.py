@@ -1,5 +1,7 @@
 # functions_content.py
 
+import email.utils
+
 from functions_debug import debug_print
 from config import *
 from functions_settings import *
@@ -306,6 +308,57 @@ def chunk_word_file_into_pages(di_pages):
     # Current logic returns empty list if no words.
     return new_pages
 
+
+def _parse_retry_after_seconds(response_headers):
+    """Return retry delay in seconds from rate-limit headers when available."""
+    if response_headers is None:
+        return None
+
+    for header_name in ('retry-after-ms', 'x-ms-retry-after-ms'):
+        try:
+            retry_ms = response_headers.get(header_name)
+            if retry_ms is None:
+                continue
+
+            retry_after = float(retry_ms) / 1000
+            if retry_after > 0:
+                return retry_after
+        except (TypeError, ValueError):
+            continue
+
+    retry_header = response_headers.get('retry-after')
+    try:
+        retry_after = float(retry_header)
+        if retry_after > 0:
+            return retry_after
+    except (TypeError, ValueError):
+        pass
+
+    if not retry_header:
+        return None
+
+    retry_date_tuple = email.utils.parsedate_tz(retry_header)
+    if retry_date_tuple is None:
+        return None
+
+    retry_after = float(email.utils.mktime_tz(retry_date_tuple) - time.time())
+    if retry_after <= 0:
+        return None
+
+    return retry_after
+
+
+def _get_rate_limit_wait_time(rate_limit_error, fallback_delay):
+    """Prefer service-provided retry timing and fall back to jittered backoff."""
+    response = getattr(rate_limit_error, 'response', None)
+    response_headers = getattr(response, 'headers', None)
+    retry_after = _parse_retry_after_seconds(response_headers)
+
+    if retry_after is not None and retry_after <= 60:
+        return retry_after
+
+    return fallback_delay * random.uniform(1.0, 1.5)
+
 def generate_embedding(
     text,
     max_retries=5,
@@ -379,7 +432,11 @@ def generate_embedding(
             if retries > max_retries:
                 return None
 
-            wait_time = current_delay * random.uniform(1.0, 1.5)
+            wait_time = _get_rate_limit_wait_time(e, current_delay)
+            debug_print(
+                f"[EMBEDDING] Rate limited, retrying in {wait_time:.2f}s "
+                f"(attempt {retries}/{max_retries})"
+            )
             time.sleep(wait_time)
             current_delay *= delay_multiplier
 
@@ -476,7 +533,11 @@ def generate_embeddings_batch(
                 if retries > max_retries:
                     raise
 
-                wait_time = current_delay * random.uniform(1.0, 1.5)
+                wait_time = _get_rate_limit_wait_time(e, current_delay)
+                debug_print(
+                    f"[EMBEDDING_BATCH] Rate limited, retrying in {wait_time:.2f}s "
+                    f"(attempt {retries}/{max_retries})"
+                )
                 time.sleep(wait_time)
                 current_delay *= delay_multiplier
 

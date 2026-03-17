@@ -1256,6 +1256,31 @@ export class PluginModalStepper {
     this.updateSqlAuthInfo();
   }
 
+  getSqlTestPluginContext() {
+    if (!this.isEditMode || !this.originalPlugin) {
+      return null;
+    }
+
+    const originalPlugin = this.originalPlugin;
+    let scope = originalPlugin.scope;
+
+    if (!scope) {
+      if (originalPlugin.is_group) {
+        scope = 'group';
+      } else if (originalPlugin.is_global || window.location.pathname.includes('admin')) {
+        scope = 'global';
+      } else {
+        scope = 'user';
+      }
+    }
+
+    return {
+      id: originalPlugin.id || '',
+      name: originalPlugin.name || '',
+      scope
+    };
+  }
+
   async testSqlConnection() {
     const btn = document.getElementById('sql-test-connection-btn');
     const resultDiv = document.getElementById('sql-test-connection-result');
@@ -1297,6 +1322,11 @@ export class PluginModalStepper {
     }
 
     payload.timeout = parseInt(document.getElementById('sql-timeout')?.value) || 10;
+
+    const existingPluginContext = this.getSqlTestPluginContext();
+    if (existingPluginContext) {
+      payload.existing_plugin = existingPluginContext;
+    }
 
     // Show loading state
     const originalText = btn.innerHTML;
@@ -1532,6 +1562,13 @@ export class PluginModalStepper {
     } else if (plugin.type && (plugin.type.toLowerCase().includes('sql') || plugin.type.toLowerCase() === 'sql_schema' || plugin.type.toLowerCase() === 'sql_query')) {
       // Populate SQL fields
       const additionalFields = plugin.additionalFields || {};
+      const auth = plugin.auth || {};
+
+      const pluginVariant = plugin.type.toLowerCase() === 'sql_schema' ? 'schema' : 'query';
+      const pluginTypeRadio = document.querySelector(`input[name="sql-plugin-type"][value="${pluginVariant}"]`);
+      if (pluginTypeRadio) {
+        pluginTypeRadio.checked = true;
+      }
       
       // Database type - select the appropriate radio button
       const databaseType = additionalFields.database_type || 'sqlserver';
@@ -1540,56 +1577,40 @@ export class PluginModalStepper {
         dbTypeRadio.checked = true;
       }
       
-      // Connection method (default to connection string)
-      // Note: The connection method might not be saved in the data, so we'll default to connection_string
-      const connectionMethodRadio = document.querySelector('input[name="sql-connection-method"][value="connection_string"]');
+      const hasConnectionString = typeof additionalFields.connection_string === 'string' && additionalFields.connection_string.length > 0;
+      const connectionMethodValue = hasConnectionString ? 'connection_string' : 'parameters';
+      const connectionMethodRadio = document.querySelector(`input[name="sql-connection-method"][value="${connectionMethodValue}"]`);
       if (connectionMethodRadio) {
         connectionMethodRadio.checked = true;
       }
-      
-      // Build connection string from individual parameters if needed
-      let connectionString = plugin.endpoint || '';
-      if (!connectionString && additionalFields.server) {
-        // Build connection string from components
-        const server = additionalFields.server;
-        const database = additionalFields.database;
-        const driver = additionalFields.driver || 'ODBC Driver 17 for SQL Server';
-        
-        if (databaseType === 'azure_sql' || databaseType === 'sqlserver') {
-          connectionString = `Server=${server};Database=${database};Driver={${driver}};`;
-          if (additionalFields.username && additionalFields.password) {
-            connectionString += `Uid=${additionalFields.username};Pwd=${additionalFields.password};`;
-          }
-        } else if (databaseType === 'postgresql') {
-          connectionString = `Host=${server};Database=${database};`;
-          if (additionalFields.username && additionalFields.password) {
-            connectionString += `Username=${additionalFields.username};Password=${additionalFields.password};`;
-          }
-        } else if (databaseType === 'mysql') {
-          connectionString = `Server=${server};Database=${database};`;
-          if (additionalFields.username && additionalFields.password) {
-            connectionString += `Uid=${additionalFields.username};Pwd=${additionalFields.password};`;
-          }
-        }
-      }
-      
-      document.getElementById('sql-connection-string').value = connectionString;
-      
-      // Authentication
-      const auth = plugin.auth || {};
-      let sqlAuthType = 'username_password'; // Default for SQL plugins
-      
-      if (auth.type === 'user' || auth.type === 'username_password') {
+
+      document.getElementById('sql-connection-string').value = additionalFields.connection_string || '';
+      document.getElementById('sql-server').value = additionalFields.server || '';
+      document.getElementById('sql-database').value = additionalFields.database || '';
+      document.getElementById('sql-port').value = additionalFields.port || '';
+      document.getElementById('sql-driver').value = additionalFields.driver || 'ODBC Driver 17 for SQL Server';
+
+      let sqlAuthType = hasConnectionString ? 'connection_string_only' : 'username_password';
+
+      if (auth.type === 'servicePrincipal') {
+        sqlAuthType = 'service_principal';
+        document.getElementById('sql-client-id').value = auth.identity || auth.client_id || '';
+        document.getElementById('sql-client-secret').value = auth.key || auth.client_secret || '';
+        document.getElementById('sql-tenant-id').value = auth.tenantId || auth.tenant_id || '';
+      } else if (auth.type === 'user' || auth.type === 'username_password' || additionalFields.username || additionalFields.password) {
         sqlAuthType = 'username_password';
         document.getElementById('sql-username').value = additionalFields.username || '';
         document.getElementById('sql-password').value = additionalFields.password || '';
       } else if (auth.type === 'integrated' || auth.type === 'windows') {
         sqlAuthType = 'integrated';
-      } else if (auth.type === 'connection_string') {
-        sqlAuthType = 'connection_string';
+      } else if (auth.type === 'identity') {
+        sqlAuthType = databaseType === 'azure_sql' ? 'managed_identity' : 'integrated';
       }
       
       document.getElementById('sql-auth-type').value = sqlAuthType;
+      this.handleSqlDatabaseTypeChange();
+      this.handleSqlConnectionMethodChange();
+      this.handleSqlAuthTypeChange();
     } else {
       // Populate generic fields
       document.getElementById('plugin-endpoint-generic').value = plugin.endpoint || '';
@@ -1772,9 +1793,9 @@ export class PluginModalStepper {
           if (!clientId || !clientSecret || !tenantId) {
             throw new Error('Please enter client ID, client secret, and tenant ID');
           }
-          auth.client_id = clientId;
-          auth.client_secret = clientSecret;
-          auth.tenant_id = tenantId;
+          auth.identity = clientId;
+          auth.key = clientSecret;
+          auth.tenantId = tenantId;
           break;
           
         case 'integrated':

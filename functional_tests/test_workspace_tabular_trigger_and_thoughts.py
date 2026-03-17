@@ -2,7 +2,7 @@
 # test_workspace_tabular_trigger_and_thoughts.py
 """
 Functional test for workspace-selected tabular trigger and per-tool thoughts fix.
-Version: 0.239.035
+Version: 0.239.114
 Implemented in: 0.239.035
 
 This test ensures that explicitly selected workspace tabular files still trigger
@@ -19,6 +19,7 @@ from types import SimpleNamespace
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(os.path.join(ROOT_DIR, 'application', 'single_app'))
 ROUTE_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'route_backend_chats.py')
 
 
@@ -34,13 +35,8 @@ def load_tabular_thought_helpers():
     selected_nodes = []
 
     for node in parsed.body:
-        if isinstance(node, ast.Assign):
-            target_names = {
-                target.id for target in node.targets if isinstance(target, ast.Name)
-            }
-            if 'TABULAR_THOUGHT_EXCLUDED_PARAMETER_NAMES' in target_names:
-                selected_nodes.append(node)
-        elif isinstance(node, ast.FunctionDef) and node.name in {
+        if isinstance(node, ast.FunctionDef) and node.name in {
+            'get_tabular_thought_excluded_parameter_names',
             'get_tabular_invocation_result_payload',
             'get_tabular_invocation_error_message',
             'format_tabular_thought_parameter_value',
@@ -168,9 +164,10 @@ def test_tabular_sk_prompt_requires_tool_use():
                 'You MUST use one or more ' in content
                 and 'tabular_processing plugin functions before answering.' in content
             ),
-            'retry mode prompt': 'RETRY MODE: Your previous attempt did not execute the data-analysis tools.' in content,
+            'retry mode prompt': 'RETRY MODE: Your previous attempt did not execute a usable analytical tool call.' in content,
             'retry logging': 'returned narrative without tool use; retrying' in content,
-            'strict retry attempts': 'maximum_auto_invoke_attempts=10 if force_tool_use else 7' in content,
+            'required retry mode': 'FunctionChoiceBehavior.Required(' in content,
+            'three-pass retry loop': 'for attempt_number in range(1, 4):' in content,
         }
 
         failed_checks = [name for name, passed in checks.items() if not passed]

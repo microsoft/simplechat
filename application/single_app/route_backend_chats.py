@@ -32,24 +32,25 @@ from swagger_wrapper import swagger_route, get_auth_security
 from functions_thoughts import ThoughtTracker
 
 
-TABULAR_DISCOVERY_FUNCTION_NAMES = {
-    'list_tabular_files',
-    'describe_tabular_file',
-}
-TABULAR_ANALYSIS_FUNCTION_NAMES = {
-    'lookup_value',
-    'aggregate_column',
-    'filter_rows',
-    'query_tabular_data',
-    'group_by_aggregate',
-    'group_by_datetime_component',
-}
-TABULAR_THOUGHT_EXCLUDED_PARAMETER_NAMES = {
-    'user_id',
-    'conversation_id',
-    'group_id',
-    'public_workspace_id',
-}
+def get_tabular_discovery_function_names():
+    """Return discovery-oriented tabular function names from the plugin."""
+    from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
+
+    return TabularProcessingPlugin.get_discovery_function_names()
+
+
+def get_tabular_analysis_function_names():
+    """Return analytical tabular function names from the plugin."""
+    from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
+
+    return TabularProcessingPlugin.get_analysis_function_names()
+
+
+def get_tabular_thought_excluded_parameter_names():
+    """Return tabular parameter names hidden from thought details."""
+    from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
+
+    return TabularProcessingPlugin.get_thought_excluded_parameter_names()
 
 
 def get_kernel():
@@ -86,9 +87,9 @@ def split_tabular_plugin_invocations(invocations):
     for invocation in invocations or []:
         function_name = getattr(invocation, 'function_name', '')
 
-        if function_name in TABULAR_DISCOVERY_FUNCTION_NAMES:
+        if function_name in get_tabular_discovery_function_names():
             discovery_invocations.append(invocation)
-        elif function_name in TABULAR_ANALYSIS_FUNCTION_NAMES:
+        elif function_name in get_tabular_analysis_function_names():
             analytical_invocations.append(invocation)
         else:
             other_invocations.append(invocation)
@@ -132,7 +133,7 @@ def split_tabular_analysis_invocations(invocations):
 
     for invocation in invocations or []:
         function_name = getattr(invocation, 'function_name', '')
-        if function_name not in TABULAR_ANALYSIS_FUNCTION_NAMES:
+        if function_name not in get_tabular_analysis_function_names():
             continue
 
         if get_tabular_invocation_error_message(invocation):
@@ -218,7 +219,7 @@ def get_tabular_tool_thought_payloads(invocations):
 
         detail_parts = []
         for parameter_name, parameter_value in parameters.items():
-            if parameter_name in TABULAR_THOUGHT_EXCLUDED_PARAMETER_NAMES:
+            if parameter_name in get_tabular_thought_excluded_parameter_names():
                 continue
 
             rendered_value = format_tabular_thought_parameter_value(parameter_value)
@@ -392,7 +393,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
         analysis_function_filters = {
             'included_functions': [
                 f"tabular_processing-{function_name}"
-                for function_name in sorted(TABULAR_ANALYSIS_FUNCTION_NAMES)
+                for function_name in sorted(get_tabular_analysis_function_names())
             ]
         }
         for fname in tabular_filenames:

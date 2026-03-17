@@ -2,7 +2,7 @@
 # test_tabular_tool_error_retry_and_thoughts.py
 """
 Functional test for tabular tool-error retry and thought visibility fix.
-Version: 0.239.037
+Version: 0.239.114
 Implemented in: 0.239.037
 
 This test ensures that analytical tabular tool calls returning JSON error
@@ -18,14 +18,13 @@ from types import SimpleNamespace
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(ROOT_DIR)
+sys.path.append(os.path.join(ROOT_DIR, 'application', 'single_app'))
 
 ROUTE_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'route_backend_chats.py')
-TARGET_ASSIGNMENTS = {
-    'TABULAR_DISCOVERY_FUNCTION_NAMES',
-    'TABULAR_ANALYSIS_FUNCTION_NAMES',
-    'TABULAR_THOUGHT_EXCLUDED_PARAMETER_NAMES',
-}
 TARGET_FUNCTIONS = {
+    'get_tabular_discovery_function_names',
+    'get_tabular_analysis_function_names',
+    'get_tabular_thought_excluded_parameter_names',
     'get_tabular_invocation_result_payload',
     'get_tabular_invocation_error_message',
     'split_tabular_analysis_invocations',
@@ -46,13 +45,7 @@ def load_tabular_route_helpers():
     selected_nodes = []
 
     for node in parsed.body:
-        if isinstance(node, ast.Assign):
-            target_names = {
-                target.id for target in node.targets if isinstance(target, ast.Name)
-            }
-            if target_names & TARGET_ASSIGNMENTS:
-                selected_nodes.append(node)
-        elif isinstance(node, ast.FunctionDef) and node.name in TARGET_FUNCTIONS:
+        if isinstance(node, ast.FunctionDef) and node.name in TARGET_FUNCTIONS:
             selected_nodes.append(node)
 
     module = ast.Module(body=selected_nodes, type_ignores=[])

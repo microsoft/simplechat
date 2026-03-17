@@ -31,7 +31,25 @@ from config import (
 class TabularProcessingPlugin:
     """Provides data analysis functions on tabular files stored in blob storage."""
 
-    SUPPORTED_EXTENSIONS = {'.csv', '.xlsx', '.xls', '.xlsm'}
+    SUPPORTED_EXTENSIONS = tuple(f'.{extension}' for extension in sorted(TABULAR_EXTENSIONS))
+    DISCOVERY_FUNCTION_NAMES = (
+        'list_tabular_files',
+        'describe_tabular_file',
+    )
+    ANALYSIS_FUNCTION_NAMES = (
+        'lookup_value',
+        'aggregate_column',
+        'filter_rows',
+        'query_tabular_data',
+        'group_by_aggregate',
+        'group_by_datetime_component',
+    )
+    THOUGHT_EXCLUDED_PARAMETER_NAMES = (
+        'user_id',
+        'conversation_id',
+        'group_id',
+        'public_workspace_id',
+    )
     DAY_NAME_ORDER = [
         'Monday',
         'Tuesday',
@@ -61,6 +79,21 @@ class TabularProcessingPlugin:
         self._blob_data_cache = {}  # Per-instance cache: (container, blob_name) -> raw bytes
         self._workbook_metadata_cache = {}  # Per-instance cache: (container, blob_name) -> workbook metadata
         self._default_sheet_overrides = {}  # (container, blob_name) -> default sheet name
+
+    @classmethod
+    def get_discovery_function_names(cls):
+        """Return discovery-oriented kernel function names exposed by the plugin."""
+        return cls.DISCOVERY_FUNCTION_NAMES
+
+    @classmethod
+    def get_analysis_function_names(cls):
+        """Return analytical kernel function names exposed by the plugin."""
+        return cls.ANALYSIS_FUNCTION_NAMES
+
+    @classmethod
+    def get_thought_excluded_parameter_names(cls):
+        """Return parameter names omitted from user-visible thought payloads."""
+        return cls.THOUGHT_EXCLUDED_PARAMETER_NAMES
 
     def set_default_sheet(self, container_name: str, blob_name: str, sheet_name: str):
         """Set the default sheet for a workbook so the model doesn't need to specify it."""

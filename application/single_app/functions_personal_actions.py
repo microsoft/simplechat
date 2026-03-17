@@ -109,8 +109,18 @@ def save_personal_action(user_id, action_data):
     try:
         # Check if an action with this name already exists
         existing_action = None
+        if action_data.get('id'):
+            existing_action = get_personal_action(
+                user_id,
+                action_data['id'],
+                return_type=SecretReturnType.NAME,
+            )
         if 'name' in action_data and action_data['name']:
-            existing_action = get_personal_action(user_id, action_data['name'])
+            existing_action = existing_action or get_personal_action(
+                user_id,
+                action_data['name'],
+                return_type=SecretReturnType.NAME,
+            )
         
         # Preserve existing ID if updating, or generate new ID if creating
         now = datetime.utcnow().isoformat()
@@ -156,7 +166,12 @@ def save_personal_action(user_id, action_data):
             action_data['auth']['type'] = 'identity'
         
         # Store secrets in Key Vault before upsert
-        action_data = keyvault_plugin_save_helper(action_data, scope_value=user_id, scope="user")
+        action_data = keyvault_plugin_save_helper(
+            action_data,
+            scope_value=user_id,
+            scope="user",
+            existing_plugin=existing_action,
+        )
         result = cosmos_personal_actions_container.upsert_item(body=action_data)
         # Remove Cosmos metadata from response
         cleaned_result = {k: v for k, v in result.items() if not k.startswith('_')}
@@ -179,7 +194,7 @@ def delete_personal_action(user_id, action_id):
     """
     try:
         # Try to find the action first to get the correct ID
-        action = get_personal_action(user_id, action_id)
+        action = get_personal_action(user_id, action_id, return_type=SecretReturnType.NAME)
         if not action:
             return False
             

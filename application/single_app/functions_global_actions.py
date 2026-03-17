@@ -106,7 +106,12 @@ def save_global_action(action_data, user_id=None):
         action_data['updated_at'] = now
         print(f"💾 Saving global action: {action_data.get('name', 'Unknown')}")
         # Store secrets in Key Vault before upsert
-        action_data = keyvault_plugin_save_helper(action_data, scope_value=action_data.get('id'), scope="global")
+        action_data = keyvault_plugin_save_helper(
+            action_data,
+            scope_value=action_data.get('id'),
+            scope="global",
+            existing_plugin=existing_action,
+        )
         result = cosmos_global_actions_container.upsert_item(body=action_data)
         print(f"✅ Global action saved successfully: {result['id']}")
         return result
@@ -130,7 +135,7 @@ def delete_global_action(action_id):
     try:
         print(f"🗑️ Deleting global action: {action_id}")
         # Delete secrets from Key Vault before deleting the action
-        action = get_global_action(action_id)
+        action = get_global_action(action_id, return_type=SecretReturnType.NAME)
         if action:
             keyvault_plugin_delete_helper(action, scope_value=action_id, scope="global")
         cosmos_global_actions_container.delete_item(

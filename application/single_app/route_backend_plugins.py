@@ -27,7 +27,13 @@ from functions_group_actions import (
     delete_group_action,
     validate_group_action_payload,
 )
-from functions_keyvault import SecretReturnType
+from functions_keyvault import (
+    SecretReturnType,
+    redact_plugin_secret_values,
+    retrieve_secret_from_key_vault_by_full_name,
+    ui_trigger_word,
+    validate_secret_name_dynamic,
+)
 #from functions_personal_actions import delete_personal_action
 
 from functions_debug import debug_print
@@ -216,6 +222,51 @@ def get_plugin_types():
 
 bpap = Blueprint('admin_plugins', __name__)
 
+
+def _redact_plugin_for_logging(plugin):
+    """Return a plugin manifest with secret-bearing values redacted for logging."""
+    if not isinstance(plugin, dict):
+        return plugin
+    return redact_plugin_secret_values(plugin)
+
+
+def _resolve_secret_value_for_sql_test(value, field_name):
+    """Resolve a Key Vault reference for SQL test-connection flows."""
+    if not isinstance(value, str) or not value:
+        return value
+    if not validate_secret_name_dynamic(value):
+        return value
+
+    resolved_value = retrieve_secret_from_key_vault_by_full_name(value)
+    if validate_secret_name_dynamic(resolved_value):
+        raise ValueError(f"Unable to resolve stored Key Vault secret for SQL field '{field_name}'.")
+    return resolved_value
+
+
+def _load_existing_plugin_for_sql_test(plugin_context, user_id):
+    """Load an existing plugin manifest with Key Vault reference names for edit-time SQL tests."""
+    if not isinstance(plugin_context, dict):
+        return None
+
+    plugin_scope = (plugin_context.get('scope') or 'user').lower()
+    plugin_identifier = plugin_context.get('id') or plugin_context.get('name')
+    if not plugin_identifier:
+        return None
+
+    if plugin_scope == 'group':
+        active_group = require_active_group(user_id)
+        assert_group_role(
+            user_id,
+            active_group,
+            allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+        )
+        return get_group_action(active_group, plugin_identifier, return_type=SecretReturnType.NAME)
+
+    if plugin_scope == 'global':
+        return get_global_action(plugin_identifier, return_type=SecretReturnType.NAME)
+
+    return get_personal_action(user_id, plugin_identifier, return_type=SecretReturnType.NAME)
+
 # === USER PLUGINS ENDPOINTS ===
 @bpap.route('/api/user/plugins', methods=['GET'])
 @swagger_route(security=get_auth_security())
@@ -273,12 +324,14 @@ def set_user_plugins():
     global_plugin_names = set(p['name'].lower() for p in global_plugins if 'name' in p)
     
     # Get current personal actions to determine what to delete
-    current_actions = get_personal_actions(user_id)
+    current_actions = get_personal_actions(user_id, return_type=SecretReturnType.NAME)
     current_action_names = set(action['name'] for action in current_actions)
+    current_action_ids = {action.get('id') for action in current_actions if action.get('id')}
     
     # Filter out plugins whose name matches a global plugin name
     filtered_plugins = []
     new_plugin_names = set()
+    new_plugin_ids = set()
     
     for plugin in plugins:
         if plugin.get('name', '').lower() in global_plugin_names:
@@ -295,7 +348,7 @@ def set_user_plugins():
         plugin.setdefault('additionalFields', {})
         
         # Remove Cosmos DB system fields that are not part of the plugin schema
-        cosmos_fields = ['_attachments', '_etag', '_rid', '_self', '_ts', 'created_at', 'updated_at', 'id', 'user_id', 'last_updated']
+        cosmos_fields = ['_attachments', '_etag', '_rid', '_self', '_ts', 'created_at', 'updated_at', 'user_id', 'last_updated']
         for field in cosmos_fields:
             if field in plugin:
                 del plugin[field]
@@ -329,23 +382,34 @@ def set_user_plugins():
             else:
                 plugin['type'] = 'unknown'  # Default type
         
-        print(f"Plugin build: {plugin}")
+        debug_print(f"Plugin build: {_redact_plugin_for_logging(plugin)}")
         validation_error = validate_plugin(plugin)
         if validation_error:
             return jsonify({'error': f'Plugin validation failed: {validation_error}'}), 400
         
         filtered_plugins.append(plugin)
         new_plugin_names.add(plugin['name'])
+        if plugin.get('id'):
+            new_plugin_ids.add(plugin['id'])
     
     # Save each plugin to the personal_actions container
+    plugins_to_delete = []
     try:
         for plugin in filtered_plugins:
             save_personal_action(user_id, plugin)
         
         # Delete any plugins that are no longer in the list
-        plugins_to_delete = current_action_names - new_plugin_names
-        for plugin_name in plugins_to_delete:
-            delete_personal_action(user_id, plugin_name)
+        for action in current_actions:
+            action_id = action.get('id')
+            action_name = action.get('name')
+            if action_id and action_id in new_plugin_ids:
+                continue
+            if action_name in new_plugin_names:
+                continue
+            plugins_to_delete.append(action)
+
+        for action in plugins_to_delete:
+            delete_personal_action(user_id, action.get('id') or action.get('name'))
             
     except Exception as e:
         debug_print(f"Error saving personal actions for user {user_id}: {e}")
@@ -356,12 +420,14 @@ def set_user_plugins():
         p_name = plugin.get('name', '')
         p_id = plugin.get('id', '')
         p_type = plugin.get('type', '')
-        if p_name in current_action_names:
+        if (p_id and p_id in current_action_ids) or p_name in current_action_names:
             log_action_update(user_id=user_id, action_id=p_id, action_name=p_name, action_type=p_type, scope='personal')
         else:
             log_action_creation(user_id=user_id, action_id=p_id, action_name=p_name, action_type=p_type, scope='personal')
-    for plugin_name in (current_action_names - new_plugin_names):
-        log_action_deletion(user_id=user_id, action_id=plugin_name, action_name=plugin_name, scope='personal')
+    for action in plugins_to_delete:
+        action_id = action.get('id', '')
+        action_name = action.get('name', '')
+        log_action_deletion(user_id=user_id, action_id=action_id, action_name=action_name, scope='personal')
 
     log_event("User plugins updated", extra={"user_id": user_id, "plugins_count": len(filtered_plugins)})
     return jsonify({'success': True})
@@ -706,7 +772,7 @@ def add_plugin():
         allowed_types = discover_plugin_types()
         validation_error = validate_plugin(new_plugin)
         if validation_error:
-            log_event("Add plugin failed: validation error", level=logging.WARNING, extra={"action": "add", "plugin": new_plugin, "error": validation_error})
+            log_event("Add plugin failed: validation error", level=logging.WARNING, extra={"action": "add", "plugin": _redact_plugin_for_logging(new_plugin), "error": validation_error})
             return jsonify({'error': validation_error}), 400
         
         if allowed_types is not None and new_plugin.get('type') not in allowed_types:
@@ -717,7 +783,7 @@ def add_plugin():
         is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(new_plugin, plugin_type)
         if not is_valid:
             log_event("Add plugin failed: manifest validation error", level=logging.WARNING, 
-                     extra={"action": "add", "plugin": new_plugin, "errors": validation_errors})
+                     extra={"action": "add", "plugin": _redact_plugin_for_logging(new_plugin), "errors": validation_errors})
             return jsonify({'error': f"Manifest validation failed: {'; '.join(validation_errors)}"}), 400
         
         # Merge with schema to ensure all required fields are present
@@ -728,7 +794,7 @@ def add_plugin():
         
         # Prevent duplicate names (case-insensitive)
         if any(p['name'].lower() == new_plugin['name'].lower() for p in plugins):
-            log_event("Add plugin failed: duplicate name", level=logging.WARNING, extra={"action": "add", "plugin": new_plugin})
+            log_event("Add plugin failed: duplicate name", level=logging.WARNING, extra={"action": "add", "plugin": _redact_plugin_for_logging(new_plugin)})
             return jsonify({'error': 'Plugin with this name already exists.'}), 400
         
         # Assign a unique ID
@@ -739,7 +805,7 @@ def add_plugin():
         save_global_action(new_plugin, user_id=str(get_current_user_id()))
         
         log_action_creation(user_id=str(get_current_user_id()), action_id=plugin_id, action_name=new_plugin.get('name', ''), action_type=new_plugin.get('type', ''), scope='global')
-        log_event("Plugin added", extra={"action": "add", "plugin": new_plugin, "user": str(get_current_user_id())})
+        log_event("Plugin added", extra={"action": "add", "plugin": _redact_plugin_for_logging(new_plugin), "user": str(get_current_user_id())})
         
         # --- HOT RELOAD TRIGGER ---
         setattr(builtins, "kernel_reload_needed", True)
@@ -761,7 +827,7 @@ def edit_plugin(plugin_name):
         allowed_types = discover_plugin_types()
         validation_error = validate_plugin(updated_plugin)
         if validation_error:
-            log_event("Edit plugin failed: validation error", level=logging.WARNING, extra={"action": "edit", "plugin": updated_plugin, "error": validation_error})
+            log_event("Edit plugin failed: validation error", level=logging.WARNING, extra={"action": "edit", "plugin": _redact_plugin_for_logging(updated_plugin), "error": validation_error})
             return jsonify({'error': validation_error}), 400
         
         if allowed_types is not None and updated_plugin.get('type') not in allowed_types:
@@ -772,7 +838,7 @@ def edit_plugin(plugin_name):
         is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(updated_plugin, plugin_type)
         if not is_valid:
             log_event("Edit plugin failed: manifest validation error", level=logging.WARNING, 
-                     extra={"action": "edit", "plugin": updated_plugin, "errors": validation_errors})
+                     extra={"action": "edit", "plugin": _redact_plugin_for_logging(updated_plugin), "errors": validation_errors})
             return jsonify({'error': f"Manifest validation failed: {'; '.join(validation_errors)}"}), 400
         
         # Merge with schema to ensure all required fields are present
@@ -789,19 +855,24 @@ def edit_plugin(plugin_name):
                 break
         
         if found_plugin:
+            duplicate_name = updated_plugin.get('name', '').lower()
+            if duplicate_name and any(
+                p.get('name', '').lower() == duplicate_name and p.get('id') != found_plugin.get('id')
+                for p in plugins
+            ):
+                log_event("Edit plugin failed: duplicate name", level=logging.WARNING, extra={"action": "edit", "plugin": _redact_plugin_for_logging(updated_plugin)})
+                return jsonify({'error': 'Plugin with this name already exists.'}), 400
+
             # Preserve the existing ID if it exists
             if 'id' in found_plugin:
                 updated_plugin['id'] = found_plugin['id']
             else:
                 updated_plugin['id'] = str(uuid.uuid4())
             
-            # Delete old and save updated
-            if 'id' in found_plugin:
-                delete_global_action(found_plugin['id'])
             save_global_action(updated_plugin, user_id=str(get_current_user_id()))
             
             log_action_update(user_id=str(get_current_user_id()), action_id=updated_plugin.get('id', ''), action_name=plugin_name, action_type=updated_plugin.get('type', ''), scope='global')
-            log_event("Plugin edited", extra={"action": "edit", "plugin": updated_plugin, "user": str(get_current_user_id())})
+            log_event("Plugin edited", extra={"action": "edit", "plugin": _redact_plugin_for_logging(updated_plugin), "user": str(get_current_user_id())})
             # --- HOT RELOAD TRIGGER ---
             setattr(builtins, "kernel_reload_needed", True)
             return jsonify({'success': True})
@@ -982,6 +1053,7 @@ def _merge_group_and_global_actions(group_actions, global_actions):
 def test_sql_connection():
     """Test a SQL database connection using provided configuration."""
     data = request.get_json(silent=True) or {}
+    user_id = get_current_user_id()
     database_type = (data.get('database_type') or 'sqlserver').lower()
     connection_method = data.get('connection_method', 'parameters')
     connection_string = data.get('connection_string', '')
@@ -993,6 +1065,39 @@ def test_sql_connection():
     password = data.get('password', '')
     auth_type = data.get('auth_type', 'username_password')
     timeout = min(int(data.get('timeout', 10)), 15)  # Cap at 15 seconds for test
+
+    try:
+        existing_plugin = _load_existing_plugin_for_sql_test(data.get('existing_plugin'), user_id)
+    except PermissionError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 403
+    except LookupError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
+    existing_additional_fields = {}
+    if isinstance(existing_plugin, dict) and isinstance(existing_plugin.get('additionalFields'), dict):
+        existing_additional_fields = existing_plugin['additionalFields']
+
+    if connection_string == ui_trigger_word:
+        connection_string = existing_additional_fields.get('connection_string', '')
+    if password == ui_trigger_word:
+        password = existing_additional_fields.get('password', '')
+
+    unresolved_fields = []
+    if connection_string == ui_trigger_word:
+        unresolved_fields.append('connection string')
+    if password == ui_trigger_word:
+        unresolved_fields.append('password')
+    if unresolved_fields:
+        field_list = ', '.join(unresolved_fields)
+        return jsonify({'success': False, 'error': f"Stored SQL secret could not be resolved for testing. Re-enter the {field_list}."}), 400
+
+    try:
+        connection_string = _resolve_secret_value_for_sql_test(connection_string, 'connection_string')
+        password = _resolve_secret_value_for_sql_test(password, 'password')
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
 
     # Map azure_sql to sqlserver
     if database_type in ('azure_sql', 'azuresql'):
