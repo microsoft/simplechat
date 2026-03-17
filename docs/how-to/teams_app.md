@@ -80,7 +80,7 @@ CLIENT_ID=your-azure-ad-client-id
 TENANT_ID=your-azure-ad-tenant-id
 MICROSOFT_PROVIDER_AUTHENTICATION_SECRET=your-client-secret
 
-# Teams Frame Ancestors (adjust domains), awalys needed
+# Teams Frame Ancestors (adjust domains), always needed
 TEAMS_FRAME_ANCESTORS=https://teams.microsoft.com https://*.teams.microsoft.com https://*.cloud.microsoft
 
 # Teams Frame Origins (adjust domains), needed only if not commercial or AzureUSGovernment
