@@ -23,6 +23,7 @@ param authenticationType string
 
 @secure()
 param enterpriseAppClientSecret string = ''
+param enableTeamsSSO bool = false
 param keyVaultUri string
 param enablePrivateNetworking bool
 param appServiceSubnetId string = ''
@@ -113,6 +114,7 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
           name: 'MICROSOFT_PROVIDER_AUTHENTICATION_SECRET'
           value: '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/enterprise-app-client-secret)'
         }
+        {name: 'ENABLE_TEAMS_SSO', value: enableTeamsSSO ? 'true' : 'false' }
         { name: 'DOCKER_REGISTRY_SERVER_URL', value: 'https://${acrService.name}${acrDomain}' }
 
         // Only add this setting if authenticationType is 'key'
@@ -216,7 +218,7 @@ resource webAppDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-pre
 }
 
 // Configure authentication settings for the web app
-resource authSettings 'Microsoft.Web/sites/config@2022-03-01' = {
+resource authSettings 'Microsoft.Web/sites/config@2022-03-01' = if (!enableTeamsSSO) {
   name: 'authsettingsV2'
   parent: webApp
   properties: {

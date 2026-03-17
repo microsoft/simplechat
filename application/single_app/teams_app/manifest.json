@@ -1,7 +1,7 @@
 {
   "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.25/MicrosoftTeams.schema.json",
   "manifestVersion": "1.25",
-  "version": "1.0.4",
+  "version": "1.0.6",
   "id": "d4871930-f34f-462e-a709-befc11081da6",
   "name": {
     "short": "Simple Chat 2",
