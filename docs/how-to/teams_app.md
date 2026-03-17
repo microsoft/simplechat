@@ -83,7 +83,7 @@ MICROSOFT_PROVIDER_AUTHENTICATION_SECRET=your-client-secret
 # Teams SSO Configuration
 ENABLE_TEAMS_SSO=true
 
-# AirGap Origin Configuration (adjust domains)
+# AirGap Frame Configuration (adjust domains)
 TEAMS_FRAME_ANCESTORS=https://teams.microsoft.com https://*.teams.microsoft.com https://*.cloud.microsoft
 CUSTOM_TEAMS_ORIGINS=["https://teams.microsoft.com", "https://*.teams.microsoft.com", "https://*.cloud.microsoft"]
 ```
@@ -94,7 +94,7 @@ App Service Authentication (EasyAuth) must be disabled for Teams SSO to work in 
 
 ## Teams App Manifest Configuration
 
-Create or update your Teams app manifest (`manifest.json`), see (teams_app)[../../applications/teams_app] folder for template.
+Create or update your Teams app manifest (`manifest.json`), see [teams_app](../../applications/teams_app) folder for template.
 
 ### Key Manifest Fields for SSO
 
