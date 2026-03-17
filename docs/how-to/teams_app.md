@@ -94,7 +94,7 @@ App Service Authentication (EasyAuth) must be disabled for Teams SSO to work in 
 
 ## Teams App Manifest Configuration
 
-Create or update your Teams app manifest (`manifest.json`), see [teams_app](../../applications/teams_app) folder for template.
+Create or update your Teams app manifest (`manifest.json`), see [teams_app](../../application/teams_app) folder for template.
 
 ### Key Manifest Fields for SSO
 
