@@ -526,7 +526,7 @@ def is_idle_timeout_enabled(settings=None):
     Returns:
         bool: True when idle-timeout enforcement should run; otherwise False.
 
-    Raises:
+    Raise
         None: Unexpected values are coerced to boolean-compatible behavior.
     """
     if settings is None:

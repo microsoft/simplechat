@@ -1433,7 +1433,14 @@
                         <label class="form-check-label ms-2" for="enable_idle_timeout">
                             Enable Idle Session Timeout and Warning
                         </label>
-                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, inactive users receive a warning and are automatically logged out after the configured timeout."></i>
+                        <button
+                             type="button"
+                             class="btn btn-link p-0 ms-2"
+                             data-bs-toggle="tooltip"
+                             title="When enabled, inactive users receive a warning and are automatically logged out after the configured timeout."
+                             aria-label="More information about idle timeout settings">
+                             <i class="bi bi-info-circle" aria-hidden="true"></i>
+                         </button>
                     </div>
                     <div id="idle_timeout_settings" class="{% if settings.enable_idle_timeout is not defined or not settings.enable_idle_timeout %}d-none{% endif %}">
                         <div class="mb-3">

@@ -236,9 +236,9 @@ def register_route_frontend_authentication(app):
             elif HOME_REDIRECT_URL:
                 logout_uri = HOME_REDIRECT_URL
             else:
-                logout_uri = url_for('index', _external=True, _scheme='https')
+                logout_uri = url_for('index', _external=True)
         else:
-            logout_uri = url_for('index', _external=True, _scheme='https')
+            logout_uri = url_for('index', _external=True)
 
         return redirect(logout_uri)
 
@@ -266,9 +266,9 @@ def register_route_frontend_authentication(app):
                 # Fall back to environment variable if Front Door is enabled but no URL is set
                 logout_uri = HOME_REDIRECT_URL
             else:
-                logout_uri = url_for('index', _external=True, _scheme='https')
+                logout_uri = url_for('index', _external=True)
         else:
-            logout_uri = url_for('index', _external=True, _scheme='https')
+            logout_uri = url_for('index', _external=True)
         
         print(f"Front Door enabled: {settings.get('enable_front_door', False)}")
         print(f"Front Door URL: {settings.get('front_door_url')}")

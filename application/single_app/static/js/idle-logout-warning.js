@@ -192,13 +192,22 @@
 
                 if (pendingUserInitiatedRefresh) {
                     pendingUserInitiatedRefresh = false;
-                    refreshServerSession(true, true);
+                    fireAndForgetSessionRefresh(true, true);
                 }
             }
         }
 
+        function fireAndForgetSessionRefresh(forceLogoutOnFailure, userInitiated) {
+            void refreshServerSession(forceLogoutOnFailure, userInitiated).catch(function (error) {
+                console.error('Unexpected session refresh error:', error);
+                if (forceLogoutOnFailure) {
+                    logoutNow();
+                }
+            });
+        }
+
         staySignedInButton.addEventListener('click', function () {
-            refreshServerSession(true, true);
+            fireAndForgetSessionRefresh(true, true);
         });
 
         logoutNowButton.addEventListener('click', function () {
@@ -237,7 +246,7 @@
             scheduleIdleTimers();
 
             if ((now - lastServerHeartbeatAt) >= HEARTBEAT_MIN_INTERVAL_MS) {
-                refreshServerSession(false, false);
+                fireAndForgetSessionRefresh(false, false);
             }
         }
     });
