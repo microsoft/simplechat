@@ -94,7 +94,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.239.005"
+VERSION = "0.239.011"
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
@@ -178,7 +178,10 @@ WORD_CHUNK_SIZE = 400
 
 if AZURE_ENVIRONMENT == "custom" or CUSTOM_IDENTITY_URL_VALUE or CUSTOM_GRAPH_AUTHORITY_URL_VALUE:
     AUTHORITY = f"{CUSTOM_IDENTITY_URL_VALUE.rstrip('/')}/{TENANT_ID}"
-    authority = CUSTOM_GRAPH_AUTHORITY_URL_VALUE or CUSTOM_IDENTITY_URL_VALUE or AUTHORITY.rstrip(f'/{TENANT_ID}')
+    base_authority = CUSTOM_GRAPH_AUTHORITY_URL_VALUE or CUSTOM_IDENTITY_URL_VALUE
+    if not base_authority:
+        base_authority = AUTHORITY.rstrip('/').removesuffix(f"/{TENANT_ID}")
+    authority = base_authority
 elif AZURE_ENVIRONMENT == "usgovernment":
     AUTHORITY = f"https://login.microsoftonline.us/{TENANT_ID}"
     authority = AzureAuthorityHosts.AZURE_GOVERNMENT

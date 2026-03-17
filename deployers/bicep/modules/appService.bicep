@@ -36,10 +36,8 @@ param customGraphUrl string?
 param customIdentityUrl string?
 @description('Custom Resource Manager URL, e.g. https://management.usgovcloudapi.net')
 param customResourceManagerUrl string?
-
 @description('Custom Cognitive Services scope ex: https://cognitiveservices.azure.com/.default')
 param customCognitiveServicesScope string?
-
 @description('Custom search resource URL for token audience, e.g. https://search.azure.us')
 param customSearchResourceUrl string?
 
@@ -166,17 +164,17 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
         { name: 'InstrumentationEngine_EXTENSION_VERSION', value: 'disabled' }
         { name: 'SnapshotDebugger_EXTENSION_VERSION', value: 'disabled' }
         { name: 'XDT_MicrosoftApplicationInsights_BaseExtensions', value: 'disabled' }
-        { name: 'XDT_MicrosoftApplicationInsights_Mode', value: 'recommended' }
-        { name: 'XDT_MicrosoftApplicationInsights_PreemptSdk', value: 'disabled' }
+        {name: 'XDT_MicrosoftApplicationInsights_Mode', value: 'recommended' }
+        {name: 'XDT_MicrosoftApplicationInsights_PreemptSdk', value: 'disabled' }
         ...(azurePlatform == 'custom' ? [
-        {name: 'CUSTOM_GRAPH_URL_VALUE', value: customGraphUrl}
-        {name: 'CUSTOM_IDENTITY_URL_VALUE', value: customIdentityUrl}
-        {name: 'CUSTOM_RESOURCE_MANAGER_URL_VALUE', value: customResourceManagerUrl}
-        {name: 'CUSTOM_BLOB_STORAGE_URL_VALUE', value: customBlobStorageSuffix}
-        {name: 'CUSTOM_COGNITIVE_SERVICES_URL_VALUE', value: customCognitiveServicesScope}
-        {name: 'CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE', value: customSearchResourceUrl}
+        {name: 'CUSTOM_GRAPH_URL_VALUE', value: customGraphUrl ?? ''}
+        {name: 'CUSTOM_IDENTITY_URL_VALUE', value: customIdentityUrl ?? ''}
+        {name: 'CUSTOM_RESOURCE_MANAGER_URL_VALUE', value: customResourceManagerUrl ?? ''}
+        {name: 'CUSTOM_BLOB_STORAGE_URL_VALUE', value: customBlobStorageSuffix ?? ''}
+        {name: 'CUSTOM_COGNITIVE_SERVICES_URL_VALUE', value: customCognitiveServicesScope ?? ''}
+        {name: 'CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE', value: customSearchResourceUrl ?? ''}
         {name: 'KEY_VAULT_DOMAIN', value: az.environment().suffixes.keyvaultDns}
-        {name: 'CUSTOM_OIDC_METADATA_URL_VALUE', value: openIdMetadataUrl}]
+        {name: 'CUSTOM_OIDC_METADATA_URL_VALUE', value: openIdMetadataUrl ?? ''}]
         : [])
       ]
     }
@@ -231,7 +229,7 @@ resource authSettings 'Microsoft.Web/sites/config@2022-03-01' = {
       azureActiveDirectory: {
         enabled: true
         registration: {
-          openIdIssuer: azurePlatform == 'AzureUSGovernment' ? 'https://login.microsoftonline.us/${tenant().tenantId}/' : 'https://sts.windows.net/${tenant().tenantId}/'
+          openIdIssuer: '${az.environment().authentication.loginEndpoint}${tenant().tenantId}/'
           clientId: enterpriseAppClientId
           clientSecretSettingName: 'MICROSOFT_PROVIDER_AUTHENTICATION_SECRET'
         }
