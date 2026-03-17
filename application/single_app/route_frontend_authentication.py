@@ -285,7 +285,7 @@ def register_route_frontend_authentication(app):
             }), 200
             
         except Exception as e:
-            print(f"Teams token exchange error: {str(e)}")
+            debug_print(f"Teams token exchange error: {str(e)}")
             import traceback
             traceback.print_exc()
             return jsonify({
