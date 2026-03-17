@@ -80,8 +80,10 @@ CLIENT_ID=your-azure-ad-client-id
 TENANT_ID=your-azure-ad-tenant-id
 MICROSOFT_PROVIDER_AUTHENTICATION_SECRET=your-client-secret
 
-# AirGap Frame Configuration (adjust domains)
+# Teams Frame Ancestors (adjust domains), awalys needed
 TEAMS_FRAME_ANCESTORS=https://teams.microsoft.com https://*.teams.microsoft.com https://*.cloud.microsoft
+
+# Teams Frame Origins (adjust domains), needed only if not commercial or AzureUSGovernment
 CUSTOM_TEAMS_ORIGINS=["https://teams.microsoft.com", "https://*.teams.microsoft.com", "https://*.cloud.microsoft"]
 ```
 
