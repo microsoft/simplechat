@@ -80,9 +80,6 @@ CLIENT_ID=your-azure-ad-client-id
 TENANT_ID=your-azure-ad-tenant-id
 MICROSOFT_PROVIDER_AUTHENTICATION_SECRET=your-client-secret
 
-# Teams SSO Configuration
-ENABLE_TEAMS_SSO=true
-
 # AirGap Frame Configuration (adjust domains)
 TEAMS_FRAME_ANCESTORS=https://teams.microsoft.com https://*.teams.microsoft.com https://*.cloud.microsoft
 CUSTOM_TEAMS_ORIGINS=["https://teams.microsoft.com", "https://*.teams.microsoft.com", "https://*.cloud.microsoft"]
@@ -101,12 +98,13 @@ Create or update your Teams app manifest (`manifest.json`), see [teams_app](../.
 - **webApplicationInfo.id**: Your Azure AD Client ID
 - **webApplicationInfo.resource**: The Application ID URI from Azure AD (must match exactly)
 - **validDomains**: Include your app domain and Azure AD login domains
+- **contentUrl**: Include path /login?teams=true to trigger Teams SSO
 
 ## Testing Teams SSO
 
 ### 1. Upload to Teams
 
-1. Package your Teams app:
+1. Package your Teams app, see [teams_app](../../application/teams_app):
    - Create a `.zip` file containing:
      - `manifest.json`
      - `color.png` (192x192)
@@ -117,27 +115,7 @@ Create or update your Teams app manifest (`manifest.json`), see [teams_app](../.
    - Click **Upload an app** → **Upload a custom app**
    - Select your `.zip` file
 
-### 2. Test Authentication Flow
-
-1. Open your app in Teams
-2. The app should:
-   - Detect it's running in Teams
-   - Show "Teams detected" status
-   - Automatically obtain SSO token
-   - Exchange token for access token
-   - Redirect to `/chats` on success
-
-3. Check browser console (F12) for logs:
-   ```
-   Login page loaded, starting authentication...
-   Teams SDK initialized
-   Teams context detected: {contextObject}
-   Attempting Teams SSO authentication...
-   Teams token acquired, exchanging for access token...
-   Teams authentication successful
-   ```
-
-### 3. Troubleshooting
+### 2. Troubleshooting
 
 #### "Failed to get authentication token"
 - Verify pre-authorized client applications are configured correctly
@@ -154,7 +132,20 @@ Create or update your Teams app manifest (`manifest.json`), see [teams_app](../.
 
 #### "Not in Teams context"
 - App falls back to standard Azure AD login (expected behavior)
-- Verify Teams manifest `contentUrl` includes `?teams=true`
+- Verify Teams manifest `contentUrl` includes `/login?teams=true`
+
+#### "Debugging Teams Thick Client with Dev Tools"
+Enable thick client dev tools by creating file *%LOCALAPPDATA%\Packages\MSTeams_8wekyb3d8bbwe\LocalCache\Microsoft\MSTeams\configuration.json* with content below and restarting Teams
+
+```json
+{
+  "core/devMenuEnabled": true
+}
+```
+
+Access thick client dev tools
+- Right click Teams in system tray
+- Select *Engineering Tools* -> *Open Dev Tools (Main Window)*
 
 ## Architecture Flow
 

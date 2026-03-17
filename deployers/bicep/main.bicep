@@ -58,9 +58,6 @@ param enterpriseAppServicePrincipalId string
 @secure()
 param enterpriseAppClientSecret string
 
-@description('Enable Teams SSO')
-param enableTeamsSSO bool = false
-
 //----------------
 // configurations
 @description('''Authentication type for resources that support Managed Identity or Key authentication.
@@ -455,7 +452,6 @@ module appService 'modules/appService.bicep' = {
     appInsightsName: applicationInsights.outputs.appInsightsName
     enterpriseAppClientId: enterpriseAppClientId
     enterpriseAppClientSecret: enterpriseAppClientSecret
-    enableTeamsSSO: enableTeamsSSO
     authenticationType: authenticationType
     keyVaultUri: keyVault.outputs.keyVaultUri
 

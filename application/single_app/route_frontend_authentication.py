@@ -61,16 +61,16 @@ def register_route_frontend_authentication(app):
         # teams=true: Attempt Teams SSO detection
         # teams=false: Skip Teams SSO, use standard Azure AD flow
         # No parameter: Default to Teams SSO detection (for backward compatibility)
-        teams_param = request.args.get('teams', 'true')
+        teams_param = request.args.get('teams', 'false')
         is_teams = teams_param == 'true'
         
-        if is_teams and ENABLE_TEAMS_SSO:
+        if is_teams:
             # Render a page that will detect Teams and handle SSO
             from functions_settings import get_settings, sanitize_settings_for_user
             settings = get_settings()
             return render_template('login.html', 
                                  client_id=CLIENT_ID,
-                                 enable_teams_sso=ENABLE_TEAMS_SSO,
+                                 enable_teams_sso=is_teams,
                                  custom_teams_origins=CUSTOM_TEAMS_ORIGINS,
                                  app_settings=sanitize_settings_for_user(settings))
         
@@ -317,21 +317,6 @@ def register_route_frontend_authentication(app):
                 "error": "token_exchange_failed",
                 "error_description": str(e)
             }), 500
-
-    @app.route('/auth/context', methods=['GET'])
-    @swagger_route(security=get_auth_security())
-    def get_auth_context():
-        """
-        Return authentication context information.
-        Helps the frontend determine if it's running in Teams and what auth method to use.
-        """
-        return jsonify({
-            "client_id": CLIENT_ID,
-            "tenant_id": TENANT_ID,
-            "scopes": SCOPE,
-            "authority": AUTHORITY,
-            "supports_teams_sso": ENABLE_TEAMS_SSO
-        }), 200
 
     @app.route('/logout')
     @swagger_route(security=get_auth_security())

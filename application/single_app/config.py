@@ -191,8 +191,7 @@ else:
 
 # Teams SSO Configuration
 TEAMS_APP_ID = os.getenv("TEAMS_APP_ID", CLIENT_ID)  # Can be same as CLIENT_ID or different
-ENABLE_TEAMS_SSO = os.getenv("ENABLE_TEAMS_SSO", "true").lower() == "true"
-TEAMS_FRAME_ANCESTORS = os.getenv("TEAMS_FRAME_ANCESTORS", "https://teams.microsoft.com https://*.teams.microsoft.com https://*.cloud.microsoft") if ENABLE_TEAMS_SSO else ""
+TEAMS_FRAME_ANCESTORS = os.getenv("TEAMS_FRAME_ANCESTORS", "") # e.g. "https://teams.microsoft.com https://*.teams.microsoft.com" - should be set to Teams domains if in airgap, otherwise can be left blank to allow from any domain since we validate the origin in the frontend against allowed Teams domains
 CUSTOM_TEAMS_ORIGINS = os.getenv("CUSTOM_TEAMS_ORIGINS", "")  # JSON array of valid domains for Teams SSO if in airgap, otherwise this is pulled from Teams, e.g. ["https://teams.microsoft.com", "https://*.teams.microsoft.com"]
 
 if AZURE_ENVIRONMENT == "custom":
