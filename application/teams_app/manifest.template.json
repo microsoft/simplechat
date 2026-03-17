@@ -1,15 +1,15 @@
 {
   "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.25/MicrosoftTeams.schema.json",
   "manifestVersion": "1.25",
-  "version": "1.0.6",
-  "id": "d4871930-f34f-462e-a709-befc11081da6",
+  "version": "1.0.0",
+  "id": "APP_ID, can be client ID of Azure AD app registration",
   "name": {
-    "short": "Simple Chat 2",
-    "full": "Simple Chat App 2"
+    "short": "Simple Chat",
+    "full": "Simple Chat App"
   },
   "description": {
     "short": "AI Chat",
-    "full": "The most basic AI chat app for Microsoft Teams."
+    "full": "A Simple AI chat app for Microsoft Teams."
   },
   "developer": {
     "name": "Your Name",
@@ -26,15 +26,15 @@
     {
       "entityId": "main",
       "name": "Simple Chat",
-      "contentUrl": "https://sceddev-sbx-app.azurewebsites.net",
-      "websiteUrl": "https://sceddev-sbx-app.azurewebsites.net",
+      "contentUrl": "https://HOSTNAME",
+      "websiteUrl": "https://HOSTNAME",
       "scopes": ["personal"]
     }
   ],
   "permissions": ["identity"],
-  "validDomains": ["sceddev-sbx-app.azurewebsites.net"],
+  "validDomains": ["HOSTNAME"],
   "webApplicationInfo": {
-    "id": "d4871930-f34f-462e-a709-befc11081da5",
-    "resource": "api://sceddev-sbx-app.azurewebsites.net/d4871930-f34f-462e-a709-befc11081da5"
+    "id": "CLIENT_ID_OF_AZURE_AD_APP_REGISTRATION",
+    "resource": "api://HOSTNAME/APP_ID, Application ID URI from Azure AD app registration Expose API page"
   }
 }

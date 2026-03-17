@@ -45,3 +45,6 @@ flask_session
 tmp**cwd
 /tmp_images
 nul
+
+# Teams manifest
+application/teams_app/manifest.json
