@@ -145,7 +145,7 @@
     <script>
         const ENABLE_TEAMS_SSO = {{ enable_teams_sso|tojson }};
         const CLIENT_ID = {{ client_id|tojson }};
-        const CUSTOM_TEAMS_ORIGINS = {{ custom_teams_origins|tojson}}
+        const CUSTOM_TEAMS_ORIGINS = {{ custom_teams_origins|tojson }};
 
         function updateStatus(message, detail = '') {
             document.getElementById('status-message').textContent = message;
