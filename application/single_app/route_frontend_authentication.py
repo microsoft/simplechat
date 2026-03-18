@@ -2,6 +2,7 @@
 
 from unittest import result
 from config import *
+from functions_appinsights import log_event
 from functions_authentication import _build_msal_app, _load_cache, _save_cache
 from functions_debug import debug_print
 from swagger_wrapper import swagger_route, get_auth_security
@@ -254,7 +255,7 @@ def register_route_frontend_authentication(app):
             
             if "error" in result:
                 error_description = result.get("error_description", result.get("error"))
-                print(f"Teams token exchange failure: {error_description}")
+                log_event(f"Teams token exchange failure: {error_description}", exceptionTraceback=True)
                 return jsonify({
                     "error": result.get("error"),
                     "error_description": error_description
@@ -267,7 +268,7 @@ def register_route_frontend_authentication(app):
             _save_cache(msal_app.token_cache)
             
             user_name = session['user'].get('name', 'Unknown')
-            print(f"Teams SSO: User {user_name} authenticated successfully.")
+            log_event(f"Teams SSO: User {user_name} authenticated successfully.")
             
             # Log the login activity
             try:
