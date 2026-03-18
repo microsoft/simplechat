@@ -233,6 +233,10 @@ def register_route_frontend_authentication(app):
         for tokens that can access Microsoft Graph and other APIs.
         """
         try:
+        # Feature gate: only allow token exchange when Teams SSO is enabled
+        if not ENABLE_TEAMS_SSO:
+            return jsonify({"error": "teams_sso_disabled"}), 404
+
             data = request.get_json()
             teams_token = data.get('token')
             
