@@ -102,7 +102,7 @@ Create or update your Teams app manifest (`manifest.json`), see [teams_app](../.
 - **staticTabs.contentUrl**: URL to open in Teams
 - **staticTabs.websiteUrl**: URL to use when *Open Website* selected
 - **webApplicationInfo.id**: Your Azure AD Client ID
-- **webApplicationInfo.resource**: The Application ID URI from App Registration Expore API page
+- **webApplicationInfo.resource**: The Application ID URI from App Registration Expose an API page
 - **validDomains**: Include your app domain and Azure AD login domains
 - **contentUrl**: Include path /login?teams=true to trigger Teams SSO
 
