@@ -92,9 +92,53 @@ def is_tabular_schema_summary_question(user_question):
     return any(re.search(pattern, normalized_question) for pattern in structure_patterns)
 
 
+def is_tabular_entity_lookup_question(user_question):
+    """Return True for cross-sheet entity lookup questions that need related-record traversal."""
+    normalized_question = re.sub(r'\s+', ' ', str(user_question or '').strip().lower())
+    if not normalized_question or is_tabular_schema_summary_question(normalized_question):
+        return False
+
+    direct_phrases = (
+        'find taxpayer',
+        'find return',
+        'show their profile',
+        'related records',
+        'full story',
+        'case history',
+    )
+    relationship_keywords = (
+        'profile',
+        'tax return summary',
+        'w-2',
+        'w2',
+        '1099',
+        'payment',
+        'refund',
+        'notice',
+        'audit',
+        'installment agreement',
+        'installment',
+        'related',
+    )
+    if any(phrase in normalized_question for phrase in direct_phrases) and any(
+        keyword in normalized_question for keyword in relationship_keywords
+    ):
+        return True
+
+    entity_lookup_patterns = (
+        r'\bfind\b.*\b(show|summarize|explain)\b.*\b(profile|related|record|records)\b',
+        r'\b(show|summarize)\b.*\b(profile|related|record|records)\b.*\b(w-2|w2|1099|payment|refund|notice|audit|installment)\b',
+    )
+    return any(re.search(pattern, normalized_question) for pattern in entity_lookup_patterns)
+
+
 def get_tabular_execution_mode(user_question):
     """Select the tabular orchestration mode for the user's question."""
-    return 'schema_summary' if is_tabular_schema_summary_question(user_question) else 'analysis'
+    if is_tabular_schema_summary_question(user_question):
+        return 'schema_summary'
+    if is_tabular_entity_lookup_question(user_question):
+        return 'entity_lookup'
+    return 'analysis'
 
 
 def build_tabular_fallback_system_message(tabular_filenames_str, execution_mode='analysis'):
@@ -115,6 +159,34 @@ def build_tabular_fallback_system_message(tabular_filenames_str, execution_mode=
         "Answer cautiously using only the schema summary already provided. "
         "Do not invent numeric totals, claim that full-data analysis succeeded, or mention additional plugin calls that were not completed. "
         "If the user's question requires computed values that are not present in the schema summary, say that the computation could not be completed from the available tool results."
+    )
+
+
+def build_search_augmentation_system_prompt(retrieved_content):
+    """Build the retrieval augmentation prompt without blocking later tool-backed results."""
+    return f"""You are an AI assistant. Use the following retrieved document excerpts to answer the user's question. Cite sources using the format (Source: filename, Page: page number).
+
+                        Retrieved Excerpts:
+                        {retrieved_content}
+
+                        Base your answer only on information supported by the retrieved excerpts and any computed tool-backed results included elsewhere in this conversation context. If the answer is not supported by that information, say so.
+                        If computed tabular results are provided in another system message, treat them as authoritative for row-level values, calculations, and numeric conclusions. Do not say that you lack direct access to the data when those computed results are present.
+
+                        Example
+                        User: What is the policy on double dipping?
+                        Assistant: The policy prohibits entities from using federal funds received through one program to apply for additional funds through another program, commonly known as 'double dipping' (Source: PolicyDocument.pdf, Page: 12)
+                        """
+
+
+def build_tabular_computed_results_system_message(source_label, tabular_analysis):
+    """Build the outer-model handoff message for successful tabular analysis."""
+    return (
+        f"The following tabular results were computed from {source_label} using "
+        f"tabular_processing plugin functions:\n\n"
+        f"{tabular_analysis}\n\n"
+        "These are tool-backed results derived from the full underlying tabular data, not just retrieved schema excerpts. "
+        "Treat them as authoritative for row-level facts, calculations, and numeric conclusions. "
+        "Do not say that you lack direct access to the data if the answer is present in these computed results."
     )
 
 
@@ -189,6 +261,123 @@ def get_tabular_invocation_error_message(invocation):
         return str(result_payload['error'])
 
     return None
+
+
+def get_tabular_invocation_candidate_sheets(invocation):
+    """Return candidate workbook sheets suggested by a tabular tool error payload."""
+    result_payload = get_tabular_invocation_result_payload(invocation)
+    candidate_sheets = result_payload.get('candidate_sheets') if result_payload else None
+    if not isinstance(candidate_sheets, list):
+        return []
+
+    normalized_candidate_sheets = []
+    seen_candidate_sheets = set()
+    for candidate_sheet in candidate_sheets:
+        normalized_candidate_sheet = str(candidate_sheet or '').strip()
+        if not normalized_candidate_sheet:
+            continue
+
+        lowercase_candidate_sheet = normalized_candidate_sheet.lower()
+        if lowercase_candidate_sheet in seen_candidate_sheets:
+            continue
+
+        seen_candidate_sheets.add(lowercase_candidate_sheet)
+        normalized_candidate_sheets.append(normalized_candidate_sheet)
+
+    return normalized_candidate_sheets
+
+
+def get_tabular_invocation_selected_sheet(invocation):
+    """Return the resolved sheet used by a tabular invocation when available."""
+    result_payload = get_tabular_invocation_result_payload(invocation) or {}
+    invocation_parameters = getattr(invocation, 'parameters', {}) or {}
+
+    selected_sheet = str(
+        result_payload.get('selected_sheet')
+        or invocation_parameters.get('sheet_name')
+        or ''
+    ).strip()
+    return selected_sheet or None
+
+
+def get_tabular_invocation_selected_sheets(invocations):
+    """Return unique selected-sheet names for a group of tabular invocations."""
+    selected_sheets = []
+    seen_sheet_names = set()
+
+    for invocation in invocations or []:
+        selected_sheet = get_tabular_invocation_selected_sheet(invocation)
+        if not selected_sheet:
+            continue
+
+        lowered_sheet_name = selected_sheet.lower()
+        if lowered_sheet_name in seen_sheet_names:
+            continue
+
+        seen_sheet_names.add(lowered_sheet_name)
+        selected_sheets.append(selected_sheet)
+
+    return selected_sheets
+
+
+def get_tabular_retry_sheet_overrides(invocations):
+    """Choose workbook sheet overrides for the next retry based on failed tool payloads."""
+    candidate_scores_by_filename = {}
+    candidate_details_by_filename = {}
+
+    for invocation in invocations or []:
+        function_name = getattr(invocation, 'function_name', '')
+        if function_name not in get_tabular_analysis_function_names():
+            continue
+
+        result_payload = get_tabular_invocation_result_payload(invocation) or {}
+        invocation_parameters = getattr(invocation, 'parameters', {}) or {}
+        filename = str(
+            result_payload.get('filename')
+            or invocation_parameters.get('filename')
+            or ''
+        ).strip()
+        if not filename:
+            continue
+
+        candidate_sheets = get_tabular_invocation_candidate_sheets(invocation)
+        if not candidate_sheets:
+            continue
+
+        selected_sheet = str(result_payload.get('selected_sheet') or '').strip().lower()
+        missing_column = str(result_payload.get('missing_column') or '').strip()
+
+        filename_scores = candidate_scores_by_filename.setdefault(filename, {})
+        filename_details = candidate_details_by_filename.setdefault(filename, [])
+        candidate_count = len(candidate_sheets)
+
+        for candidate_index, candidate_sheet in enumerate(candidate_sheets):
+            if selected_sheet and candidate_sheet.lower() == selected_sheet:
+                continue
+
+            score = max(1, candidate_count - candidate_index)
+            filename_scores[candidate_sheet] = filename_scores.get(candidate_sheet, 0) + score
+
+        if missing_column:
+            filename_details.append(f"missing column '{missing_column}'")
+
+    retry_sheet_overrides = {}
+    for filename, filename_scores in candidate_scores_by_filename.items():
+        if not filename_scores:
+            continue
+
+        selected_sheet_name = sorted(
+            filename_scores.items(),
+            key=lambda item: (-item[1], item[0].lower())
+        )[0][0]
+        detail_messages = candidate_details_by_filename.get(filename, [])
+        detail_text = ', '.join(detail_messages[:3]) if detail_messages else None
+        retry_sheet_overrides[filename] = {
+            'sheet_name': selected_sheet_name,
+            'detail': detail_text,
+        }
+
+    return retry_sheet_overrides
 
 
 def split_tabular_analysis_invocations(invocations):
@@ -354,38 +543,90 @@ def _normalize_tabular_sheet_token(token):
 
 def _tokenize_tabular_sheet_text(text):
     """Tokenize free text into normalized sheet-matching tokens."""
+    original_text = re.sub(r'(?i)w[\s\-_]*2', ' w2 ', str(text or ''))
+    expanded_text = re.sub(r'([a-z])([A-Z])', r'\1 \2', original_text)
+    expanded_text = re.sub(r'([A-Za-z])([0-9])', r'\1 \2', expanded_text)
+    expanded_text = re.sub(r'([0-9])([A-Za-z])', r'\1 \2', expanded_text)
+    expanded_text = re.sub(r'[_\-]+', ' ', expanded_text)
     tokens = []
-    for raw_token in re.split(r'[^a-z0-9]+', str(text or '').lower()):
-        normalized_token = _normalize_tabular_sheet_token(raw_token)
-        if normalized_token and len(normalized_token) > 1:
+    seen_tokens = set()
+
+    for raw_text in (original_text, expanded_text):
+        for raw_token in re.split(r'[^a-z0-9]+', raw_text.lower()):
+            normalized_token = _normalize_tabular_sheet_token(raw_token)
+            if not normalized_token or len(normalized_token) <= 1:
+                continue
+            if normalized_token in seen_tokens:
+                continue
+            seen_tokens.add(normalized_token)
             tokens.append(normalized_token)
+
     return tokens
+
+
+def _score_tabular_sheet_match(sheet_name, question_text):
+    """Score how strongly a worksheet name matches the user question."""
+    question_tokens = set(_tokenize_tabular_sheet_text(question_text))
+    question_phrase = ' '.join(_tokenize_tabular_sheet_text(question_text))
+    sheet_tokens = _tokenize_tabular_sheet_text(sheet_name)
+    if not sheet_tokens:
+        return 0
+
+    sheet_phrase = ' '.join(sheet_tokens)
+    score = 0
+
+    if sheet_phrase and sheet_phrase in question_phrase:
+        score += 8
+
+    token_matches = sum(1 for token in sheet_tokens if token in question_tokens)
+    score += token_matches * 3
+
+    if len(sheet_tokens) == 1 and sheet_tokens[0] in question_tokens:
+        score += 4
+
+    return score
+
+
+def _select_relevant_workbook_sheets(sheet_names, question_text, minimum_score=1):
+    """Return all workbook sheets that appear relevant to the question."""
+    ranked_sheets = []
+    for sheet_name in sheet_names or []:
+        score = _score_tabular_sheet_match(sheet_name, question_text)
+        if score < minimum_score:
+            continue
+        ranked_sheets.append((score, sheet_name))
+
+    ranked_sheets.sort(key=lambda item: (-item[0], item[1].lower()))
+    return [sheet_name for _, sheet_name in ranked_sheets]
+
+
+def is_tabular_access_limited_analysis(analysis_text):
+    """Return True when a tool-backed analysis still claims the data is unavailable."""
+    normalized_analysis = re.sub(r'\s+', ' ', str(analysis_text or '').strip().lower())
+    if not normalized_analysis:
+        return False
+
+    inaccessible_phrases = (
+        "don't have direct access",
+        'do not have direct access',
+        "don't have",
+        'do not have',
+        'visible excerpt you provided',
+        'if those tool-backed results exist',
+        'allow me to query again',
+        'can outline what i would retrieve',
+    )
+    return any(phrase in normalized_analysis for phrase in inaccessible_phrases)
 
 
 def _select_likely_workbook_sheet(sheet_names, question_text):
     """Return a likely sheet name when the user question strongly matches one sheet."""
-    question_tokens = set(_tokenize_tabular_sheet_text(question_text))
-    question_phrase = ' '.join(_tokenize_tabular_sheet_text(question_text))
     best_sheet = None
     best_score = 0
     runner_up_score = 0
 
     for sheet_name in sheet_names or []:
-        sheet_tokens = _tokenize_tabular_sheet_text(sheet_name)
-        if not sheet_tokens:
-            continue
-
-        sheet_phrase = ' '.join(sheet_tokens)
-        score = 0
-
-        if sheet_phrase and sheet_phrase in question_phrase:
-            score += 8
-
-        token_matches = sum(1 for token in sheet_tokens if token in question_tokens)
-        score += token_matches * 3
-
-        if len(sheet_tokens) == 1 and sheet_tokens[0] in question_tokens:
-            score += 4
+        score = _score_tabular_sheet_match(sheet_name, question_text)
 
         if score > best_score:
             runner_up_score = best_score
@@ -420,8 +661,9 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
 
     try:
         plugin_logger = get_plugin_logger()
-        execution_mode = execution_mode if execution_mode in {'analysis', 'schema_summary'} else 'analysis'
+        execution_mode = execution_mode if execution_mode in {'analysis', 'schema_summary', 'entity_lookup'} else 'analysis'
         schema_summary_mode = execution_mode == 'schema_summary'
+        entity_lookup_mode = execution_mode == 'entity_lookup'
         log_event(
             f"[Tabular SK Analysis] Starting {execution_mode} analysis for files: {tabular_filenames}",
             level=logging.INFO,
@@ -472,6 +714,10 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
 
         schema_parts = []
         workbook_sheet_hints = {}
+        workbook_related_sheet_hints = {}
+        workbook_blob_locations = {}
+        retry_sheet_overrides = {}
+        previous_failed_call_parameters = []  # entity lookup: concrete failed call params for retry hints
         allowed_function_filters = {
             'included_functions': [
                 f"tabular_processing-{function_name}"
@@ -494,6 +740,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     fname,
                     preview_rows=2,
                 )
+                workbook_blob_locations[fname] = (container, blob_path)
 
                 if schema_info.get('is_workbook') and schema_info.get('sheet_count', 0) > 1:
                     # Build a compact sheet directory so the model can pick the
@@ -503,9 +750,16 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                         schema_info.get('sheet_names', []),
                         user_question,
                     )
+                    relevant_sheets = _select_relevant_workbook_sheets(
+                        schema_info.get('sheet_names', []),
+                        user_question,
+                    )
+                    if entity_lookup_mode:
+                        workbook_related_sheet_hints[fname] = relevant_sheets or list(schema_info.get('sheet_names', []))
                     if likely_sheet:
                         workbook_sheet_hints[fname] = likely_sheet
-                        tabular_plugin.set_default_sheet(container, blob_path, likely_sheet)
+                        if not entity_lookup_mode:
+                            tabular_plugin.set_default_sheet(container, blob_path, likely_sheet)
 
                     sheet_directory = []
                     for sname in schema_info.get('sheet_names', []):
@@ -544,7 +798,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
 
         schema_context = "\n".join(schema_parts)
 
-        def build_system_prompt(force_tool_use=False, tool_error_messages=None):
+        def build_system_prompt(force_tool_use=False, tool_error_messages=None, execution_gap_messages=None):
             if schema_summary_mode:
                 retry_prefix = ""
                 if force_tool_use:
@@ -604,22 +858,67 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     "Correct the function arguments and try again. If the operation is not 'count', provide an aggregate_column.\n\n"
                 )
 
+            execution_gap_feedback = ""
+            if execution_gap_messages:
+                rendered_gaps = "\n".join(
+                    f"- {gap_message}" for gap_message in execution_gap_messages
+                )
+                execution_gap_feedback = (
+                    "PREVIOUS EXECUTION GAPS:\n"
+                    f"{rendered_gaps}\n"
+                    "Correct the analysis plan and query the missing related worksheets before answering.\n\n"
+                )
+
             missing_sheet_feedback = ""
             if tool_error_messages and any(
                 'Specify sheet_name or sheet_index on analytical calls.' in error_message
                 for error_message in tool_error_messages
             ):
-                guidance_lines = [
-                    "MULTI-SHEET RETRY: Your previous analytical call omitted sheet_name on a multi-sheet workbook.",
-                    "Retry immediately with sheet_name set to the most relevant worksheet from sheet_directory.",
-                    "For account/category lookup questions by month, use filter_rows or query_tabular_data on the label column first, then read the requested month column.",
-                    "Do not aggregate an entire month column unless the user explicitly asked for a total, sum, average, min, max, or count.",
-                ]
-                for workbook_name, hinted_sheet in workbook_sheet_hints.items():
-                    guidance_lines.append(
-                        f"Likely worksheet for {workbook_name} based on the question text: {hinted_sheet}."
-                    )
-                missing_sheet_feedback = "\n".join(guidance_lines) + "\n\n"
+                if entity_lookup_mode:
+                    # Entity lookup: generate concrete per-sheet filter_rows examples from the actual failed call parameters
+                    call_example_lines = []
+                    for failed_params in previous_failed_call_parameters[:2]:
+                        fname = failed_params.get('filename', '')
+                        col = failed_params.get('column', '')
+                        op = failed_params.get('operator', '==')
+                        val = failed_params.get('value', '')
+                        if not fname or not col or not val:
+                            continue
+                        related_sheets = workbook_related_sheet_hints.get(fname) or list(workbook_sheet_hints.values())
+                        for sheet in related_sheets[:6]:
+                            call_example_lines.append(
+                                f'  filter_rows(filename="{fname}", sheet_name="{sheet}", column="{col}", operator="{op}", value="{val}")'
+                            )
+                    if call_example_lines:
+                        examples_block = "\n".join(call_example_lines)
+                        missing_sheet_feedback = (
+                            "MULTI-SHEET RETRY REQUIRED: Your previous calls omitted sheet_name and all failed.\n"
+                            "For this multi-sheet workbook, sheet_name is MANDATORY in every analytical call.\n"
+                            "Execute ALL of these calls now (copy exactly as written):\n"
+                            f"{examples_block}\n\n"
+                        )
+                    else:
+                        related_lines = [
+                            "MULTI-SHEET RETRY REQUIRED: Your previous calls omitted sheet_name.",
+                            "Add sheet_name to every analytical call. Relevant worksheets per file:",
+                        ]
+                        for workbook_name, related_sheets in workbook_related_sheet_hints.items():
+                            related_lines.append(
+                                f"  {workbook_name}: query each of: {', '.join(related_sheets[:6])}"
+                            )
+                        missing_sheet_feedback = "\n".join(related_lines) + "\n\n"
+                else:
+                    guidance_lines = [
+                        "MULTI-SHEET RETRY: Your previous analytical call omitted sheet_name on a multi-sheet workbook.",
+                        "Retry immediately with sheet_name set to the most relevant worksheet from sheet_directory.",
+                        "For account/category lookup questions by month, use filter_rows or query_tabular_data on the label column first, then read the requested month column.",
+                        "Do not aggregate an entire month column unless the user explicitly asked for a total, sum, average, min, max, or count.",
+                    ]
+                    for workbook_name, hinted_sheet in workbook_sheet_hints.items():
+                        guidance_lines.append(
+                            f"Likely worksheet for {workbook_name} based on the question text: {hinted_sheet}."
+                        )
+                    missing_sheet_feedback = "\n".join(guidance_lines) + "\n\n"
 
             sheet_hint_feedback = ""
             if workbook_sheet_hints:
@@ -630,7 +929,73 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 sheet_hint_feedback = (
                     "LIKELY WORKSHEET HINTS:\n"
                     f"{rendered_hints}\n"
-                    "Use the likely worksheet unless the question clearly refers to a different sheet.\n\n"
+                    "Use the likely worksheet unless the question clearly refers to a different sheet or a prior tool error identified a better recovery sheet.\n\n"
+                )
+
+            recovery_sheet_feedback = ""
+            if retry_sheet_overrides:
+                rendered_recovery_hints = "\n".join(
+                    (
+                        f"- {workbook_name}: retry on worksheet '{override_payload['sheet_name']}'"
+                        + (f" ({override_payload['detail']})" if override_payload.get('detail') else '')
+                    )
+                    for workbook_name, override_payload in retry_sheet_overrides.items()
+                )
+                recovery_sheet_feedback = (
+                    "RECOVERY WORKSHEET HINTS:\n"
+                    f"{rendered_recovery_hints}\n"
+                    "These recovery hints override the original likely-sheet guess when the previous tool call failed on the wrong worksheet.\n\n"
+                )
+
+            related_sheet_feedback = ""
+            if workbook_related_sheet_hints:
+                rendered_related_sheet_hints = "\n".join(
+                    f"- {workbook_name}: {', '.join(related_sheets)}"
+                    for workbook_name, related_sheets in workbook_related_sheet_hints.items()
+                    if related_sheets
+                )
+                if rendered_related_sheet_hints:
+                    related_sheet_feedback = (
+                        "QUESTION-RELEVANT WORKSHEET HINTS:\n"
+                        f"{rendered_related_sheet_hints}\n"
+                        "Use these worksheets to satisfy cross-sheet profile and related-record requests.\n\n"
+                    )
+
+            if entity_lookup_mode:
+                entity_retry_prefix = retry_prefix
+                if force_tool_use:
+                    entity_retry_prefix = (
+                        "RETRY MODE: Your previous attempt did not complete the related-record lookup. "
+                        "You MUST call one or more analytical tabular_processing plugin functions before writing any answer text. "
+                        "Query the missing related worksheets explicitly with sheet_name.\n\n"
+                    )
+
+                return (
+                    "You are a workbook entity lookup analyst. The full dataset is available through the "
+                    "tabular_processing plugin functions. The user is asking for one entity and related records across worksheets. "
+                    "You MUST use one or more tabular_processing plugin functions before answering. Never answer from the schema preview alone.\n\n"
+                    f"{entity_retry_prefix}"
+                    f"{tool_error_feedback}"
+                    f"{execution_gap_feedback}"
+                    f"{recovery_sheet_feedback}"
+                    f"{sheet_hint_feedback}"
+                    f"{related_sheet_feedback}"
+                    f"{missing_sheet_feedback}"
+                    f"FILE SCHEMAS:\n"
+                    f"{schema_context}\n\n"
+                    "AVAILABLE FUNCTIONS: lookup_value, aggregate_column, filter_rows, query_tabular_data, "
+                    "group_by_aggregate, and group_by_datetime_component.\n\n"
+                    "Discovery functions are not available in this analysis run because schema context is already pre-loaded.\n\n"
+                    "IMPORTANT:\n"
+                    "1. Pass sheet_name='<name>' on EVERY analytical call for multi-sheet workbooks. Do not rely on a default sheet for cross-sheet entity lookups.\n"
+                    "2. First retrieve the primary entity row on the most relevant worksheet.\n"
+                    "3. Then query other relevant worksheets explicitly to collect related records.\n"
+                    "4. When a retrieved row contains a secondary identifier such as ReturnID, CaseID, AccountID, PaymentID, W2ID, or Form1099ID, reuse it to query dependent worksheets.\n"
+                    "5. Do not stop after the first successful row if the question asks for related records across sheets.\n"
+                    "6. If a requested record type has no corresponding worksheet in the workbook, say that the workbook does not contain that record type.\n"
+                    "7. Clearly distinguish between no matching rows and no corresponding worksheet.\n"
+                    "8. Summarize concrete found records sheet-by-sheet using the tool results, not schema placeholders.\n"
+                    "9. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report."
                 )
 
             return (
@@ -641,6 +1006,8 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 "analysis later — run it now.\n\n"
                 f"{retry_prefix}"
                 f"{tool_error_feedback}"
+                f"{execution_gap_feedback}"
+                f"{recovery_sheet_feedback}"
                 f"{sheet_hint_feedback}"
                 f"{missing_sheet_feedback}"
                 f"FILE SCHEMAS:\n"
@@ -650,18 +1017,20 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 "Discovery functions are not available in this analysis run because schema context is already pre-loaded.\n\n"
                 "IMPORTANT:\n"
                 "1. Use the pre-loaded schema to pick the correct columns, then call the plugin functions.\n"
-                "2. For multi-sheet workbooks, review the sheet_directory to find the most relevant sheet for the question. Pass sheet_name='<name>' in every analytical tool call unless the likely_sheet already matches the question.\n"
-                "3. For account/category lookup questions at a specific period or metric, use lookup_value first. Provide lookup_column, lookup_value, and target_column.\n"
-                "4. If lookup_value is not sufficient, use filter_rows or query_tabular_data on the label column, then read the requested period column.\n"
-                "5. Only use aggregate_column when the user explicitly asks for a sum, average, min, max, or count across rows.\n"
-                "6. For time-based questions on datetime columns, use group_by_datetime_component.\n"
-                "7. For threshold, ranking, comparison, or correlation-like questions, first filter/query the relevant rows, then compute grouped metrics.\n"
-                "8. Batch multiple independent function calls in a SINGLE response whenever possible.\n"
-                "9. If you need more than 100 filtered rows, explicitly set max_rows higher.\n"
-                "10. For analytical questions, prefer lookup/filter/query plus aggregate/grouped computations over raw row or preview output.\n"
-                "11. For peak, busiest, highest, or lowest questions, use grouped functions and inspect the highest_group, highest_value, lowest_group, and lowest_value summary fields.\n"
-                "12. Return only computed findings and name the strongest drivers clearly.\n"
-                "13. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report."
+                "2. For multi-sheet workbooks, review the sheet_directory to find the most relevant sheet for the question. Pass sheet_name='<name>' in every analytical tool call unless a trustworthy default sheet has already been established.\n"
+                "3. If a previous tool error says a requested column is missing on the current sheet and suggests candidate sheets, switch to one of those candidate sheets immediately.\n"
+                "4. For account/category lookup questions at a specific period or metric, use lookup_value first. Provide lookup_column, lookup_value, and target_column.\n"
+                "5. If lookup_value is not sufficient, use filter_rows or query_tabular_data on the label column, then read the requested period column.\n"
+                "6. Only use aggregate_column when the user explicitly asks for a sum, average, min, max, or count across rows.\n"
+                "7. For time-based questions on datetime columns, use group_by_datetime_component.\n"
+                "8. For threshold, ranking, comparison, or correlation-like questions, first filter/query the relevant rows, then compute grouped metrics.\n"
+                "9. Batch multiple independent function calls in a SINGLE response whenever possible.\n"
+                "10. If you need more than 100 filtered rows, explicitly set max_rows higher.\n"
+                "11. For analytical questions, prefer lookup/filter/query plus aggregate/grouped computations over raw row or preview output.\n"
+                "12. For identifier-based workbook questions, locate the identifier on the correct sheet before explaining downstream calculations.\n"
+                "13. For peak, busiest, highest, or lowest questions, use grouped functions and inspect the highest_group, highest_value, lowest_group, and lowest_value summary fields.\n"
+                "14. Return only computed findings and name the strongest drivers clearly.\n"
+                "15. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report."
             )
 
         baseline_invocations = plugin_logger.get_invocations_for_conversation(
@@ -671,6 +1040,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
         )
         baseline_invocation_count = len(baseline_invocations)
         previous_tool_error_messages = []
+        previous_execution_gap_messages = []
 
         for attempt_number in range(1, 4):
             force_tool_use = attempt_number > 1
@@ -679,6 +1049,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
             chat_history.add_system_message(build_system_prompt(
                 force_tool_use=force_tool_use,
                 tool_error_messages=previous_tool_error_messages,
+                execution_gap_messages=previous_execution_gap_messages,
             ))
 
             chat_history.add_user_message(
@@ -773,6 +1144,39 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                         )
                 else:
                     if successful_analytical_invocations:
+                        previous_tool_error_messages = []
+                        previous_failed_call_parameters = []
+
+                        if entity_lookup_mode:
+                            selected_sheets = get_tabular_invocation_selected_sheets(successful_analytical_invocations)
+                            execution_gap_messages = []
+
+                            if len(selected_sheets) <= 1:
+                                rendered_selected_sheets = ', '.join(selected_sheets) if selected_sheets else 'unknown worksheet'
+                                execution_gap_messages.append(
+                                    f"Previous attempt only queried worksheet(s): {rendered_selected_sheets}. The question asks for related records across worksheets, so query additional relevant sheets explicitly with sheet_name."
+                                )
+
+                            if is_tabular_access_limited_analysis(analysis):
+                                execution_gap_messages.append(
+                                    'Previous attempt still claimed the requested data was unavailable even though analytical tool calls succeeded. Use the returned rows and answer directly.'
+                                )
+
+                            if execution_gap_messages and attempt_number < 3:
+                                previous_execution_gap_messages = execution_gap_messages
+                                log_event(
+                                    f"[Tabular SK Analysis] Attempt {attempt_number} entity lookup was incomplete despite successful tool calls; retrying",
+                                    extra={
+                                        'selected_sheets': selected_sheets,
+                                        'execution_gaps': previous_execution_gap_messages,
+                                        'successful_tool_count': len(successful_analytical_invocations),
+                                    },
+                                    level=logging.WARNING,
+                                )
+                                baseline_invocation_count = len(invocations_after)
+                                continue
+
+                        previous_execution_gap_messages = []
                         log_event(
                             f"[Tabular SK Analysis] Analysis complete via {len(successful_analytical_invocations)} analytical tool call(s) on attempt {attempt_number}",
                             level=logging.INFO
@@ -781,6 +1185,60 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
 
                     if failed_analytical_invocations:
                         previous_tool_error_messages = summarize_tabular_invocation_errors(failed_analytical_invocations)
+                        previous_execution_gap_messages = []
+                        retry_sheet_overrides = get_tabular_retry_sheet_overrides(failed_analytical_invocations)
+                        for workbook_name, override_payload in retry_sheet_overrides.items():
+                            blob_location = workbook_blob_locations.get(workbook_name)
+                            if not blob_location:
+                                continue
+
+                            container_name, blob_name = blob_location
+                            tabular_plugin.set_default_sheet(
+                                container_name,
+                                blob_name,
+                                override_payload['sheet_name'],
+                            )
+
+                        if retry_sheet_overrides:
+                            log_event(
+                                f"[Tabular SK Analysis] Attempt {attempt_number} selected retry worksheet override(s): {retry_sheet_overrides}",
+                                level=logging.INFO,
+                            )
+                        # For entity_lookup mode, extract and cache concrete call parameters
+                        # so the retry prompt can generate per-sheet corrected call examples
+                        if entity_lookup_mode:
+                            seen_entity_filters = set()
+                            entity_call_params = []
+                            for invoc in failed_analytical_invocations:
+                                error_msg = get_tabular_invocation_error_message(invoc) or ''
+                                if 'Specify sheet_name or sheet_index on analytical calls.' not in error_msg:
+                                    continue
+                                invoc_params = getattr(invoc, 'parameters', {}) or {}
+                                fn = getattr(invoc, 'function_name', '')
+                                fname = str(invoc_params.get('filename') or '').strip()
+                                if fn == 'filter_rows':
+                                    col = str(invoc_params.get('column') or '').strip()
+                                    op = str(invoc_params.get('operator') or '==').strip()
+                                    val = str(invoc_params.get('value') or '').strip()
+                                elif fn == 'lookup_value':
+                                    col = str(invoc_params.get('lookup_column') or '').strip()
+                                    op = '=='
+                                    val = str(invoc_params.get('lookup_value') or '').strip()
+                                else:
+                                    continue
+                                if not fname or not col or not val:
+                                    continue
+                                filter_key = (fname, col, val)
+                                if filter_key in seen_entity_filters:
+                                    continue
+                                seen_entity_filters.add(filter_key)
+                                entity_call_params.append({
+                                    'filename': fname,
+                                    'column': col,
+                                    'operator': op,
+                                    'value': val,
+                                })
+                            previous_failed_call_parameters = entity_call_params
                         log_event(
                             f"[Tabular SK Analysis] Attempt {attempt_number} used analytical tool(s) but all returned errors; retrying",
                             extra={
@@ -790,11 +1248,13 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                             level=logging.WARNING
                         )
                     elif analytical_invocations:
+                        previous_execution_gap_messages = []
                         log_event(
                             f"[Tabular SK Analysis] Attempt {attempt_number} used analytical tool(s) without usable computed results; retrying",
                             level=logging.WARNING
                         )
                     elif discovery_invocations:
+                        previous_execution_gap_messages = []
                         discovery_function_names = sorted({
                             invocation.function_name for invocation in discovery_invocations
                         })
@@ -803,11 +1263,13 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                             level=logging.WARNING
                         )
                     elif new_invocation_count > 0:
+                        previous_execution_gap_messages = []
                         log_event(
                             f"[Tabular SK Analysis] Attempt {attempt_number} used unsupported tool(s) without computed analysis; retrying",
                             level=logging.WARNING
                         )
                     else:
+                        previous_execution_gap_messages = []
                         log_event(
                             f"[Tabular SK Analysis] Attempt {attempt_number} returned narrative without tool use; retrying",
                             level=logging.WARNING
@@ -826,6 +1288,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     )
                 elif failed_analytical_invocations:
                     previous_tool_error_messages = summarize_tabular_invocation_errors(failed_analytical_invocations)
+                    previous_execution_gap_messages = []
                     log_event(
                         f"[Tabular SK Analysis] Attempt {attempt_number} returned no content after tool errors; retrying",
                         extra={
@@ -1937,17 +2400,7 @@ def register_route_backend_chats(app):
 
                     retrieved_content = "\n\n".join(retrieved_texts)
                     # Construct system prompt for search results
-                    system_prompt_search = f"""You are an AI assistant. Use the following retrieved document excerpts to answer the user's question. Cite sources using the format (Source: filename, Page: page number).
-
-                        Retrieved Excerpts:
-                        {retrieved_content}
-
-                        Based *only* on the information provided above, answer the user's query. If the answer isn't in the excerpts, say so.
-
-                        Example
-                        User: What is the policy on double dipping?
-                        Assistant: The policy prohibits entities from using federal funds received through one program to apply for additional funds through another program, commonly known as 'double dipping' (Source: PolicyDocument.pdf, Page: 12)
-                        """
+                    system_prompt_search = build_search_augmentation_system_prompt(retrieved_content)
                     # Add this to a temporary list, don't save to DB yet
                     system_messages_for_augmentation.append({
                         'role': 'system',
@@ -2124,20 +2577,7 @@ def register_route_backend_chats(app):
                         # Update the system prompt with the enhanced content including metadata
                         if retrieved_texts:
                             retrieved_content = "\n\n".join(retrieved_texts)
-                            system_prompt_search = f"""You are an AI assistant. Use the following retrieved document excerpts to answer the user's question. Cite sources using the format (Source: filename, Page: page number).
-                                Retrieved Excerpts:
-                                {retrieved_content}
-                                Based *only* on the information provided above, answer the user's query. If the answer isn't in the excerpts, say so.
-
-                                Retrieved Excerpts:
-                                {retrieved_content}
-
-                                Based *only* on the information provided above, answer the user's query. If the answer isn't in the excerpts, say so.
-
-                                Example
-                                User: What is the policy on double dipping?
-                                Assistant: The policy prohibits entities from using federal funds received through one program to apply for additional funds through another program, commonly known as 'double dipping' (Source: PolicyDocument.pdf, Page: 12)
-                                """
+                            system_prompt_search = build_search_augmentation_system_prompt(retrieved_content)
                             # Update the system message with enhanced content and updated documents array
                             if system_messages_for_augmentation:
                                 system_messages_for_augmentation[0]['content'] = system_prompt_search
@@ -2539,11 +2979,9 @@ def register_route_backend_chats(app):
                     thought_tracker.add_thought('tabular_analysis', thought_content, thought_detail)
 
                 if tabular_analysis:
-                    tabular_system_msg = (
-                        f"The following tabular results were computed from the file(s) "
-                        f"{tabular_filenames_str} using tabular_processing plugin functions:\n\n"
-                        f"{tabular_analysis}\n\n"
-                        f"Use these computed results to answer the user's question accurately."
+                    tabular_system_msg = build_tabular_computed_results_system_message(
+                        f"the file(s) {tabular_filenames_str}",
+                        tabular_analysis,
                     )
                 else:
                     tabular_system_msg = build_tabular_fallback_system_message(
@@ -2904,11 +3342,9 @@ def register_route_backend_chats(app):
                         # Inject pre-computed analysis results as context
                         conversation_history_for_api.append({
                             'role': 'system',
-                            'content': (
-                                f"The following tabular results were computed from the chat-uploaded file(s) "
-                                f"{chat_tabular_filenames_str} using tabular_processing plugin functions:\n\n"
-                                f"{chat_tabular_analysis}\n\n"
-                                f"Use these computed results to answer the user's question accurately."
+                            'content': build_tabular_computed_results_system_message(
+                                f"the chat-uploaded file(s) {chat_tabular_filenames_str}",
+                                chat_tabular_analysis,
                             )
                         })
 
@@ -4637,16 +5073,7 @@ def register_route_backend_chats(app):
                                         retrieved_texts.append(vision_context)
                         
                         retrieved_content = "\n\n".join(retrieved_texts)
-                        system_prompt_search = f"""You are an AI assistant. Use the following retrieved document excerpts to answer the user's question. Cite sources using the format (Source: filename, Page: page number).
-                                                Retrieved Excerpts:
-                                                {retrieved_content}
-
-                                                Based *only* on the information provided above, answer the user's query. If the answer isn't in the excerpts, say so.
-
-                                                Example
-                                                User: What is the policy on double dipping?
-                                                Assistant: The policy prohibits entities from using federal funds received through one program to apply for additional funds through another program, commonly known as 'double dipping' (Source: PolicyDocument.pdf, Page: 12)
-                                                """
+                        system_prompt_search = build_search_augmentation_system_prompt(retrieved_content)
                         
                         system_messages_for_augmentation.append({
                             'role': 'system',
@@ -4708,11 +5135,9 @@ def register_route_backend_chats(app):
                     if tabular_analysis:
                         system_messages_for_augmentation.append({
                             'role': 'system',
-                            'content': (
-                                f"The following tabular results were computed from the file(s) "
-                                f"{tabular_filenames_str} using tabular_processing plugin functions:\n\n"
-                                f"{tabular_analysis}\n\n"
-                                f"Use these computed results to answer the user's question accurately."
+                            'content': build_tabular_computed_results_system_message(
+                                f"the file(s) {tabular_filenames_str}",
+                                tabular_analysis,
                             )
                         })
 
@@ -4899,11 +5324,9 @@ def register_route_backend_chats(app):
                         if chat_tabular_analysis:
                             conversation_history_for_api.append({
                                 'role': 'system',
-                                'content': (
-                                    f"The following tabular results were computed from the chat-uploaded file(s) "
-                                    f"{chat_tabular_filenames_str} using tabular_processing plugin functions:\n\n"
-                                    f"{chat_tabular_analysis}\n\n"
-                                    f"Use these computed results to answer the user's question accurately."
+                                'content': build_tabular_computed_results_system_message(
+                                    f"the chat-uploaded file(s) {chat_tabular_filenames_str}",
+                                    chat_tabular_analysis,
                                 )
                             })
 

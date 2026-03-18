@@ -231,6 +231,215 @@ class TabularProcessingPlugin:
 
         return workbook_metadata.get('default_sheet'), workbook_metadata
 
+    def _filter_rows_across_sheets(
+        self,
+        container_name: str,
+        blob_name: str,
+        filename: str,
+        column: str,
+        operator_str: str,
+        value: str,
+        max_rows: int = 100,
+    ) -> Optional[str]:
+        """Search for matching rows across all sheets that contain the requested column.
+
+        Returns a combined JSON result when matches are found on any sheet,
+        or None if the workbook is not multi-sheet (caller should fall through).
+        """
+        workbook_metadata = self._get_workbook_metadata(container_name, blob_name)
+        if not workbook_metadata.get('is_workbook'):
+            return None
+
+        available_sheets = workbook_metadata.get('sheet_names', [])
+        if len(available_sheets) <= 1:
+            return None
+
+        combined_results = []
+        sheets_searched = []
+        sheets_matched = []
+        total_matches = 0
+
+        for sheet in available_sheets:
+            df = self._read_tabular_blob_to_dataframe(
+                container_name,
+                blob_name,
+                sheet_name=sheet,
+            )
+            df = self._try_numeric_conversion(df)
+
+            if column not in df.columns:
+                continue
+
+            sheets_searched.append(sheet)
+            series = df[column]
+            op = operator_str.strip().lower()
+
+            numeric_value = None
+            try:
+                numeric_value = float(value)
+            except (ValueError, TypeError):
+                pass
+
+            if op in ('==', 'equals'):
+                if numeric_value is not None and pandas.api.types.is_numeric_dtype(series):
+                    mask = series == numeric_value
+                else:
+                    mask = series.astype(str).str.lower() == value.lower()
+            elif op == '!=':
+                if numeric_value is not None and pandas.api.types.is_numeric_dtype(series):
+                    mask = series != numeric_value
+                else:
+                    mask = series.astype(str).str.lower() != value.lower()
+            elif op == '>':
+                mask = series > numeric_value if numeric_value is not None else pandas.Series([False] * len(series))
+            elif op == '<':
+                mask = series < numeric_value if numeric_value is not None else pandas.Series([False] * len(series))
+            elif op == '>=':
+                mask = series >= numeric_value if numeric_value is not None else pandas.Series([False] * len(series))
+            elif op == '<=':
+                mask = series <= numeric_value if numeric_value is not None else pandas.Series([False] * len(series))
+            elif op == 'contains':
+                mask = series.astype(str).str.contains(value, case=False, na=False)
+            elif op == 'startswith':
+                mask = series.astype(str).str.lower().str.startswith(value.lower())
+            elif op == 'endswith':
+                mask = series.astype(str).str.lower().str.endswith(value.lower())
+            else:
+                continue
+
+            sheet_matches = int(mask.sum())
+            if sheet_matches == 0:
+                continue
+
+            sheets_matched.append(sheet)
+            total_matches += sheet_matches
+            remaining_capacity = max(0, max_rows - len(combined_results))
+            if remaining_capacity > 0:
+                filtered = df[mask].head(remaining_capacity)
+                for row in filtered.to_dict(orient='records'):
+                    row['_sheet'] = sheet
+                    combined_results.append(row)
+
+        if not sheets_searched:
+            return None
+
+        log_event(
+            f"[TabularProcessingPlugin] Cross-sheet filter_rows: "
+            f"searched {len(sheets_searched)} sheets, "
+            f"matched on {len(sheets_matched)} ({sheets_matched}), "
+            f"total_matches={total_matches}",
+            level=logging.INFO,
+        )
+
+        return json.dumps({
+            "filename": filename,
+            "selected_sheet": "ALL (cross-sheet search)",
+            "sheets_searched": sheets_searched,
+            "sheets_matched": sheets_matched,
+            "total_matches": total_matches,
+            "returned_rows": len(combined_results),
+            "data": combined_results,
+        }, indent=2, default=str)
+
+    def _lookup_value_across_sheets(
+        self,
+        container_name: str,
+        blob_name: str,
+        filename: str,
+        lookup_column: str,
+        lookup_value_str: str,
+        target_column: Optional[str] = None,
+        match_operator: str = "equals",
+        max_rows: int = 25,
+    ) -> Optional[str]:
+        """Look up matching rows across all sheets that contain the lookup column.
+
+        Returns a combined JSON result when matches are found,
+        or None if the workbook is not multi-sheet.
+        """
+        workbook_metadata = self._get_workbook_metadata(container_name, blob_name)
+        if not workbook_metadata.get('is_workbook'):
+            return None
+
+        available_sheets = workbook_metadata.get('sheet_names', [])
+        if len(available_sheets) <= 1:
+            return None
+
+        combined_results = []
+        sheets_searched = []
+        sheets_matched = []
+        total_matches = 0
+        operator = (match_operator or 'equals').strip().lower()
+        normalized_lookup_value = str(lookup_value_str)
+
+        for sheet in available_sheets:
+            df = self._read_tabular_blob_to_dataframe(
+                container_name,
+                blob_name,
+                sheet_name=sheet,
+            )
+            df = self._try_numeric_conversion(df)
+
+            if lookup_column not in df.columns:
+                continue
+
+            sheets_searched.append(sheet)
+            series = df[lookup_column]
+
+            if operator in {'equals', '=='}:
+                mask = series.astype(str).str.lower() == normalized_lookup_value.lower()
+            elif operator == 'contains':
+                mask = series.astype(str).str.contains(normalized_lookup_value, case=False, na=False)
+            elif operator == 'startswith':
+                mask = series.astype(str).str.lower().str.startswith(normalized_lookup_value.lower())
+            elif operator == 'endswith':
+                mask = series.astype(str).str.lower().str.endswith(normalized_lookup_value.lower())
+            else:
+                mask = series.astype(str).str.lower() == normalized_lookup_value.lower()
+
+            sheet_matches = int(mask.sum())
+            if sheet_matches == 0:
+                continue
+
+            sheets_matched.append(sheet)
+            total_matches += sheet_matches
+            remaining_capacity = max(0, max_rows - len(combined_results))
+            if remaining_capacity > 0:
+                matched_df = df[mask].head(remaining_capacity)
+                if target_column and target_column in df.columns:
+                    for _, row in matched_df.iterrows():
+                        combined_results.append({
+                            '_sheet': sheet,
+                            lookup_column: row[lookup_column],
+                            target_column: row[target_column],
+                            '_full_row': {str(k): v for k, v in row.to_dict().items()},
+                        })
+                else:
+                    for row in matched_df.to_dict(orient='records'):
+                        row['_sheet'] = sheet
+                        combined_results.append(row)
+
+        if not sheets_searched:
+            return None
+
+        log_event(
+            f"[TabularProcessingPlugin] Cross-sheet lookup_value: "
+            f"searched {len(sheets_searched)} sheets, "
+            f"matched on {len(sheets_matched)} ({sheets_matched}), "
+            f"total_matches={total_matches}",
+            level=logging.INFO,
+        )
+
+        return json.dumps({
+            "filename": filename,
+            "selected_sheet": "ALL (cross-sheet search)",
+            "sheets_searched": sheets_searched,
+            "sheets_matched": sheets_matched,
+            "total_matches": total_matches,
+            "returned_rows": len(combined_results),
+            "data": combined_results,
+        }, indent=2, default=str)
+
     def _format_datetime_column_label(self, value) -> str:
         """Render date-like Excel header labels into stable analysis-friendly strings."""
         timestamp_value = pandas.Timestamp(value)
@@ -332,6 +541,90 @@ class TabularProcessingPlugin:
             'selected_sheet': None,
             'per_sheet_schemas': per_sheet_schemas,
         }
+
+    def _find_candidate_sheets_for_columns(
+        self,
+        container_name: str,
+        blob_name: str,
+        column_names: List[str],
+        exclude_sheet: Optional[str] = None,
+    ) -> List[str]:
+        """Return workbook sheets that contain one or more requested columns, ordered by best match."""
+        workbook_metadata = self._get_workbook_metadata(container_name, blob_name)
+        if not workbook_metadata.get('is_workbook'):
+            return []
+
+        normalized_targets = []
+        seen_targets = set()
+        for column_name in column_names or []:
+            normalized_column_name = str(column_name or '').strip().lower()
+            if not normalized_column_name or normalized_column_name in seen_targets:
+                continue
+            seen_targets.add(normalized_column_name)
+            normalized_targets.append(normalized_column_name)
+
+        if not normalized_targets:
+            return []
+
+        normalized_exclude_sheet = str(exclude_sheet or '').strip().lower()
+        ranked_candidates = []
+        for sheet_name in workbook_metadata.get('sheet_names', []):
+            if normalized_exclude_sheet and sheet_name.lower() == normalized_exclude_sheet:
+                continue
+
+            dataframe = self._read_tabular_blob_to_dataframe(
+                container_name,
+                blob_name,
+                sheet_name=sheet_name,
+            )
+            normalized_columns = {str(column).strip().lower() for column in dataframe.columns}
+            matched_columns = [
+                target_column for target_column in normalized_targets
+                if target_column in normalized_columns
+            ]
+            if not matched_columns:
+                continue
+
+            ranked_candidates.append((len(matched_columns), sheet_name))
+
+        ranked_candidates.sort(key=lambda item: (-item[0], item[1].lower()))
+        return [sheet_name for _, sheet_name in ranked_candidates]
+
+    def _build_missing_column_error_payload(
+        self,
+        container_name: str,
+        blob_name: str,
+        filename: str,
+        workbook_metadata: dict,
+        selected_sheet: Optional[str],
+        missing_column: str,
+        related_columns: Optional[List[str]] = None,
+        available_columns: Optional[List[str]] = None,
+    ) -> dict:
+        """Build a workbook-aware missing-column payload that points retries at better candidate sheets."""
+        available_columns = available_columns or []
+        payload = {
+            'error': f"Column '{missing_column}' not found. Available: {available_columns}",
+            'filename': filename,
+            'missing_column': missing_column,
+            'selected_sheet': selected_sheet if workbook_metadata.get('is_workbook') else None,
+        }
+
+        if workbook_metadata.get('is_workbook') and workbook_metadata.get('sheet_count', 0) > 1:
+            candidate_sheets = self._find_candidate_sheets_for_columns(
+                container_name,
+                blob_name,
+                [missing_column] + list(related_columns or []),
+                exclude_sheet=selected_sheet,
+            )
+            if candidate_sheets:
+                payload['candidate_sheets'] = candidate_sheets
+                payload['error'] = (
+                    f"Column '{missing_column}' not found on sheet '{selected_sheet}'. "
+                    f"Available: {available_columns}. Candidate sheets: {candidate_sheets}"
+                )
+
+        return payload
 
     def _read_tabular_blob_to_dataframe(
         self,
@@ -880,6 +1173,20 @@ class TabularProcessingPlugin:
                     user_id, conversation_id, filename, source,
                     group_id=group_id, public_workspace_id=public_workspace_id
                 )
+                # When no sheet_name given and no default-sheet override exists,
+                # try cross-sheet search before erroring
+                normalized_sheet = (sheet_name or '').strip()
+                normalized_sheet_idx = None if sheet_index is None else str(sheet_index).strip()
+                has_default_override = (container, blob_path) in self._default_sheet_overrides
+                if not normalized_sheet and normalized_sheet_idx in (None, '') and not has_default_override:
+                    cross_sheet_result = self._lookup_value_across_sheets(
+                        container, blob_path, filename,
+                        lookup_column, lookup_value, target_column,
+                        match_operator=match_operator,
+                        max_rows=int(max_rows),
+                    )
+                    if cross_sheet_result is not None:
+                        return cross_sheet_result
                 selected_sheet, workbook_metadata = self._resolve_sheet_selection(
                     container,
                     blob_path,
@@ -896,9 +1203,31 @@ class TabularProcessingPlugin:
                 df = self._try_numeric_conversion(df)
 
                 if lookup_column not in df.columns:
-                    return json.dumps({"error": f"Column '{lookup_column}' not found. Available: {list(df.columns)}"})
+                    return json.dumps(
+                        self._build_missing_column_error_payload(
+                            container,
+                            blob_path,
+                            filename,
+                            workbook_metadata,
+                            selected_sheet,
+                            lookup_column,
+                            related_columns=[target_column],
+                            available_columns=list(df.columns),
+                        )
+                    )
                 if target_column not in df.columns:
-                    return json.dumps({"error": f"Column '{target_column}' not found. Available: {list(df.columns)}"})
+                    return json.dumps(
+                        self._build_missing_column_error_payload(
+                            container,
+                            blob_path,
+                            filename,
+                            workbook_metadata,
+                            selected_sheet,
+                            target_column,
+                            related_columns=[lookup_column],
+                            available_columns=list(df.columns),
+                        )
+                    )
 
                 series = df[lookup_column]
                 operator = (match_operator or 'equals').strip().lower()
@@ -982,7 +1311,17 @@ class TabularProcessingPlugin:
                 df = self._try_numeric_conversion(df)
 
                 if column not in df.columns:
-                    return json.dumps({"error": f"Column '{column}' not found. Available: {list(df.columns)}"})
+                    return json.dumps(
+                        self._build_missing_column_error_payload(
+                            container,
+                            blob_path,
+                            filename,
+                            workbook_metadata,
+                            selected_sheet,
+                            column,
+                            available_columns=list(df.columns),
+                        )
+                    )
 
                 series = df[column]
                 op = operation.lower().strip()
@@ -1050,6 +1389,18 @@ class TabularProcessingPlugin:
                     user_id, conversation_id, filename, source,
                     group_id=group_id, public_workspace_id=public_workspace_id
                 )
+                # When no sheet_name given and no default-sheet override exists,
+                # try cross-sheet search before erroring
+                normalized_sheet = (sheet_name or '').strip()
+                normalized_sheet_idx = None if sheet_index is None else str(sheet_index).strip()
+                has_default_override = (container, blob_path) in self._default_sheet_overrides
+                if not normalized_sheet and normalized_sheet_idx in (None, '') and not has_default_override:
+                    cross_sheet_result = self._filter_rows_across_sheets(
+                        container, blob_path, filename, column, operator, value,
+                        max_rows=int(max_rows),
+                    )
+                    if cross_sheet_result is not None:
+                        return cross_sheet_result
                 selected_sheet, workbook_metadata = self._resolve_sheet_selection(
                     container,
                     blob_path,
@@ -1226,7 +1577,20 @@ class TabularProcessingPlugin:
 
                 for col in [group_by_column, aggregate_column]:
                     if col not in df.columns:
-                        return json.dumps({"error": f"Column '{col}' not found. Available: {list(df.columns)}"})
+                        related_columns = [group_by_column, aggregate_column]
+                        related_columns = [column_name for column_name in related_columns if column_name != col]
+                        return json.dumps(
+                            self._build_missing_column_error_payload(
+                                container,
+                                blob_path,
+                                filename,
+                                workbook_metadata,
+                                selected_sheet,
+                                col,
+                                related_columns=related_columns,
+                                available_columns=list(df.columns),
+                            )
+                        )
 
                 op = operation.lower().strip()
                 if op not in {'count', 'sum', 'mean', 'min', 'max', 'median', 'std'}:
@@ -1325,9 +1689,19 @@ class TabularProcessingPlugin:
                         })
 
                 if datetime_column not in df.columns:
-                    return json.dumps({
-                        "error": f"Column '{datetime_column}' not found. Available: {list(df.columns)}"
-                    })
+                    related_columns = [aggregate_column] if aggregate_column else []
+                    return json.dumps(
+                        self._build_missing_column_error_payload(
+                            container,
+                            blob_path,
+                            filename,
+                            workbook_metadata,
+                            selected_sheet,
+                            datetime_column,
+                            related_columns=related_columns,
+                            available_columns=list(df.columns),
+                        )
+                    )
 
                 parsed_datetime = self._parse_datetime_like_series(df[datetime_column])
                 valid_mask = parsed_datetime.notna()
@@ -1361,9 +1735,18 @@ class TabularProcessingPlugin:
                             "error": "aggregate_column is required unless operation='count'."
                         })
                     if aggregate_column_name not in filtered_df.columns:
-                        return json.dumps({
-                            "error": f"Column '{aggregate_column_name}' not found. Available: {list(filtered_df.columns)}"
-                        })
+                        return json.dumps(
+                            self._build_missing_column_error_payload(
+                                container,
+                                blob_path,
+                                filename,
+                                workbook_metadata,
+                                selected_sheet,
+                                aggregate_column_name,
+                                related_columns=[datetime_column],
+                                available_columns=list(filtered_df.columns),
+                            )
+                        )
                     grouped = filtered_df.groupby(component_column_name)[aggregate_column_name].agg(op)
 
                 grouped = grouped.dropna()

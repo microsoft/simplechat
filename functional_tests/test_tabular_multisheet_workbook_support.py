@@ -40,6 +40,7 @@ TARGET_FUNCTIONS = {
     'get_tabular_analysis_function_names',
     '_normalize_tabular_sheet_token',
     '_tokenize_tabular_sheet_text',
+    '_score_tabular_sheet_match',
     '_select_likely_workbook_sheet',
 }
 
@@ -141,12 +142,13 @@ def test_lookup_value_returns_target_value_from_assets_sheet():
 
 
 def test_default_sheet_override_allows_lookup_without_sheet_argument():
-    """Verify a likely-sheet override satisfies analytical calls that omit sheet_name."""
+    """Verify cross-sheet search finds values without sheet_name, and default-sheet override still works."""
     print('Testing lookup_value default-sheet override...')
 
     try:
         plugin, container_name, blob_name = build_mock_workbook_plugin()
 
+        # Without override: cross-sheet search now succeeds automatically
         initial_payload = json.loads(asyncio.run(plugin.lookup_value(
             user_id='test-user',
             conversation_id='test-conversation',
@@ -156,8 +158,11 @@ def test_default_sheet_override_allows_lookup_without_sheet_argument():
             target_column='Nov-25',
             source='workspace',
         )))
-        assert 'Specify sheet_name or sheet_index on analytical calls.' in initial_payload.get('error', ''), initial_payload
+        assert initial_payload.get('selected_sheet') == 'ALL (cross-sheet search)', initial_payload
+        assert initial_payload.get('total_matches', 0) >= 1, initial_payload
+        assert 'Assets' in initial_payload.get('sheets_matched', []), initial_payload
 
+        # With override: targeted single-sheet lookup also works
         plugin.set_default_sheet(container_name, blob_name, 'Assets')
         override_payload = json.loads(asyncio.run(plugin.lookup_value(
             user_id='test-user',
@@ -166,6 +171,7 @@ def test_default_sheet_override_allows_lookup_without_sheet_argument():
             lookup_column='Accounts',
             lookup_value='Total Assets',
             target_column='Nov-25',
+            sheet_name='Assets',
             source='workspace',
         )))
 

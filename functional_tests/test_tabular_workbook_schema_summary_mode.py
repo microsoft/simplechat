@@ -2,7 +2,7 @@
 # test_tabular_workbook_schema_summary_mode.py
 """
 Functional test for workbook schema-summary routing fix.
-Version: 0.239.115
+Version: 0.239.119
 Implemented in: 0.239.115
 
 This test ensures workbook-structure questions use schema-summary routing,
@@ -25,6 +25,7 @@ TARGET_FUNCTIONS = {
     'get_tabular_discovery_function_names',
     'get_tabular_analysis_function_names',
     'is_tabular_schema_summary_question',
+    'is_tabular_entity_lookup_question',
     'get_tabular_execution_mode',
     'build_tabular_fallback_system_message',
     'get_tabular_invocation_result_payload',
