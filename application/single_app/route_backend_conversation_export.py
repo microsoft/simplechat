@@ -21,6 +21,7 @@ from functions_debug import debug_print
 from functions_settings import *
 from functions_thoughts import get_thoughts_for_conversation
 from swagger_wrapper import swagger_route, get_auth_security
+from docx import Document as DocxDocument
 
 
 TRANSCRIPT_ROLES = {'user', 'assistant'}
