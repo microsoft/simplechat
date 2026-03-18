@@ -102,7 +102,7 @@ app.config['SECRET_KEY'] = SECRET_KEY
 
 app.config.update(
     SESSION_COOKIE_SECURE=True,        # required if you use SameSite=None
-    SESSION_COOKIE_SAMESITE="None",    # or "Lax" depending on your needs
+    SESSION_COOKIE_SAMESITE="None" if ENABLE_TEAMS_SSO else "Lax",
     SESSION_COOKIE_HTTPONLY=True,
 )
 
