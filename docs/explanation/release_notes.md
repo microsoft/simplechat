@@ -11,7 +11,7 @@
     *   New `/auth/teams/token-exchange` backend endpoint exchanges Teams SSO tokens for access tokens via MSAL OBO flow, with session persistence and activity logging.
     *   New `login.html` template with Teams SDK detection, automatic SSO authentication, consent-required handling, and graceful fallback to standard Azure AD login.
     *   Teams manifest template (`manifest.template.json`) with SSO-ready `webApplicationInfo`, static tab, and valid domain configuration.
-    *   New environment variables: `TEAMS_APP_ID`, `TEAMS_FRAME_ANCESTORS`, `CUSTOM_TEAMS_ORIGINS` for configurable Teams SSO behaviour.
+    *   New environment variables: `TEAMS_APP_ID`, `TEAMS_FRAME_ANCESTORS`, `CUSTOM_TEAMS_ORIGINS`, and `ENABLE_TEAMS_SSO` for configurable Teams SSO behaviour.
     *   Content Security Policy `frame-ancestors` directive now dynamically includes Teams domains via `TEAMS_FRAME_ANCESTORS` setting.
     *   Session cookies updated to `SameSite=None`, `Secure=True`, `HttpOnly=True` to support cross-origin Teams iframe embedding.
     *   (Ref: `route_frontend_authentication.py`, `login.html`, `config.py`, `app.py`, `manifest.template.json`, Teams SSO, OBO flow)

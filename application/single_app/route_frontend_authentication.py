@@ -2,6 +2,7 @@
 
 from unittest import result
 from config import *
+from functions_appinsights import log_exception
 from functions_authentication import _build_msal_app, _load_cache, _save_cache
 from functions_debug import debug_print
 from swagger_wrapper import swagger_route, get_auth_security
@@ -81,7 +82,7 @@ def register_route_frontend_authentication(app):
             scopes=SCOPE, # Use SCOPE from config (includes offline_access)
             redirect_uri=redirect_uri
         )
-        print("Redirecting to Azure AD for authentication.")
+        debug_print("Redirecting to Azure AD for authentication.")
         #auth_url= auth_url.replace('https://', 'http://')  # Ensure HTTPS for security
         return redirect(auth_url)
 
@@ -92,7 +93,7 @@ def register_route_frontend_authentication(app):
         if request.args.get('error'):
             error = request.args.get('error')
             error_description = request.args.get('error_description', 'No description provided.')
-            print(f"Azure AD Login Error: {error} - {error_description}")
+            debug_print(f"Azure AD Login Error: {error} - {error_description}")
             return f"Login Error: {error} - {error_description}", 400 # Or render an error page
 
         code = request.args.get('code')
@@ -286,11 +287,10 @@ def register_route_frontend_authentication(app):
             
         except Exception as e:
             debug_print(f"Teams token exchange error: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            log_exception(e)
             return jsonify({
                 "error": "token_exchange_failed",
-                "error_description": str(e)
+                "error_description": "An unexpected error occurred during token exchange."
             }), 500
 
     @app.route('/logout')
@@ -321,9 +321,9 @@ def register_route_frontend_authentication(app):
         else:
             logout_uri = url_for('index', _external=True, _scheme='https')
         
-        print(f"Front Door enabled: {settings.get('enable_front_door', False)}")
-        print(f"Front Door URL: {settings.get('front_door_url')}")
-        print(f"Logout redirect URI: {logout_uri}")
+        debug_print(f"Front Door enabled: {settings.get('enable_front_door', False)}")
+        debug_print(f"Front Door URL: {settings.get('front_door_url')}")
+        debug_print(f"Logout redirect URI: {logout_uri}")
         
         logout_url = (
             f"{AUTHORITY}/oauth2/v2.0/logout"
