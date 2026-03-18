@@ -2,7 +2,7 @@
   "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.25/MicrosoftTeams.schema.json",
   "manifestVersion": "1.25",
   "version": "1.0.0",
-  "id": "APP_ID, can be client ID of Azure AD app registration",
+  "id": "APP_ID",
   "name": {
     "short": "Simple Chat",
     "full": "Simple Chat App"
@@ -34,7 +34,7 @@
   "permissions": ["identity"],
   "validDomains": ["HOSTNAME"],
   "webApplicationInfo": {
-    "id": "CLIENT_ID_OF_AZURE_AD_APP_REGISTRATION",
-    "resource": "api://HOSTNAME/APP_ID, Application ID URI from Azure AD app registration Expose API page"
+    "id": "CLIENT_ID",
+    "resource": "api://HOSTNAME/CLIENT_ID"
   }
 }
