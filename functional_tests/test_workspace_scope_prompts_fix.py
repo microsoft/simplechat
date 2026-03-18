@@ -1,216 +1,163 @@
 #!/usr/bin/env python3
+# test_workspace_scope_prompts_fix.py
 """
 Functional test for workspace scope affecting prompts functionality.
-Version: 0.229.042
-Implemented in: 0.229.042
+Version: 0.239.123
+Implemented in: 0.239.123
 
-This test ensures that workspace scope selection (All, Personal, Group, Public) 
-properly filters prompts in the same way it filters documents. When scope is 
-changed, only prompts from the selected scope should be visible.
+This test ensures that chat prompt loading remains scope-aware for personal,
+group, and public prompt sources, and that the prompt picker uses the current
+searchable single-select implementation.
 """
 
-import sys
 import os
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+import sys
 
-def test_prompt_scope_filtering_javascript_implementation():
-    """Test that the JavaScript implementation properly handles prompt scope filtering."""
-    print("🔍 Testing Workspace Scope Prompts Fix...")
-    
+
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+CHAT_PROMPTS_FILE = os.path.join(
+    ROOT_DIR,
+    'application',
+    'single_app',
+    'static',
+    'js',
+    'chat',
+    'chat-prompts.js',
+)
+CHAT_GLOBAL_FILE = os.path.join(
+    ROOT_DIR,
+    'application',
+    'single_app',
+    'static',
+    'js',
+    'chat',
+    'chat-global.js',
+)
+CHAT_TEMPLATE_FILE = os.path.join(
+    ROOT_DIR,
+    'application',
+    'single_app',
+    'templates',
+    'chats.html',
+)
+CONFIG_FILE = os.path.join(
+    ROOT_DIR,
+    'application',
+    'single_app',
+    'config.py',
+)
+PUBLIC_PROMPTS_ROUTE_FILE = os.path.join(
+    ROOT_DIR,
+    'application',
+    'single_app',
+    'route_backend_public_prompts.py',
+)
+
+
+def read_file(path):
+    with open(path, 'r', encoding='utf-8') as file_handle:
+        return file_handle.read()
+
+
+def test_prompt_scope_filtering_and_searchable_picker_implementation():
+    """Verify prompt scope filtering now uses effective scopes and searchable dropdown UI."""
+    print('🔍 Testing workspace scope prompts implementation...')
+
     try:
-        # Read the updated chat-prompts.js file
-        chat_prompts_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            "..",
-            "application",
-            "single_app",
-            "static",
-            "js",
-            "chat",
-            "chat-prompts.js"
-        )
-        
-        if not os.path.exists(chat_prompts_path):
-            raise Exception(f"Chat prompts file not found: {chat_prompts_path}")
-            
-        with open(chat_prompts_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        # Test 1: Check if publicPrompts variable is declared in global
-        chat_global_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            "..",
-            "application",
-            "single_app",
-            "static",
-            "js",
-            "chat",
-            "chat-global.js"
-        )
-        
-        with open(chat_global_path, 'r', encoding='utf-8') as f:
-            global_content = f.read()
-            
-        if "let publicPrompts = [];" not in global_content:
-            raise Exception("❌ publicPrompts variable not declared in chat-global.js")
-        print("✅ publicPrompts variable properly declared in global scope")
-        
-        # Test 2: Check if loadPublicPrompts function exists
-        if "export function loadPublicPrompts()" not in content:
-            raise Exception("❌ loadPublicPrompts function not found")
-        print("✅ loadPublicPrompts function implemented")
-        
-        # Test 3: Check if loadPublicPrompts fetches from correct API endpoint
-        if '"/api/public_prompts"' not in content:
-            raise Exception("❌ loadPublicPrompts not using correct API endpoint")
-        print("✅ loadPublicPrompts uses correct API endpoint (/api/public_prompts)")
-        
-        # Test 4: Check if populatePromptSelectScope function exists
-        if "export function populatePromptSelectScope()" not in content:
-            raise Exception("❌ populatePromptSelectScope function not found")
-        print("✅ populatePromptSelectScope function implemented")
-        
-        # Test 5: Check if scope filtering logic is implemented
-        scope_conditions = [
-            'scopeVal === "all"',
-            'scopeVal === "personal"', 
-            'scopeVal === "group"',
-            'scopeVal === "public"'
+        prompts_content = read_file(CHAT_PROMPTS_FILE)
+        global_content = read_file(CHAT_GLOBAL_FILE)
+        template_content = read_file(CHAT_TEMPLATE_FILE)
+        config_content = read_file(CONFIG_FILE)
+
+        required_global_snippets = [
+            'let publicPrompts = [];',
         ]
-        
-        for condition in scope_conditions:
-            if condition not in content:
-                raise Exception(f"❌ Scope filtering condition missing: {condition}")
-        print("✅ All scope filtering conditions implemented (all, personal, group, public)")
-        
-        # Test 6: Check if prompts are properly labeled by scope
-        scope_labels = [
+        missing_global = [snippet for snippet in required_global_snippets if snippet not in global_content]
+        assert not missing_global, f'Missing global prompt state: {missing_global}'
+        print('✅ publicPrompts variable properly declared in chat-global.js')
+
+        required_prompt_snippets = [
+            'import { docScopeSelect, getEffectiveScopes } from "./chat-documents.js";',
+            'import { createSearchableSingleSelect } from "./chat-searchable-select.js";',
+            'function initializePromptSelector() {',
+            'promptSelectorController = createSearchableSingleSelect({',
+            'async function fetchAllPromptPages(endpoint, emptyStatuses = []) {',
+            'const promptPageSize = 100;',
+            'scopes.personal',
+            'scopes.groupIds.length > 0',
+            'scopes.publicWorkspaceIds.length > 0',
             'scope: "Personal"',
             'scope: "Group"',
-            'scope: "Public"'
+            'scope: "Public"',
+            'loadAllPromptsPromise = Promise.all([loadUserPrompts(), loadGroupPrompts(), loadPublicPrompts()])',
+            'docScopeSelect.addEventListener("change", function() {',
         ]
-        
-        for label in scope_labels:
-            if label not in content:
-                raise Exception(f"❌ Scope label missing: {label}")
-        print("✅ Prompts properly labeled with scope (Personal, Group, Public)")
-        
-        # Test 7: Check if loadAllPrompts function exists
-        if "export function loadAllPrompts()" not in content:
-            raise Exception("❌ loadAllPrompts function not found")
-        print("✅ loadAllPrompts function implemented")
-        
-        # Test 8: Check if loadAllPrompts loads all three types of prompts
-        all_loads = [
-            "loadUserPrompts()",
-            "loadGroupPrompts()", 
-            "loadPublicPrompts()"
+        missing_prompt = [snippet for snippet in required_prompt_snippets if snippet not in prompts_content]
+        assert not missing_prompt, f'Missing prompt scope/search snippets: {missing_prompt}'
+        print('✅ Prompt scope filtering and searchable selector logic implemented')
+
+        required_template_snippets = [
+            'id="prompt-dropdown"',
+            'id="prompt-search-input"',
+            'id="prompt-dropdown-items"',
         ]
-        
-        for load_func in all_loads:
-            if load_func not in content:
-                raise Exception(f"❌ loadAllPrompts missing: {load_func}")
-        print("✅ loadAllPrompts loads all prompt types (user, group, public)")
-        
-        # Test 9: Check if scope change event listener is added
-        if 'docScopeSelect.addEventListener("change"' not in content:
-            raise Exception("❌ Scope change event listener not added")
-        print("✅ Scope change event listener properly added")
-        
-        # Test 10: Check if imports include docScopeSelect
-        if 'import { docScopeSelect } from "./chat-documents.js";' not in content:
-            raise Exception("❌ docScopeSelect import missing")
-        print("✅ docScopeSelect properly imported from chat-documents.js")
-        
-        # Test 11: Check version update in config.py
-        config_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            "..",
-            "application",
-            "single_app",
-            "config.py"
-        )
-        
-        with open(config_path, 'r', encoding='utf-8') as f:
-            config_content = f.read()
-            
-        if 'VERSION = "0.229.042"' not in config_content:
-            raise Exception("❌ Version not updated in config.py")
-        print("✅ Version properly updated to 0.229.042 in config.py")
-        
-        print("✅ All workspace scope prompts functionality tests passed!")
+        missing_template = [snippet for snippet in required_template_snippets if snippet not in template_content]
+        assert not missing_template, f'Missing prompt dropdown template markup: {missing_template}'
+        print('✅ Prompt dropdown template markup implemented')
+
+        assert 'VERSION = "0.239.123"' in config_content, 'Expected config.py version 0.239.123'
+        print('✅ Version properly updated to 0.239.123 in config.py')
+
+        print('✅ Workspace scope prompt implementation checks passed!')
         return True
-        
-    except Exception as e:
-        print(f"❌ Test failed: {e}")
+
+    except Exception as exc:
+        print(f'❌ Test failed: {exc}')
         import traceback
         traceback.print_exc()
         return False
 
-def test_api_endpoints_exist():
-    """Test that required API endpoints exist for public prompts."""
-    print("\n🔍 Testing API Endpoints...")
-    
+
+def test_public_prompt_api_endpoints_exist():
+    """Verify public prompt API endpoints still exist for scope-aware prompt loading."""
+    print('\n🔍 Testing public prompt API endpoints...')
+
     try:
-        # Check if public prompts route file exists
-        route_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            "..",
-            "application",
-            "single_app",
-            "route_backend_public_prompts.py"
-        )
-        
-        if not os.path.exists(route_path):
-            raise Exception("❌ route_backend_public_prompts.py not found")
-        
-        with open(route_path, 'r', encoding='utf-8') as f:
-            route_content = f.read()
-        
-        # Check for required API endpoints
+        route_content = read_file(PUBLIC_PROMPTS_ROUTE_FILE)
+
         required_endpoints = [
             "'/api/public_prompts', methods=['GET']",
             "'/api/public_prompts', methods=['POST']",
-            "'/api/public_prompts/<prompt_id>', methods=['GET']"
+            "'/api/public_prompts/<prompt_id>', methods=['GET']",
         ]
-        
-        for endpoint in required_endpoints:
-            if endpoint not in route_content:
-                raise Exception(f"❌ API endpoint missing: {endpoint}")
-        
-        print("✅ All required API endpoints exist for public prompts")
+
+        missing = [endpoint for endpoint in required_endpoints if endpoint not in route_content]
+        assert not missing, f'Missing public prompt API endpoints: {missing}'
+
+        print('✅ All required API endpoints exist for public prompts')
         return True
-        
-    except Exception as e:
-        print(f"❌ API endpoint test failed: {e}")
+
+    except Exception as exc:
+        print(f'❌ API endpoint test failed: {exc}')
+        import traceback
+        traceback.print_exc()
         return False
 
-if __name__ == "__main__":
-    print("🧪 Running Workspace Scope Prompts Fix Tests...\n")
-    
-    test1_result = test_prompt_scope_filtering_javascript_implementation()
-    test2_result = test_api_endpoints_exist()
-    
-    success = test1_result and test2_result
-    
-    print(f"\n📊 Results: {'2/2' if success else '0/2 or 1/2'} tests passed")
-    
-    if success:
-        print("\n🎉 Workspace scope prompts fix implementation verified!")
-        print("📋 Summary of changes:")
-        print("   • Added publicPrompts variable to chat-global.js")
-        print("   • Implemented loadPublicPrompts() function")
-        print("   • Created populatePromptSelectScope() for scope-aware filtering")
-        print("   • Added loadAllPrompts() to load all prompt types")
-        print("   • Added scope change event listener")
-        print("   • Updated version to 0.229.042")
-        print("\n🔧 How it works:")
-        print("   • When scope is 'All': shows Personal + Group + Public prompts")
-        print("   • When scope is 'Personal': shows only Personal prompts")
-        print("   • When scope is 'Group': shows only Group prompts") 
-        print("   • When scope is 'Public': shows only Public prompts")
-        print("   • Scope changes automatically update prompt list")
-    else:
-        print("\n❌ Some tests failed. Please review the implementation.")
-    
+
+if __name__ == '__main__':
+    print('🧪 Running Workspace Scope Prompts Fix Tests...\n')
+
+    tests = [
+        test_prompt_scope_filtering_and_searchable_picker_implementation,
+        test_public_prompt_api_endpoints_exist,
+    ]
+
+    results = []
+    for test in tests:
+        print(f"\n🧪 Running {test.__name__}...")
+        results.append(test())
+
+    success = all(results)
+    print(f"\n📊 Results: {sum(results)}/{len(results)} tests passed")
     sys.exit(0 if success else 1)

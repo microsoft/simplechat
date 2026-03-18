@@ -8,10 +8,43 @@ import {
     getUserSetting,
     setUserSetting
 } from '../agents_common.js';
+import { createSearchableSingleSelect } from './chat-searchable-select.js';
 
 const enableAgentsBtn = document.getElementById("enable-agents-btn");
 const agentSelectContainer = document.getElementById("agent-select-container");
 const modelSelectContainer = document.getElementById("model-select-container");
+const agentSelect = document.getElementById('agent-select');
+const agentDropdown = document.getElementById('agent-dropdown');
+const agentDropdownButton = document.getElementById('agent-dropdown-button');
+const agentDropdownMenu = document.getElementById('agent-dropdown-menu');
+const agentDropdownText = agentDropdownButton
+    ? agentDropdownButton.querySelector('.chat-searchable-select-text')
+    : null;
+const agentSearchInput = document.getElementById('agent-search-input');
+const agentDropdownItems = document.getElementById('agent-dropdown-items');
+
+let agentSelectorController = null;
+
+function initializeAgentSelector() {
+    if (agentSelectorController || !agentSelect) {
+        return agentSelectorController;
+    }
+
+    agentSelectorController = createSearchableSingleSelect({
+        selectEl: agentSelect,
+        dropdownEl: agentDropdown,
+        buttonEl: agentDropdownButton,
+        buttonTextEl: agentDropdownText,
+        menuEl: agentDropdownMenu,
+        searchInputEl: agentSearchInput,
+        itemsContainerEl: agentDropdownItems,
+        placeholderText: 'Select an Agent',
+        emptyMessage: 'No agents available',
+        emptySearchMessage: 'No matching agents found',
+    });
+
+    return agentSelectorController;
+}
 
 /**
  * Check if agents are currently enabled
@@ -24,6 +57,8 @@ export function areAgentsEnabled() {
 
 export async function initializeAgentInteractions() {
     if (enableAgentsBtn && agentSelectContainer) {
+        initializeAgentSelector();
+
         // On load, sync UI with enable_agents setting
         const enableAgents = await getUserSetting('enable_agents');
         if (enableAgents) {
@@ -58,7 +93,8 @@ export async function initializeAgentInteractions() {
 }
 
 export async function populateAgentDropdown() {
-    const agentSelect = agentSelectContainer.querySelector('select');
+    initializeAgentSelector();
+
     try {
         const [userAgents, selectedAgent] = await Promise.all([
             fetchUserAgents(),
@@ -71,6 +107,7 @@ export async function populateAgentDropdown() {
         const globalAgents = combinedAgents.filter(agent => agent.is_global);
         const orderedAgents = [...personalAgents, ...activeGroupAgents, ...globalAgents];
         populateAgentSelect(agentSelect, orderedAgents, selectedAgent);
+        agentSelectorController?.refresh();
         agentSelect.onchange = async function () {
             const selectedOption = agentSelect.options[agentSelect.selectedIndex];
             if (!selectedOption) {

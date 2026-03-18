@@ -2,6 +2,15 @@
 
 # Feature Release
 
+### **(v0.239.123)**
+
+#### User Interface Enhancements
+
+*   **Searchable Chat Selectors**
+    *   Added in-dropdown search on the chat page for workspace scope, tags, documents, prompts, models, and agents so large lists are faster to navigate without scrolling through the full set of options.
+    *   Prompt, model, and agent pickers now use searchable single-select dropdowns while preserving existing chat behavior, and prompt loading now walks all prompt API pages so search covers the full prompt list instead of only the first page.
+    *   (Ref: `chats.html`, `chat-searchable-select.js`, `chat-documents.js`, `chat-prompts.js`, `chat-model-selector.js`, `chat-agents.js`, chat selector UX)
+
 ### **(v0.239.116)**
 
 #### Bug Fixes

@@ -5,6 +5,7 @@ import { loadConversations, selectConversation, ensureConversationPresent, creat
 import { loadAllDocs, populateDocumentSelectScope, handleDocumentSelectChange, loadTagsForScope, filterDocumentsBySelectedTags, setScopeFromUrlParam } from "./chat-documents.js";
 import { getUrlParameter } from "./chat-utils.js"; // Assuming getUrlParameter is in chat-utils.js now
 import { loadUserPrompts, loadGroupPrompts, initializePromptInteractions } from "./chat-prompts.js";
+import { initializeModelSelector } from "./chat-model-selector.js";
 import { loadUserSettings } from "./chat-layout.js";
 import { showToast } from "./chat-toast.js";
 import { initConversationInfoButton } from "./chat-conversation-info-button.js";
@@ -96,6 +97,8 @@ window.addEventListener('DOMContentLoaded', async () => {
               modelSelect.value = userSettings.preferredModelDeployment;
           }
       }
+
+      initializeModelSelector();
 
       // --- Initialize Document-related UI ---
       // This part handles URL params for documents - KEEP IT

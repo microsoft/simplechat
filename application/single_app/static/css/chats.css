@@ -20,6 +20,13 @@
   z-index: 1050 !important; /* Ensure it's above other elements */
 }
 
+.chat-searchable-select .dropdown-menu.show {
+  display: block !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  z-index: 1050 !important;
+}
+
 /* Handle dropdown positioning at the edge of viewport */
 #document-dropdown.dropup .dropdown-menu {
   bottom: 100% !important;
@@ -37,6 +44,105 @@
   position: absolute;
   left: 0 !important; /* Keep it aligned to the left of its container */
   right: auto !important; /* Prevent right positioning */
+}
+
+.chat-searchable-select {
+  min-width: 120px;
+}
+
+.chat-searchable-select .dropdown-menu {
+  min-width: 100%;
+  max-width: 360px;
+  max-height: 60vh;
+  overflow: hidden;
+  padding: 8px;
+}
+
+.chat-searchable-select-button {
+  text-align: left;
+  position: relative;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-right: 1.5rem;
+}
+
+.chat-searchable-select-text {
+  display: inline-block;
+  max-width: calc(100% - 20px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-searchable-select-search,
+.chat-dropdown-search {
+  padding: 0 0.25rem;
+}
+
+.chat-searchable-select-items {
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: 0;
+}
+
+.chat-searchable-select-items .dropdown-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  padding: 0.5rem 0.75rem;
+}
+
+.chat-searchable-select-items .dropdown-item.active {
+  background-color: #e9ecef;
+  color: #212529;
+}
+
+.chat-searchable-select-items .dropdown-item:hover {
+  background-color: #f8f9fa;
+}
+
+.chat-searchable-select-items .dropdown-item.disabled {
+  color: #6c757d;
+  cursor: default;
+}
+
+.chat-searchable-select-items .dropdown-item.disabled:hover {
+  background-color: transparent;
+}
+
+#prompt-selection-container .chat-searchable-select {
+  width: 260px;
+}
+
+#model-select-container .chat-searchable-select,
+#agent-select-container .chat-searchable-select {
+  width: 220px;
+}
+
+#scope-dropdown-menu,
+#tags-dropdown-menu {
+  overflow: hidden !important;
+}
+
+#scope-dropdown-items {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+#tags-dropdown-items {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+#scope-dropdown-items .dropdown-item,
+#tags-dropdown-items .dropdown-item {
+  width: 100%;
+  text-align: left;
 }
 
 /* Document dropdown items must be explicitly displayed */
