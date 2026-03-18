@@ -248,6 +248,9 @@ SECURITY_HEADERS = {
     )
 }
 
+if not ENABLE_TEAMS_SSO:
+    SECURITY_HEADERS['X-Frame-Options'] = 'DENY'  # Prevent framing if Teams SSO is not enabled
+
 def get_redis_cache_infrastructure_endpoint(redis_hostname: str) -> str:
     """
     Get the appropriate Redis cache infrastructure endpoint based on Azure environment.
