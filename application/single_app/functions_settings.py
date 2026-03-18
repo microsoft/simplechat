@@ -605,6 +605,20 @@ def extract_latest_version_from_html(html_content):
         return None
     
 def deep_merge_dicts(default_dict, existing_dict):
+    """
+    Recursively merge keys from default_dict into existing_dict in place.
+    This function DOES NOT return a merged dictionary. Instead, it mutates
+    existing_dict directly, adding any keys that are missing (and, for nested
+    dict values, recursing to merge their contents as well). Non-dict values
+    in existing_dict are left as-is and are not overwritten.
+
+    Args:
+        default_dict (dict): Source of default values.
+        existing_dict (dict): Target dictionary that will be updated in place.
+        
+    Returns:
+        bool: True if existing_dict was modified at any depth, otherwise False.
+    """
     changed = False
     for k, default_val in default_dict.items():
         if k not in existing_dict:

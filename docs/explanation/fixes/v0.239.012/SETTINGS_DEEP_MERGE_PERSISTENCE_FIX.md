@@ -17,18 +17,18 @@
 
 ### Code Changes Summary
 
-- Added `import copy` in `functions_settings.py`.
-- Captured a pre-merge snapshot with `original_settings_item = copy.deepcopy(settings_item)`.
-- Updated change detection to compare `merged` against `original_settings_item`.
-- Preserved existing merge behavior and upsert/logging flow.
+ - Updated `deep_merge_dicts()` in `functions_settings.py` to return a boolean `changed` flag indicating whether any values were added or updated during the merge.
+ - Updated `get_settings()` (and related callers) to use the returned `settings_changed` flag to decide whether to upsert the merged settings back to Cosmos DB.
+ - Kept the merge semantics the same while fixing the persistence condition so that only genuinely changed settings trigger an upsert.
+ - Preserved existing upsert behavior, logging flow, and return shapes for callers.
 
 ### Testing Approach
 
 - Added functional regression test: `functional_tests/test_settings_deep_merge_persistence_fix.py`.
 - Test validates marker-based wiring for:
-  - deep-copy snapshot creation,
-  - comparison against pre-merge state,
-  - Cosmos upsert path availability,
+  - the `changed` flag returned from `deep_merge_dicts()`,
+  - the `settings_changed` gate that controls whether the Cosmos upsert path is invoked,
+  - Cosmos upsert path availability and logging when defaults introduce new keys,
   - version alignment in `config.py`.
 
 ### Impact Analysis
@@ -45,7 +45,7 @@
 
 ### After
 
-- Missing default keys trigger the upsert path and persistence logging because merge output is compared against a deep-copied pre-merge snapshot.
+- Missing default keys trigger the upsert path and persistence logging because `deep_merge_dicts()` reports that changes occurred and `settings_changed` evaluates `True`, causing the merged settings to be written back to Cosmos DB.
 
 ### Test Result
 

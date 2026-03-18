@@ -19,7 +19,7 @@
 
 *   **Settings Default Merge Persistence Fix**
     *   Fixed app settings merge detection in `get_settings()` where `deep_merge_dicts()` mutates the existing settings object in place, causing change detection to always evaluate as unchanged.
-    *   Added pre-merge snapshot comparison with `copy.deepcopy()` so missing default keys correctly trigger `upsert_item()` and are persisted back to Cosmos DB.
+    *   Updated `deep_merge_dicts()` to return a boolean `changed` flag and wired `get_settings()` to call `upsert_item()` when `settings_changed` is `True`, so missing default keys correctly trigger persistence back to Cosmos DB.
     *   Added a functional regression test to validate the merge detection and persistence markers.
     *   (Ref: `application/single_app/functions_settings.py`, `application/single_app/config.py`, `functional_tests/test_settings_deep_merge_persistence_fix.py`)
     
