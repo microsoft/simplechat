@@ -92,7 +92,7 @@ def register_route_frontend_authentication(app):
         if request.args.get('error'):
             error = request.args.get('error')
             error_description = request.args.get('error_description', 'No description provided.')
-            qprint(f"Azure AD Login Error: {error} - {error_description}")
+            print(f"Azure AD Login Error: {error} - {error_description}")
             return f"Login Error: {error} - {error_description}", 400 # Or render an error page
 
         code = request.args.get('code')
@@ -234,8 +234,8 @@ def register_route_frontend_authentication(app):
         """
         try:
         # Feature gate: only allow token exchange when Teams SSO is enabled
-        if not ENABLE_TEAMS_SSO:
-            return jsonify({"error": "teams_sso_disabled"}), 404
+            if not ENABLE_TEAMS_SSO:
+                return jsonify({"error": "teams_sso_disabled"}), 404
 
             data = request.get_json()
             teams_token = data.get('token')
