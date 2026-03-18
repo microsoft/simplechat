@@ -58,6 +58,12 @@ param enterpriseAppServicePrincipalId string
 @secure()
 param enterpriseAppClientSecret string
 
+@description('''Enable Single Sign-On (SSO) for Microsoft Teams when users access the application through the Teams client.
+- If true, the application will attempt to use the Teams SSO flow for authentication when accessed from within Teams.
+- If false, the application will not attempt to use Teams SSO and will fall back to standard authentication flows.
+- Default is false''')
+param enableTeamsSso bool = false
+
 //----------------
 // configurations
 @description('''Authentication type for resources that support Managed Identity or Key authentication.
@@ -452,6 +458,7 @@ module appService 'modules/appService.bicep' = {
     appInsightsName: applicationInsights.outputs.appInsightsName
     enterpriseAppClientId: enterpriseAppClientId
     enterpriseAppClientSecret: enterpriseAppClientSecret
+    enableTeamsSso: enableTeamsSso
     authenticationType: authenticationType
     keyVaultUri: keyVault.outputs.keyVaultUri
 

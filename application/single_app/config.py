@@ -190,6 +190,7 @@ else:
     authority = AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
 
 # Teams SSO Configuration
+ENABLE_TEAMS_SSO = os.getenv("ENABLE_TEAMS_SSO", "false").lower() == "true"
 TEAMS_APP_ID = os.getenv("TEAMS_APP_ID", CLIENT_ID)  # Can be same as CLIENT_ID or different
 TEAMS_FRAME_ANCESTORS = os.getenv("TEAMS_FRAME_ANCESTORS", "") # e.g. "https://teams.microsoft.com https://*.teams.microsoft.com" - should be set to Teams domains if in airgap, otherwise can be left blank to allow from any domain since we validate the origin in the frontend against allowed Teams domains
 CUSTOM_TEAMS_ORIGINS_RAW = os.getenv("CUSTOM_TEAMS_ORIGINS", "")  # JSON array of valid domains for Teams SSO if in airgap, otherwise this is pulled from Teams, e.g. ["https://teams.microsoft.com", "https://*.teams.microsoft.com"]
@@ -211,6 +212,9 @@ elif AZURE_ENVIRONMENT == "usgovernment":
     video_indexer_endpoint = "https://api.videoindexer.ai.azure.us"
     search_resource_manager = "https://search.azure.us"
     KEY_VAULT_DOMAIN = ".vault.usgovcloudapi.net"
+    if ENABLE_TEAMS_SSO and not TEAMS_FRAME_ANCESTORS:
+        # In public cloud, we can allow from any domain since we validate the origin in the frontend against allowed Teams domains.
+        TEAMS_FRAME_ANCESTORS = "https://teams.microsoft.us https://*.teams.microsoft.us"
 else:
     OIDC_METADATA_URL = f"https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration"
     resource_manager = "https://management.azure.com"
@@ -218,6 +222,9 @@ else:
     cognitive_services_scope = "https://cognitiveservices.azure.com/.default"
     video_indexer_endpoint = "https://api.videoindexer.ai"
     KEY_VAULT_DOMAIN = ".vault.azure.net"
+    if ENABLE_TEAMS_SSO and not TEAMS_FRAME_ANCESTORS:
+        # In US Government, we need to restrict the frame ancestors to the specific Teams domains to allow the SSO flow to work, since we can't rely on the frontend to validate the origin against the public Teams domains.
+        TEAMS_FRAME_ANCESTORS = "https://teams.microsoft.com https://*.teams.microsoft.com"
 
 # Security Headers Configuration
 SECURITY_HEADERS = {

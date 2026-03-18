@@ -35,11 +35,11 @@ def register_route_frontend_authentication(app):
         # Check if this is a Teams context (via query parameter)
         # teams=true: Attempt Teams SSO detection
         # teams=false: Skip Teams SSO, use standard Azure AD flow
-        # No parameter: Default to skip Teams SSO and use standard Azure AD flow
-        teams_param = request.args.get('teams', 'false')
+        # No parameter: Default to Teams SSO detection (for backward compatibility)
+        teams_param = request.args.get('teams', 'true')
         is_teams = teams_param == 'true'
         
-        if is_teams:
+        if is_teams and ENABLE_TEAMS_SSO:
             # Render a page that will detect Teams and handle SSO
             from functions_settings import get_settings, sanitize_settings_for_user
             settings = get_settings()

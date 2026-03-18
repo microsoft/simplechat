@@ -76,15 +76,16 @@ Ensure these environment variables are set:
 
 ```bash
 # Required
+ENABLE_TEAMS_SSO=true
 CLIENT_ID=your-azure-ad-client-id
 TENANT_ID=your-azure-ad-tenant-id
 MICROSOFT_PROVIDER_AUTHENTICATION_SECRET=your-client-secret
 
-# Teams Frame Ancestors (adjust domains), always needed
-TEAMS_FRAME_ANCESTORS=https://teams.microsoft.com https://*.teams.microsoft.com https://*.cloud.microsoft
+# Teams Frame Ancestors (adjust domains), needed only if not commercial or AzureUSGovernment
+TEAMS_FRAME_ANCESTORS=https://teams.microsoft.com https://*.teams.microsoft.com
 
 # Teams Frame Origins (adjust domains), needed only if not commercial or AzureUSGovernment
-CUSTOM_TEAMS_ORIGINS=["https://teams.microsoft.com", "https://*.teams.microsoft.com", "https://*.cloud.microsoft"]
+CUSTOM_TEAMS_ORIGINS=["https://teams.microsoft.com", "https://*.teams.microsoft.com"]
 ```
 
 ## Disable App Service Authentication
@@ -134,7 +135,7 @@ Create or update your Teams app manifest (`manifest.json`), see [teams_app](../.
 
 #### "Not in Teams context"
 - App falls back to standard Azure AD login (expected behavior)
-- Verify Teams manifest `contentUrl` includes `/login?teams=true`
+- Verify ENALBE_TEAMS_SSO env var is set to 'true'
 
 #### "Debugging Teams Thick Client with Dev Tools"
 Enable thick client dev tools by creating file *%LOCALAPPDATA%\Packages\MSTeams_8wekyb3d8bbwe\LocalCache\Microsoft\MSTeams\configuration.json* with content below and restarting Teams
