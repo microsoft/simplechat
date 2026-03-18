@@ -2,12 +2,14 @@
 # test_chat_searchable_selectors.py
 """
 Functional test for searchable chat selectors.
-Version: 0.239.123
-Implemented in: 0.239.123
+Version: 0.239.124
+Implemented in: 0.239.124
 
 This test ensures that the chat page adds search support for workspace scope,
 tags, prompts, models, and agents, and that prompt loading fetches all pages so
-the searchable prompt picker is not capped at the first prompt page.
+the searchable prompt picker is not capped at the first prompt page. It also
+verifies that the chat action buttons and selector controls use a responsive
+toolbar layout instead of compressing active buttons into narrow columns.
 """
 
 import os
@@ -68,6 +70,14 @@ CHAT_AGENTS_FILE = os.path.join(
     'chat',
     'chat-agents.js',
 )
+CHAT_CSS_FILE = os.path.join(
+    ROOT_DIR,
+    'application',
+    'single_app',
+    'static',
+    'css',
+    'chats.css',
+)
 CONFIG_FILE = os.path.join(
     ROOT_DIR,
     'application',
@@ -91,12 +101,20 @@ def test_chat_template_contains_searchable_selectors():
         required_snippets = [
             'id="scope-search-input"',
             'id="tags-search-input"',
+            'class="chat-toolbar mb-2"',
+            'class="chat-toolbar-actions"',
+            'class="chat-toolbar-controls"',
+            'class="chat-toolbar-toggles"',
+            'class="chat-toolbar-selectors"',
             'id="prompt-dropdown"',
             'id="prompt-search-input"',
             'id="model-dropdown"',
             'id="model-search-input"',
             'id="agent-dropdown"',
             'id="agent-search-input"',
+            'id="prompt-selection-container" class="chat-toolbar-selector"',
+            'id="agent-select-container" class="chat-toolbar-selector"',
+            'id="model-select-container" class="chat-toolbar-selector"',
             'chat-searchable-select',
             'id="prompt-select"',
             'id="model-select"',
@@ -107,6 +125,39 @@ def test_chat_template_contains_searchable_selectors():
         assert not missing, f'Missing searchable selector markup: {missing}'
 
         print('✅ Chat template searchable selector markup passed')
+        return True
+
+    except Exception as exc:
+        print(f'❌ Test failed: {exc}')
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_chat_toolbar_layout_supports_wrapping_without_button_compression():
+    """Verify the chat toolbar uses responsive layout rules for buttons and selectors."""
+    print('🔍 Testing chat toolbar layout wiring...')
+
+    try:
+        content = read_file(CHAT_CSS_FILE)
+
+        required_snippets = [
+            '.chat-toolbar {',
+            '.chat-toolbar-actions,',
+            '.chat-toolbar-controls {',
+            '.chat-toolbar-selectors {',
+            '.chat-toolbar-selector {',
+            '.chat-toolbar-selector .chat-searchable-select {',
+            '.search-btn,',
+            '.file-btn {',
+            '@media (max-width: 1200px) {',
+            '@media (max-width: 768px) {',
+        ]
+
+        missing = [snippet for snippet in required_snippets if snippet not in content]
+        assert not missing, f'Missing responsive toolbar layout rules: {missing}'
+
+        print('✅ Chat toolbar layout wiring passed')
         return True
 
     except Exception as exc:
@@ -250,7 +301,7 @@ def test_version_bumped_for_searchable_chat_selector_change():
 
     try:
         config_content = read_file(CONFIG_FILE)
-        assert 'VERSION = "0.239.123"' in config_content, 'Expected config.py version 0.239.123'
+        assert 'VERSION = "0.239.124"' in config_content, 'Expected config.py version 0.239.124'
 
         print('✅ Config version bump passed')
         return True
@@ -265,6 +316,7 @@ def test_version_bumped_for_searchable_chat_selector_change():
 if __name__ == '__main__':
     tests = [
         test_chat_template_contains_searchable_selectors,
+        test_chat_toolbar_layout_supports_wrapping_without_button_compression,
         test_shared_search_helper_supports_dropdown_filtering_and_single_selects,
         test_scope_tag_and_document_search_are_wired_in_chat_documents,
         test_prompt_selector_pages_all_prompts_and_uses_searchable_select,

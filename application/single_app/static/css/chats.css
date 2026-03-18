@@ -50,6 +50,66 @@
   min-width: 120px;
 }
 
+.chat-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.chat-toolbar-actions,
+.chat-toolbar-controls,
+.chat-toolbar-toggles,
+.chat-toolbar-selectors {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.chat-toolbar-actions {
+  flex: 1 1 320px;
+  flex-wrap: wrap;
+}
+
+.chat-toolbar-controls {
+  flex: 1 1 540px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.chat-toolbar-toggles {
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+}
+
+.chat-toolbar-selectors {
+  flex: 1 1 460px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.chat-toolbar-selector {
+  flex: 1 1 200px;
+  min-width: 180px;
+  max-width: 280px;
+}
+
+.chat-toolbar-selector .chat-searchable-select {
+  width: 100%;
+  min-width: 0;
+}
+
+#prompt-selection-container.chat-toolbar-selector {
+  max-width: 300px;
+}
+
+#model-select-container.chat-toolbar-selector,
+#agent-select-container.chat-toolbar-selector {
+  max-width: 230px;
+}
+
 .chat-searchable-select .dropdown-menu {
   min-width: 100%;
   max-width: 360px;
@@ -115,18 +175,34 @@
   background-color: transparent;
 }
 
-#prompt-selection-container .chat-searchable-select {
-  width: 260px;
-}
-
-#model-select-container .chat-searchable-select,
-#agent-select-container .chat-searchable-select {
-  width: 220px;
-}
-
 #scope-dropdown-menu,
 #tags-dropdown-menu {
   overflow: hidden !important;
+}
+
+@media (max-width: 1200px) {
+  .chat-toolbar-controls,
+  .chat-toolbar-selectors {
+    justify-content: flex-start;
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 768px) {
+  .chat-toolbar-controls {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+
+  .chat-toolbar-selectors {
+    flex-basis: 100%;
+  }
+
+  .chat-toolbar-selector {
+    flex: 1 1 100%;
+    min-width: 0;
+    max-width: none;
+  }
 }
 
 #scope-dropdown-items {
@@ -876,6 +952,12 @@ a.citation-link:hover {
   justify-content: center;
 }
 
+.search-btn,
+.file-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 /* Hide the text initially */
 .search-btn .search-btn-text {
   opacity: 0;
@@ -1364,8 +1446,7 @@ ol {
   align-items: flex-end;
 }
 #prompt-selection-container {
-  /* Prevent the container from growing vertically */
-  align-self: flex-end; /* Align item itself to bottom */
+  align-self: auto;
 }
 #prompt-select {
   /* Adjust max-width as needed */

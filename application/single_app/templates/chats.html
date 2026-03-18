@@ -291,9 +291,9 @@
 
             <div class="p-3 border-top flex-shrink-0">
                 
-                 <div class="d-flex align-items-center mb-2 justify-content-between">
+                      <div class="chat-toolbar mb-2">
                     <!-- Left side buttons -->
-                    <div class="d-flex align-items-center flex-wrap gap-2">
+                          <div class="chat-toolbar-actions">
                         {% if settings.enable_image_generation %}
                         <button
                             id="image-generate-btn"
@@ -342,7 +342,9 @@
                     </div>
                     
                     <!-- Right side selectors -->
-                    <div class="d-flex align-items-center gap-2">
+                    <div class="chat-toolbar-controls">
+
+                        <div class="chat-toolbar-toggles">
 
                         <!-- TTS Autoplay toggle button -->
                         {% if app_settings.enable_text_to_speech %}
@@ -383,9 +385,12 @@
                             <i class="bi bi-reception-2"></i>
                         </button>
 
+                        </div>
+
                         <!-- Prompt Selector -->
+                        <div class="chat-toolbar-selectors">
                         {% if settings.enable_user_workspace or settings.enable_group_workspaces %}
-                        <div id="prompt-selection-container" class="flex-shrink-0" style="display: none;">
+                        <div id="prompt-selection-container" class="chat-toolbar-selector" style="display: none;">
                             <label for="prompt-select" class="visually-hidden">Prompt</label>
                             <div class="dropdown chat-searchable-select" id="prompt-dropdown">
                                 <button class="form-select chat-searchable-select-button"
@@ -412,7 +417,7 @@
 
 
                         <!-- Agent selector -->
-                        <div id="agent-select-container" class="flex-shrink-0" style="display: none;">
+                        <div id="agent-select-container" class="chat-toolbar-selector" style="display: none;">
                             <label for="agent-select" class="visually-hidden">Agent</label>
                             <div class="dropdown chat-searchable-select" id="agent-dropdown">
                                 <button class="form-select chat-searchable-select-button"
@@ -440,7 +445,7 @@
                         
                         
                         <!-- Model selector - right aligned -->
-                        <div id="model-select-container" class="flex-shrink-0">
+                        <div id="model-select-container" class="chat-toolbar-selector">
                             <label for="model-select" class="visually-hidden">Model</label>
                             <div class="dropdown chat-searchable-select" id="model-dropdown">
                                 <button class="form-select chat-searchable-select-button"
@@ -495,6 +500,7 @@
                                 {% endfor %}
                             {% endif %}
                             </select>
+                        </div>
                         </div>
                     </div>
                 </div>

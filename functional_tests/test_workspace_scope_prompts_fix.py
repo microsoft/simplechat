@@ -2,8 +2,8 @@
 # test_workspace_scope_prompts_fix.py
 """
 Functional test for workspace scope affecting prompts functionality.
-Version: 0.239.123
-Implemented in: 0.239.123
+Version: 0.239.124
+Implemented in: 0.239.124
 
 This test ensures that chat prompt loading remains scope-aware for personal,
 group, and public prompt sources, and that the prompt picker uses the current
@@ -106,8 +106,8 @@ def test_prompt_scope_filtering_and_searchable_picker_implementation():
         assert not missing_template, f'Missing prompt dropdown template markup: {missing_template}'
         print('✅ Prompt dropdown template markup implemented')
 
-        assert 'VERSION = "0.239.123"' in config_content, 'Expected config.py version 0.239.123'
-        print('✅ Version properly updated to 0.239.123 in config.py')
+        assert 'VERSION = "0.239.124"' in config_content, 'Expected config.py version 0.239.124'
+        print('✅ Version properly updated to 0.239.124 in config.py')
 
         print('✅ Workspace scope prompt implementation checks passed!')
         return True
