@@ -100,7 +100,7 @@ def test_server_idle_timeout_wiring():
     """Validate idle-timeout and heartbeat backend wiring exists."""
     print("🔍 Testing server-side idle-timeout wiring...")
 
-    _, app_tree = _parse_python_file("application", "single_app", "app.py")
+    app_content, app_tree = _parse_python_file("application", "single_app", "app.py")
     config_content = _read_file("application", "single_app", "config.py")
     _, auth_tree = _parse_python_file("application", "single_app", "route_frontend_authentication.py")
     _, config_tree = _parse_python_file("application", "single_app", "config.py")
@@ -138,6 +138,21 @@ def test_server_idle_timeout_wiring():
         for node in app_tree.body
     )
     assert has_settings_source_counter_dict, "Missing settings_source_counters = {} assignment"
+
+    required_settings_source_logging_markers = [
+        "settings_source_last_observed = None",
+        "settings_source_last_non_cache_log_epoch = 0",
+        "settings_source_non_cache_log_interval_seconds = 60",
+        "should_log_non_cache_info",
+        "if should_log_non_cache_info:"
+    ]
+    missing_settings_source_logging_markers = [
+        marker for marker in required_settings_source_logging_markers
+        if marker not in app_content
+    ]
+    assert not missing_settings_source_logging_markers, (
+        f"Missing settings-source logging throttling markers: {missing_settings_source_logging_markers}"
+    )
 
     idle_settings_def = _find_top_level_function(app_tree, "get_idle_timeout_settings")
     has_idle_timeout_default_get = False

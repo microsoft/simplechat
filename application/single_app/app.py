@@ -542,6 +542,9 @@ def is_idle_timeout_enabled(settings=None):
 
 settings_source_counters = {}
 settings_source_counters_lock = threading.Lock()
+settings_source_last_observed = None
+settings_source_last_non_cache_log_epoch = 0
+settings_source_non_cache_log_interval_seconds = 60
 
 
 def record_request_settings_source(source):
@@ -558,12 +561,33 @@ def record_request_settings_source(source):
         None: Counter updates and diagnostics are handled internally.
     """
     normalized_source = source or 'unknown'
+    now_epoch = int(time.time())
+
+    global settings_source_last_observed
+    global settings_source_last_non_cache_log_epoch
+
     with settings_source_counters_lock:
         settings_source_counters[normalized_source] = settings_source_counters.get(normalized_source, 0) + 1
         cache_hits = settings_source_counters.get('cache', 0)
         cosmos_fallback_hits = settings_source_counters.get('cosmos_fallback', 0)
         cosmos_forced_hits = settings_source_counters.get('cosmos_forced', 0)
         unknown_hits = settings_source_counters.get('unknown', 0)
+
+        previous_source = settings_source_last_observed
+        source_changed = normalized_source != previous_source
+        settings_source_last_observed = normalized_source
+
+        non_cache_log_window_elapsed = (
+            now_epoch - settings_source_last_non_cache_log_epoch
+        ) >= settings_source_non_cache_log_interval_seconds
+
+        should_log_non_cache_info = (
+            normalized_source != 'cache'
+            and (source_changed or non_cache_log_window_elapsed)
+        )
+
+        if should_log_non_cache_info:
+            settings_source_last_non_cache_log_epoch = now_epoch
 
     g.request_settings_source = normalized_source
     debug_print(
@@ -575,12 +599,14 @@ def record_request_settings_source(source):
         unknown_hits=unknown_hits
     )
 
-    if normalized_source != 'cache':
+    if should_log_non_cache_info:
         log_event(
             "Request settings source is non-cache.",
             extra={
                 "path": request.path,
                 "settings_source": normalized_source,
+                "source_changed": source_changed,
+                "non_cache_log_window_elapsed": non_cache_log_window_elapsed,
                 "cache_hits": cache_hits,
                 "cosmos_fallback_hits": cosmos_fallback_hits,
                 "cosmos_forced_hits": cosmos_forced_hits,
