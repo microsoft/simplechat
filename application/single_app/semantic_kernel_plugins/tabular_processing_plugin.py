@@ -1173,12 +1173,10 @@ class TabularProcessingPlugin:
                     user_id, conversation_id, filename, source,
                     group_id=group_id, public_workspace_id=public_workspace_id
                 )
-                # When no sheet_name given and no default-sheet override exists,
-                # try cross-sheet search before erroring
+                # When no explicit sheet_name is given, try cross-sheet search first
                 normalized_sheet = (sheet_name or '').strip()
                 normalized_sheet_idx = None if sheet_index is None else str(sheet_index).strip()
-                has_default_override = (container, blob_path) in self._default_sheet_overrides
-                if not normalized_sheet and normalized_sheet_idx in (None, '') and not has_default_override:
+                if not normalized_sheet and normalized_sheet_idx in (None, ''):
                     cross_sheet_result = self._lookup_value_across_sheets(
                         container, blob_path, filename,
                         lookup_column, lookup_value, target_column,
@@ -1389,12 +1387,10 @@ class TabularProcessingPlugin:
                     user_id, conversation_id, filename, source,
                     group_id=group_id, public_workspace_id=public_workspace_id
                 )
-                # When no sheet_name given and no default-sheet override exists,
-                # try cross-sheet search before erroring
+                # When no explicit sheet_name is given, try cross-sheet search first
                 normalized_sheet = (sheet_name or '').strip()
                 normalized_sheet_idx = None if sheet_index is None else str(sheet_index).strip()
-                has_default_override = (container, blob_path) in self._default_sheet_overrides
-                if not normalized_sheet and normalized_sheet_idx in (None, '') and not has_default_override:
+                if not normalized_sheet and normalized_sheet_idx in (None, ''):
                     cross_sheet_result = self._filter_rows_across_sheets(
                         container, blob_path, filename, column, operator, value,
                         max_rows=int(max_rows),
