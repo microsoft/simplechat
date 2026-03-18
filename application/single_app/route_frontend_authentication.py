@@ -42,7 +42,7 @@ def register_route_frontend_authentication(app):
         
         # Get settings from database, with environment variable fallback
         from functions_settings import get_settings
-        settings = get_settings()
+        settings = get_settings() or {}
         
         # Only use Front Door redirect URL if Front Door is enabled
         if settings.get('enable_front_door', False):
@@ -89,7 +89,7 @@ def register_route_frontend_authentication(app):
 
         # Get settings from database, with environment variable fallback
         from functions_settings import get_settings
-        settings = get_settings()
+        settings = get_settings() or {}
         
         # Only use Front Door redirect URL if Front Door is enabled
         if settings.get('enable_front_door', False):
@@ -142,7 +142,7 @@ def register_route_frontend_authentication(app):
         # You might want to store the original destination in the session during /login
         # Get settings from database, with environment variable fallback
         from functions_settings import get_settings
-        settings = get_settings()
+        settings = get_settings() or {}
         
         debug_print(f"HOME_REDIRECT_URL (env): {HOME_REDIRECT_URL}")
         debug_print(f"front_door_url (db): {settings.get('front_door_url')}")
@@ -184,7 +184,7 @@ def register_route_frontend_authentication(app):
 
         # Get settings for redirect URI (same logic as other routes)
         from functions_settings import get_settings
-        settings = get_settings()
+        settings = get_settings() or {}
         
         if settings.get('enable_front_door', False):
             front_door_url = settings.get('front_door_url')
@@ -226,7 +226,7 @@ def register_route_frontend_authentication(app):
         session.clear()
 
         from functions_settings import get_settings
-        settings = get_settings()
+        settings = get_settings() or {}
 
         if settings.get('enable_front_door', False):
             front_door_url = settings.get('front_door_url')
@@ -236,9 +236,9 @@ def register_route_frontend_authentication(app):
             elif HOME_REDIRECT_URL:
                 logout_uri = HOME_REDIRECT_URL
             else:
-                logout_uri = url_for('index', _external=True)
+                logout_uri = url_for('index')
         else:
-            logout_uri = url_for('index', _external=True)
+            logout_uri = url_for('index')
 
         return redirect(logout_uri)
 
@@ -254,7 +254,7 @@ def register_route_frontend_authentication(app):
         # MSAL provides a helper for this too, but constructing manually is fine
         # Get settings from database, with environment variable fallback
         from functions_settings import get_settings
-        settings = get_settings()
+        settings = get_settings() or {}
         
         # Only use Front Door redirect URL if Front Door is enabled
         if settings.get('enable_front_door', False):

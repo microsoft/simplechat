@@ -297,8 +297,10 @@ def test_server_idle_timeout_wiring():
 
     login_def = _find_nested_function(auth_register_def, "login")
     authorized_def = _find_nested_function(auth_register_def, "authorized")
+    local_logout_def = _find_nested_function(auth_register_def, "local_logout")
     assert login_def is not None, "Missing login route function in authentication route"
     assert authorized_def is not None, "Missing authorized route function in authentication route"
+    assert local_logout_def is not None, "Missing local_logout route function in authentication route"
 
     has_last_activity_pop = False
     for node in ast.walk(login_def):
@@ -338,6 +340,33 @@ def test_server_idle_timeout_wiring():
                 has_last_activity_assignment = True
     assert has_last_activity_assignment, "Missing session['last_activity_epoch'] = int(time.time()) in authorized flow"
 
+    has_relative_index_url_for = False
+    has_external_index_url_for = False
+    for node in ast.walk(local_logout_def):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "url_for"
+            and len(node.args) == 1
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value == "index"
+        ):
+            if len(node.keywords) == 0:
+                has_relative_index_url_for = True
+
+            has_external_keyword = any(
+                isinstance(keyword, ast.keyword)
+                and keyword.arg == "_external"
+                and isinstance(keyword.value, ast.Constant)
+                and keyword.value.value is True
+                for keyword in node.keywords
+            )
+            if has_external_keyword:
+                has_external_index_url_for = True
+
+    assert has_relative_index_url_for, "Missing relative url_for('index') fallback in local_logout"
+    assert not has_external_index_url_for, "Unexpected url_for('index', _external=True) in local_logout"
+
     print("✅ Server-side idle-timeout wiring is present")
 
 
@@ -356,7 +385,8 @@ def test_base_template_warning_modal_wiring():
         "js/idle-logout-warning.js",
         "localLogoutUrl",
         "fullSsoLogoutUrl",
-        "enabled: {{ idle_timeout_enabled | default(false) | tojson }}",
+        "'enabled': idle_timeout_enabled | default(false)",
+        "| tojson | safe",
         "session_heartbeat"
     ]
 

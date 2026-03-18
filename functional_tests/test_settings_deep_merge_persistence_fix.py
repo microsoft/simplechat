@@ -29,9 +29,8 @@ def _read_file(*path_parts):
 
 def _load_functions_settings_ast():
     """Load and parse functions_settings.py into an AST tree."""
-    settings_content = _read_file("application", "single_app", "functions_settings.py")
-    return settings_content, ast.parse(settings_content)
-
+    source = _read_file("application", "single_app", "functions_settings.py")
+    return source, ast.parse(source)
 
 def _find_top_level_function(module_tree, function_name):
     """Find a top-level function definition by name."""

@@ -353,14 +353,14 @@
   <script src="{{ url_for('static', filename='js/notifications.js') }}"></script>
   {% if session.get('user') %}
   <script>
-    window.idleLogoutConfig = {
-      enabled: {{ idle_timeout_enabled | default(false) | tojson }},
-      timeoutMinutes: {{ idle_timeout_minutes | default(30) | int }},
-      warningMinutes: {{ idle_warning_minutes | default(28) | int }},
-      heartbeatUrl: "{{ url_for('session_heartbeat') }}",
-      localLogoutUrl: "{{ url_for('local_logout') }}",
-      fullSsoLogoutUrl: "{{ url_for('logout') }}"
-    };
+    window.idleLogoutConfig = {{ {
+      'enabled': idle_timeout_enabled | default(false),
+      'timeoutMinutes': idle_timeout_minutes | default(30) | int,
+      'warningMinutes': idle_warning_minutes | default(28) | int,
+      'heartbeatUrl': url_for('session_heartbeat'),
+      'localLogoutUrl': url_for('local_logout'),
+      'fullSsoLogoutUrl': url_for('logout')
+    } | tojson | safe }};
   </script>
   <script src="{{ url_for('static', filename='js/idle-logout-warning.js') }}"></script>
   {% endif %}
