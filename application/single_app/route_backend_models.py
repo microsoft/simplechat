@@ -7,6 +7,15 @@ from swagger_wrapper import swagger_route, get_auth_security
 import re
 
 
+def _get_configured_models(settings, setting_key):
+    configured = settings.get(setting_key, {}) or {}
+    return configured.get('all', []) if isinstance(configured, dict) else []
+
+
+def _is_foundry_project_endpoint(endpoint):
+    return 'services.ai.azure.com' in (endpoint or '').lower()
+
+
 def register_route_backend_models(app):
     """
     Register backend routes for fetching Azure OpenAI models.
@@ -25,10 +34,12 @@ def register_route_backend_models(app):
 
         subscription_id = settings.get('azure_openai_gpt_subscription_id', '')
         resource_group = settings.get('azure_openai_gpt_resource_group', '')
-        account_name = settings.get('azure_openai_gpt_endpoint', '').split('.')[0].replace("https://", "")
+        endpoint = settings.get('azure_openai_gpt_endpoint', '')
+        account_name = endpoint.split('.')[0].replace("https://", "")
+        configured_models = _get_configured_models(settings, 'gpt_model')
 
-        if not subscription_id or not resource_group or not account_name:
-            return jsonify({"error": "Azure GPT Model subscription/RG/endpoint not configured"}), 400
+        if _is_foundry_project_endpoint(endpoint) or not subscription_id or not resource_group or not account_name:
+            return jsonify({"models": configured_models}), 200
 
         if AZURE_ENVIRONMENT == "usgovernment" or AZURE_ENVIRONMENT == "custom":
             
@@ -66,8 +77,8 @@ def register_route_backend_models(app):
                         "modelName": model_name
                     })
 
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
+        except Exception:
+            return jsonify({"models": configured_models}), 200
 
         return jsonify({"models": models})
 
@@ -85,10 +96,12 @@ def register_route_backend_models(app):
 
         subscription_id = settings.get('azure_openai_embedding_subscription_id', '')
         resource_group = settings.get('azure_openai_embedding_resource_group', '')
-        account_name = settings.get('azure_openai_embedding_endpoint', '').split('.')[0].replace("https://", "")
+        endpoint = settings.get('azure_openai_embedding_endpoint', '')
+        account_name = endpoint.split('.')[0].replace("https://", "")
+        configured_models = _get_configured_models(settings, 'embedding_model')
 
-        if not subscription_id or not resource_group or not account_name:
-            return jsonify({"error": "Azure Embedding Model subscription/RG/endpoint not configured"}), 400
+        if _is_foundry_project_endpoint(endpoint) or not subscription_id or not resource_group or not account_name:
+            return jsonify({"models": configured_models}), 200
 
         if AZURE_ENVIRONMENT == "usgovernment" or AZURE_ENVIRONMENT == "custom":
             
@@ -124,8 +137,8 @@ def register_route_backend_models(app):
                         "deploymentName": d.name,
                         "modelName": model_name
                     })
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
+        except Exception:
+            return jsonify({"models": configured_models}), 200
 
         return jsonify({"models": models})
 

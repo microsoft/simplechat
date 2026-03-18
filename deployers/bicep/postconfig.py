@@ -1,15 +1,20 @@
 from azure.cosmos import CosmosClient
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 from azure.keyvault.secrets import SecretClient
 import os
 import json
 
-credential = DefaultAzureCredential()
-token = credential.get_token("https://cosmos.azure.com/.default")
+credential = AzureCliCredential()
 
 cosmosEndpoint = os.getenv("var_cosmosDb_uri")
-client = CosmosClient(cosmosEndpoint, credential=credential)
+cosmosKey = os.getenv("var_cosmosDb_key")
+
+if cosmosKey:
+    client = CosmosClient(cosmosEndpoint, cosmosKey)
+else:
+    credential.get_token("https://cosmos.azure.com/.default")
+    client = CosmosClient(cosmosEndpoint, credential=credential)
 
 database_name = "SimpleChat"
 container_name = "settings"
@@ -35,6 +40,7 @@ var_authenticationType = os.getenv("var_authenticationType")
 var_keyVaultUri = os.getenv("var_keyVaultUri")
 
 var_openAIEndpoint = os.getenv("var_openAIEndpoint")
+var_openAISubscriptionId = os.getenv("var_openAISubscriptionId")
 var_openAIResourceGroup = os.getenv("var_openAIResourceGroup")
 var_subscriptionId = os.getenv("var_subscriptionId")
 var_rgName = os.getenv("var_rgName")
@@ -68,8 +74,15 @@ item["enable_external_healthcheck"] = True
 # AI Models
 item["azure_openai_gpt_endpoint"] = var_openAIEndpoint
 item["azure_openai_gpt_authentication_type"] = var_authenticationType
-item["azure_openai_gpt_subscription_id"] = var_subscriptionId
+item["azure_openai_gpt_subscription_id"] = var_openAISubscriptionId or var_subscriptionId
 item["azure_openai_gpt_resource_group"] = var_openAIResourceGroup
+if keyvault_client and var_authenticationType == "key":
+    try:
+        openai_key_secret = keyvault_client.get_secret("openAi-key")
+        item["azure_openai_gpt_key"] = openai_key_secret.value
+        print("Retrieved Azure OpenAI key from Key Vault for GPT settings")
+    except Exception as e:
+        print(f"Warning: Could not retrieve openAi-key from Key Vault for GPT settings: {e}")
 item["gpt_model"] = {
     "selected": [
         {
@@ -88,8 +101,15 @@ item["gpt_model"] = {
 
 item["azure_openai_embedding_endpoint"] = var_openAIEndpoint
 item["azure_openai_embedding_authentication_type"] = var_authenticationType
-item["azure_openai_embedding_subscription_id"] = var_subscriptionId
+item["azure_openai_embedding_subscription_id"] = var_openAISubscriptionId or var_subscriptionId
 item["azure_openai_embedding_resource_group"] = var_openAIResourceGroup
+if keyvault_client and var_authenticationType == "key":
+    try:
+        openai_key_secret = keyvault_client.get_secret("openAi-key")
+        item["azure_openai_embedding_key"] = openai_key_secret.value
+        print("Retrieved Azure OpenAI key from Key Vault for embedding settings")
+    except Exception as e:
+        print(f"Warning: Could not retrieve openAi-key from Key Vault for embedding settings: {e}")
 item["embedding_model"] = {
     "selected": [
         {

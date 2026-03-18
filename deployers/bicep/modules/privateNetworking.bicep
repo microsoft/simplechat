@@ -2,6 +2,7 @@ targetScope = 'resourceGroup'
 
 param virtualNetworkId string
 param privateEndpointSubnetId string
+param privateDnsZoneConfigs object = {}
 
 param location string
 param appName string
@@ -15,6 +16,8 @@ param searchServiceName string
 param docIntelName string
 param storageAccountName string
 param openAIName string
+param openAIResourceGroupName string
+param openAISubscriptionId string
 param webAppName string
 
 
@@ -22,6 +25,8 @@ param webAppName string
 param contentSafetyName string
 param speechServiceName string
 param videoIndexerName string
+
+var useExternalOpenAIResource = openAIName != '' && !empty(openAIResourceGroupName) && !empty(openAISubscriptionId)
 
 //=========================================================
 // privateDNSZoneNames
@@ -36,6 +41,18 @@ var cosmosDbDnsZoneName = privateDnsZoneData[cloudName].cosmosDb
 var keyVaultDnsZoneName = privateDnsZoneData[cloudName].keyVault
 var openAiDnsZoneName = privateDnsZoneData[cloudName].openAi
 var webSitesDnsZoneName = privateDnsZoneData[cloudName].webSites
+var defaultPrivateDnsZoneConfig = {
+  zoneResourceId: ''
+  createVNetLink: true
+}
+var keyVaultPrivateDnsZoneConfig = contains(privateDnsZoneConfigs, 'keyVault') ? union(defaultPrivateDnsZoneConfig, privateDnsZoneConfigs.keyVault) : defaultPrivateDnsZoneConfig
+var cosmosDbPrivateDnsZoneConfig = contains(privateDnsZoneConfigs, 'cosmosDb') ? union(defaultPrivateDnsZoneConfig, privateDnsZoneConfigs.cosmosDb) : defaultPrivateDnsZoneConfig
+var containerRegistryPrivateDnsZoneConfig = contains(privateDnsZoneConfigs, 'containerRegistry') ? union(defaultPrivateDnsZoneConfig, privateDnsZoneConfigs.containerRegistry) : defaultPrivateDnsZoneConfig
+var aiSearchPrivateDnsZoneConfig = contains(privateDnsZoneConfigs, 'aiSearch') ? union(defaultPrivateDnsZoneConfig, privateDnsZoneConfigs.aiSearch) : defaultPrivateDnsZoneConfig
+var blobStoragePrivateDnsZoneConfig = contains(privateDnsZoneConfigs, 'blobStorage') ? union(defaultPrivateDnsZoneConfig, privateDnsZoneConfigs.blobStorage) : defaultPrivateDnsZoneConfig
+var cognitiveServicesPrivateDnsZoneConfig = contains(privateDnsZoneConfigs, 'cognitiveServices') ? union(defaultPrivateDnsZoneConfig, privateDnsZoneConfigs.cognitiveServices) : defaultPrivateDnsZoneConfig
+var openAiPrivateDnsZoneConfig = contains(privateDnsZoneConfigs, 'openAi') ? union(defaultPrivateDnsZoneConfig, privateDnsZoneConfigs.openAi) : defaultPrivateDnsZoneConfig
+var webSitesPrivateDnsZoneConfig = contains(privateDnsZoneConfigs, 'webSites') ? union(defaultPrivateDnsZoneConfig, privateDnsZoneConfigs.webSites) : defaultPrivateDnsZoneConfig
 
 //=========================================================
 // key vault
@@ -53,6 +70,8 @@ module keyVaultDNSZone 'privateDNS.bicep' = {
     name: 'kv'
     vNetId: virtualNetworkId
     tags: tags
+    existingZoneResourceId: keyVaultPrivateDnsZoneConfig.zoneResourceId
+    createVNetLink: keyVaultPrivateDnsZoneConfig.createVNetLink
   }
 }
 
@@ -60,7 +79,6 @@ module keyVaultPE 'privateEndpoint.bicep' = {
   name: 'keyVaultPE'
   dependsOn: [
     kv
-    keyVaultDNSZone
   ]
   params: {
     name: 'kv'
@@ -94,6 +112,8 @@ module cosmosDbDNSZone 'privateDNS.bicep' = {
     name: 'cosmosDb'
     vNetId: virtualNetworkId
     tags: tags
+    existingZoneResourceId: cosmosDbPrivateDnsZoneConfig.zoneResourceId
+    createVNetLink: cosmosDbPrivateDnsZoneConfig.createVNetLink
   }
 }
 
@@ -101,7 +121,6 @@ module cosmosDbPE 'privateEndpoint.bicep' = {
   name: 'cosmosDbPE'
   dependsOn: [
     cosmosDb
-    cosmosDbDNSZone
   ]
   params: {
     name: 'cosmosDb'
@@ -135,6 +154,8 @@ module acrDNSZone 'privateDNS.bicep' = {
     name: 'acr'
     vNetId: virtualNetworkId
     tags: tags
+    existingZoneResourceId: containerRegistryPrivateDnsZoneConfig.zoneResourceId
+    createVNetLink: containerRegistryPrivateDnsZoneConfig.createVNetLink
   }
 }
 
@@ -142,7 +163,6 @@ module acrPE 'privateEndpoint.bicep' = {
   name: 'acrPE'
   dependsOn: [
     acr
-    acrDNSZone
   ]
   params: {
     name: 'acr'
@@ -176,6 +196,8 @@ module searchServiceDNSZone 'privateDNS.bicep' = {
     name: 'searchService'
     vNetId: virtualNetworkId
     tags: tags
+    existingZoneResourceId: aiSearchPrivateDnsZoneConfig.zoneResourceId
+    createVNetLink: aiSearchPrivateDnsZoneConfig.createVNetLink
   }
 }
 
@@ -183,7 +205,6 @@ module searchServicePE 'privateEndpoint.bicep' = {
   name: 'searchServicePE'
   dependsOn: [
     searchService
-    searchServiceDNSZone
   ]
   params: {
     name: 'searchService'
@@ -217,6 +238,8 @@ module docIntelDNSZone 'privateDNS.bicep' = {
     name: 'docIntelService'
     vNetId: virtualNetworkId
     tags: tags
+    existingZoneResourceId: cognitiveServicesPrivateDnsZoneConfig.zoneResourceId
+    createVNetLink: cognitiveServicesPrivateDnsZoneConfig.createVNetLink
   }
 }
 
@@ -224,7 +247,6 @@ module docIntelPE 'privateEndpoint.bicep' = {
   name: 'docIntelPE'
   dependsOn: [
     docIntelService
-    docIntelDNSZone
   ]
   params: {
     name: 'docIntelService'
@@ -258,6 +280,8 @@ module storageAccountDNSZone 'privateDNS.bicep' = {
     name: 'storage'
     vNetId: virtualNetworkId
     tags: tags
+    existingZoneResourceId: blobStoragePrivateDnsZoneConfig.zoneResourceId
+    createVNetLink: blobStoragePrivateDnsZoneConfig.createVNetLink
   }
 }
 
@@ -265,7 +289,6 @@ module storageAccountPE 'privateEndpoint.bicep' = {
   name: 'storageAccountPE'
   dependsOn: [
     storageAccount
-    storageAccountDNSZone
   ]
   params: {
     name: 'storageAccount'
@@ -284,11 +307,16 @@ module storageAccountPE 'privateEndpoint.bicep' = {
   }
 }
 //=========================================================
-resource openAiService 'Microsoft.CognitiveServices/accounts@2024-10-01' existing = {
+resource openAiService 'Microsoft.CognitiveServices/accounts@2024-10-01' existing = if (openAIName != '' && !useExternalOpenAIResource) {
   name: openAIName
 }
 
-module openAiDNSZone 'privateDNS.bicep' = {
+resource openAiServiceExternal 'Microsoft.CognitiveServices/accounts@2024-10-01' existing = if (useExternalOpenAIResource) {
+  name: openAIName
+  scope: resourceGroup(openAISubscriptionId, openAIResourceGroupName)
+}
+
+module openAiDNSZone 'privateDNS.bicep' = if (openAIName != '') {
   name: 'openAiDNSZone'
   params: {
     zoneName: openAiDnsZoneName
@@ -297,26 +325,27 @@ module openAiDNSZone 'privateDNS.bicep' = {
     name: 'openAiService'
     vNetId: virtualNetworkId
     tags: tags
+    existingZoneResourceId: openAiPrivateDnsZoneConfig.zoneResourceId
+    createVNetLink: openAiPrivateDnsZoneConfig.createVNetLink
   }
 }
 
-module openAiPE 'privateEndpoint.bicep' = {
+module openAiPE 'privateEndpoint.bicep' = if (openAIName != '') {
   name: 'openAiPE'
   dependsOn: [
-    openAiService
-    openAiDNSZone
   ]
   params: {
     name: 'openAiService'
     location: location
     appName: appName
     environment: environment
-    serviceResourceID: openAiService.id
+    serviceResourceID: useExternalOpenAIResource ? openAiServiceExternal.id : openAiService.id
     subnetId: privateEndpointSubnetId
     groupIDs: [
       'account'
     ]
     privateDnsZoneIds: [
+      #disable-next-line BCP318 // module is deployed under the same condition as this private endpoint
       openAiDNSZone.outputs.privateDnsZoneId
     ]
     tags: tags
@@ -338,6 +367,8 @@ module webAppDNSZone 'privateDNS.bicep' = {
     name: 'webApp'
     vNetId: virtualNetworkId
     tags: tags
+    existingZoneResourceId: webSitesPrivateDnsZoneConfig.zoneResourceId
+    createVNetLink: webSitesPrivateDnsZoneConfig.createVNetLink
   }
 }
 
@@ -345,7 +376,6 @@ module webAppPE 'privateEndpoint.bicep' = {
   name: 'webAppPE'
   dependsOn: [
     webApp
-    webAppDNSZone
   ]
   params: {
     name: 'webApp'

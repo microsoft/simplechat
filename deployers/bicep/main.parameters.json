@@ -47,6 +47,36 @@
     "enablePrivateNetworking": {
       "value": "${ENABLE_PRIVATE_NETWORKING}"
     },
+    "existingVirtualNetworkId": {
+      "value": "${EXISTING_VNET_RESOURCE_ID}"
+    },
+    "existingAppServiceSubnetId": {
+      "value": "${EXISTING_APP_SERVICE_SUBNET_RESOURCE_ID}"
+    },
+    "existingPrivateEndpointSubnetId": {
+      "value": "${EXISTING_PRIVATE_ENDPOINT_SUBNET_RESOURCE_ID}"
+    },
+    "privateDnsZoneConfigs": {
+      "value": {}
+    },
+    "existingOpenAIEndpoint": {
+      "value": "${EXISTING_AZURE_OPENAI_ENDPOINT}"
+    },
+    "existingOpenAIResourceName": {
+      "value": "${EXISTING_AZURE_OPENAI_RESOURCE_NAME}"
+    },
+    "existingOpenAIResourceGroup": {
+      "value": "${EXISTING_AZURE_OPENAI_RESOURCE_GROUP}"
+    },
+    "existingOpenAISubscriptionId": {
+      "value": "${EXISTING_AZURE_OPENAI_SUBSCRIPTION_ID}"
+    },
+    "existingOpenAIKey": {
+      "value": "${EXISTING_AZURE_OPENAI_KEY}"
+    },
+    "openAIDeploymentType": {
+      "value": "${OPENAI_DEPLOYMENT_TYPE}"
+    },
     "gptModels": {
       "value": "${GPT_MODELS}"
     },

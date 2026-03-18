@@ -2,6 +2,142 @@
 
 # Feature Release
 
+### **(v0.237.050)**
+
+#### Bug Fixes
+
+*   **AZD Windows Hook Resource Group Resolution Fix**
+    *   Fixed AZD Windows hook execution that failed when `var_rgName` was stale or missing from the deployment context, preventing resource group resolution during `postprovision`, `predeploy`, and `postup` hook phases.
+    *   Added direct Azure resource group name lookup as a fallback when `var_rgName` is unavailable, ensuring hooks can reliably resolve the correct resource group even if the variable state becomes outdated.
+    *   Added regression coverage to prevent resource group resolution failures from recurring in future deployments that rely on the AZD Windows hook framework.
+    *   (Ref: `deployers/azure.yaml`, `functional_tests/test_azd_windows_hooks.py`, `docs/explanation/fixes/v0.237.050/AZD_WINDOWS_RGNAME_RESOLUTION_FIX.md`)
+
+### **(v0.237.049)**
+
+#### Bug Fixes
+
+*   **AZD Windows Hook Validation Fix**
+    *   Fixed Windows `azd provision` and `azd up` runs that failed after infrastructure provisioning because `postprovision`, `predeploy`, and `postup` did not define valid Windows hook commands in `azure.yaml`.
+    *   Added native PowerShell hook implementations for the Windows deployment path so post-provision configuration, image build orchestration, and private-network finalization can execute on Windows without relying on POSIX-only hook blocks.
+    *   Added regression coverage to prevent the required Windows AZD hook definitions from being removed or reformatted incorrectly in future changes.
+    *   (Ref: `deployers/azure.yaml`, `functional_tests/test_azd_windows_hooks.py`, `docs/explanation/fixes/v0.237.049/AZD_WINDOWS_POSTPROVISION_HOOK_FIX.md`)
+
+### **(v0.237.048)**
+
+#### New Features
+
+*   **Azure CLI Azure OpenAI Model Deployment Support**
+    *   Extended the Azure CLI deployer so it can create the default GPT and embedding model deployments for either a newly created Azure OpenAI account or a reused existing account.
+    *   Added configurable Azure OpenAI deployment type handling for `Standard`, `DatazoneStandard`, and `GlobalStandard`, along with retry guidance when quota or regional availability blocks the initial deployment type.
+    *   Updated deployment documentation and added regression coverage so the Azure CLI path now reflects the same Azure OpenAI model deployment expectations more clearly.
+    *   (Ref: `deployers/azurecli/deploy-simplechat.ps1`, `deployers/azurecli/README.md`, `functional_tests/test_azurecli_aoai_model_deployments.py`, `docs/explanation/features/AZURECLI_AOAI_MODEL_DEPLOYMENTS.md`)
+
+### **(v0.237.022)**
+
+#### New Features
+
+*   **Azure CLI Private Networking Parity**
+    *   Extended the Azure CLI deployer to support the same core private networking flow as the Bicep deployer for the services it provisions.
+    *   Added support for creating a deployment VNet, reusing existing App Service and private endpoint subnets, creating private endpoints, creating or reusing private DNS zones, and optionally suppressing VNet link creation per zone.
+    *   Added private networking validation and operator guidance directly in the deployment script so administrators are prompted to confirm subnet delegation, DNS ownership, and VNet link expectations before deployment continues.
+    *   (Ref: `deployers/azurecli/deploy-simplechat.ps1`, `deployers/azurecli/README.md`, private endpoints, private DNS, App Service VNet integration)
+
+#### Bug Fixes
+
+*   **Azure CLI Cleanup and Documentation Alignment**
+    *   Updated the Azure CLI destroy script to better reflect the new private networking model by clarifying that shared enterprise VNets, subnets, and customer-managed private DNS zones are not removed when they live outside the deployment resource group.
+    *   Added cloud-aware token refresh handling for both Azure Commercial and Azure Government and fixed Entra security group cleanup to include the public workspace creation group.
+    *   Updated feature documentation and deployment guidance to describe the new cleanup behavior and aligned the application version metadata with the Azure CLI deployment changes.
+    *   (Ref: `deployers/azurecli/destroy-simplechat.ps1`, `deployers/azurecli/README.md`, `docs/explanation/features/AZURECLI_PRIVATE_NETWORKING_PARITY.md`, `application/single_app/config.py`)
+
+### **(v0.237.020)**
+
+#### New Features
+
+*   **Terraform Private Networking Parity**
+    *   Added core private networking support to the Terraform deployer so it can now create or reuse a virtual network, use dedicated App Service integration and private endpoint subnets, and provision private endpoints for the main Simple Chat dependencies.
+    *   Added support for automatic private DNS zone creation, enterprise private DNS zone reuse by resource ID, and optional per-zone VNet link suppression when central networking teams manage those links separately.
+    *   Added Terraform support for private networking configuration of the web app, storage account, Azure AI Search, Document Intelligence, and Azure OpenAI so public access is disabled when private networking is enabled.
+    *   (Ref: `deployers/terraform/private_networking.tf`, `deployers/terraform/main.tf`, private endpoints, private DNS, App Service VNet integration)
+
+#### Bug Fixes
+
+*   **Terraform Deployment Guidance and Provider Support Alignment**
+    *   Updated the Terraform deployment guidance to match the new private networking capabilities, including examples for new VNet creation, existing subnet reuse, and private DNS zone reuse.
+    *   Added the `azapi` provider requirement so Terraform can manage private DNS VNet links needed for cross-scope and enterprise-managed networking scenarios.
+    *   Added feature documentation for the new Terraform private networking flow and aligned the application version metadata with the release.
+    *   (Ref: `deployers/terraform/ReadMe.md`, `deployers/terraform/.terraform.lock.hcl`, `docs/explanation/features/TERRAFORM_PRIVATE_NETWORKING_PARITY.md`, `application/single_app/config.py`)
+
+### **(v0.237.019)**
+
+#### Bug Fixes
+
+*   **Terraform Existing Azure OpenAI Reuse Alignment**
+    *   Updated the Terraform deployer to better align with the newer Azure OpenAI deployment patterns already supported in the Bicep deployer.
+    *   Added support for specifying an existing Azure OpenAI subscription ID when the reused resource lives outside the primary deployment subscription.
+    *   Added support for an explicit existing Azure OpenAI or Azure AI Foundry-compatible endpoint override so Terraform can configure the application with externally managed endpoints instead of deriving the endpoint from the resource name.
+    *   OpenAI RBAC assignment logic now skips automatic role assignment when only an endpoint is supplied and no deployable Azure OpenAI resource metadata is available.
+    *   (Ref: `deployers/terraform/main.tf`, existing Azure OpenAI reuse, cross-subscription lookup, endpoint override)
+
+*   **Terraform Deployment Guidance Improvements**
+    *   Expanded Terraform deployment documentation to clearly explain that the Terraform deployer does not currently automate existing VNet reuse, subnet creation, private endpoint deployment, or private DNS zone creation/linking.
+    *   Added prerequisite guidance for administrators who plan to enforce private networking after deployment, including subnet delegation and private DNS requirements.
+    *   Added documentation for endpoint-only Azure OpenAI reuse and cross-subscription Azure OpenAI resource lookup.
+    *   (Ref: `deployers/terraform/ReadMe.md`, Terraform deployment guidance, private networking prerequisites)
+
+### **(v0.237.018)**
+
+#### New Features
+
+*   **Existing VNet and Subnet Reuse for Private Networking**
+    *   Added support for deploying Simple Chat into an existing customer-managed virtual network when private networking is enabled.
+    *   New infrastructure parameters allow reuse of an existing VNet, an existing App Service VNet integration subnet, and an existing private endpoint subnet.
+    *   Existing network resources may live in the same resource group, a different resource group, or a different subscription.
+    *   The deployment now clearly distinguishes between creating a new VNet and reusing an existing one, and it avoids creating subnets inside external customer-managed VNets.
+    *   (Ref: `deployers/bicep/main.bicep`, `deployers/bicep/main.parameters.json`, private networking, existing VNet support)
+
+*   **Private DNS Zone Reuse and Link Control**
+    *   Added per-zone private DNS configuration through `privateDnsZoneConfigs` so deployments can either create local private DNS zones or reuse centrally managed ones.
+    *   Each supported DNS zone can now reuse an existing zone by resource ID and optionally skip automatic VNet link creation when the customer manages DNS links separately.
+    *   This enables mixed enterprise scenarios where some zones are managed locally and others are managed by a central networking team.
+    *   (Ref: `deployers/bicep/main.bicep`, `deployers/bicep/modules/privateDNS.bicep`, `deployers/bicep/modules/privateDNSLink.bicep`, `deployers/bicep/modules/privateNetworking.bicep`)
+
+*   **Existing Azure OpenAI and Azure AI Foundry Endpoint Support**
+    *   Added support for reusing an existing Azure OpenAI resource or a public Azure AI Foundry OpenAI-compatible endpoint instead of always deploying a new Azure OpenAI resource.
+    *   New parameters support external endpoint reuse, external resource metadata, cross-resource-group and cross-subscription scenarios, and optional API key injection when automatic key retrieval is not available.
+    *   Model discovery now falls back to configured deployment values when Azure management metadata is unavailable, which improves compatibility with endpoint-only and AI Foundry scenarios.
+    *   (Ref: `deployers/bicep/modules/openAI.bicep`, `deployers/bicep/modules/appService.bicep`, `deployers/bicep/postconfig.py`, `application/single_app/route_backend_models.py`)
+
+*   **Region-Aware Azure OpenAI Default Model Updates**
+    *   Updated default GPT and embedding model deployments for Azure Commercial and Azure Government regions.
+    *   Default GPT model deployment is now `gpt-4o` with `Standard` SKU.
+    *   Default embedding deployment is now `text-embedding-3-small` in Azure Commercial and US Gov Arizona, with `text-embedding-ada-002` retained for US Gov Virginia where model availability differs.
+    *   (Ref: `deployers/bicep/main.bicep`, Azure OpenAI defaults, Azure Government model support)
+
+*   **AZD Pre-Provision Prerequisite Validation for Private Networking**
+    *   Added a pre-provision validation step for `azd up` / `azd provision` that inspects the user's networking choices before infrastructure deployment begins.
+    *   When private networking is enabled, the deployment now explains the prerequisites for reusing an existing VNet, describes private DNS behavior, and stops early if required subnet resource IDs are missing.
+    *   This gives administrators a clear chance to pause, prepare prerequisites, and rerun the deployment instead of discovering missing dependencies later in the provisioning flow.
+    *   (Ref: `deployers/azure.yaml`, `deployers/bicep/validate_azd_prerequisites.py`, `deployers/bicep/README.md`)
+
+#### Bug Fixes
+
+*   **Cross-Scope Private DNS and External OpenAI Deployment Fixes**
+    *   Fixed Bicep compilation and scoping issues affecting private DNS zone reuse, VNet link creation, and role assignments for externally managed Azure OpenAI resources.
+    *   Introduced helper modules to perform private DNS VNet link creation and external OpenAI RBAC assignment at the correct deployment scope.
+    *   Resolved nullability and dependency warnings in the infrastructure modules so the updated templates compile cleanly.
+    *   (Ref: `deployers/bicep/modules/privateDNSLink.bicep`, `deployers/bicep/modules/setPermissions-openAIExternal.bicep`, `deployers/bicep/modules/setPermissions.bicep`, `deployers/bicep/modules/privateNetworking.bicep`)
+
+*   **AZD OpenAI Output Export Alignment Fix**
+    *   Fixed an AZD environment export mismatch where `azure.yaml` referenced singular OpenAI model output names that no longer matched the Bicep template outputs.
+    *   Updated the deployment hooks to export the correct plural GPT and embedding model arrays and the Azure OpenAI subscription ID, ensuring post-deployment configuration receives the expected values.
+    *   (Ref: `deployers/azure.yaml`, `deployers/bicep/main.bicep`, `deployers/bicep/postconfig.py`)
+
+*   **Deployment Guidance Improvements for Private Networking**
+    *   Expanded deployment guidance so administrators understand the prerequisites and consequences of choosing existing VNet reuse and centralized private DNS management.
+    *   Updated one-click deployment and Azure CLI deployment guidance to explain when existing subnet IDs, subnet delegation, DNS zones, and VNet links must already be in place.
+    *   (Ref: `deployers/bicep/README.md`, `deployers/bicep/OneClickDeploy.md`, `deployers/azurecli/deploy-simplechat.ps1`, `docs/how-to/enterprise_networking.md`)
+
 ### **(v0.237.011)**
 
 #### Bug Fixes

@@ -11,11 +11,22 @@ param logAnalyticsId string
 param keyVault string
 param authenticationType string
 param configureApplicationPermissions bool
+param existingOpenAIEndpoint string = ''
+param existingOpenAIResourceName string = ''
+param existingOpenAIResourceGroup string = ''
+param existingOpenAISubscriptionId string = ''
+
+@secure()
+param existingOpenAIKey string = ''
 
 param gptModels array
 param embeddingModels array
 
 param enablePrivateNetworking bool
+
+var useExistingOpenAIEndpoint = !empty(existingOpenAIEndpoint)
+var resolvedOpenAIResourceGroup = useExistingOpenAIEndpoint ? existingOpenAIResourceGroup : resourceGroup().name
+var resolvedOpenAISubscriptionId = useExistingOpenAIEndpoint ? existingOpenAISubscriptionId : subscription().subscriptionId
 
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
@@ -23,7 +34,7 @@ module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
 }
 
 // deploy new Azure OpenAI Resource
-resource openAI 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
+resource openAI 'Microsoft.CognitiveServices/accounts@2024-10-01' = if (!useExistingOpenAIEndpoint) {
   name: toLower('${appName}-${environment}-openai')
   location: location
   kind: 'OpenAI'
@@ -41,7 +52,7 @@ resource openAI 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
 }
 
 // configure diagnostic settings for OpenAI Resource if required
-resource openAIDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (enableDiagLogging) {
+resource openAIDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (enableDiagLogging && !useExistingOpenAIEndpoint) {
   name: toLower('${openAI.name}-diagnostics')
   scope: openAI
   properties: {
@@ -56,7 +67,7 @@ resource openAIDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-pre
 // deploy AI models defined in the input arrays
 @batchSize(1)
 module aiModel 'aiModel.bicep' = [
-  for (model, i) in concat(gptModels, embeddingModels): {
+  for (model, i) in !useExistingOpenAIEndpoint ? concat(gptModels, embeddingModels) : []: {
     name: 'model-${replace(model.modelName, '.', '-')}-${i}'
     params: {
       parent: openAI.name
@@ -71,15 +82,18 @@ module aiModel 'aiModel.bicep' = [
 //=========================================================
 // store openAI keys in key vault if using key authentication and configure app permissions = true
 //=========================================================
-module openAISecret 'keyVault-Secrets.bicep' = if (authenticationType == 'key' && configureApplicationPermissions) {
+module openAISecret 'keyVault-Secrets.bicep' = if (authenticationType == 'key' && configureApplicationPermissions && (!useExistingOpenAIEndpoint || !empty(existingOpenAIKey))) {
   name: 'storeOpenAISecret'
   params: {
     keyVaultName: keyVault
     secretName: 'openAi-key'
-    secretValue: openAI.listKeys().key1
+    #disable-next-line BCP422 // guarded by useExistingOpenAIEndpoint condition above
+    secretValue: useExistingOpenAIEndpoint ? existingOpenAIKey : openAI.listKeys().key1
   }
 }
 
-output openAIName string = openAI.name
-output openAIResourceGroup string = resourceGroup().name
-output openAIEndpoint string = openAI.properties.endpoint
+output openAIName string = useExistingOpenAIEndpoint ? existingOpenAIResourceName : openAI.name
+output openAIResourceGroup string = resolvedOpenAIResourceGroup
+output openAISubscriptionId string = resolvedOpenAISubscriptionId
+#disable-next-line BCP318 // guarded by useExistingOpenAIEndpoint condition above
+output openAIEndpoint string = useExistingOpenAIEndpoint ? existingOpenAIEndpoint : openAI.properties.endpoint

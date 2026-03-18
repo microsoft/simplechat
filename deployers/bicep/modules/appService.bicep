@@ -15,6 +15,7 @@ param azurePlatform string
 param cosmosDbName string
 param searchServiceName string
 param openAiServiceName string
+param openAiEndpoint string
 param openAiResourceGroupName string
 param documentIntelligenceServiceName string
 param appInsightsName string
@@ -42,10 +43,6 @@ resource cosmosDb 'Microsoft.DocumentDB/databaseAccounts@2023-04-15' existing = 
 
 resource searchService 'Microsoft.Search/searchServices@2025-05-01' existing = {
   name: searchServiceName
-}
-
-resource openAiService 'Microsoft.CognitiveServices/accounts@2024-10-01' existing = {
-  name: openAiServiceName
 }
 
 resource documentIntelligence 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
@@ -117,9 +114,9 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
           : [])
 
         { name: 'WEBSITE_AUTH_AAD_ALLOWED_TENANTS', value: tenant().tenantId }
-        { name: 'AZURE_OPENAI_RESOURCE_NAME', value: openAiService.name }
+        { name: 'AZURE_OPENAI_RESOURCE_NAME', value: openAiServiceName }
         { name: 'AZURE_OPENAI_RESOURCE_GROUP_NAME', value: openAiResourceGroupName }
-        { name: 'AZURE_OPENAI_URL', value: openAiService.properties.endpoint }
+        { name: 'AZURE_OPENAI_URL', value: openAiEndpoint }
         { name: 'AZURE_SEARCH_SERVICE_NAME', value: searchService.name }
         // Only add this setting if authenticationType is 'key'
         ...(authenticationType == 'key'
