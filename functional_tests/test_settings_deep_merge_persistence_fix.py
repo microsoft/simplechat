@@ -55,27 +55,21 @@ def test_get_settings_merge_detection_ast_wiring():
     get_settings_def = _find_top_level_function(module_tree, "get_settings")
     assert get_settings_def is not None, "Missing get_settings function in functions_settings.py"
 
-    has_snapshot_assignment = False
     has_merged_assignment = False
+    has_settings_changed_assignment = False
     merge_comparison_if = None
 
     for node in ast.walk(get_settings_def):
         if isinstance(node, ast.Assign):
             for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "original_settings_item":
-                    if (
-                        isinstance(node.value, ast.Call)
-                        and isinstance(node.value.func, ast.Attribute)
-                        and isinstance(node.value.func.value, ast.Name)
-                        and node.value.func.value.id == "copy"
-                        and node.value.func.attr == "deepcopy"
-                        and len(node.value.args) == 1
-                        and isinstance(node.value.args[0], ast.Name)
-                        and node.value.args[0].id == "settings_item"
-                    ):
-                        has_snapshot_assignment = True
-
                 if isinstance(target, ast.Name) and target.id == "merged":
+                    if (
+                        isinstance(node.value, ast.Name)
+                        and node.value.id == "settings_item"
+                    ):
+                        has_merged_assignment = True
+
+                if isinstance(target, ast.Name) and target.id == "settings_changed":
                     if (
                         isinstance(node.value, ast.Call)
                         and isinstance(node.value.func, ast.Name)
@@ -84,26 +78,17 @@ def test_get_settings_merge_detection_ast_wiring():
                         and isinstance(node.value.args[0], ast.Name)
                         and node.value.args[0].id == "default_settings"
                         and isinstance(node.value.args[1], ast.Name)
-                        and node.value.args[1].id == "settings_item"
+                        and node.value.args[1].id == "merged"
                     ):
-                        has_merged_assignment = True
+                        has_settings_changed_assignment = True
 
-        if isinstance(node, ast.If) and isinstance(node.test, ast.Compare):
-            compare_node = node.test
-            if (
-                isinstance(compare_node.left, ast.Name)
-                and compare_node.left.id == "merged"
-                and len(compare_node.ops) == 1
-                and isinstance(compare_node.ops[0], ast.NotEq)
-                and len(compare_node.comparators) == 1
-                and isinstance(compare_node.comparators[0], ast.Name)
-                and compare_node.comparators[0].id == "original_settings_item"
-            ):
+        if isinstance(node, ast.If) and isinstance(node.test, ast.Name):
+            if node.test.id == "settings_changed":
                 merge_comparison_if = node
 
-    assert has_snapshot_assignment, "Missing original_settings_item copy.deepcopy(settings_item) assignment"
-    assert has_merged_assignment, "Missing merged = deep_merge_dicts(default_settings, settings_item) assignment"
-    assert merge_comparison_if is not None, "Missing if merged != original_settings_item comparison"
+    assert has_merged_assignment, "Missing merged = settings_item assignment"
+    assert has_settings_changed_assignment, "Missing settings_changed = deep_merge_dicts(default_settings, merged) assignment"
+    assert merge_comparison_if is not None, "Missing if settings_changed branch"
 
     has_upsert_in_branch = False
     has_log_event_in_branch = False
@@ -149,7 +134,9 @@ def test_deep_merge_dicts_ast_behavior_wiring():
     has_not_in_guard = False
     has_missing_key_assignment = False
     has_recursive_merge_call = False
-    returns_existing_dict = False
+    has_changed_init = False
+    has_changed_true_assignment = False
+    returns_changed = False
 
     for node in ast.walk(deep_merge_def):
         if isinstance(node, ast.Compare):
@@ -166,6 +153,23 @@ def test_deep_merge_dicts_ast_behavior_wiring():
 
         if isinstance(node, ast.Assign) and len(node.targets) == 1:
             target = node.targets[0]
+
+            if (
+                isinstance(target, ast.Name)
+                and target.id == "changed"
+                and isinstance(node.value, ast.Constant)
+                and node.value.value is False
+            ):
+                has_changed_init = True
+
+            if (
+                isinstance(target, ast.Name)
+                and target.id == "changed"
+                and isinstance(node.value, ast.Constant)
+                and node.value.value is True
+            ):
+                has_changed_true_assignment = True
+
             if (
                 isinstance(target, ast.Subscript)
                 and isinstance(target.value, ast.Name)
@@ -188,13 +192,15 @@ def test_deep_merge_dicts_ast_behavior_wiring():
             has_recursive_merge_call = True
 
         if isinstance(node, ast.Return):
-            if isinstance(node.value, ast.Name) and node.value.id == "existing_dict":
-                returns_existing_dict = True
+            if isinstance(node.value, ast.Name) and node.value.id == "changed":
+                returns_changed = True
 
     assert has_not_in_guard, "Missing 'if k not in existing_dict' guard in deep_merge_dicts"
     assert has_missing_key_assignment, "Missing existing_dict[k] = default_val assignment in deep_merge_dicts"
     assert has_recursive_merge_call, "Missing recursive deep_merge_dicts(default_val, existing_val) call"
-    assert returns_existing_dict, "Missing return existing_dict in deep_merge_dicts"
+    assert has_changed_init, "Missing changed = False initialization in deep_merge_dicts"
+    assert has_changed_true_assignment, "Missing changed = True assignment in deep_merge_dicts"
+    assert returns_changed, "Missing return changed in deep_merge_dicts"
 
     print("✅ deep_merge_dicts AST behavior wiring is present")
 

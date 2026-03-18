@@ -526,7 +526,7 @@ def is_idle_timeout_enabled(settings=None):
     Returns:
         bool: True when idle-timeout enforcement should run; otherwise False.
 
-    Raise
+    Raises:
         None: Unexpected values are coerced to boolean-compatible behavior.
     """
     if settings is None:
@@ -713,8 +713,26 @@ def enforce_idle_session_timeout():
     now_epoch = int(time.time())
     request_settings = get_request_settings()
     if not is_idle_timeout_enabled(request_settings):
-        session['last_activity_epoch'] = now_epoch
-        session.modified = True
+        disabled_refresh_interval_seconds = 60
+        last_activity_epoch = session.get('last_activity_epoch')
+        should_refresh_last_activity = False
+
+        if last_activity_epoch is None:
+            should_refresh_last_activity = True
+        else:
+            try:
+                parsed_last_activity_epoch = int(float(last_activity_epoch))
+                if (
+                    parsed_last_activity_epoch > now_epoch
+                    or (now_epoch - parsed_last_activity_epoch) >= disabled_refresh_interval_seconds
+                ):
+                    should_refresh_last_activity = True
+            except (TypeError, ValueError):
+                should_refresh_last_activity = True
+
+        if should_refresh_last_activity:
+            session['last_activity_epoch'] = now_epoch
+            session.modified = True
         return None
 
     idle_timeout_minutes, _ = get_idle_timeout_settings(request_settings)
