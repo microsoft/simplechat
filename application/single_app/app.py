@@ -738,11 +738,24 @@ def enforce_idle_session_timeout():
     idle_timeout_minutes, _ = get_idle_timeout_settings(request_settings)
     last_activity_epoch = session.get('last_activity_epoch')
     has_valid_last_activity_epoch = False
+    max_allowed_future_skew_seconds = 60
 
     if last_activity_epoch is not None:
         try:
             parsed_last_activity_epoch = int(float(last_activity_epoch))
-            has_valid_last_activity_epoch = True
+            if parsed_last_activity_epoch <= (now_epoch + max_allowed_future_skew_seconds):
+                has_valid_last_activity_epoch = True
+            else:
+                log_event(
+                    "Idle timeout last_activity_epoch is in the future; resetting timestamp.",
+                    extra={
+                        "path": request.path,
+                        "parsed_last_activity_epoch": parsed_last_activity_epoch,
+                        "now_epoch": now_epoch,
+                        "max_allowed_future_skew_seconds": max_allowed_future_skew_seconds
+                    },
+                    level=logging.WARNING
+                )
             idle_seconds = now_epoch - parsed_last_activity_epoch
             if idle_seconds >= (idle_timeout_minutes * 60):
                 user_id = session.get('user', {}).get('oid') or session.get('user', {}).get('sub')

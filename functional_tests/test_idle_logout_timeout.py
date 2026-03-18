@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_idle_logout_timeout.py
 """
 Functional test for idle session auto-logout.
 Version: 0.239.012
