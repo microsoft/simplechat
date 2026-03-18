@@ -25,9 +25,6 @@ window.addEventListener('DOMContentLoaded', async () => {
   // Initialize streaming toggle
   initializeStreamingToggle();
   
-  // Initialize reasoning toggle
-  initializeReasoningToggle();
-  
   // Initialize speech input
   try {
     initializeSpeechInput();
@@ -80,14 +77,13 @@ window.addEventListener('DOMContentLoaded', async () => {
   }
 
   // Load documents, prompts, and user settings
+  const docsPromise = loadAllDocs();
+  const userPromptsPromise = loadUserPrompts();
+  const groupPromptsPromise = loadGroupPrompts();
+  const userSettingsPromise = loadUserSettings();
+
   try {
-      const [docsResult, userPromptsResult, groupPromptsResult, userSettings] = await Promise.all([
-          loadAllDocs(),
-          loadUserPrompts(),
-          loadGroupPrompts(),
-          loadUserSettings()
-      ]);
-      console.log("Initial data (Docs, Prompts, Settings) loaded successfully."); // Log success
+      const userSettings = await userSettingsPromise;
       
       // Set the preferred model if available
       if (userSettings && userSettings.preferredModelDeployment) {
@@ -99,6 +95,14 @@ window.addEventListener('DOMContentLoaded', async () => {
       }
 
       initializeModelSelector();
+      initializeReasoningToggle(userSettings);
+
+      const [docsResult, userPromptsResult, groupPromptsResult] = await Promise.all([
+          docsPromise,
+          userPromptsPromise,
+          groupPromptsPromise
+      ]);
+      console.log("Initial data (Docs, Prompts, Settings) loaded successfully."); // Log success
 
       // --- Initialize Document-related UI ---
       // This part handles URL params for documents - KEEP IT

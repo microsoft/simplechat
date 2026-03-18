@@ -2,7 +2,7 @@
 # test_chat_searchable_selectors.py
 """
 Functional test for searchable chat selectors.
-Version: 0.239.124
+Version: 0.239.125
 Implemented in: 0.239.124
 
 This test ensures that the chat page adds search support for workspace scope,
@@ -301,7 +301,7 @@ def test_version_bumped_for_searchable_chat_selector_change():
 
     try:
         config_content = read_file(CONFIG_FILE)
-        assert 'VERSION = "0.239.124"' in config_content, 'Expected config.py version 0.239.124'
+        assert 'VERSION = "0.239.125"' in config_content, 'Expected config.py version 0.239.125'
 
         print('✅ Config version bump passed')
         return True
