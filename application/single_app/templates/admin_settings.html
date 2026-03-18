@@ -1434,6 +1434,12 @@
                         <textarea class="form-control" id="default_system_prompt" name="default_system_prompt"
                             rows="5">{{ settings.default_system_prompt }}</textarea>
                     </div>
+                    <div class="mb-3">
+                        <label for="access_denied_message" class="form-label">Access Denied Message</label>
+                        <small class="text-muted d-block mb-1">Shown to signed-in users who lack the required roles. Use Enter for line breaks.</small>
+                        <textarea class="form-control" id="access_denied_message" name="access_denied_message"
+                            rows="3">{{ settings.access_denied_message }}</textarea>
+                    </div>
                 </div>
             </div>
 

@@ -276,9 +276,31 @@
     *   For SQL action types, the redundant additional fields UI in Step 4 is hidden entirely since all SQL configuration is already handled in Step 3.
     *   Step 5 (Summary) no longer shows the raw additional fields JSON dump for SQL types, since that data is already shown in the SQL Database Configuration summary card.
     *   (Ref: `_plugin_modal.html`, `plugin_modal_stepper.js`)
+### **(v0.239.007)**
+
+#### New Features
+
+*   **Per-Message Export**
+    *   Added export and action options to the three-dots dropdown menu on individual chat messages (both AI and user messages).
+    *   **Export to Markdown**: Downloads the message as a `.md` file with a role header. Entirely client-side.
+    *   **Export to Word**: Generates a styled `.docx` document via a new backend endpoint (`POST /api/message/export-word`). Includes Markdown-to-Word formatting (headings, bold, italic, code blocks, lists) and a citations section when present.
+    *   **Use as Prompt**: Inserts the raw message content directly into the chat input box for reuse — no clipboard, one click and it's ready to edit and send.
+    *   **Open in Email**: Opens the user's default email client with the message pre-filled in the subject and body via `mailto:`.
+    *   New options appear below a divider in the dropdown, preserving existing actions (Delete, Retry, Edit, Feedback).
+    *   (Ref: `chat-message-export.js`, `chat-messages.js`, `route_backend_conversation_export.py`, per-message export)
+
 ### **(v0.239.005)**
 
 #### New Features
+
+*   **Custom Azure Environment Support in Bicep Deployment**
+    *   Added `custom` as a supported `cloudEnvironment` value alongside `public` and `usgovernment`, enabling deployment to sovereign or custom Azure environments via Bicep.
+    *   New Bicep parameters for custom environments: `customBlobStorageSuffix`, `customGraphUrl`, `customIdentityUrl`, `customResourceManagerUrl`, `customCognitiveServicesScope`, and `customSearchResourceUrl`. All of these are automatically populated from `az.environment()` defaults except `customGraphUrl`, which must be explicitly provided for custom cloud environments and can be overridden as needed.
+    *   The `cloudEnvironment` parameter now defaults intelligently based on `az.environment().name`, and legacy values (`AzureCloud`, `AzureUSGovernment`) are mapped to SimpleChat's expected values (`public`, `usgovernment`).
+    *   Custom environment app settings (`CUSTOM_GRAPH_URL_VALUE`, `CUSTOM_IDENTITY_URL_VALUE`, `CUSTOM_RESOURCE_MANAGER_URL_VALUE`, etc.) are conditionally injected only when `azurePlatform == 'custom'`.
+    *   Replaced hardcoded ACR domain logic and auth issuer URLs with dynamic `az.environment()` lookups for better cross-cloud compatibility.
+    *   Fixed trailing slash handling in `AUTHORITY` URL construction in `config.py` using `rstrip('/')`.
+    *   (Ref: `deployers/bicep/main.bicep`, `deployers/bicep/modules/appService.bicep`, `config.py`, sovereign cloud support)
 
 *   **Redis Key Vault Authentication**
     *   Added a new `key_vault` authentication type for Redis, allowing the Redis access key to be retrieved securely from Azure Key Vault at runtime rather than stored directly in settings.
@@ -323,6 +345,11 @@
     *   **Files Modified**:`styles.css`
     *   (Ref: `.editor-toolbar`, SimpleMDE Bootstrap Icons replacement, dark mode CodeMirror overrides)
 
+*   **Docker Customization: CA Certificate and pip.conf**
+    *   Fixed Docker customization issues related to custom CA certificate handling and `pip.conf` configuration.
+    *   Ensures Python package installation works reliably in environments requiring custom certificate trust and pip configuration.
+    *   (Ref: Docker customization, CA cert setup, `pip.conf` handling)
+    
 ### **(v0.239.001)**
 
 #### New Features
