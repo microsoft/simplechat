@@ -135,7 +135,7 @@ Create or update your Teams app manifest (`manifest.json`), see [teams_app](../.
 
 #### "Not in Teams context"
 - App falls back to standard Azure AD login (expected behavior)
-- Verify ENALBE_TEAMS_SSO env var is set to 'true'
+- Verify ENABLE_TEAMS_SSO env var is set to 'true'
 
 #### "Debugging Teams Thick Client with Dev Tools"
 Enable thick client dev tools by creating file *%LOCALAPPDATA%\Packages\MSTeams_8wekyb3d8bbwe\LocalCache\Microsoft\MSTeams\configuration.json* with content below and restarting Teams
