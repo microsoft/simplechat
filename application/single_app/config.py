@@ -212,7 +212,7 @@ elif AZURE_ENVIRONMENT == "usgovernment":
     search_resource_manager = "https://search.azure.us"
     KEY_VAULT_DOMAIN = ".vault.usgovcloudapi.net"
     if ENABLE_TEAMS_SSO and not TEAMS_FRAME_ANCESTORS:
-        # In public cloud, we can allow from any domain since we validate the origin in the frontend against allowed Teams domains.
+        # In US Government, we need to restrict the frame ancestors to the specific Teams domains to allow the SSO flow to work, since we can't rely on the frontend to validate the origin against the public Teams domains.
         TEAMS_FRAME_ANCESTORS = "https://teams.microsoft.us https://*.teams.microsoft.us"
 else:
     OIDC_METADATA_URL = f"https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration"
@@ -222,7 +222,7 @@ else:
     video_indexer_endpoint = "https://api.videoindexer.ai"
     KEY_VAULT_DOMAIN = ".vault.azure.net"
     if ENABLE_TEAMS_SSO and not TEAMS_FRAME_ANCESTORS:
-        # In US Government, we need to restrict the frame ancestors to the specific Teams domains to allow the SSO flow to work, since we can't rely on the frontend to validate the origin against the public Teams domains.
+        # In public cloud, we can allow from any domain since we validate the origin in the frontend against allowed Teams domains.
         TEAMS_FRAME_ANCESTORS = "https://teams.microsoft.com https://*.teams.microsoft.com"
 
 # Security Headers Configuration
