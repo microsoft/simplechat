@@ -26,7 +26,7 @@
     {
       "entityId": "main",
       "name": "Simple Chat",
-      "contentUrl": "https://HOSTNAME",
+      "contentUrl": "https://HOSTNAME/login?teams=true",
       "websiteUrl": "https://HOSTNAME",
       "scopes": ["personal"]
     }
