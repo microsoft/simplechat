@@ -1,12 +1,10 @@
 # route_frontend_authentication.py
 
-from unittest import result
 from config import *
 from functions_appinsights import log_event
 from functions_authentication import _build_msal_app, _load_cache, _save_cache
 from functions_debug import debug_print
 from swagger_wrapper import swagger_route, get_auth_security
-from urllib.parse import urlparse
 
 def build_front_door_urls(front_door_url):
     """
