@@ -2904,7 +2904,8 @@ def register_route_backend_chats(app):
                         'conversation_id': conversation_id,
                         'conversation_title': conversation_item['title'],
                         'model_deployment_name': image_gen_model,
-                        'message_id': image_message_id
+                        'message_id': image_message_id,
+                        'user_message_id': user_message_id
                     }), 200
                 except Exception as e:
                     debug_print(f"Image generation error: {str(e)}")
@@ -4361,6 +4362,94 @@ def register_route_backend_chats(app):
             request_start_time = time.time()
         except Exception as e:
             return jsonify({'error': f'Failed to parse request: {str(e)}'}), 400
+
+        compatibility_mode = bool(data.get('image_generation')) or bool(
+            data.get('retry_user_message_id') or data.get('edited_user_message_id')
+        )
+
+        def normalize_legacy_chat_payload(payload):
+            """Convert the legacy JSON response shape into the streaming terminal payload."""
+            return {
+                'done': True,
+                'conversation_id': payload.get('conversation_id'),
+                'conversation_title': payload.get('conversation_title'),
+                'classification': payload.get('classification', []),
+                'model_deployment_name': payload.get('model_deployment_name'),
+                'message_id': payload.get('message_id'),
+                'user_message_id': payload.get('user_message_id'),
+                'augmented': payload.get('augmented', False),
+                'hybrid_citations': payload.get('hybrid_citations', []),
+                'web_search_citations': payload.get('web_search_citations', []),
+                'agent_citations': payload.get('agent_citations', []),
+                'agent_display_name': payload.get('agent_display_name'),
+                'agent_name': payload.get('agent_name'),
+                'full_content': payload.get('reply', ''),
+                'image_url': payload.get('image_url'),
+                'reload_messages': payload.get('reload_messages', False),
+                'kernel_fallback_notice': payload.get('kernel_fallback_notice'),
+                'thoughts_enabled': payload.get('thoughts_enabled', False),
+                'blocked': payload.get('blocked', False),
+            }
+
+        def generate_compatibility_response():
+            """Bridge legacy JSON chat handling into a terminal SSE event for parity cases."""
+            try:
+                if data.get('image_generation'):
+                    prompt_text = (data.get('message') or '').strip()
+                    prompt_preview = prompt_text[:120] + '...' if len(prompt_text) > 120 else prompt_text
+
+                    yield f"data: {json.dumps({
+                        'type': 'thought',
+                        'step_type': 'generation',
+                        'content': f'Generating image based on \"{prompt_preview}\"' if prompt_preview else 'Generating image from your prompt'
+                    })}\n\n"
+
+                    yield f"data: {json.dumps({
+                        'type': 'thought',
+                        'step_type': 'generation',
+                        'content': 'Preparing image model request'
+                    })}\n\n"
+
+                legacy_result = chat_api()
+                legacy_response = legacy_result
+                status_code = 200
+
+                if isinstance(legacy_result, tuple):
+                    legacy_response = legacy_result[0]
+                    if len(legacy_result) > 1 and isinstance(legacy_result[1], int):
+                        status_code = legacy_result[1]
+
+                if hasattr(legacy_response, 'get_json'):
+                    payload = legacy_response.get_json(silent=True) or {}
+                else:
+                    payload = {}
+
+                if status_code >= 400:
+                    error_message = payload.get('error') or f'Compatibility chat request failed ({status_code})'
+                    yield f"data: {json.dumps({'error': error_message})}\n\n"
+                    return
+
+                if payload.get('image_url'):
+                    yield f"data: {json.dumps({
+                        'type': 'thought',
+                        'step_type': 'generation',
+                        'content': 'Image generated and ready to display'
+                    })}\n\n"
+
+                yield f"data: {json.dumps(normalize_legacy_chat_payload(payload))}\n\n"
+            except Exception as compatibility_error:
+                yield f"data: {json.dumps({'error': str(compatibility_error)})}\n\n"
+
+        if compatibility_mode:
+            return Response(
+                stream_with_context(generate_compatibility_response()),
+                mimetype='text/event-stream',
+                headers={
+                    'Cache-Control': 'no-cache',
+                    'X-Accel-Buffering': 'no',
+                    'Connection': 'keep-alive'
+                }
+            )
         
         def generate():
             try:

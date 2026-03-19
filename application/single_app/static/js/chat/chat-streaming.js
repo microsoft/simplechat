@@ -7,7 +7,7 @@ import { updateSidebarConversationTitle } from './chat-sidebar-conversations.js'
 import { applyScopeLock } from './chat-documents.js';
 import { handleStreamingThought } from './chat-thoughts.js';
 
-let streamingEnabled = false;
+let streamingEnabled = true;
 let currentEventSource = null;
 
 function parseSseEventPayload(eventBlock) {
@@ -26,8 +26,9 @@ function parseSseEventPayload(eventBlock) {
 
 export function initializeStreamingToggle() {
     const streamingToggleBtn = document.getElementById('streaming-toggle-btn');
+    streamingEnabled = true;
+
     if (!streamingToggleBtn) {
-        console.warn('Streaming toggle button not found');
         return;
     }
     
@@ -36,7 +37,7 @@ export function initializeStreamingToggle() {
     // Load initial state from user settings
     loadUserSettings().then(settings => {
         console.log('Loaded user settings:', settings);
-        streamingEnabled = settings.streamingEnabled === true;
+        streamingEnabled = true;
         console.log('Streaming enabled:', streamingEnabled);
         updateStreamingButtonState();
         updateStreamingButtonVisibility();
@@ -46,19 +47,10 @@ export function initializeStreamingToggle() {
     
     // Handle toggle click
     streamingToggleBtn.addEventListener('click', () => {
-        streamingEnabled = !streamingEnabled;
-        console.log('Streaming toggled to:', streamingEnabled);
-        
-        // Save the setting
-        console.log('Saving streaming setting...');
-        saveUserSetting({ streamingEnabled });
-        
+        streamingEnabled = true;
         updateStreamingButtonState();
-        
-        const message = streamingEnabled 
-            ? 'Streaming enabled - responses will appear in real-time' 
-            : 'Streaming disabled - responses will appear when complete';
-        showToast(message, 'info');
+
+        showToast('Streaming is required for chat responses.', 'info');
     });
     
     // Listen for agents toggle - hide streaming button when agents are active
@@ -76,31 +68,11 @@ export function initializeStreamingToggle() {
 function updateStreamingButtonState() {
     const streamingToggleBtn = document.getElementById('streaming-toggle-btn');
     if (!streamingToggleBtn) return;
-    
-    // Check if TTS autoplay is enabled
-    let ttsAutoplayEnabled = false;
-    if (typeof window.appSettings !== 'undefined' && window.appSettings.enable_text_to_speech) {
-        const cachedSettings = JSON.parse(localStorage.getItem('userSettings') || '{}');
-        ttsAutoplayEnabled = cachedSettings.settings?.ttsAutoplay === true;
-    }
-    
-    if (ttsAutoplayEnabled) {
-        // Disable streaming button when TTS autoplay is on
-        streamingToggleBtn.classList.remove('btn-primary');
-        streamingToggleBtn.classList.add('btn-outline-secondary', 'disabled');
-        streamingToggleBtn.disabled = true;
-        streamingToggleBtn.title = 'Streaming disabled - TTS autoplay is enabled. Disable TTS autoplay in your profile to enable streaming.';
-    } else if (streamingEnabled) {
-        streamingToggleBtn.classList.remove('btn-outline-secondary', 'disabled');
-        streamingToggleBtn.classList.add('btn-primary');
-        streamingToggleBtn.disabled = false;
-        streamingToggleBtn.title = 'Streaming enabled - click to disable';
-    } else {
-        streamingToggleBtn.classList.remove('btn-primary', 'disabled');
-        streamingToggleBtn.classList.add('btn-outline-secondary');
-        streamingToggleBtn.disabled = false;
-        streamingToggleBtn.title = 'Streaming disabled - click to enable';
-    }
+
+    streamingToggleBtn.classList.remove('btn-outline-secondary', 'disabled');
+    streamingToggleBtn.classList.add('btn-primary');
+    streamingToggleBtn.disabled = true;
+    streamingToggleBtn.title = 'Streaming is always enabled for chat responses';
 }
 
 /**
@@ -117,42 +89,19 @@ function updateStreamingButtonVisibility() {
 }
 
 export function isStreamingEnabled() {
-    // Check if TTS autoplay is enabled - streaming is incompatible with TTS autoplay
-    if (typeof window.appSettings !== 'undefined' && window.appSettings.enable_text_to_speech) {
-        // Dynamically check TTS settings
-        loadUserSettings().then(settings => {
-            if (settings.ttsAutoplay === true) {
-                console.log('TTS autoplay enabled - streaming disabled');
-            }
-        }).catch(error => {
-            console.error('Error checking TTS settings:', error);
-        });
-        
-        // Synchronous check using cached value if available
-        const cachedSettings = JSON.parse(localStorage.getItem('userSettings') || '{}');
-        if (cachedSettings.settings?.ttsAutoplay === true) {
-            return false; // Disable streaming when TTS autoplay is active
-        }
-    }
-    
-    // Check if image generation is active - streaming is incompatible with image gen
-    const imageGenBtn = document.getElementById('image-generate-btn');
-    if (imageGenBtn && imageGenBtn.classList.contains('active')) {
-        return false; // Disable streaming when image generation is active
-    }
     return streamingEnabled;
 }
 
-export function sendMessageWithStreaming(messageData, tempUserMessageId, currentConversationId) {
+export function sendMessageWithStreaming(messageData, tempUserMessageId, currentConversationId, options = {}) {
     if (!streamingEnabled) {
         return null; // Caller should use regular fetch
     }
-    
-    // Double-check: never stream if image generation is active
-    const imageGenBtn = document.getElementById('image-generate-btn');
-    if (imageGenBtn && imageGenBtn.classList.contains('active')) {
-        return null; // Force regular fetch for image generation
-    }
+
+    const {
+        onDone = null,
+        onError = null,
+        onFinally = null,
+    } = options;
     
     // Close any existing connection
     if (currentEventSource) {
@@ -208,6 +157,12 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
                 streamError = true;
                 streamErrorMessage = data.error;
                 handleStreamError(tempAiMessageId, data.partial_content || accumulatedContent, data.error);
+                if (typeof onError === 'function') {
+                    onError(data.error, data);
+                }
+                if (typeof onFinally === 'function') {
+                    onFinally();
+                }
                 return true;
             }
 
@@ -233,6 +188,14 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
                     tempUserMessageId,
                     data
                 );
+
+                if (typeof onDone === 'function') {
+                    onDone(data);
+                }
+
+                if (typeof onFinally === 'function') {
+                    onFinally();
+                }
 
                 currentEventSource = null;
                 return true;
@@ -296,6 +259,14 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
                             accumulatedContent,
                             'Stream ended before completion metadata was received.'
                         );
+
+                        if (typeof onError === 'function') {
+                            onError('Stream ended before completion metadata was received.');
+                        }
+
+                        if (typeof onFinally === 'function') {
+                            onFinally();
+                        }
                     }
 
                     return;
@@ -312,6 +283,12 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
                 clearTimeout(streamTimeout);
                 console.error('Stream reading error:', err);
                 handleStreamError(tempAiMessageId, accumulatedContent, err.message);
+                if (typeof onError === 'function') {
+                    onError(err.message, err);
+                }
+                if (typeof onFinally === 'function') {
+                    onFinally();
+                }
             });
         }
         
@@ -326,6 +303,14 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
         const msgElement = document.querySelector(`[data-message-id="${tempAiMessageId}"]`);
         if (msgElement) {
             msgElement.remove();
+        }
+
+        if (typeof onError === 'function') {
+            onError(error.message, error);
+        }
+
+        if (typeof onFinally === 'function') {
+            onFinally();
         }
     });
     
@@ -404,6 +389,32 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData) {
     
     // Remove the temporary streaming message
     messageElement.remove();
+
+    if (finalData.kernel_fallback_notice) {
+        showToast(finalData.kernel_fallback_notice, 'warning');
+    }
+
+    if (finalData.image_url) {
+        appendMessage(
+            'image',
+            finalData.image_url,
+            finalData.model_deployment_name,
+            finalData.message_id,
+            false,
+            [],
+            [],
+            finalData.agent_citations || [],
+            finalData.agent_display_name || null,
+            finalData.agent_name || null,
+            null,
+            true
+        );
+
+        if (finalData.reload_messages && finalData.conversation_id && typeof window.chatMessages?.loadMessages === 'function') {
+            window.chatMessages.loadMessages(finalData.conversation_id);
+        }
+        return;
+    }
     
     // Create proper message with all metadata using appendMessage
     appendMessage(
@@ -413,7 +424,7 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData) {
         finalData.message_id,
         finalData.augmented,
         finalData.hybrid_citations || [],
-        [],
+        finalData.web_search_citations || [],
         finalData.agent_citations || [],
         finalData.agent_display_name || null,
         finalData.agent_name || null,
@@ -446,6 +457,10 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData) {
                 }
             })
             .catch(err => console.warn('Failed to fetch scope lock metadata after streaming:', err));
+    }
+
+    if (finalData.reload_messages && finalData.conversation_id && typeof window.chatMessages?.loadMessages === 'function') {
+        window.chatMessages.loadMessages(finalData.conversation_id);
     }
 }
 

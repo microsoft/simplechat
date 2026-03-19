@@ -731,8 +731,8 @@ function loadUserMetrics() {
             }
             
             // Update preferences badges
-            document.getElementById('streaming-badge').textContent = data.settings?.streamingEnabled ? 'Enabled' : 'Disabled';
-            document.getElementById('streaming-badge').className = `badge ${data.settings?.streamingEnabled ? 'bg-success' : 'bg-secondary'}`;
+            document.getElementById('streaming-badge').textContent = 'Required';
+            document.getElementById('streaming-badge').className = 'badge bg-success';
             
             document.getElementById('darkmode-badge').textContent = data.settings?.darkModeEnabled ? 'Enabled' : 'Disabled';
             document.getElementById('darkmode-badge').className = `badge ${data.settings?.darkModeEnabled ? 'bg-dark' : 'bg-light text-dark'}`;

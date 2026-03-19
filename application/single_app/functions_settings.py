@@ -276,7 +276,7 @@ def get_settings(use_cosmos=False):
         'enable_external_healthcheck': False,
         
         # Streaming settings
-        'streamingEnabled': False,
+        'streamingEnabled': True,
         
         # Reasoning effort settings (per-model)
         'reasoningEffortSettings': {},
