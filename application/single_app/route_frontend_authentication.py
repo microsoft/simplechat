@@ -6,6 +6,7 @@ from functions_appinsights import log_event
 from functions_authentication import _build_msal_app, _load_cache, _save_cache
 from functions_debug import debug_print
 from swagger_wrapper import swagger_route, get_auth_security
+from urllib.parse import urlparse
 
 def build_front_door_urls(front_door_url):
     """
@@ -237,6 +238,32 @@ def register_route_frontend_authentication(app):
             # Feature gate: only allow token exchange when Teams SSO is enabled
             if not ENABLE_TEAMS_SSO:
                 return jsonify({"error": "teams_sso_disabled"}), 404
+
+            # Basic CSRF mitigation: ensure request originates from this app's origin
+            origin = request.headers.get("Origin")
+            referer = request.headers.get("Referer")
+            header_value = origin or referer
+
+            if not header_value:
+                log_event("teams_token_exchange_csrf_missing_origin", {})
+                return jsonify({
+                    "error": "invalid_request",
+                    "error_description": "Missing Origin/Referer header."
+                }), 400
+
+            parsed = urlparse(header_value)
+            request_origin = f"{parsed.scheme}://{parsed.netloc}"
+            expected_origin = request.host_url.rstrip("/")
+
+            if request_origin.rstrip("/") != expected_origin:
+                log_event("teams_token_exchange_csrf_origin_mismatch", {
+                    "request_origin": request_origin,
+                    "expected_origin": expected_origin
+                })
+                return jsonify({
+                    "error": "invalid_request",
+                    "error_description": "Origin mismatch."
+                }), 400
 
             data = request.get_json()
             teams_token = data.get('token')
