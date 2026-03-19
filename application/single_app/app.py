@@ -100,11 +100,12 @@ app.config['SESSION_TYPE'] = SESSION_TYPE
 app.config['VERSION'] = VERSION
 app.config['SECRET_KEY'] = SECRET_KEY
 
-app.config.update(
-    SESSION_COOKIE_SECURE=True,        # required if you use SameSite=None
-    SESSION_COOKIE_SAMESITE="None" if ENABLE_TEAMS_SSO else "Lax",
-    SESSION_COOKIE_HTTPONLY=True,
-)
+if ENABLE_TEAMS_SSO:
+    app.config.update(
+        SESSION_COOKIE_SECURE=True,        # required if you use SameSite=None
+        SESSION_COOKIE_SAMESITE="None",
+        SESSION_COOKIE_HTTPONLY=True,
+    )
 
 # Ensure filesystem session directory (when used) points to a writable path inside container.
 if SESSION_TYPE == 'filesystem':
