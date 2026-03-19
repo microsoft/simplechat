@@ -252,13 +252,13 @@ def register_route_frontend_authentication(app):
                 }), 400
 
             parsed = urlparse(header_value)
-            request_origin = f"{parsed.scheme}://{parsed.netloc}"
-            expected_origin = request.host_url.rstrip("/")
+            request_host = parsed.netloc
+            expected_host = urlparse(request.host_url).netloc
 
-            if request_origin.rstrip("/") != expected_origin:
+            if request_host != expected_host:
                 log_event("teams_token_exchange_csrf_origin_mismatch", {
-                    "request_origin": request_origin,
-                    "expected_origin": expected_origin
+                    "request_host": request_host,
+                    "expected_host": expected_host
                 })
                 return jsonify({
                     "error": "invalid_request",
@@ -266,7 +266,7 @@ def register_route_frontend_authentication(app):
                 }), 400
 
             data = request.get_json()
-            teams_token = data.get('token')
+            teams_token = data.get('token') or {}
             
             if not teams_token:
                 return jsonify({"error": "No token provided"}), 400
