@@ -90,7 +90,22 @@ CUSTOM_TEAMS_ORIGINS=["https://teams.microsoft.com", "https://*.teams.microsoft.
 
 ## Disable App Service Authentication
 
-App Service Authentication (EasyAuth) must be disabled for Teams SSO to work in the thick client due to login.microsoftonline.com frame restrictions.
+When you enable Teams SSO (`ENABLE_TEAMS_SSO=true`), App Service Authentication (EasyAuth) must **not** enforce its own login page for the Teams tab. The Teams thick client cannot display the EasyAuth login experience because `login.microsoftonline.com` cannot be framed, which breaks SSO.
+
+> Note: The provided Bicep templates may configure `authsettingsV2` (EasyAuth) for the web app. If you plan to use Teams SSO, you must either disable EasyAuth completely or configure it so that unauthenticated requests are allowed and do not trigger an EasyAuth login challenge for the Teams tab URL.
+
+To safely disable or neutralize EasyAuth for Teams SSO:
+
+1. In the Azure Portal, go to **App Services** → select your SimpleChat web app.
+2. Open the **Authentication** blade.
+3. Either:
+   - Set **App Service Authentication** to **Off**, and **Save**, **or**
+   - Configure the **authsettingsV2** policy so that:
+       - **Unauthenticated requests** are allowed (no redirect to a login page), and
+       - Your Teams tab URL (e.g. `/login?teams=true` or the tab path you use) is not protected by EasyAuth.
+4. Redeploy or restart the app if prompted so the new authentication settings take effect.
+
+EasyAuth **can remain enabled** for standard browser access (outside of Teams) if you need App Service–level authentication, as long as it does not intercept requests coming from the Teams tab or require framing `login.microsoftonline.com`. In that case, ensure Teams traffic is either excluded from EasyAuth or is allowed as anonymous and authenticated within the app using the Teams SSO token.
 
 ## Teams App Manifest Configuration
 
