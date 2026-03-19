@@ -239,32 +239,6 @@ def register_route_frontend_authentication(app):
             if not ENABLE_TEAMS_SSO:
                 return jsonify({"error": "teams_sso_disabled"}), 404
 
-            # Basic CSRF mitigation: ensure request originates from this app's origin
-            origin = request.headers.get("Origin")
-            referer = request.headers.get("Referer")
-            header_value = origin or referer
-
-            if not header_value:
-                log_event("teams_token_exchange_csrf_missing_origin", {})
-                return jsonify({
-                    "error": "invalid_request",
-                    "error_description": "Missing Origin/Referer header."
-                }), 400
-
-            parsed = urlparse(header_value)
-            request_host = parsed.netloc
-            expected_host = urlparse(request.host_url).netloc
-
-            if request_host != expected_host:
-                log_event("teams_token_exchange_csrf_origin_mismatch", {
-                    "request_host": request_host,
-                    "expected_host": expected_host
-                })
-                return jsonify({
-                    "error": "invalid_request",
-                    "error_description": "Origin mismatch."
-                }), 400
-
             data = request.get_json()
             teams_token = data.get('token') or {}
             
