@@ -3,7 +3,11 @@
 import { showToast } from "./chat-toast.js";
 import { loadMessages } from "./chat-messages.js";
 import { isColorLight, toBoolean } from "./chat-utils.js";
-import { loadSidebarConversations, setActiveConversation as setSidebarActiveConversation } from "./chat-sidebar-conversations.js";
+import {
+  loadSidebarConversations,
+  setActiveConversation as setSidebarActiveConversation,
+  setConversationUnreadState as setSidebarConversationUnreadState,
+} from "./chat-sidebar-conversations.js";
 import { toggleConversationInfoButton } from "./chat-conversation-info-button.js";
 import { restoreScopeLockState, resetScopeLock } from "./chat-documents.js";
 
@@ -29,6 +33,109 @@ let isLoadingConversations = false; // Prevent concurrent loads
 let showQuickSearch = false; // Track if quick search input is visible
 let quickSearchTerm = ""; // Current search term
 let pendingConversationCreation = null; // Reuse a single in-flight create request
+const markConversationReadRequests = new Map();
+
+function createUnreadDotElement() {
+  const unreadDot = document.createElement("span");
+  unreadDot.classList.add("conversation-unread-dot");
+  unreadDot.setAttribute("aria-hidden", "true");
+  return unreadDot;
+}
+
+function updateConversationUnreadStateCache(conversationId, hasUnread) {
+  allConversations = allConversations.map(convo => {
+    if (convo.id !== conversationId) {
+      return convo;
+    }
+
+    return {
+      ...convo,
+      has_unread_assistant_response: hasUnread,
+      last_unread_assistant_message_id: hasUnread ? convo.last_unread_assistant_message_id : null,
+      last_unread_assistant_at: hasUnread ? convo.last_unread_assistant_at : null,
+    };
+  });
+}
+
+function getConversationUnreadState(conversationId) {
+  const convoItem = document.querySelector(`.conversation-item[data-conversation-id="${conversationId}"]`);
+  if (convoItem) {
+    return convoItem.dataset.hasUnreadAssistantResponse === "true";
+  }
+
+  const conversation = allConversations.find(convo => convo.id === conversationId);
+  return Boolean(conversation?.has_unread_assistant_response);
+}
+
+export function setConversationUnreadState(conversationId, hasUnread) {
+  updateConversationUnreadStateCache(conversationId, hasUnread);
+
+  const convoItem = document.querySelector(`.conversation-item[data-conversation-id="${conversationId}"]`);
+  if (convoItem) {
+    convoItem.dataset.hasUnreadAssistantResponse = hasUnread ? "true" : "false";
+
+    const titleRow = convoItem.querySelector(".conversation-title-row");
+    const titleElement = convoItem.querySelector(".conversation-title");
+    const existingDot = convoItem.querySelector(".conversation-unread-dot");
+
+    if (!hasUnread) {
+      if (existingDot) {
+        existingDot.remove();
+      }
+    } else if (!existingDot && titleRow && titleElement) {
+      titleRow.insertBefore(createUnreadDotElement(), titleElement);
+    }
+  }
+
+  setSidebarConversationUnreadState(conversationId, hasUnread);
+}
+
+export async function markConversationRead(conversationId, options = {}) {
+  const { force = false, suppressErrorToast = false } = options;
+  if (!conversationId) {
+    return null;
+  }
+
+  const previousUnreadState = getConversationUnreadState(conversationId);
+  if (!force && !previousUnreadState) {
+    return { success: true, skipped: true };
+  }
+
+  if (markConversationReadRequests.has(conversationId)) {
+    return markConversationReadRequests.get(conversationId);
+  }
+
+  setConversationUnreadState(conversationId, false);
+
+  const markReadRequest = fetch(`/api/conversations/${conversationId}/mark-read`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  })
+    .then(async response => {
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.success === false) {
+        throw new Error(data.error || "Failed to mark conversation as read");
+      }
+      return data;
+    })
+    .catch(error => {
+      if (previousUnreadState) {
+        setConversationUnreadState(conversationId, true);
+      }
+
+      if (!suppressErrorToast) {
+        showToast(`Failed to clear unread state: ${error.message}`, "danger");
+      }
+
+      throw error;
+    })
+    .finally(() => {
+      markConversationReadRequests.delete(conversationId);
+    });
+
+  markConversationReadRequests.set(conversationId, markReadRequest);
+  return markReadRequest;
+}
 
 // Clear selected conversations when loading the page
 document.addEventListener('DOMContentLoaded', () => {
@@ -345,6 +452,9 @@ export async function ensureConversationPresent(conversationId) {
     chat_type: metadata.chat_type || null,
     is_pinned: metadata.is_pinned || false,
     is_hidden: metadata.is_hidden || false,
+    has_unread_assistant_response: metadata.has_unread_assistant_response || false,
+    last_unread_assistant_message_id: metadata.last_unread_assistant_message_id || null,
+    last_unread_assistant_at: metadata.last_unread_assistant_at || null,
   };
 
   // Keep allConversations in sync
@@ -366,6 +476,7 @@ export function createConversationItem(convo) {
   convoItem.classList.add("list-group-item", "list-group-item-action", "conversation-item", "d-flex", "align-items-center"); // Use action class
   convoItem.setAttribute("data-conversation-id", convo.id);
   convoItem.setAttribute("data-conversation-title", convo.title); // Store title too
+  convoItem.dataset.hasUnreadAssistantResponse = convo.has_unread_assistant_response ? "true" : "false";
 
   // *** Store classification data as stringified JSON ***
   convoItem.dataset.classifications = JSON.stringify(convo.classification || []);
@@ -438,8 +549,12 @@ export function createConversationItem(convo) {
   leftDiv.classList.add("d-flex", "flex-column", "flex-grow-1", "pe-2"); // flex-grow and padding-end
   leftDiv.style.overflow = "hidden"; // Prevent overflow issues
 
+  const titleRow = document.createElement("div");
+  titleRow.classList.add("conversation-title-row", "d-flex", "align-items-center", "gap-2", "overflow-hidden");
+
   const titleSpan = document.createElement("span");
-  titleSpan.classList.add("conversation-title", "text-truncate"); // Bold and truncate
+  titleSpan.classList.add("conversation-title", "text-truncate", "flex-grow-1"); // Bold and truncate
+  titleSpan.style.minWidth = "0";
   
   // Add pin icon if conversation is pinned
   const isPinned = convo.is_pinned || false;
@@ -452,12 +567,18 @@ export function createConversationItem(convo) {
   titleSpan.appendChild(document.createTextNode(convo.title));
   titleSpan.title = convo.title; // Tooltip for full title
 
+  if (convo.has_unread_assistant_response) {
+    titleRow.appendChild(createUnreadDotElement());
+  }
+
+  titleRow.appendChild(titleSpan);
+
   const dateSpan = document.createElement("small");
   dateSpan.classList.add("text-muted");
   const date = new Date(convo.last_updated);
   dateSpan.textContent = date.toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }); // Shorter format
 
-  leftDiv.appendChild(titleSpan);
+  leftDiv.appendChild(titleRow);
   leftDiv.appendChild(dateSpan);
 
   // Right part: three dots dropdown
@@ -800,7 +921,8 @@ export function addConversationToList(conversationId, title = null, classificati
     id: conversationId,
     title: title || "New Conversation", // Default title
     last_updated: new Date().toISOString(),
-    classification: classifications // Include classifications
+    classification: classifications, // Include classifications
+    has_unread_assistant_response: false,
   };
 
   const convoItem = createConversationItem(convo);
@@ -989,6 +1111,9 @@ export async function selectConversation(conversationId) {
   }
 
   loadMessages(conversationId);
+  markConversationRead(conversationId, { force: true, suppressErrorToast: true }).catch(error => {
+    console.warn('Failed to clear unread state for conversation:', error);
+  });
   highlightSelectedConversation(conversationId);
   
   // Show the conversation info button since we have an active conversation
@@ -1535,6 +1660,8 @@ window.chatConversations = {
   loadConversations,
   highlightSelectedConversation,
   addConversationToList,
+  markConversationRead,
+  setConversationUnreadState,
   deleteConversation,
   toggleConversationSelection,
   deleteSelectedConversations,

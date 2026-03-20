@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Web Search Failure Graceful Handling.
-Version: 0.236.014
+Version: 0.239.124
 Implemented in: 0.236.014
 
 This test ensures that when web search fails, the system properly injects
@@ -167,9 +167,9 @@ def test_error_scenarios_have_return_false():
 
 def test_web_search_results_container_usage():
     """
-    Test that web_search_results_container is used to inject system messages.
+    Test that the augmentation message container is used to inject system messages.
     """
-    print("\n🔍 Testing web_search_results_container for system message injection...")
+    print("\n🔍 Testing augmentation container for system message injection...")
     
     try:
         file_path = os.path.join(
@@ -192,9 +192,9 @@ def test_web_search_results_container_usage():
         
         func_content = content[func_start:func_end]
         
-        # Check for container append with system role
-        has_container_param = 'web_search_results_container' in func_content
-        has_append_call = 'web_search_results_container.append' in func_content
+        # Check for augmentation container append with system role
+        has_container_param = 'system_messages_for_augmentation' in func_content
+        has_append_call = 'system_messages_for_augmentation.append' in func_content
         has_system_message = "'role': 'system'" in func_content or '"role": "system"' in func_content
         
         checks = {
@@ -228,7 +228,7 @@ def run_all_tests():
     """Run all tests and report results."""
     print("=" * 60)
     print("Web Search Failure Graceful Handling Fix - Functional Tests")
-    print("Version: 0.236.013")
+    print("Version: 0.239.124")
     print("=" * 60)
     
     tests = [

@@ -1,5 +1,6 @@
 // chat-streaming.js
 import { appendMessage, updateUserMessageId } from './chat-messages.js';
+import { markConversationRead } from './chat-conversations.js';
 import { hideLoadingIndicatorInChatbox, showLoadingIndicatorInChatbox } from './chat-loading-indicator.js';
 import { loadUserSettings, saveUserSetting } from './chat-layout.js';
 import { showToast } from './chat-toast.js';
@@ -461,6 +462,12 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData) {
 
     if (finalData.reload_messages && finalData.conversation_id && typeof window.chatMessages?.loadMessages === 'function') {
         window.chatMessages.loadMessages(finalData.conversation_id);
+    }
+
+    if (finalData.conversation_id) {
+        markConversationRead(finalData.conversation_id, { force: true, suppressErrorToast: true }).catch(error => {
+            console.warn('Failed to clear unread state after live streaming completion:', error);
+        });
     }
 }
 

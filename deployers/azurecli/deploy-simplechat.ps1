@@ -607,6 +607,9 @@ if (-not $webApp) {
         }
 
         Write-Host "`n=====> Setting App Service Container Image ..."
+        # This deployer uses a container-based App Service.
+        # Gunicorn startup is handled by the Dockerfile ENTRYPOINT inside the image,
+        # so App Service native Python startup settings are not configured here.
         # az webapp config container set `
         # --name $appServiceName `
         # --resource-group $resourceGroupName `

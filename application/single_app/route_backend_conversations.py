@@ -4,6 +4,8 @@ from config import *
 from functions_authentication import *
 from functions_settings import *
 from functions_conversation_metadata import get_conversation_metadata, update_conversation_with_metadata
+from functions_conversation_unread import clear_conversation_unread, normalize_conversation_unread_state
+from functions_notifications import mark_chat_response_notifications_read_for_conversation
 from flask import Response, request
 from functions_debug import debug_print
 from swagger_wrapper import swagger_route, get_auth_security
@@ -288,8 +290,9 @@ def register_route_backend_conversations(app):
             return jsonify({'error': 'User not authenticated'}), 401
         query = f"SELECT * FROM c WHERE c.user_id = '{user_id}' ORDER BY c.last_updated DESC"
         items = list(cosmos_conversations_container.query_items(query=query, enable_cross_partition_query=True))
+        normalized_items = [normalize_conversation_unread_state(item) for item in items]
         return jsonify({
-            'conversations': items
+            'conversations': normalized_items
         }), 200
 
 
@@ -312,7 +315,10 @@ def register_route_backend_conversations(app):
             'tags': [],
             'strict': False,
             'is_pinned': False,
-            'is_hidden': False
+            'is_hidden': False,
+            'has_unread_assistant_response': False,
+            'last_unread_assistant_message_id': None,
+            'last_unread_assistant_at': None,
         }
         cosmos_conversations_container.upsert_item(conversation_item)
         
@@ -793,6 +799,7 @@ def register_route_backend_conversations(app):
                 item=conversation_id,
                 partition_key=conversation_id
             )
+            conversation_item = normalize_conversation_unread_state(conversation_item)
             
             # Ensure that the conversation belongs to the current user
             if conversation_item.get('user_id') != user_id:
@@ -810,6 +817,9 @@ def register_route_backend_conversations(app):
                 "strict": conversation_item.get('strict', False),
                 "is_pinned": conversation_item.get('is_pinned', False),
                 "is_hidden": conversation_item.get('is_hidden', False),
+                "has_unread_assistant_response": conversation_item.get('has_unread_assistant_response', False),
+                "last_unread_assistant_message_id": conversation_item.get('last_unread_assistant_message_id'),
+                "last_unread_assistant_at": conversation_item.get('last_unread_assistant_at'),
                 "scope_locked": conversation_item.get('scope_locked'),
                 "locked_contexts": conversation_item.get('locked_contexts', []),
                 "chat_type": conversation_item.get('chat_type'),
@@ -821,6 +831,46 @@ def register_route_backend_conversations(app):
         except Exception as e:
             print(f"Error retrieving conversation metadata: {e}")
             return jsonify({'error': 'Failed to retrieve conversation metadata'}), 500
+
+    @app.route('/api/conversations/<conversation_id>/mark-read', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def mark_conversation_read_api(conversation_id):
+        """Clear unread assistant-response state and related chat notifications."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        try:
+            conversation_item = cosmos_conversations_container.read_item(
+                item=conversation_id,
+                partition_key=conversation_id
+            )
+            conversation_item = normalize_conversation_unread_state(conversation_item)
+
+            if conversation_item.get('user_id') != user_id:
+                return jsonify({'error': 'Forbidden'}), 403
+
+            conversation_item = clear_conversation_unread(conversation_item)
+            cosmos_conversations_container.upsert_item(conversation_item)
+
+            notifications_marked_read = mark_chat_response_notifications_read_for_conversation(
+                user_id,
+                conversation_id
+            )
+
+            return jsonify({
+                'success': True,
+                'conversation_id': conversation_id,
+                'has_unread_assistant_response': False,
+                'notifications_marked_read': notifications_marked_read,
+            }), 200
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Conversation not found'}), 404
+        except Exception as e:
+            debug_print(f"Error marking conversation {conversation_id} as read: {e}")
+            return jsonify({'error': 'Failed to mark conversation as read'}), 500
 
     @app.route('/api/conversations/<conversation_id>/summary', methods=['POST'])
     @swagger_route(security=get_auth_security())

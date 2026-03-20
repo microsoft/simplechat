@@ -16,6 +16,24 @@ The application utilizes **Azure Cosmos DB** for storing conversations, metadata
 
 [Detailed deployment Guide](./deployers/bicep/README.md)
 
+### Deployment Runtime Notes
+
+- The repo-provided `azd`, Bicep, Terraform, and Azure CLI deployers are currently **container-based** App Service deployments.
+- For those container deployments, you do **not** need to set an App Service Stack Settings Startup command. The image already starts Gunicorn via [application/single_app/Dockerfile](application/single_app/Dockerfile).
+- If you deploy to **native Python App Service** instead of using the container image, set the App Service Startup command explicitly.
+
+If App Service starts in `application/single_app`:
+
+```bash
+python -m gunicorn -c gunicorn.conf.py app:app
+```
+
+If App Service starts from the repo root:
+
+```bash
+python -m gunicorn -c application/single_app/gunicorn.conf.py --chdir application/single_app app:app
+```
+
 ### Pre-Configuration:
 
 The following procedure must be completed with a user that has permissions to create an application registration in the users Entra tenant. 

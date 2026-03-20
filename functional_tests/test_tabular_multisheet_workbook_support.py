@@ -2,7 +2,7 @@
 # test_tabular_multisheet_workbook_support.py
 """
 Functional test for multi-sheet workbook analytical orchestration fix.
-Version: 0.239.114
+Version: 0.239.124
 Implemented in: 0.239.111
 
 This test ensures that multi-sheet workbook analysis can select the likely
@@ -245,12 +245,115 @@ def test_route_uses_analytical_filters_and_lookup_guidance():
         return False
 
 
+def test_column_based_scoring_selects_sheet_by_column_names():
+    """Verify likely-sheet selection uses column names when sheet names are generic.
+
+    Simulates a Superstore-style workbook where sheet names (Orders, People,
+    Returns) are generic but column names (Sales, Profit) match the question.
+    """
+    print('Testing column-based likely-sheet scoring...')
+
+    try:
+        helpers, _ = load_tabular_route_helpers()
+        select_likely_sheet = helpers['_select_likely_workbook_sheet']
+        score_match = helpers['_score_tabular_sheet_match']
+
+        per_sheet = {
+            'Orders': {
+                'columns': ['Row ID', 'Order ID', 'Order Date', 'Ship Date',
+                            'Ship Mode', 'Customer ID', 'Customer Name',
+                            'Segment', 'Country', 'City', 'State',
+                            'Postal Code', 'Region', 'Product ID',
+                            'Category', 'Sub-Category', 'Product Name',
+                            'Sales', 'Quantity', 'Discount', 'Profit'],
+                'row_count': 10194,
+            },
+            'People': {
+                'columns': ['Person', 'Region'],
+                'row_count': 4,
+            },
+            'Returns': {
+                'columns': ['Returned', 'Order ID'],
+                'row_count': 800,
+            },
+        }
+        sheet_names = ['Orders', 'People', 'Returns']
+
+        # Without columns, "analyze sales\profit" should NOT match any sheet
+        no_column_result = select_likely_sheet(sheet_names, 'analyze sales\\profit')
+        assert no_column_result is None, f"Expected None without columns, got {no_column_result}"
+
+        # With columns, "analyze sales\profit" should match Orders via Sales/Profit columns
+        with_column_result = select_likely_sheet(
+            sheet_names,
+            'analyze sales\\profit',
+            per_sheet=per_sheet,
+        )
+        assert with_column_result == 'Orders', f"Expected Orders, got {with_column_result}"
+
+        # Verify the individual scores make sense
+        orders_score = score_match('Orders', 'analyze sales\\profit',
+                                   columns=per_sheet['Orders']['columns'])
+        people_score = score_match('People', 'analyze sales\\profit',
+                                   columns=per_sheet['People']['columns'])
+        returns_score = score_match('Returns', 'analyze sales\\profit',
+                                    columns=per_sheet['Returns']['columns'])
+        assert orders_score > people_score, f"Orders {orders_score} should beat People {people_score}"
+        assert orders_score > returns_score, f"Orders {orders_score} should beat Returns {returns_score}"
+
+        print('PASS column-based likely-sheet scoring')
+        return True
+
+    except Exception as exc:
+        print(f'FAIL test: {exc}')
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_fallback_selects_largest_sheet_when_no_column_match():
+    """Verify the route code falls back to the largest sheet when no scoring match.
+
+    When neither sheet names nor column names match the question (e.g. a very
+    generic question like 'help me with this file'), the analysis-mode
+    fallback should pick the sheet with the most rows as a reasonable default.
+    """
+    print('Testing fallback largest-sheet selection in route source...')
+
+    try:
+        _, route_content = load_tabular_route_helpers()
+
+        # The fallback logic should be present in the route source
+        checks = {
+            'fallback picks max rows sheet': (
+                "key=lambda s: per_sheet.get(s, {}).get('row_count', 0)" in route_content
+            ),
+            'fallback sets default sheet': (
+                "likely_sheet = fallback_sheet" in route_content
+            ),
+        }
+
+        failed_checks = [name for name, passed in checks.items() if not passed]
+        assert not failed_checks, f"Missing expected fallback logic: {failed_checks}"
+
+        print('PASS fallback largest-sheet selection')
+        return True
+
+    except Exception as exc:
+        print(f'FAIL test: {exc}')
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 if __name__ == '__main__':
     tests = [
         test_lookup_value_returns_target_value_from_assets_sheet,
         test_default_sheet_override_allows_lookup_without_sheet_argument,
         test_likely_sheet_helper_handles_pluralized_question_text,
         test_route_uses_analytical_filters_and_lookup_guidance,
+        test_column_based_scoring_selects_sheet_by_column_names,
+        test_fallback_selects_largest_sheet_when_no_column_match,
     ]
 
     results = []

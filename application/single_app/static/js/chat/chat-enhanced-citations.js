@@ -297,6 +297,85 @@ export function showAudioModal(docId, timestamp, fileName) {
     modalInstance.show();
 }
 
+function triggerBlobDownload(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function getDownloadFilename(response, fallbackFilename) {
+    const contentDisposition = response.headers.get('Content-Disposition') || '';
+    const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+    if (utf8Match && utf8Match[1]) {
+        try {
+            return decodeURIComponent(utf8Match[1]);
+        } catch (error) {
+            console.warn('Could not decode UTF-8 filename from Content-Disposition:', error);
+            return utf8Match[1];
+        }
+    }
+
+    const quotedMatch = contentDisposition.match(/filename="([^"]+)"/i);
+    if (quotedMatch && quotedMatch[1]) {
+        return quotedMatch[1];
+    }
+
+    const unquotedMatch = contentDisposition.match(/filename=([^;]+)/i);
+    if (unquotedMatch && unquotedMatch[1]) {
+        return unquotedMatch[1].trim();
+    }
+
+    return fallbackFilename || 'download';
+}
+
+async function downloadTabularFile(downloadUrl, fallbackFilename, downloadBtn) {
+    const originalMarkup = downloadBtn.innerHTML;
+    downloadBtn.disabled = true;
+    downloadBtn.classList.add('disabled');
+    downloadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Downloading...';
+
+    try {
+        const response = await fetch(downloadUrl, {
+            credentials: 'same-origin',
+        });
+
+        if (!response.ok) {
+            let errorMessage = `Could not download file (${response.status}).`;
+            const contentType = response.headers.get('Content-Type') || '';
+
+            if (contentType.includes('application/json')) {
+                const errorData = await response.json().catch(() => null);
+                if (errorData && errorData.error) {
+                    errorMessage = errorData.error;
+                }
+            } else {
+                const errorText = await response.text().catch(() => '');
+                if (errorText) {
+                    errorMessage = errorText;
+                }
+            }
+
+            throw new Error(errorMessage);
+        }
+
+        const blob = await response.blob();
+        const downloadFilename = getDownloadFilename(response, fallbackFilename);
+        triggerBlobDownload(blob, downloadFilename);
+    } catch (error) {
+        console.error('Error downloading tabular file:', error);
+        showToast(error.message || 'Could not download file.', 'danger');
+    } finally {
+        downloadBtn.disabled = false;
+        downloadBtn.classList.remove('disabled');
+        downloadBtn.innerHTML = originalMarkup;
+    }
+}
+
 /**
  * Show tabular file preview modal with data table
  * @param {string} docId - Document ID
@@ -329,8 +408,10 @@ export function showTabularDownloadModal(docId, fileName, initialSheetName = nul
     sheetSelect.innerHTML = '';
 
     const downloadUrl = `/api/enhanced_citations/tabular_workspace?doc_id=${encodeURIComponent(docId)}`;
-    downloadBtn.href = downloadUrl;
-    downloadBtn.download = fileName;
+    downloadBtn.onclick = (event) => {
+        event.preventDefault();
+        downloadTabularFile(downloadUrl, fileName, downloadBtn);
+    };
 
     // Show modal immediately with loading state
     const modalInstance = new bootstrap.Modal(tabularModal);
@@ -640,9 +721,9 @@ function createTabularModal() {
                 </div>
                 <div class="modal-footer d-flex justify-content-between align-items-center">
                     <span id="enhanced-tabular-row-info" class="text-muted small"></span>
-                    <a id="enhanced-tabular-download" class="btn btn-primary btn-sm" target="_blank" rel="noopener noreferrer">
+                    <button type="button" id="enhanced-tabular-download" class="btn btn-primary btn-sm">
                         <i class="bi bi-download me-1"></i>Download File
-                    </a>
+                    </button>
                 </div>
             </div>
         </div>

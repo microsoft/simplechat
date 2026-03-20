@@ -9,6 +9,9 @@ services:
     project: ../application/single_app
     language: python
     host: appservice
+        # Container-based App Service deployment.
+        # Gunicorn startup is provided by application/single_app/Dockerfile,
+        # so no App Service Stack Settings startup command is required.
     docker:
       context: ../../
       dockerfile: application/single_app/Dockerfile

@@ -14,10 +14,12 @@ import asyncio, types
 import ast
 import json
 import os
+import queue
 import re
+import threading
 from typing import Any, Dict, List, Mapping, Optional
 from config import *
-from flask import g
+from flask import Response, copy_current_request_context, g, stream_with_context
 from functions_authentication import *
 from functions_search import *
 from functions_settings import *
@@ -25,7 +27,9 @@ from functions_agents import get_agent_id_by_name
 from functions_group import find_group_by_id, get_user_role_in_group
 from functions_chat import *
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
+from functions_conversation_unread import mark_conversation_unread
 from functions_debug import debug_print
+from functions_notifications import create_chat_response_notification
 from functions_activity_logging import log_chat_activity, log_conversation_creation, log_token_usage
 from flask import current_app
 from swagger_wrapper import swagger_route, get_auth_security
@@ -201,6 +205,75 @@ def get_kernel_agents():
     return g_agents or builtins_agents
 
 
+def is_personal_chat_conversation(conversation_item):
+    """Return True when a conversation belongs to personal chat scope."""
+    chat_type = str((conversation_item or {}).get('chat_type') or '').strip().lower()
+    return not chat_type.startswith('group') and not chat_type.startswith('public')
+
+
+class BackgroundStreamBridge:
+    """Relay SSE events from a background worker to the active HTTP stream."""
+
+    def __init__(self, max_queue_size=200):
+        self._queue = queue.Queue(maxsize=max_queue_size)
+        self._sentinel = object()
+        self._consumer_attached = True
+        self._state_lock = threading.Lock()
+
+    def push(self, event):
+        """Queue an SSE event unless the consumer has already detached."""
+        while True:
+            with self._state_lock:
+                consumer_attached = self._consumer_attached
+
+            if not consumer_attached:
+                return False
+
+            try:
+                self._queue.put(event, timeout=0.25)
+                return True
+            except queue.Full:
+                continue
+
+    def finish(self):
+        """Signal stream completion to the active consumer."""
+        while True:
+            with self._state_lock:
+                consumer_attached = self._consumer_attached
+
+            if not consumer_attached:
+                return
+
+            try:
+                self._queue.put(self._sentinel, timeout=0.25)
+                return
+            except queue.Full:
+                continue
+
+    def iter_events(self):
+        """Yield queued SSE events until the worker finishes."""
+        while True:
+            next_item = self._queue.get()
+            if next_item is self._sentinel:
+                break
+            yield next_item
+
+    def detach_consumer(self):
+        """Stop queueing new events once the HTTP consumer disconnects."""
+        with self._state_lock:
+            already_detached = not self._consumer_attached
+            self._consumer_attached = False
+
+        if already_detached:
+            return
+
+        while True:
+            try:
+                self._queue.get_nowait()
+            except queue.Empty:
+                break
+
+
 def get_new_plugin_invocations(invocations, baseline_count):
     """Return only the plugin invocations created after the baseline count."""
     if not invocations:
@@ -298,6 +371,300 @@ def get_tabular_invocation_selected_sheet(invocation):
         or ''
     ).strip()
     return selected_sheet or None
+
+
+def get_tabular_invocation_data_rows(invocation):
+    """Return tabular result rows when the invocation payload includes them."""
+    result_payload = get_tabular_invocation_result_payload(invocation) or {}
+    rows = result_payload.get('data')
+    return rows if isinstance(rows, list) else []
+
+
+def normalize_tabular_overlap_value(value):
+    """Normalize row identifier values so they can be intersected reliably."""
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(value, sort_keys=True, default=str)
+    if value is None:
+        return None
+    return str(value)
+
+
+def get_tabular_overlap_identifier_column(row_sets):
+    """Return a shared identifier column suitable for intersecting row sets."""
+    common_columns = None
+
+    for rows in row_sets or []:
+        if not rows:
+            return None
+
+        row_columns = set()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            row_columns.update(str(column_name) for column_name in row.keys())
+
+        if not row_columns:
+            return None
+
+        if common_columns is None:
+            common_columns = row_columns
+        else:
+            common_columns &= row_columns
+
+    if not common_columns:
+        return None
+
+    identifier_candidates = [
+        column_name for column_name in common_columns
+        if column_name.lower() == 'id' or column_name.lower().endswith('id')
+    ]
+    if not identifier_candidates:
+        return None
+
+    preferred_order = {
+        'flightid': 0,
+        'returnid': 1,
+        'taxpayerid': 2,
+        'paymentid': 3,
+        'caseid': 4,
+        'accountid': 5,
+        'recordid': 6,
+        'id': 7,
+    }
+
+    return sorted(
+        identifier_candidates,
+        key=lambda column_name: (
+            preferred_order.get(column_name.lower(), 99),
+            column_name.lower(),
+        ),
+    )[0]
+
+
+def describe_tabular_invocation_conditions(invocation):
+    """Render a compact description of the invocation filters for raw fallbacks."""
+    parameters = getattr(invocation, 'parameters', {}) or {}
+
+    query_expression = str(parameters.get('query_expression') or '').strip()
+    if query_expression:
+        return query_expression
+
+    column_name = str(parameters.get('column') or '').strip()
+    operator = str(parameters.get('operator') or '').strip()
+    value = parameters.get('value')
+    if column_name and operator:
+        return f"{column_name} {operator} {value}"
+
+    lookup_column = str(parameters.get('lookup_column') or '').strip()
+    lookup_value = parameters.get('lookup_value')
+    if lookup_column:
+        return f"{lookup_column} == {lookup_value}"
+
+    return None
+
+
+def get_tabular_query_overlap_summary(invocations, max_rows=25):
+    """Summarize overlap across successful row-returning tabular calls.
+
+    This is a defensive fallback for cases where tool execution succeeded but the
+    inner SK synthesis step failed before it could combine the results.
+    """
+    grouped_invocations = {}
+
+    for invocation in invocations or []:
+        function_name = getattr(invocation, 'function_name', '')
+        if function_name not in {'query_tabular_data', 'filter_rows'}:
+            continue
+
+        rows = get_tabular_invocation_data_rows(invocation)
+        if not rows:
+            continue
+
+        result_payload = get_tabular_invocation_result_payload(invocation) or {}
+        group_key = (
+            str(result_payload.get('filename') or '').strip(),
+            str(get_tabular_invocation_selected_sheet(invocation) or '').strip(),
+        )
+        grouped_invocations.setdefault(group_key, []).append({
+            'invocation': invocation,
+            'rows': rows,
+            'payload': result_payload,
+        })
+
+    best_summary = None
+
+    for (filename, selected_sheet), grouped_items in grouped_invocations.items():
+        if len(grouped_items) < 2:
+            continue
+
+        row_sets = [grouped_item['rows'] for grouped_item in grouped_items]
+        identifier_column = get_tabular_overlap_identifier_column(row_sets)
+        if not identifier_column:
+            continue
+
+        overlapping_keys = None
+        for rows in row_sets:
+            row_keys = {
+                normalize_tabular_overlap_value(row.get(identifier_column))
+                for row in rows
+                if isinstance(row, dict) and normalize_tabular_overlap_value(row.get(identifier_column)) is not None
+            }
+            if overlapping_keys is None:
+                overlapping_keys = row_keys
+            else:
+                overlapping_keys &= row_keys
+
+        if not overlapping_keys:
+            continue
+
+        ordered_sample_rows = []
+        seen_sample_keys = set()
+        for row in grouped_items[0]['rows']:
+            if not isinstance(row, dict):
+                continue
+
+            row_key = normalize_tabular_overlap_value(row.get(identifier_column))
+            if row_key not in overlapping_keys or row_key in seen_sample_keys:
+                continue
+
+            ordered_sample_rows.append(row)
+            seen_sample_keys.add(row_key)
+            if len(ordered_sample_rows) >= max_rows:
+                break
+
+        source_queries = []
+        for grouped_item in grouped_items:
+            rendered_conditions = describe_tabular_invocation_conditions(grouped_item['invocation'])
+            if rendered_conditions:
+                source_queries.append(rendered_conditions)
+
+        overlap_summary = {
+            'filename': filename or None,
+            'selected_sheet': selected_sheet or None,
+            'identifier_column': identifier_column,
+            'overlap_count': len(overlapping_keys),
+            'sample_rows': ordered_sample_rows,
+            'sample_rows_limited': len(overlapping_keys) > len(ordered_sample_rows),
+            'source_queries': source_queries,
+        }
+
+        if best_summary is None or overlap_summary['overlap_count'] > best_summary['overlap_count']:
+            best_summary = overlap_summary
+
+    return best_summary
+
+
+def get_tabular_invocation_compact_payload(invocation, max_rows=10):
+    """Return a compact, prompt-safe summary of a successful tabular invocation."""
+    result_payload = get_tabular_invocation_result_payload(invocation)
+    if not result_payload:
+        return None
+
+    function_name = getattr(invocation, 'function_name', '')
+    compact_payload = {
+        'function': function_name,
+        'filename': result_payload.get('filename'),
+        'selected_sheet': result_payload.get('selected_sheet'),
+    }
+
+    if function_name == 'aggregate_column':
+        compact_payload.update({
+            'column': result_payload.get('column'),
+            'operation': result_payload.get('operation'),
+            'result': result_payload.get('result'),
+        })
+    elif function_name in {'group_by_aggregate', 'group_by_datetime_component'}:
+        for key_name in (
+            'group_by',
+            'date_component',
+            'aggregate_column',
+            'operation',
+            'groups',
+            'highest_group',
+            'highest_value',
+            'lowest_group',
+            'lowest_value',
+            'top_results',
+        ):
+            if key_name in result_payload:
+                compact_payload[key_name] = result_payload.get(key_name)
+    elif function_name == 'lookup_value':
+        for key_name in (
+            'lookup_column',
+            'lookup_value',
+            'target_column',
+            'value',
+            'total_matches',
+            'returned_rows',
+        ):
+            if key_name in result_payload:
+                compact_payload[key_name] = result_payload.get(key_name)
+
+        data_rows = get_tabular_invocation_data_rows(invocation)
+        if data_rows:
+            compact_payload['sample_rows'] = data_rows[:max_rows]
+            compact_payload['sample_rows_limited'] = len(data_rows) > max_rows
+    elif function_name in {'query_tabular_data', 'filter_rows'}:
+        for key_name in ('total_matches', 'returned_rows'):
+            if key_name in result_payload:
+                compact_payload[key_name] = result_payload.get(key_name)
+
+        data_rows = get_tabular_invocation_data_rows(invocation)
+        if data_rows:
+            compact_payload['sample_rows'] = data_rows[:max_rows]
+            compact_payload['sample_rows_limited'] = len(data_rows) > max_rows
+
+        rendered_conditions = describe_tabular_invocation_conditions(invocation)
+        if rendered_conditions:
+            compact_payload['conditions'] = rendered_conditions
+    else:
+        compact_payload.update(result_payload)
+
+    return compact_payload
+
+
+def build_tabular_analysis_fallback_from_invocations(invocations):
+    """Build a compact computed-results handoff from successful tool calls.
+
+    Used when the mini SK tabular pass completed tool execution but failed to
+    produce a final natural-language synthesis response.
+    """
+    successful_invocations = [
+        invocation for invocation in (invocations or [])
+        if not get_tabular_invocation_error_message(invocation)
+    ]
+    if not successful_invocations:
+        return None
+
+    overlap_summary = get_tabular_query_overlap_summary(successful_invocations)
+    compact_results = []
+    for invocation in successful_invocations[:8]:
+        compact_payload = get_tabular_invocation_compact_payload(invocation)
+        if compact_payload is None:
+            continue
+        compact_results.append(compact_payload)
+
+    if not overlap_summary and not compact_results:
+        return None
+
+    rendered_sections = [
+        "The following structured results come directly from successful tabular tool executions.",
+        "Use them as computed evidence even though the inner tabular synthesis step did not complete.",
+    ]
+
+    if overlap_summary:
+        rendered_sections.append(
+            "OVERLAP SUMMARY:\n"
+            f"{json.dumps(overlap_summary, indent=2, default=str)}"
+        )
+
+    if compact_results:
+        rendered_sections.append(
+            "TOOL RESULT SUMMARIES:\n"
+            f"{json.dumps(compact_results, indent=2, default=str)}"
+        )
+
+    return "\n\n".join(rendered_sections)
 
 
 def get_tabular_invocation_selected_sheets(invocations):
@@ -564,8 +931,15 @@ def _tokenize_tabular_sheet_text(text):
     return tokens
 
 
-def _score_tabular_sheet_match(sheet_name, question_text):
-    """Score how strongly a worksheet name matches the user question."""
+def _score_tabular_sheet_match(sheet_name, question_text, columns=None):
+    """Score how strongly a worksheet name matches the user question.
+
+    When *columns* (a list of column-name strings from the sheet schema) is
+    provided, column-name tokens that overlap with the question contribute to
+    the score.  This allows sheets whose names are generic (e.g. "Orders") to
+    still score highly when the question references column values like
+    "sales" or "profit".
+    """
     question_tokens = set(_tokenize_tabular_sheet_text(question_text))
     question_phrase = ' '.join(_tokenize_tabular_sheet_text(question_text))
     sheet_tokens = _tokenize_tabular_sheet_text(sheet_name)
@@ -584,14 +958,26 @@ def _score_tabular_sheet_match(sheet_name, question_text):
     if len(sheet_tokens) == 1 and sheet_tokens[0] in question_tokens:
         score += 4
 
+    # Column-name overlap: each matching column token adds 2 points.
+    if columns and question_tokens:
+        column_tokens = set()
+        for col_name in columns:
+            column_tokens.update(_tokenize_tabular_sheet_text(col_name))
+        column_matches = sum(1 for token in question_tokens if token in column_tokens)
+        score += column_matches * 2
+
     return score
 
 
-def _select_relevant_workbook_sheets(sheet_names, question_text, minimum_score=1):
+def _select_relevant_workbook_sheets(sheet_names, question_text, minimum_score=1, per_sheet=None):
     """Return all workbook sheets that appear relevant to the question."""
     ranked_sheets = []
     for sheet_name in sheet_names or []:
-        score = _score_tabular_sheet_match(sheet_name, question_text)
+        columns = None
+        if per_sheet:
+            sheet_info = per_sheet.get(sheet_name, {})
+            columns = sheet_info.get('columns', [])
+        score = _score_tabular_sheet_match(sheet_name, question_text, columns=columns)
         if score < minimum_score:
             continue
         ranked_sheets.append((score, sheet_name))
@@ -619,14 +1005,18 @@ def is_tabular_access_limited_analysis(analysis_text):
     return any(phrase in normalized_analysis for phrase in inaccessible_phrases)
 
 
-def _select_likely_workbook_sheet(sheet_names, question_text):
+def _select_likely_workbook_sheet(sheet_names, question_text, per_sheet=None):
     """Return a likely sheet name when the user question strongly matches one sheet."""
     best_sheet = None
     best_score = 0
     runner_up_score = 0
 
     for sheet_name in sheet_names or []:
-        score = _score_tabular_sheet_match(sheet_name, question_text)
+        columns = None
+        if per_sheet:
+            sheet_info = per_sheet.get(sheet_name, {})
+            columns = sheet_info.get('columns', [])
+        score = _score_tabular_sheet_match(sheet_name, question_text, columns=columns)
 
         if score > best_score:
             runner_up_score = best_score
@@ -749,16 +1139,31 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     likely_sheet = _select_likely_workbook_sheet(
                         schema_info.get('sheet_names', []),
                         user_question,
+                        per_sheet=per_sheet,
                     )
                     relevant_sheets = _select_relevant_workbook_sheets(
                         schema_info.get('sheet_names', []),
                         user_question,
+                        per_sheet=per_sheet,
                     )
                     if entity_lookup_mode:
                         workbook_related_sheet_hints[fname] = relevant_sheets or list(schema_info.get('sheet_names', []))
                     if likely_sheet:
                         workbook_sheet_hints[fname] = likely_sheet
                         if not entity_lookup_mode:
+                            tabular_plugin.set_default_sheet(container, blob_path, likely_sheet)
+                    elif not entity_lookup_mode:
+                        # Fallback for analysis mode: pick the sheet with the
+                        # most rows so that set_default_sheet is always called
+                        # and the model can omit sheet_name on tool calls.
+                        fallback_sheet = max(
+                            schema_info.get('sheet_names', []),
+                            key=lambda s: per_sheet.get(s, {}).get('row_count', 0),
+                            default=None,
+                        )
+                        if fallback_sheet:
+                            likely_sheet = fallback_sheet
+                            workbook_sheet_hints[fname] = likely_sheet
                             tabular_plugin.set_default_sheet(container, blob_path, likely_sheet)
 
                     sheet_directory = []
@@ -1024,13 +1429,14 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 "6. Only use aggregate_column when the user explicitly asks for a sum, average, min, max, or count across rows.\n"
                 "7. For time-based questions on datetime columns, use group_by_datetime_component.\n"
                 "8. For threshold, ranking, comparison, or correlation-like questions, first filter/query the relevant rows, then compute grouped metrics.\n"
-                "9. Batch multiple independent function calls in a SINGLE response whenever possible.\n"
-                "10. If you need more than 100 filtered rows, explicitly set max_rows higher.\n"
-                "11. For analytical questions, prefer lookup/filter/query plus aggregate/grouped computations over raw row or preview output.\n"
-                "12. For identifier-based workbook questions, locate the identifier on the correct sheet before explaining downstream calculations.\n"
-                "13. For peak, busiest, highest, or lowest questions, use grouped functions and inspect the highest_group, highest_value, lowest_group, and lowest_value summary fields.\n"
-                "14. Return only computed findings and name the strongest drivers clearly.\n"
-                "15. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report."
+                "9. When the question asks for rows satisfying multiple conditions, prefer one combined query_expression using and/or instead of separate broad queries that you plan to intersect later.\n"
+                "10. Batch multiple independent function calls in a SINGLE response whenever possible.\n"
+                "11. Keep max_rows as small as possible. Only increase it when the user explicitly asked for an exhaustive row list or export; otherwise return total_matches plus representative rows.\n"
+                "12. For analytical questions, prefer lookup/filter/query plus aggregate/grouped computations over raw row or preview output.\n"
+                "13. For identifier-based workbook questions, locate the identifier on the correct sheet before explaining downstream calculations.\n"
+                "14. For peak, busiest, highest, or lowest questions, use grouped functions and inspect the highest_group, highest_value, lowest_group, and lowest_value summary fields.\n"
+                "15. Return only computed findings and name the strongest drivers clearly.\n"
+                "16. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report."
             )
 
         baseline_invocations = plugin_logger.get_invocations_for_conversation(
@@ -1073,9 +1479,19 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 ),
             )
 
-            result = await chat_service.get_chat_message_contents(
-                chat_history, execution_settings, kernel=kernel
-            )
+            result = None
+            synthesis_exception = None
+            try:
+                result = await chat_service.get_chat_message_contents(
+                    chat_history, execution_settings, kernel=kernel
+                )
+            except Exception as exc:
+                synthesis_exception = exc
+                log_event(
+                    f"[Tabular SK Analysis] Attempt {attempt_number} synthesis failed after tool execution setup: {exc}",
+                    level=logging.WARNING,
+                    exceptionTraceback=True,
+                )
 
             invocations_after = plugin_logger.get_invocations_for_conversation(
                 user_id,
@@ -1095,6 +1511,35 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     failed_schema_summary_invocations.append(invocation)
                 else:
                     successful_schema_summary_invocations.append(invocation)
+
+            if synthesis_exception is not None:
+                raw_tool_fallback = None
+                if not schema_summary_mode:
+                    raw_tool_fallback = build_tabular_analysis_fallback_from_invocations(
+                        successful_analytical_invocations,
+                    )
+
+                if raw_tool_fallback:
+                    log_event(
+                        f"[Tabular SK Analysis] Falling back to raw successful tool summaries after attempt {attempt_number} synthesis error",
+                        extra={
+                            'successful_tool_count': len(successful_analytical_invocations),
+                            'attempt_number': attempt_number,
+                        },
+                        level=logging.WARNING,
+                    )
+                    return raw_tool_fallback
+
+                log_event(
+                    f"[Tabular SK Analysis] Attempt {attempt_number} could not recover from synthesis error",
+                    extra={
+                        'successful_tool_count': len(successful_analytical_invocations),
+                        'failed_tool_count': len(failed_analytical_invocations),
+                        'attempt_number': attempt_number,
+                    },
+                    level=logging.WARNING,
+                )
+                break
 
             if result and result[0].content:
                 analysis = result[0].content.strip()
@@ -1151,7 +1596,13 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                             selected_sheets = get_tabular_invocation_selected_sheets(successful_analytical_invocations)
                             execution_gap_messages = []
 
-                            if len(selected_sheets) <= 1:
+                            # Cross-sheet results ("ALL (cross-sheet search)") already span
+                            # the entire workbook — no execution gap for sheet coverage.
+                            has_cross_sheet_result = any(
+                                'cross-sheet' in (s or '').lower() for s in selected_sheets
+                            )
+
+                            if len(selected_sheets) <= 1 and not has_cross_sheet_result:
                                 rendered_selected_sheets = ', '.join(selected_sheets) if selected_sheets else 'unknown worksheet'
                                 execution_gap_messages.append(
                                     f"Previous attempt only queried worksheet(s): {rendered_selected_sheets}. The question asks for related records across worksheets, so query additional relevant sheets explicitly with sheet_name."
@@ -1477,7 +1928,57 @@ def determine_tabular_source_hint(document_scope, active_group_id=None, active_p
         return 'public'
     return 'workspace'
 
+
 def register_route_backend_chats(app):
+    def build_background_stream_response(event_generator_factory):
+        """Run SSE generation in background execution so it survives disconnects."""
+        stream_bridge = BackgroundStreamBridge()
+
+        @copy_current_request_context
+        def stream_worker():
+            try:
+                for event in event_generator_factory():
+                    stream_bridge.push(event)
+            except Exception as e:
+                debug_print(f"[STREAM BACKGROUND] Worker error: {e}")
+                stream_bridge.push(
+                    f"data: {json.dumps({'error': f'Internal server error: {str(e)}'})}\n\n"
+                )
+            finally:
+                stream_bridge.finish()
+
+        executor = current_app.extensions.get('executor')
+        if executor:
+            try:
+                executor.submit(stream_worker)
+            except Exception as e:
+                debug_print(f"[STREAM BACKGROUND] Executor submit failed, falling back to thread: {e}")
+                worker_thread = threading.Thread(target=stream_worker, daemon=True)
+                worker_thread.start()
+        else:
+            worker_thread = threading.Thread(target=stream_worker, daemon=True)
+            worker_thread.start()
+
+        def consume_stream():
+            try:
+                for event in stream_bridge.iter_events():
+                    yield event
+            except GeneratorExit:
+                stream_bridge.detach_consumer()
+                raise
+            finally:
+                stream_bridge.detach_consumer()
+
+        return Response(
+            stream_with_context(consume_stream()),
+            mimetype='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'X-Accel-Buffering': 'no',
+                'Connection': 'keep-alive'
+            }
+        )
+
     @app.route('/api/chat', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -4441,15 +4942,7 @@ def register_route_backend_chats(app):
                 yield f"data: {json.dumps({'error': str(compatibility_error)})}\n\n"
 
         if compatibility_mode:
-            return Response(
-                stream_with_context(generate_compatibility_response()),
-                mimetype='text/event-stream',
-                headers={
-                    'Cache-Control': 'no-cache',
-                    'X-Accel-Buffering': 'no',
-                    'Connection': 'keep-alive'
-                }
-            )
+            return build_background_stream_response(generate_compatibility_response)
         
         def generate():
             try:
@@ -5883,6 +6376,29 @@ def register_route_backend_chats(app):
                     except Exception as e:
                         debug_print(f"Error collecting conversation metadata: {e}")
                     
+                    if is_personal_chat_conversation(conversation_item):
+                        conversation_item = mark_conversation_unread(
+                            conversation_item,
+                            assistant_message_id,
+                            unread_timestamp=conversation_item['last_updated']
+                        )
+
+                        notification_doc = create_chat_response_notification(
+                            user_id=user_id,
+                            conversation_id=conversation_id,
+                            message_id=assistant_message_id,
+                            conversation_title=conversation_item.get('title', ''),
+                            response_preview=accumulated_content,
+                        )
+                        if notification_doc:
+                            debug_print(
+                                f"Created chat completion notification {notification_doc['id']} for conversation {conversation_id}"
+                            )
+                    else:
+                        debug_print(
+                            f"Skipping personal chat completion notification for conversation {conversation_id} because chat_type={conversation_item.get('chat_type')}"
+                        )
+
                     cosmos_conversations_container.upsert_item(conversation_item)
                     
                     # Send final message with metadata
@@ -5954,15 +6470,7 @@ def register_route_backend_chats(app):
                 debug_print(f"[STREAM API ERROR] Full traceback:\n{error_traceback}")
                 yield f"data: {json.dumps({'error': f'Internal server error: {str(e)}'})}\n\n"
         
-        return Response(
-            stream_with_context(generate()),
-            mimetype='text/event-stream',
-            headers={
-                'Cache-Control': 'no-cache',
-                'X-Accel-Buffering': 'no',
-                'Connection': 'keep-alive'
-            }
-        )
+        return build_background_stream_response(generate)
 
     @app.route('/api/message/<message_id>/mask', methods=['POST'])
     @swagger_route(security=get_auth_security())

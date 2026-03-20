@@ -22,6 +22,7 @@ from functions_settings import *
 from functions_thoughts import get_thoughts_for_conversation
 from swagger_wrapper import swagger_route, get_auth_security
 from docx import Document as DocxDocument
+from docx.shared import Pt
 
 
 TRANSCRIPT_ROLES = {'user', 'assistant'}
@@ -123,6 +124,85 @@ def register_route_backend_conversation_export(app):
             debug_print(f"Export error: {str(exc)}")
             log_event(f"Conversation export failed: {exc}", level="WARNING")
             return jsonify({'error': f'Export failed: {str(exc)}'}), 500
+
+    @app.route('/api/message/export-word', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def api_export_message_word():
+        """
+        Export a single message as a Word (.docx) document.
+
+        Request body:
+            message_id (str): ID of the message to export.
+            conversation_id (str): ID of the conversation the message belongs to.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({'error': 'Request body is required'}), 400
+
+        message_id = str(data.get('message_id', '') or '').strip()
+        conversation_id = str(data.get('conversation_id', '') or '').strip()
+
+        if not message_id or not conversation_id:
+            return jsonify({'error': 'message_id and conversation_id are required'}), 400
+
+        try:
+            try:
+                conversation = cosmos_conversations_container.read_item(
+                    item=conversation_id,
+                    partition_key=conversation_id
+                )
+            except Exception:
+                return jsonify({'error': 'Conversation not found'}), 404
+
+            if conversation.get('user_id') != user_id:
+                return jsonify({'error': 'Access denied'}), 403
+
+            try:
+                message = cosmos_messages_container.read_item(
+                    item=message_id,
+                    partition_key=conversation_id
+                )
+            except Exception:
+                message_query = """
+                    SELECT * FROM c
+                    WHERE c.id = @message_id AND c.conversation_id = @conversation_id
+                """
+                message_results = list(cosmos_messages_container.query_items(
+                    query=message_query,
+                    parameters=[
+                        {'name': '@message_id', 'value': message_id},
+                        {'name': '@conversation_id', 'value': conversation_id}
+                    ],
+                    enable_cross_partition_query=True
+                ))
+                if not message_results:
+                    return jsonify({'error': 'Message not found'}), 404
+                message = message_results[0]
+
+            if message.get('conversation_id') != conversation_id:
+                return jsonify({'error': 'Message not found'}), 404
+
+            document_bytes = _message_to_docx_bytes(message)
+            timestamp_str = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+            filename = f"message_export_{timestamp_str}.docx"
+
+            response = make_response(document_bytes)
+            response.headers['Content-Type'] = (
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            )
+            response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+            return response
+
+        except Exception as exc:
+            debug_print(f"Message export error: {str(exc)}")
+            log_event(f"Message export failed: {exc}", level="WARNING")
+            return jsonify({'error': 'Export failed due to a server error. Please try again later.'}), 500
 
 
 def _build_export_entry(
@@ -1159,6 +1239,128 @@ def _safe_filename(title: str) -> str:
     if len(safe) > 50:
         safe = safe[:50]
     return safe or 'Untitled'
+
+
+def _message_to_docx_bytes(message: Dict[str, Any]) -> bytes:
+    doc = DocxDocument()
+    doc.add_heading('Message Export', level=1)
+
+    role_label = _role_to_label(message.get('role', 'unknown'))
+    timestamp = message.get('timestamp', '')
+
+    meta_paragraph = doc.add_paragraph()
+    meta_run = meta_paragraph.add_run(f"Role: {role_label}")
+    meta_run.bold = True
+    if timestamp:
+        meta_paragraph.add_run(f"    {timestamp}")
+
+    doc.add_paragraph('')
+
+    content = _normalize_content(message.get('content', ''))
+    if content:
+        _add_markdown_content_to_doc(doc, content)
+    else:
+        doc.add_paragraph('No content recorded.')
+
+    citation_labels = _build_message_citation_labels(message)
+    if citation_labels:
+        doc.add_heading('Citations', level=2)
+        for citation_label in citation_labels:
+            doc.add_paragraph(citation_label, style='List Bullet')
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+    return buffer.read()
+
+
+def _build_message_citation_labels(message: Dict[str, Any]) -> List[str]:
+    normalized_citations = _normalize_citations(_collect_raw_citation_buckets(message))
+    citation_labels: List[str] = []
+    seen_labels = set()
+
+    for citation in normalized_citations:
+        label = str(
+            citation.get('label')
+            or citation.get('title')
+            or citation.get('url')
+            or citation.get('filepath')
+            or citation.get('tool_name')
+            or citation.get('function_name')
+            or ''
+        ).strip()
+        if not label or label in seen_labels:
+            continue
+        seen_labels.add(label)
+        citation_labels.append(label)
+
+    return citation_labels
+
+
+def _add_markdown_content_to_doc(doc: DocxDocument, content: str):
+    lines = content.split('\n')
+    index = 0
+
+    while index < len(lines):
+        line = lines[index]
+
+        heading_match = re.match(r'^(#{1,6})\s+(.*)', line)
+        if heading_match:
+            level = min(len(heading_match.group(1)), 4)
+            doc.add_heading(heading_match.group(2).strip(), level=level)
+            index += 1
+            continue
+
+        if line.strip().startswith('```'):
+            code_lines = []
+            index += 1
+            while index < len(lines) and not lines[index].strip().startswith('```'):
+                code_lines.append(lines[index])
+                index += 1
+            index += 1
+            code_paragraph = doc.add_paragraph()
+            code_run = code_paragraph.add_run('\n'.join(code_lines))
+            code_run.font.name = 'Consolas'
+            code_run.font.size = Pt(9)
+            continue
+
+        unordered_list_match = re.match(r'^(\s*)[*\-+]\s+(.*)', line)
+        if unordered_list_match:
+            doc.add_paragraph(unordered_list_match.group(2).strip(), style='List Bullet')
+            index += 1
+            continue
+
+        ordered_list_match = re.match(r'^(\s*)\d+[.)]\s+(.*)', line)
+        if ordered_list_match:
+            doc.add_paragraph(ordered_list_match.group(2).strip(), style='List Number')
+            index += 1
+            continue
+
+        if not line.strip():
+            index += 1
+            continue
+
+        paragraph = doc.add_paragraph()
+        _add_inline_markdown_runs(paragraph, line)
+        index += 1
+
+
+def _add_inline_markdown_runs(paragraph, text: str):
+    parts = re.compile(r'(\*\*.*?\*\*|\*.*?\*|`[^`]+`)').split(text)
+
+    for part in parts:
+        if part.startswith('**') and part.endswith('**'):
+            run = paragraph.add_run(part[2:-2])
+            run.bold = True
+        elif part.startswith('*') and part.endswith('*') and len(part) > 2:
+            run = paragraph.add_run(part[1:-1])
+            run.italic = True
+        elif part.startswith('`') and part.endswith('`'):
+            run = paragraph.add_run(part[1:-1])
+            run.font.name = 'Consolas'
+            run.font.size = Pt(9)
+        elif part:
+            paragraph.add_run(part)
 
 
 # ---------------------------------------------------------------------------

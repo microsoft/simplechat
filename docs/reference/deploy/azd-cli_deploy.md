@@ -30,6 +30,23 @@ Azure Developer CLI (azd) provides the fastest and most automated way to deploy 
 
 ## Quick Start
 
+## Runtime Startup Behavior
+
+- The current `azd` deployment path in this repo is a **container-based App Service** deployment.
+- Gunicorn is started by the container entrypoint in `application/single_app/Dockerfile`.
+- You do **not** need to populate App Service Stack Settings Startup command when deploying through this `azd` path.
+- If you deploy to native Python App Service instead, use one of these startup commands:
+
+```bash
+python -m gunicorn -c gunicorn.conf.py app:app
+```
+
+or, if the site starts from the repo root:
+
+```bash
+python -m gunicorn -c application/single_app/gunicorn.conf.py --chdir application/single_app app:app
+```
+
 ### 1. Clone Repository
 ```bash
 git clone https://github.com/microsoft/simplechat.git

@@ -440,6 +440,80 @@ class TabularProcessingPlugin:
             "data": combined_results,
         }, indent=2, default=str)
 
+    def _query_tabular_data_across_sheets(
+        self,
+        container_name: str,
+        blob_name: str,
+        filename: str,
+        query_expression: str,
+        max_rows: int = 100,
+    ) -> Optional[str]:
+        """Execute a pandas query expression across all sheets of a multi-sheet workbook.
+
+        Returns a combined JSON result when any sheet produces matches,
+        or None if the workbook is not multi-sheet.
+        """
+        workbook_metadata = self._get_workbook_metadata(container_name, blob_name)
+        if not workbook_metadata.get('is_workbook'):
+            return None
+
+        available_sheets = workbook_metadata.get('sheet_names', [])
+        if len(available_sheets) <= 1:
+            return None
+
+        combined_results = []
+        sheets_searched = []
+        sheets_matched = []
+        total_matches = 0
+
+        for sheet in available_sheets:
+            df = self._read_tabular_blob_to_dataframe(
+                container_name,
+                blob_name,
+                sheet_name=sheet,
+            )
+            df = self._try_numeric_conversion(df)
+
+            try:
+                result_df = df.query(query_expression)
+            except Exception:
+                # Query expression references columns not in this sheet — skip
+                continue
+
+            sheets_searched.append(sheet)
+            sheet_matches = len(result_df)
+            if sheet_matches == 0:
+                continue
+
+            sheets_matched.append(sheet)
+            total_matches += sheet_matches
+            remaining_capacity = max(0, max_rows - len(combined_results))
+            if remaining_capacity > 0:
+                for row in result_df.head(remaining_capacity).to_dict(orient='records'):
+                    row['_sheet'] = sheet
+                    combined_results.append(row)
+
+        if not sheets_searched:
+            return None
+
+        log_event(
+            f"[TabularProcessingPlugin] Cross-sheet query_tabular_data: "
+            f"searched {len(sheets_searched)} sheets, "
+            f"matched on {len(sheets_matched)} ({sheets_matched}), "
+            f"total_matches={total_matches}",
+            level=logging.INFO,
+        )
+
+        return json.dumps({
+            "filename": filename,
+            "selected_sheet": "ALL (cross-sheet search)",
+            "sheets_searched": sheets_searched,
+            "sheets_matched": sheets_matched,
+            "total_matches": total_matches,
+            "returned_rows": len(combined_results),
+            "data": combined_results,
+        }, indent=2, default=str)
+
     def _format_datetime_column_label(self, value) -> str:
         """Render date-like Excel header labels into stable analysis-friendly strings."""
         timestamp_value = pandas.Timestamp(value)
@@ -1494,6 +1568,16 @@ class TabularProcessingPlugin:
                     user_id, conversation_id, filename, source,
                     group_id=group_id, public_workspace_id=public_workspace_id
                 )
+                # When no explicit sheet_name is given, try cross-sheet query first
+                normalized_sheet = (sheet_name or '').strip()
+                normalized_sheet_idx = None if sheet_index is None else str(sheet_index).strip()
+                if not normalized_sheet and normalized_sheet_idx in (None, ''):
+                    cross_sheet_result = self._query_tabular_data_across_sheets(
+                        container, blob_path, filename, query_expression,
+                        max_rows=int(max_rows),
+                    )
+                    if cross_sheet_result is not None:
+                        return cross_sheet_result
                 selected_sheet, workbook_metadata = self._resolve_sheet_selection(
                     container,
                     blob_path,

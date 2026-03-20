@@ -47,3 +47,4 @@ tmp**cwd
 nul
 /.github/plans
 *.xlsx
+/artifacts/tests
