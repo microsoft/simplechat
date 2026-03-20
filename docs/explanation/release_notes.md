@@ -2,10 +2,95 @@
 
 # Feature Release
 
-### **(v0.238.024)**
+### **(v0.239.007)**
 
 #### New Features
 
+*   **Per-Message Export**
+    *   Added export and action options to the three-dots dropdown menu on individual chat messages (both AI and user messages).
+    *   **Export to Markdown**: Downloads the message as a `.md` file with a role header. Entirely client-side.
+    *   **Export to Word**: Generates a styled `.docx` document via a new backend endpoint (`POST /api/message/export-word`). Includes Markdown-to-Word formatting (headings, bold, italic, code blocks, lists) and a citations section when present.
+    *   **Use as Prompt**: Inserts the raw message content directly into the chat input box for reuse — no clipboard, one click and it's ready to edit and send.
+    *   **Open in Email**: Opens the user's default email client with the message pre-filled in the subject and body via `mailto:`.
+    *   New options appear below a divider in the dropdown, preserving existing actions (Delete, Retry, Edit, Feedback).
+    *   (Ref: `chat-message-export.js`, `chat-messages.js`, `route_backend_conversation_export.py`, per-message export)
+
+### **(v0.239.005)**
+
+#### New Features
+
+*   **Custom Azure Environment Support in Bicep Deployment**
+    *   Added `custom` as a supported `cloudEnvironment` value alongside `public` and `usgovernment`, enabling deployment to sovereign or custom Azure environments via Bicep.
+    *   New Bicep parameters for custom environments: `customBlobStorageSuffix`, `customGraphUrl`, `customIdentityUrl`, `customResourceManagerUrl`, `customCognitiveServicesScope`, and `customSearchResourceUrl`. All of these are automatically populated from `az.environment()` defaults except `customGraphUrl`, which must be explicitly provided for custom cloud environments and can be overridden as needed.
+    *   The `cloudEnvironment` parameter now defaults intelligently based on `az.environment().name`, and legacy values (`AzureCloud`, `AzureUSGovernment`) are mapped to SimpleChat's expected values (`public`, `usgovernment`).
+    *   Custom environment app settings (`CUSTOM_GRAPH_URL_VALUE`, `CUSTOM_IDENTITY_URL_VALUE`, `CUSTOM_RESOURCE_MANAGER_URL_VALUE`, etc.) are conditionally injected only when `azurePlatform == 'custom'`.
+    *   Replaced hardcoded ACR domain logic and auth issuer URLs with dynamic `az.environment()` lookups for better cross-cloud compatibility.
+    *   Fixed trailing slash handling in `AUTHORITY` URL construction in `config.py` using `rstrip('/')`.
+    *   (Ref: `deployers/bicep/main.bicep`, `deployers/bicep/modules/appService.bicep`, `config.py`, sovereign cloud support)
+
+*   **Redis Key Vault Authentication**
+    *   Added a new `key_vault` authentication type for Redis, allowing the Redis access key to be retrieved securely from Azure Key Vault at runtime rather than stored directly in settings.
+    *   Applies across all Redis usage paths: app settings cache (`app_settings_cache.py`), session management (`app.py`), and the Redis test connection flow (`route_backend_settings.py`).
+    *   Uses `retrieve_secret_direct()` from `functions_keyvault.py` to fetch the Redis key by its Key Vault secret name. Respects `key_vault_identity` for a user-assigned managed identity on the Key Vault client.
+    *   New admin setting fields: `redis_auth_type` (values: `key`, `managed_identity`, `key_vault`) and `redis_key` (used as the Key Vault secret name when `key_vault` auth type is selected).
+    *   **Files Modified**: `app_settings_cache.py`, `app.py` `configure_sessions`, `route_backend_settings.py` `_test_redis_connection`, `functions_keyvault.py` `retrieve_secret_direct`
+
+#### Bug Fixes
+
+*   **Key Vault Bootstrap Circular Dependency Fix**
+    *   Fixed `TypeError: 'NoneType' object is not callable` crash on startup when `redis_auth_type` is set to `key_vault`. The error occurred because `retrieve_secret_direct()` called `app_settings_cache.get_settings_cache()` while `configure_app_cache()` was still initialising, leaving `get_settings_cache` as `None`.
+    *   **Root Cause**: `app_settings_cache.configure_app_cache()` calls `retrieve_secret_direct()` before `get_settings_cache` is assigned. Both `retrieve_secret_direct()` and `get_keyvault_credential()` attempted to resolve settings via the cache at call time.
+    *   **Solution**: Added an optional `settings` parameter to both `retrieve_secret_direct()` and `get_keyvault_credential()`. When `settings` is passed explicitly, the cache is bypassed entirely. `configure_app_cache()` now passes `settings=settings` to avoid touching the uninitialised cache.
+    *   **Files Modified**: `functions_keyvault.py` (`retrieve_secret_direct`, `get_keyvault_credential`), `app_settings_cache.py` (`configure_app_cache`).
+    *   (Ref: `retrieve_secret_direct`, `get_keyvault_credential`, bootstrap initialisation order, circular dependency)
+
+*   **Key Vault Logging Consistency Fix**
+    *   Replaced all remaining `print()` calls and `logging.error()` / `logging.warning()` calls throughout `functions_keyvault.py` with `log_event()` from `functions_appinsights.py`, consistent with the project logging standard.
+    *   Previously, duplicate log output appeared on startup (e.g. `[Log] ... -- None` and `[LOG] ...`) because some code paths used `print()` or the standard `logging` module alongside `log_event()`.
+    *   **Files Modified**: `functions_keyvault.py` (all helper functions: `retrieve_secret_from_key_vault`, `store_secret_in_key_vault`, `build_full_secret_name`, `keyvault_agent_save_helper`, `keyvault_plugin_save_helper`, `keyvault_plugin_get_helper`, `keyvault_plugin_delete_helper`, `keyvault_agent_delete_helper`).
+    *   (Ref: `log_event`, logging consistency, duplicate startup log output)
+
+*   **Legacy Conversation `chat_type` Default Fix**
+    *   Fixed an issue where conversation details failed to load properly for legacy conversations that were created before the `chat_type` field was introduced.
+    *   **Root Cause**: The metadata API returned `None` for `chat_type` on older conversation documents that pre-date the field, causing downstream consumers to behave incorrectly when determining conversation context.
+    *   **Solution**: Added a default value of `'personal'` to the `chat_type` field in the conversation metadata response: `conversation_item.get('chat_type', 'personal')`.
+    *   **Files Modified**: `route_backend_conversations.py`
+    *   (Ref: `get_conversation_metadata_api`, legacy conversation schema compatibility)
+
+*   **Chat Message Content Overflow / Word-Wrap Fix**
+    *   Fixed an issue where long AI responses with overflowing content (e.g. wide code blocks or tables) were not scrollable, and word-wrap was not functioning correctly within message bubbles.
+    *   **Root Cause**: `.message-content` had `overflow: visible`, which prevented the browser from applying horizontal scroll bars to overflowing child elements.
+    *   **Solution**: Changed `.message-content` to `overflow: auto`, enabling proper word-wrap behaviour and horizontal scrolling for overflowing content while preserving existing layout.
+    *   **Files Modified**: `chats.css`
+    *   (Ref: `.message-content` overflow property)
+
+*   **SimpleMDE Prompt Editor Toolbar Icons Fix**
+    *   Fixed missing/invisible toolbar icons in the SimpleMDE Markdown editor used in the New Prompt dialog, for both light and dark mode themes.
+    *   **Root Cause**: SimpleMDE uses Font Awesome icon classes (e.g. `fa-bold`) on toolbar buttons, but the app does not load Font Awesome — only Bootstrap Icons. This caused all toolbar buttons to render as blank or invisible squares.
+    *   **Solution**: Added CSS rules in `styles.css` to intercept SimpleMDE's Font Awesome class selectors and replace them with the correct Bootstrap Icons Unicode codepoints via `::before` pseudo-elements. Full dark mode styling (toolbar background, icon colours, active state, CodeMirror editor area, preview pane, and statusbar) was also added.
+    *   **Files Modified**:`styles.css`
+    *   (Ref: `.editor-toolbar`, SimpleMDE Bootstrap Icons replacement, dark mode CodeMirror overrides)
+
+*   **Docker Customization: CA Certificate and pip.conf**
+    *   Fixed Docker customization issues related to custom CA certificate handling and `pip.conf` configuration.
+    *   Ensures Python package installation works reliably in environments requiring custom certificate trust and pip configuration.
+    *   (Ref: Docker customization, CA cert setup, `pip.conf` handling)
+    
+### **(v0.239.001)**
+
+#### New Features
+
+*   **Conversation Export**
+    *   Export one or multiple conversations from the Chat page in JSON or Markdown format.
+    *   **Single Export**: Use the ellipsis menu on any conversation to quickly export it.
+    *   **Multi-Export**: Enter selection mode, check the conversations you want, and click the export button.
+    *   A guided 4-step wizard walks you through selection review, format choice, packaging options (single file or ZIP archive), and download.
+    *   Sensitive internal metadata is automatically stripped from exported data for security.
+
+*   **Retention Policy UI for Groups and Public Workspaces**
+    *   Can now configure conversation and document retention periods directly from the workspace and group management page.
+    *   Choose from preset retention periods ranging from 7 days to 10 years, use the organization default, or disable automatic deletion entirely.
+    
 *   **Owner-Only Group Agent and Action Management**
     *   New admin setting to restrict group agent and group action management (create, edit, delete) to only the group Owner role.
     *   **Admin Toggle**: "Require Owner to Manage Group Agents and Actions" located in Admin Settings > My Groups section, under the existing group creation membership setting.
@@ -81,6 +166,19 @@
     *   **Files Modified**: `chat-documents.js`, `chat-messages.js`, `functions_search.py`, `route_backend_chats.py`, `chats.html`.
     *   (Ref: Multi-document selection, tag filtering, OData search integration, `CHAT_DOCUMENT_AND_TAG_FILTERING.md`)
 
+#### New Features
+
+*   **Conversation Export**
+    *   Export one or multiple conversations from the Chat page in JSON or Markdown format.
+    *   **Single Export**: Use the ellipsis menu on any conversation to quickly export it.
+    *   **Multi-Export**: Enter selection mode, check the conversations you want, and click the export button.
+    *   A guided 4-step wizard walks you through selection review, format choice, packaging options (single file or ZIP archive), and download.
+    *   Sensitive internal metadata is automatically stripped from exported data for security.
+
+*   **Retention Policy UI for Groups and Public Workspaces**
+    *   Can now configure conversation and document retention periods directly from the workspace and group management page.
+    *   Choose from preset retention periods ranging from 7 days to 10 years, use the organization default, or disable automatic deletion entirely.
+
 #### Bug Fixes
 
 *   **Citation Parsing Bug Fix**
@@ -89,6 +187,31 @@
     *   **Solution**: Added auto-fill logic using `getDocPrefix()` to extract the document ID prefix from known reference patterns and construct missing page references (e.g., if `[doc_abc_1]` exists, infer `doc_abc_2` through `doc_abc_5`).
     *   **Files Modified**: `chat-citations.js`.
     *   (Ref: Citation parsing, page range handling, `CITATION_IMPROVEMENTS.md`)
+
+*   **Public Workspace setActive 403 Fix**
+    *   Fixed issue where non-owner/admin/document-manager users received a 403 "Not a member" error when trying to activate a public workspace for chat.
+    *   Root cause was an overly restrictive membership check on the `/api/public_workspaces/setActive` endpoint that only allowed owners, admins, and document managers — even though public workspaces are intended to be accessible to all authenticated users for chatting.
+    *   Removed the membership verification from the `setActive` endpoint; the route still requires authentication (`@login_required`, `@user_required`) and the public workspaces feature flag (`@enabled_required`).
+    *   Other admin-level endpoints (listing members, viewing stats, ownership transfer) retain their membership checks.
+    *   (Ref: `route_backend_public_workspaces.py`, `api_set_active_public_workspace`)
+    
+*   **Chats Page User Settings Hardening**
+    *   Fixed a user-specific chats page failure where only one affected user could not load `/chats` due to malformed per-user settings data.
+    *   **Root Cause**: The chats route assumed `user_settings["settings"]` was always a dictionary. If that field existed but had an invalid type (for example string, null, or list), the page could fail before rendering.
+    *   **Solution**: Hardened `get_user_settings()` to normalize missing/malformed `settings` to `{}` and persist the repaired document. Hardened the chats route to use safe dictionary fallbacks when reading nested settings values.
+    *   **Telemetry**: Added repair logging (`[UserSettings] Malformed settings repaired`) to improve diagnostics for future user-specific data-shape issues.
+    *   **Files Modified**: `functions_settings.py`, `route_frontend_chats.py`, `config.py`.
+    *   **Files Added**: `test_chats_user_settings_hardening_fix.py`, `CHATS_USER_SETTINGS_HARDENING_FIX.md`.
+    *   (Ref: user settings normalization, `/chats` route resilience, `functional_tests/test_chats_user_settings_hardening_fix.py`, `docs/explanation/fixes/CHATS_USER_SETTINGS_HARDENING_FIX.md`)
+
+*   **Tag Filter Input Sanitization (Injection Prevention)**
+    *   Added `sanitize_tags_for_filter()` function to validate tag filter inputs against the same `^[a-z0-9_-]+$` character whitelist enforced when saving tags.
+    *   Previously, tag filter values from query parameters only passed through `normalize_tag()` (strip + lowercase) without character validation, allowing arbitrary characters to reach OData filter construction in `build_tags_filter()`.
+    *   Hardened `build_tags_filter()` in `functions_search.py` to validate tags before interpolating into OData expressions, eliminating the OData injection vector.
+    *   Updated tag filter parsing in personal, group, and public document routes to use `sanitize_tags_for_filter()` for defense-in-depth.
+    *   Invalid tag filter values are silently dropped (they cannot match any stored tag).
+    *   **Files Modified**: `functions_documents.py`, `functions_search.py`, `route_backend_documents.py`, `route_backend_group_documents.py`, `route_backend_public_documents.py`.
+    *   (Ref: `TAG_FILTER_INJECTION_FIX.md`, `sanitize_tags_for_filter`)
 
 #### User Interface Enhancements
 
@@ -127,6 +250,27 @@
     *   (Ref: `route_backend_agents.py`, global agent add/edit routes, `global_selected_agent` setting)
 
 ### **(v0.237.008)**
+### **(v0.237.011)**
+
+#### Bug Fixes
+
+*   **Chat File Upload "Unsupported File Type" Fix**
+    *   Fixed issue where uploading xlsx, png, jpg, csv, and other image/tabular files in the chat interface returned a 400 "Unsupported file type" error.
+    *   **Root Cause**: `os.path.splitext()` returns extensions with a leading dot (e.g., `.png`), but the `IMAGE_EXTENSIONS` and `TABULAR_EXTENSIONS` sets in `config.py` store extensions without dots (e.g., `png`). The comparison `'.png' in {'png', ...}` was always `False`, causing all image and tabular uploads to fall through to the unsupported file type error.
+    *   **Solution**: Added `file_ext_nodot = file_ext.lstrip('.')` and used the dot-stripped extension for set comparisons against `IMAGE_EXTENSIONS` and `TABULAR_EXTENSIONS`, matching the pattern already used in `functions_documents.py`.
+    *   (Ref: `route_frontend_chats.py`, file extension comparison, `IMAGE_EXTENSIONS`, `TABULAR_EXTENSIONS`)
+
+*   **Manage Group Page Duplicate Code and Error Handling Fix**
+    *   Fixed multiple code quality and user experience issues in the Manage Group page JavaScript.
+    *   **Duplicate Event Handlers**: Removed duplicate event handler registrations (lines 96-127) for `.select-user-btn`, `.remove-member-btn`, `.change-role-btn`, `.approve-request-btn`, and `.reject-request-btn` that were causing multiple event firings.
+    *   **Duplicate HTML in Actions Column**: Fixed member action buttons rendering duplicate attributes as visible text instead of functional buttons, causing raw HTML/CSS class names to display in the Actions column.
+    *   **Duplicate Pending Request Buttons**: Removed duplicate Approve and Reject buttons in pending requests table that were appearing twice per request.
+    *   **Enhanced Error Handling**: Improved `setRole()` and `removeMember()` functions with specific error messages for 404 (member not found) and 403 (permission denied) errors, automatic member list refresh on 404, and user-friendly toast notifications instead of generic alerts.
+    *   **Removed Duplicate Comment**: Cleaned up duplicate "Render user-search results" comment.
+    *   **Impact**: Member management buttons now render and function correctly, provide better error feedback, and auto-recover from stale member data.
+    *   (Ref: `manage_group.js`, event handler deduplication, error handling improvements, toast notifications)
+    
+### **(v0.237.009)**
 
 #### New Features
 

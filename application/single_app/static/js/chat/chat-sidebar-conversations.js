@@ -155,6 +155,7 @@ function createSidebarConversationItem(convo) {
           <li><a class="dropdown-item pin-btn" href="#"><i class="bi bi-pin-angle me-2"></i>${isPinned ? 'Unpin' : 'Pin'}</a></li>
           <li><a class="dropdown-item hide-btn" href="#"><i class="bi bi-${isHidden ? 'eye' : 'eye-slash'} me-2"></i>${isHidden ? 'Unhide' : 'Hide'}</a></li>
           <li><a class="dropdown-item select-btn" href="#"><i class="bi bi-check-square me-2"></i>Select</a></li>
+          <li><a class="dropdown-item export-btn" href="#"><i class="bi bi-download me-2"></i>Export</a></li>
           <li><a class="dropdown-item edit-btn" href="#"><i class="bi bi-pencil-fill me-2"></i>Edit title</a></li>
           <li><a class="dropdown-item delete-btn text-danger" href="#"><i class="bi bi-trash-fill me-2"></i>Delete</a></li>
         </ul>
@@ -285,6 +286,7 @@ function createSidebarConversationItem(convo) {
   const pinBtn = convoItem.querySelector('.pin-btn');
   const hideBtn = convoItem.querySelector('.hide-btn');
   const selectBtn = convoItem.querySelector('.select-btn');
+  const exportBtn = convoItem.querySelector('.export-btn');
   const editBtn = convoItem.querySelector('.edit-btn');
   const deleteBtn = convoItem.querySelector('.delete-btn');
   
@@ -396,6 +398,25 @@ function createSidebarConversationItem(convo) {
       // Toggle selection mode
       if (window.chatConversations && window.chatConversations.toggleConversationSelection) {
         window.chatConversations.toggleConversationSelection(convo.id);
+      }
+    });
+  }
+  
+  if (exportBtn) {
+    exportBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      // Close dropdown after action
+      const dropdownBtn = convoItem.querySelector('[data-bs-toggle="dropdown"]');
+      if (dropdownBtn) {
+        const dropdownInstance = bootstrap.Dropdown.getInstance(dropdownBtn);
+        if (dropdownInstance) {
+          dropdownInstance.hide();
+        }
+      }
+      // Open export wizard for this single conversation
+      if (window.chatExport && window.chatExport.openExportWizard) {
+        window.chatExport.openExportWizard([convo.id], true);
       }
     });
   }
@@ -523,6 +544,7 @@ export function setSidebarSelectionMode(isActive) {
     if (isActive) {
       conversationsToggle.style.color = '#856404';
       conversationsToggle.style.fontWeight = '600';
+      conversationsToggle.classList.add('selection-active');
       conversationsActions.style.display = 'flex !important';
       conversationsActions.style.setProperty('display', 'flex', 'important');
       // Hide the search and eye buttons in selection mode
@@ -564,6 +586,7 @@ export function setSidebarSelectionMode(isActive) {
     } else {
       conversationsToggle.style.color = '';
       conversationsToggle.style.fontWeight = '';
+      conversationsToggle.classList.remove('selection-active');
       conversationsActions.style.display = 'none !important';
       conversationsActions.style.setProperty('display', 'none', 'important');
       if (sidebarDeleteBtn) {
@@ -574,6 +597,10 @@ export function setSidebarSelectionMode(isActive) {
       }
       if (sidebarHideBtn) {
         sidebarHideBtn.style.display = 'none';
+      }
+      const sidebarExportBtn = document.getElementById('sidebar-export-selected-btn');
+      if (sidebarExportBtn) {
+        sidebarExportBtn.style.display = 'none';
       }
       // Show the search and eye buttons again when exiting selection mode
       if (sidebarSettingsBtn) {
@@ -596,6 +623,7 @@ export function updateSidebarDeleteButton(selectedCount) {
   const sidebarDeleteBtn = document.getElementById('sidebar-delete-selected-btn');
   const sidebarPinBtn = document.getElementById('sidebar-pin-selected-btn');
   const sidebarHideBtn = document.getElementById('sidebar-hide-selected-btn');
+  const sidebarExportBtn = document.getElementById('sidebar-export-selected-btn');
   
   if (selectedCount > 0) {
     if (sidebarDeleteBtn) {
@@ -610,6 +638,10 @@ export function updateSidebarDeleteButton(selectedCount) {
       sidebarHideBtn.style.display = 'inline-flex';
       sidebarHideBtn.title = `Hide ${selectedCount} selected conversation${selectedCount > 1 ? 's' : ''}`;
     }
+    if (sidebarExportBtn) {
+      sidebarExportBtn.style.display = 'inline-flex';
+      sidebarExportBtn.title = `Export ${selectedCount} selected conversation${selectedCount > 1 ? 's' : ''}`;
+    }
   } else {
     if (sidebarDeleteBtn) {
       sidebarDeleteBtn.style.display = 'none';
@@ -619,6 +651,9 @@ export function updateSidebarDeleteButton(selectedCount) {
     }
     if (sidebarHideBtn) {
       sidebarHideBtn.style.display = 'none';
+    }
+    if (sidebarExportBtn) {
+      sidebarExportBtn.style.display = 'none';
     }
   }
 }
@@ -817,6 +852,22 @@ document.addEventListener('DOMContentLoaded', () => {
         // Trigger the main delete selected functionality
         if (window.chatConversations && window.chatConversations.deleteSelectedConversations) {
           window.chatConversations.deleteSelectedConversations();
+        }
+      });
+    }
+    
+    // Handle sidebar export selected button click
+    const sidebarExportBtn = document.getElementById('sidebar-export-selected-btn');
+    if (sidebarExportBtn) {
+      sidebarExportBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        // Open export wizard for selected conversations
+        if (window.chatExport && window.chatExport.openExportWizard && window.chatConversations && window.chatConversations.getSelectedConversations) {
+          const selectedIds = window.chatConversations.getSelectedConversations();
+          if (selectedIds && selectedIds.length > 0) {
+            window.chatExport.openExportWizard(Array.from(selectedIds), false);
+          }
         }
       });
     }

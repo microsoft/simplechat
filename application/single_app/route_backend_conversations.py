@@ -798,7 +798,7 @@ def register_route_backend_conversations(app):
                 "is_hidden": conversation_item.get('is_hidden', False),
                 "scope_locked": conversation_item.get('scope_locked'),
                 "locked_contexts": conversation_item.get('locked_contexts', []),
-                "chat_type": conversation_item.get('chat_type')
+                "chat_type": conversation_item.get('chat_type', 'personal') # Default to 'personal' if chat_type is not defined (legacy conversations)
             }), 200
             
         except CosmosResourceNotFoundError:

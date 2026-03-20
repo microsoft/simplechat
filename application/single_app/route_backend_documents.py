@@ -362,9 +362,9 @@ def register_route_backend_documents(app):
         
         # Tags Filter (comma-separated, AND logic - document must have all specified tags)
         if tags_filter:
-            from functions_documents import normalize_tag
-            tags_list = [normalize_tag(t.strip()) for t in tags_filter.split(',') if t.strip()]
-            
+            from functions_documents import sanitize_tags_for_filter
+            tags_list = sanitize_tags_for_filter(tags_filter)
+
             if tags_list:
                 # Each tag must exist in the document's tags array
                 for idx, tag in enumerate(tags_list):
@@ -1378,7 +1378,7 @@ def register_route_backend_documents(app):
                         approval_status = entry.get('approval_status', 'unknown')
                         try:
                             # Get user details from Microsoft Graph
-                            graph_url = f"https://graph.microsoft.com/v1.0/users/{oid}"
+                            graph_url = get_graph_endpoint(f"/users/{oid}")
                             response = requests.get(graph_url, headers=headers)
                             
                             if response.status_code == 200:
