@@ -17,7 +17,7 @@ param location string
 ])
 param cloudEnvironment string = az.environment().name == 'AzureCloud' ? 'public' : (az.environment().name == 'AzureUSGovernment' ? 'usgovernment' : 'custom')
 // SimpleChat expects public, usgovernment or custom
-var scCloudEnvironment = cloudEnvironment == 'AzureCloud' ? 'public' : (cloudEnvironment == 'AzureUSGovernment' ? 'usgovernment' : cloudEnvironment)
+var scCloudEnvironment = cloudEnvironment == 'public' ? 'public' : (cloudEnvironment == 'usgovernment' ? 'usgovernment' : cloudEnvironment)
 
 @description('''The name of the application to be deployed.  
 - Name may only contain letters and numbers
@@ -104,13 +104,29 @@ param gptModels array = [
   {
     modelName: 'gpt-4.1'
     modelVersion: '2025-04-14'
-    skuName: cloudEnvironment == 'AzureCloud' ? 'GlobalStandard' : 'Standard'
+    skuName: 'GlobalStandard'
+    skuCapacity: 150
+  }
+  {
+    modelName: 'gpt-4o'
+    modelVersion: '2024-11-20'
+    skuName: 'GlobalStandard'
+    skuCapacity: 150
+  }
+]
+
+@description('''Array of GPT model names to deploy to the OpenAI resource.''')
+param gptModelsGov array = [
+  {
+    modelName: 'gpt-4.1'
+    modelVersion: '2025-04-14'
+    skuName: 'Standard'
     skuCapacity: 50
   }
   {
     modelName: 'gpt-4o'
     modelVersion: '2024-11-20'
-    skuName: cloudEnvironment == 'AzureCloud' ? 'GlobalStandard' : 'Standard'
+    skuName: 'Standard'
     skuCapacity: 50
   }
 ]
@@ -136,10 +152,9 @@ param embeddingModelsGov array = [
   {
     modelName: 'text-embedding-ada-002'
     modelVersion: '2'
-    skuName: cloudEnvironment == 'AzureCloud' ? 'GlobalStandard' : 'Standard'
+    skuName: 'Standard'
     skuCapacity: 50
   }
-  
 ]
 
 //----------------
@@ -179,7 +194,7 @@ param deployVideoIndexerService bool
 var rgName = '${appName}-${environment}-rg'
 var requiredTags = { application: appName, environment: environment, 'azd-env-name': azdEnvironmentName }
 var tags = union(requiredTags, specialTags)
-var acrCloudSuffix = cloudEnvironment == 'AzureCloud' ? '.azurecr.io' : '.azurecr.us'
+var acrCloudSuffix = cloudEnvironment == 'public' ? '.azurecr.io' : '.azurecr.us'
 var acrName = toLower('${appName}${environment}acr')
 var containerRegistry = '${acrName}${acrCloudSuffix}'
 var containerImageName = '${containerRegistry}/${imageName}'
@@ -415,8 +430,8 @@ module openAI 'modules/openAI.bicep' = {
     authenticationType: authenticationType
     configureApplicationPermissions: configureApplicationPermissions
 
-    gptModels: gptModels
-    embeddingModels: cloudEnvironment == 'AzureCloud' ? embeddingModels : embeddingModelsGov
+    gptModels: cloudEnvironment == 'public' ? gptModels : gptModelsGov
+    embeddingModels: cloudEnvironment == 'public' ? embeddingModels : embeddingModelsGov
 
     enablePrivateNetworking: enablePrivateNetworking
   }
@@ -644,6 +659,7 @@ module privateNetworking 'modules/privateNetworking.bicep' = if (enablePrivateNe
 
 
 // output values required for postprovision script in azure.yaml
+output param_cloudEnvironment string = cloudEnvironment
 output var_acrName string = toLower('${appName}${environment}acr')
 output var_authenticationType string = toLower(authenticationType)
 output var_blobStorageEndpoint string = storageAccount.outputs.endpoint
@@ -657,9 +673,9 @@ output var_documentIntelligenceServiceEndpoint string = docIntel.outputs.documen
 output var_keyVaultName string = keyVault.outputs.keyVaultName
 output var_keyVaultUri string = keyVault.outputs.keyVaultUri
 output var_openAIEndpoint string = openAI.outputs.openAIEndpoint
-output var_openAIGPTModels array = gptModels
+output var_openAIGPTModels array = cloudEnvironment == 'public' ? gptModels : gptModelsGov
 output var_openAIResourceGroup string = openAI.outputs.openAIResourceGroup //may be able to remove
-output var_openAIEmbeddingModels array = embeddingModels
+output var_openAIEmbeddingModels array = cloudEnvironment == 'public' ? embeddingModels : embeddingModelsGov
 #disable-next-line BCP318 // expect one value to be null
 output var_redisCacheHostName string = deployRedisCache ? redisCache.outputs.redisCacheHostName : ''
 output var_rgName string = rgName
