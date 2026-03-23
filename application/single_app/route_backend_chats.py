@@ -4167,7 +4167,6 @@ def register_route_backend_chats(app):
             chat_mode = None
             scope_id=active_group_id if chat_type == 'group' else user_id
             scope_type='group' if chat_type == 'group' else 'user'
-            conversation_id=conversation_id
             enable_multi_agent_orchestration = False
             fallback_steps = []
             selected_agent = None
