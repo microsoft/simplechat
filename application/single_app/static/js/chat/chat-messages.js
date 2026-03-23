@@ -17,7 +17,7 @@ import { escapeHtml, isColorLight, addTargetBlankToExternalLinks } from "./chat-
 import { showToast } from "./chat-toast.js";
 import { autoplayTTSIfEnabled } from "./chat-tts.js";
 import { saveUserSetting } from "./chat-layout.js";
-import { isStreamingEnabled, sendMessageWithStreaming } from "./chat-streaming.js";
+import { sendMessageWithStreaming } from "./chat-streaming.js";
 import { getCurrentReasoningEffort, isReasoningEffortEnabled } from './chat-reasoning.js';
 import { areAgentsEnabled } from './chat-agents.js';
 import { createThoughtsToggleHtml, attachThoughtsToggleListener } from './chat-thoughts.js';
@@ -1560,16 +1560,11 @@ export function actuallySendMessage(finalMessageToSend) {
     agent_info: agentInfo,
     reasoning_effort: getCurrentReasoningEffort()
   };
-  const streamInitiated = sendMessageWithStreaming(
+  sendMessageWithStreaming(
     messageData,
     tempUserMessageId,
     currentConversationId
   );
-
-  if (!streamInitiated) {
-    hideLoadingIndicatorInChatbox();
-    showToast('Failed to start streaming response.', 'error');
-  }
 
   return;
 }

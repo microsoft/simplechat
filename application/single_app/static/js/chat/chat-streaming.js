@@ -2,13 +2,11 @@
 import { appendMessage, updateUserMessageId } from './chat-messages.js';
 import { markConversationRead } from './chat-conversations.js';
 import { hideLoadingIndicatorInChatbox, showLoadingIndicatorInChatbox } from './chat-loading-indicator.js';
-import { loadUserSettings, saveUserSetting } from './chat-layout.js';
 import { showToast } from './chat-toast.js';
 import { updateSidebarConversationTitle } from './chat-sidebar-conversations.js';
 import { applyScopeLock } from './chat-documents.js';
 import { handleStreamingThought } from './chat-thoughts.js';
 
-let streamingEnabled = true;
 let currentEventSource = null;
 
 function parseSseEventPayload(eventBlock) {
@@ -25,79 +23,7 @@ function parseSseEventPayload(eventBlock) {
         .join('\n');
 }
 
-export function initializeStreamingToggle() {
-    const streamingToggleBtn = document.getElementById('streaming-toggle-btn');
-    streamingEnabled = true;
-
-    if (!streamingToggleBtn) {
-        return;
-    }
-    
-    console.log('Initializing streaming toggle...');
-    
-    // Load initial state from user settings
-    loadUserSettings().then(settings => {
-        console.log('Loaded user settings:', settings);
-        streamingEnabled = true;
-        console.log('Streaming enabled:', streamingEnabled);
-        updateStreamingButtonState();
-        updateStreamingButtonVisibility();
-    }).catch(error => {
-        console.error('Error loading streaming settings:', error);
-    });
-    
-    // Handle toggle click
-    streamingToggleBtn.addEventListener('click', () => {
-        streamingEnabled = true;
-        updateStreamingButtonState();
-
-        showToast('Streaming is required for chat responses.', 'info');
-    });
-    
-    // Listen for agents toggle - hide streaming button when agents are active
-    const enableAgentsBtn = document.getElementById('enable-agents-btn');
-    if (enableAgentsBtn) {
-        const observer = new MutationObserver(() => {
-            updateStreamingButtonVisibility();
-        });
-        observer.observe(enableAgentsBtn, { attributes: true, attributeFilter: ['class'] });
-    }
-    
-    updateStreamingButtonVisibility();
-}
-
-function updateStreamingButtonState() {
-    const streamingToggleBtn = document.getElementById('streaming-toggle-btn');
-    if (!streamingToggleBtn) return;
-
-    streamingToggleBtn.classList.remove('btn-outline-secondary', 'disabled');
-    streamingToggleBtn.classList.add('btn-primary');
-    streamingToggleBtn.disabled = true;
-    streamingToggleBtn.title = 'Streaming is always enabled for chat responses';
-}
-
-/**
- * Update streaming button visibility based on agent state
- */
-function updateStreamingButtonVisibility() {
-    const streamingToggleBtn = document.getElementById('streaming-toggle-btn');
-    const enableAgentsBtn = document.getElementById('enable-agents-btn');
-    
-    if (!streamingToggleBtn) return;
-    
-    // Show streaming button even when agents are active (agents now support streaming)
-    streamingToggleBtn.style.display = 'flex';
-}
-
-export function isStreamingEnabled() {
-    return streamingEnabled;
-}
-
 export function sendMessageWithStreaming(messageData, tempUserMessageId, currentConversationId, options = {}) {
-    if (!streamingEnabled) {
-        return null; // Caller should use regular fetch
-    }
-
     const {
         onDone = null,
         onError = null,

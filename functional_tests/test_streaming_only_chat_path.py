@@ -2,13 +2,13 @@
 #!/usr/bin/env python3
 """
 Functional test for streaming-only chat path migration.
-Version: 0.239.136
-Implemented in: 0.239.127
+Version: 0.239.137
+Implemented in: 0.239.137
 
 This test ensures that first-party chat clients use the streaming chat path,
 that the legacy non-streaming fallback is not called directly from chat UI
-entry points, and that the streaming backend retains a compatibility bridge
-for parity-sensitive requests including image-generation thought events.
+entry points, and that obsolete streaming toggle scaffolding is removed from
+the frontend now that streaming is the only supported chat mode.
 """
 
 import sys
@@ -39,7 +39,6 @@ def test_streaming_only_chat_path() -> bool:
     chat_streaming = ROOT / "application" / "single_app" / "static" / "js" / "chat" / "chat-streaming.js"
     route_backend_chats = ROOT / "application" / "single_app" / "route_backend_chats.py"
     chats_template = ROOT / "application" / "single_app" / "templates" / "chats.html"
-    settings_file = ROOT / "application" / "single_app" / "functions_settings.py"
     config_file = ROOT / "application" / "single_app" / "config.py"
 
     assert_contains(chat_messages, "sendMessageWithStreaming(")
@@ -50,6 +49,9 @@ def test_streaming_only_chat_path() -> bool:
     assert_contains(chat_streaming, "fetch('/api/chat/stream'")
     assert_contains(chat_streaming, "finalData.image_url")
     assert_contains(chat_streaming, "finalData.reload_messages")
+    assert_not_contains(chat_streaming, "initializeStreamingToggle")
+    assert_not_contains(chat_streaming, "isStreamingEnabled")
+    assert_not_contains(chat_streaming, "streaming-toggle-btn")
 
     assert_contains(route_backend_chats, "compatibility_mode = bool(data.get('image_generation'))")
     assert_contains(route_backend_chats, "generate_compatibility_response")
@@ -59,10 +61,10 @@ def test_streaming_only_chat_path() -> bool:
     assert_contains(route_backend_chats, 'Image generated and ready to display')
 
     assert_not_contains(chats_template, "streaming-toggle-btn")
-    assert_contains(settings_file, "'streamingEnabled': True")
+    assert_not_contains(chats_template, "streaming-badge")
     assert_contains(route_backend_chats, "return build_background_stream_response(generate_compatibility_response)")
     assert_contains(route_backend_chats, "return build_background_stream_response(generate)")
-    assert_contains(config_file, 'VERSION = "0.239.136"')
+    assert_contains(config_file, 'VERSION = "0.239.137"')
 
     print("Streaming-only chat path checks passed!")
     return True

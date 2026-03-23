@@ -276,7 +276,7 @@ window.executeMessageRetry = function() {
             console.log('   retry_thread_attempt:', data.chat_request.retry_thread_attempt);
             console.log('   Full chat_request:', data.chat_request);
 
-            const streamStarted = sendMessageWithStreaming(
+            sendMessageWithStreaming(
                 data.chat_request,
                 null,
                 data.chat_request.conversation_id,
@@ -300,10 +300,6 @@ window.executeMessageRetry = function() {
                     }
                 }
             );
-
-            if (!streamStarted) {
-                throw new Error('Failed to start streaming retry response');
-            }
 
             return null;
         } else {

@@ -9,7 +9,6 @@ import { initializeModelSelector } from "./chat-model-selector.js";
 import { loadUserSettings } from "./chat-layout.js";
 import { showToast } from "./chat-toast.js";
 import { initConversationInfoButton } from "./chat-conversation-info-button.js";
-import { initializeStreamingToggle } from "./chat-streaming.js";
 import { initializeReasoningToggle } from "./chat-reasoning.js";
 import { initializeSpeechInput } from "./chat-speech-input.js";
 
@@ -21,9 +20,6 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   // Initialize the conversation info button
   initConversationInfoButton();
-  
-  // Initialize streaming toggle
-  initializeStreamingToggle();
   
   // Initialize speech input
   try {
