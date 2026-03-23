@@ -568,6 +568,11 @@ if __name__ == '__main__':
         print(f"Starting Gunicorn using {gunicorn_config_path}")
         os.execvp(sys.executable, [sys.executable, '-m', 'gunicorn', '-c', gunicorn_config_path, 'app:app'])
 
+    if use_gunicorn and debug_mode:
+        print("⚠️  WARNING: Both Gunicorn and Flask debug mode are enabled, which is not supported. Please disable one of them, app will not run until resolved.")
+        log_event("WARNING: Running with both Gunicorn and Flask debug mode is not supported. Please disable one of them, app will not run until resolved.", level=logging.WARNING)
+        exit(1)
+
     initialize_application(force=True)
 
     if debug_mode:
