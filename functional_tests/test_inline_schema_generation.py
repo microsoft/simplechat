@@ -11,6 +11,7 @@ like 'bing_search', and ensuring accuracy with the real route code.
 
 import sys
 import os
+import inspect
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'application', 'single_app'))
 
 def test_inline_schema_generation():
@@ -33,7 +34,7 @@ def test_inline_schema_generation():
         chat_func = None
         for rule in test_app.url_map.iter_rules():
             if '/api/chat' in rule.rule and 'POST' in rule.methods:
-                chat_func = test_app.view_functions.get(rule.endpoint)
+                chat_func = inspect.unwrap(test_app.view_functions.get(rule.endpoint))
                 break
         
         if not chat_func:
@@ -48,11 +49,21 @@ def test_inline_schema_generation():
         if not schema:
             print("❌ No schema generated from chat_api function")
             return False
+
+        json_schema = (
+            schema
+            .get('content', {})
+            .get('application/json', {})
+            .get('schema', {})
+        )
+        if not json_schema:
+            print("❌ JSON request body schema not found in generated request body")
+            return False
             
-        print(f"✅ Generated schema from actual route: {len(schema.get('properties', {}))} properties")
+        print(f"✅ Generated schema from actual route: {len(json_schema.get('properties', {}))} properties")
         
         # Verify the schema contains actual parameters from the route
-        properties = schema.get('properties', {})
+        properties = json_schema.get('properties', {})
         
         expected_fields = [
             'message', 'conversation_id', 'hybrid_search', 'selected_document_id', 
@@ -81,7 +92,7 @@ def test_inline_schema_generation():
             print("✅ Correctly excluded 'bing_search' - not found in actual route")
         
         # Verify message is required
-        required_fields = schema.get('required', [])
+        required_fields = json_schema.get('required', [])
         if 'message' in required_fields:
             print("✅ 'message' correctly identified as required")
         else:

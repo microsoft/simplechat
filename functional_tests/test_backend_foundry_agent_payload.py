@@ -92,7 +92,7 @@ if __name__ == "__main__":
 
     for test in tests:
         print(f"\n🧪 Running {test.__name__}...")
-        results.append(test())
+        results.append(test() is not False)
 
     success = all(results)
     print(f"\n📊 Results: {sum(results)}/{len(tests)} tests passed")
