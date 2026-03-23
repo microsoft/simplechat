@@ -76,12 +76,14 @@
   flex: 1 1 540px;
   flex-wrap: wrap;
   justify-content: flex-end;
+  align-items: center;
   margin-left: auto;
 }
 
 .chat-toolbar-toggles {
   flex: 0 0 auto;
   flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .chat-toolbar-selectors {
@@ -191,11 +193,16 @@
 @media (max-width: 768px) {
   .chat-toolbar-controls {
     flex-basis: 100%;
+    justify-content: flex-start;
     margin-left: 0;
   }
 
   .chat-toolbar-selectors {
     flex-basis: 100%;
+  }
+
+  .chat-toolbar-toggles {
+    width: 100%;
   }
 
   .chat-toolbar-selector {

@@ -343,38 +343,6 @@
                     
                     <!-- Right side selectors -->
                     <div class="chat-toolbar-controls">
-
-                        <div class="chat-toolbar-toggles">
-
-                        <!-- TTS Autoplay toggle button -->
-                        {% if app_settings.enable_text_to_speech %}
-                        <button 
-                            id="tts-autoplay-toggle-btn" 
-                            class="btn btn-outline-secondary btn-sm rounded-circle" 
-                            data-bs-toggle="tooltip" 
-                            data-bs-placement="top" 
-                            data-bs-title="Toggle AI voice response"
-                            title="Auto voice response disabled - click to enable"
-                            style="width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center;"
-                        >
-                            <i class="bi bi-volume-mute"></i>
-                        </button>
-                        {% endif %}
-
-                        <!-- Reasoning effort toggle button -->
-                        <button 
-                            id="reasoning-toggle-btn" 
-                            class="btn btn-outline-secondary btn-sm rounded-circle" 
-                            data-bs-toggle="tooltip" 
-                            data-bs-placement="top" 
-                            title="Configure reasoning effort"
-                            style="width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center;"
-                        >
-                            <i class="bi bi-reception-2"></i>
-                        </button>
-
-                        </div>
-
                         <!-- Prompt Selector -->
                         <div class="chat-toolbar-selectors">
                         {% if settings.enable_user_workspace or settings.enable_group_workspaces %}
@@ -488,6 +456,37 @@
                                 {% endfor %}
                             {% endif %}
                             </select>
+                        </div>
+
+                        <div class="chat-toolbar-toggles">
+
+                        <!-- Reasoning effort toggle button -->
+                        <button 
+                            id="reasoning-toggle-btn" 
+                            class="btn btn-outline-secondary btn-sm rounded-circle" 
+                            data-bs-toggle="tooltip" 
+                            data-bs-placement="top" 
+                            title="Configure reasoning effort"
+                            style="width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center;"
+                        >
+                            <i class="bi bi-reception-2"></i>
+                        </button>
+
+                        <!-- TTS Autoplay toggle button -->
+                        {% if app_settings.enable_text_to_speech %}
+                        <button 
+                            id="tts-autoplay-toggle-btn" 
+                            class="btn btn-outline-secondary btn-sm rounded-circle" 
+                            data-bs-toggle="tooltip" 
+                            data-bs-placement="top" 
+                            data-bs-title="Toggle AI voice response"
+                            title="Auto voice response disabled - click to enable"
+                            style="width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center;"
+                        >
+                            <i class="bi bi-volume-mute"></i>
+                        </button>
+                        {% endif %}
+
                         </div>
                         </div>
                     </div>
