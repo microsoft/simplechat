@@ -199,8 +199,6 @@ document.addEventListener('DOMContentLoaded', ()=>{
     if (activePublicId) fetchPublicDocs();
   });
 
-  Array.from(publicDropdownItems.children).forEach(()=>{}); // placeholder
-
   // --- Document selection event listeners ---
   // Event delegation for document checkboxes
   document.addEventListener('change', function(event) {
@@ -266,8 +264,7 @@ function updatePublicRoleDisplay(){
     if (nameRoleEl) nameRoleEl.textContent = activePublicName;
     if (display) display.style.display = 'block';
     if (uploadSection) uploadSection.style.display = ['Owner','Admin','DocumentManager'].includes(userRoleInActivePublic) ? 'block' : 'none';
-    // uploadHr was removed from template, so skip
-    
+
     // Control visibility of Settings tab (only for Owners and Admins)
     const settingsTabNav = document.getElementById('public-settings-tab-nav');
     const canManageSettings = ['Owner', 'Admin'].includes(userRoleInActivePublic);
@@ -1709,7 +1706,7 @@ window.loadPublicWorkspaceTags = loadPublicWorkspaceTags;
 function isPublicColorLight(hex) {
   if (!hex) return true;
   hex = hex.replace('#', '');
-  const r = parseInt(hex.substr(0,2),16), g = parseInt(hex.substr(2,2),16), b = parseInt(hex.substr(4,2),16);
+  const r = parseInt(hex.substring(0, 2), 16), g = parseInt(hex.substring(2, 4), 16), b = parseInt(hex.substring(4, 6), 16);
   return (r * 299 + g * 587 + b * 114) / 1000 > 155;
 }
 
