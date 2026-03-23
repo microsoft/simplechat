@@ -2,7 +2,7 @@
 
 # Feature Release
 
-### **(v0.239.134)**
+### **(v0.240.001)**
 
 #### Bug Fixes
 
@@ -11,16 +11,12 @@
     *   Hardened admin logo and favicon uploads so Pillow now only opens the PNG and JPEG formats already allowed by the route, preventing disguised PSD content from being decoded during upload processing.
     *   (Ref: `application/single_app/requirements.txt`, `application/single_app/route_frontend_admin_settings.py`, `functional_tests/test_pillow_psd_upload_hardening.py`)
 
-### **(v0.239.135)**
-
 #### Bug Fixes
 
 *   **Changed-Files GitHub Action Supply Chain Remediation**
     *   Updated the release-notes pull request workflow to use the patched `tj-actions/changed-files@v46.0.1` release after the March 2025 supply chain compromise affecting older tag families.
     *   Added a functional regression check to ensure the workflow does not drift back to the known malicious commit or an older vulnerable action reference.
     *   (Ref: `release-notes-check.yml`, `test_changed_files_action_version.py`, GitHub Actions workflow security, CI dependency pinning)
-
-### **(v0.239.133)**
 
 #### New Features
 
@@ -42,8 +38,6 @@
     *   Personal completion-side effects are now determined from the saved conversation type instead of active workspace session values.
     *   (Ref: personal chat scope gating, `route_backend_chats.py`, `test_chat_completion_notifications.py`)
 
-### **(v0.239.129)**
-
 #### Bug Fixes
 
 *   **Distributed Background Task Locks**
@@ -52,8 +46,6 @@
     *   Updated the startup documentation and added functional validation for the distributed lock wiring.
     *   (Ref: `background_tasks.py`, `SIMPLECHAT_STARTUP.md`, `test_background_task_distributed_locks.py`, `test_startup_scheduler_support.py`)
 
-### **(v0.239.127)**
-
 #### New Features
 
 *   **SimpleChat Startup and Scheduler Separation**
@@ -61,8 +53,6 @@
     *   Extracted the scheduler-style logging timer, approval expiration, and retention loops into a shared background task module and added a dedicated `simplechat_scheduler.py` entrypoint so scheduled work can run in a separate process or job.
     *   This allows the web app to use Gunicorn with `workers=2` without duplicating scheduler loops inside every worker process, while keeping a legacy override available for single-process environments.
     *   (Ref: `app.py`, `background_tasks.py`, `simplechat_scheduler.py`, `SIMPLECHAT_STARTUP.md`, `test_startup_scheduler_support.py`)
-
-### **(v0.239.128)**
 
 #### New Features
 
@@ -80,8 +70,6 @@
     *   Updated the startup guide and Gunicorn runtime validation test to reflect the new default-on behavior.
     *   (Ref: `app.py`, `SIMPLECHAT_STARTUP.md`, `test_gunicorn_startup_support.py`)
 
-### **(v0.239.126)**
-
 #### Bug Fixes
 
 *   **Gunicorn Production Startup Support**
@@ -96,16 +84,12 @@
     *   Removed the chat-page streaming toggle, updated the UI to treat streaming as required behavior, and added regression coverage to prevent first-party chat modules from drifting back to direct `/api/chat` calls.
     *   (Ref: `route_backend_chats.py`, `chat-messages.js`, `chat-streaming.js`, `chat-retry.js`, `chat-edit.js`, `chats.html`, `test_streaming_only_chat_path.py`)
 
-### **(v0.239.123)**
-
 #### User Interface Enhancements
 
 *   **Searchable Chat Selectors**
     *   Added in-dropdown search on the chat page for workspace scope, tags, documents, prompts, models, and agents so large lists are faster to navigate without scrolling through the full set of options.
     *   Prompt, model, and agent pickers now use searchable single-select dropdowns while preserving existing chat behavior, and prompt loading now walks all prompt API pages so search covers the full prompt list instead of only the first page.
     *   (Ref: `chats.html`, `chat-searchable-select.js`, `chat-documents.js`, `chat-prompts.js`, `chat-model-selector.js`, `chat-agents.js`, chat selector UX)
-
-### **(v0.239.116)**
 
 #### Bug Fixes
 
@@ -114,8 +98,6 @@
     *   This reduces avoidable repeat throttling during document processing, batched embedding generation, and search embedding requests when Azure OpenAI asks the client to wait.
     *   The existing exponential backoff behavior remains in place as a fallback when the service does not provide a usable retry delay.
     *   (Ref: `functions_content.py`, embedding retry logic, `test_embedding_rate_limit_wait_time.py`)
-
-### **(v0.239.114)**
 
 #### Bug Fixes
 
@@ -126,16 +108,12 @@
     *   Existing plaintext SQL action credentials are not backfilled automatically; they move to Key Vault the next time the action is saved while Key Vault storage is enabled.
     *   (Ref: `functions_keyvault.py`, `route_backend_plugins.py`, `plugin_modal_stepper.js`, `workspace_plugins.js`, SQL action configuration)
 
-### **(v0.239.113)**
-
 #### Bug Fixes
 
 *   **Group/Public Expanded Document Tags**
     *   Fixed group and public workspace list views so expanding a document now shows its tags, matching the personal workspace experience.
     *   The fix adds color-coded tag badges with a `No tags` fallback in expanded document details without changing the existing backend document APIs.
     *   (Ref: `group_workspaces.html`, `public_workspace.js`, expanded document details, workspace tag rendering)
-
-### **(v0.239.112)**
 
 #### Bug Fixes
 
@@ -144,8 +122,6 @@
     *   Agent payload sanitization now strips backend-managed audit and Cosmos metadata before schema validation, while preserving server-side tracking during persistence.
     *   (Ref: `functions_agent_payload.py`, `route_backend_agents.py`, agent schema validation, functional test coverage)
 
-### **(v0.239.104)**
-
 #### Bug Fixes
 
 *   **Multi-Sheet Workbook Tabular Analysis**
@@ -153,8 +129,6 @@
     *   Tabular runtime analysis now requires explicit `sheet_name` or `sheet_index` selection for analytical calls on multi-sheet workbooks, and the SK mini-agent preload now includes workbook sheet inventory and per-sheet schemas so the model can choose the correct worksheet before computing results.
     *   Enhanced citations and tabular previews now preserve worksheet context, using `Sheet: <name>` for sheet-specific references and `Location: Workbook Schema` for workbook-level schema citations instead of generic `Page 1` labels. The tabular preview modal also supports switching between workbook sheets.
     *   (Ref: `tabular_processing_plugin.py`, `route_backend_chats.py`, `route_enhanced_citations.py`, `chat-enhanced-citations.js`, `chat-citations.js`, `chat-messages.js`)
-
-### **(v0.239.102)**
 
 #### Bug Fixes
 
@@ -178,8 +152,6 @@
 *   **Tabular Preview Memory Optimization**
     *   The `/api/enhanced_citations/tabular_preview` endpoint no longer loads entire files into a DataFrame. It now uses `nrows` limits in `pandas.read_csv`/`read_excel` to read only the rows needed for the preview, and checks blob size before downloading to reject oversized files early.
     *   (Ref: `route_enhanced_citations.py`)
-
-### **(v0.239.031)**
 
 #### New Features
 
@@ -379,7 +351,6 @@
     *   For SQL action types, the redundant additional fields UI in Step 4 is hidden entirely since all SQL configuration is already handled in Step 3.
     *   Step 5 (Summary) no longer shows the raw additional fields JSON dump for SQL types, since that data is already shown in the SQL Database Configuration summary card.
     *   (Ref: `_plugin_modal.html`, `plugin_modal_stepper.js`)
-### **(v0.239.007)**
 
 #### New Features
 
@@ -391,8 +362,6 @@
     *   **Open in Email**: Opens the user's default email client with the message pre-filled in the subject and body via `mailto:`.
     *   New options appear below a divider in the dropdown, preserving existing actions (Delete, Retry, Edit, Feedback).
     *   (Ref: `chat-message-export.js`, `chat-messages.js`, `route_backend_conversation_export.py`, per-message export)
-
-### **(v0.239.005)**
 
 #### New Features
 
@@ -452,8 +421,8 @@
     *   Fixed Docker customization issues related to custom CA certificate handling and `pip.conf` configuration.
     *   Ensures Python package installation works reliably in environments requiring custom certificate trust and pip configuration.
     *   (Ref: Docker customization, CA cert setup, `pip.conf` handling)
-    
-### **(v0.239.001)**
+
+### **(v0.239.002)**
 
 #### New Features
 
@@ -467,7 +436,7 @@
 *   **Retention Policy UI for Groups and Public Workspaces**
     *   Can now configure conversation and document retention periods directly from the workspace and group management page.
     *   Choose from preset retention periods ranging from 7 days to 10 years, use the organization default, or disable automatic deletion entirely.
-    
+
 *   **Owner-Only Group Agent and Action Management**
     *   New admin setting to restrict group agent and group action management (create, edit, delete) to only the group Owner role.
     *   **Admin Toggle**: "Require Owner to Manage Group Agents and Actions" located in Admin Settings > My Groups section, under the existing group creation membership setting.
@@ -558,7 +527,7 @@
     *   Removed the membership verification from the `setActive` endpoint; the route still requires authentication (`@login_required`, `@user_required`) and the public workspaces feature flag (`@enabled_required`).
     *   Other admin-level endpoints (listing members, viewing stats, ownership transfer) retain their membership checks.
     *   (Ref: `route_backend_public_workspaces.py`, `api_set_active_public_workspace`)
-    
+
 *   **Chats Page User Settings Hardening**
     *   Fixed a user-specific chats page failure where only one affected user could not load `/chats` due to malformed per-user settings data.
     *   **Root Cause**: The chats route assumed `user_settings["settings"]` was always a dictionary. If that field existed but had an invalid type (for example string, null, or list), the page could fail before rendering.
@@ -613,7 +582,6 @@
     *   **Solution**: Removed the post-save `global_selected_agent` enforcement from the add and edit routes. The delete route already correctly prevents deletion of the selected agent.
     *   (Ref: `route_backend_agents.py`, global agent add/edit routes, `global_selected_agent` setting)
 
-### **(v0.237.008)**
 ### **(v0.237.011)**
 
 #### Bug Fixes
@@ -633,7 +601,7 @@
     *   **Removed Duplicate Comment**: Cleaned up duplicate "Render user-search results" comment.
     *   **Impact**: Member management buttons now render and function correctly, provide better error feedback, and auto-recover from stale member data.
     *   (Ref: `manage_group.js`, event handler deduplication, error handling improvements, toast notifications)
-    
+
 ### **(v0.237.009)**
 
 #### New Features
