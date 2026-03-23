@@ -2,7 +2,7 @@
 # test_chat_completion_notifications.py
 """
 Functional test for chat completion notifications.
-Version: 0.239.133
+Version: 0.239.136
 Implemented in: 0.239.128
 
 This test ensures that personal chat completions create deep-link notifications,
@@ -398,11 +398,11 @@ def test_version_updated_for_feature():
     with open(config_file_path, 'r', encoding='utf-8') as handle:
         config_content = handle.read()
 
-    if 'VERSION = "0.239.133"' not in config_content:
-        print("❌ Version not updated to 0.239.133")
+    if 'VERSION = "0.239.136"' not in config_content:
+        print("❌ Version not updated to 0.239.136")
         return False
 
-    print("✅ Version properly updated to 0.239.133")
+    print("✅ Version properly updated to 0.239.136")
     return True
 
 

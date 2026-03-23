@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for streaming-only chat path migration.
-Version: 0.239.133
+Version: 0.239.136
 Implemented in: 0.239.127
 
 This test ensures that first-party chat clients use the streaming chat path,
@@ -62,7 +62,7 @@ def test_streaming_only_chat_path() -> bool:
     assert_contains(settings_file, "'streamingEnabled': True")
     assert_contains(route_backend_chats, "return build_background_stream_response(generate_compatibility_response)")
     assert_contains(route_backend_chats, "return build_background_stream_response(generate)")
-    assert_contains(config_file, 'VERSION = "0.239.133"')
+    assert_contains(config_file, 'VERSION = "0.239.136"')
 
     print("Streaming-only chat path checks passed!")
     return True

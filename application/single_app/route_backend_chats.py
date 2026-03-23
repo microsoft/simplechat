@@ -4899,17 +4899,19 @@ def register_route_backend_chats(app):
                     prompt_text = (data.get('message') or '').strip()
                     prompt_preview = prompt_text[:120] + '...' if len(prompt_text) > 120 else prompt_text
 
-                    yield f"data: {json.dumps({
+                    image_prompt_event = {
                         'type': 'thought',
                         'step_type': 'generation',
                         'content': f'Generating image based on \"{prompt_preview}\"' if prompt_preview else 'Generating image from your prompt'
-                    })}\n\n"
+                    }
+                    yield f"data: {json.dumps(image_prompt_event)}\n\n"
 
-                    yield f"data: {json.dumps({
+                    image_request_event = {
                         'type': 'thought',
                         'step_type': 'generation',
                         'content': 'Preparing image model request'
-                    })}\n\n"
+                    }
+                    yield f"data: {json.dumps(image_request_event)}\n\n"
 
                 legacy_result = chat_api()
                 legacy_response = legacy_result
@@ -4931,11 +4933,12 @@ def register_route_backend_chats(app):
                     return
 
                 if payload.get('image_url'):
-                    yield f"data: {json.dumps({
+                    image_ready_event = {
                         'type': 'thought',
                         'step_type': 'generation',
                         'content': 'Image generated and ready to display'
-                    })}\n\n"
+                    }
+                    yield f"data: {json.dumps(image_ready_event)}\n\n"
 
                 yield f"data: {json.dumps(normalize_legacy_chat_payload(payload))}\n\n"
             except Exception as compatibility_error:

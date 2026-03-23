@@ -9,9 +9,23 @@ from functions_logging import *
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta
 
+ALLOWED_PIL_IMAGE_UPLOAD_FORMATS = ('PNG', 'JPEG')
+
 def allowed_file(filename, allowed_extensions):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in allowed_extensions
+
+def open_allowed_uploaded_image(file_bytes, filename):
+    img = Image.open(BytesIO(file_bytes), formats=list(ALLOWED_PIL_IMAGE_UPLOAD_FORMATS))
+    img.load()
+
+    detected_format = (img.format or '').upper()
+    if detected_format not in ALLOWED_PIL_IMAGE_UPLOAD_FORMATS:
+        raise ValueError(
+            f"Unsupported image format for {filename}. Allowed formats: {', '.join(ALLOWED_PIL_IMAGE_UPLOAD_FORMATS)}"
+        )
+
+    return img, detected_format
 
 def register_route_frontend_admin_settings(app):
     @app.route('/admin/settings', methods=['GET', 'POST'])
@@ -943,13 +957,12 @@ def register_route_frontend_admin_settings(app):
                     )
 
                     # 3) Load into Pillow from the original bytes for processing
-                    in_memory_for_process = BytesIO(file_bytes) # Use original bytes
-                    img = Image.open(in_memory_for_process)
+                    img, detected_format = open_allowed_uploaded_image(file_bytes, logo_file.filename)
                     
                     add_file_task_to_file_processing_log(
                         document_id='Image_Upload', # Placeholder if needed
                         user_id='New_image',
-                        content=f"Loaded image for processing: {logo_file.filename}"
+                        content=f"Loaded image for processing: {logo_file.filename} (format: {detected_format})"
                     )
 
                     # Ensure image mode is compatible (e.g., convert palette modes)
@@ -1026,13 +1039,12 @@ def register_route_frontend_admin_settings(app):
                     )
 
                     # 2) Load into Pillow from the original bytes for processing
-                    in_memory_for_process = BytesIO(file_bytes) # Use original bytes
-                    img = Image.open(in_memory_for_process)
+                    img, detected_format = open_allowed_uploaded_image(file_bytes, logo_dark_file.filename)
                     
                     add_file_task_to_file_processing_log(
                         document_id='Image_Upload', # Placeholder if needed
                         user_id='New_image',
-                        content=f"Loaded dark mode logo image for processing: {logo_dark_file.filename}"
+                        content=f"Loaded dark mode logo image for processing: {logo_dark_file.filename} (format: {detected_format})"
                     )
 
                     # 3) Ensure image mode is compatible (e.g., convert palette modes)
@@ -1108,13 +1120,12 @@ def register_route_frontend_admin_settings(app):
                     )
 
                     # 2) Load into Pillow from the original bytes for processing
-                    in_memory_for_process = BytesIO(file_bytes) # Use original bytes
-                    img = Image.open(in_memory_for_process)
+                    img, detected_format = open_allowed_uploaded_image(file_bytes, favicon_file.filename)
                     
                     add_file_task_to_file_processing_log(
                         document_id='Image_Upload', # Placeholder if needed
                         user_id='New_image',
-                        content=f"Loaded favicon image for processing: {favicon_file.filename}"
+                        content=f"Loaded favicon image for processing: {favicon_file.filename} (format: {detected_format})"
                     )
 
                     # 3) Ensure image mode is compatible (e.g., convert palette modes)

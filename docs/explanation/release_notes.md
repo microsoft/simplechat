@@ -2,6 +2,24 @@
 
 # Feature Release
 
+### **(v0.239.134)**
+
+#### Bug Fixes
+
+*   **Pillow PSD Upload Hardening**
+    *   Updated the application to use `pillow==12.1.1`, moving the app off the vulnerable Pillow range for specially crafted PSD image parsing.
+    *   Hardened admin logo and favicon uploads so Pillow now only opens the PNG and JPEG formats already allowed by the route, preventing disguised PSD content from being decoded during upload processing.
+    *   (Ref: `application/single_app/requirements.txt`, `application/single_app/route_frontend_admin_settings.py`, `functional_tests/test_pillow_psd_upload_hardening.py`)
+
+### **(v0.239.135)**
+
+#### Bug Fixes
+
+*   **Changed-Files GitHub Action Supply Chain Remediation**
+    *   Updated the release-notes pull request workflow to use the patched `tj-actions/changed-files@v46.0.1` release after the March 2025 supply chain compromise affecting older tag families.
+    *   Added a functional regression check to ensure the workflow does not drift back to the known malicious commit or an older vulnerable action reference.
+    *   (Ref: `release-notes-check.yml`, `test_changed_files_action_version.py`, GitHub Actions workflow security, CI dependency pinning)
+
 ### **(v0.239.133)**
 
 #### New Features

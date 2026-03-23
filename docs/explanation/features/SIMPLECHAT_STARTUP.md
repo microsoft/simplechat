@@ -1,9 +1,9 @@
-# SimpleChat Startup and Scheduler (v0.239.129)
+# SimpleChat Startup and Scheduler (v0.239.136)
 
 ## Overview
 This document explains how SimpleChat should be started in local development, Azure App Service native Python deployments, and container-based runtimes. It also explains how background scheduler work is separated from the Gunicorn web process so administrators can use more than one web worker without duplicating scheduler threads.
 
-**Version Implemented:** 0.239.129
+**Version Implemented:** 0.239.136
 
 ## Dependencies
 - Flask application bootstrap in `application/single_app/app.py`
@@ -12,14 +12,14 @@ This document explains how SimpleChat should be started in local development, Az
 - Dedicated scheduler entrypoint in `application/single_app/simplechat_scheduler.py`
 - Container startup in `application/single_app/Dockerfile`
 
-## Implemented in version: **0.239.129**
+## Implemented in version: **0.239.136**
 
 ## Technical Specifications
 
 ### Web Process Modes
 - **Local debug mode:** `FLASK_DEBUG=1` and `python app.py`
 - **Direct Gunicorn mode:** Gunicorn launched by App Service or by an operator command
-- **Optional handoff mode:** `python app.py` with `SIMPLECHAT_USE_GUNICORN=1`
+- **Optional handoff mode:** `python app.py` with `SIMPLECHAT_USE_GUNICORN=1` on Linux-compatible runtimes
 
 The web process now supports two production-safe approaches:
 
@@ -27,6 +27,12 @@ The web process now supports two production-safe approaches:
 2. Launch `python app.py` and let the process exec into Gunicorn when `SIMPLECHAT_USE_GUNICORN=1` is set.
 
 If Gunicorn is already the startup command, `SIMPLECHAT_USE_GUNICORN` is not needed.
+
+Important platform note:
+
+- Windows local development should stay on `FLASK_DEBUG=1` with `python app.py`.
+- Gunicorn and the optional handoff path should be treated as Linux/container/App Service runtime options, not native Windows runtime options.
+- If a Windows developer needs Gunicorn-specific worker or thread validation, use Docker Desktop, WSL2, or another Linux environment.
 
 ### Background Scheduler Separation
 Scheduler-style loops are defined in `background_tasks.py` and can be started either:
@@ -44,7 +50,7 @@ Approval expiry and retention policy execution also use Cosmos-backed distribute
 - `FLASK_DEBUG=1`
   Uses the Flask development server with HTTPS and local-friendly behavior.
 - `SIMPLECHAT_USE_GUNICORN=1`
-  Only matters when the process starts as `python app.py` in non-debug mode.
+  Only matters when the process starts as `python app.py` in non-debug mode on a runtime that can execute Gunicorn.
 - `SIMPLECHAT_RUN_BACKGROUND_TASKS`
   Background loops are enabled when this setting is unset. Set it to `0`, `false`, `no`, or `off` to disable background loops in the current process.
 
@@ -137,14 +143,21 @@ python app.py
 
 This keeps the normal Flask development flow and starts background loops in the local process.
 
+On Windows, this is the recommended local workflow. Keep `FLASK_DEBUG=1` enabled and do not rely on native Gunicorn execution.
+
 If multiple workers or instances are active, the approval expiry and retention policy jobs now coordinate through distributed locks. Logging timer work still runs per process.
 
 ### Production-Like Local Workflow
-For concurrency, timeout, and streaming validation, run Gunicorn locally:
+For concurrency, timeout, and streaming validation, run Gunicorn locally only in Linux-compatible environments such as Docker, WSL2, or a native Linux/macOS shell:
 
 ```bash
 gunicorn --bind=0.0.0.0:5000 --worker-class gthread --workers 2 --threads 8 --timeout 900 --graceful-timeout 60 --keep-alive 75 --max-requests 500 --max-requests-jitter 50 app:app
 ```
+
+Windows note:
+
+- Native Windows Python cannot run Gunicorn because Gunicorn depends on Unix-only modules.
+- On Windows, use `python app.py` for application development and switch to Docker or WSL2 when you need Gunicorn-specific validation.
 
 To test the scheduler separately at the same time:
 
@@ -175,6 +188,7 @@ These tests verify:
 - deployment guidance documentation presence
 
 ## Known Limitations
+- Native Windows Python is not a supported Gunicorn runtime.
 - Leaving `SIMPLECHAT_RUN_BACKGROUND_TASKS` unset enables the loops in every Gunicorn worker process.
 - Approval expiry and retention policy now coordinate with distributed locks, but logging timer work still runs in every enabled process.
 - Set `SIMPLECHAT_RUN_BACKGROUND_TASKS=0` in web workers if you want the separate scheduler process to be the only scheduler runtime.
