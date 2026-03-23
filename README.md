@@ -121,6 +121,58 @@ This step will begin the deployment process.
 azd up 
 ```
 
+## Deployment Runtime Notes
+
+### Container
+> [!NOTE]
+>
+> The container deployments of Simple Chat does NOT need this step, when you run `azd up` for new installs or `azd deploy` for updates, the container is configured to run with gunicorn.
+
+- The repo-provided `azd`, Bicep, Terraform, and Azure CLI deployers are **container-based** App Service deployments.
+- For those container deployments, do **not** set an App Service Stack Settings Startup command. 
+    - The container already starts Gunicorn through `application/single_app/Dockerfile`.
+
+## Native Python
+- For **native Python App Service** deployments, deploy the `application/single_app` folder and set the App Service Startup command explicitly.
+
+Native Python deployment references:
+
+- [Manual deployment notes](./docs/reference/deploy/manual_deploy.md)
+- [Manual setup steps](./docs/setup_instructions_manual.md#installing-and-deploying-the-application-code)
+- [VS Code deployment steps](./docs/setup_instructions_manual.md#deploying-via-vs-code-recommended-for-simplicity)
+- [Azure CLI ZIP deploy steps](./docs/setup_instructions_manual.md#deploying-via-azure-cli-zip-deploy)
+
+To set the Startup command in Azure Portal:
+
+1. Go to the App Service.
+2. Open **Settings** > **Configuration** > **Stack Settings**.
+3. Enter the following Startup command.
+4. Save the change, then stop and start the app.
+
+Use this Startup command for native Python App Service deployments:
+
+```bash
+python -m gunicorn -c gunicorn.conf.py app:app
+```
+
+> [!IMPORTANT]
+>
+> Running Simple Chat with gunicorn improves the experience with better request handling and concurrency.
+
+## Upgrade Paths
+
+- For a concise upgrade decision guide, see [docs/how-to/upgrade_paths.md](docs/how-to/upgrade_paths.md).
+
+### Container
+- **Container-based upgrades** should usually start with `azd deploy` for code-only changes. Use `azd up` only when the release also changes infrastructure.
+- If your App Service is already configured to pull from ACR and you want image-only rollouts, use the ACR/image refresh approach described in [docs/how-to/upgrade_paths.md](docs/how-to/upgrade_paths.md) instead of treating every release as a full reprovisioning event.
+
+### Native Python
+- **Native Python App Service upgrades** should reuse the manual deployment path, validate the Startup command above, and deploy the `application/single_app` folder with VS Code or Azure CLI ZIP deploy.
+- [Manual native Python upgrade guide](./docs/setup_instructions_manual.md#upgrading-the-application)
+- [Native Python ZIP deploy reference](./docs/setup_instructions_manual.md#deploying-via-azure-cli-zip-deploy)
+- [Native Python deployment notes](./docs/reference/deploy/manual_deploy.md)
+
 ## Architecture
 
 ![Architecture](./docs/images/architecture.png)
@@ -144,6 +196,7 @@ azd up
 - **Metadata Extraction (Optional)**: Apply an AI model (configurable GPT model via Admin Settings) to automatically generate keywords, two-sentence summaries, and infer author/date for uploaded documents. Allows manual override for richer search context.
 - **File Processing Logs (Optional)**: Enable verbose logging for all ingestion pipelines (workspaces and ephemeral chat uploads) to aid in debugging, monitoring, and auditing file processing steps.
 - **Redis Cache (Optional)**: Integrate Azure Cache for Redis to provide a distributed, high-performance session store. This enables true horizontal scaling and high availability by decoupling user sessions from individual app instances.
+- **SQL Database Agents (Optional)**: Connect agents to Azure SQL or other SQL databases through configurable SQL Query and SQL Schema plugins. Database schema is automatically discovered and injected into agent instructions at load time, enabling agents to answer natural language questions by generating and executing SQL queries without requiring users to know table or column names.
 - **Authentication & RBAC**: Secure access via Azure Active Directory (Entra ID) using MSAL. Supports Managed Identities for Azure service authentication, group-based controls, and custom application roles (`Admin`, `User`, `CreateGroup`, `SafetyAdmin`, `FeedbackAdmin`).
 - **Supported File Types**:
 

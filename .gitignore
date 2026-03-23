@@ -45,3 +45,6 @@ flask_session
 tmp**cwd
 /tmp_images
 nul
+/.github/plans
+*.xlsx
+/artifacts/tests

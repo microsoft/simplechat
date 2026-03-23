@@ -78,6 +78,9 @@ var acrDomain = az.environment().suffixes.acrLoginServer
 resource webApp 'Microsoft.Web/sites@2022-03-01' = {
   name: toLower('${appName}-${environment}-app')
   location: location
+  // This module deploys a Linux container App Service.
+  // Gunicorn startup comes from the container image entrypoint,
+  // so App Service native Python startup settings are not used here.
   kind: 'app,linux,container'
   properties: {
     serverFarmId: appServicePlanId

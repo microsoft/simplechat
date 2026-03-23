@@ -75,6 +75,7 @@ from route_backend_public_documents import *
 from route_backend_public_prompts import *
 from route_backend_user_agreement import register_route_backend_user_agreement
 from route_backend_conversation_export import register_route_backend_conversation_export
+from route_backend_thoughts import register_route_backend_thoughts
 from route_backend_speech import register_route_backend_speech
 from route_backend_tts import register_route_backend_tts
 from route_enhanced_citations import register_enhanced_citations_routes
@@ -102,7 +103,7 @@ app.config['SECRET_KEY'] = SECRET_KEY
 
 # Ensure filesystem session directory (when used) points to a writable path inside container.
 if SESSION_TYPE == 'filesystem':
-    app.config['SESSION_FILE_DIR'] = SESSION_FILE_DIR if 'SESSION_FILE_DIR' in globals() else os.environ.get('SESSION_FILE_DIR', '/app/flask_session')
+    app.config['SESSION_FILE_DIR'] = globals().get('SESSION_FILE_DIR', os.environ.get('SESSION_FILE_DIR', '/app/flask_session'))
     try:
         os.makedirs(app.config['SESSION_FILE_DIR'], exist_ok=True)
     except Exception as e:
@@ -141,8 +142,29 @@ from redis import Redis
 from functions_settings import get_settings
 from functions_authentication import get_current_user_id
 from functions_global_agents import ensure_default_global_agent_exists
+from background_tasks import start_background_task_threads
 
 from route_external_health import *
+
+_app_init_lock = threading.Lock()
+_app_initialized = False
+_background_tasks_lock = threading.Lock()
+_background_tasks_started = False
+
+
+def is_running_under_gunicorn():
+    """Return True when the current process is a Gunicorn worker."""
+    server_software = os.environ.get('SERVER_SOFTWARE', '')
+    return 'gunicorn' in server_software.lower() or bool(os.environ.get('GUNICORN_CMD_ARGS'))
+
+
+def should_start_background_tasks():
+    """Enable background loops unless the runtime explicitly disables them."""
+    env_value = os.environ.get('SIMPLECHAT_RUN_BACKGROUND_TASKS')
+    if env_value is not None:
+        return env_value.strip().lower() not in ('0', 'false', 'no', 'off')
+
+    return True
 
 # =================== Session Configuration ===================
 def configure_sessions(settings):
@@ -228,202 +250,66 @@ def configure_sessions(settings):
     Session(app)
 
 # =================== Helper Functions ===================
-@app.before_first_request
-def before_first_request():
-    print("Initializing application...")
-    settings = get_settings(use_cosmos=True)
-    app_settings_cache.configure_app_cache(settings, get_redis_cache_infrastructure_endpoint(settings.get('redis_url', '').strip().split('.')[0]))
-    app_settings_cache.update_settings_cache(settings)
-    sanitized_settings = sanitize_settings_for_logging(settings)
-    debug_print(f"DEBUG:Application settings: {sanitized_settings}")
-    sanitized_settings_cache = sanitize_settings_for_logging(app_settings_cache.get_settings_cache())
-    debug_print(f"DEBUG:App settings cache initialized: {'Using Redis cache:' + str(app_settings_cache.app_cache_is_using_redis)} {sanitized_settings_cache}")
+def start_background_tasks():
+    """Start background loops once per process when enabled for the current runtime."""
+    global _background_tasks_started
 
-    initialize_clients(settings)
-    ensure_custom_logo_file_exists(app, settings)
-    # Enable Application Insights logging globally if configured
-    print("Setting up Application Insights logging...")
-    setup_appinsights_logging(settings)
-    logging.basicConfig(level=logging.DEBUG)
-    print("Application initialized.")
-    ensure_default_global_agent_exists()
+    with _background_tasks_lock:
+        if _background_tasks_started:
+            return
 
-    # Background task to check for expired logging timers
-    def check_logging_timers():
-        """Background task that checks for expired logging timers and disables logging accordingly"""
-        while True:
-            try:
-                settings = get_settings()
-                current_time = datetime.now()
-                settings_changed = False
-                
-                # Check debug logging timer
-                if (settings.get('enable_debug_logging', False) and 
-                    settings.get('debug_logging_timer_enabled', False) and 
-                    settings.get('debug_logging_turnoff_time')):
-                    
-                    turnoff_time = settings.get('debug_logging_turnoff_time')
-                    if isinstance(turnoff_time, str):
-                        try:
-                            turnoff_time = datetime.fromisoformat(turnoff_time)
-                        except:
-                            turnoff_time = None
-                    
-                    if turnoff_time and current_time >= turnoff_time:
-                        debug_print(f"logging timer expired at {turnoff_time}. Disabling debug logging.")
-                        settings['enable_debug_logging'] = False
-                        settings['debug_logging_timer_enabled'] = False
-                        settings['debug_logging_turnoff_time'] = None
-                        settings_changed = True
-                
-                # Check file processing logs timer
-                if (settings.get('enable_file_processing_logs', False) and 
-                    settings.get('file_processing_logs_timer_enabled', False) and 
-                    settings.get('file_processing_logs_turnoff_time')):
-                    
-                    turnoff_time = settings.get('file_processing_logs_turnoff_time')
-                    if isinstance(turnoff_time, str):
-                        try:
-                            turnoff_time = datetime.fromisoformat(turnoff_time)
-                        except:
-                            turnoff_time = None
-                    
-                    if turnoff_time and current_time >= turnoff_time:
-                        print(f"File processing logs timer expired at {turnoff_time}. Disabling file processing logs.")
-                        settings['enable_file_processing_logs'] = False
-                        settings['file_processing_logs_timer_enabled'] = False
-                        settings['file_processing_logs_turnoff_time'] = None
-                        settings_changed = True
-                
-                # Save settings if any changes were made
-                if settings_changed:
-                    update_settings(settings)
-                    print("Logging settings updated due to timer expiration.")
-                
-            except Exception as e:
-                print(f"Error in logging timer check: {e}")
-                log_event(f"Error in logging timer check: {e}", level=logging.ERROR)
-            
-            # Check every 60 seconds
-            time.sleep(60)
+        if not should_start_background_tasks():
+            print("Background tasks disabled for this web process.")
+            _background_tasks_started = True
+            return
+        start_background_task_threads()
+        _background_tasks_started = True
 
-    # Start the background timer check thread
-    timer_thread = threading.Thread(target=check_logging_timers, daemon=True)
-    timer_thread.start()
-    print("Logging timer background task started.")
 
-    # Background task to check for expired approval requests
-    def check_expired_approvals():
-        """Background task that checks for expired approval requests and auto-denies them"""
-        while True:
-            try:
-                from functions_approvals import auto_deny_expired_approvals
-                denied_count = auto_deny_expired_approvals()
-                if denied_count > 0:
-                    print(f"Auto-denied {denied_count} expired approval request(s).")
-            except Exception as e:
-                print(f"Error in approval expiration check: {e}")
-                log_event(f"Error in approval expiration check: {e}", level=logging.ERROR)
-            
-            # Check every 6 hours (21600 seconds)
-            time.sleep(21600)
+def initialize_application(force=False):
+    """Initialize caches, clients, sessions, and optional background services once per process."""
+    global _app_initialized
 
-    # Start the approval expiration check thread
-    approval_thread = threading.Thread(target=check_expired_approvals, daemon=True)
-    approval_thread.start()
-    print("Approval expiration background task started.")
+    with _app_init_lock:
+        if _app_initialized and not force:
+            return
 
-    # Background task to check retention policy execution time
-    def check_retention_policy():
-        """Background task that executes retention policy at scheduled time"""
-        while True:
-            try:
-                settings = get_settings()
-                
-                # Check if any retention policy is enabled
-                personal_enabled = settings.get('enable_retention_policy_personal', False)
-                group_enabled = settings.get('enable_retention_policy_group', False)
-                public_enabled = settings.get('enable_retention_policy_public', False)
-                
-                if personal_enabled or group_enabled or public_enabled:
-                    current_time = datetime.now(timezone.utc)
-                    
-                    # Check if next scheduled run time has passed
-                    next_run = settings.get('retention_policy_next_run')
-                    should_run = False
-                    
-                    if next_run:
-                        try:
-                            next_run_dt = datetime.fromisoformat(next_run)
-                            # Run if we've passed the scheduled time
-                            if current_time >= next_run_dt:
-                                should_run = True
-                        except Exception as parse_error:
-                            print(f"Error parsing next_run timestamp: {parse_error}")
-                            # If we can't parse, fall back to checking last_run
-                            last_run = settings.get('retention_policy_last_run')
-                            if last_run:
-                                try:
-                                    last_run_dt = datetime.fromisoformat(last_run)
-                                    # Run if last run was more than 23 hours ago
-                                    if (current_time - last_run_dt).total_seconds() > (23 * 3600):
-                                        should_run = True
-                                except:
-                                    should_run = True
-                            else:
-                                should_run = True
-                    else:
-                        # No next_run set, check last_run instead
-                        last_run = settings.get('retention_policy_last_run')
-                        if last_run:
-                            try:
-                                last_run_dt = datetime.fromisoformat(last_run)
-                                # Run if last run was more than 23 hours ago
-                                if (current_time - last_run_dt).total_seconds() > (23 * 3600):
-                                    should_run = True
-                            except:
-                                should_run = True
-                        else:
-                            # Never run before, execute now
-                            should_run = True
-                    
-                    if should_run:
-                        print(f"Executing scheduled retention policy at {current_time.isoformat()}")
-                        from functions_retention_policy import execute_retention_policy
-                        results = execute_retention_policy(manual_execution=False)
-                        
-                        if results.get('success'):
-                            print(f"Retention policy execution completed: "
-                                 f"{results['personal']['conversations']} personal conversations, "
-                                 f"{results['personal']['documents']} personal documents, "
-                                 f"{results['group']['conversations']} group conversations, "
-                                 f"{results['group']['documents']} group documents, "
-                                 f"{results['public']['conversations']} public conversations, "
-                                 f"{results['public']['documents']} public documents deleted.")
-                        else:
-                            print(f"Retention policy execution failed: {results.get('errors')}")
-                
-            except Exception as e:
-                print(f"Error in retention policy check: {e}")
-                log_event(f"Error in retention policy check: {e}", level=logging.ERROR)
-            
-            # Check every 5 minutes for more responsive scheduling
-            time.sleep(300)
+        print("Initializing application...")
+        settings = get_settings(use_cosmos=True)
+        redis_hostname = settings.get('redis_url', '').strip().split('.')[0]
+        app_settings_cache.configure_app_cache(
+            settings,
+            get_redis_cache_infrastructure_endpoint(redis_hostname)
+        )
+        app_settings_cache.update_settings_cache(settings)
+        sanitized_settings = sanitize_settings_for_logging(settings)
+        debug_print(f"DEBUG:Application settings: {sanitized_settings}")
+        sanitized_settings_cache = sanitize_settings_for_logging(app_settings_cache.get_settings_cache())
+        debug_print(f"DEBUG:App settings cache initialized: {'Using Redis cache:' + str(app_settings_cache.app_cache_is_using_redis)} {sanitized_settings_cache}")
 
-    # Start the retention policy check thread
-    retention_thread = threading.Thread(target=check_retention_policy, daemon=True)
-    retention_thread.start()
-    print("Retention policy background task started.")
+        initialize_clients(settings)
+        ensure_custom_logo_file_exists(app, settings)
+        print("Setting up Application Insights logging...")
+        setup_appinsights_logging(settings)
+        logging.basicConfig(level=logging.DEBUG)
+        ensure_default_global_agent_exists()
 
-    # Initialize Semantic Kernel and plugins
-    enable_semantic_kernel = settings.get('enable_semantic_kernel', False)
-    per_user_semantic_kernel = settings.get('per_user_semantic_kernel', False)
-    if enable_semantic_kernel and not per_user_semantic_kernel:
-        print("Semantic Kernel is enabled. Initializing...")
-        initialize_semantic_kernel()
+        start_background_tasks()
 
-    # Unified session setup
-    configure_sessions(settings)
+        enable_semantic_kernel = settings.get('enable_semantic_kernel', False)
+        per_user_semantic_kernel = settings.get('per_user_semantic_kernel', False)
+        if enable_semantic_kernel and not per_user_semantic_kernel:
+            print("Semantic Kernel is enabled. Initializing...")
+            initialize_semantic_kernel()
+
+        configure_sessions(settings)
+        _app_initialized = True
+        print("Application initialized.")
+
+
+@app.before_request
+def ensure_application_initialized():
+    initialize_application()
 
 @app.context_processor
 def inject_settings():
@@ -667,16 +553,27 @@ register_route_backend_public_prompts(app)
 # ------------------- API User Agreement Routes ----------
 register_route_backend_user_agreement(app)
 
+# ------------------- API Thoughts Routes ----------------
+register_route_backend_thoughts(app)
+
 # ------------------- Extenral Health Routes ----------
 register_route_external_health(app)
 
 if __name__ == '__main__':
-    settings = get_settings(use_cosmos=True)
-    app_settings_cache.configure_app_cache(settings, get_redis_cache_infrastructure_endpoint(settings.get('redis_url', '').strip().split('.')[0]))
-    app_settings_cache.update_settings_cache(settings)
-    initialize_clients(settings)
-
     debug_mode = os.environ.get("FLASK_DEBUG", "0") == "1"
+    use_gunicorn = os.environ.get("SIMPLECHAT_USE_GUNICORN", "0").strip().lower() in ('1', 'true', 'yes', 'on')
+
+    if use_gunicorn and not debug_mode:
+        gunicorn_config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'gunicorn.conf.py')
+        print(f"Starting Gunicorn using {gunicorn_config_path}")
+        os.execvp(sys.executable, [sys.executable, '-m', 'gunicorn', '-c', gunicorn_config_path, 'app:app'])
+
+    if use_gunicorn and debug_mode:
+        print("⚠️  WARNING: Both Gunicorn and Flask debug mode are enabled, which is not supported. Please disable one of them, app will not run until resolved.")
+        log_event("WARNING: Running with both Gunicorn and Flask debug mode is not supported. Please disable one of them, app will not run until resolved.", level=logging.WARNING)
+        exit(1)
+
+    initialize_application(force=True)
 
     if debug_mode:
         # Local development with HTTPS

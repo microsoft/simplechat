@@ -1237,10 +1237,11 @@ function setupToggles() {
         const mathToggle = document.getElementById('toggle-math-plugin');
         const textToggle = document.getElementById('toggle-text-plugin');
         const factMemoryToggle = document.getElementById('toggle-fact-memory-plugin');
+        const tabularProcessingToggle = document.getElementById('toggle-tabular-processing-plugin');
         const embeddingToggle = document.getElementById('toggle-default-embedding-model-plugin');
         const allowUserPluginsToggle = document.getElementById('toggle-allow-user-plugins');
         const allowGroupPluginsToggle = document.getElementById('toggle-allow-group-plugins');
-        const toggles = [timeToggle, httpToggle, waitToggle, mathToggle, textToggle, factMemoryToggle, embeddingToggle, allowUserPluginsToggle, allowGroupPluginsToggle];
+        const toggles = [timeToggle, httpToggle, waitToggle, mathToggle, textToggle, factMemoryToggle, tabularProcessingToggle, embeddingToggle, allowUserPluginsToggle, allowGroupPluginsToggle];
         // Feedback area
         let feedbackDiv = document.getElementById('core-plugin-toggles-feedback');
         if (!feedbackDiv) {
@@ -1270,6 +1271,16 @@ function setupToggles() {
                 if (textToggle) textToggle.checked = !!settings.enable_text_plugin;
                 if (embeddingToggle) embeddingToggle.checked = !!settings.enable_default_embedding_model_plugin;
                 if (factMemoryToggle) factMemoryToggle.checked = !!settings.enable_fact_memory_plugin;
+                if (tabularProcessingToggle) {
+                    tabularProcessingToggle.checked = !!settings.enable_tabular_processing_plugin;
+                    const ecEnabled = !!settings.enable_enhanced_citations;
+                    tabularProcessingToggle.disabled = !ecEnabled;
+                    const depNote = document.getElementById('tabular-processing-dependency-note');
+                    if (depNote) {
+                        depNote.textContent = ecEnabled ? 'Requires Enhanced Citations' : 'Requires Enhanced Citations (currently disabled)';
+                        depNote.className = ecEnabled ? 'text-muted d-block ms-4' : 'text-danger d-block ms-4';
+                    }
+                }
                 if (allowUserPluginsToggle) allowUserPluginsToggle.checked = !!settings.allow_user_plugins;
                 if (allowGroupPluginsToggle) allowGroupPluginsToggle.checked = !!settings.allow_group_plugins;
             } catch (err) {
@@ -1291,6 +1302,7 @@ function setupToggles() {
                 enable_text_plugin: textToggle ? textToggle.checked : false,
                 enable_default_embedding_model_plugin: embeddingToggle ? embeddingToggle.checked : false,
                 enable_fact_memory_plugin: factMemoryToggle ? factMemoryToggle.checked : false,
+                enable_tabular_processing_plugin: tabularProcessingToggle ? tabularProcessingToggle.checked : false,
                 allow_user_plugins: allowUserPluginsToggle ? allowUserPluginsToggle.checked : false,
                 allow_group_plugins: allowGroupPluginsToggle ? allowGroupPluginsToggle.checked : false
             };
@@ -3844,11 +3856,12 @@ function checkOptionalFeaturesEnabled(stepNumber) {
                 return endpoint && key;
             }
         
-        case 11: // User feedback and archiving
-            // Check if feedback is enabled
+        case 11: // User feedback, archiving, and thoughts
+            // Check if feedback, archiving, or thoughts is enabled
             const feedbackEnabled = document.getElementById('enable_user_feedback')?.checked;
             const archivingEnabled = document.getElementById('enable_conversation_archiving')?.checked;
-            return feedbackEnabled || archivingEnabled;
+            const thoughtsEnabled = document.getElementById('enable_thoughts')?.checked;
+            return feedbackEnabled || archivingEnabled || thoughtsEnabled;
             
         case 12: // Enhanced citations and image generation
             // Check if enhanced citations or image generation is enabled

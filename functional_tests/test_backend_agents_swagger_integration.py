@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for route_backend_agents.py swagger integration.
-Version: 0.229.065
-Implemented in: 0.229.065
+Version: 0.239.146
+Implemented in: 0.239.146
 
 This test ensures that all endpoints in route_backend_agents.py are properly decorated 
 with @swagger_route decorators and will be included in the automatic swagger documentation.
@@ -27,6 +27,7 @@ def test_backend_agents_swagger_integration():
         from flask import Flask
         test_app = Flask(__name__)
         test_app.register_blueprint(bpa)
+        openapi_spec = extract_route_info(test_app)
         
         # Count endpoints with swagger decorators
         swagger_endpoints = 0
@@ -37,10 +38,19 @@ def test_backend_agents_swagger_integration():
             if rule.endpoint.startswith('admin_agents.'):
                 total_endpoints += 1
                 endpoint_name = rule.endpoint.split('.')[-1]
+                path = rule.rule
+                path = path.replace('<', '{').replace('>', '}')
+                path = path.replace('{int:', '{').replace('{string:', '{').replace('{float:', '{')
+                path = path.replace('{uuid:', '{').replace('{path:', '{')
+                route_operations = openapi_spec.get('paths', {}).get(path, {})
+                route_info = None
+                for method in rule.methods - {'HEAD', 'OPTIONS'}:
+                    route_info = route_operations.get(method.lower())
+                    if route_info:
+                        break
                 
                 # Try to extract route info (this will work if swagger_route decorator is present)
                 try:
-                    route_info = extract_route_info(rule, test_app.view_functions[rule.endpoint])
                     if route_info:
                         swagger_endpoints += 1
                         endpoint_details.append({

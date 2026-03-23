@@ -75,7 +75,7 @@ export async function showConversationDetails(conversationId) {
  * @returns {string} HTML string
  */
 function renderConversationMetadata(metadata, conversationId) {
-  const { context = [], tags = [], strict = false, classification = [], last_updated, chat_type = 'personal', is_pinned = false, is_hidden = false, scope_locked, locked_contexts = [] } = metadata;
+  const { context = [], tags = [], strict = false, classification = [], last_updated, chat_type = 'personal', is_pinned = false, is_hidden = false, scope_locked, locked_contexts = [], summary = null } = metadata;
   
   // Organize tags by category
   const tagsByCategory = {
@@ -97,6 +97,18 @@ function renderConversationMetadata(metadata, conversationId) {
   // Build HTML sections
   let html = `
     <div class="row g-3">
+      <!-- Summary Section -->
+      <div class="col-12">
+        <div class="card">
+          <div class="card-header bg-primary bg-opacity-75 text-white d-flex justify-content-between align-items-center">
+            <h6 class="mb-0"><i class="bi bi-blockquote-left me-2"></i>Summary</h6>
+            ${summary ? `<small class="opacity-75">Generated ${formatDate(summary.generated_at)}${summary.model_deployment ? ` · ${summary.model_deployment}` : ''}</small>` : ''}
+          </div>
+          <div class="card-body" id="summary-card-body">
+            ${renderSummaryContent(summary, conversationId)}
+          </div>
+        </div>
+      </div>
       <!-- Basic Info -->
       <div class="col-12">
         <div class="card">
@@ -570,8 +582,159 @@ function extractPageNumbers(chunkIds) {
   return pages.sort((a, b) => parseInt(a) - parseInt(b));
 }
 
+/**
+ * Render the summary card body content
+ * @param {Object|null} summary - Existing summary data or null
+ * @param {string} conversationId - The conversation ID
+ * @returns {string} HTML string
+ */
+function renderSummaryContent(summary, conversationId) {
+  if (summary && summary.content) {
+    return `
+      <p class="mb-2">${escapeHtml(summary.content)}</p>
+      <div class="d-flex justify-content-end">
+        <button class="btn btn-sm btn-outline-secondary" id="regenerate-summary-btn"
+                data-conversation-id="${conversationId}">
+          <i class="bi bi-arrow-clockwise me-1"></i>Regenerate
+        </button>
+      </div>
+    `;
+  }
+
+  // Build model options from the global model-select dropdown
+  const modelOptions = getAvailableModelOptions();
+  return `
+    <p class="text-muted mb-3">No summary has been generated for this conversation yet.</p>
+    <div class="d-flex align-items-center gap-2">
+      <select class="form-select form-select-sm" id="summary-model-select" style="max-width: 260px;">
+        ${modelOptions}
+      </select>
+      <button class="btn btn-sm btn-primary" id="generate-summary-btn"
+              data-conversation-id="${conversationId}">
+        <i class="bi bi-blockquote-left me-1"></i>Generate Summary
+      </button>
+    </div>
+  `;
+}
+
+/**
+ * Get available model options from the global #model-select dropdown
+ * @returns {string} HTML option elements
+ */
+function getAvailableModelOptions() {
+  const globalSelect = document.getElementById('model-select');
+  if (!globalSelect) {
+    return '<option value="">Default</option>';
+  }
+  let options = '';
+  for (const opt of globalSelect.options) {
+    options += `<option value="${escapeHtml(opt.value)}"${opt.selected ? ' selected' : ''}>${escapeHtml(opt.text)}</option>`;
+  }
+  return options || '<option value="">Default</option>';
+}
+
+/**
+ * Handle summary generation (generate or regenerate)
+ * @param {string} conversationId - The conversation ID
+ * @param {string} modelDeployment - Selected model deployment
+ */
+async function handleGenerateSummary(conversationId, modelDeployment) {
+  const cardBody = document.getElementById('summary-card-body');
+  if (!cardBody) {
+    return;
+  }
+
+  cardBody.innerHTML = `
+    <div class="d-flex align-items-center gap-2">
+      <div class="spinner-border spinner-border-sm text-primary" role="status">
+        <span class="visually-hidden">Generating...</span>
+      </div>
+      <span class="text-muted">Generating summary...</span>
+    </div>
+  `;
+
+  try {
+    const response = await fetch(`/api/conversations/${conversationId}/summary`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model_deployment: modelDeployment })
+    });
+
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(errData.error || `HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    const summary = data.summary;
+    cardBody.innerHTML = renderSummaryContent(summary, conversationId);
+
+    // Update card header with generation info
+    const cardHeader = cardBody.closest('.card').querySelector('.card-header');
+    if (cardHeader && summary) {
+      const smallEl = cardHeader.querySelector('small');
+      const infoText = `Generated ${formatDate(summary.generated_at)}${summary.model_deployment ? ` · ${summary.model_deployment}` : ''}`;
+      if (smallEl) {
+        smallEl.textContent = infoText;
+      } else {
+        const small = document.createElement('small');
+        small.className = 'opacity-75';
+        small.textContent = infoText;
+        cardHeader.appendChild(small);
+      }
+    }
+
+  } catch (error) {
+    console.error('Error generating summary:', error);
+    cardBody.innerHTML = `
+      <div class="text-danger mb-2">
+        <i class="bi bi-exclamation-triangle me-1"></i>
+        Failed to generate summary: ${escapeHtml(error.message)}
+      </div>
+      ${renderSummaryContent(null, conversationId)}
+    `;
+  }
+}
+
+/**
+ * Simple HTML escapefor display
+ * @param {string} str - String to escape
+ * @returns {string} Escaped string
+ */
+function escapeHtml(str) {
+  if (!str) {
+    return '';
+  }
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
 // Event listeners for details buttons
 document.addEventListener('click', function(e) {
+  // Generate summary button
+  if (e.target.closest('#generate-summary-btn')) {
+    e.preventDefault();
+    const btn = e.target.closest('#generate-summary-btn');
+    const cid = btn.getAttribute('data-conversation-id');
+    const modelSelect = document.getElementById('summary-model-select');
+    const model = modelSelect ? modelSelect.value : '';
+    handleGenerateSummary(cid, model);
+    return;
+  }
+
+  // Regenerate summary button
+  if (e.target.closest('#regenerate-summary-btn')) {
+    e.preventDefault();
+    const btn = e.target.closest('#regenerate-summary-btn');
+    const cid = btn.getAttribute('data-conversation-id');
+    // Use the currently selected global model for regeneration
+    const globalSelect = document.getElementById('model-select');
+    const model = globalSelect ? globalSelect.value : '';
+    handleGenerateSummary(cid, model);
+    return;
+  }
+
   if (e.target.closest('.details-btn')) {
     e.preventDefault();
     

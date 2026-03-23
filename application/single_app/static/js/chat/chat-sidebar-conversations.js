@@ -11,6 +11,37 @@ let sidebarShowHiddenConversations = false; // Track if hidden conversations sho
 let isLoadingSidebarConversations = false; // Prevent concurrent sidebar loads
 let pendingSidebarReload = false; // Track if a reload is pending
 
+function createUnreadDotElement() {
+  const unreadDot = document.createElement('span');
+  unreadDot.classList.add('conversation-unread-dot', 'sidebar-conversation-unread-dot');
+  unreadDot.setAttribute('aria-hidden', 'true');
+  return unreadDot;
+}
+
+export function setConversationUnreadState(conversationId, hasUnread) {
+  const sidebarItem = document.querySelector(`.sidebar-conversation-item[data-conversation-id="${conversationId}"]`);
+  if (!sidebarItem) {
+    return;
+  }
+
+  sidebarItem.dataset.hasUnreadAssistantResponse = hasUnread ? 'true' : 'false';
+
+  const titleWrapper = sidebarItem.querySelector('.sidebar-conversation-header');
+  const titleElement = sidebarItem.querySelector('.sidebar-conversation-title');
+  const existingDot = sidebarItem.querySelector('.sidebar-conversation-unread-dot');
+
+  if (!hasUnread) {
+    if (existingDot) {
+      existingDot.remove();
+    }
+    return;
+  }
+
+  if (!existingDot && titleWrapper && titleElement) {
+    titleWrapper.insertBefore(createUnreadDotElement(), titleElement);
+  }
+}
+
 // Load conversations for the sidebar
 export function loadSidebarConversations() {
   if (!sidebarConversationsList) return;
@@ -124,6 +155,7 @@ function createSidebarConversationItem(convo) {
   const convoItem = document.createElement("div");
   convoItem.classList.add("sidebar-conversation-item");
   convoItem.setAttribute("data-conversation-id", convo.id);
+  convoItem.dataset.hasUnreadAssistantResponse = convo.has_unread_assistant_response ? 'true' : 'false';
   if (convo.chat_type) {
     convoItem.setAttribute("data-chat-type", convo.chat_type);
   }
@@ -186,6 +218,10 @@ function createSidebarConversationItem(convo) {
     
     // Add title to wrapper
     titleWrapper.appendChild(originalTitleElement);
+
+    if (convo.has_unread_assistant_response) {
+      titleWrapper.insertBefore(createUnreadDotElement(), originalTitleElement);
+    }
 
     const isGroupConversation = (convo.chat_type && convo.chat_type.startsWith('group')) || groupName;
     if (isGroupConversation) {
@@ -916,5 +952,6 @@ window.chatSidebarConversations = {
   updateSidebarConversationTitle,
   enableSidebarTitleEdit,
   loadSidebarConversations,
-  setActiveConversation
+  setActiveConversation,
+  setConversationUnreadState
 };

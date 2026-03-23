@@ -1,139 +1,186 @@
 # Conversation Export
 
 ## Overview
-The Conversation Export feature allows users to export one or multiple conversations directly from the Chats experience. A multi-step wizard modal guides users through format selection, output packaging, and downloading the final file.
+The Conversation Export feature lets users export one or more chats from the Chats experience as JSON, Markdown, or PDF. The export now mirrors the live conversation view more closely by excluding deleted and inactive-thread messages, including processing thoughts, and preserving the modern citation buckets used by the chat UI.
 
-**Version Implemented:** 0.237.050
+**Version Implemented:** 0.239.022 (base), 0.239.023 (PDF export), 0.239.030 (persistent summaries)
 
 ## Dependencies
-- Flask (backend route)
-- Azure Cosmos DB (conversation and message storage)
-- Bootstrap 5 (modal, step indicators, cards)
-- ES modules (chat-export.js)
+- Flask backend route and file responses
+- Azure Cosmos DB conversation, message, and thought containers
+- Bootstrap 5 modal workflow
+- ES modules in `static/js/chat/chat-export.js`
+- Azure OpenAI / APIM-backed chat model access for optional intro summaries
+- PyMuPDF (fitz) for HTML-to-PDF rendering via the Story API
+
+## Implemented in version: **0.239.030**
 
 ## Architecture Overview
 
 ### Backend
-- **Route file:** `route_backend_conversation_export.py`
+- **Route file:** `application/single_app/route_backend_conversation_export.py`
 - **Endpoint:** `POST /api/conversations/export`
-- **Registration:** Called via `register_route_backend_conversation_export(app)` in `app.py`
+- **Registration:** `register_route_backend_conversation_export(app)`
 
-The endpoint accepts a JSON body with:
-| Field | Type | Description |
-|---|---|---|
-| `conversation_ids` | list[str] | IDs of conversations to export |
-| `format` | string | `"json"` or `"markdown"` |
-| `packaging` | string | `"single"` or `"zip"` |
-
-The server verifies user ownership of each conversation, fetches messages from Cosmos DB, filters for active thread messages, sanitizes internal fields, and returns either a single file or ZIP archive as a binary download.
+The export route now:
+- verifies the current user owns each requested conversation
+- loads messages ordered by timestamp, then reapplies thread ordering to match the chat UI
+- removes soft-deleted messages and inactive-thread retries
+- joins processing thoughts from the thoughts container by `message_id`
+- builds both normalized citation summaries and raw citation buckets
+- optionally generates a per-conversation intro summary using the selected chat model
 
 ### Frontend
-- **JS module:** `static/js/chat/chat-export.js`
-- **Modal HTML:** Embedded in `templates/chats.html` (`#export-wizard-modal`)
-- **Global API:** `window.chatExport.openExportWizard(conversationIds, skipSelection)`
+- **JS module:** `application/single_app/static/js/chat/chat-export.js`
+- **Modal host:** `application/single_app/templates/chats.html`
+- **Entry point:** `window.chatExport.openExportWizard(conversationIds, skipSelection)`
 
-The wizard has up to 4 steps:
-1. **Selection Review** — Shows selected conversations with titles (skipped for single-conversation export)
-2. **Format** — Choose between JSON and Markdown via action-type cards
-3. **Packaging** — Choose between single file and ZIP archive
-4. **Download** — Summary and download button
+The wizard now has up to 5 steps:
+1. **Selection** — Review selected conversations (multi-select exports only)
+2. **Format** — Choose JSON, Markdown, or PDF
+3. **Packaging** — Choose a single file or ZIP archive
+4. **Summary** — Optionally generate a per-conversation intro summary and choose the summary model from the same model list used in the chat composer
+5. **Download** — Review settings and download the export
 
-## Entry Points
+## Request Payload
 
-### Single Conversation Export
-- **Sidebar ellipsis menu** → "Export" item (in `chat-sidebar-conversations.js`)
-- **Left-pane ellipsis menu** → "Export" item (in `chat-conversations.js`)
-- Both call `window.chatExport.openExportWizard([conversationId], true)` — skips the selection step
-
-### Multi-Conversation Export
-- Enter selection mode by clicking "Select" on any conversation
-- Select multiple conversations via checkboxes
-- Click the export button in:
-  - **Left-pane header** — `#export-selected-btn` (btn-info, download icon)
-  - **Sidebar actions bar** — `#sidebar-export-selected-btn`
-- These call `window.chatExport.openExportWizard(selectedIds, false)` — shows all 4 steps
+| Field | Type | Description |
+|---|---|---|
+| `conversation_ids` | list[str] | Conversation IDs to export |
+| `format` | string | `"json"`, `"markdown"`, or `"pdf"` |
+| `packaging` | string | `"single"` or `"zip"` |
+| `include_summary_intro` | boolean | Whether to generate a per-conversation intro summary |
+| `summary_model_deployment` | string | Optional selected model deployment for the summary intro |
 
 ## Export Formats
 
 ### JSON
-Produces a JSON array where each entry contains:
-```json
-{
-  "conversation": {
-    "id": "...",
-    "title": "...",
-    "last_updated": "...",
-    "chat_type": "...",
-    "tags": [],
-    "is_pinned": false,
-    "context": []
-  },
-  "messages": [
-    {
-      "role": "user",
-      "content": "...",
-      "timestamp": "...",
-      "citations": []
-    }
-  ]
-}
-```
+Each exported conversation entry contains:
+- `conversation` metadata and aggregate counts
+- `summary_intro` status and content (when enabled)
+- `messages` with:
+  - raw `content`
+  - normalized `content_text`
+  - curated `details`
+  - normalized `citations`
+  - raw `legacy_citations`, `hybrid_citations`, `web_search_citations`, and `agent_citations`
+  - nested `thoughts`
+
+This makes the JSON export useful both for readable inspection and downstream processing.
 
 ### Markdown
-Produces a Markdown document with:
-- `# Title` heading
-- Metadata block (last updated, chat type, tags, message count)
-- `### Role` sections per message with timestamps
-- Citation lists where applicable
-- `---` separators between messages and conversations
+Markdown exports are now organized like a lightweight report:
+- conversation title and metadata header
+- optional **Abstract** section generated by the selected model
+- **Transcript** section with clean user/assistant turns only
+- appendix sections for:
+  - conversation metadata
+  - curated message details
+  - references/citations
+  - processing thoughts
+  - supplemental non-transcript messages such as file or system records
+
+This keeps the main body readable while moving verbose reference material to the end of the document.
+
+### PDF
+PDF exports render the conversation as a print-ready document with chat-bubble styling that visually resembles the live chat interface:
+- **User messages** are displayed in blue bubbles (#c8e0fa) aligned to the right
+- **Assistant messages** are displayed in gray bubbles (#f1f0f0) aligned to the left
+- **System and file messages** use distinct background colors
+- Message content is converted from Markdown to HTML for rich formatting
+- The same appendix structure as Markdown is included (metadata, details, references, thoughts, supplemental messages)
+- PDF rendering uses PyMuPDF's Story API on US Letter paper (612 × 792pt) with 0.5-inch margins
+- Multi-page content is handled automatically with page overflow
+
+## Citation Handling
+
+The export supports the same citation categories used in the live chat UI:
+- **Document citations** from `hybrid_citations`
+- **Web citations** from `web_search_citations`
+- **Agent/tool citations** from `agent_citations`
+- **Legacy citations** for backwards-compatible older messages
+
+Normalized citation summaries provide a single export-friendly list, while the raw buckets preserve the original structured data.
+
+## Thoughts Handling
+
+If processing thoughts are enabled and available, they are exported with the assistant message they belong to. Each thought includes:
+- `step_index`
+- `step_type`
+- `content`
+- `detail`
+- `duration_ms`
+- `timestamp`
+
+Markdown exports place these in the **Processing Thoughts** appendix.
 
 ## Output Packaging
 
 ### Single File
-- One file containing all selected conversations
-- JSON: `.json` file
-- Markdown: `.md` file with `---` separators between conversations
+- JSON exports combine all selected conversations into one `.json` file
+- Markdown exports combine all selected conversations into one `.md` file separated by `---`
+- PDF exports combine all selected conversations into one `.pdf` file with visual separators between conversations
 
 ### ZIP Archive
-- One file per conversation inside a `.zip`
-- Filenames: `{sanitized_title}_{id_prefix}.{ext}`
-- Titles are sanitized for filesystem safety (special chars replaced, truncated to 50 chars)
+- Each conversation is written to its own file in the archive
+- Filenames use `{sanitized_title}_{conversation_id_prefix}.{ext}`
+- Summary intros remain per conversation in both JSON and Markdown archive entries
 
-## File Structure
-```
-application/single_app/
-├── route_backend_conversation_export.py   # Backend API endpoint
-├── app.py                                  # Route registration
-├── static/js/chat/
-│   ├── chat-export.js                     # Export wizard module
-│   ├── chat-conversations.js              # Left-pane wiring
-│   └── chat-sidebar-conversations.js      # Sidebar wiring
-├── templates/
-│   ├── chats.html                         # Modal HTML + button + script
-│   ├── _sidebar_nav.html                  # Sidebar export button
-│   └── _sidebar_short_nav.html            # Short sidebar export button
-functional_tests/
-└── test_conversation_export.py            # Functional tests
-```
+## Persistent Conversation Summaries (v0.239.030)
 
-## Security
-- Endpoint requires `@login_required` and `@user_required` decorators
-- Each conversation is verified for user ownership before export
-- Internal Cosmos DB fields (`_rid`, `_self`, `_etag`, `user_id`, etc.) are stripped from output
-- No sensitive data is included in the export
+Summaries generated during export or on demand are now persisted to the conversation document in Cosmos DB and reused automatically.
+
+### How Caching Works
+- Each summary stores `message_time_start` and `message_time_end` from the messages it was built from.
+- On subsequent exports, `_build_summary_intro` compares the cached `message_time_end` against the latest message timestamp. If no new messages exist, the cached summary is returned instantly.
+- If new messages exist beyond the cached range, a fresh summary is generated, saved, and returned.
+
+### On-Demand Generation
+- The conversation details modal (opened from the sidebar) now includes a **Summary** card.
+- If no summary exists, a **Generate Summary** button with a model selector lets users create one without exporting.
+- If a summary exists, the content, generation date, and model are displayed with a **Regenerate** button.
+- New API endpoint: `POST /api/conversations/<id>/summary` with optional `{ "model_deployment": "..." }` body.
+
+### Reusable Helper
+- `generate_conversation_summary()` (in `route_backend_conversation_export.py`) is the shared LLM call function used by both the export pipeline and the API endpoint.
+- It handles transcript assembly, truncation, model role selection (developer vs system), and Cosmos persistence.
+
+## Security and Data-Shaping Rules
+- Route uses authenticated user checks before export
+- Only user-owned personal conversations are exported
+- Internal Cosmos metadata is not passed through
+- Deleted messages and inactive-thread retries are excluded
+- Exported message details are curated rather than raw metadata dumps
+- Raw settings are not exposed to the browser; the export wizard reuses the existing chat model selector already rendered from sanitized settings
+
+## Files Updated
+- `application/single_app/route_backend_conversation_export.py`
+- `application/single_app/route_backend_conversations.py`
+- `application/single_app/static/js/chat/chat-export.js`
+- `application/single_app/static/js/chat/chat-conversation-details.js`
+- `application/single_app/config.py`
+- `functional_tests/test_conversation_export.py`
+- `functional_tests/test_persistent_conversation_summary.py`
 
 ## Testing and Validation
-- **Functional test:** `functional_tests/test_conversation_export.py`
-- Tests cover:
-  - Conversation sanitization (internal field stripping)
-  - Message sanitization
-  - Markdown generation (headings, metadata, citations)
-  - JSON structure validation
-  - ZIP packaging (correct entries, valid content)
-  - Filename sanitization (special chars, truncation, empty input)
-  - Active thread message filtering
+- **Functional tests:**
+  - `functional_tests/test_conversation_export.py` — export pipeline (8 tests)
+  - `functional_tests/test_persistent_conversation_summary.py` — summary caching (8 tests)
+
+Coverage includes:
+- deleted/inactive message filtering
+- normalized and raw citation export
+- thoughts attached to assistant messages
+- transcript-style Markdown appendices
+- summary-intro metadata shape
+- filename sanitization and ZIP naming
+- content normalization and citation-count helpers
+- PDF HTML body generation with chat-bubble classes
+- PDF byte output validation (%PDF- header)
 
 ## Known Limitations
-- Export is limited to conversations the authenticated user owns
-- Very large conversations (thousands of messages) may take longer to process
-- The wizard fetches conversation titles client-side; if a title lookup fails, it shows the conversation ID instead
+- Export remains limited to user-owned personal conversations
+- Optional intro summaries increase export time because each selected conversation is summarized individually
+- Very large conversations may be truncated for summary generation, though the full export content is still preserved in the output
+- Summary generation is best-effort: if model initialization or generation fails, the export still completes and records the summary error state
+- PDF rendering relies on PyMuPDF’s CSS subset which does not support flexbox, float, or full border-radius; bubble alignment is approximated using margin offsets

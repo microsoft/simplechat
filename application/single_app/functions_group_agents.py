@@ -63,15 +63,37 @@ def get_group_agent(group_id: str, agent_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def save_group_agent(group_id: str, agent_data: Dict[str, Any]) -> Dict[str, Any]:
+def save_group_agent(group_id: str, agent_data: Dict[str, Any], user_id: Optional[str] = None) -> Dict[str, Any]:
     """Create or update a group agent entry."""
     payload = sanitize_agent_payload(agent_data)
     agent_id = payload.get("id") or str(uuid.uuid4())
     payload["id"] = agent_id
     payload["group_id"] = group_id
-    payload["last_updated"] = datetime.utcnow().isoformat()
+    now = datetime.utcnow().isoformat()
+    payload["last_updated"] = now
     payload["is_global"] = False
     payload["is_group"] = True
+
+    # Track who created/modified this agent
+    existing_agent = None
+    try:
+        existing_agent = cosmos_group_agents_container.read_item(
+            item=agent_id,
+            partition_key=group_id,
+        )
+    except exceptions.CosmosResourceNotFoundError:
+        pass
+    except Exception:
+        pass
+
+    if existing_agent:
+        payload["created_by"] = existing_agent.get("created_by", user_id)
+        payload["created_at"] = existing_agent.get("created_at", now)
+    else:
+        payload["created_by"] = user_id
+        payload["created_at"] = now
+    payload["modified_by"] = user_id
+    payload["modified_at"] = now
 
     # Required/defaulted fields
     payload.setdefault("name", "")

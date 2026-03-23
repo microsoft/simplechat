@@ -4,14 +4,22 @@
 import { showToast } from "../chat/chat-toast.js";
 import * as agentsCommon from '../agents_common.js';
 import { AgentModalStepper } from '../agent_modal_stepper.js';
+import {
+    humanizeName, truncateDescription, escapeHtml,
+    setupViewToggle, switchViewContainers,
+    openViewModal, createAgentCard
+} from './view-utils.js';
 
 // --- DOM Elements & Globals ---
 const agentsTbody = document.getElementById('agents-table-body');
 const agentsErrorDiv = document.getElementById('workspace-agents-error');
 const createAgentBtn = document.getElementById('create-agent-btn');
 const agentsSearchInput = document.getElementById('agents-search');
+const agentsListView = document.getElementById('agents-list-view');
+const agentsGridView = document.getElementById('agents-grid-view');
 let agents = [];
 let filteredAgents = [];
+let currentViewMode = 'list';
 
 
 // --- Function Definitions ---
@@ -43,104 +51,87 @@ function filterAgents(searchTerm) {
     });
   }
   renderAgentsTable(filteredAgents);
+  renderAgentsGrid(filteredAgents);
 }
 
-// --- Helper Functions ---
-
-function truncateDisplayName(displayName, maxLength = 12) {
-  if (!displayName || displayName.length <= maxLength) {
-    return displayName;
+// Open the view modal for an agent with Chat/Edit/Delete actions in the footer
+function openAgentViewModal(agent) {
+  const callbacks = {
+    onChat: (a) => chatWithAgent(a.name),
+    onDelete: !agent.is_global ? (a) => { if (confirm(`Delete agent '${a.name}'?`)) deleteAgent(a.name); } : null
+  };
+  if (!agent.is_global) {
+    callbacks.onEdit = (a) => openAgentModal(a);
   }
-  return displayName.substring(0, maxLength) + '...';
+  openViewModal(agent, 'agent', callbacks);
 }
 
+// --- Rendering Functions ---
 function renderAgentsTable(agentsList) {
   if (!agentsTbody) return;
   agentsTbody.innerHTML = '';
   if (!agentsList.length) {
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="4" class="text-center text-muted">No agents found.</td>';
+    tr.innerHTML = '<td colspan="3" class="text-center text-muted">No agents found.</td>';
     agentsTbody.appendChild(tr);
     return;
   }
-  // Fetch selected_agent from user settings (async)
-  fetch('/api/user/settings').then(res => {
-    if (!res.ok) throw new Error('Failed to load user settings');
-    return res.json();
-  }).then(settings => {
-    let selectedAgentObj = settings.selected_agent;
-    if (!selectedAgentObj && settings.settings && settings.settings.selected_agent) {
-      selectedAgentObj = settings.settings.selected_agent;
-    }
-    let selectedAgentName = typeof selectedAgentObj === 'object' ? selectedAgentObj.name : selectedAgentObj;
-    agentsTbody.innerHTML = '';
-    for (const agent of agentsList) {
-      const tr = document.createElement('tr');
-      
-      // Create action buttons
-      let actionButtons = `<button class="btn btn-sm btn-primary chat-agent-btn me-1" data-name="${agent.name}" title="Chat with this agent">
+
+  for (const agent of agentsList) {
+    const tr = document.createElement('tr');
+    const displayName = humanizeName(agent.display_name || agent.name || '');
+    const description = agent.description || 'No description available';
+    const truncatedDesc = truncateDescription(description, 90);
+    const isGlobal = agent.is_global;
+
+    // Action buttons — Chat + View always, Edit/Delete for non-global
+    let actionButtons = `<button class="btn btn-sm btn-primary chat-agent-btn me-1" data-name="${escapeHtml(agent.name)}" title="Chat with this agent">
         <i class="bi bi-chat-dots me-1"></i>Chat
+      </button>
+      <button class="btn btn-sm btn-outline-info view-agent-btn me-1" data-name="${escapeHtml(agent.name)}" title="View details">
+        <i class="bi bi-eye"></i>
       </button>`;
-      
-      if (!agent.is_global) {
-        actionButtons += `
-          <button class="btn btn-sm btn-outline-secondary edit-agent-btn me-1" data-name="${agent.name}" title="Edit agent">
-            <i class="bi bi-pencil"></i>
-          </button>
-          <button class="btn btn-sm btn-outline-danger delete-agent-btn" data-name="${agent.name}" title="Delete agent">
-            <i class="bi bi-trash"></i>
-          </button>
-        `;
-      }
-      
-      const truncatedDisplayName = truncateDisplayName(agent.display_name || agent.name || '');
-      
-      tr.innerHTML = `
-        <td>
-          <strong>${truncatedDisplayName}</strong>
-          ${agent.is_global ? ' <span class="badge bg-info text-dark">Global</span>' : ''}
-        </td>
-        <td class="text-muted small">${agent.description || 'No description available'}</td>
-        <td>${actionButtons}</td>
-      `;
-      agentsTbody.appendChild(tr);
+
+    if (!isGlobal) {
+      actionButtons += `
+        <button class="btn btn-sm btn-outline-secondary edit-agent-btn me-1" data-name="${escapeHtml(agent.name)}" title="Edit agent">
+          <i class="bi bi-pencil"></i>
+        </button>
+        <button class="btn btn-sm btn-outline-danger delete-agent-btn" data-name="${escapeHtml(agent.name)}" title="Delete agent">
+          <i class="bi bi-trash"></i>
+        </button>`;
     }
-  }).catch(e => {
-    renderError('Could not load agent settings: ' + e.message);
-    // Fallback: render table without settings
-    agentsTbody.innerHTML = '';
-    for (const agent of agentsList) {
-      const tr = document.createElement('tr');
-      
-      // Create action buttons
-      let actionButtons = `<button class="btn btn-sm btn-primary chat-agent-btn me-1" data-name="${agent.name}" title="Chat with this agent">
-        <i class="bi bi-chat-dots me-1"></i>Chat
-      </button>`;
-      
-      if (!agent.is_global) {
-        actionButtons += `
-          <button class="btn btn-sm btn-outline-secondary edit-agent-btn me-1" data-name="${agent.name}" title="Edit agent">
-            <i class="bi bi-pencil"></i>
-          </button>
-          <button class="btn btn-sm btn-outline-danger delete-agent-btn" data-name="${agent.name}" title="Delete agent">
-            <i class="bi bi-trash"></i>
-          </button>
-        `;
-      }
-      
-      const truncatedDisplayName = truncateDisplayName(agent.display_name || agent.name || '');
-      
-      tr.innerHTML = `
-        <td>
-          <strong>${truncatedDisplayName}</strong>
-          ${agent.is_global ? ' <span class="badge bg-info text-dark">Global</span>' : ''}
-        </td>
-        <td class="text-muted small">${agent.description || 'No description available'}</td>
-        <td>${actionButtons}</td>
-      `;
-      agentsTbody.appendChild(tr);
-    }
-  });
+
+    tr.innerHTML = `
+      <td>
+        <strong title="${escapeHtml(agent.display_name || agent.name || '')}">${escapeHtml(displayName)}</strong>
+        ${isGlobal ? ' <span class="badge bg-info text-dark">Global</span>' : ''}
+      </td>
+      <td class="text-muted small" title="${escapeHtml(description)}">${escapeHtml(truncatedDesc)}</td>
+      <td>${actionButtons}</td>
+    `;
+    agentsTbody.appendChild(tr);
+  }
+}
+
+function renderAgentsGrid(agentsList) {
+  if (!agentsGridView) return;
+  agentsGridView.innerHTML = '';
+  if (!agentsList.length) {
+    agentsGridView.innerHTML = '<div class="col-12 text-center text-muted p-4">No agents found.</div>';
+    return;
+  }
+
+  for (const agent of agentsList) {
+    const card = createAgentCard(agent, {
+      onChat: (a) => chatWithAgent(a.name),
+      onView: (a) => openAgentViewModal(a),
+      onEdit: (a) => openAgentModal(a),
+      onDelete: (a) => { if (confirm(`Delete agent '${a.name}'?`)) deleteAgent(a.name); },
+      canManage: !agent.is_global
+    });
+    agentsGridView.appendChild(card);
+  }
 }
 
 async function fetchAgents() {
@@ -151,6 +142,7 @@ async function fetchAgents() {
     agents = await res.json();
     filteredAgents = agents; // Initialize filtered list
     renderAgentsTable(filteredAgents);
+    renderAgentsGrid(filteredAgents);
   } catch (e) {
     renderError(e.message);
   }
@@ -177,17 +169,14 @@ function attachAgentTableEvents() {
   }
   
   agentsTbody.addEventListener('click', function (e) {
-    console.log('Agent table clicked, target:', e.target);
-    
     // Find the button element (could be the target or a parent)
     const editBtn = e.target.closest('.edit-agent-btn');
     const deleteBtn = e.target.closest('.delete-agent-btn');
     const chatBtn = e.target.closest('.chat-agent-btn');
+    const viewBtn = e.target.closest('.view-agent-btn');
     
     if (editBtn) {
-      console.log('Edit agent button clicked, dataset:', editBtn.dataset);
       const agent = agents.find(a => a.name === editBtn.dataset.name);
-      console.log('Found agent:', agent);
       openAgentModal(agent);
     }
     
@@ -201,33 +190,27 @@ function attachAgentTableEvents() {
       const agentName = chatBtn.dataset.name;
       chatWithAgent(agentName);
     }
+
+    if (viewBtn) {
+      const agent = agents.find(a => a.name === viewBtn.dataset.name);
+      if (agent) openAgentViewModal(agent);
+    }
   });
 }
 
 async function chatWithAgent(agentName) {
   try {
-    console.log('DEBUG: chatWithAgent called with agentName:', agentName);
-    console.log('DEBUG: Available agents:', agents);
-    
-    // Find the agent to get its is_global status
     const agent = agents.find(a => a.name === agentName);
-    console.log('DEBUG: Found agent:', agent);
-    
     if (!agent) {
       throw new Error('Agent not found');
     }
     
-    console.log('DEBUG: Agent is_global flag:', agent.is_global);
-    console.log('DEBUG: !!agent.is_global:', !!agent.is_global);
-    
-    // Set the selected agent with proper is_global flag
     const payloadData = { 
       selected_agent: { 
         name: agentName, 
         is_global: !!agent.is_global 
       } 
     };
-    console.log('DEBUG: Sending payload:', payloadData);
     
     const resp = await fetch('/api/user/settings/selected_agent', {
       method: 'POST',
@@ -239,9 +222,6 @@ async function chatWithAgent(agentName) {
       throw new Error('Failed to select agent');
     }
     
-    console.log('DEBUG: Agent selection saved successfully');
-    
-    // Navigate to chat page
     window.location.href = '/chats';
   } catch (err) {
     console.error('Error selecting agent for chat:', err);
@@ -353,6 +333,17 @@ async function deleteAgent(name) {
 function initializeWorkspaceAgentUI() {
   window.agentModalStepper = new AgentModalStepper(false);
   attachAgentTableEvents();
+
+  // Set up view toggle
+  setupViewToggle('agents', 'agentsViewPreference', (mode) => {
+    currentViewMode = mode;
+    switchViewContainers(mode, agentsListView, agentsGridView);
+    // Re-render grid if switching to grid and we have data
+    if (mode === 'grid' && filteredAgents.length) {
+      renderAgentsGrid(filteredAgents);
+    }
+  });
+
   fetchAgents();
 }
 
