@@ -312,28 +312,6 @@ class SQLSchemaPlugin(BasePlugin):
                 {"error": error_msg},
                 {"source": "sql_schema_plugin", "success": False}
             )
-            
-            # Get tables
-            tables_query = self._get_tables_query(include_system_tables, table_filter)
-            cursor.execute(tables_query)
-            tables = cursor.fetchall()
-            
-            # Get schema for each table
-            for table_row in tables:
-                table_name = table_row[0] if isinstance(table_row, (list, tuple)) else table_row
-                table_schema = self._get_table_schema_data(cursor, table_name)
-                schema_data["tables"][table_name] = table_schema
-            
-            # Get relationships
-            relationships = self._get_relationships_data(cursor)
-            schema_data["relationships"] = relationships
-            
-            log_event(f"[SQLSchemaPlugin] Retrieved schema for {len(schema_data['tables'])} tables")
-            return ResultWithMetadata(schema_data, self.metadata)
-            
-        except Exception as e:
-            log_event(f"[SQLSchemaPlugin] Error getting database schema: {e}")
-            raise
 
     @kernel_function(description="Get the detailed schema (column names, data types, constraints) for a specific table. If the database schema is already provided in your instructions, use that directly instead of calling this function. Only call this if you need details for a specific table not already in your instructions.")
     @plugin_function_logger("SQLSchemaPlugin")
