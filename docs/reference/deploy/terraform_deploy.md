@@ -10,14 +10,8 @@ The current Terraform deployer in this repo provisions a **container-based Azure
 
 ## If You Switch Terraform to Native Python Later
 
-If you change the Terraform deployment model away from containers and into native Python App Service, then the Startup command should be:
+If you change the Terraform deployment model away from containers and into native Python App Service, deploy the `application/single_app` folder and use this Startup command:
 
 ```bash
 python -m gunicorn -c gunicorn.conf.py app:app
-```
-
-or, if the site starts from the repo root:
-
-```bash
-python -m gunicorn -c application/single_app/gunicorn.conf.py --chdir application/single_app app:app
 ```

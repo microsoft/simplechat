@@ -62,16 +62,10 @@ Ensure the following resource providers are registered in your subscription:
 - This deployer publishes a **container image** to Azure App Service.
 - Gunicorn is started by the container entrypoint in `application/single_app/Dockerfile`.
 - Do **not** add an App Service Stack Settings Startup command for this deployer unless you intentionally change the deployment model away from containers.
-- If you later switch to a native Python App Service deployment, use one of these startup commands instead:
+- If you later switch to a native Python App Service deployment, deploy the `application/single_app` folder and use this startup command instead:
 
 ```bash
 python -m gunicorn -c gunicorn.conf.py app:app
-```
-
-or, if the site starts from the repo root:
-
-```bash
-python -m gunicorn -c application/single_app/gunicorn.conf.py --chdir application/single_app app:app
 ```
 
 The below steps cover the process to deploy the Simple Chat application to an Azure Subscription.  It is assumed the user has administrative rights to the subscription for deployment.  If the user does not also have permissions to create an Application Registration in Entra, a stand-alone script can be provided to an administrator with the correct permissions.
@@ -375,7 +369,7 @@ A: Base infrastructure (without optional services) costs approximately:
 ### Upgrading
 
 **Q: How do I upgrade to a new version?**
-A: Run `azd up` again from the updated codebase. Use `azd provision --preview` to review changes first.
+A: For **code-only** container updates, prefer `azd deploy`. Use `azd provision --preview` and then `azd up` only when the release also changes infrastructure. See [../../docs/how-to/upgrade_paths.md](../../docs/how-to/upgrade_paths.md) for the upgrade decision guide.
 
 ---
 

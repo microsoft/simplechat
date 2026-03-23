@@ -69,16 +69,12 @@ Approval expiry and retention policy execution also use Cosmos-backed distribute
 ### Recommended Web Startup
 Use Gunicorn directly in the App Service Startup command when deploying the native Python runtime.
 
-If App Service starts in `application/single_app`:
+Deploy and run the `application/single_app` folder in App Service.
+
+Use this Startup command:
 
 ```bash
 python -m gunicorn -c gunicorn.conf.py app:app
-```
-
-If App Service starts at the repo root:
-
-```bash
-python -m gunicorn -c application/single_app/gunicorn.conf.py --chdir application/single_app app:app
 ```
 
 An explicit full command is also valid:

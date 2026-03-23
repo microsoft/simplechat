@@ -136,6 +136,42 @@ def is_tabular_entity_lookup_question(user_question):
     return any(re.search(pattern, normalized_question) for pattern in entity_lookup_patterns)
 
 
+def is_tabular_cross_sheet_bridge_question(user_question):
+    """Return True for grouped analytical questions that may need multiple worksheets."""
+    normalized_question = re.sub(r'\s+', ' ', str(user_question or '').strip().lower())
+    if (
+        not normalized_question
+        or is_tabular_schema_summary_question(normalized_question)
+        or is_tabular_entity_lookup_question(normalized_question)
+    ):
+        return False
+
+    aggregate_keywords = (
+        'how many',
+        'count',
+        'counts',
+        'total',
+        'totals',
+        'sum',
+        'average',
+        'avg',
+        'minimum',
+        'maximum',
+        'min',
+        'max',
+    )
+    grouping_patterns = (
+        r'\bfor each\b',
+        r'\beach\b',
+        r'\bper\b',
+        r'\bby\b\s+[a-z0-9_\-]+(?:\s+[a-z0-9_\-]+){0,2}',
+    )
+
+    return any(keyword in normalized_question for keyword in aggregate_keywords) and any(
+        re.search(pattern, normalized_question) for pattern in grouping_patterns
+    )
+
+
 def get_tabular_execution_mode(user_question):
     """Select the tabular orchestration mode for the user's question."""
     if is_tabular_schema_summary_question(user_question):
@@ -986,6 +1022,65 @@ def _select_relevant_workbook_sheets(sheet_names, question_text, minimum_score=1
     return [sheet_name for _, sheet_name in ranked_sheets]
 
 
+def _build_tabular_cross_sheet_bridge_plan(sheet_names, question_text, per_sheet=None):
+    """Infer a lightweight reference-sheet to fact-sheet plan for grouped workbook questions."""
+    if not per_sheet or not is_tabular_cross_sheet_bridge_question(question_text):
+        return None
+
+    ranked_sheets = []
+    for sheet_name in sheet_names or []:
+        sheet_info = per_sheet.get(sheet_name, {})
+        columns = sheet_info.get('columns', [])
+        row_count = sheet_info.get('row_count', 0) or 0
+        score = _score_tabular_sheet_match(sheet_name, question_text, columns=columns)
+        if score <= 0:
+            continue
+        ranked_sheets.append({
+            'sheet_name': sheet_name,
+            'score': score,
+            'row_count': row_count,
+        })
+
+    if len(ranked_sheets) < 2:
+        return None
+
+    fact_sheet = max(
+        ranked_sheets,
+        key=lambda item: (item['row_count'], item['score'], item['sheet_name'].lower()),
+    )
+    reference_candidates = [
+        item for item in ranked_sheets
+        if item['sheet_name'] != fact_sheet['sheet_name'] and item['row_count'] > 0
+    ]
+    if not reference_candidates:
+        return None
+
+    reference_sheet = min(
+        reference_candidates,
+        key=lambda item: (item['row_count'], -item['score'], item['sheet_name'].lower()),
+    )
+
+    if fact_sheet['row_count'] <= reference_sheet['row_count']:
+        return None
+
+    if fact_sheet['row_count'] < max(25, reference_sheet['row_count'] * 2):
+        return None
+
+    relevant_sheets = [reference_sheet['sheet_name'], fact_sheet['sheet_name']]
+    for item in sorted(ranked_sheets, key=lambda entry: (-entry['score'], entry['sheet_name'].lower())):
+        if item['sheet_name'] in relevant_sheets:
+            continue
+        relevant_sheets.append(item['sheet_name'])
+
+    return {
+        'reference_sheet': reference_sheet['sheet_name'],
+        'reference_row_count': reference_sheet['row_count'],
+        'fact_sheet': fact_sheet['sheet_name'],
+        'fact_row_count': fact_sheet['row_count'],
+        'relevant_sheets': relevant_sheets,
+    }
+
+
 def is_tabular_access_limited_analysis(analysis_text):
     """Return True when a tool-backed analysis still claims the data is unavailable."""
     normalized_analysis = re.sub(r'\s+', ' ', str(analysis_text or '').strip().lower())
@@ -1105,6 +1200,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
         schema_parts = []
         workbook_sheet_hints = {}
         workbook_related_sheet_hints = {}
+        workbook_cross_sheet_bridge_hints = {}
         workbook_blob_locations = {}
         retry_sheet_overrides = {}
         previous_failed_call_parameters = []  # entity lookup: concrete failed call params for retry hints
@@ -1146,13 +1242,24 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                         user_question,
                         per_sheet=per_sheet,
                     )
+                    cross_sheet_bridge_plan = None
+                    if not schema_summary_mode and not entity_lookup_mode:
+                        cross_sheet_bridge_plan = _build_tabular_cross_sheet_bridge_plan(
+                            schema_info.get('sheet_names', []),
+                            user_question,
+                            per_sheet=per_sheet,
+                        )
                     if entity_lookup_mode:
                         workbook_related_sheet_hints[fname] = relevant_sheets or list(schema_info.get('sheet_names', []))
+                    elif cross_sheet_bridge_plan:
+                        workbook_cross_sheet_bridge_hints[fname] = cross_sheet_bridge_plan
+                        workbook_related_sheet_hints[fname] = cross_sheet_bridge_plan.get('relevant_sheets', [])
+                        likely_sheet = cross_sheet_bridge_plan.get('fact_sheet') or likely_sheet
                     if likely_sheet:
                         workbook_sheet_hints[fname] = likely_sheet
-                        if not entity_lookup_mode:
+                        if not entity_lookup_mode and not cross_sheet_bridge_plan:
                             tabular_plugin.set_default_sheet(container, blob_path, likely_sheet)
-                    elif not entity_lookup_mode:
+                    elif not entity_lookup_mode and not cross_sheet_bridge_plan:
                         # Fallback for analysis mode: pick the sheet with the
                         # most rows so that set_default_sheet is always called
                         # and the model can omit sheet_name on tool calls.
@@ -1360,11 +1467,32 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     if related_sheets
                 )
                 if rendered_related_sheet_hints:
+                    related_sheet_instruction = (
+                        'Use these worksheets to satisfy cross-sheet profile and related-record requests.'
+                        if entity_lookup_mode else
+                        'Use these worksheets together when the answer may require one sheet for entities and another for facts.'
+                    )
                     related_sheet_feedback = (
                         "QUESTION-RELEVANT WORKSHEET HINTS:\n"
                         f"{rendered_related_sheet_hints}\n"
-                        "Use these worksheets to satisfy cross-sheet profile and related-record requests.\n\n"
+                        f"{related_sheet_instruction}\n\n"
                     )
+
+            cross_sheet_bridge_feedback = ""
+            if workbook_cross_sheet_bridge_hints:
+                rendered_bridge_hints = "\n".join(
+                    (
+                        f"- {workbook_name}: reference worksheet '{bridge_hint['reference_sheet']}' "
+                        f"({bridge_hint['reference_row_count']} rows); fact worksheet '{bridge_hint['fact_sheet']}' "
+                        f"({bridge_hint['fact_row_count']} rows)"
+                    )
+                    for workbook_name, bridge_hint in workbook_cross_sheet_bridge_hints.items()
+                )
+                cross_sheet_bridge_feedback = (
+                    "CROSS-SHEET BRIDGE PLAN:\n"
+                    f"{rendered_bridge_hints}\n"
+                    "For grouped cross-sheet questions, first use the reference worksheet to identify canonical entity or category names, then compute the requested metric from the fact worksheet. Prefer shared identifier or name columns over yes/no, boolean, or membership-flag columns.\n\n"
+                )
 
             if entity_lookup_mode:
                 entity_retry_prefix = retry_prefix
@@ -1414,6 +1542,8 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 f"{execution_gap_feedback}"
                 f"{recovery_sheet_feedback}"
                 f"{sheet_hint_feedback}"
+                f"{related_sheet_feedback}"
+                f"{cross_sheet_bridge_feedback}"
                 f"{missing_sheet_feedback}"
                 f"FILE SCHEMAS:\n"
                 f"{schema_context}\n\n"
@@ -1422,21 +1552,22 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 "Discovery functions are not available in this analysis run because schema context is already pre-loaded.\n\n"
                 "IMPORTANT:\n"
                 "1. Use the pre-loaded schema to pick the correct columns, then call the plugin functions.\n"
-                "2. For multi-sheet workbooks, review the sheet_directory to find the most relevant sheet for the question. Pass sheet_name='<name>' in every analytical tool call unless a trustworthy default sheet has already been established.\n"
+                "2. For multi-sheet workbooks, review the sheet_directory to find the most relevant sheet for the question. Pass sheet_name='<name>' in every analytical tool call unless a trustworthy default sheet has already been established. If a CROSS-SHEET BRIDGE PLAN is provided, query the listed worksheets explicitly and do not rely on a default sheet.\n"
                 "3. If a previous tool error says a requested column is missing on the current sheet and suggests candidate sheets, switch to one of those candidate sheets immediately.\n"
                 "4. For account/category lookup questions at a specific period or metric, use lookup_value first. Provide lookup_column, lookup_value, and target_column.\n"
                 "5. If lookup_value is not sufficient, use filter_rows or query_tabular_data on the label column, then read the requested period column.\n"
                 "6. Only use aggregate_column when the user explicitly asks for a sum, average, min, max, or count across rows.\n"
                 "7. For time-based questions on datetime columns, use group_by_datetime_component.\n"
                 "8. For threshold, ranking, comparison, or correlation-like questions, first filter/query the relevant rows, then compute grouped metrics.\n"
-                "9. When the question asks for rows satisfying multiple conditions, prefer one combined query_expression using and/or instead of separate broad queries that you plan to intersect later.\n"
-                "10. Batch multiple independent function calls in a SINGLE response whenever possible.\n"
-                "11. Keep max_rows as small as possible. Only increase it when the user explicitly asked for an exhaustive row list or export; otherwise return total_matches plus representative rows.\n"
-                "12. For analytical questions, prefer lookup/filter/query plus aggregate/grouped computations over raw row or preview output.\n"
-                "13. For identifier-based workbook questions, locate the identifier on the correct sheet before explaining downstream calculations.\n"
-                "14. For peak, busiest, highest, or lowest questions, use grouped functions and inspect the highest_group, highest_value, lowest_group, and lowest_value summary fields.\n"
-                "15. Return only computed findings and name the strongest drivers clearly.\n"
-                "16. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report."
+                "9. When the question asks for grouped results for each entity or category and a cross-sheet bridge plan is available, use the reference worksheet to identify the canonical entities or categories and the fact worksheet to compute the metric. Do not answer 'each X' by grouping a yes/no, boolean, or membership-flag column unless the user explicitly asked about that flag.\n"
+                "10. When the question asks for rows satisfying multiple conditions, prefer one combined query_expression using and/or instead of separate broad queries that you plan to intersect later.\n"
+                "11. Batch multiple independent function calls in a SINGLE response whenever possible.\n"
+                "12. Keep max_rows as small as possible. Only increase it when the user explicitly asked for an exhaustive row list or export; otherwise return total_matches plus representative rows.\n"
+                "13. For analytical questions, prefer lookup/filter/query plus aggregate/grouped computations over raw row or preview output.\n"
+                "14. For identifier-based workbook questions, locate the identifier on the correct sheet before explaining downstream calculations.\n"
+                "15. For peak, busiest, highest, or lowest questions, use grouped functions and inspect the highest_group, highest_value, lowest_group, and lowest_value summary fields.\n"
+                "16. Return only computed findings and name the strongest drivers clearly.\n"
+                "17. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report."
             )
 
         baseline_invocations = plugin_logger.get_invocations_for_conversation(
@@ -4868,6 +4999,25 @@ def register_route_backend_chats(app):
             data.get('retry_user_message_id') or data.get('edited_user_message_id')
         )
 
+        request_message = (data.get('message') or '').strip()
+        request_preview = request_message[:120] + '...' if len(request_message) > 120 else request_message
+        debug_print(
+            "[Streaming] Incoming /api/chat/stream request | "
+            f"conversation_id={data.get('conversation_id')} | "
+            f"compatibility_mode={compatibility_mode} | "
+            f"hybrid_search={data.get('hybrid_search')} | "
+            f"web_search={data.get('web_search_enabled')} | "
+            f"doc_scope={data.get('doc_scope')} | "
+            f"chat_type={data.get('chat_type', 'user')} | "
+            f"selected_document_id={data.get('selected_document_id')} | "
+            f"selected_document_ids={len(data.get('selected_document_ids', []) or [])} | "
+            f"active_group_id={data.get('active_group_id')} | "
+            f"active_group_ids={len(data.get('active_group_ids', []) or [])} | "
+            f"active_public_workspace_id={data.get('active_public_workspace_id')} | "
+            f"frontend_model={data.get('model_deployment')} | "
+            f"message_preview={request_preview!r}"
+        )
+
         def normalize_legacy_chat_payload(payload):
             """Convert the legacy JSON response shape into the streaming terminal payload."""
             return {
@@ -4945,6 +5095,7 @@ def register_route_backend_chats(app):
                 yield f"data: {json.dumps({'error': str(compatibility_error)})}\n\n"
 
         if compatibility_mode:
+            debug_print("[Streaming] Routing request through compatibility bridge")
             return build_background_stream_response(generate_compatibility_response)
         
         def generate():
@@ -4988,6 +5139,24 @@ def register_route_backend_chats(app):
                 classifications_to_send = data.get('classifications')
                 chat_type = data.get('chat_type', 'user')
                 reasoning_effort = data.get('reasoning_effort')  # Extract reasoning effort for reasoning models
+
+                debug_print(
+                    "[Streaming] Parsed request payload | "
+                    f"user_id={user_id} | "
+                    f"conversation_id={conversation_id} | "
+                    f"message_length={len(user_message)} | "
+                    f"hybrid_search={hybrid_search_enabled} | "
+                    f"web_search={web_search_enabled} | "
+                    f"doc_scope={document_scope} | "
+                    f"chat_type={chat_type} | "
+                    f"selected_document_id={selected_document_id} | "
+                    f"selected_document_ids={len(selected_document_ids)} | "
+                    f"active_group_id={active_group_id} | "
+                    f"active_group_ids={len(active_group_ids)} | "
+                    f"active_public_workspace_id={active_public_workspace_id} | "
+                    f"frontend_model={frontend_gpt_model} | "
+                    f"reasoning_effort={reasoning_effort}"
+                )
                 
                 # Check if agents are enabled
                 enable_semantic_kernel = settings.get('enable_semantic_kernel', False)
@@ -5047,6 +5216,9 @@ def register_route_backend_chats(app):
                 from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
                 plugin_logger = get_plugin_logger()
                 plugin_logger.clear_invocations_for_conversation(user_id, conversation_id)
+                debug_print(
+                    f"[Streaming] Cleared plugin invocations for user_id={user_id}, conversation_id={conversation_id}"
+                )
                 
                 # Validate chat_type
                 if chat_type not in ('user', 'group'):
@@ -5072,6 +5244,12 @@ def register_route_backend_chats(app):
                     hybrid_search_enabled = hybrid_search_enabled.lower() == 'true'
                 if isinstance(web_search_enabled, str):
                     web_search_enabled = web_search_enabled.lower() == 'true'
+                debug_print(
+                    "[Streaming] Normalized toggles | "
+                    f"hybrid_search={hybrid_search_enabled} | "
+                    f"web_search={web_search_enabled} | "
+                    f"chat_type={chat_type}"
+                )
                 
                 # Initialize GPT client (simplified version)
                 gpt_model = ""
@@ -5135,6 +5313,10 @@ def register_route_backend_chats(app):
                     if not gpt_client or not gpt_model:
                         yield f"data: {json.dumps({'error': 'Failed to initialize AI model'})}\n\n"
                         return
+
+                    debug_print(
+                        f"[Streaming] Initialized model client | model={gpt_model} | enable_gpt_apim={enable_gpt_apim}"
+                    )
                         
                 except Exception as e:
                     yield f"data: {json.dumps({'error': f'Model initialization failed: {str(e)}'})}\n\n"
@@ -5153,11 +5335,13 @@ def register_route_backend_chats(app):
                         'strict': False
                     }
                     cosmos_conversations_container.upsert_item(conversation_item)
+                    debug_print(f"[Streaming] Created new conversation {conversation_id}")
                 else:
                     try:
                         conversation_item = cosmos_conversations_container.read_item(
                             item=conversation_id, partition_key=conversation_id
                         )
+                        debug_print(f"[Streaming] Loaded existing conversation {conversation_id}")
                     except CosmosResourceNotFoundError:
                         conversation_item = {
                             'id': conversation_id,
@@ -5169,6 +5353,7 @@ def register_route_backend_chats(app):
                             'strict': False
                         }
                         cosmos_conversations_container.upsert_item(conversation_item)
+                        debug_print(f"[Streaming] Conversation {conversation_id} not found; created replacement")
                 
                 # Determine chat type
                 actual_chat_type = 'personal'
@@ -5319,6 +5504,9 @@ def register_route_backend_chats(app):
                 }
                 
                 cosmos_messages_container.upsert_item(user_message_doc)
+                debug_print(
+                    f"[Streaming] Saved user message {user_message_id} | thread_id={current_user_thread_id} | previous_thread_id={previous_thread_id}"
+                )
                 
                 # Log activity
                 try:
@@ -5457,6 +5645,11 @@ def register_route_backend_chats(app):
                 # Hybrid search (if enabled)
                 combined_documents = []
                 if hybrid_search_enabled:
+                    debug_print(
+                        "[Streaming] Starting hybrid search | "
+                        f"conversation_id={conversation_id} | doc_scope={document_scope} | "
+                        f"selected_document_ids={len(selected_document_ids)} | tags={len(tags_filter) if isinstance(tags_filter, list) else 0}"
+                    )
                     yield emit_thought('search', f"Searching {document_scope or 'personal'} workspace documents for '{(search_query or user_message)[:50]}'")
                     try:
                         search_args = {
@@ -5485,6 +5678,9 @@ def register_route_backend_chats(app):
                             search_args['tags_filter'] = tags_filter
                         
                         search_results = hybrid_search(**search_args)
+                        debug_print(
+                            f"[Streaming] Hybrid search completed | results={len(search_results) if search_results else 0}"
+                        )
                     except Exception as e:
                         debug_print(f"Error during hybrid search: {e}")
 
@@ -5690,6 +5886,11 @@ def register_route_backend_chats(app):
                     baseline_tabular_invocation_count = len(
                         plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
                     )
+                    debug_print(
+                        "[Streaming][Tabular SK] Starting workspace tabular analysis | "
+                        f"files={sorted(workspace_tabular_files)} | source_hint={tabular_source_hint} | "
+                        f"execution_mode={tabular_execution_mode} | baseline_invocations={baseline_tabular_invocation_count}"
+                    )
 
                     tabular_analysis = asyncio.run(run_tabular_sk_analysis(
                         user_question=user_message,
@@ -5706,6 +5907,10 @@ def register_route_backend_chats(app):
                     tabular_invocations = get_new_plugin_invocations(
                         plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000),
                         baseline_tabular_invocation_count
+                    )
+                    debug_print(
+                        "[Streaming][Tabular SK] Completed workspace tabular analysis | "
+                        f"analysis_returned={bool(tabular_analysis)} | new_invocations={len(tabular_invocations)}"
                     )
                     tabular_thought_payloads = get_tabular_tool_thought_payloads(tabular_invocations)
                     for thought_content, thought_detail in tabular_thought_payloads:
@@ -5745,6 +5950,9 @@ def register_route_backend_chats(app):
                         )
 
                 if web_search_enabled:
+                    debug_print(
+                        f"[Streaming] Starting web search augmentation for conversation_id={conversation_id}"
+                    )
                     yield emit_thought('web_search', f"Searching the web for '{(search_query or user_message)[:50]}'")
                     perform_web_search(
                         settings=settings,
@@ -5762,6 +5970,9 @@ def register_route_backend_chats(app):
                         web_search_citations_list=web_search_citations_list,
                     )
                     if web_search_citations_list:
+                        debug_print(
+                            f"[Streaming] Web search completed | citations={len(web_search_citations_list)}"
+                        )
                         yield emit_thought('web_search', f"Got {len(web_search_citations_list)} web search results")
 
                 # Update message chat type
@@ -5881,6 +6092,11 @@ def register_route_backend_chats(app):
                         baseline_tabular_invocation_count = len(
                             plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
                         )
+                        debug_print(
+                            "[Streaming][Chat Tabular SK] Starting chat-uploaded tabular analysis | "
+                            f"files={sorted(chat_tabular_files)} | execution_mode={chat_tabular_execution_mode} | "
+                            f"baseline_invocations={baseline_tabular_invocation_count}"
+                        )
 
                         chat_tabular_analysis = asyncio.run(run_tabular_sk_analysis(
                             user_question=user_message,
@@ -5895,6 +6111,10 @@ def register_route_backend_chats(app):
                         chat_tabular_invocations = get_new_plugin_invocations(
                             plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000),
                             baseline_tabular_invocation_count
+                        )
+                        debug_print(
+                            "[Streaming][Chat Tabular SK] Completed chat-uploaded tabular analysis | "
+                            f"analysis_returned={bool(chat_tabular_analysis)} | new_invocations={len(chat_tabular_invocations)}"
                         )
                         chat_tabular_thought_payloads = get_tabular_tool_thought_payloads(chat_tabular_invocations)
                         for thought_content, thought_detail in chat_tabular_thought_payloads:
@@ -6017,6 +6237,12 @@ def register_route_backend_chats(app):
                 # DEBUG: Check agent streaming decision
                 debug_print(f"[DEBUG] use_agent_streaming={use_agent_streaming}, selected_agent={selected_agent is not None}")
                 debug_print(f"[DEBUG] enable_semantic_kernel={enable_semantic_kernel}, user_enable_agents={user_enable_agents}")
+                debug_print(
+                    "[Streaming] Selected response path | "
+                    f"use_agent_streaming={use_agent_streaming} | "
+                    f"selected_agent={getattr(selected_agent, 'name', None) if selected_agent else None} | "
+                    f"model={gpt_model}"
+                )
                 
                 try:
                     if use_agent_streaming and selected_agent:
@@ -6028,10 +6254,16 @@ def register_route_backend_chats(app):
                         # Register callback to persist plugin thoughts to Cosmos in real-time
                         callback_key = f"{user_id}:{conversation_id}"
                         plugin_logger_cb = get_plugin_logger()
+                        debug_print(
+                            f"[Streaming][Plugin Callback] Registering callback for key={callback_key}"
+                        )
 
                         def on_plugin_invocation_streaming(inv):
                             duration_str = f" ({int(inv.duration_ms)}ms)" if inv.duration_ms else ""
                             tool_name = f"{inv.plugin_name}.{inv.function_name}"
+                            debug_print(
+                                f"[Streaming][Plugin Callback] Received invocation {tool_name}{duration_str} | success={inv.success}"
+                            )
                             thought_tracker.add_thought(
                                 'agent_tool_call',
                                 f"Agent called {tool_name}{duration_str}"
@@ -6097,6 +6329,9 @@ def register_route_backend_chats(app):
                             chunks, stream_usage = loop.run_until_complete(stream_agent_async())
                         except Exception as stream_error:
                             plugin_logger_cb.deregister_callbacks(callback_key)
+                            debug_print(
+                                f"[Streaming][Plugin Callback] Deregistered callback after streaming error for key={callback_key}"
+                            )
                             debug_print(f"❌ Agent streaming error: {stream_error}")
                             import traceback
                             traceback.print_exc()
@@ -6109,6 +6344,9 @@ def register_route_backend_chats(app):
 
                         # Deregister callback (agent completed successfully)
                         plugin_logger_cb.deregister_callbacks(callback_key)
+                        debug_print(
+                            f"[Streaming][Plugin Callback] Deregistered callback after successful stream for key={callback_key}"
+                        )
 
                         # Emit SSE-only events for streaming UI (Cosmos writes already done by callback)
                         agent_plugin_invocations = plugin_logger_cb.get_invocations_for_conversation(user_id, conversation_id)
@@ -6422,6 +6660,13 @@ def register_route_backend_chats(app):
                         'full_content': accumulated_content,
                         'thoughts_enabled': thought_tracker.enabled
                     }
+                    debug_print(
+                        "[Streaming] Finalizing stream response | "
+                        f"conversation_id={conversation_id} | message_id={assistant_message_id} | "
+                        f"content_length={len(accumulated_content)} | hybrid_citations={len(hybrid_citations_list)} | "
+                        f"web_citations={len(web_search_citations_list)} | agent_citations={len(agent_citations_list)} | "
+                        f"thoughts_enabled={thought_tracker.enabled}"
+                    )
                     yield f"data: {json.dumps(final_data)}\n\n"
                     
                 except Exception as e:

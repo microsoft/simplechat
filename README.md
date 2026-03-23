@@ -16,24 +16,6 @@ The application utilizes **Azure Cosmos DB** for storing conversations, metadata
 
 [Detailed deployment Guide](./deployers/bicep/README.md)
 
-### Deployment Runtime Notes
-
-- The repo-provided `azd`, Bicep, Terraform, and Azure CLI deployers are currently **container-based** App Service deployments.
-- For those container deployments, you do **not** need to set an App Service Stack Settings Startup command. The image already starts Gunicorn via [application/single_app/Dockerfile](application/single_app/Dockerfile).
-- If you deploy to **native Python App Service** instead of using the container image, set the App Service Startup command explicitly.
-
-If App Service starts in `application/single_app`:
-
-```bash
-python -m gunicorn -c gunicorn.conf.py app:app
-```
-
-If App Service starts from the repo root:
-
-```bash
-python -m gunicorn -c application/single_app/gunicorn.conf.py --chdir application/single_app app:app
-```
-
 ### Pre-Configuration:
 
 The following procedure must be completed with a user that has permissions to create an application registration in the users Entra tenant. 
@@ -138,6 +120,58 @@ This step will begin the deployment process.
 ```powershell
 azd up 
 ```
+
+## Deployment Runtime Notes
+
+### Container
+> [!NOTE]
+>
+> The container deployments of Simple Chat does NOT need this step, when you run `azd up` for new installs or `azd deploy` for updates, the container is configured to run with gunicorn.
+
+- The repo-provided `azd`, Bicep, Terraform, and Azure CLI deployers are **container-based** App Service deployments.
+- For those container deployments, do **not** set an App Service Stack Settings Startup command. 
+    - The container already starts Gunicorn through `application/single_app/Dockerfile`.
+
+## Native Python
+- For **native Python App Service** deployments, deploy the `application/single_app` folder and set the App Service Startup command explicitly.
+
+Native Python deployment references:
+
+- [Manual deployment notes](./docs/reference/deploy/manual_deploy.md)
+- [Manual setup steps](./docs/setup_instructions_manual.md#installing-and-deploying-the-application-code)
+- [VS Code deployment steps](./docs/setup_instructions_manual.md#deploying-via-vs-code-recommended-for-simplicity)
+- [Azure CLI ZIP deploy steps](./docs/setup_instructions_manual.md#deploying-via-azure-cli-zip-deploy)
+
+To set the Startup command in Azure Portal:
+
+1. Go to the App Service.
+2. Open **Settings** > **Configuration** > **Stack Settings**.
+3. Enter the following Startup command.
+4. Save the change, then stop and start the app.
+
+Use this Startup command for native Python App Service deployments:
+
+```bash
+python -m gunicorn -c gunicorn.conf.py app:app
+```
+
+> [!IMPORTANT]
+>
+> Running Simple Chat with gunicorn improves the experience with better request handling and concurrency.
+
+## Upgrade Paths
+
+- For a concise upgrade decision guide, see [docs/how-to/upgrade_paths.md](docs/how-to/upgrade_paths.md).
+
+### Container
+- **Container-based upgrades** should usually start with `azd deploy` for code-only changes. Use `azd up` only when the release also changes infrastructure.
+- If your App Service is already configured to pull from ACR and you want image-only rollouts, use the ACR/image refresh approach described in [docs/how-to/upgrade_paths.md](docs/how-to/upgrade_paths.md) instead of treating every release as a full reprovisioning event.
+
+### Native Python
+- **Native Python App Service upgrades** should reuse the manual deployment path, validate the Startup command above, and deploy the `application/single_app` folder with VS Code or Azure CLI ZIP deploy.
+- [Manual native Python upgrade guide](./docs/setup_instructions_manual.md#upgrading-the-application)
+- [Native Python ZIP deploy reference](./docs/setup_instructions_manual.md#deploying-via-azure-cli-zip-deploy)
+- [Native Python deployment notes](./docs/reference/deploy/manual_deploy.md)
 
 ## Architecture
 

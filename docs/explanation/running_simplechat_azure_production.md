@@ -8,7 +8,7 @@ category: Explanation
 
 This guide explains the supported production startup patterns for Simple Chat in Azure.
 
-Current documentation version: 0.239.136
+Current documentation version: 0.239.139
 
 ## Default Azure Production Model in This Repo
 
@@ -35,18 +35,12 @@ python3 -m gunicorn -c /app/gunicorn.conf.py app:app
 
 ## Native Python App Service Option
 
-If you intentionally deploy Simple Chat as a native Python App Service instead of using the repo container image, set the web startup command explicitly.
+If you intentionally deploy Simple Chat as a native Python App Service instead of using the repo container image, deploy the `application/single_app` folder and set the web startup command explicitly.
 
-If App Service starts in `application/single_app`:
+Use this Startup command:
 
 ```bash
 python -m gunicorn -c gunicorn.conf.py app:app
-```
-
-If App Service starts from the repo root:
-
-```bash
-python -m gunicorn -c application/single_app/gunicorn.conf.py --chdir application/single_app app:app
 ```
 
 ## Background Scheduler Guidance
