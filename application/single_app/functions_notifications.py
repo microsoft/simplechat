@@ -31,6 +31,10 @@ NOTIFICATION_TYPES = {
         'icon': 'bi-file-earmark-check',
         'color': 'success'
     },
+    'chat_response_complete': {
+        'icon': 'bi-chat-dots',
+        'color': 'success'
+    },
     'document_processing_failed': {
         'icon': 'bi-file-earmark-x',
         'color': 'danger'
@@ -226,6 +230,41 @@ def create_public_workspace_notification(
             'public_workspace_id': public_workspace_id
         },
         metadata=metadata
+    )
+
+
+def create_chat_response_notification(
+    user_id,
+    conversation_id,
+    message_id,
+    conversation_title='',
+    response_preview='',
+):
+    """Create a personal notification when a chat response completes."""
+    normalized_title = str(conversation_title or '').strip() or 'Conversation'
+    normalized_preview = str(response_preview or '').strip()
+    if len(normalized_preview) > 160:
+        normalized_preview = f"{normalized_preview[:157]}..."
+
+    notification_message = (
+        normalized_preview
+        or f'The AI model responded in {normalized_title}.'
+    )
+
+    return create_notification(
+        user_id=user_id,
+        notification_type='chat_response_complete',
+        title=f'AI responded in {normalized_title}',
+        message=notification_message,
+        link_url=f'/chats?conversationId={conversation_id}',
+        link_context={
+            'workspace_type': 'personal',
+            'conversation_id': conversation_id,
+        },
+        metadata={
+            'conversation_id': conversation_id,
+            'message_id': message_id,
+        }
     )
 
 
@@ -465,6 +504,46 @@ def mark_notification_read(notification_id, user_id):
     except Exception as e:
         debug_print(f"Error marking notification {notification_id} as read: {e}")
         return False
+
+
+def mark_chat_response_notifications_read_for_conversation(user_id, conversation_id):
+    """Mark personal chat-completion notifications read for a conversation."""
+    try:
+        query = """
+            SELECT * FROM c
+            WHERE c.user_id = @user_id
+            AND c.notification_type = @notification_type
+            AND c.metadata.conversation_id = @conversation_id
+        """
+        params = [
+            {'name': '@user_id', 'value': user_id},
+            {'name': '@notification_type', 'value': 'chat_response_complete'},
+            {'name': '@conversation_id', 'value': conversation_id},
+        ]
+
+        notifications = list(cosmos_notifications_container.query_items(
+            query=query,
+            parameters=params,
+            partition_key=user_id
+        ))
+
+        marked_count = 0
+        for notification in notifications:
+            read_by = notification.get('read_by', [])
+            if user_id in read_by:
+                continue
+
+            read_by.append(user_id)
+            notification['read_by'] = read_by
+            cosmos_notifications_container.upsert_item(notification)
+            marked_count += 1
+
+        return marked_count
+    except Exception as e:
+        debug_print(
+            f"Error marking chat response notifications as read for conversation {conversation_id}: {e}"
+        )
+        return 0
 
 
 def dismiss_notification(notification_id, user_id):

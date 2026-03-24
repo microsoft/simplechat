@@ -24,12 +24,7 @@ def register_route_backend_users(app):
         if not token:
             return jsonify({"error": "Could not acquire access token"}), 401
 
-        if AZURE_ENVIRONMENT == "usgovernment":
-            user_endpoint = "https://graph.microsoft.us/v1.0/users"
-        elif AZURE_ENVIRONMENT == "custom":
-            user_endpoint = CUSTOM_GRAPH_URL_VALUE
-        else:
-            user_endpoint = "https://graph.microsoft.com/v1.0/users"
+        user_endpoint = get_graph_endpoint("/users")
             
         headers = {
             "Authorization": f"Bearer {token}",

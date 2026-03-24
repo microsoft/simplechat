@@ -2,6 +2,10 @@
 // Shared logic for admin_plugins.js and workspace_plugins.js
 // Exports: functions for modal field handling, validation, label toggling, table rendering, and plugin CRUD
 import { showToast } from "./chat/chat-toast.js"
+import {
+    humanizeName, truncateDescription,
+    openViewModal, createActionCard
+} from './workspace/view-utils.js';
 
 // Fetch merged plugin settings from backend given type and current settings
 export async function fetchAndMergePluginSettings(pluginType, currentSettings = {}) {
@@ -60,8 +64,7 @@ export function escapeHtml(str) {
 }
 
 // Render plugins table (parameterized for tbody selector and button handlers)
-export function renderPluginsTable({plugins, tbodySelector, onEdit, onDelete, ensureTable = true, isAdmin = false}) {
-  console.log('Rendering plugins table with %d plugins', plugins.length);
+export function renderPluginsTable({plugins, tbodySelector, onEdit, onDelete, onView, ensureTable = true, isAdmin = false}) {
   // Optionally ensure the table is present before rendering
   if (ensureTable) {
     ensurePluginsTableInRoot();
@@ -75,29 +78,33 @@ export function renderPluginsTable({plugins, tbodySelector, onEdit, onDelete, en
   plugins.forEach(plugin => {
     const tr = document.createElement('tr');
     const safeName = escapeHtml(plugin.name);
-    const safeDisplayName = escapeHtml(plugin.display_name || plugin.name);
-    const safeDesc = escapeHtml(plugin.description || 'No description available');
+    const displayName = humanizeName(plugin.display_name || plugin.name);
+    const safeDisplayName = escapeHtml(displayName);
+    const description = plugin.description || 'No description available';
+    const truncatedDesc = escapeHtml(truncateDescription(description, 90));
     let actionButtons = '';
     let globalBadge = plugin.is_global ? ' <span class="badge bg-info text-dark">Global</span>' : '';
     
-    // Show action buttons for:
-    // - Admin context: all actions (global and personal)
-    // - User context: only personal actions (not global)
+    // View button always shown
+    let viewButton = `<button type="button" class="btn btn-sm btn-outline-info view-plugin-btn me-1" data-plugin-name="${safeName}" title="View details">
+            <i class="bi bi-eye"></i>
+          </button>`;
+    
+    // Edit/Delete buttons based on context
+    let editDeleteButtons = '';
     if (isAdmin || !plugin.is_global) {
-      actionButtons = `
-        <div class="d-flex gap-1">
+      editDeleteButtons = `
           <button type="button" class="btn btn-sm btn-outline-secondary edit-plugin-btn" data-plugin-name="${safeName}" title="Edit action">
             <i class="bi bi-pencil"></i>
           </button>
           <button type="button" class="btn btn-sm btn-outline-danger delete-plugin-btn" data-plugin-name="${safeName}" title="Delete action">
             <i class="bi bi-trash"></i>
-          </button>
-        </div>
-      `;
+          </button>`;
     }
+    actionButtons = `<div class="d-flex gap-1">${viewButton}${editDeleteButtons}</div>`;
     tr.innerHTML = `
-      <td><strong>${safeDisplayName}</strong>${globalBadge}</td>
-      <td class="text-muted small">${safeDesc}</td>
+      <td><strong title="${escapeHtml(plugin.display_name || plugin.name || '')}">${safeDisplayName}</strong>${globalBadge}</td>
+      <td class="text-muted small" title="${escapeHtml(description)}">${truncatedDesc}</td>
       <td>${actionButtons}</td>
     `;
     tbody.appendChild(tr);
@@ -108,6 +115,34 @@ export function renderPluginsTable({plugins, tbodySelector, onEdit, onDelete, en
   });
   tbody.querySelectorAll('.delete-plugin-btn').forEach(btn => {
     btn.onclick = () => onDelete(btn.getAttribute('data-plugin-name'));
+  });
+  tbody.querySelectorAll('.view-plugin-btn').forEach(btn => {
+    btn.onclick = () => {
+      if (onView) {
+        onView(btn.getAttribute('data-plugin-name'));
+      }
+    };
+  });
+}
+
+// Render plugins grid (card-based view)
+export function renderPluginsGrid({plugins, containerSelector, onEdit, onDelete, onView, isAdmin = false}) {
+  const container = document.querySelector(containerSelector);
+  if (!container) return;
+  container.innerHTML = '';
+  if (!plugins.length) {
+    container.innerHTML = '<div class="col-12 text-center text-muted p-4">No actions found.</div>';
+    return;
+  }
+  plugins.forEach(plugin => {
+    const card = createActionCard(plugin, {
+      onView: (p) => { if (onView) onView(p.name); },
+      onEdit: (p) => onEdit(p.name),
+      onDelete: (p) => onDelete(p.name),
+      canManage: isAdmin || !plugin.is_global,
+      isAdmin
+    });
+    container.appendChild(card);
   });
 }
 

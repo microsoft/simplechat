@@ -21,6 +21,7 @@ from semantic_kernel_plugins.text_plugin import TextPlugin
 from semantic_kernel.functions.kernel_plugin import KernelPlugin
 from semantic_kernel_plugins.embedding_model_plugin import EmbeddingModelPlugin
 from semantic_kernel_plugins.fact_memory_plugin import FactMemoryPlugin
+from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
 from functions_settings import get_settings, get_user_settings
 from foundry_agent_runtime import AzureAIFoundryChatCompletionAgent
 from functions_appinsights import log_event, get_appinsights_logger
@@ -709,6 +710,13 @@ def load_embedding_model_plugin(kernel: Kernel, settings):
             description="Provides text embedding functions using the configured embedding model."
         )
 
+def load_tabular_processing_plugin(kernel: Kernel):
+    kernel.add_plugin(
+        TabularProcessingPlugin(),
+        plugin_name="tabular_processing",
+        description="Provides data analysis on tabular files (CSV, XLSX) stored in blob storage. Can list files, describe schemas, aggregate columns, filter rows, run queries, and perform group-by operations."
+    )
+
 def load_core_plugins_only(kernel: Kernel, settings):
     """Load only core plugins for model-only conversations without agents."""
     debug_print(f"[SK Loader] Loading core plugins only for model-only mode...")
@@ -729,6 +737,10 @@ def load_core_plugins_only(kernel: Kernel, settings):
     if settings.get('enable_text_plugin', True):
         load_text_plugin(kernel)
         log_event("[SK Loader] Loaded Text plugin.", level=logging.INFO)
+
+    if settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
+        load_tabular_processing_plugin(kernel)
+        log_event("[SK Loader] Loaded Tabular Processing plugin.", level=logging.INFO)
 
 # =================== Semantic Kernel Initialization ===================
 def initialize_semantic_kernel(user_id: str=None, redis_client=None):
@@ -1022,6 +1034,195 @@ def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="gl
         print(f"[SK Loader] Error loading agent-specific plugins: {e}")
         log_event(f"[SK Loader] Error loading agent-specific plugins: {e}", level=logging.ERROR, exceptionTraceback=True)
 
+
+def _extract_sql_schema_for_instructions(kernel) -> str:
+    """
+    Check if any SQL Schema plugins are loaded in the kernel and extract their schema
+    information to inject into agent instructions.
+    
+    Returns a formatted schema summary string, or empty string if no SQL schema plugins found.
+    """
+    from semantic_kernel_plugins.sql_schema_plugin import SQLSchemaPlugin
+    
+    schema_parts = []
+    
+    try:
+        # Iterate through all registered plugins in the kernel
+        for plugin_name, plugin in kernel.plugins.items():
+            # Check if the underlying plugin object is a SQLSchemaPlugin
+            # Kernel plugins wrap the original object - we need to check the underlying instance
+            plugin_obj = None
+            
+            # Try to access the underlying plugin instance
+            if isinstance(plugin, SQLSchemaPlugin):
+                plugin_obj = plugin
+            elif hasattr(plugin, '_plugin_instance'):
+                if isinstance(plugin._plugin_instance, SQLSchemaPlugin):
+                    plugin_obj = plugin._plugin_instance
+            else:
+                # Check if any function in this plugin belongs to a SQLSchemaPlugin
+                for func_name, func in plugin.functions.items():
+                    if hasattr(func, 'method') and hasattr(func.method, '__self__'):
+                        if isinstance(func.method.__self__, SQLSchemaPlugin):
+                            plugin_obj = func.method.__self__
+                            break
+            
+            if plugin_obj is not None:
+                print(f"[SK Loader] Found SQL Schema plugin: {plugin_name}, fetching schema...")
+                try:
+                    schema_result = plugin_obj.get_database_schema()
+                    if schema_result and hasattr(schema_result, 'data'):
+                        schema_data = schema_result.data
+                    else:
+                        schema_data = schema_result
+                    
+                    if isinstance(schema_data, dict) and "tables" in schema_data:
+                        db_name = schema_data.get("database_name", "Unknown")
+                        db_type = schema_data.get("database_type", "Unknown")
+                        
+                        schema_text = f"### Database: {db_name} ({db_type})\n\n"
+                        
+                        for table_name, table_info in schema_data["tables"].items():
+                            schema_name = table_info.get("schema_name", "dbo")
+                            qualified_name = f"{schema_name}.{table_name}" if schema_name else table_name
+                            schema_text += f"**Table: {qualified_name}**\n"
+                            
+                            columns = table_info.get("columns", [])
+                            if columns:
+                                schema_text += "| Column | Type | Nullable |\n|--------|------|----------|\n"
+                                for col in columns:
+                                    col_name = col.get("column_name", "?")
+                                    col_type = col.get("data_type", "?")
+                                    nullable = "Yes" if col.get("is_nullable", True) else "No"
+                                    schema_text += f"| {col_name} | {col_type} | {nullable} |\n"
+                            
+                            pks = table_info.get("primary_keys", [])
+                            if pks:
+                                schema_text += f"Primary Key(s): {', '.join(pks)}\n"
+                            
+                            schema_text += "\n"
+                        
+                        # Add relationships
+                        relationships = schema_data.get("relationships", [])
+                        if relationships:
+                            schema_text += "**Relationships (Foreign Keys):**\n"
+                            for rel in relationships:
+                                parent = rel.get("parent_table", "?")
+                                parent_col = rel.get("parent_column", "?")
+                                ref = rel.get("referenced_table", "?")
+                                ref_col = rel.get("referenced_column", "?")
+                                schema_text += f"- {parent}.{parent_col} → {ref}.{ref_col}\n"
+                            schema_text += "\n"
+                        
+                        schema_parts.append(schema_text)
+                        print(f"[SK Loader] Successfully extracted schema for {db_name}: {len(schema_data['tables'])} tables")
+                    else:
+                        print(f"[SK Loader] Schema data for {plugin_name} was empty or had unexpected format")
+                        
+                except Exception as e:
+                    print(f"[SK Loader] Warning: Failed to fetch schema from {plugin_name}: {e}")
+                    log_event(f"[SK Loader] Failed to fetch SQL schema for injection: {e}",
+                             extra={"plugin_name": plugin_name, "error": str(e)},
+                             level=logging.WARNING)
+    except Exception as e:
+        print(f"[SK Loader] Warning: Error iterating kernel plugins for SQL schema: {e}")
+        log_event(f"[SK Loader] Error iterating kernel plugins for SQL schema: {e}",
+                 extra={"error": str(e)}, level=logging.WARNING)
+    
+    # Fallback: If no SQLSchemaPlugin was found, check for SQLQueryPlugin instances
+    # and create a temporary SQLSchemaPlugin from their connection config to extract schema
+    if not schema_parts:
+        from semantic_kernel_plugins.sql_query_plugin import SQLQueryPlugin as _SQLQueryPlugin
+        
+        try:
+            for plugin_name, plugin in kernel.plugins.items():
+                query_obj = None
+                
+                if isinstance(plugin, _SQLQueryPlugin):
+                    query_obj = plugin
+                elif hasattr(plugin, '_plugin_instance'):
+                    if isinstance(plugin._plugin_instance, _SQLQueryPlugin):
+                        query_obj = plugin._plugin_instance
+                else:
+                    for func_name, func in plugin.functions.items():
+                        if hasattr(func, 'method') and hasattr(func.method, '__self__'):
+                            if isinstance(func.method.__self__, _SQLQueryPlugin):
+                                query_obj = func.method.__self__
+                                break
+                
+                if query_obj is not None:
+                    print(f"[SK Loader] Fallback: Found SQLQueryPlugin '{plugin_name}', creating temporary schema extractor...")
+                    try:
+                        temp_manifest = {
+                            'type': 'sql_schema',
+                            'name': f'{plugin_name}_temp_schema',
+                            'database_type': getattr(query_obj, 'database_type', 'azure_sql'),
+                            'server': getattr(query_obj, 'server', ''),
+                            'database': getattr(query_obj, 'database', ''),
+                            'username': getattr(query_obj, 'username', ''),
+                            'password': getattr(query_obj, 'password', ''),
+                            'driver': getattr(query_obj, 'driver', ''),
+                            'connection_string': getattr(query_obj, 'connection_string', ''),
+                        }
+                        temp_schema = SQLSchemaPlugin(temp_manifest)
+                        schema_result = temp_schema.get_database_schema()
+                        if schema_result and hasattr(schema_result, 'data'):
+                            schema_data = schema_result.data
+                        else:
+                            schema_data = schema_result
+                        
+                        if isinstance(schema_data, dict) and "tables" in schema_data:
+                            db_name = schema_data.get("database_name", "Unknown")
+                            db_type = schema_data.get("database_type", "Unknown")
+                            
+                            schema_text = f"### Database: {db_name} ({db_type})\n\n"
+                            
+                            for table_name, table_info in schema_data["tables"].items():
+                                schema_name = table_info.get("schema_name", "dbo")
+                                qualified_name = f"{schema_name}.{table_name}" if schema_name else table_name
+                                schema_text += f"**Table: {qualified_name}**\n"
+                                
+                                columns = table_info.get("columns", [])
+                                if columns:
+                                    schema_text += "| Column | Type | Nullable |\n|--------|------|----------|\n"
+                                    for col in columns:
+                                        col_name = col.get("column_name", "?")
+                                        col_type = col.get("data_type", "?")
+                                        nullable = "Yes" if col.get("is_nullable", True) else "No"
+                                        schema_text += f"| {col_name} | {col_type} | {nullable} |\n"
+                                
+                                pks = table_info.get("primary_keys", [])
+                                if pks:
+                                    schema_text += f"Primary Key(s): {', '.join(pks)}\n"
+                                
+                                schema_text += "\n"
+                            
+                            relationships = schema_data.get("relationships", [])
+                            if relationships:
+                                schema_text += "**Relationships (Foreign Keys):**\n"
+                                for rel in relationships:
+                                    parent = rel.get("parent_table", "?")
+                                    parent_col = rel.get("parent_column", "?")
+                                    ref = rel.get("referenced_table", "?")
+                                    ref_col = rel.get("referenced_column", "?")
+                                    schema_text += f"- {parent}.{parent_col} → {ref}.{ref_col}\n"
+                                schema_text += "\n"
+                            
+                            schema_parts.append(schema_text)
+                            print(f"[SK Loader] Fallback: Successfully extracted schema from SQLQueryPlugin '{plugin_name}': {len(schema_data['tables'])} tables")
+                    except Exception as e:
+                        print(f"[SK Loader] Fallback: Failed to extract schema from SQLQueryPlugin '{plugin_name}': {e}")
+                        log_event(f"[SK Loader] Fallback schema extraction failed",
+                                 extra={"plugin_name": plugin_name, "error": str(e)},
+                                 level=logging.WARNING)
+        except Exception as e:
+            print(f"[SK Loader] Warning: Error in fallback SQL schema extraction: {e}")
+            log_event(f"[SK Loader] Error in fallback SQL schema extraction: {e}",
+                     extra={"error": str(e)}, level=logging.WARNING)
+    
+    return "\n".join(schema_parts)
+
+
 def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis_client=None, mode_label="global"):
     """
     DRY helper to load a single agent (default agent) for the kernel.
@@ -1217,6 +1418,27 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 group_id=group_id,
             )
 
+            # Auto-inject SQL database schema into agent instructions if SQL plugins are loaded
+            try:
+                sql_schema_summary = _extract_sql_schema_for_instructions(kernel)
+                if sql_schema_summary:
+                    agent_config["instructions"] = (
+                        agent_config.get("instructions", "") +
+                        "\n\n## Available Database Schema\n"
+                        "The following database tables and columns are available for SQL queries. "
+                        "ALWAYS use these exact table and column names when writing SQL queries.\n\n" +
+                        sql_schema_summary +
+                        "\n\nWhen a user asks a question about data, use the schema above to construct "
+                        "the appropriate SQL query and execute it using the SQL Query plugin functions. "
+                        "Do NOT ask the user for table or column names — use the schema provided above."
+                    )
+                    print(f"[SK Loader] Injected SQL schema into agent instructions for {agent_config['name']}")
+            except Exception as e:
+                print(f"[SK Loader] Warning: Failed to inject SQL schema into instructions: {e}")
+                log_event(f"[SK Loader] Failed to inject SQL schema into agent instructions: {e}",
+                         extra={"agent_name": agent_config["name"], "error": str(e)},
+                         level=logging.WARNING)
+
         try:
             kwargs = {
                 "name": agent_config["name"],
@@ -1370,6 +1592,14 @@ def load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="glob
             log_event("[SK Loader] Loaded Fact Memory Plugin.", level=logging.INFO)
         except Exception as e:
             log_event(f"[SK Loader] Failed to load Fact Memory Plugin: {e}", level=logging.WARNING)
+
+    # Register Tabular Processing Plugin if enabled (requires enhanced citations)
+    if settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
+        try:
+            load_tabular_processing_plugin(kernel)
+            log_event("[SK Loader] Loaded Tabular Processing plugin.", level=logging.INFO)
+        except Exception as e:
+            log_event(f"[SK Loader] Failed to load Tabular Processing plugin: {e}", level=logging.WARNING)
 
     # Conditionally load static embedding model plugin
     if settings.get('enable_default_embedding_model_plugin', True):
@@ -1746,7 +1976,11 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
         load_embedding_model_plugin(kernel, settings)
         print(f"[SK Loader] Loaded Default Embedding Model plugin.")
         log_event("[SK Loader] Loaded Default Embedding Model plugin.", level=logging.INFO)
-    
+
+    if settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
+        load_tabular_processing_plugin(kernel)
+        log_event("[SK Loader] Loaded Tabular Processing plugin.", level=logging.INFO)
+
     # Get selected agent from user settings (this still needs to be in user settings for UI state)
     user_settings = get_user_settings(user_id).get('settings', {})
     selected_agent = user_settings.get('selected_agent')

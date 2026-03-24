@@ -20,6 +20,7 @@ The options are:
 - [Azure CLI with Powershell](#azure-cli-with-powershell)
 - [BICEP](#bicep)
 - [Terraform](#hashicorp-terraform)
+- [Upgrade Existing Deployments](#upgrade-existing-deployments)
 
 **Note:** Terraform is the most robust and requires the least manual post-deployment actions at this time.
 
@@ -34,6 +35,12 @@ In addition, this section covers additional configuration items such as
 This is the step by step process required to deploy the infrastructure and configurations needed to run the Simple Chat solution.  This method is discouraged in favor of any of the IaC deployment solutions, however it does contain information that may be useful in debugging configuration difficulties.
 
 [Link to manual deployment steps](./setup_instructions_manual.md)
+
+## Upgrade Existing Deployments
+
+If you already have Simple Chat deployed and only need to update the application, use the dedicated upgrade guide instead of rerunning the full setup flow.
+
+[Link to upgrade paths](./how-to/upgrade_paths.md)
 
 ## Azure CLI with Powershell
 

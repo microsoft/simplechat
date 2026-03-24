@@ -708,21 +708,32 @@
                   </button>
                   <button class="btn btn-success btn-sm" id="create-agent-btn" type="button">New Agent</button>
                 </div>
+                <div class="btn-group btn-group-sm" role="group" aria-label="Agents view mode">
+                  <input type="radio" class="btn-check" name="agents-view-mode" id="agents-view-list" autocomplete="off" checked>
+                  <label class="btn btn-outline-secondary" for="agents-view-list"><i class="bi bi-list-ul"></i></label>
+                  <input type="radio" class="btn-check" name="agents-view-mode" id="agents-view-grid" autocomplete="off">
+                  <label class="btn btn-outline-secondary" for="agents-view-grid"><i class="bi bi-grid-3x3-gap"></i></label>
+                </div>
               </div>
               <div class="mb-3">
                 <input type="search" class="form-control" id="agents-search" placeholder="Search agents by name or description...">
               </div>
-              <table class="table table-striped" id="agents-table">
-                <thead><tr><th>Display Name</th><th>Description</th><th>Actions</th></tr></thead>
-                <tbody id="agents-table-body">
-                  <tr class="table-loading-row">
-                    <td colspan="3">
-                      <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
-                      Loading agents...
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+              <!-- List View -->
+              <div id="agents-list-view">
+                <table class="table table-striped item-list-table" id="agents-table">
+                  <thead><tr><th>Display Name</th><th>Description</th><th>Actions</th></tr></thead>
+                  <tbody id="agents-table-body">
+                    <tr class="table-loading-row">
+                      <td colspan="3">
+                        <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
+                        Loading agents...
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <!-- Grid View -->
+              <div id="agents-grid-view" class="row g-3 d-none"></div>
             </div>
             <div id="workspace-agents-error"></div>
           </div>
@@ -750,16 +761,27 @@
             <div class="card p-3 my-3">
               <div class="d-flex justify-content-between align-items-center mb-2">
                 <button class="btn btn-success btn-sm" id="create-plugin-btn">New Action</button>
+                <div class="btn-group btn-group-sm" role="group" aria-label="Actions view mode">
+                  <input type="radio" class="btn-check" name="plugins-view-mode" id="plugins-view-list" autocomplete="off" checked>
+                  <label class="btn btn-outline-secondary" for="plugins-view-list"><i class="bi bi-list-ul"></i></label>
+                  <input type="radio" class="btn-check" name="plugins-view-mode" id="plugins-view-grid" autocomplete="off">
+                  <label class="btn btn-outline-secondary" for="plugins-view-grid"><i class="bi bi-grid-3x3-gap"></i></label>
+                </div>
               </div>
               <div class="mb-3">
                 <input type="search" class="form-control" id="plugins-search" placeholder="Search actions by name or description...">
               </div>
-              <table class="table table-striped" id="plugins-table">
-                <thead><tr><th>Display Name</th><th>Description</th><th style="width: 140px;">Actions</th></tr></thead>
-                <tbody id="plugins-table-body">
-                  <!-- Populated by JS -->
-                </tbody>
-              </table>
+              <!-- List View -->
+              <div id="plugins-list-view">
+                <table class="table table-striped item-list-table" id="plugins-table">
+                  <thead><tr><th>Display Name</th><th>Description</th><th>Actions</th></tr></thead>
+                  <tbody id="plugins-table-body">
+                    <!-- Populated by JS -->
+                  </tbody>
+                </table>
+              </div>
+              <!-- Grid View -->
+              <div id="plugins-grid-view" class="row g-3 d-none"></div>
             </div>
           </template>
         {% else %}
@@ -824,6 +846,23 @@
   <!--</div>-->
 
   {% include '_multiendpoint_modal.html' %}
+  <!-- Shared Item View Modal (read-only details for agents/actions) -->
+  <div class="modal fade" id="item-view-modal" tabindex="-1" aria-labelledby="item-view-modal-label" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="item-view-modal-label">Details</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <!-- Populated dynamically by view-utils.js -->
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- Modal for Creating/Editing Prompts (Keep As Is) -->
   <div

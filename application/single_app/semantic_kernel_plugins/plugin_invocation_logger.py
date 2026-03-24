@@ -11,6 +11,7 @@ import time
 import logging
 import functools
 import inspect
+import threading
 from typing import Any, Dict, List, Optional, Callable
 from datetime import datetime
 from dataclasses import dataclass, asdict
@@ -51,24 +52,29 @@ class PluginInvocationLogger:
         self.invocations: List[PluginInvocation] = []
         self.max_history = 1000  # Keep last 1000 invocations in memory
         self.logger = get_appinsights_logger() or logging.getLogger(__name__)
+        self._callbacks: Dict[str, List[Callable[[PluginInvocation], None]]] = {}
+        self._callback_lock = threading.Lock()
         
     def log_invocation(self, invocation: PluginInvocation):
         """Log a plugin invocation to Application Insights and local history."""
         # Add to local history
         self.invocations.append(invocation)
-        
+
         # Trim history if needed
         if len(self.invocations) > self.max_history:
             self.invocations = self.invocations[-self.max_history:]
-        
+
         # Enhanced terminal logging
         self._log_to_terminal(invocation)
-        
+
         # Log to Application Insights
         self._log_to_appinsights(invocation)
-        
+
         # Log to standard logging
         self._log_to_standard(invocation)
+
+        # Fire registered thought callbacks
+        self._fire_callbacks(invocation)
     
     def _log_to_terminal(self, invocation: PluginInvocation):
         """Log detailed invocation information to terminal."""
@@ -276,6 +282,34 @@ class PluginInvocationLogger:
     def clear_history(self):
         """Clear the invocation history."""
         self.invocations.clear()
+
+    def register_callback(self, key, callback):
+        """Register a callback fired on each plugin invocation for the given key.
+
+        Args:
+            key: A string key, typically f"{user_id}:{conversation_id}".
+            callback: Called with the PluginInvocation after it is logged.
+        """
+        with self._callback_lock:
+            if key not in self._callbacks:
+                self._callbacks[key] = []
+            self._callbacks[key].append(callback)
+
+    def deregister_callbacks(self, key):
+        """Remove all callbacks for the given key."""
+        with self._callback_lock:
+            self._callbacks.pop(key, None)
+
+    def _fire_callbacks(self, invocation):
+        """Fire matching callbacks for this invocation's user+conversation."""
+        key = f"{invocation.user_id}:{invocation.conversation_id}"
+        with self._callback_lock:
+            callbacks = list(self._callbacks.get(key, []))
+        for cb in callbacks:
+            try:
+                cb(invocation)
+            except Exception as e:
+                log_event(f"Plugin invocation callback error: {e}", level="WARNING")
 
 
 # Global instance

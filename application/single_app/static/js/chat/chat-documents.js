@@ -1,6 +1,7 @@
 // chat-documents.js
 
 import { showToast } from "./chat-toast.js";
+import { initializeFilterableDropdownSearch } from "./chat-searchable-select.js";
 
 export const docScopeSelect = document.getElementById("doc-scope-select");
 const searchDocumentsBtn = document.getElementById("search-documents-btn");
@@ -8,6 +9,7 @@ const docSelectEl = document.getElementById("document-select"); // Hidden select
 const searchDocumentsContainer = document.getElementById("search-documents-container"); // Container for scope/doc/class
 
 // Custom dropdown elements
+const docDropdown = document.getElementById("document-dropdown");
 const docDropdownButton = document.getElementById("document-dropdown-button");
 const docDropdownItems = document.getElementById("document-dropdown-items");
 const docDropdownMenu = document.getElementById("document-dropdown-menu");
@@ -17,12 +19,16 @@ const docSearchInput = document.getElementById("document-search-input");
 const chatTagsFilter = document.getElementById("chat-tags-filter");
 const tagsDropdown = document.getElementById("tags-dropdown");
 const tagsDropdownButton = document.getElementById("tags-dropdown-button");
+const tagsDropdownMenu = document.getElementById("tags-dropdown-menu");
 const tagsDropdownItems = document.getElementById("tags-dropdown-items");
+const tagsSearchInput = document.getElementById("tags-search-input");
 
 // Scope dropdown elements
+const scopeDropdown = document.getElementById("scope-dropdown");
 const scopeDropdownButton = document.getElementById("scope-dropdown-button");
 const scopeDropdownItems = document.getElementById("scope-dropdown-items");
 const scopeDropdownMenu = document.getElementById("scope-dropdown-menu");
+const scopeSearchInput = document.getElementById("scope-search-input");
 
 // We'll store personalDocs/groupDocs/publicDocs in memory once loaded:
 export let personalDocs = [];
@@ -48,6 +54,33 @@ const publicWorkspaceIdToName = {};
 let selectedPersonal = true;
 let selectedGroupIds = (window.userGroups || []).map(g => g.id);
 let selectedPublicWorkspaceIds = (window.userVisiblePublicWorkspaces || []).map(ws => ws.id);
+
+const documentSearchController = initializeFilterableDropdownSearch({
+  dropdownEl: docDropdown,
+  menuEl: docDropdownMenu,
+  searchInputEl: docSearchInput,
+  itemsContainerEl: docDropdownItems,
+  emptyMessage: 'No matching documents found',
+  isAlwaysVisibleItem: item => item.getAttribute('data-search-role') === 'action',
+});
+
+const scopeSearchController = initializeFilterableDropdownSearch({
+  dropdownEl: scopeDropdown,
+  menuEl: scopeDropdownMenu,
+  searchInputEl: scopeSearchInput,
+  itemsContainerEl: scopeDropdownItems,
+  emptyMessage: 'No matching workspaces found',
+  isAlwaysVisibleItem: item => item.getAttribute('data-search-role') === 'action',
+});
+
+const tagsSearchController = initializeFilterableDropdownSearch({
+  dropdownEl: tagsDropdown,
+  menuEl: tagsDropdownMenu,
+  searchInputEl: tagsSearchInput,
+  itemsContainerEl: tagsDropdownItems,
+  emptyMessage: 'No matching tags found',
+  isAlwaysVisibleItem: item => item.getAttribute('data-search-role') === 'action',
+});
 
 /* ---------------------------------------------------------------------------
    Get Effective Scopes — used by chat-messages.js and internally
@@ -160,9 +193,18 @@ export function restoreScopeLockState(lockState, contexts) {
  * Reset scope lock for a new conversation.
  * Resets to "All" with no lock.
  */
-export function resetScopeLock() {
+export function resetScopeLock(options = {}) {
+  const { preserveSelections = false } = options;
+
   scopeLocked = null;
   lockedContexts = [];
+
+  if (preserveSelections) {
+    buildScopeDropdown();
+    updateScopeLockIcon();
+    updateHeaderLockIcon();
+    return;
+  }
 
   const groups = window.userGroups || [];
   const publicWorkspaces = window.userVisiblePublicWorkspaces || [];
@@ -227,6 +269,7 @@ function buildScopeDropdown() {
   allItem.type = "button";
   allItem.classList.add("dropdown-item", "d-flex", "align-items-center", "fw-bold");
   allItem.setAttribute("data-scope-action", "toggle-all");
+  allItem.setAttribute("data-search-role", "action");
   allItem.style.display = "flex";
   allItem.style.width = "100%";
   allItem.style.textAlign = "left";
@@ -283,6 +326,7 @@ function buildScopeDropdown() {
   }
 
   syncScopeButtonText();
+  scopeSearchController?.applyFilter(scopeSearchInput ? scopeSearchInput.value : '');
 }
 
 /* ---------------------------------------------------------------------------
@@ -358,6 +402,7 @@ function rebuildScopeDropdownWithLock() {
 
   syncScopeButtonText();
   updateScopeLockIcon();
+  scopeSearchController?.applyFilter(scopeSearchInput ? scopeSearchInput.value : '');
 }
 
 /* ---------------------------------------------------------------------------
@@ -421,6 +466,8 @@ function createScopeItem(value, label, checked) {
   item.type = "button";
   item.classList.add("dropdown-item", "d-flex", "align-items-center");
   item.setAttribute("data-scope-value", value);
+  item.setAttribute("data-search-role", "item");
+  item.dataset.searchLabel = label;
   item.style.display = "flex";
   item.style.width = "100%";
   item.style.textAlign = "left";
@@ -556,6 +603,7 @@ export function populateDocumentSelectScope() {
     allItem.type = "button";
     allItem.classList.add("dropdown-item");
     allItem.setAttribute("data-document-id", "");
+    allItem.setAttribute("data-search-role", "action");
     allItem.textContent = "All Documents";
     allItem.style.display = "block";
     allItem.style.width = "100%";
@@ -618,7 +666,9 @@ export function populateDocumentSelectScope() {
       dropdownItem.type = "button";
       dropdownItem.classList.add("dropdown-item", "d-flex", "align-items-center");
       dropdownItem.setAttribute("data-document-id", doc.id);
+      dropdownItem.setAttribute("data-search-role", "item");
       dropdownItem.setAttribute("title", doc.label);
+      dropdownItem.dataset.searchLabel = doc.label;
       dropdownItem.dataset.tags = JSON.stringify(doc.tags || []);
       dropdownItem.dataset.classification = doc.classification || '';
       dropdownItem.style.display = "flex";
@@ -674,6 +724,7 @@ export function populateDocumentSelectScope() {
 
   // Trigger UI update after populating
   handleDocumentSelectChange();
+  documentSearchController?.applyFilter(docSearchInput ? docSearchInput.value : '');
 }
 
 export function getDocumentMetadata(docId) {
@@ -831,14 +882,14 @@ export function loadAllDocs() {
 function initializeDocumentDropdown() {
   if (!docDropdownMenu) return;
 
-  // Clear any leftover search-filter inline styles on visible items
+  // Clear any leftover search-filter state on visible items
   docDropdownItems.querySelectorAll('.dropdown-item').forEach(item => {
-    item.removeAttribute('data-filtered');
-    item.style.display = '';
+    item.classList.remove('d-none');
   });
 
   // Re-apply tag filter (DOM removal approach — no CSS issues)
   filterDocumentsBySelectedTags();
+  documentSearchController?.applyFilter(docSearchInput ? docSearchInput.value : '');
 
   // Size the dropdown to fill its parent container
   const parentContainer = docDropdownButton.closest('.flex-grow-1');
@@ -976,6 +1027,7 @@ export async function loadTagsForScope() {
         allItem.type = 'button';
         allItem.classList.add('dropdown-item', 'text-muted', 'small');
         allItem.setAttribute('data-tag-value', '');
+        allItem.setAttribute('data-search-role', 'action');
         allItem.textContent = 'Clear All';
         allItem.style.display = 'block';
         allItem.style.width = '100%';
@@ -993,6 +1045,8 @@ export async function loadTagsForScope() {
           item.type = 'button';
           item.classList.add('dropdown-item', 'd-flex', 'align-items-center');
           item.setAttribute('data-tag-value', tag.name);
+          item.setAttribute('data-search-role', 'item');
+          item.dataset.searchLabel = tag.displayName;
           item.style.display = 'flex';
           item.style.width = '100%';
           item.style.textAlign = 'left';
@@ -1029,6 +1083,8 @@ export async function loadTagsForScope() {
             item.type = 'button';
             item.classList.add('dropdown-item', 'd-flex', 'align-items-center');
             item.setAttribute('data-tag-value', cls.name);
+            item.setAttribute('data-search-role', 'item');
+            item.dataset.searchLabel = cls.displayName;
             item.style.display = 'flex';
             item.style.width = '100%';
             item.style.textAlign = 'left';
@@ -1053,6 +1109,8 @@ export async function loadTagsForScope() {
             tagsDropdownItems.appendChild(item);
           });
         }
+
+        tagsSearchController?.applyFilter(tagsSearchInput ? tagsSearchInput.value : '');
       }
     } else {
       hideTagsDropdown();
@@ -1069,6 +1127,9 @@ function showTagsDropdown() {
 
 function hideTagsDropdown() {
   if (tagsDropdown) tagsDropdown.style.display = 'none';
+  if (tagsSearchController) {
+    tagsSearchController.resetFilter();
+  }
 }
 
 /* ---------------------------------------------------------------------------
@@ -1166,6 +1227,8 @@ export function filterDocumentsBySelectedTags() {
       opt.disabled = !matchesSelection(optTags, optClassification);
     });
   }
+
+  documentSearchController?.applyFilter(docSearchInput ? docSearchInput.value : '');
 }
 
 /* ---------------------------------------------------------------------------
@@ -1250,7 +1313,6 @@ if (chatTagsFilter) {
 
 // Tags dropdown: prevent closing when clicking inside
 if (tagsDropdownItems) {
-  const tagsDropdownMenu = document.getElementById("tags-dropdown-menu");
   if (tagsDropdownMenu) {
     tagsDropdownMenu.addEventListener('click', function(e) {
       e.stopPropagation();
@@ -1413,70 +1475,6 @@ if (docDropdownItems) {
   });
 }
 
-// Add search functionality
-if (docSearchInput) {
-  // Define our filtering function to ensure consistent filtering logic.
-  // Items hidden by tag filter are physically removed from the DOM,
-  // so querySelectorAll naturally excludes them.
-  const filterDocumentItems = function(searchTerm) {
-    if (!docDropdownItems) return;
-
-    const items = docDropdownItems.querySelectorAll('.dropdown-item');
-    let matchFound = false;
-
-    items.forEach(item => {
-      const docName = item.textContent.toLowerCase();
-
-      if (!searchTerm || docName.includes(searchTerm)) {
-        item.style.display = '';
-        item.setAttribute('data-filtered', 'visible');
-        matchFound = true;
-      } else {
-        item.style.display = 'none';
-        item.setAttribute('data-filtered', 'hidden');
-      }
-    });
-
-    // Show a message if no matches found
-    const noMatchesEl = docDropdownItems.querySelector('.no-matches');
-    if (!matchFound && searchTerm && searchTerm.length > 0) {
-      if (!noMatchesEl) {
-        const noMatchesMsg = document.createElement('div');
-        noMatchesMsg.className = 'no-matches text-center text-muted py-2';
-        noMatchesMsg.textContent = 'No matching documents found';
-        docDropdownItems.appendChild(noMatchesMsg);
-      }
-    } else {
-      if (noMatchesEl) {
-        noMatchesEl.remove();
-      }
-    }
-  };
-
-  // Attach input event directly
-  docSearchInput.addEventListener('input', function() {
-    const searchTerm = this.value.toLowerCase().trim();
-    filterDocumentItems(searchTerm);
-  });
-
-  // Also attach keyup event as a fallback
-  docSearchInput.addEventListener('keyup', function() {
-    const searchTerm = this.value.toLowerCase().trim();
-    filterDocumentItems(searchTerm);
-  });
-
-  // Prevent dropdown from closing when clicking in search input
-  docSearchInput.addEventListener('click', function(e) {
-    e.stopPropagation();
-    e.preventDefault();
-  });
-
-  // Prevent dropdown from closing when pressing keys in search input
-  docSearchInput.addEventListener('keydown', function(e) {
-    e.stopPropagation();
-  });
-}
-
 /* ---------------------------------------------------------------------------
    Handle Document Selection & Update UI
 --------------------------------------------------------------------------- */
@@ -1513,10 +1511,7 @@ document.addEventListener('DOMContentLoaded', function() {
   // If search documents button exists, it needs to be clicked to show controls
   if (searchDocumentsBtn && docDropdownButton) {
     try {
-      // Get the dropdown element
-      const dropdownEl = document.getElementById('document-dropdown');
-
-      if (dropdownEl) {
+      if (docDropdown) {
         // Initialize Bootstrap dropdown with the right configuration
         new bootstrap.Dropdown(docDropdownButton, {
           boundary: 'viewport',
@@ -1537,14 +1532,15 @@ document.addEventListener('DOMContentLoaded', function() {
         });
 
         // Clear search when opening
-        dropdownEl.addEventListener('show.bs.dropdown', function() {
+        docDropdown.addEventListener('show.bs.dropdown', function() {
           if (docSearchInput) {
             docSearchInput.value = '';
           }
+          documentSearchController?.applyFilter('');
         });
 
         // Adjust sizing and focus search when shown
-        dropdownEl.addEventListener('shown.bs.dropdown', function() {
+        docDropdown.addEventListener('shown.bs.dropdown', function() {
           initializeDocumentDropdown();
           if (docSearchInput) {
             setTimeout(() => docSearchInput.focus(), 50);
@@ -1552,20 +1548,8 @@ document.addEventListener('DOMContentLoaded', function() {
         });
 
         // Clean up inline styles and reset state when hidden
-        dropdownEl.addEventListener('hidden.bs.dropdown', function() {
-          if (docSearchInput) {
-            docSearchInput.value = '';
-          }
-          // Clear search filtering state
-          if (docDropdownItems) {
-            const items = docDropdownItems.querySelectorAll('.dropdown-item');
-            items.forEach(item => {
-              item.removeAttribute('data-filtered');
-              item.style.display = '';
-            });
-            const noMatchesEl = docDropdownItems.querySelector('.no-matches');
-            if (noMatchesEl) noMatchesEl.remove();
-          }
+        docDropdown.addEventListener('hidden.bs.dropdown', function() {
+          documentSearchController?.resetFilter();
           // Clear inline styles set by initializeDocumentDropdown so they
           // don't interfere with Bootstrap's positioning on next open
           if (docDropdownMenu) {

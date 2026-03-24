@@ -3,7 +3,11 @@
 import { showToast } from "./chat-toast.js";
 import { loadMessages } from "./chat-messages.js";
 import { isColorLight, toBoolean } from "./chat-utils.js";
-import { loadSidebarConversations, setActiveConversation as setSidebarActiveConversation } from "./chat-sidebar-conversations.js";
+import {
+  loadSidebarConversations,
+  setActiveConversation as setSidebarActiveConversation,
+  setConversationUnreadState as setSidebarConversationUnreadState,
+} from "./chat-sidebar-conversations.js";
 import { toggleConversationInfoButton } from "./chat-conversation-info-button.js";
 import { restoreScopeLockState, resetScopeLock } from "./chat-documents.js";
 import { loadUserSettings } from "./chat-layout.js";
@@ -13,6 +17,7 @@ const newConversationBtn = document.getElementById("new-conversation-btn");
 const deleteSelectedBtn = document.getElementById("delete-selected-btn");
 const pinSelectedBtn = document.getElementById("pin-selected-btn");
 const hideSelectedBtn = document.getElementById("hide-selected-btn");
+const exportSelectedBtn = document.getElementById("export-selected-btn");
 const conversationsList = document.getElementById("conversations-list");
 const currentConversationTitleEl = document.getElementById("current-conversation-title");
 const currentConversationClassificationsEl = document.getElementById("current-conversation-classifications");
@@ -94,6 +99,110 @@ let allConversations = []; // Store all conversations for client-side filtering
 let isLoadingConversations = false; // Prevent concurrent loads
 let showQuickSearch = false; // Track if quick search input is visible
 let quickSearchTerm = ""; // Current search term
+let pendingConversationCreation = null; // Reuse a single in-flight create request
+const markConversationReadRequests = new Map();
+
+function createUnreadDotElement() {
+  const unreadDot = document.createElement("span");
+  unreadDot.classList.add("conversation-unread-dot");
+  unreadDot.setAttribute("aria-hidden", "true");
+  return unreadDot;
+}
+
+function updateConversationUnreadStateCache(conversationId, hasUnread) {
+  allConversations = allConversations.map(convo => {
+    if (convo.id !== conversationId) {
+      return convo;
+    }
+
+    return {
+      ...convo,
+      has_unread_assistant_response: hasUnread,
+      last_unread_assistant_message_id: hasUnread ? convo.last_unread_assistant_message_id : null,
+      last_unread_assistant_at: hasUnread ? convo.last_unread_assistant_at : null,
+    };
+  });
+}
+
+function getConversationUnreadState(conversationId) {
+  const convoItem = document.querySelector(`.conversation-item[data-conversation-id="${conversationId}"]`);
+  if (convoItem) {
+    return convoItem.dataset.hasUnreadAssistantResponse === "true";
+  }
+
+  const conversation = allConversations.find(convo => convo.id === conversationId);
+  return Boolean(conversation?.has_unread_assistant_response);
+}
+
+export function setConversationUnreadState(conversationId, hasUnread) {
+  updateConversationUnreadStateCache(conversationId, hasUnread);
+
+  const convoItem = document.querySelector(`.conversation-item[data-conversation-id="${conversationId}"]`);
+  if (convoItem) {
+    convoItem.dataset.hasUnreadAssistantResponse = hasUnread ? "true" : "false";
+
+    const titleRow = convoItem.querySelector(".conversation-title-row");
+    const titleElement = convoItem.querySelector(".conversation-title");
+    const existingDot = convoItem.querySelector(".conversation-unread-dot");
+
+    if (!hasUnread) {
+      if (existingDot) {
+        existingDot.remove();
+      }
+    } else if (!existingDot && titleRow && titleElement) {
+      titleRow.insertBefore(createUnreadDotElement(), titleElement);
+    }
+  }
+
+  setSidebarConversationUnreadState(conversationId, hasUnread);
+}
+
+export async function markConversationRead(conversationId, options = {}) {
+  const { force = false, suppressErrorToast = false } = options;
+  if (!conversationId) {
+    return null;
+  }
+
+  const previousUnreadState = getConversationUnreadState(conversationId);
+  if (!force && !previousUnreadState) {
+    return { success: true, skipped: true };
+  }
+
+  if (markConversationReadRequests.has(conversationId)) {
+    return markConversationReadRequests.get(conversationId);
+  }
+
+  setConversationUnreadState(conversationId, false);
+
+  const markReadRequest = fetch(`/api/conversations/${conversationId}/mark-read`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  })
+    .then(async response => {
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.success === false) {
+        throw new Error(data.error || "Failed to mark conversation as read");
+      }
+      return data;
+    })
+    .catch(error => {
+      if (previousUnreadState) {
+        setConversationUnreadState(conversationId, true);
+      }
+
+      if (!suppressErrorToast) {
+        showToast(`Failed to clear unread state: ${error.message}`, "danger");
+      }
+
+      throw error;
+    })
+    .finally(() => {
+      markConversationReadRequests.delete(conversationId);
+    });
+
+  markConversationReadRequests.set(conversationId, markReadRequest);
+  return markReadRequest;
+}
 
 // Clear selected conversations when loading the page
 document.addEventListener('DOMContentLoaded', () => {
@@ -165,6 +274,9 @@ function enterSelectionMode() {
   if (hideSelectedBtn) {
     hideSelectedBtn.style.display = "block";
   }
+  if (exportSelectedBtn) {
+    exportSelectedBtn.style.display = "block";
+  }
   
   // Only reload conversations if we're transitioning from inactive to active
   // This shows hidden conversations in selection mode
@@ -197,6 +309,9 @@ function exitSelectionMode() {
   }
   if (hideSelectedBtn) {
     hideSelectedBtn.style.display = "none";
+  }
+  if (exportSelectedBtn) {
+    exportSelectedBtn.style.display = "none";
   }
   
   // Clear any selections
@@ -406,6 +521,9 @@ export async function ensureConversationPresent(conversationId) {
     chat_type: metadata.chat_type || null,
     is_pinned: metadata.is_pinned || false,
     is_hidden: metadata.is_hidden || false,
+    has_unread_assistant_response: metadata.has_unread_assistant_response || false,
+    last_unread_assistant_message_id: metadata.last_unread_assistant_message_id || null,
+    last_unread_assistant_at: metadata.last_unread_assistant_at || null,
   };
 
   // Keep allConversations in sync
@@ -427,6 +545,7 @@ export function createConversationItem(convo) {
   convoItem.classList.add("list-group-item", "list-group-item-action", "conversation-item", "d-flex", "align-items-center"); // Use action class
   convoItem.setAttribute("data-conversation-id", convo.id);
   convoItem.setAttribute("data-conversation-title", convo.title); // Store title too
+  convoItem.dataset.hasUnreadAssistantResponse = convo.has_unread_assistant_response ? "true" : "false";
 
   // *** Store classification data as stringified JSON ***
   convoItem.dataset.classifications = JSON.stringify(convo.classification || []);
@@ -514,12 +633,12 @@ export function createConversationItem(convo) {
   leftDiv.classList.add("d-flex", "flex-column", "flex-grow-1", "pe-2"); // flex-grow and padding-end
   leftDiv.style.overflow = "hidden"; // Prevent overflow issues
 
+  const titleRow = document.createElement("div");
+  titleRow.classList.add("conversation-title-row", "d-flex", "align-items-center", "gap-2", "overflow-hidden");
+
   const titleSpan = document.createElement("span");
   titleSpan.classList.add("conversation-title", "text-truncate", "flex-grow-1"); // Bold and truncate
   titleSpan.style.minWidth = "0";
-  
-  const titleRow = document.createElement("div");
-  titleRow.classList.add("d-flex", "align-items-center", "gap-2");
   
   // Add pin icon if conversation is pinned
   const isPinned = convo.is_pinned || false;
@@ -532,28 +651,11 @@ export function createConversationItem(convo) {
   titleSpan.appendChild(document.createTextNode(convo.title));
   titleSpan.title = convo.title; // Tooltip for full title
 
-  titleRow.appendChild(titleSpan);
-
-  const isGroupConversation = (normalizedChatType && normalizedChatType.startsWith('group')) ||
-    (convo.context && convo.context.some(ctx => ctx.type === 'primary' && ctx.scope === 'group'));
-  const isPersonalConversation = !isGroupConversation && (
-    (normalizedChatType && normalizedChatType.startsWith('personal')) ||
-    (convo.context && convo.context.some(ctx => ctx.type === 'primary' && ctx.scope === 'personal'))
-  );
-
-  if (isGroupConversation) {
-    const groupBadge = document.createElement('span');
-    groupBadge.classList.add('badge', 'bg-info', 'conversation-badge-group');
-    groupBadge.textContent = 'group';
-    groupBadge.title = 'Group conversation';
-    titleRow.appendChild(groupBadge);
-  } else if (isPersonalConversation) {
-    const personalBadge = document.createElement('span');
-    personalBadge.classList.add('badge', 'bg-primary', 'conversation-badge-personal');
-    personalBadge.textContent = 'personal';
-    personalBadge.title = 'Personal conversation';
-    titleRow.appendChild(personalBadge);
+  if (convo.has_unread_assistant_response) {
+    titleRow.appendChild(createUnreadDotElement());
   }
+
+  titleRow.appendChild(titleSpan);
 
   const dateSpan = document.createElement("small");
   dateSpan.classList.add("text-muted");
@@ -614,6 +716,14 @@ export function createConversationItem(convo) {
   selectA.href = "#";
   selectA.innerHTML = '<i class="bi bi-check-square me-2"></i>Select';
   selectLi.appendChild(selectA);
+  
+  // Add Export option
+  const exportLi = document.createElement("li");
+  const exportA = document.createElement("a");
+  exportA.classList.add("dropdown-item", "export-btn");
+  exportA.href = "#";
+  exportA.innerHTML = '<i class="bi bi-download me-2"></i>Export';
+  exportLi.appendChild(exportA);
 
   const editLi = document.createElement("li");
   const editA = document.createElement("a");
@@ -633,6 +743,8 @@ export function createConversationItem(convo) {
   dropdownMenu.appendChild(pinLi);
   dropdownMenu.appendChild(hideLi);
   dropdownMenu.appendChild(selectLi);
+  dropdownMenu.appendChild(exportLi);
+
   dropdownMenu.appendChild(editLi);
   dropdownMenu.appendChild(deleteLi);
   rightDiv.appendChild(dropdownBtn);
@@ -680,6 +792,16 @@ export function createConversationItem(convo) {
     event.stopPropagation();
     closeDropdownMenu(dropdownBtn);
     enterSelectionMode();
+  });
+
+  // Add event listener for the Export button
+  exportA.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    closeDropdownMenu(dropdownBtn);
+    if (window.chatExport && window.chatExport.openExportWizard) {
+      window.chatExport.openExportWizard([convo.id], true);
+    }
   });
 
   // Add event listener for the Pin button
@@ -884,7 +1006,8 @@ export function addConversationToList(conversationId, title = null, classificati
     title: title || "New Conversation", // Default title
     last_updated: new Date().toISOString(),
     classification: classifications, // Include classifications
-    chat_type: "new"
+    chat_type: "new", // Temporary chat type until metadata is fetched
+    has_unread_assistant_response: false,
   };
 
   const convoItem = createConversationItem(convo);
@@ -910,6 +1033,7 @@ export function addConversationToList(conversationId, title = null, classificati
 // Select a conversation, load messages, update UI
 export async function selectConversation(conversationId) {
   currentConversationId = conversationId;
+  window.currentConversationId = conversationId;
 
   const convoItem = document.querySelector(`.conversation-item[data-conversation-id="${conversationId}"]`);
   if (!convoItem) {
@@ -1095,6 +1219,9 @@ export async function selectConversation(conversationId) {
   }
 
   loadMessages(conversationId);
+  markConversationRead(conversationId, { force: true, suppressErrorToast: true }).catch(error => {
+    console.warn('Failed to clear unread state for conversation:', error);
+  });
   highlightSelectedConversation(conversationId);
   
   // Show the conversation info button since we have an active conversation
@@ -1180,7 +1307,21 @@ export function deleteConversation(conversationId) {
 }
 
 // Create a new conversation via API
-export async function createNewConversation(callback) {
+export async function createNewConversation(callback, options = {}) {
+    if (pendingConversationCreation) {
+      try {
+        await pendingConversationCreation;
+        if (typeof callback === "function") {
+          callback();
+        }
+      } catch (error) {
+        // The original caller already surfaced the creation failure.
+      }
+      return;
+    }
+
+  const { preserveSelections = false } = options;
+
     // Disable new button? Show loading?
     if (newConversationBtn) newConversationBtn.disabled = true;
     
@@ -1192,54 +1333,61 @@ export async function createNewConversation(callback) {
     }
     
   try {
-    const response = await fetch("/api/create_conversation", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      credentials: "same-origin",
-    });
-    if (!response.ok) {
-      const errData = await response.json().catch(() => ({}));
-      throw new Error(errData.error || "Failed to create conversation");
-    }
-    const data = await response.json();
-    if (!data.conversation_id) {
-      throw new Error("No conversation_id returned from server.");
-    }
+    pendingConversationCreation = (async () => {
+      const response = await fetch("/api/create_conversation", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "same-origin",
+      });
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to create conversation");
+      }
+      const data = await response.json();
+      if (!data.conversation_id) {
+        throw new Error("No conversation_id returned from server.");
+      }
 
-    currentConversationId = data.conversation_id;
-    // Reset scope lock for new conversation
-    resetScopeLock();
-    // Add to list (pass empty classifications for new convo)
-    addConversationToList(data.conversation_id, data.title /* Use title from API if provided */, []);
-    
-    // Don't call selectConversation here if we're about to send a message
-    // because selectConversation clears the chatbox, which would remove
-    // the user message that's about to be appended by actuallySendMessage
-    // Instead, just update the UI elements directly
-    window.currentConversationId = data.conversation_id;
-    const titleEl = document.getElementById("current-conversation-title");
-    if (titleEl) {
-      titleEl.textContent = data.title || "New Conversation";
-    }
-    // Clear classification/tag badges from previous conversation
-    if (currentConversationClassificationsEl) {
-      currentConversationClassificationsEl.innerHTML = "";
-    }
-    updateConversationUrl(data.conversation_id);
-    console.log('[createNewConversation] Created conversation without reload:', data.conversation_id);
+      currentConversationId = data.conversation_id;
+      // Reset scope lock for new conversation
+      resetScopeLock({ preserveSelections });
+      // Add to list (pass empty classifications for new convo)
+      addConversationToList(data.conversation_id, data.title /* Use title from API if provided */, []);
+
+      // Don't call selectConversation here if we're about to send a message
+      // because selectConversation clears the chatbox, which would remove
+      // the user message that's about to be appended by actuallySendMessage
+      // Instead, just update the UI elements directly
+      window.currentConversationId = data.conversation_id;
+      const titleEl = document.getElementById("current-conversation-title");
+      if (titleEl) {
+        titleEl.textContent = data.title || "New Conversation";
+      }
+      // Clear classification/tag badges from previous conversation
+      if (currentConversationClassificationsEl) {
+        currentConversationClassificationsEl.innerHTML = "";
+      }
+      updateConversationUrl(data.conversation_id);
+      console.log('[createNewConversation] Created conversation without reload:', data.conversation_id);
+
+      return data;
+    })();
+
+    const data = await pendingConversationCreation;
 
     // Execute callback if provided (e.g., to send the first message)
     if (typeof callback === "function") {
       callback();
     }
 
-
+    return data;
   } catch (error) {
     console.error("Error creating conversation:", error);
     showToast(`Failed to create a new conversation: ${error.message}`, "danger");
   } finally {
+      pendingConversationCreation = null;
       if (newConversationBtn) newConversationBtn.disabled = false;
   }
 }
@@ -1564,6 +1712,17 @@ if (hideSelectedBtn) {
   hideSelectedBtn.addEventListener("click", bulkHideConversations);
 }
 
+if (exportSelectedBtn) {
+  exportSelectedBtn.addEventListener("click", () => {
+    if (window.chatExport && window.chatExport.openExportWizard) {
+      const selectedIds = Array.from(selectedConversations);
+      if (selectedIds.length > 0) {
+        window.chatExport.openExportWizard(selectedIds, false);
+      }
+    }
+  });
+}
+
 // Helper function to set show hidden conversations state and return a promise
 export function setShowHiddenConversations(value) {
   showHiddenConversations = value;
@@ -1615,6 +1774,8 @@ window.chatConversations = {
   loadConversations,
   highlightSelectedConversation,
   addConversationToList,
+  markConversationRead,
+  setConversationUnreadState,
   deleteConversation,
   toggleConversationSelection,
   deleteSelectedConversations,

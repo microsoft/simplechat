@@ -342,22 +342,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
         </button>
       </li>
     {% endif %}
-    {% if app_settings.enable_retention_policy_group %}
-    <li class="nav-item d-none" role="presentation" id="group-settings-tab-nav">
-      <button
-        class="nav-link"
-        id="group-settings-tab-btn"
-        data-bs-toggle="tab"
-        data-bs-target="#group-settings-tab"
-        type="button"
-        role="tab"
-        aria-controls="group-settings-tab"
-        aria-selected="false"
-      >
-        Settings
-      </button>
-    </li>
-    {% endif %}
   </ul>
 
   <!-- Tab Panes -->
@@ -796,33 +780,42 @@ app_settings.app_title }} {% endblock %} {% block head %}
         <div id="group-agents-permission-warning" class="alert alert-warning d-none">
           You do not have permission to manage group agents.
         </div>
-        <div class="mb-3">
+        <div class="d-flex align-items-center gap-2 mb-3">
           <input
             type="search"
             class="form-control"
             id="group-agents-search"
             placeholder="Search group agents by name or description..."
           />
+          <div class="btn-group btn-group-sm" role="group" aria-label="View toggle">
+            <input type="radio" class="btn-check" name="groupAgentsViewToggle" id="groupAgents-view-list" value="list" autocomplete="off" checked>
+            <label class="btn btn-outline-secondary" for="groupAgents-view-list" title="List view"><i class="bi bi-list-ul"></i></label>
+            <input type="radio" class="btn-check" name="groupAgentsViewToggle" id="groupAgents-view-grid" value="grid" autocomplete="off">
+            <label class="btn btn-outline-secondary" for="groupAgents-view-grid" title="Grid view"><i class="bi bi-grid-3x3-gap"></i></label>
+          </div>
         </div>
-        <table class="table table-striped" id="group-agents-table">
-          <thead>
-            <tr>
-              <th>Display Name</th>
-              <th>Description</th>
-              <th style="width: 160px;">Actions</th>
-            </tr>
-          </thead>
-          <tbody id="group-agents-table-body">
-            <tr class="table-loading-row">
-              <td colspan="3">
-                <div class="spinner-border spinner-border-sm me-2" role="status">
-                  <span class="visually-hidden">Loading...</span>
-                </div>
-                Select a group to load agents.
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <div id="group-agents-list-view">
+          <table class="table table-striped item-list-table" id="group-agents-table">
+            <thead>
+              <tr>
+                <th>Display Name</th>
+                <th>Description</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="group-agents-table-body">
+              <tr class="table-loading-row">
+                <td colspan="3">
+                  <div class="spinner-border spinner-border-sm me-2" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                  </div>
+                  Select a group to load agents.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div id="group-agents-grid-view" class="row g-3 d-none"></div>
       </div>
       <div id="group-agents-error"></div>
     </div>
@@ -846,33 +839,42 @@ app_settings.app_title }} {% endblock %} {% block head %}
           <div class="d-flex justify-content-between align-items-center mb-2">
             <button class="btn btn-success btn-sm" id="create-group-plugin-btn">New Action</button>
           </div>
-          <div class="mb-3">
+          <div class="d-flex align-items-center gap-2 mb-3">
             <input
               type="search"
               class="form-control"
               id="group-plugins-search"
               placeholder="Search group actions by name or description..."
             />
+            <div class="btn-group btn-group-sm" role="group" aria-label="View toggle">
+              <input type="radio" class="btn-check" name="groupPluginsViewToggle" id="groupPlugins-view-list" value="list" autocomplete="off" checked>
+              <label class="btn btn-outline-secondary" for="groupPlugins-view-list" title="List view"><i class="bi bi-list-ul"></i></label>
+              <input type="radio" class="btn-check" name="groupPluginsViewToggle" id="groupPlugins-view-grid" value="grid" autocomplete="off">
+              <label class="btn btn-outline-secondary" for="groupPlugins-view-grid" title="Grid view"><i class="bi bi-grid-3x3-gap"></i></label>
+            </div>
           </div>
-          <table class="table table-striped" id="group-plugins-table">
-            <thead>
-              <tr>
-                <th>Display Name</th>
-                <th>Description</th>
-                <th style="width: 140px;">Actions</th>
-              </tr>
-            </thead>
-            <tbody id="group-plugins-table-body">
-              <tr class="table-loading-row">
-                <td colspan="3">
-                  <div class="spinner-border spinner-border-sm me-2" role="status">
-                    <span class="visually-hidden">Loading...</span>
-                  </div>
-                  Select a group to load actions.
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <div id="group-plugins-list-view">
+            <table class="table table-striped item-list-table" id="group-plugins-table">
+              <thead>
+                <tr>
+                  <th>Display Name</th>
+                  <th>Description</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="group-plugins-table-body">
+                <tr class="table-loading-row">
+                  <td colspan="3">
+                    <div class="spinner-border spinner-border-sm me-2" role="status">
+                      <span class="visually-hidden">Loading...</span>
+                    </div>
+                    Select a group to load actions.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div id="group-plugins-grid-view" class="row g-3 d-none"></div>
         </div>
       </template>
     </div>
@@ -1003,6 +1005,21 @@ app_settings.app_title }} {% endblock %} {% block head %}
 <!-- End Container -->
 
 {% include '_multiendpoint_modal.html' %}
+<!-- Item View Modal (shared by agents & actions grid/list view buttons) -->
+<div class="modal fade" id="item-view-modal" tabindex="-1" aria-labelledby="item-view-modal-title" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="item-view-modal-title">View Item</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="item-view-modal-body"></div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- Loading Modal (Keep As Is - Used by Upload) -->
 <div
@@ -2628,7 +2645,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
     // Update UI elements dependent on role (applies to both tabs potentially)
     updateRoleDisplay();
     updateGroupPromptsRoleUI(); // This is specific to prompts tab UI elements
-    loadGroupRetentionSettings(); // Load retention settings
   }
 
   function updateRoleDisplay() {
@@ -2660,140 +2676,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
       uploadSection.style.display = showUpload ? "block" : "none";
     if (uploadHr) uploadHr.style.display = showUpload ? "block" : "none";
 
-    // Control visibility of Settings tab (only for Owners and Admins)
-    const settingsTabNav = document.getElementById('group-settings-tab-nav');
-    const canManageSettings = ['Owner', 'Admin'].includes(userRoleInActiveGroup);
-    if (settingsTabNav) {
-      settingsTabNav.classList.toggle('d-none', !canManageSettings);
-    }
-
     notifyGroupWorkspaceContext();
   }
 
-  /* ===================== GROUP RETENTION POLICY ===================== */
-
-  async function loadGroupRetentionSettings() {
-    if (!activeGroupId) return;
-    
-    const convSelect = document.getElementById('group-conversation-retention-days');
-    const docSelect = document.getElementById('group-document-retention-days');
-    
-    if (!convSelect || !docSelect) return; // Settings tab not available
-    
-    console.log('Loading group retention settings for:', activeGroupId);
-    
-    try {
-      // Fetch organization defaults for group retention
-      const orgDefaultsResp = await fetch('/api/retention-policy/defaults/group');
-      const orgData = await orgDefaultsResp.json();
-      
-      if (orgData.success) {
-        const convDefaultOption = convSelect.querySelector('option[value="default"]');
-        const docDefaultOption = docSelect.querySelector('option[value="default"]');
-        
-        if (convDefaultOption) {
-          convDefaultOption.textContent = `Using organization default (${orgData.default_conversation_label})`;
-        }
-        if (docDefaultOption) {
-          docDefaultOption.textContent = `Using organization default (${orgData.default_document_label})`;
-        }
-        console.log('Loaded org defaults:', orgData);
-      }
-    } catch (error) {
-      console.error('Error loading group retention defaults:', error);
-    }
-    
-    // Load current group's retention policy settings
-    try {
-      const groupResp = await fetch(`/api/groups/${activeGroupId}`);
-      
-      if (!groupResp.ok) {
-        throw new Error(`Failed to fetch group: ${groupResp.status}`);
-      }
-      
-      const groupData = await groupResp.json();
-      console.log('Loaded group data:', groupData);
-      
-      // API returns group object directly (not wrapped in success/group)
-      if (groupData && groupData.retention_policy) {
-        const retentionPolicy = groupData.retention_policy;
-        let convRetention = retentionPolicy.conversation_retention_days;
-        let docRetention = retentionPolicy.document_retention_days;
-        
-        console.log('Found retention policy:', retentionPolicy);
-        
-        // If undefined, use 'default'
-        if (convRetention === undefined || convRetention === null) convRetention = 'default';
-        if (docRetention === undefined || docRetention === null) docRetention = 'default';
-        
-        convSelect.value = convRetention;
-        docSelect.value = docRetention;
-        console.log('Set retention values to:', { conv: convRetention, doc: docRetention });
-      } else {
-        // Set to organization default if no retention policy set
-        console.log('No retention policy found, using defaults');
-        convSelect.value = 'default';
-        docSelect.value = 'default';
-      }
-    } catch (error) {
-      console.error('Error loading group retention settings:', error);
-      // Set defaults on error
-      convSelect.value = 'default';
-      docSelect.value = 'default';
-    }
-  }
-
-  async function saveGroupRetentionSettings() {
-    if (!activeGroupId) {
-      showToast('No active group selected.', 'warning');
-      return;
-    }
-    
-    const convSelect = document.getElementById('group-conversation-retention-days');
-    const docSelect = document.getElementById('group-document-retention-days');
-    const statusSpan = document.getElementById('group-retention-save-status');
-    
-    if (!convSelect || !docSelect) return;
-    
-    const retentionData = {
-      conversation_retention_days: convSelect.value,
-      document_retention_days: docSelect.value
-    };
-    
-    console.log('Saving group retention settings:', retentionData);
-    
-    // Show saving status
-    if (statusSpan) {
-      statusSpan.innerHTML = '<span class="text-info"><i class="bi bi-hourglass-split"></i> Saving...</span>';
-    }
-    
-    try {
-      const response = await fetch(`/api/retention-policy/group/${activeGroupId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(retentionData)
-      });
-      
-      const data = await response.json();
-      console.log('Save response:', data);
-      
-      if (response.ok && data.success) {
-        if (statusSpan) {
-          statusSpan.innerHTML = '<span class="text-success"><i class="bi bi-check-circle-fill"></i> Saved successfully!</span>';
-          setTimeout(() => { statusSpan.innerHTML = ''; }, 3000);
-        }
-        console.log('Group retention settings saved successfully');
-      } else {
-        throw new Error(data.error || 'Failed to save retention settings');
-      }
-    } catch (error) {
-      console.error('Error saving group retention settings:', error);
-      if (statusSpan) {
-        statusSpan.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-circle-fill"></i> Error: ${error.message}</span>`;
-      }
-      showToast(`Error saving retention settings: ${error.message}`, 'danger');
-    }
-  }
 
   /* ===================== GROUP DOCUMENTS ===================== */
 
@@ -3182,6 +3067,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
                     ? doc.keywords.join(", ")
                     : doc.keywords || "N/A"
                 )}</p>
+                <p class="mb-1"><strong>Tags:</strong> ${renderGroupTagBadges(doc.tags || [])}</p>
                 <p class="mb-0"><strong>Abstract:</strong> ${escapeHtml(
                   doc.abstract || "N/A"
                 )}</p>
@@ -4908,6 +4794,29 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const d = document.createElement('div');
     d.textContent = text;
     return d.innerHTML;
+  }
+
+  function renderGroupTagBadges(tags, maxDisplay = 3) {
+    if (!Array.isArray(tags) || tags.length === 0) {
+      return '<span class="text-muted small">No tags</span>';
+    }
+
+    let html = '';
+    const displayTags = tags.slice(0, maxDisplay);
+
+    displayTags.forEach(tagName => {
+      const tag = groupWorkspaceTags.find(t => t.name === tagName);
+      const color = tag && tag.color ? tag.color : '#6c757d';
+      const textClass = isGroupColorLight(color) ? 'text-dark' : 'text-light';
+
+      html += `<span class="tag-badge ${textClass}" style="background-color:${color};" title="${escapeGroupHtml(tagName)}">${escapeGroupHtml(tagName)}</span>`;
+    });
+
+    if (tags.length > maxDisplay) {
+      html += `<span class="badge bg-secondary">+${tags.length - maxDisplay}</span>`;
+    }
+
+    return html;
   }
 
   // --- Tag Management Modal ---

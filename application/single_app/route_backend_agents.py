@@ -24,6 +24,11 @@ from functions_appinsights import log_event
 from functions_group import get_group_model_endpoints, require_active_group
 from json_schema_validation import validate_agent
 from swagger_wrapper import swagger_route, get_auth_security
+from functions_activity_logging import (
+    log_agent_creation,
+    log_agent_update,
+    log_agent_deletion,
+)
 
 bpa = Blueprint('admin_agents', __name__)
 
@@ -150,6 +155,18 @@ def set_user_agents():
     for agent_name in agents_to_delete:
         delete_personal_agent(user_id, agent_name)
     
+    # Log individual agent activities
+    for agent in filtered_agents:
+        a_name = agent.get('name', '')
+        a_id = agent.get('id', '')
+        a_display = agent.get('display_name', a_name)
+        if a_name in current_agent_names:
+            log_agent_update(user_id=user_id, agent_id=a_id, agent_name=a_name, agent_display_name=a_display, scope='personal')
+        else:
+            log_agent_creation(user_id=user_id, agent_id=a_id, agent_name=a_name, agent_display_name=a_display, scope='personal')
+    for agent_name in agents_to_delete:
+        log_agent_deletion(user_id=user_id, agent_id=agent_name, agent_name=agent_name, scope='personal')
+
     log_event("User agents updated", extra={"user_id": user_id, "agents_count": len(filtered_agents)})
     return jsonify({'success': True})
 
@@ -178,6 +195,9 @@ def delete_user_agent(agent_name):
     # Delete from personal_agents container
     delete_personal_agent(user_id, agent_name)
     
+    # Log agent deletion activity
+    log_agent_deletion(user_id=user_id, agent_id=agent_to_delete.get('id', agent_name), agent_name=agent_name, scope='personal')
+
     # Check if there are any agents left and if they match global_selected_agent
     remaining_agents = get_personal_agents(user_id)
     if len(remaining_agents) > 0:
@@ -288,11 +308,12 @@ def create_group_agent_route():
         cleaned_payload.pop(key, None)
 
     try:
-        saved = save_group_agent(active_group, cleaned_payload)
+        saved = save_group_agent(active_group, cleaned_payload, user_id=user_id)
     except Exception as exc:
         debug_print('Failed to save group agent: %s', exc)
         return jsonify({'error': 'Unable to save agent'}), 500
 
+    log_agent_creation(user_id=user_id, agent_id=saved.get('id', ''), agent_name=saved.get('name', ''), agent_display_name=saved.get('display_name', ''), scope='group', group_id=active_group)
     return jsonify(saved), 201
 
 
@@ -356,11 +377,12 @@ def update_group_agent_route(agent_id):
             cleaned_payload.pop(key, None)
 
     try:
-        saved = save_group_agent(active_group, cleaned_payload)
+        saved = save_group_agent(active_group, cleaned_payload, user_id=user_id)
     except Exception as exc:
         debug_print('Failed to update group agent %s: %s', agent_id, exc)
         return jsonify({'error': 'Unable to update agent'}), 500
 
+    log_agent_update(user_id=user_id, agent_id=agent_id, agent_name=saved.get('name', ''), agent_display_name=saved.get('display_name', ''), scope='group', group_id=active_group)
     return jsonify(saved), 200
 
 
@@ -392,6 +414,7 @@ def delete_group_agent_route(agent_id):
 
     if not removed:
         return jsonify({'error': 'Agent not found'}), 404
+    log_agent_deletion(user_id=user_id, agent_id=agent_id, agent_name=agent_id, scope='group', group_id=active_group)
     return jsonify({'message': 'Agent deleted'}), 200
 
 # User endpoint to set selected agent (new model, not legacy default_agent)
@@ -552,10 +575,11 @@ def add_agent():
                 cleaned_agent['id'] = '15b0c92a-741d-42ff-ba0b-367c7ee0c848'
         
         # Save to global agents container
-        result = save_global_agent(cleaned_agent)
+        result = save_global_agent(cleaned_agent, user_id=str(get_current_user_id()))
         if not result:
             return jsonify({'error': 'Failed to save agent.'}), 500
 
+        log_agent_creation(user_id=str(get_current_user_id()), agent_id=cleaned_agent.get('id', ''), agent_name=cleaned_agent.get('name', ''), agent_display_name=cleaned_agent.get('display_name', ''), scope='global')
         log_event("Agent added", extra={"action": "add", "agent": {k: v for k, v in cleaned_agent.items() if k != 'id'}, "user": str(get_current_user_id())})
         # --- HOT RELOAD TRIGGER ---
         setattr(builtins, "kernel_reload_needed", True)
@@ -663,10 +687,11 @@ def edit_agent(agent_name):
             return jsonify({'error': 'Agent not found.'}), 404
         
         # Save the updated agent
-        result = save_global_agent(cleaned_agent)
+        result = save_global_agent(cleaned_agent, user_id=str(get_current_user_id()))
         if not result:
             return jsonify({'error': 'Failed to save agent.'}), 500
 
+        log_agent_update(user_id=str(get_current_user_id()), agent_id=cleaned_agent.get('id', ''), agent_name=agent_name, agent_display_name=cleaned_agent.get('display_name', ''), scope='global')
         log_event(
             f"Agent {agent_name} edited",
             extra={
@@ -708,6 +733,7 @@ def delete_agent(agent_name):
         if not success:
             return jsonify({'error': 'Failed to delete agent.'}), 500
         
+        log_agent_deletion(user_id=str(get_current_user_id()), agent_id=agent_to_delete.get('id', ''), agent_name=agent_name, scope='global')
         log_event("Agent deleted", extra={"action": "delete", "agent_name": agent_name, "user": str(get_current_user_id())})
         # --- HOT RELOAD TRIGGER ---
         setattr(builtins, "kernel_reload_needed", True)

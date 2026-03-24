@@ -246,6 +246,9 @@
                     <button class="btn btn-danger btn-sm me-2" id="delete-selected-btn" style="display: none;" title="Delete selected conversations">
                         <i class="bi bi-trash"></i>
                     </button>
+                    <button class="btn btn-info btn-sm me-2" id="export-selected-btn" style="display: none;" title="Export selected conversations">
+                        <i class="bi bi-download"></i>
+                    </button>
                     <!-- Dock toggle button removed: sidebar is always docked -->
                     <button class="btn btn-primary btn-sm ms-2" id="new-conversation-btn" title="Start a new chat">
                         <i class="bi bi-plus-lg"></i>
@@ -300,9 +303,9 @@
 
             <div class="p-3 border-top flex-shrink-0">
                 
-                 <div class="d-flex align-items-center mb-2 justify-content-between">
+                      <div class="chat-toolbar mb-2">
                     <!-- Left side buttons -->
-                    <div class="d-flex align-items-center flex-wrap gap-2">
+                          <div class="chat-toolbar-actions">
                         {% if settings.enable_image_generation %}
                         <button
                             id="image-generate-btn"
@@ -351,79 +354,106 @@
                     </div>
                     
                     <!-- Right side selectors -->
-                    <div class="d-flex align-items-center gap-2">
-
-                        <!-- TTS Autoplay toggle button -->
-                        {% if app_settings.enable_text_to_speech %}
-                        <button 
-                            id="tts-autoplay-toggle-btn" 
-                            class="btn btn-outline-secondary btn-sm rounded-circle" 
-                            data-bs-toggle="tooltip" 
-                            data-bs-placement="top" 
-                            data-bs-title="Toggle AI voice response"
-                            title="Auto voice response disabled - click to enable"
-                            style="width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center;"
-                        >
-                            <i class="bi bi-volume-mute"></i>
-                        </button>
-                        {% endif %}
-
-                        <!-- Streaming toggle button -->
-                        <button 
-                            id="streaming-toggle-btn" 
-                            class="btn btn-outline-secondary btn-sm rounded-circle" 
-                            data-bs-toggle="tooltip" 
-                            data-bs-placement="top" 
-                            title="Toggle streaming responses."
-                            style="width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center;"
-                        >
-                            <i class="bi bi-lightning"></i>
-                        </button>
-
-                        <!-- Reasoning effort toggle button -->
-                        <button 
-                            id="reasoning-toggle-btn" 
-                            class="btn btn-outline-secondary btn-sm rounded-circle" 
-                            data-bs-toggle="tooltip" 
-                            data-bs-placement="top" 
-                            title="Configure reasoning effort"
-                            style="width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center;"
-                        >
-                            <i class="bi bi-reception-2"></i>
-                        </button>
-
+                    <div class="chat-toolbar-controls">
                         <!-- Prompt Selector -->
+                        <div class="chat-toolbar-selectors">
                         {% if settings.enable_user_workspace or settings.enable_group_workspaces %}
-                        <div id="prompt-selection-container" class="flex-shrink-0" style="display: none;">
-                            <select class="form-select" id="prompt-select"></select>
+                        <div id="prompt-selection-container" class="chat-toolbar-selector" style="display: none;">
+                            <label for="prompt-select" class="visually-hidden">Prompt</label>
+                            <div class="dropdown chat-searchable-select" id="prompt-dropdown">
+                                <button class="form-select chat-searchable-select-button"
+                                        type="button"
+                                        id="prompt-dropdown-button"
+                                        data-bs-toggle="dropdown"
+                                        data-bs-auto-close="outside"
+                                        aria-expanded="false">
+                                    <span class="chat-searchable-select-text text-truncate">Select a Prompt...</span>
+                                </button>
+                                <div class="dropdown-menu p-2 chat-searchable-select-menu" id="prompt-dropdown-menu">
+                                    <div class="chat-searchable-select-search mb-2">
+                                        <input type="text"
+                                               class="form-control form-control-sm"
+                                               placeholder="Search prompts..."
+                                               id="prompt-search-input">
+                                    </div>
+                                    <div class="dropdown-items-container chat-searchable-select-items" id="prompt-dropdown-items"></div>
+                                </div>
+                            </div>
+                            <select class="form-select d-none" id="prompt-select"></select>
                         </div>
                         {% endif %}
 
 
                         <!-- Agent selector -->
-                        <div id="agent-select-container" style="display: none;">
+                        <div id="agent-select-container" class="chat-toolbar-selector" style="display: none;">
                             <label for="agent-select" class="visually-hidden">Agent</label>
-                            <select id="agent-select" class="form-select me-4">
+                            <div class="dropdown chat-searchable-select" id="agent-dropdown">
+                                <button class="form-select chat-searchable-select-button"
+                                        type="button"
+                                        id="agent-dropdown-button"
+                                        data-bs-toggle="dropdown"
+                                        data-bs-auto-close="outside"
+                                        aria-expanded="false">
+                                    <span class="chat-searchable-select-text text-truncate">Select an Agent</span>
+                                </button>
+                                <div class="dropdown-menu p-2 chat-searchable-select-menu" id="agent-dropdown-menu">
+                                    <div class="chat-searchable-select-search mb-2">
+                                        <input type="text"
+                                               class="form-control form-control-sm"
+                                               placeholder="Search agents..."
+                                               id="agent-search-input">
+                                    </div>
+                                    <div class="dropdown-items-container chat-searchable-select-items" id="agent-dropdown-items"></div>
+                                </div>
+                            </div>
+                            <select id="agent-select" class="form-select d-none">
                                 <!-- Agents will be populated dynamically by JS -->
                             </select>
                         </div>
                         
                         
                         <!-- Model selector - right aligned -->
-                        <div id="model-select-container" class="flex-shrink-0">
+                        <div id="model-select-container" class="chat-toolbar-selector">
                             <label for="model-select" class="visually-hidden">Model</label>
-                            <select id="model-select" class="form-select">
-                            {% if enable_multi_model_endpoints %}
-                                {% for model in multi_endpoint_models %}
-                                <option
-                                    value="{{ model.id }}"
-                                    data-endpoint-id="{{ model.endpoint_id }}"
-                                    data-provider="{{ model.provider }}"
-                                    data-deployment-name="{{ model.deployment_name }}"
-                                    title="{{ model.description or model.display_name }}"
-                                    {% if loop.first %}selected{% endif %}
-                                >
-                                    {{ model.display_name }}
+                            <div class="dropdown chat-searchable-select" id="model-dropdown">
+                                <button class="form-select chat-searchable-select-button"
+                                        type="button"
+                                        id="model-dropdown-button"
+                                        data-bs-toggle="dropdown"
+                                        data-bs-auto-close="outside"
+                                        aria-expanded="false">
+                                    <span class="chat-searchable-select-text text-truncate">
+                                    {% if settings.enable_gpt_apim %}
+                                        {% set raw = settings.azure_apim_gpt_deployment or "" %}
+                                        {% set apim_list = raw.split(',') %}
+                                        {% set first_dep = apim_list[0].strip() if apim_list and apim_list[0].strip() else 'Select a Model' %}
+                                        {{ first_dep }}
+                                    {% elif settings.gpt_model.selected %}
+                                        {{ settings.gpt_model.selected[0].modelName }}
+                                    {% else %}
+                                        Select a Model
+                                    {% endif %}
+                                    </span>
+                                </button>
+                                <div class="dropdown-menu p-2 chat-searchable-select-menu" id="model-dropdown-menu">
+                                    <div class="chat-searchable-select-search mb-2">
+                                        <input type="text"
+                                               class="form-control form-control-sm"
+                                               placeholder="Search models..."
+                                               id="model-search-input">
+                                    </div>
+                                    <div class="dropdown-items-container chat-searchable-select-items" id="model-dropdown-items"></div>
+                                </div>
+                            </div>
+                            <select id="model-select" class="form-select d-none">
+                            {% if settings.enable_gpt_apim %}
+                                {# when using APIM, azure_apim_gpt_deployment may be "dep1" or "dep1,dep2,…" #}
+                                {% set raw = settings.azure_apim_gpt_deployment or "" %}
+                                {% set apim_list = raw.split(',') %}
+                                {% for dep in apim_list %}
+                                {% set d = dep.strip() %}
+                                <option value="{{ d }}" {% if loop.first %}selected{% endif %}>
+                                    {{ d }}
                                 </option>
                                 {% endfor %}
                             {% else %}
@@ -450,6 +480,38 @@
                                 {% endif %}
                             {% endif %}
                             </select>
+                        </div>
+
+                        <div class="chat-toolbar-toggles">
+
+                        <!-- Reasoning effort toggle button -->
+                        <button 
+                            id="reasoning-toggle-btn" 
+                            class="btn btn-outline-secondary btn-sm rounded-circle" 
+                            data-bs-toggle="tooltip" 
+                            data-bs-placement="top" 
+                            title="Configure reasoning effort"
+                            style="width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center;"
+                        >
+                            <i class="bi bi-reception-2"></i>
+                        </button>
+
+                        <!-- TTS Autoplay toggle button -->
+                        {% if app_settings.enable_text_to_speech %}
+                        <button 
+                            id="tts-autoplay-toggle-btn" 
+                            class="btn btn-outline-secondary btn-sm rounded-circle" 
+                            data-bs-toggle="tooltip" 
+                            data-bs-placement="top" 
+                            data-bs-title="Toggle AI voice response"
+                            title="Auto voice response disabled - click to enable"
+                            style="width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center;"
+                        >
+                            <i class="bi bi-volume-mute"></i>
+                        </button>
+                        {% endif %}
+
+                        </div>
                         </div>
                     </div>
                 </div>
@@ -481,7 +543,13 @@
                                     <span class="selected-scope-text text-truncate">All</span>
                                 </button>
                                 <div class="dropdown-menu p-2" id="scope-dropdown-menu" style="width: 280px; max-height: 400px; overflow-y: auto;">
-                                    <div id="scope-dropdown-items">
+                                    <div class="chat-dropdown-search mb-2">
+                                        <input type="text"
+                                               class="form-control form-control-sm"
+                                               placeholder="Search workspaces..."
+                                               id="scope-search-input">
+                                    </div>
+                                    <div class="dropdown-items-container" id="scope-dropdown-items">
                                         <!-- Populated by JS from window.userGroups and window.userVisiblePublicWorkspaces -->
                                     </div>
                                 </div>
@@ -501,6 +569,12 @@
                                     <span class="selected-tags-text text-truncate">All Tags</span>
                                 </button>
                                 <div class="dropdown-menu p-2" id="tags-dropdown-menu" style="width: 250px; max-height: 300px; overflow-y: auto;">
+                                    <div class="chat-dropdown-search mb-2">
+                                        <input type="text"
+                                               class="form-control form-control-sm"
+                                               placeholder="Search tags..."
+                                               id="tags-search-input">
+                                    </div>
                                     <div class="dropdown-items-container" id="tags-dropdown-items">
                                         <!-- Tags will be populated here -->
                                     </div>
@@ -975,6 +1049,38 @@
     </div>
 </div>
 
+<!-- Export Wizard Modal -->
+<div class="modal fade" id="export-wizard-modal" tabindex="-1" aria-labelledby="export-wizard-modal-label" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="export-wizard-modal-label">
+                    <i class="bi bi-download me-2"></i>Export Conversations
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Step indicators -->
+                <div id="export-steps-container" class="d-flex justify-content-center mb-4">
+                    <!-- Populated dynamically by chat-export.js -->
+                </div>
+                <!-- Step content -->
+                <div id="export-wizard-body">
+                    <!-- Populated dynamically by chat-export.js -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" id="export-prev-btn" style="display: none;">
+                    <i class="bi bi-arrow-left me-1"></i>Previous
+                </button>
+                <button type="button" class="btn btn-primary" id="export-next-btn">
+                    Next<i class="bi bi-arrow-right ms-1"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="toast-container position-fixed top-0 end-0 p-3" id="toast-container"></div>
 
 <!-- Scope Lock/Unlock Modal (dual-mode: content set dynamically by JS) -->
@@ -1011,8 +1117,8 @@
     window.activeGroupId = "{{ active_group_id }}";
     window.activeGroupName = "{{ active_group_name }}";
     window.activePublicWorkspaceId = "{{ active_public_workspace_id }}";
-    window.userGroups = {{ user_groups|tojson|safe }};
-    window.userVisiblePublicWorkspaces = {{ user_visible_public_workspaces|tojson|safe }};
+    window.userGroups = JSON.parse('{{ user_groups|tojson|safe }}');
+    window.userVisiblePublicWorkspaces = JSON.parse('{{ user_visible_public_workspaces|tojson|safe }}');
     window.enableEnhancedCitations = "{{ enable_enhanced_citations }}";
     window.enable_document_classification = "{{ enable_document_classification }}";
     window.classification_categories = JSON.parse('{{ settings.document_classification_categories|tojson(indent=None)|safe }}' || '[]');
@@ -1028,14 +1134,15 @@
 
     // App settings for feature detection
     window.appSettings = {
-        enable_text_to_speech: {{ 'true' if app_settings.enable_text_to_speech else 'false' }},
-        enable_speech_to_text_input: {{ 'true' if app_settings.enable_speech_to_text_input else 'false' }},
-        enable_web_search_user_notice: {{ 'true' if settings.enable_web_search_user_notice else 'false' }},
-        enforce_workspace_scope_lock: {{ 'true' if settings.enforce_workspace_scope_lock else 'false' }}
-        enable_multi_model_endpoints: {{ 'true' if enable_multi_model_endpoints else 'false' }}
+        enable_text_to_speech: JSON.parse('{{ 'true' if app_settings.enable_text_to_speech else 'false' }}'),
+        enable_speech_to_text_input: JSON.parse('{{ 'true' if app_settings.enable_speech_to_text_input else 'false' }}'),
+        enable_web_search_user_notice: JSON.parse('{{ 'true' if settings.enable_web_search_user_notice else 'false' }}'),
+        enforce_workspace_scope_lock: JSON.parse('{{ 'true' if settings.enforce_workspace_scope_lock else 'false' }}'),
+        enable_multi_model_endpoints: JSON.parse('{{ 'true' if enable_multi_model_endpoints else 'false' }}'),
+        enable_thoughts: JSON.parse('{{ 'true' if settings.enable_thoughts else 'false' }}')
     };
 
-    window.multiEndpointNotice = {{ multi_endpoint_notice|tojson()|safe }};
+    window.multiEndpointNotice = JSON.parse('{{ multi_endpoint_notice|tojson()|safe }}');
 
     // Layout related globals (can stay here or move entirely into chat-layout.js if preferred)
     let splitInstance = null;
@@ -1068,6 +1175,7 @@
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-search-modal.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-reasoning.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-retry.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/chat/chat-export.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-onload.js') }}"></script>
 {% if settings.enable_semantic_kernel %}
     <script type="module" src="{{ url_for('static', filename='js/chat/chat-agents.js') }}"></script>
