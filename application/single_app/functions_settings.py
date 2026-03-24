@@ -25,6 +25,7 @@ def get_settings(use_cosmos=False):
         'enable_text_plugin': True,
         'enable_default_embedding_model_plugin': False,
         'enable_fact_memory_plugin': True,
+        'enable_tabular_processing_plugin': False,
         'enable_multi_agent_orchestration': False,
         'max_rounds_per_agent': 1,
         'enable_semantic_kernel': False,
@@ -130,9 +131,11 @@ def get_settings(use_cosmos=False):
         'enable_group_workspaces': True,
         'enable_group_creation': True,
         'require_member_of_create_group': False,
+        'require_owner_for_group_agent_management': False,
         'enable_public_workspaces': False,
         'require_member_of_create_public_workspace': False,
         'enable_file_sharing': False,
+        'enforce_workspace_scope_lock': True,
 
         # Multimedia
         'enable_video_file_support': False,
@@ -203,6 +206,9 @@ def get_settings(use_cosmos=False):
         'require_member_of_feedback_admin': False,
         'enable_conversation_archiving': False,
 
+        # Processing Thoughts
+        'enable_thoughts': False,
+
         # Search and Extract
         'azure_ai_search_endpoint': '',
         'azure_ai_search_key': '',
@@ -256,8 +262,12 @@ def get_settings(use_cosmos=False):
 
         # Other
         'max_file_size_mb': 150,
+        'tabular_preview_max_blob_size_mb': 200,
         'conversation_history_limit': 10,
         'default_system_prompt': '',
+        # Access denied message shown on the home page for signed-in users who lack required roles.
+        # Default is hard-coded; admins can override via Admin Settings (persisted in Cosmos DB).
+        'access_denied_message': 'You are logged in but do not have the required permissions to access this application.\nPlease contact an administrator for access.',
         'enable_file_processing_logs': True,
         'file_processing_logs_timer_enabled': False,
         'file_timer_value': 1,
@@ -266,7 +276,7 @@ def get_settings(use_cosmos=False):
         'enable_external_healthcheck': False,
         
         # Streaming settings
-        'streamingEnabled': False,
+        'streamingEnabled': True,
         
         # Reasoning effort settings (per-model)
         'reasoningEffortSettings': {},
@@ -389,6 +399,9 @@ def update_settings(new_settings):
         # always fetch the latest settings doc, which includes your merges
         settings_item = get_settings()
         settings_item.update(new_settings)
+        # Dependency enforcement: tabular processing requires enhanced citations
+        if not settings_item.get('enable_enhanced_citations', False):
+            settings_item['enable_tabular_processing_plugin'] = False
         cosmos_settings_container.upsert_item(settings_item)
         cache_updater = getattr(app_settings_cache, "update_settings_cache", None)
         if callable(cache_updater):
@@ -549,15 +562,22 @@ def get_user_settings(user_id):
     from flask import session
     try:
         doc = cosmos_user_settings_container.read_item(item=user_id, partition_key=user_id)
+        updated = False
+
         # Ensure the settings key exists for consistency downstream
-        if 'settings' not in doc:
+        if 'settings' not in doc or not isinstance(doc.get('settings'), dict):
+            previous_type = type(doc.get('settings')).__name__ if 'settings' in doc else 'missing'
             doc['settings'] = {}
+            updated = True
+            log_event("[UserSettings] Malformed settings repaired", {
+                "user_id": user_id,
+                "previous_type": previous_type,
+            })
         
         # Try to update email/display_name if missing and available in session
         user = session.get("user", {})
         email = user.get("preferred_username") or user.get("email")
         display_name = user.get("name")
-        updated = False
         if email and doc.get("email") != email:
             doc["email"] = email
             updated = True

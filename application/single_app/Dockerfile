@@ -7,15 +7,13 @@ FROM mcr.microsoft.com/azurelinux/base/python:3.12 AS builder
 ARG UID
 ARG GID
 
-# Setup pip.conf if has content
-COPY pip.conf.d/ /etc/pip.conf.d
+# Copy pip.conf into the image for pip configuration
+COPY docker-customization/pip.conf /etc/pip.conf
 
 # CA
 # copy certs to /etc/pki/ca-trust/source/anchors
-COPY custom-ca-certificates/ /etc/ssl/certs
-RUN mkdir -p /etc/pki/ca-trust/source/anchors/ \
-    && update-ca-trust enable \
-    && cp /etc/ssl/certs/*.crt /etc/pki/ca-trust/source/anchors/ \
+COPY docker-customization/custom-ca-certificates/ /etc/pki/ca-trust/source/anchors
+RUN update-ca-trust enable \
     && update-ca-trust extract
 
 ENV PYTHONUNBUFFERED=1
@@ -44,6 +42,7 @@ ARG UID
 ARG GID
 
 COPY --from=builder /etc/pki /etc/pki
+COPY --from=builder /etc/ssl/certs /etc/ssl/certs
 COPY --from=builder /home/nonroot /home/nonroot
 COPY --from=builder /etc/passwd /etc/passwd
 COPY --from=builder /etc/group /etc/group
@@ -59,8 +58,11 @@ ENV HOME=/home/nonroot \
     PYTHONIOENCODING=utf-8 \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
-    PYTHONUNBUFFERED=1
-
+    PYTHONUNBUFFERED=1 \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt \
+    SSL_CERT_DIR=/etc/ssl/certs \
+    REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-bundle.crt
+    
 WORKDIR /app
 
 # Copy application code and set ownership
@@ -69,4 +71,4 @@ COPY --chown=${UID}:${GID} application/single_app ./
 # Expose port
 EXPOSE 5000
 
-ENTRYPOINT [ "python3", "/app/app.py" ]
+ENTRYPOINT ["python3", "-m", "gunicorn", "-c", "/app/gunicorn.conf.py", "app:app"]

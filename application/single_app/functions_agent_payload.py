@@ -45,6 +45,21 @@ _STRING_DEFAULT_FIELDS = [
     "azure_agent_apim_gpt_deployment",
     "azure_agent_apim_gpt_api_version",
 ]
+_SERVER_MANAGED_FIELDS = [
+    "_attachments",
+    "_etag",
+    "_rid",
+    "_self",
+    "_ts",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "last_updated",
+    "user_id",
+    "group_id",
+]
 
 _MAX_FIELD_LENGTHS = {
     "name": 100,
@@ -146,12 +161,18 @@ def _validate_foundry_field_lengths(foundry_settings: Dict[str, Any]) -> None:
         if isinstance(value, str) and len(value) > max_len:
             raise AgentPayloadError(f"azure_ai_foundry.{field} exceeds maximum length of {max_len}.")
 
+
+def _strip_server_managed_fields(payload: Dict[str, Any]) -> None:
+    for field in _SERVER_MANAGED_FIELDS:
+        payload.pop(field, None)
+
 def sanitize_agent_payload(agent: Dict[str, Any]) -> Dict[str, Any]:
     """Return a sanitized copy of the agent payload or raise AgentPayloadError."""
     if not isinstance(agent, dict):
         raise AgentPayloadError("Agent payload must be an object.")
 
     sanitized = deepcopy(agent)
+    _strip_server_managed_fields(sanitized)
     _normalize_text_fields(sanitized)
 
     for field in _STRING_DEFAULT_FIELDS:

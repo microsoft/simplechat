@@ -170,6 +170,60 @@ def log_web_search_consent_acceptance(
         debug_print(f"Error logging web search consent acceptance for user {user_id}: {str(e)}")
 
 
+def log_index_auto_fix(
+    index_type: str,
+    missing_fields: list,
+    user_id: str = 'system',
+    admin_email: Optional[str] = None
+) -> None:
+    """
+    Log automatic Azure AI Search index field fixes to activity_logs and App Insights.
+
+    Args:
+        index_type (str): Type of index fixed ('user', 'group', or 'public').
+        missing_fields (list): List of field names that were added.
+        user_id (str, optional): User ID triggering the fix. Defaults to 'system'.
+        admin_email (str, optional): Admin email if triggered by admin.
+    """
+    try:
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'activity_type': 'index_auto_fix',
+            'user_id': user_id,
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'index_type': index_type,
+            'missing_fields': missing_fields,
+            'fields_added': len(missing_fields),
+            'trigger': 'automatic',
+            'description': f"Automatically added {len(missing_fields)} missing field(s) to {index_type} index: {', '.join(missing_fields)}"
+        }
+
+        if admin_email:
+            activity_record['admin_email'] = admin_email
+
+        cosmos_activity_logs_container.create_item(body=activity_record)
+
+        log_event(
+            message=f"Auto-fixed {index_type} index: added {len(missing_fields)} field(s)",
+            extra=activity_record,
+            level=logging.INFO
+        )
+        debug_print(f"Logged index auto-fix for {index_type} index: {', '.join(missing_fields)}")
+
+    except Exception as e:
+        log_event(
+            message=f"Error logging index auto-fix: {str(e)}",
+            extra={
+                'user_id': user_id,
+                'index_type': index_type,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+        debug_print(f"Error logging index auto-fix for {index_type}: {str(e)}")
+
+
 def log_document_upload(
     user_id: str,
     container_type: str,
@@ -1339,3 +1393,332 @@ def log_retention_policy_force_push(
             level=logging.ERROR
         )
         debug_print(f"⚠️  Warning: Failed to log retention policy force push: {str(e)}")
+
+
+# === AGENT & ACTION ACTIVITY LOGGING ===
+
+def log_agent_creation(
+    user_id: str,
+    agent_id: str,
+    agent_name: str,
+    agent_display_name: Optional[str] = None,
+    scope: str = 'personal',
+    group_id: Optional[str] = None
+) -> None:
+    """
+    Log an agent creation activity.
+
+    Args:
+        user_id: The ID of the user who created the agent
+        agent_id: The unique ID of the new agent
+        agent_name: The name of the agent
+        agent_display_name: The display name of the agent
+        scope: 'personal', 'group', or 'global'
+        group_id: The group ID (only for group scope)
+    """
+    try:
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': user_id,
+            'activity_type': 'agent_creation',
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'entity_type': 'agent',
+            'operation': 'create',
+            'entity': {
+                'id': agent_id,
+                'name': agent_name,
+                'display_name': agent_display_name or agent_name
+            },
+            'workspace_type': scope,
+            'workspace_context': {}
+        }
+        if scope == 'group' and group_id:
+            activity_record['workspace_context']['group_id'] = group_id
+
+        cosmos_activity_logs_container.create_item(body=activity_record)
+        log_event(
+            message=f"Agent created: {agent_name} ({scope}) by user {user_id}",
+            extra=activity_record,
+            level=logging.INFO
+        )
+        debug_print(f"✅ Agent creation logged: {agent_name} ({scope})")
+    except Exception as e:
+        log_event(
+            message=f"Error logging agent creation: {str(e)}",
+            extra={'user_id': user_id, 'agent_id': agent_id, 'scope': scope, 'error': str(e)},
+            level=logging.ERROR
+        )
+        debug_print(f"⚠️  Warning: Failed to log agent creation: {str(e)}")
+
+
+def log_agent_update(
+    user_id: str,
+    agent_id: str,
+    agent_name: str,
+    agent_display_name: Optional[str] = None,
+    scope: str = 'personal',
+    group_id: Optional[str] = None
+) -> None:
+    """
+    Log an agent update activity.
+
+    Args:
+        user_id: The ID of the user who updated the agent
+        agent_id: The unique ID of the agent
+        agent_name: The name of the agent
+        agent_display_name: The display name of the agent
+        scope: 'personal', 'group', or 'global'
+        group_id: The group ID (only for group scope)
+    """
+    try:
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': user_id,
+            'activity_type': 'agent_update',
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'entity_type': 'agent',
+            'operation': 'update',
+            'entity': {
+                'id': agent_id,
+                'name': agent_name,
+                'display_name': agent_display_name or agent_name
+            },
+            'workspace_type': scope,
+            'workspace_context': {}
+        }
+        if scope == 'group' and group_id:
+            activity_record['workspace_context']['group_id'] = group_id
+
+        cosmos_activity_logs_container.create_item(body=activity_record)
+        log_event(
+            message=f"Agent updated: {agent_name} ({scope}) by user {user_id}",
+            extra=activity_record,
+            level=logging.INFO
+        )
+        debug_print(f"✅ Agent update logged: {agent_name} ({scope})")
+    except Exception as e:
+        log_event(
+            message=f"Error logging agent update: {str(e)}",
+            extra={'user_id': user_id, 'agent_id': agent_id, 'scope': scope, 'error': str(e)},
+            level=logging.ERROR
+        )
+        debug_print(f"⚠️  Warning: Failed to log agent update: {str(e)}")
+
+
+def log_agent_deletion(
+    user_id: str,
+    agent_id: str,
+    agent_name: str,
+    scope: str = 'personal',
+    group_id: Optional[str] = None
+) -> None:
+    """
+    Log an agent deletion activity.
+
+    Args:
+        user_id: The ID of the user who deleted the agent
+        agent_id: The unique ID of the agent
+        agent_name: The name of the agent
+        scope: 'personal', 'group', or 'global'
+        group_id: The group ID (only for group scope)
+    """
+    try:
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': user_id,
+            'activity_type': 'agent_deletion',
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'entity_type': 'agent',
+            'operation': 'delete',
+            'entity': {
+                'id': agent_id,
+                'name': agent_name
+            },
+            'workspace_type': scope,
+            'workspace_context': {}
+        }
+        if scope == 'group' and group_id:
+            activity_record['workspace_context']['group_id'] = group_id
+
+        cosmos_activity_logs_container.create_item(body=activity_record)
+        log_event(
+            message=f"Agent deleted: {agent_name} ({scope}) by user {user_id}",
+            extra=activity_record,
+            level=logging.INFO
+        )
+        debug_print(f"✅ Agent deletion logged: {agent_name} ({scope})")
+    except Exception as e:
+        log_event(
+            message=f"Error logging agent deletion: {str(e)}",
+            extra={'user_id': user_id, 'agent_id': agent_id, 'scope': scope, 'error': str(e)},
+            level=logging.ERROR
+        )
+        debug_print(f"⚠️  Warning: Failed to log agent deletion: {str(e)}")
+
+
+def log_action_creation(
+    user_id: str,
+    action_id: str,
+    action_name: str,
+    action_type: Optional[str] = None,
+    scope: str = 'personal',
+    group_id: Optional[str] = None
+) -> None:
+    """
+    Log an action/plugin creation activity.
+
+    Args:
+        user_id: The ID of the user who created the action
+        action_id: The unique ID of the new action
+        action_name: The name of the action
+        action_type: The type of the action (e.g., 'openapi', 'sql_query')
+        scope: 'personal', 'group', or 'global'
+        group_id: The group ID (only for group scope)
+    """
+    try:
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': user_id,
+            'activity_type': 'action_creation',
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'entity_type': 'action',
+            'operation': 'create',
+            'entity': {
+                'id': action_id,
+                'name': action_name,
+                'type': action_type
+            },
+            'workspace_type': scope,
+            'workspace_context': {}
+        }
+        if scope == 'group' and group_id:
+            activity_record['workspace_context']['group_id'] = group_id
+
+        cosmos_activity_logs_container.create_item(body=activity_record)
+        log_event(
+            message=f"Action created: {action_name} ({scope}) by user {user_id}",
+            extra=activity_record,
+            level=logging.INFO
+        )
+        debug_print(f"✅ Action creation logged: {action_name} ({scope})")
+    except Exception as e:
+        log_event(
+            message=f"Error logging action creation: {str(e)}",
+            extra={'user_id': user_id, 'action_id': action_id, 'scope': scope, 'error': str(e)},
+            level=logging.ERROR
+        )
+        debug_print(f"⚠️  Warning: Failed to log action creation: {str(e)}")
+
+
+def log_action_update(
+    user_id: str,
+    action_id: str,
+    action_name: str,
+    action_type: Optional[str] = None,
+    scope: str = 'personal',
+    group_id: Optional[str] = None
+) -> None:
+    """
+    Log an action/plugin update activity.
+
+    Args:
+        user_id: The ID of the user who updated the action
+        action_id: The unique ID of the action
+        action_name: The name of the action
+        action_type: The type of the action
+        scope: 'personal', 'group', or 'global'
+        group_id: The group ID (only for group scope)
+    """
+    try:
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': user_id,
+            'activity_type': 'action_update',
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'entity_type': 'action',
+            'operation': 'update',
+            'entity': {
+                'id': action_id,
+                'name': action_name,
+                'type': action_type
+            },
+            'workspace_type': scope,
+            'workspace_context': {}
+        }
+        if scope == 'group' and group_id:
+            activity_record['workspace_context']['group_id'] = group_id
+
+        cosmos_activity_logs_container.create_item(body=activity_record)
+        log_event(
+            message=f"Action updated: {action_name} ({scope}) by user {user_id}",
+            extra=activity_record,
+            level=logging.INFO
+        )
+        debug_print(f"✅ Action update logged: {action_name} ({scope})")
+    except Exception as e:
+        log_event(
+            message=f"Error logging action update: {str(e)}",
+            extra={'user_id': user_id, 'action_id': action_id, 'scope': scope, 'error': str(e)},
+            level=logging.ERROR
+        )
+        debug_print(f"⚠️  Warning: Failed to log action update: {str(e)}")
+
+
+def log_action_deletion(
+    user_id: str,
+    action_id: str,
+    action_name: str,
+    action_type: Optional[str] = None,
+    scope: str = 'personal',
+    group_id: Optional[str] = None
+) -> None:
+    """
+    Log an action/plugin deletion activity.
+
+    Args:
+        user_id: The ID of the user who deleted the action
+        action_id: The unique ID of the action
+        action_name: The name of the action
+        action_type: The type of the action
+        scope: 'personal', 'group', or 'global'
+        group_id: The group ID (only for group scope)
+    """
+    try:
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': user_id,
+            'activity_type': 'action_deletion',
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'entity_type': 'action',
+            'operation': 'delete',
+            'entity': {
+                'id': action_id,
+                'name': action_name,
+                'type': action_type
+            },
+            'workspace_type': scope,
+            'workspace_context': {}
+        }
+        if scope == 'group' and group_id:
+            activity_record['workspace_context']['group_id'] = group_id
+
+        cosmos_activity_logs_container.create_item(body=activity_record)
+        log_event(
+            message=f"Action deleted: {action_name} ({scope}) by user {user_id}",
+            extra=activity_record,
+            level=logging.INFO
+        )
+        debug_print(f"✅ Action deletion logged: {action_name} ({scope})")
+    except Exception as e:
+        log_event(
+            message=f"Error logging action deletion: {str(e)}",
+            extra={'user_id': user_id, 'action_id': action_id, 'scope': scope, 'error': str(e)},
+            level=logging.ERROR
+        )
+        debug_print(f"⚠️  Warning: Failed to log action deletion: {str(e)}")

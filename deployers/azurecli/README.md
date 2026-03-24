@@ -234,3 +234,14 @@ Cleanup behavior:
 - That removes private endpoints, private DNS zones, and the deployment VNet only when those resources were created inside that deployment resource group.
 - If the deployment reused an existing VNet, existing subnets, or customer-managed private DNS zones outside the deployment resource group, those shared resources are not deleted.
 - The destroy script also removes the Entra application registration and the Simple Chat security groups created by the Azure CLI deployer.
+
+## Runtime Startup Behavior
+
+- This deployer configures Azure App Service to run the published **container image**.
+- Gunicorn is already started by the container entrypoint in `application/single_app/Dockerfile`.
+- You do **not** need to add anything to App Service Stack Settings Startup command when using this deployer.
+- If you manually switch to a native Python App Service deployment instead of containers, deploy the `application/single_app` folder and use:
+
+```bash
+python -m gunicorn -c gunicorn.conf.py app:app
+```

@@ -1,6 +1,8 @@
 // static/js/workspace/workspace-documents.js
 
 import { escapeHtml } from "./workspace-utils.js";
+import { initializeTags, renderTagBadges, loadWorkspaceTags } from "./workspace-tags.js";
+import { getSelectedTagsArray, setSelectedTags, clearSelectedTags, updateDocumentTagsDisplay, loadWorkspaceTags as loadTagManagementTags } from './workspace-tag-management.js';
 
 // ------------- State Variables -------------
 let docsCurrentPage = 1;
@@ -10,6 +12,9 @@ let docsClassificationFilter = '';
 let docsAuthorFilter = ''; // Added for Author filter
 let docsKeywordsFilter = ''; // Added for Keywords filter
 let docsAbstractFilter = ''; // Added for Abstract filter
+let docsTagsFilter = ''; // Added for Tags filter
+let docsSortBy = '_ts';    // Current sort field
+let docsSortOrder = 'desc'; // Current sort order
 const activePolls = new Set();
 
 // ------------- DOM Elements (Documents Tab) -------------
@@ -38,9 +43,16 @@ const docsClassificationFilterSelect = (window.enable_document_classification ==
 const docsAuthorFilterInput = document.getElementById('docs-author-filter');
 const docsKeywordsFilterInput = document.getElementById('docs-keywords-filter');
 const docsAbstractFilterInput = document.getElementById('docs-abstract-filter');
+const docsTagsFilterSelect = document.getElementById('docs-tags-filter');
 // Buttons (get them regardless, they might be rendered in different places)
 const docsApplyFiltersBtn = document.getElementById('docs-apply-filters-btn');
 const docsClearFiltersBtn = document.getElementById('docs-clear-filters-btn');
+
+// Expose state variables globally for workspace-tags.js
+window.docsCurrentPage = docsCurrentPage;
+window.docsTagsFilter = docsTagsFilter;
+window.selectedDocuments = selectedDocuments;
+window.fetchUserDocuments = fetchUserDocuments;
 
 // ------------- Helper Functions -------------
 function isColorLight(hexColor) {
@@ -92,6 +104,14 @@ if (docsApplyFiltersBtn) {
         docsAuthorFilter = docsAuthorFilterInput ? docsAuthorFilterInput.value.trim() : '';
         docsKeywordsFilter = docsKeywordsFilterInput ? docsKeywordsFilterInput.value.trim() : '';
         docsAbstractFilter = docsAbstractFilterInput ? docsAbstractFilterInput.value.trim() : '';
+        
+        // Get selected tags
+        if (docsTagsFilterSelect) {
+            const selectedOptions = Array.from(docsTagsFilterSelect.selectedOptions);
+            docsTagsFilter = selectedOptions.map(opt => opt.value).join(',');
+        } else {
+            docsTagsFilter = '';
+        }
 
         docsCurrentPage = 1; // Reset to first page
         fetchUserDocuments();
@@ -120,12 +140,19 @@ if (docsClearFiltersBtn) {
         if (docsAuthorFilterInput) docsAuthorFilterInput.value = '';
         if (docsKeywordsFilterInput) docsKeywordsFilterInput.value = '';
         if (docsAbstractFilterInput) docsAbstractFilterInput.value = '';
+        if (docsTagsFilterSelect) {
+            Array.from(docsTagsFilterSelect.options).forEach(opt => opt.selected = false);
+        }
 
         docsSearchTerm = '';
         docsClassificationFilter = '';
         docsAuthorFilter = '';
         docsKeywordsFilter = '';
         docsAbstractFilter = '';
+        docsTagsFilter = '';
+        docsSortBy = '_ts';
+        docsSortOrder = 'desc';
+        updateListSortIcons();
 
         docsCurrentPage = 1; // Reset to first page
         fetchUserDocuments();
@@ -159,6 +186,37 @@ if (docsSearchInput) {
     }
 });
 
+// Sortable column headers in list view
+document.querySelectorAll('#documents-table .sortable-header').forEach(th => {
+    th.addEventListener('click', () => {
+        const field = th.getAttribute('data-sort-field');
+        if (docsSortBy === field) {
+            docsSortOrder = docsSortOrder === 'asc' ? 'desc' : 'asc';
+        } else {
+            docsSortBy = field;
+            docsSortOrder = 'asc';
+        }
+        docsCurrentPage = 1;
+        updateListSortIcons();
+        fetchUserDocuments();
+    });
+});
+
+function updateListSortIcons() {
+    document.querySelectorAll('#documents-table .sortable-header').forEach(th => {
+        const field = th.getAttribute('data-sort-field');
+        const icon = th.querySelector('.sort-icon');
+        if (!icon) return;
+        if (field === docsSortBy) {
+            icon.className = docsSortOrder === 'asc'
+                ? 'bi bi-sort-alpha-down small sort-icon'
+                : 'bi bi-sort-alpha-up small sort-icon';
+        } else {
+            icon.className = 'bi bi-arrow-down-up text-muted small sort-icon';
+        }
+    });
+}
+
 
 // Metadata Modal Form Submission
 if (docMetadataForm && docMetadataModalEl) { // Check both exist
@@ -184,6 +242,9 @@ if (docMetadataForm && docMetadataModalEl) { // Check both exist
         if (payload.authors) {
             payload.authors = payload.authors.split(",").map(a => a.trim()).filter(Boolean);
         } else { payload.authors = []; }
+        
+        // Get selected tags from the tag management system
+        payload.tags = getSelectedTagsArray();
 
         // Add classification if enabled AND selected (handle 'none' value)
         // Use the window flag to check if classification is enabled
@@ -206,6 +267,7 @@ if (docMetadataForm && docMetadataModalEl) { // Check both exist
             .then(updatedDoc => {
                 if (docMetadataModalEl) docMetadataModalEl.hide();
                 fetchUserDocuments(); // Refresh the table
+                loadWorkspaceTags(); // Refresh tag counts and grid view
             })
             .catch(err => {
                 console.error("Error updating document:", err);
@@ -450,9 +512,20 @@ function fetchUserDocuments() {
     if (docsAbstractFilter) {
         params.append('abstract', docsAbstractFilter); // Assumes backend uses 'abstract'
     }
+    // Add tags filter if selected
+    if (docsTagsFilter) {
+        params.append('tags', docsTagsFilter); // Comma-separated tags
+    }
     // Add shared only filter
     if (docsSharedOnlyFilter && docsSharedOnlyFilter.checked) {
         params.append('shared_only', 'true');
+    }
+    // Add sort parameters
+    if (docsSortBy !== '_ts') {
+        params.append('sort_by', docsSortBy);
+    }
+    if (docsSortOrder !== 'desc') {
+        params.append('sort_order', docsSortOrder);
     }
 
     console.log("Fetching documents with params:", params.toString()); // Debugging: Check params
@@ -467,7 +540,7 @@ function fetchUserDocuments() {
             documentsTableBody.innerHTML = ""; // Clear loading/existing rows
             if (!data.documents || data.documents.length === 0) {
                 // Check if any filters are active
-                const filtersActive = docsSearchTerm || docsClassificationFilter || docsAuthorFilter || docsKeywordsFilter || docsAbstractFilter;
+                const filtersActive = docsSearchTerm || docsClassificationFilter || docsAuthorFilter || docsKeywordsFilter || docsAbstractFilter || docsTagsFilter;
                 documentsTableBody.innerHTML = `
                     <tr>
                         <td colspan="4" class="text-center p-4 text-muted">
@@ -495,6 +568,15 @@ function fetchUserDocuments() {
                     docs = docs.filter(doc =>
                         Array.isArray(doc.shared_user_ids) && doc.shared_user_ids.length > 0
                     );
+                }
+                // Client-side sort to ensure correct order
+                if (docsSortBy !== '_ts') {
+                    docs.sort((a, b) => {
+                        const valA = (a[docsSortBy] || '').toLowerCase();
+                        const valB = (b[docsSortBy] || '').toLowerCase();
+                        const cmp = valA.localeCompare(valB);
+                        return docsSortOrder === 'asc' ? cmp : -cmp;
+                    });
                 }
                 window.lastFetchedDocs = docs;
                 docs.forEach(doc => renderDocumentRow(doc));
@@ -602,10 +684,10 @@ function renderDocumentRow(doc) {
             `;
         }
         
-        // Add Search in Chat option
+        // Add Chat option
         actionsDropdown += `
             <li><a class="dropdown-item" href="#" onclick="window.redirectToChat('${docId}'); return false;">
-                <i class="bi bi-chat-dots-fill me-2"></i>Search in Chat
+                <i class="bi bi-chat-dots-fill me-2"></i>Chat
             </a></li>
         `;
         
@@ -724,6 +806,7 @@ function renderDocumentRow(doc) {
                     <p class="mb-1"><strong>Citations:</strong> ${doc.enhanced_citations ? '<span class="badge bg-success">Enhanced</span>' : '<span class="badge bg-secondary">Standard</span>'}</p>
                     <p class="mb-1"><strong>Publication Date:</strong> ${escapeHtml(doc.publication_date || "N/A")}</p>
                     <p class="mb-1"><strong>Keywords:</strong> ${escapeHtml(Array.isArray(doc.keywords) ? doc.keywords.join(", ") : doc.keywords || "N/A")}</p>
+                    <p class="mb-1"><strong>Tags:</strong> ${renderTagBadges(doc.tags || [])}</p>
                     <p class="mb-0"><strong>Abstract:</strong> ${escapeHtml(doc.abstract || "N/A")}</p>
                     <hr class="my-2">
                     <div class="d-flex flex-wrap gap-2">
@@ -1084,7 +1167,7 @@ window.onEditDocument = function(docId) {
             const docKeywordsInput = document.getElementById("doc-keywords");
             const docPubDateInput = document.getElementById("doc-publication-date");
             const docAuthorsInput = document.getElementById("doc-authors");
-            const classificationSelect = document.getElementById("doc-classification"); // Use the correct ID
+            const classificationSelect = document.getElementById("doc-classification");
 
             if (docIdInput) docIdInput.value = doc.id;
             if (docTitleInput) docTitleInput.value = doc.title || "";
@@ -1092,6 +1175,15 @@ window.onEditDocument = function(docId) {
             if (docKeywordsInput) docKeywordsInput.value = Array.isArray(doc.keywords) ? doc.keywords.join(", ") : (doc.keywords || "");
             if (docPubDateInput) docPubDateInput.value = doc.publication_date || "";
             if (docAuthorsInput) docAuthorsInput.value = Array.isArray(doc.authors) ? doc.authors.join(", ") : (doc.authors || "");
+            
+            // Set selected tags in the new tag management system
+            const docTags = doc.tags || [];
+            setSelectedTags(docTags);
+
+            // Load workspace tags (for color info) then update the display
+            loadTagManagementTags().then(() => {
+                updateDocumentTagsDisplay();
+            });
 
             // Handle classification dropdown visibility and value based on the window flag - CORRECTED CHECK
             if ((window.enable_document_classification === true || window.enable_document_classification === "true") && classificationSelect) {
@@ -1266,6 +1358,13 @@ window.removeSelfFromDocument = function(documentId, event) {
 
 window.redirectToChat = function(documentId) {
     window.location.href = `/chats?search_documents=true&doc_scope=personal&document_id=${documentId}`;
+}
+
+window.chatWithSelected = function() {
+    const docIds = Array.from(window.selectedDocuments);
+    if (docIds.length === 0) return;
+    const idsParam = encodeURIComponent(docIds.join(','));
+    window.location.href = `/chats?search_documents=true&doc_scope=personal&document_ids=${idsParam}`;
 }
 
 // Make fetchUserDocuments globally available for workspace-init.js

@@ -1,7 +1,7 @@
 // chat-documents.js
 
 import { showToast } from "./chat-toast.js";
-import { toBoolean } from "./chat-utils.js";
+import { initializeFilterableDropdownSearch } from "./chat-searchable-select.js";
 
 export const docScopeSelect = document.getElementById("doc-scope-select");
 const searchDocumentsBtn = document.getElementById("search-documents-btn");
@@ -9,61 +9,583 @@ const docSelectEl = document.getElementById("document-select"); // Hidden select
 const searchDocumentsContainer = document.getElementById("search-documents-container"); // Container for scope/doc/class
 
 // Custom dropdown elements
+const docDropdown = document.getElementById("document-dropdown");
 const docDropdownButton = document.getElementById("document-dropdown-button");
 const docDropdownItems = document.getElementById("document-dropdown-items");
 const docDropdownMenu = document.getElementById("document-dropdown-menu");
 const docSearchInput = document.getElementById("document-search-input");
 
-// Classification elements
-const classificationContainer = document.querySelector(".classification-container"); // Main container div
-const classificationSelectInput = document.getElementById("classification-select"); // The input field (now dual purpose)
-const classificationMultiselectDropdown = document.getElementById("classification-multiselect-dropdown"); // Wrapper for button+menu
-const classificationDropdownBtn = document.getElementById("classification-dropdown-btn");
-const classificationDropdownMenu = document.getElementById("classification-dropdown-menu");
+// Tags filter elements
+const chatTagsFilter = document.getElementById("chat-tags-filter");
+const tagsDropdown = document.getElementById("tags-dropdown");
+const tagsDropdownButton = document.getElementById("tags-dropdown-button");
+const tagsDropdownMenu = document.getElementById("tags-dropdown-menu");
+const tagsDropdownItems = document.getElementById("tags-dropdown-items");
+const tagsSearchInput = document.getElementById("tags-search-input");
 
-// --- Get Classification Categories ---
-// Ensure classification_categories is correctly parsed and available
-// It should be an array of objects like [{label: 'Confidential', color: '#ff0000'}, ...]
-// If it's just a comma-separated string from settings, parse it first.
-let classificationCategories = [];
-try {
-    // Use the structure already provided in base.html
-    classificationCategories = window.classification_categories || [];
-    if (typeof classificationCategories === 'string') {
-        // If it was a simple string "cat1,cat2", convert to objects
-         classificationCategories = classificationCategories.split(',')
-            .map(cat => cat.trim())
-            .filter(cat => cat) // Remove empty strings
-            .map(label => ({ label: label, color: '#6c757d' })); // Assign default color if only labels provided
-    }
-} catch (e) {
-    console.error("Error parsing classification categories:", e);
-    classificationCategories = [];
-}
-// ----------------------------------
+// Scope dropdown elements
+const scopeDropdown = document.getElementById("scope-dropdown");
+const scopeDropdownButton = document.getElementById("scope-dropdown-button");
+const scopeDropdownItems = document.getElementById("scope-dropdown-items");
+const scopeDropdownMenu = document.getElementById("scope-dropdown-menu");
+const scopeSearchInput = document.getElementById("scope-search-input");
 
 // We'll store personalDocs/groupDocs/publicDocs in memory once loaded:
 export let personalDocs = [];
 export let groupDocs = [];
 export let publicDocs = [];
-let activeGroupName = "";
-let activePublicWorkspaceName = "";
-let publicWorkspaceIdToName = {};
-let visiblePublicWorkspaceIds = []; // Store IDs of public workspaces visible to the user
+
+// Items removed from the DOM by tag filtering (stored so they can be re-added)
+// Each entry: { element, nextSibling }
+let tagFilteredOutItems = [];
+
+// Scope lock state
+let scopeLocked = null;    // null = auto-lockable, true = locked, false = user-unlocked
+let lockedContexts = [];   // Array of {scope, id} identifying locked workspaces
+
+// Build name maps from server-provided data (fixes activeGroupName bug)
+const groupIdToName = {};
+(window.userGroups || []).forEach(g => { groupIdToName[g.id] = g.name; });
+
+const publicWorkspaceIdToName = {};
+(window.userVisiblePublicWorkspaces || []).forEach(ws => { publicWorkspaceIdToName[ws.id] = ws.name; });
+
+// Multi-scope selection state
+let selectedPersonal = true;
+let selectedGroupIds = (window.userGroups || []).map(g => g.id);
+let selectedPublicWorkspaceIds = (window.userVisiblePublicWorkspaces || []).map(ws => ws.id);
+
+const documentSearchController = initializeFilterableDropdownSearch({
+  dropdownEl: docDropdown,
+  menuEl: docDropdownMenu,
+  searchInputEl: docSearchInput,
+  itemsContainerEl: docDropdownItems,
+  emptyMessage: 'No matching documents found',
+  isAlwaysVisibleItem: item => item.getAttribute('data-search-role') === 'action',
+});
+
+const scopeSearchController = initializeFilterableDropdownSearch({
+  dropdownEl: scopeDropdown,
+  menuEl: scopeDropdownMenu,
+  searchInputEl: scopeSearchInput,
+  itemsContainerEl: scopeDropdownItems,
+  emptyMessage: 'No matching workspaces found',
+  isAlwaysVisibleItem: item => item.getAttribute('data-search-role') === 'action',
+});
+
+const tagsSearchController = initializeFilterableDropdownSearch({
+  dropdownEl: tagsDropdown,
+  menuEl: tagsDropdownMenu,
+  searchInputEl: tagsSearchInput,
+  itemsContainerEl: tagsDropdownItems,
+  emptyMessage: 'No matching tags found',
+  isAlwaysVisibleItem: item => item.getAttribute('data-search-role') === 'action',
+});
+
+/* ---------------------------------------------------------------------------
+   Get Effective Scopes — used by chat-messages.js and internally
+--------------------------------------------------------------------------- */
+export function getEffectiveScopes() {
+  return {
+    personal: selectedPersonal,
+    groupIds: [...selectedGroupIds],
+    publicWorkspaceIds: [...selectedPublicWorkspaceIds],
+  };
+}
+
+/* ---------------------------------------------------------------------------
+   Scope Lock — exported functions
+--------------------------------------------------------------------------- */
+
+/** Returns current scope lock state: null (auto-lockable), true (locked), false (user-unlocked). */
+export function isScopeLocked() {
+  return scopeLocked;
+}
+
+/**
+ * Apply scope lock from metadata after a response.
+ * Called after AI response when backend sets scope_locked=true.
+ */
+export function applyScopeLock(contexts, lockState) {
+  if (lockState !== true) return;
+  scopeLocked = true;
+  lockedContexts = contexts || [];
+  rebuildScopeDropdownWithLock();
+  updateHeaderLockIcon();
+}
+
+/**
+ * Toggle scope lock via API call. Can both lock and unlock.
+ * @param {string} conversationId
+ * @param {boolean} newState - true = lock, false = unlock
+ * @returns {Promise}
+ */
+export async function toggleScopeLock(conversationId, newState) {
+  if (!conversationId) return;
+
+  const response = await fetch(`/api/conversations/${conversationId}/scope_lock`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({ scope_locked: newState })
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to toggle scope lock');
+  }
+
+  const result = await response.json();
+  scopeLocked = newState;
+  // lockedContexts preserved from API response (never cleared)
+  lockedContexts = result.locked_contexts || lockedContexts;
+
+  if (newState === true) {
+    // Re-locking: narrow scope to locked workspaces, rebuild with lock
+    selectedPersonal = lockedContexts.some(c => c.scope === 'personal');
+    selectedGroupIds = lockedContexts.filter(c => c.scope === 'group').map(c => c.id);
+    selectedPublicWorkspaceIds = lockedContexts.filter(c => c.scope === 'public').map(c => c.id);
+    rebuildScopeDropdownWithLock();
+  } else {
+    // Unlocking: open all scopes, rebuild normally
+    const groups = window.userGroups || [];
+    const publicWorkspaces = window.userVisiblePublicWorkspaces || [];
+    selectedPersonal = true;
+    selectedGroupIds = groups.map(g => g.id);
+    selectedPublicWorkspaceIds = publicWorkspaces.map(ws => ws.id);
+    buildScopeDropdown();
+    updateScopeLockIcon();
+  }
+
+  updateHeaderLockIcon();
+
+  // Reload docs for the new scope
+  loadAllDocs().then(() => { loadTagsForScope(); });
+}
+
+/**
+ * Restore scope lock state when switching conversations.
+ * Called from selectConversation() in chat-conversations.js.
+ */
+export function restoreScopeLockState(lockState, contexts) {
+  scopeLocked = lockState;
+  lockedContexts = contexts || [];
+
+  if (scopeLocked === true && lockedContexts.length > 0) {
+    // Set scope selection to match locked contexts
+    selectedPersonal = lockedContexts.some(c => c.scope === 'personal');
+    selectedGroupIds = lockedContexts.filter(c => c.scope === 'group').map(c => c.id);
+    selectedPublicWorkspaceIds = lockedContexts.filter(c => c.scope === 'public').map(c => c.id);
+
+    rebuildScopeDropdownWithLock();
+    // Reload docs for the locked scope
+    loadAllDocs().then(() => { loadTagsForScope(); });
+  } else {
+    // Not locked (null or false) — rebuild dropdown normally
+    buildScopeDropdown();
+    updateScopeLockIcon();
+  }
+
+  updateHeaderLockIcon();
+}
+
+/**
+ * Reset scope lock for a new conversation.
+ * Resets to "All" with no lock.
+ */
+export function resetScopeLock(options = {}) {
+  const { preserveSelections = false } = options;
+
+  scopeLocked = null;
+  lockedContexts = [];
+
+  if (preserveSelections) {
+    buildScopeDropdown();
+    updateScopeLockIcon();
+    updateHeaderLockIcon();
+    return;
+  }
+
+  const groups = window.userGroups || [];
+  const publicWorkspaces = window.userVisiblePublicWorkspaces || [];
+  selectedPersonal = true;
+  selectedGroupIds = groups.map(g => g.id);
+  selectedPublicWorkspaceIds = publicWorkspaces.map(ws => ws.id);
+
+  buildScopeDropdown();
+  updateScopeLockIcon();
+  updateHeaderLockIcon();
+
+  // Reload documents for the full "All" scope
+  loadAllDocs().then(() => { loadTagsForScope(); });
+}
+
+/* ---------------------------------------------------------------------------
+   Set scope from legacy URL parameter values (personal/group/public/all)
+--------------------------------------------------------------------------- */
+export function setScopeFromUrlParam(scopeString, options = {}) {
+  const groups = window.userGroups || [];
+  const publicWorkspaces = window.userVisiblePublicWorkspaces || [];
+
+  switch (scopeString) {
+    case "personal":
+      selectedPersonal = true;
+      selectedGroupIds = [];
+      selectedPublicWorkspaceIds = [];
+      break;
+    case "group":
+      selectedPersonal = false;
+      selectedGroupIds = options.groupId ? [options.groupId] : groups.map(g => g.id);
+      selectedPublicWorkspaceIds = [];
+      break;
+    case "public":
+      selectedPersonal = false;
+      selectedGroupIds = [];
+      selectedPublicWorkspaceIds = options.workspaceId ? [options.workspaceId] : publicWorkspaces.map(ws => ws.id);
+      break;
+    default: // "all"
+      selectedPersonal = true;
+      selectedGroupIds = groups.map(g => g.id);
+      selectedPublicWorkspaceIds = publicWorkspaces.map(ws => ws.id);
+      break;
+  }
+
+  buildScopeDropdown();
+}
+
+/* ---------------------------------------------------------------------------
+   Build the Scope Dropdown (called once on init)
+--------------------------------------------------------------------------- */
+function buildScopeDropdown() {
+  if (!scopeDropdownItems) return;
+
+  scopeDropdownItems.innerHTML = "";
+
+  const groups = window.userGroups || [];
+  const publicWorkspaces = window.userVisiblePublicWorkspaces || [];
+
+  // "Select All" / "Clear All" toggle
+  const allItem = document.createElement("button");
+  allItem.type = "button";
+  allItem.classList.add("dropdown-item", "d-flex", "align-items-center", "fw-bold");
+  allItem.setAttribute("data-scope-action", "toggle-all");
+  allItem.setAttribute("data-search-role", "action");
+  allItem.style.display = "flex";
+  allItem.style.width = "100%";
+  allItem.style.textAlign = "left";
+  const allCb = document.createElement("input");
+  allCb.type = "checkbox";
+  allCb.classList.add("form-check-input", "me-2", "scope-checkbox-all");
+  allCb.style.pointerEvents = "none";
+  allCb.style.minWidth = "16px";
+  allCb.checked = true;
+  // Compute initial "All" state from module variables
+  const totalPossibleInit = 1 + groups.length + publicWorkspaces.length;
+  const totalSelectedInit = (selectedPersonal ? 1 : 0) + selectedGroupIds.length + selectedPublicWorkspaceIds.length;
+  allCb.checked = (totalSelectedInit === totalPossibleInit);
+  allCb.indeterminate = (totalSelectedInit > 0 && totalSelectedInit < totalPossibleInit);
+  const allLabel = document.createElement("span");
+  allLabel.textContent = "All";
+  allItem.appendChild(allCb);
+  allItem.appendChild(allLabel);
+  scopeDropdownItems.appendChild(allItem);
+
+  // Divider
+  const divider1 = document.createElement("div");
+  divider1.classList.add("dropdown-divider");
+  scopeDropdownItems.appendChild(divider1);
+
+  // Personal item
+  const personalItem = createScopeItem("personal", "Personal", selectedPersonal);
+  scopeDropdownItems.appendChild(personalItem);
+
+  // Groups section
+  if (groups.length > 0) {
+    const groupHeader = document.createElement("div");
+    groupHeader.classList.add("dropdown-header", "small", "text-muted", "px-2", "pt-2", "pb-1");
+    groupHeader.textContent = "Groups";
+    scopeDropdownItems.appendChild(groupHeader);
+
+    groups.forEach(g => {
+      const item = createScopeItem(`group:${g.id}`, g.name, selectedGroupIds.includes(g.id));
+      scopeDropdownItems.appendChild(item);
+    });
+  }
+
+  // Public Workspaces section
+  if (publicWorkspaces.length > 0) {
+    const pubHeader = document.createElement("div");
+    pubHeader.classList.add("dropdown-header", "small", "text-muted", "px-2", "pt-2", "pb-1");
+    pubHeader.textContent = "Public Workspaces";
+    scopeDropdownItems.appendChild(pubHeader);
+
+    publicWorkspaces.forEach(ws => {
+      const item = createScopeItem(`public:${ws.id}`, ws.name, selectedPublicWorkspaceIds.includes(ws.id));
+      scopeDropdownItems.appendChild(item);
+    });
+  }
+
+  syncScopeButtonText();
+  scopeSearchController?.applyFilter(scopeSearchInput ? scopeSearchInput.value : '');
+}
+
+/* ---------------------------------------------------------------------------
+   Rebuild Scope Dropdown with Lock Indicators
+--------------------------------------------------------------------------- */
+function rebuildScopeDropdownWithLock() {
+  if (scopeLocked !== true || !scopeDropdownItems) {
+    buildScopeDropdown();
+    updateScopeLockIcon();
+    return;
+  }
+
+  // First build the dropdown normally
+  buildScopeDropdown();
+
+  // Build a set of locked scope keys for fast lookup (e.g. "personal", "group:abc", "public:xyz")
+  const lockedKeys = new Set();
+  for (const ctx of lockedContexts) {
+    if (ctx.scope === 'personal') {
+      lockedKeys.add('personal');
+    } else if (ctx.scope === 'group') {
+      lockedKeys.add(`group:${ctx.id}`);
+    } else if (ctx.scope === 'public') {
+      lockedKeys.add(`public:${ctx.id}`);
+    }
+  }
+
+  // Force scope selection to match locked contexts
+  selectedPersonal = lockedKeys.has('personal');
+  selectedGroupIds = lockedContexts.filter(c => c.scope === 'group').map(c => c.id);
+  selectedPublicWorkspaceIds = lockedContexts.filter(c => c.scope === 'public').map(c => c.id);
+
+  // Iterate all scope items and apply lock/disable styling
+  scopeDropdownItems.querySelectorAll('.dropdown-item[data-scope-value]').forEach(item => {
+    const val = item.getAttribute('data-scope-value');
+    const cb = item.querySelector('.scope-checkbox');
+    const isLocked = lockedKeys.has(val);
+
+    if (isLocked) {
+      // This workspace is locked — mark as active and locked
+      if (cb) cb.checked = true;
+      item.classList.add('scope-locked-item');
+      item.classList.remove('scope-disabled-item');
+      item.style.pointerEvents = 'none';
+
+      // Add lock icon if not already present
+      if (!item.querySelector('.bi-lock-fill')) {
+        const lockIcon = document.createElement('i');
+        lockIcon.classList.add('bi', 'bi-lock-fill', 'ms-auto', 'text-warning', 'scope-lock-badge');
+        item.appendChild(lockIcon);
+      }
+    } else {
+      // This workspace is not locked — gray it out
+      if (cb) cb.checked = false;
+      item.classList.add('scope-disabled-item');
+      item.classList.remove('scope-locked-item');
+      item.style.pointerEvents = 'none';
+      item.title = 'Scope locked to other workspaces';
+    }
+  });
+
+  // Disable the "All" toggle
+  const allToggle = scopeDropdownItems.querySelector('[data-scope-action="toggle-all"]');
+  if (allToggle) {
+    allToggle.classList.add('scope-disabled-item');
+    allToggle.style.pointerEvents = 'none';
+    const allCb = allToggle.querySelector('.scope-checkbox-all');
+    if (allCb) {
+      allCb.checked = false;
+      allCb.indeterminate = true;
+    }
+  }
+
+  syncScopeButtonText();
+  updateScopeLockIcon();
+  scopeSearchController?.applyFilter(scopeSearchInput ? scopeSearchInput.value : '');
+}
+
+/* ---------------------------------------------------------------------------
+   Update Scope Lock Icon Visibility and Tooltip
+--------------------------------------------------------------------------- */
+function updateScopeLockIcon() {
+  const indicator = document.getElementById('scope-lock-indicator');
+  if (!indicator) return;
+
+  if (scopeLocked === true) {
+    indicator.style.display = 'inline';
+
+    // Build tooltip showing locked workspace names
+    const names = [];
+    for (const ctx of lockedContexts) {
+      if (ctx.scope === 'personal') {
+        names.push('Personal');
+      } else if (ctx.scope === 'group') {
+        const name = groupIdToName[ctx.id] || ctx.id;
+        names.push(`Group: ${name}`);
+      } else if (ctx.scope === 'public') {
+        const name = publicWorkspaceIdToName[ctx.id] || ctx.id;
+        names.push(`Public: ${name}`);
+      }
+    }
+    indicator.title = `Scope locked to: ${names.join(', ')}. Click to manage.`;
+  } else {
+    indicator.style.display = 'none';
+  }
+
+  updateHeaderLockIcon();
+}
+
+/* ---------------------------------------------------------------------------
+   Update Header Lock Icon (inline with classification badges)
+--------------------------------------------------------------------------- */
+function updateHeaderLockIcon() {
+  const headerBtn = document.getElementById('header-scope-lock-btn');
+  if (!headerBtn) return;
+
+  if (scopeLocked === null || scopeLocked === undefined) {
+    // No data used yet — hide header lock
+    headerBtn.style.display = 'none';
+  } else if (scopeLocked === true) {
+    // Locked
+    headerBtn.style.display = 'inline';
+    headerBtn.className = 'text-warning';
+    headerBtn.innerHTML = '<i class="bi bi-lock-fill"></i>';
+    headerBtn.title = 'Scope locked — click to manage';
+  } else {
+    // Unlocked (false)
+    headerBtn.style.display = 'inline';
+    headerBtn.className = 'text-muted';
+    headerBtn.innerHTML = '<i class="bi bi-unlock"></i>';
+    headerBtn.title = 'Scope unlocked — click to re-lock';
+  }
+}
+
+function createScopeItem(value, label, checked) {
+  const item = document.createElement("button");
+  item.type = "button";
+  item.classList.add("dropdown-item", "d-flex", "align-items-center");
+  item.setAttribute("data-scope-value", value);
+  item.setAttribute("data-search-role", "item");
+  item.dataset.searchLabel = label;
+  item.style.display = "flex";
+  item.style.width = "100%";
+  item.style.textAlign = "left";
+
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.classList.add("form-check-input", "me-2", "scope-checkbox");
+  cb.style.pointerEvents = "none";
+  cb.style.minWidth = "16px";
+  cb.checked = checked;
+
+  const span = document.createElement("span");
+  span.textContent = label;
+  span.style.overflow = "hidden";
+  span.style.textOverflow = "ellipsis";
+  span.style.whiteSpace = "nowrap";
+
+  item.appendChild(cb);
+  item.appendChild(span);
+  return item;
+}
+
+/* ---------------------------------------------------------------------------
+   Sync scope state from checkboxes → module variables
+--------------------------------------------------------------------------- */
+function syncScopeStateFromCheckboxes() {
+  if (!scopeDropdownItems) return;
+
+  selectedPersonal = false;
+  selectedGroupIds = [];
+  selectedPublicWorkspaceIds = [];
+
+  scopeDropdownItems.querySelectorAll(".dropdown-item[data-scope-value]").forEach(item => {
+    const cb = item.querySelector(".scope-checkbox");
+    if (!cb || !cb.checked) return;
+
+    const val = item.getAttribute("data-scope-value");
+    if (val === "personal") {
+      selectedPersonal = true;
+    } else if (val.startsWith("group:")) {
+      selectedGroupIds.push(val.substring(6));
+    } else if (val.startsWith("public:")) {
+      selectedPublicWorkspaceIds.push(val.substring(7));
+    }
+  });
+
+  // Update the "All" checkbox state
+  const allCb = scopeDropdownItems.querySelector(".scope-checkbox-all");
+  if (allCb) {
+    const totalItems = scopeDropdownItems.querySelectorAll(".scope-checkbox").length;
+    const checkedItems = scopeDropdownItems.querySelectorAll(".scope-checkbox:checked").length;
+    allCb.checked = (totalItems === checkedItems);
+    allCb.indeterminate = (checkedItems > 0 && checkedItems < totalItems);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Sync scope button text
+--------------------------------------------------------------------------- */
+function syncScopeButtonText() {
+  if (!scopeDropdownButton) return;
+  const textEl = scopeDropdownButton.querySelector(".selected-scope-text");
+  if (!textEl) return;
+
+  const groups = window.userGroups || [];
+  const publicWorkspaces = window.userVisiblePublicWorkspaces || [];
+
+  const totalPossible = 1 + groups.length + publicWorkspaces.length; // personal + groups + public
+  const totalSelected = (selectedPersonal ? 1 : 0) + selectedGroupIds.length + selectedPublicWorkspaceIds.length;
+
+  if (totalSelected === 0) {
+    textEl.textContent = "None selected";
+  } else if (totalSelected === totalPossible) {
+    textEl.textContent = "All";
+  } else if (selectedPersonal && selectedGroupIds.length === 0 && selectedPublicWorkspaceIds.length === 0) {
+    textEl.textContent = "Personal";
+  } else {
+    const parts = [];
+    if (selectedPersonal) parts.push("Personal");
+    if (selectedGroupIds.length === 1) {
+      parts.push(groupIdToName[selectedGroupIds[0]] || "1 group");
+    } else if (selectedGroupIds.length > 1) {
+      parts.push(`${selectedGroupIds.length} groups`);
+    }
+    if (selectedPublicWorkspaceIds.length === 1) {
+      parts.push(publicWorkspaceIdToName[selectedPublicWorkspaceIds[0]] || "1 workspace");
+    } else if (selectedPublicWorkspaceIds.length > 1) {
+      parts.push(`${selectedPublicWorkspaceIds.length} workspaces`);
+    }
+    textEl.textContent = parts.join(", ");
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Handle scope change — reload docs and tags
+--------------------------------------------------------------------------- */
+function onScopeChanged() {
+  syncScopeStateFromCheckboxes();
+  syncScopeButtonText();
+  // Reload docs and tags for the new scope
+  loadAllDocs().then(() => {
+    loadTagsForScope();
+  });
+}
 
 /* ---------------------------------------------------------------------------
    Populate the Document Dropdown Based on the Scope
 --------------------------------------------------------------------------- */
 export function populateDocumentSelectScope() {
-  if (!docScopeSelect || !docSelectEl) return;
+  if (!docSelectEl) return;
 
-  console.log("Populating document dropdown with scope:", docScopeSelect.value);
-  console.log("Personal docs:", personalDocs.length);
-  console.log("Group docs:", groupDocs.length);
+  // Discard any items stored by the tag filter (they're about to be rebuilt)
+  tagFilteredOutItems = [];
 
-  const previousValue = docSelectEl.value; // Store previous selection if needed
+  const scopes = getEffectiveScopes();
+
   docSelectEl.innerHTML = ""; // Clear existing options
-  
+
   // Clear the dropdown items container
   if (docDropdownItems) {
     docDropdownItems.innerHTML = "";
@@ -74,13 +596,14 @@ export function populateDocumentSelectScope() {
   allOpt.value = ""; // Use empty string for "All"
   allOpt.textContent = "All Documents"; // Consistent label
   docSelectEl.appendChild(allOpt);
-  
+
   // Add "All Documents" item to custom dropdown
   if (docDropdownItems) {
     const allItem = document.createElement("button");
     allItem.type = "button";
     allItem.classList.add("dropdown-item");
     allItem.setAttribute("data-document-id", "");
+    allItem.setAttribute("data-search-role", "action");
     allItem.textContent = "All Documents";
     allItem.style.display = "block";
     allItem.style.width = "100%";
@@ -88,44 +611,43 @@ export function populateDocumentSelectScope() {
     docDropdownItems.appendChild(allItem);
   }
 
-  const scopeVal = docScopeSelect.value || "all";
-
   let finalDocs = [];
-  if (scopeVal === "all") {
+
+  // Add personal docs if personal scope is selected
+  if (scopes.personal) {
     const pDocs = personalDocs.map((d) => ({
       id: d.id,
       label: `[Personal] ${d.title || d.file_name}`,
-      classification: d.document_classification, // Store classification
+      tags: d.tags || [],
+      classification: d.document_classification || '',
     }));
+    finalDocs = finalDocs.concat(pDocs);
+  }
+
+  // Add group docs — label each with its group name
+  if (scopes.groupIds.length > 0) {
     const gDocs = groupDocs.map((d) => ({
       id: d.id,
-      label: `[Group: ${activeGroupName}] ${d.title || d.file_name}`,
-      classification: d.document_classification, // Store classification
+      label: `[Group: ${groupIdToName[d.group_id] || "Unknown"}] ${d.title || d.file_name}`,
+      tags: d.tags || [],
+      classification: d.document_classification || '',
     }));
-    const pubDocs = publicDocs.map((d) => ({
-      id: d.id,
-      label: `[Public: ${publicWorkspaceIdToName[d.public_workspace_id] || "Unknown"}] ${d.title || d.file_name}`,
-      classification: d.document_classification, // Store classification
-    }));
-    finalDocs = pDocs.concat(gDocs).concat(pubDocs);
-  } else if (scopeVal === "personal") {
-    finalDocs = personalDocs.map((d) => ({
-      id: d.id,
-      label: `[Personal] ${d.title || d.file_name}`,
-      classification: d.document_classification,
-    }));
-  } else if (scopeVal === "group") {
-    finalDocs = groupDocs.map((d) => ({
-      id: d.id,
-      label: `[Group: ${activeGroupName}] ${d.title || d.file_name}`,
-      classification: d.document_classification,
-    }));
-  } else if (scopeVal === "public") {
-    finalDocs = publicDocs.map((d) => ({
-      id: d.id,
-      label: `[Public: ${publicWorkspaceIdToName[d.public_workspace_id] || "Unknown"}] ${d.title || d.file_name}`,
-      classification: d.document_classification,
-    }));
+    finalDocs = finalDocs.concat(gDocs);
+  }
+
+  // Add public docs — label each with its workspace name
+  if (scopes.publicWorkspaceIds.length > 0) {
+    // Filter publicDocs to only those in selected workspaces
+    const selectedWsSet = new Set(scopes.publicWorkspaceIds);
+    const pubDocs = publicDocs
+      .filter(d => selectedWsSet.has(d.public_workspace_id))
+      .map((d) => ({
+        id: d.id,
+        label: `[Public: ${publicWorkspaceIdToName[d.public_workspace_id] || "Unknown"}] ${d.title || d.file_name}`,
+        tags: d.tags || [],
+        classification: d.document_classification || '',
+      }));
+    finalDocs = finalDocs.concat(pubDocs);
   }
 
   // Add document options to the hidden select and populate the custom dropdown
@@ -134,19 +656,39 @@ export function populateDocumentSelectScope() {
     const opt = document.createElement("option");
     opt.value = doc.id;
     opt.textContent = doc.label;
-    opt.dataset.classification = doc.classification || ""; // Store classification or empty string
+    opt.dataset.tags = JSON.stringify(doc.tags || []);
+    opt.dataset.classification = doc.classification || '';
     docSelectEl.appendChild(opt);
-    
+
     // Add to custom dropdown
     if (docDropdownItems) {
       const dropdownItem = document.createElement("button");
       dropdownItem.type = "button";
-      dropdownItem.classList.add("dropdown-item");
+      dropdownItem.classList.add("dropdown-item", "d-flex", "align-items-center");
       dropdownItem.setAttribute("data-document-id", doc.id);
-      dropdownItem.textContent = doc.label;
-      dropdownItem.style.display = "block";
+      dropdownItem.setAttribute("data-search-role", "item");
+      dropdownItem.setAttribute("title", doc.label);
+      dropdownItem.dataset.searchLabel = doc.label;
+      dropdownItem.dataset.tags = JSON.stringify(doc.tags || []);
+      dropdownItem.dataset.classification = doc.classification || '';
+      dropdownItem.style.display = "flex";
       dropdownItem.style.width = "100%";
       dropdownItem.style.textAlign = "left";
+
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.classList.add("form-check-input", "me-2", "doc-checkbox");
+      checkbox.style.pointerEvents = "none"; // Click handled by button
+      checkbox.style.minWidth = "16px";
+
+      const label = document.createElement("span");
+      label.textContent = doc.label;
+      label.style.overflow = "hidden";
+      label.style.textOverflow = "ellipsis";
+      label.style.whiteSpace = "nowrap";
+
+      dropdownItem.appendChild(checkbox);
+      dropdownItem.appendChild(label);
       docDropdownItems.appendChild(dropdownItem);
     }
   });
@@ -155,7 +697,7 @@ export function populateDocumentSelectScope() {
   if (docSearchInput && docDropdownItems) {
     const documentsCount = finalDocs.length;
     const searchContainer = docSearchInput.closest('.document-search-container');
-    
+
     if (searchContainer) {
       // Always show search if there are more than 0 documents
       if (documentsCount > 0) {
@@ -166,44 +708,23 @@ export function populateDocumentSelectScope() {
     }
   }
 
-  // Try to restore previous selection if it still exists, otherwise default to "All"
-  if (finalDocs.some(doc => doc.id === previousValue)) {
-    docSelectEl.value = previousValue;
-    if (docDropdownButton) {
-      const selectedDoc = finalDocs.find(doc => doc.id === previousValue);
-      if (selectedDoc) {
-        docDropdownButton.querySelector(".selected-document-text").textContent = selectedDoc.label;
-      }
-      
-      // Update active state in dropdown
-      if (docDropdownItems) {
-        document.querySelectorAll("#document-dropdown-items .dropdown-item").forEach(item => {
-          item.classList.remove("active");
-          if (item.getAttribute("data-document-id") === previousValue) {
-            item.classList.add("active");
-          }
-        });
-      }
-    }
-  } else {
-    docSelectEl.value = ""; // Default to "All Documents"
-    if (docDropdownButton) {
-      docDropdownButton.querySelector(".selected-document-text").textContent = "All Documents";
-      
-      // Set "All Documents" as active
-      if (docDropdownItems) {
-        document.querySelectorAll("#document-dropdown-items .dropdown-item").forEach(item => {
-          item.classList.remove("active");
-          if (item.getAttribute("data-document-id") === "") {
-            item.classList.add("active");
-          }
-        });
-      }
+  // Reset to "All Documents" (no specific documents selected)
+  // With multi-select, clear all selections
+  Array.from(docSelectEl.options).forEach(opt => { opt.selected = false; });
+  if (docDropdownButton) {
+    docDropdownButton.querySelector(".selected-document-text").textContent = "All Documents";
+
+    // Clear all checkbox states
+    if (docDropdownItems) {
+      docDropdownItems.querySelectorAll(".doc-checkbox").forEach(cb => {
+        cb.checked = false;
+      });
     }
   }
 
-  // IMPORTANT: Trigger the classification update after populating
+  // Trigger UI update after populating
   handleDocumentSelectChange();
+  documentSearchController?.applyFilter(docSearchInput ? docSearchInput.value : '');
 }
 
 export function getDocumentMetadata(docId) {
@@ -211,27 +732,23 @@ export function getDocumentMetadata(docId) {
   // Search personal docs first
   const personalMatch = personalDocs.find(doc => doc.id === docId || doc.document_id === docId); // Check common ID keys
   if (personalMatch) {
-    // console.log(`Metadata found in personalDocs for ${docId}`);
     return personalMatch;
   }
   // Then search group docs
   const groupMatch = groupDocs.find(doc => doc.id === docId || doc.document_id === docId);
    if (groupMatch) {
-    // console.log(`Metadata found in groupDocs for ${docId}`);
     return groupMatch;
   }
   // Finally search public docs
   const publicMatch = publicDocs.find(doc => doc.id === docId || doc.document_id === docId);
   if (publicMatch) {
-    // console.log(`Metadata found in publicDocs for ${docId}`);
     return publicMatch;
   }
-  // console.log(`Metadata NOT found for ${docId}`);
   return null; // Not found in any list
 }
 
 /* ---------------------------------------------------------------------------
-   Loading Documents (Keep existing loadPersonalDocs, loadGroupDocs, loadAllDocs)
+   Loading Documents
 --------------------------------------------------------------------------- */
 export function loadPersonalDocs() {
   // Use a large page_size to load all documents at once, without pagination
@@ -252,9 +769,15 @@ export function loadPersonalDocs() {
     });
 }
 
-export function loadGroupDocs() {
-  // Use a large page_size to load all documents at once, without pagination
-  return fetch("/api/group_documents?page_size=1000")
+export function loadGroupDocs(groupIds) {
+  // Accept explicit group IDs list, fall back to selected scope
+  const ids = groupIds || selectedGroupIds || [];
+  if (ids.length === 0) {
+    groupDocs = [];
+    return Promise.resolve();
+  }
+  const idsParam = ids.join(',');
+  return fetch(`/api/group_documents?group_ids=${encodeURIComponent(idsParam)}&page_size=1000`)
     .then((r) => {
       if (!r.ok) {
         // Handle 400 errors gracefully (e.g., no active group selected)
@@ -290,113 +813,29 @@ export function loadPublicDocs() {
       if (data.error) {
         console.warn("Error fetching public workspace docs:", data.error);
         publicDocs = [];
-        activePublicWorkspaceName = "";
-        publicWorkspaceIdToName = {};
         return;
       }
-      // Fetch user settings to determine visible workspaces
-      return fetch("/api/user/settings")
-        .then((r) => r.json())
-        .then((settingsData) => {
-          const userSettings = settingsData && settingsData.settings ? settingsData.settings : {};
-          const publicDirectorySettings = userSettings.publicDirectorySettings || {};
-          // Only include documents from visible public workspaces
-          publicDocs = (data.documents || []).filter(
-            (doc) => publicDirectorySettings[doc.public_workspace_id] === true
-          );
-          // Now fetch the workspace list to build the ID->name mapping
-          return fetch("/api/public_workspaces/discover")
-            .then((r) => r.json())
-            .then((workspaces) => {
-              publicWorkspaceIdToName = {};
-              (workspaces || []).forEach(ws => {
-                publicWorkspaceIdToName[ws.id] = ws.name;
-              });
-              // Determine if only one public workspace is visible
-              const visibleWorkspaceIds = Object.keys(publicDirectorySettings).filter(
-                id => publicDirectorySettings[id] === true
-              );
-              visiblePublicWorkspaceIds = visibleWorkspaceIds; // Store for use in scope label updates
-              if (visibleWorkspaceIds.length === 1) {
-                activePublicWorkspaceName = publicWorkspaceIdToName[visibleWorkspaceIds[0]] || "Unknown";
-              } else {
-                activePublicWorkspaceName = "All Public Workspaces";
-              }
-              console.log(
-                `Loaded ${publicDocs.length} public workspace documents from user-visible public workspaces`
-              );
-            })
-            .catch((err) => {
-              // If workspace list can't be loaded, fallback to generic label
-              publicWorkspaceIdToName = {};
-              activePublicWorkspaceName = "All Public Workspaces";
-              console.warn("Could not load public workspace names:", err);
-            });
-        })
-        .catch((err) => {
-          // If user settings can't be loaded, default to showing all documents
-          console.warn("Could not load user settings, showing all public workspace documents:", err);
-          publicDocs = data.documents || [];
-          publicWorkspaceIdToName = {};
-          activePublicWorkspaceName = "All Public Workspaces";
-          visiblePublicWorkspaceIds = []; // Reset visible workspace IDs
-        });
+      // Filter to only docs from currently selected public workspaces
+      const selectedWsSet = new Set(selectedPublicWorkspaceIds);
+      publicDocs = (data.documents || []).filter(
+        (doc) => selectedWsSet.has(doc.public_workspace_id)
+      );
+      console.log(
+        `Loaded ${publicDocs.length} public workspace documents from selected public workspaces`
+      );
     })
     .catch((err) => {
       console.error("Error loading public workspace docs:", err);
       publicDocs = [];
-      publicWorkspaceIdToName = {};
-      activePublicWorkspaceName = "";
-      visiblePublicWorkspaceIds = []; // Reset visible workspace IDs
     });
-}
-
-/**
- * Updates the scope option labels to show dynamic workspace names
- */
-function updateScopeLabels() {
-  if (!docScopeSelect) return;
-  
-  // Update public option text based on visible workspaces
-  const publicOption = docScopeSelect.querySelector('option[value="public"]');
-  if (publicOption) {
-    // Get names of visible public workspaces
-    const visibleWorkspaceNames = visiblePublicWorkspaceIds
-      .map(id => publicWorkspaceIdToName[id])
-      .filter(name => name && name !== "Unknown");
-    
-    let publicLabel = "Public";
-    
-    if (visibleWorkspaceNames.length === 0) {
-      publicLabel = "Public";
-    } else if (visibleWorkspaceNames.length === 1) {
-      publicLabel = `Public: ${visibleWorkspaceNames[0]}`;
-    } else if (visibleWorkspaceNames.length <= 3) {
-      publicLabel = `Public: ${visibleWorkspaceNames.join(", ")}`;
-    } else {
-      publicLabel = `Public: ${visibleWorkspaceNames.slice(0, 3).join(", ")}, 3+`;
-    }
-    
-    publicOption.textContent = publicLabel;
-    console.log(`Updated public scope label to: ${publicLabel}`);
-  }
 }
 
 export function loadAllDocs() {
   const hasDocControls = searchDocumentsBtn || docScopeSelect || docSelectEl;
-  
-  // Use the toBoolean helper for consistent checking
-  const classificationEnabled = toBoolean(window.enable_document_classification);
 
   if (!hasDocControls) {
     return Promise.resolve();
   }
-  // Only hide the classification container if feature disabled
-  if (classificationContainer && !classificationEnabled) {
-      classificationContainer.style.display = 'none';
-  }
-  // Ensure container is visible if feature is enabled
-  if (classificationContainer && classificationEnabled) classificationContainer.style.display = '';
 
   // Initialize custom document dropdown if available
   if (docDropdownButton && docDropdownItems) {
@@ -406,131 +845,68 @@ export function loadAllDocs() {
       // Initially show the search field as it will be useful for filtering
       documentSearchContainer.classList.remove('d-none');
     }
-    
-    console.log("Setting up document dropdown event listeners...");
-    
-    // Make sure dropdown shows when button is clicked
-    docDropdownButton.addEventListener('click', function(e) {
-      console.log("Dropdown button clicked");
-      // Initialize dropdown after a short delay to ensure DOM is ready
-      setTimeout(() => {
-        initializeDocumentDropdown();
-      }, 100);
-    });
-    
-    // Additionally listen for the bootstrap shown.bs.dropdown event
-    const dropdownEl = document.querySelector('#document-dropdown');
-    if (dropdownEl) {
-      dropdownEl.addEventListener('shown.bs.dropdown', function(e) {
-        console.log("Dropdown shown event fired");
-        // Focus the search input for immediate searching
-        if (docSearchInput) {
-          setTimeout(() => {
-            docSearchInput.focus();
-            initializeDocumentDropdown();
-          }, 100);
-        } else {
-          initializeDocumentDropdown();
-        }
-      });
-      
-      // Handle dropdown hide event to clear search and reset item visibility
-      dropdownEl.addEventListener('hide.bs.dropdown', function(e) {
-        console.log("Dropdown hide event fired");
-        if (docSearchInput) {
-          docSearchInput.value = '';
-          // Reset all items to visible
-          if (docDropdownItems) {
-            const items = docDropdownItems.querySelectorAll('.dropdown-item');
-            items.forEach(item => {
-              item.style.display = 'block';
-              item.removeAttribute('data-filtered');
-            });
-            
-            // Remove any "no matches" message
-            const noMatchesEl = docDropdownItems.querySelector('.no-matches');
-            if (noMatchesEl) {
-              noMatchesEl.remove();
-            }
-          }
-        }
-      });
-    } else {
-      console.error("Document dropdown element not found");
-    }
+
   }
 
-  return Promise.all([loadPersonalDocs(), loadGroupDocs(), loadPublicDocs()])
+  const scopes = getEffectiveScopes();
+
+  // Build parallel load promises based on selected scopes
+  const promises = [];
+  if (scopes.personal) {
+    promises.push(loadPersonalDocs());
+  } else {
+    personalDocs = [];
+  }
+  if (scopes.groupIds.length > 0) {
+    promises.push(loadGroupDocs(scopes.groupIds));
+  } else {
+    groupDocs = [];
+  }
+  if (scopes.publicWorkspaceIds.length > 0) {
+    promises.push(loadPublicDocs());
+  } else {
+    publicDocs = [];
+  }
+
+  return Promise.all(promises)
     .then(() => {
-      console.log("All documents loaded. Personal:", personalDocs.length, "Group:", groupDocs.length, "Public:", publicDocs.length);
-      // Update scope labels after loading data
-      updateScopeLabels();
-      // After loading, populate the select and set initial classification state
+      // After loading, populate the select and set initial state
       populateDocumentSelectScope();
-      // handleDocumentSelectChange(); // Called within populateDocumentSelectScope now
     })
     .catch(err => {
       console.error("Error loading documents:", err);
     });
 }
 
-// Function to ensure dropdown menu is properly displayed
+// Function to adjust dropdown sizing when shown
 function initializeDocumentDropdown() {
   if (!docDropdownMenu) return;
-  
-  console.log("Initializing dropdown display");
-  
-  // Make sure dropdown menu is visible and has proper z-index
-  docDropdownMenu.classList.add('show');
-  docDropdownMenu.style.zIndex = "1050"; // Ensure it's above other elements
-  
-  // Reset visibility of items if no search term is active
-  if (!docSearchInput || !docSearchInput.value.trim()) {
-    console.log("Resetting item visibility");
-    const items = docDropdownItems.querySelectorAll('.dropdown-item');
-    items.forEach(item => {
-      // Only reset items that aren't already filtered by an active search
-      if (!item.hasAttribute('data-filtered')) {
-        item.style.display = 'block';
-      }
-    });
-  }
-  
-  // If there's a search term in the input, apply filtering immediately
-  if (docSearchInput && docSearchInput.value.trim()) {
-    console.log("Search term detected, triggering filter");
-    // Create and dispatch both events for maximum browser compatibility
-    docSearchInput.dispatchEvent(new Event('input', { bubbles: true }));
-    docSearchInput.dispatchEvent(new Event('keyup', { bubbles: true }));
-  }
-  
-  // Set a fixed narrower width for the dropdown
-  let maxWidth = 400; // Updated to 400px width
-  
-  // Calculate parent container width (we want dropdown to fit inside right pane)
+
+  // Clear any leftover search-filter state on visible items
+  docDropdownItems.querySelectorAll('.dropdown-item').forEach(item => {
+    item.classList.remove('d-none');
+  });
+
+  // Re-apply tag filter (DOM removal approach — no CSS issues)
+  filterDocumentsBySelectedTags();
+  documentSearchController?.applyFilter(docSearchInput ? docSearchInput.value : '');
+
+  // Size the dropdown to fill its parent container
   const parentContainer = docDropdownButton.closest('.flex-grow-1');
-  if (parentContainer) {
-    const parentWidth = parentContainer.offsetWidth;
-    // Use the smaller of our fixed width or 90% of parent width
-    maxWidth = Math.min(maxWidth, parentWidth * 0.9);
-  }
-  
+  const maxWidth = parentContainer ? parentContainer.offsetWidth : 400;
+
   docDropdownMenu.style.maxWidth = `${maxWidth}px`;
   docDropdownMenu.style.width = `${maxWidth}px`;
-  
+
   // Ensure dropdown stays within viewport bounds
   const menuRect = docDropdownMenu.getBoundingClientRect();
   const viewportHeight = window.innerHeight;
-  
-  // If dropdown extends beyond viewport, adjust position or max-height
+
   if (menuRect.bottom > viewportHeight) {
-    // Option 1: Adjust max-height to fit
-    const maxPossibleHeight = viewportHeight - menuRect.top - 10; // 10px buffer
+    const maxPossibleHeight = viewportHeight - menuRect.top - 10;
     docDropdownMenu.style.maxHeight = `${maxPossibleHeight}px`;
-    
-    // Also adjust the items container
+
     if (docDropdownItems) {
-      // Account for search box height including its margin
       const searchContainer = docDropdownMenu.querySelector('.document-search-container');
       const searchHeight = searchContainer ? searchContainer.offsetHeight : 40;
       docDropdownItems.style.maxHeight = `${maxPossibleHeight - searchHeight}px`;
@@ -538,10 +914,455 @@ function initializeDocumentDropdown() {
   }
 }
 /* ---------------------------------------------------------------------------
+   Load Tags for Selected Scope
+--------------------------------------------------------------------------- */
+export async function loadTagsForScope() {
+  if (!chatTagsFilter) return;
+
+  // Clear existing options in both hidden select and custom dropdown
+  chatTagsFilter.innerHTML = '';
+  if (tagsDropdownItems) tagsDropdownItems.innerHTML = '';
+
+  try {
+    const scopes = getEffectiveScopes();
+    const fetchPromises = [];
+
+    if (scopes.personal) {
+      fetchPromises.push(fetch('/api/documents/tags').then(r => r.json()));
+    }
+    if (scopes.groupIds.length > 0) {
+      const idsParam = scopes.groupIds.join(',');
+      fetchPromises.push(fetch(`/api/group_documents/tags?group_ids=${encodeURIComponent(idsParam)}`).then(r => r.json()));
+    }
+    if (scopes.publicWorkspaceIds.length > 0) {
+      const wsParam = scopes.publicWorkspaceIds.join(',');
+      fetchPromises.push(fetch(`/api/public_workspace_documents/tags?workspace_ids=${encodeURIComponent(wsParam)}`).then(r => r.json()));
+    }
+
+    if (fetchPromises.length === 0) {
+      hideTagsDropdown();
+      return;
+    }
+
+    const results = await Promise.allSettled(fetchPromises);
+
+    // Merge tags by name, summing counts
+    const tagMap = {};
+    results.forEach(result => {
+      if (result.status === 'fulfilled' && result.value && result.value.tags) {
+        result.value.tags.forEach(tag => {
+          if (tagMap[tag.name]) {
+            tagMap[tag.name] += tag.count;
+          } else {
+            tagMap[tag.name] = tag.count;
+          }
+        });
+      }
+    });
+
+    const allTags = Object.entries(tagMap).map(([name, count]) => ({ name, displayName: name, count, isClassification: false }));
+    allTags.sort((a, b) => a.name.localeCompare(b.name));
+
+    // Add classification categories if enabled
+    const classificationItems = [];
+    const classificationEnabled = (window.enable_document_classification === true
+        || String(window.enable_document_classification).toLowerCase() === 'true');
+    if (classificationEnabled) {
+      const categories = window.classification_categories || [];
+      const scopesForCls = getEffectiveScopes();
+
+      // Gather all in-scope docs
+      const scopeDocs = [];
+      if (scopesForCls.personal) scopeDocs.push(...personalDocs);
+      if (scopesForCls.groupIds.length > 0) scopeDocs.push(...groupDocs);
+      if (scopesForCls.publicWorkspaceIds.length > 0) {
+        const wsSet = new Set(scopesForCls.publicWorkspaceIds);
+        scopeDocs.push(...publicDocs.filter(d => wsSet.has(d.public_workspace_id)));
+      }
+
+      // Count classifications
+      const clsCounts = {};
+      let unclassifiedCount = 0;
+      scopeDocs.forEach(doc => {
+        const cls = doc.document_classification;
+        if (!cls || cls === '' || cls.toLowerCase() === 'none') {
+          unclassifiedCount++;
+        } else {
+          clsCounts[cls] = (clsCounts[cls] || 0) + 1;
+        }
+      });
+
+      // Always show Unclassified entry
+      classificationItems.push({ name: '__unclassified__', displayName: 'Unclassified', count: unclassifiedCount, isClassification: true, color: '#6c757d' });
+      // Always show all configured categories (even at 0 count)
+      categories.forEach(cat => {
+        const count = clsCounts[cat.label] || 0;
+        classificationItems.push({ name: cat.label, displayName: cat.label, count, isClassification: true, color: cat.color || '#6c757d' });
+      });
+    }
+
+    const hasItems = allTags.length > 0 || classificationItems.length > 0;
+
+    if (hasItems) {
+      showTagsDropdown();
+
+      // Populate hidden select with tags and classifications
+      allTags.forEach(tag => {
+        const option = document.createElement('option');
+        option.value = tag.name;
+        option.textContent = `${tag.name} (${tag.count})`;
+        chatTagsFilter.appendChild(option);
+      });
+      classificationItems.forEach(cls => {
+        const option = document.createElement('option');
+        option.value = cls.name;
+        option.textContent = `${cls.displayName} (${cls.count})`;
+        chatTagsFilter.appendChild(option);
+      });
+
+      // Populate custom dropdown with checkboxes
+      if (tagsDropdownItems) {
+        // Add "Clear All" item
+        const allItem = document.createElement('button');
+        allItem.type = 'button';
+        allItem.classList.add('dropdown-item', 'text-muted', 'small');
+        allItem.setAttribute('data-tag-value', '');
+        allItem.setAttribute('data-search-role', 'action');
+        allItem.textContent = 'Clear All';
+        allItem.style.display = 'block';
+        allItem.style.width = '100%';
+        allItem.style.textAlign = 'left';
+        tagsDropdownItems.appendChild(allItem);
+
+        // Divider after Clear All
+        const divider1 = document.createElement('div');
+        divider1.classList.add('dropdown-divider');
+        tagsDropdownItems.appendChild(divider1);
+
+        // Render regular tags
+        allTags.forEach(tag => {
+          const item = document.createElement('button');
+          item.type = 'button';
+          item.classList.add('dropdown-item', 'd-flex', 'align-items-center');
+          item.setAttribute('data-tag-value', tag.name);
+          item.setAttribute('data-search-role', 'item');
+          item.dataset.searchLabel = tag.displayName;
+          item.style.display = 'flex';
+          item.style.width = '100%';
+          item.style.textAlign = 'left';
+
+          const checkbox = document.createElement('input');
+          checkbox.type = 'checkbox';
+          checkbox.classList.add('form-check-input', 'me-2', 'tag-checkbox');
+          checkbox.style.pointerEvents = 'none';
+          checkbox.style.minWidth = '16px';
+
+          const label = document.createElement('span');
+          label.textContent = `${tag.name} (${tag.count})`;
+
+          item.appendChild(checkbox);
+          item.appendChild(label);
+          tagsDropdownItems.appendChild(item);
+        });
+
+        // Render classification items with visual distinction
+        if (classificationItems.length > 0) {
+          // Divider before classifications
+          const divider2 = document.createElement('div');
+          divider2.classList.add('dropdown-divider');
+          tagsDropdownItems.appendChild(divider2);
+
+          // Small header
+          const header = document.createElement('div');
+          header.classList.add('dropdown-header', 'small', 'text-muted', 'px-3', 'py-1');
+          header.textContent = 'Classifications';
+          tagsDropdownItems.appendChild(header);
+
+          classificationItems.forEach(cls => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.classList.add('dropdown-item', 'd-flex', 'align-items-center');
+            item.setAttribute('data-tag-value', cls.name);
+            item.setAttribute('data-search-role', 'item');
+            item.dataset.searchLabel = cls.displayName;
+            item.style.display = 'flex';
+            item.style.width = '100%';
+            item.style.textAlign = 'left';
+
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.classList.add('form-check-input', 'me-2', 'tag-checkbox');
+            checkbox.style.pointerEvents = 'none';
+            checkbox.style.minWidth = '16px';
+
+            const icon = document.createElement('i');
+            icon.classList.add('bi', 'bi-bookmark-fill', 'me-1');
+            icon.style.color = cls.color;
+            icon.style.fontSize = '0.75rem';
+
+            const label = document.createElement('span');
+            label.textContent = `${cls.displayName} (${cls.count})`;
+
+            item.appendChild(checkbox);
+            item.appendChild(icon);
+            item.appendChild(label);
+            tagsDropdownItems.appendChild(item);
+          });
+        }
+
+        tagsSearchController?.applyFilter(tagsSearchInput ? tagsSearchInput.value : '');
+      }
+    } else {
+      hideTagsDropdown();
+    }
+  } catch (error) {
+    console.error('Error loading tags:', error);
+    hideTagsDropdown();
+  }
+}
+
+function showTagsDropdown() {
+  if (tagsDropdown) tagsDropdown.style.display = 'block';
+}
+
+function hideTagsDropdown() {
+  if (tagsDropdown) tagsDropdown.style.display = 'none';
+  if (tagsSearchController) {
+    tagsSearchController.resetFilter();
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Sync Tags Dropdown Button Text with Selection State
+--------------------------------------------------------------------------- */
+function syncTagsDropdownButtonText() {
+  if (!tagsDropdownButton || !tagsDropdownItems) return;
+
+  const checkedItems = tagsDropdownItems.querySelectorAll('.tag-checkbox:checked');
+  const count = checkedItems.length;
+  const textEl = tagsDropdownButton.querySelector('.selected-tags-text');
+  if (!textEl) return;
+
+  if (count === 0) {
+    textEl.textContent = 'All Tags';
+  } else if (count === 1) {
+    const parentItem = checkedItems[0].closest('.dropdown-item');
+    const tagValue = parentItem ? parentItem.getAttribute('data-tag-value') : '';
+    textEl.textContent = tagValue || '1 tag selected';
+  } else {
+    textEl.textContent = `${count} tags selected`;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Get Selected Tags
+--------------------------------------------------------------------------- */
+export function getSelectedTags() {
+  if (!chatTagsFilter) return [];
+  // Check if the tags dropdown is visible (the hidden select is always display:none via d-none class)
+  if (tagsDropdown && tagsDropdown.style.display === 'none') return [];
+  return Array.from(chatTagsFilter.selectedOptions).map(opt => opt.value);
+}
+
+/* ---------------------------------------------------------------------------
+   Filter Document Dropdown by Selected Tags
+   Uses DOM removal instead of CSS hiding to guarantee items disappear.
+--------------------------------------------------------------------------- */
+export function filterDocumentsBySelectedTags() {
+  if (!docDropdownItems) return;
+
+  // 1) Re-add any items previously removed by this filter (preserve order)
+  for (let i = tagFilteredOutItems.length - 1; i >= 0; i--) {
+    const { element, nextSibling } = tagFilteredOutItems[i];
+    if (nextSibling && nextSibling.parentNode === docDropdownItems) {
+      docDropdownItems.insertBefore(element, nextSibling);
+    } else {
+      docDropdownItems.appendChild(element);
+    }
+  }
+  tagFilteredOutItems = [];
+
+  const selectedTags = getSelectedTags();
+
+  // Helper: check if a document matches by tag or classification
+  function matchesSelection(tags, classification) {
+    const matchesByTag = tags.some(tag => selectedTags.includes(tag));
+    if (matchesByTag) return true;
+    const docCls = classification || '';
+    return selectedTags.some(sel => {
+      if (sel === '__unclassified__') return !docCls || docCls === '' || docCls.toLowerCase() === 'none';
+      return docCls === sel;
+    });
+  }
+
+  // 2) If tags/classifications are selected, remove non-matching items from the DOM
+  if (selectedTags.length > 0) {
+    const items = Array.from(docDropdownItems.querySelectorAll('.dropdown-item'));
+    items.forEach(item => {
+      const docId = item.getAttribute('data-document-id');
+      // "All Documents" item stays
+      if (docId === '' || docId === null) return;
+
+      let docTags = [];
+      try { docTags = JSON.parse(item.dataset.tags || '[]'); } catch (e) { docTags = []; }
+      const docClassification = item.dataset.classification || '';
+
+      if (!matchesSelection(docTags, docClassification)) {
+        const nextSibling = item.nextElementSibling;
+        docDropdownItems.removeChild(item);
+        tagFilteredOutItems.push({ element: item, nextSibling });
+      }
+    });
+  }
+
+  // 3) Sync hidden select to keep state consistent
+  if (docSelectEl) {
+    Array.from(docSelectEl.options).forEach(opt => {
+      if (opt.value === '') return;
+      if (selectedTags.length === 0) { opt.disabled = false; return; }
+
+      let optTags = [];
+      try { optTags = JSON.parse(opt.dataset.tags || '[]'); } catch (e) { optTags = []; }
+      const optClassification = opt.dataset.classification || '';
+      opt.disabled = !matchesSelection(optTags, optClassification);
+    });
+  }
+
+  documentSearchController?.applyFilter(docSearchInput ? docSearchInput.value : '');
+}
+
+/* ---------------------------------------------------------------------------
+   Sync Dropdown Button Text with Selection State
+--------------------------------------------------------------------------- */
+function syncDropdownButtonText() {
+  if (!docDropdownButton || !docDropdownItems) return;
+
+  const checkedItems = docDropdownItems.querySelectorAll('.doc-checkbox:checked');
+  const count = checkedItems.length;
+  const textEl = docDropdownButton.querySelector(".selected-document-text");
+  if (!textEl) return;
+
+  if (count === 0) {
+    textEl.textContent = "All Documents";
+  } else if (count === 1) {
+    // Show the single document name
+    const parentItem = checkedItems[0].closest('.dropdown-item');
+    const labelSpan = parentItem ? parentItem.querySelector('span') : null;
+    textEl.textContent = labelSpan ? labelSpan.textContent : "1 document selected";
+  } else {
+    textEl.textContent = `${count} documents selected`;
+  }
+}
+
+/* ---------------------------------------------------------------------------
    UI Event Listeners
 --------------------------------------------------------------------------- */
-if (docScopeSelect) {
-  docScopeSelect.addEventListener("change", populateDocumentSelectScope);
+
+// Scope dropdown: prevent closing when clicking inside
+if (scopeDropdownMenu) {
+  scopeDropdownMenu.addEventListener('click', function(e) {
+    e.stopPropagation();
+  });
+}
+
+// Scope dropdown: click handler for scope items
+if (scopeDropdownItems) {
+  scopeDropdownItems.addEventListener('click', function(e) {
+    e.stopPropagation();
+
+    // Guard: prevent changes when scope is locked
+    if (scopeLocked === true) { e.preventDefault(); return; }
+
+    const item = e.target.closest('.dropdown-item');
+    if (!item) return;
+
+    const action = item.getAttribute('data-scope-action');
+    const scopeValue = item.getAttribute('data-scope-value');
+
+    if (action === 'toggle-all') {
+      // Toggle all checkboxes
+      const allCb = item.querySelector('.scope-checkbox-all');
+      if (allCb) {
+        const newState = !allCb.checked;
+        allCb.checked = newState;
+        allCb.indeterminate = false;
+        scopeDropdownItems.querySelectorAll('.scope-checkbox').forEach(cb => {
+          cb.checked = newState;
+        });
+      }
+      onScopeChanged();
+      return;
+    }
+
+    if (scopeValue) {
+      // Toggle individual checkbox
+      const cb = item.querySelector('.scope-checkbox');
+      if (cb) {
+        cb.checked = !cb.checked;
+      }
+      onScopeChanged();
+    }
+  });
+}
+
+if (chatTagsFilter) {
+  chatTagsFilter.addEventListener("change", () => {
+    filterDocumentsBySelectedTags();
+  });
+}
+
+// Tags dropdown: prevent closing when clicking inside
+if (tagsDropdownItems) {
+  if (tagsDropdownMenu) {
+    tagsDropdownMenu.addEventListener('click', function(e) {
+      e.stopPropagation();
+    });
+  }
+
+  // Click handler for tag items with checkbox toggling
+  tagsDropdownItems.addEventListener('click', function(e) {
+    e.stopPropagation();
+    const item = e.target.closest('.dropdown-item');
+    if (!item) return;
+
+    const tagValue = item.getAttribute('data-tag-value');
+
+    // "Clear All" item unchecks everything
+    if (tagValue === '' || tagValue === null) {
+      tagsDropdownItems.querySelectorAll('.tag-checkbox').forEach(cb => {
+        cb.checked = false;
+      });
+      // Clear hidden select
+      if (chatTagsFilter) {
+        Array.from(chatTagsFilter.options).forEach(opt => { opt.selected = false; });
+      }
+      syncTagsDropdownButtonText();
+      filterDocumentsBySelectedTags();
+      return;
+    }
+
+    // Toggle checkbox
+    const checkbox = item.querySelector('.tag-checkbox');
+    if (checkbox) {
+      checkbox.checked = !checkbox.checked;
+    }
+
+    // Sync hidden select with checked state
+    if (chatTagsFilter) {
+      Array.from(chatTagsFilter.options).forEach(opt => { opt.selected = false; });
+      tagsDropdownItems.querySelectorAll('.dropdown-item').forEach(di => {
+        const cb = di.querySelector('.tag-checkbox');
+        const val = di.getAttribute('data-tag-value');
+        if (cb && cb.checked && val) {
+          const matchingOpt = Array.from(chatTagsFilter.options).find(o => o.value === val);
+          if (matchingOpt) matchingOpt.selected = true;
+        }
+      });
+    }
+
+    syncTagsDropdownButtonText();
+    filterDocumentsBySelectedTags();
+  });
 }
 
 if (searchDocumentsBtn) {
@@ -552,42 +1373,28 @@ if (searchDocumentsBtn) {
 
     if (this.classList.contains("active")) {
       searchDocumentsContainer.style.display = "block";
+      // Build the scope dropdown on first open (respect lock state)
+      if (scopeLocked === true) {
+        rebuildScopeDropdownWithLock();
+      } else {
+        buildScopeDropdown();
+      }
       // Ensure initial population and state is correct when opening
       loadAllDocs().then(() => {
-        // Force Bootstrap to update the Popper positioning
+        // Load tags for the currently selected scope
+        loadTagsForScope();
+        // Update Bootstrap Popper positioning if dropdown was already initialized
         try {
           const dropdownInstance = bootstrap.Dropdown.getInstance(docDropdownButton);
           if (dropdownInstance) {
             dropdownInstance.update();
-          } else {
-            // Initialize dropdown if not already done
-            new bootstrap.Dropdown(docDropdownButton, {
-              boundary: 'viewport',
-              reference: 'toggle',
-              autoClose: 'outside',
-              popperConfig: {
-                strategy: 'fixed',
-                modifiers: [
-                  {
-                    name: 'preventOverflow',
-                    options: {
-                      boundary: 'viewport',
-                      padding: 10
-                    }
-                  }
-                ]
-              }
-            });
           }
         } catch (err) {
-          console.error("Error initializing dropdown:", err);
+          console.error("Error updating dropdown:", err);
         }
-        // handleDocumentSelectChange() is called by populateDocumentSelectScope within loadAllDocs
       });
     } else {
       searchDocumentsContainer.style.display = "none";
-      // Optional: Reset classification state when hiding?
-      // resetClassificationState(); // You might want a function for this
     }
   });
 }
@@ -603,12 +1410,12 @@ if (docDropdownMenu) {
   docDropdownMenu.addEventListener('click', function(e) {
     e.stopPropagation();
   });
-  
+
   // Additional event handlers to prevent dropdown from closing
   docDropdownMenu.addEventListener('keydown', function(e) {
     e.stopPropagation();
   });
-  
+
   docDropdownMenu.addEventListener('keyup', function(e) {
     e.stopPropagation();
   });
@@ -619,323 +1426,67 @@ if (docDropdownItems) {
   docDropdownItems.addEventListener('click', function(e) {
     e.stopPropagation();
   });
-  
-  // Directly attach click handler to the container for better delegation
-  docDropdownItems.addEventListener('click', function(e) {
-    // Find closest dropdown-item whether clicked directly or on a child
-    const item = e.target.closest('.dropdown-item');
-    if (!item) return; // Exit if click wasn't on/in a dropdown item
-    
-    const docId = item.getAttribute('data-document-id');
-    console.log("Document item clicked:", docId, item.textContent);
-    
-    // Update hidden select
-    if (docSelectEl) {
-      docSelectEl.value = docId;
-      
-      // Trigger change event
-      const event = new Event('change', { bubbles: true });
-      docSelectEl.dispatchEvent(event);
-    }
-    
-    // Update dropdown button text
-    if (docDropdownButton) {
-      docDropdownButton.querySelector('.selected-document-text').textContent = item.textContent;
-    }
-    
-    // Update active state
-    document.querySelectorAll('#document-dropdown-items .dropdown-item').forEach(i => {
-      i.classList.remove('active');
-    });
-    item.classList.add('active');
-    
-    // Close dropdown
-    try {
-      const dropdownInstance = bootstrap.Dropdown.getInstance(docDropdownButton);
-      if (dropdownInstance) {
-        dropdownInstance.hide();
-      }
-    } catch (err) {
-      console.error("Error closing dropdown:", err);
-    }
-  });
-}
 
-// Add search functionality
-if (docSearchInput) {
-  // Define our filtering function to ensure consistent filtering logic
-  const filterDocumentItems = function(searchTerm) {
-    console.log("Filtering documents with search term:", searchTerm);
-    
-    if (!docDropdownItems) {
-      console.error("Document dropdown items container not found");
+  // Multi-select click handler with checkbox toggling
+  docDropdownItems.addEventListener('click', function(e) {
+    const item = e.target.closest('.dropdown-item');
+    if (!item) return;
+
+    const docId = item.getAttribute('data-document-id');
+
+    // "All Documents" item clears all selections
+    if (docId === '' || docId === null) {
+      // Uncheck all checkboxes
+      docDropdownItems.querySelectorAll('.doc-checkbox').forEach(cb => {
+        cb.checked = false;
+      });
+      // Clear hidden select
+      if (docSelectEl) {
+        Array.from(docSelectEl.options).forEach(opt => { opt.selected = false; });
+      }
+      syncDropdownButtonText();
+      handleDocumentSelectChange();
       return;
     }
-    
-    // Get all dropdown items directly from the items container
-    const items = docDropdownItems.querySelectorAll('.dropdown-item');
-    console.log(`Found ${items.length} document items to filter`);
-    
-    // Keep track if any items matched
-    let matchFound = false;
-    
-    // Process each item
-    items.forEach(item => {
-      // Get the text content for comparison
-      const docName = item.textContent.toLowerCase();
-      
-      // Check if the document name includes the search term
-      if (docName.includes(searchTerm)) {
-        // Show matching item
-        item.style.display = 'block';
-        item.setAttribute('data-filtered', 'visible');
-        matchFound = true;
-      } else {
-        // Hide non-matching item
-        item.style.display = 'none';
-        item.setAttribute('data-filtered', 'hidden');
-      }
-    });
-    
-    console.log(`Filter results: ${matchFound ? 'Matches found' : 'No matches found'}`);
-    
-    // Show a message if no matches found
-    const noMatchesEl = docDropdownItems.querySelector('.no-matches');
-    if (!matchFound && searchTerm.length > 0) {
-      if (!noMatchesEl) {
-        const noMatchesMsg = document.createElement('div');
-        noMatchesMsg.className = 'no-matches text-center text-muted py-2';
-        noMatchesMsg.textContent = 'No matching documents found';
-        docDropdownItems.appendChild(noMatchesMsg);
-      }
-    } else {
-      // Remove the "no matches" message if it exists
-      if (noMatchesEl) {
-        noMatchesEl.remove();
-      }
+
+    // Toggle checkbox
+    const checkbox = item.querySelector('.doc-checkbox');
+    if (checkbox) {
+      checkbox.checked = !checkbox.checked;
     }
-    
-    // Make sure dropdown stays open and visible
-    if (docDropdownMenu) {
-      docDropdownMenu.classList.add('show');
+
+    // Sync hidden select with checked state
+    if (docSelectEl) {
+      Array.from(docSelectEl.options).forEach(opt => { opt.selected = false; });
+      docDropdownItems.querySelectorAll('.dropdown-item').forEach(di => {
+        const cb = di.querySelector('.doc-checkbox');
+        const id = di.getAttribute('data-document-id');
+        if (cb && cb.checked && id) {
+          const matchingOpt = Array.from(docSelectEl.options).find(o => o.value === id);
+          if (matchingOpt) matchingOpt.selected = true;
+        }
+      });
     }
-  };
-  
-  // Attach input event directly 
-  docSearchInput.addEventListener('input', function() {
-    const searchTerm = this.value.toLowerCase().trim();
-    filterDocumentItems(searchTerm);
-  });
-  
-  // Also attach keyup event as a fallback
-  docSearchInput.addEventListener('keyup', function() {
-    const searchTerm = this.value.toLowerCase().trim();
-    filterDocumentItems(searchTerm);
-  });
-  
-  // Clear search when dropdown closes
-  document.addEventListener('hidden.bs.dropdown', function(e) {
-    if (e.target.id === 'document-dropdown') {
-      docSearchInput.value = ''; // Clear search input
-      
-      // Reset visibility of all items
-      if (docDropdownItems) {
-        const items = docDropdownItems.querySelectorAll('.dropdown-item');
-        items.forEach(item => {
-          item.style.display = 'block';
-          item.removeAttribute('data-filtered');
-        });
-      }
-      
-      // Remove any "no matches" message
-      const noMatchesEl = docDropdownItems?.querySelector('.no-matches');
-      if (noMatchesEl) {
-        noMatchesEl.remove();
-      }
-    }
-  });
-  
-  // Prevent dropdown from closing when clicking in search input
-  docSearchInput.addEventListener('click', function(e) {
-    e.stopPropagation();
-    e.preventDefault();
-  });
-  
-  // Prevent dropdown from closing when pressing keys in search input
-  docSearchInput.addEventListener('keydown', function(e) {
-    e.stopPropagation();
+
+    syncDropdownButtonText();
+    handleDocumentSelectChange();
+
+    // Do NOT close dropdown - allow multiple selections
   });
 }
 
 /* ---------------------------------------------------------------------------
-   Handle Document Selection & Update Classification UI
+   Handle Document Selection & Update UI
 --------------------------------------------------------------------------- */
 export function handleDocumentSelectChange() {
-  // Only require docSelectEl for document selection logic
   if (!docSelectEl) {
       console.error("Document select element not found, cannot update UI.");
       return;
   }
 
-  // Update custom dropdown button text to match selected document
-  if (docDropdownButton) {
-    const selectedOption = docSelectEl.options[docSelectEl.selectedIndex];
-    if (selectedOption) {
-      docDropdownButton.querySelector(".selected-document-text").textContent = selectedOption.textContent;
-      
-      // Update active state in dropdown
-      if (docDropdownItems) {
-        document.querySelectorAll("#document-dropdown-items .dropdown-item").forEach(item => {
-          item.classList.remove("active");
-          if (item.getAttribute("data-document-id") === selectedOption.value) {
-            item.classList.add("active");
-          }
-        });
-      }
-    }
-  }
-
-  // Classification UI logic (optional, only if elements exist)
-  const classificationEnabled = toBoolean(window.enable_document_classification);
-
-  if (classificationContainer) {
-    if (classificationEnabled) {
-      classificationContainer.style.display = '';
-    } else {
-      classificationContainer.style.display = 'none';
-    }
-  }
-
-  // If classification is not enabled, skip classification UI logic, but allow document selection to work
-  if (!classificationEnabled) {
-    return;
-  }
-
-  if (!classificationSelectInput || !classificationMultiselectDropdown || !classificationDropdownBtn || !classificationDropdownMenu) {
-    // If classification elements are missing, skip classification UI logic
-    return;
-  }
-
-  const selectedOption = docSelectEl.options[docSelectEl.selectedIndex];
-  const docId = selectedOption.value;
-
-  // Case 1: "All Documents" is selected (value is empty string)
-  if (!docId) {
-    classificationSelectInput.style.display = "none"; // Hide the single display input
-    classificationSelectInput.value = ""; // Clear its value just in case
-
-    classificationMultiselectDropdown.style.display = "block"; // Show the dropdown wrapper
-
-    // Build the checkbox list (this function will also set the initial state)
-    buildClassificationCheckboxDropdown();
-  }
-  // Case 2: A specific document is selected
-  else {
-    classificationMultiselectDropdown.style.display = "none"; // Hide the dropdown wrapper
-
-    // Get the classification stored on the selected option element
-    const classification = selectedOption.dataset.classification || "N/A"; // Use "N/A" or similar if empty
-
-    classificationSelectInput.value = classification; // Set the input's value
-    classificationSelectInput.style.display = "block"; // Show the input
-    // Input is already readonly via HTML, no need to disable JS-side unless you want extra safety
-  }
+  // Sync button text from current hidden select state
+  syncDropdownButtonText();
 }
-
-/* ---------------------------------------------------------------------------
-   Build and Manage Classification Checkbox Dropdown (for "All Documents")
---------------------------------------------------------------------------- */
-function buildClassificationCheckboxDropdown() {
-  if (!classificationDropdownMenu || !classificationDropdownBtn || !classificationSelectInput) return;
-
-  classificationDropdownMenu.innerHTML = ""; // Clear previous items
-
-  // Stop propagation on menu clicks to prevent closing when clicking labels/checkboxes
-  classificationDropdownMenu.addEventListener('click', (e) => {
-        e.stopPropagation();
-  });
-
-
-  if (classificationCategories.length === 0) {
-      classificationDropdownMenu.innerHTML = '<li class="dropdown-item text-muted small">No categories defined</li>';
-      classificationDropdownBtn.textContent = "No categories";
-      classificationDropdownBtn.disabled = true;
-      classificationSelectInput.value = ""; // Ensure hidden value is empty
-      return;
-  }
-
-  classificationDropdownBtn.disabled = false;
-
-  // Create a checkbox item for each classification category
-  classificationCategories.forEach((cat) => {
-    // Use cat.label assuming cat is {label: 'Name', color: '#...'}
-    const categoryLabel = cat.label || cat; // Handle if it's just an array of strings
-    if (!categoryLabel) return; // Skip empty categories
-
-    const li = document.createElement("li");
-    const label = document.createElement("label");
-    label.classList.add("dropdown-item", "d-flex", "align-items-center", "gap-2"); // Use flex for spacing
-    label.style.cursor = 'pointer'; // Make it clear the whole item is clickable
-
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.value = categoryLabel.trim();
-    checkbox.checked = true; // Default to checked
-    checkbox.classList.add('form-check-input', 'mt-0'); // Bootstrap class, mt-0 for alignment
-
-    label.appendChild(checkbox);
-    label.appendChild(document.createTextNode(` ${categoryLabel.trim()}`)); // Add label text
-
-    li.appendChild(label);
-    classificationDropdownMenu.appendChild(li);
-
-    // Add listener to the checkbox itself
-    checkbox.addEventListener("change", () => {
-      updateClassificationDropdownLabelAndValue();
-    });
-  });
-
-  // Initialize the button label and the hidden input value after building
-  updateClassificationDropdownLabelAndValue();
-}
-
-// Single function to update both the button label and the hidden input's value
-function updateClassificationDropdownLabelAndValue() {
-  if (!classificationDropdownMenu || !classificationDropdownBtn || !classificationSelectInput) return;
-
-  const checkboxes = classificationDropdownMenu.querySelectorAll("input[type='checkbox']");
-  const checkedCheckboxes = classificationDropdownMenu.querySelectorAll("input[type='checkbox']:checked");
-
-  const totalCount = checkboxes.length;
-  const checkedCount = checkedCheckboxes.length;
-
-  // Update Button Label
-  if (checkedCount === 0) {
-    classificationDropdownBtn.textContent = "None selected";
-  } else if (checkedCount === totalCount) {
-    classificationDropdownBtn.textContent = "All selected";
-  } else if (checkedCount === 1) {
-    // Find the single selected label
-    classificationDropdownBtn.textContent = checkedCheckboxes[0].value; // Show the actual label if only one selected
-    // classificationDropdownBtn.textContent = "1 selected"; // Alternative: Keep generic count
-  } else {
-    classificationDropdownBtn.textContent = `${checkedCount} selected`;
-  }
-
-  // Update Hidden Input Value (comma-separated string)
-  const checkedValues = [];
-  checkedCheckboxes.forEach((cb) => checkedValues.push(cb.value));
-  classificationSelectInput.value = checkedValues.join(","); // Store comma-separated list
-}
-
-// Helper function (optional) to reset state if needed
-// function resetClassificationState() {
-//     if (!docSelectEl || !classificationContainer) return;
-//     // Potentially reset docSelectEl to "All"
-//     // docSelectEl.value = "";
-//     // Then trigger the update
-//     handleDocumentSelectChange();
-// }
 
 
 // --- Ensure initial state is set after documents are loaded ---
@@ -943,20 +1494,29 @@ function updateClassificationDropdownLabelAndValue() {
 
 // Initialize the dropdown on page load
 document.addEventListener('DOMContentLoaded', function() {
-  // If search documents button exists, it needs to be clicked to show controls
-  if (searchDocumentsBtn && docScopeSelect && docDropdownButton) {
+  // Initialize scope dropdown
+  if (scopeDropdownButton) {
     try {
-      // Get the dropdown element
-      const dropdownEl = document.getElementById('document-dropdown');
-      
-      if (dropdownEl) {
-        console.log("Initializing Bootstrap dropdown with search functionality");
-        
+      const scopeDropdownEl = document.getElementById('scope-dropdown');
+      if (scopeDropdownEl) {
+        new bootstrap.Dropdown(scopeDropdownButton, {
+          autoClose: 'outside'
+        });
+      }
+    } catch (err) {
+      console.error("Error initializing scope dropdown:", err);
+    }
+  }
+
+  // If search documents button exists, it needs to be clicked to show controls
+  if (searchDocumentsBtn && docDropdownButton) {
+    try {
+      if (docDropdown) {
         // Initialize Bootstrap dropdown with the right configuration
         new bootstrap.Dropdown(docDropdownButton, {
           boundary: 'viewport',
           reference: 'toggle',
-          autoClose: 'outside', // Close when clicking outside, stay open when clicking inside
+          autoClose: 'outside',
           popperConfig: {
             strategy: 'fixed',
             modifiers: [
@@ -970,44 +1530,147 @@ document.addEventListener('DOMContentLoaded', function() {
             ]
           }
         });
-        
-        // Listen for dropdown show event
-        dropdownEl.addEventListener('shown.bs.dropdown', function() {
-          console.log("Dropdown shown - making sure items are visible");
-          initializeDocumentDropdown();
-          
-          // Focus the search input when dropdown is shown
+
+        // Clear search when opening
+        docDropdown.addEventListener('show.bs.dropdown', function() {
           if (docSearchInput) {
-            setTimeout(() => {
-              docSearchInput.focus();
-            }, 100);
+            docSearchInput.value = '';
+          }
+          documentSearchController?.applyFilter('');
+        });
+
+        // Adjust sizing and focus search when shown
+        docDropdown.addEventListener('shown.bs.dropdown', function() {
+          initializeDocumentDropdown();
+          if (docSearchInput) {
+            setTimeout(() => docSearchInput.focus(), 50);
           }
         });
-        
-        // Re-initialize the search filter every time the dropdown is shown
-        if (docSearchInput) {
-          // Clear any previous search when opening the dropdown
-          dropdownEl.addEventListener('show.bs.dropdown', function() {
-            docSearchInput.value = '';
-          });
-          
-          // Ensure the search filter is properly initialized when the dropdown is shown
-          dropdownEl.addEventListener('shown.bs.dropdown', function() {
-            // Explicitly focus and activate the search input
-            setTimeout(() => {
-              docSearchInput.focus();
-              
-              // Add click handler for search input to prevent dropdown from closing
-              docSearchInput.onclick = function(e) {
-                e.stopPropagation();
-                e.preventDefault();
-              };
-            }, 150);
-          });
-        }
+
+        // Clean up inline styles and reset state when hidden
+        docDropdown.addEventListener('hidden.bs.dropdown', function() {
+          documentSearchController?.resetFilter();
+          // Clear inline styles set by initializeDocumentDropdown so they
+          // don't interfere with Bootstrap's positioning on next open
+          if (docDropdownMenu) {
+            docDropdownMenu.style.maxHeight = '';
+            docDropdownMenu.style.maxWidth = '';
+            docDropdownMenu.style.width = '';
+          }
+          if (docDropdownItems) {
+            docDropdownItems.style.maxHeight = '';
+          }
+        });
       }
     } catch (err) {
       console.error("Error initializing bootstrap dropdown:", err);
     }
+  }
+
+  // --- Scope Lock: Dual-mode modal event wiring ---
+  const confirmToggleBtn = document.getElementById('confirm-scope-lock-toggle-btn');
+  if (confirmToggleBtn) {
+    confirmToggleBtn.addEventListener('click', async () => {
+      const conversationId = window.currentConversationId;
+      if (!conversationId) return;
+
+      const newState = scopeLocked === true ? false : true;
+
+      try {
+        confirmToggleBtn.disabled = true;
+        confirmToggleBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>' +
+          (newState ? 'Locking...' : 'Unlocking...');
+        await toggleScopeLock(conversationId, newState);
+
+        // Hide modal
+        const modalEl = document.getElementById('scopeLockModal');
+        if (modalEl) {
+          const modalInstance = bootstrap.Modal.getInstance(modalEl);
+          if (modalInstance) modalInstance.hide();
+        }
+      } catch (err) {
+        console.error('Failed to toggle scope lock:', err);
+      } finally {
+        confirmToggleBtn.disabled = false;
+      }
+    });
+  }
+
+  const scopeLockModal = document.getElementById('scopeLockModal');
+  if (scopeLockModal) {
+    scopeLockModal.addEventListener('show.bs.modal', () => {
+      const titleEl = document.getElementById('scopeLockModalLabel');
+      const descEl = document.getElementById('scope-lock-modal-description');
+      const alertEl = document.getElementById('scope-lock-modal-alert');
+      const toggleBtn = document.getElementById('confirm-scope-lock-toggle-btn');
+      const listEl = document.getElementById('locked-workspaces-list');
+
+      // Build workspace list
+      const workspaceItems = [];
+      for (const ctx of lockedContexts) {
+        let name = '';
+        let icon = '';
+        if (ctx.scope === 'personal') {
+          name = 'Personal';
+          icon = 'bi-person';
+        } else if (ctx.scope === 'group') {
+          name = groupIdToName[ctx.id] || ctx.id;
+          icon = 'bi-people';
+        } else if (ctx.scope === 'public') {
+          name = publicWorkspaceIdToName[ctx.id] || ctx.id;
+          icon = 'bi-globe';
+        }
+        if (name) {
+          workspaceItems.push(`<li class="list-group-item"><i class="bi ${icon} me-2"></i>${name}</li>`);
+        }
+      }
+
+      if (listEl) {
+        if (workspaceItems.length > 0) {
+          const listLabel = scopeLocked === true ? 'Currently locked to:' : 'Will lock to:';
+          listEl.innerHTML = `<p class="small text-muted mb-2">${listLabel}</p><ul class="list-group list-group-flush">${workspaceItems.join('')}</ul>`;
+        } else {
+          listEl.innerHTML = '<p class="text-muted">No specific workspaces recorded.</p>';
+        }
+      }
+
+      if (scopeLocked === true) {
+        // Currently locked — show unlock mode
+        if (titleEl) titleEl.innerHTML = '<i class="bi bi-unlock me-2"></i>Unlock Workspace Scope';
+        if (descEl) descEl.textContent = 'This conversation\'s scope is locked to prevent accidental cross-contamination with other data sources.';
+        if (alertEl) {
+          alertEl.className = 'alert alert-warning mb-0';
+          alertEl.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>Unlocking allows you to select any workspace for this conversation. You can re-lock it later.';
+        }
+        if (toggleBtn) {
+          toggleBtn.className = 'btn btn-warning';
+          toggleBtn.innerHTML = '<i class="bi bi-unlock me-1"></i>Unlock Scope';
+        }
+
+        // Check if admin enforces scope lock — hide unlock button
+        if (window.appSettings && window.appSettings.enforce_workspace_scope_lock) {
+          if (toggleBtn) toggleBtn.classList.add('d-none');
+          if (alertEl) {
+            alertEl.className = 'alert alert-info mb-0';
+            alertEl.innerHTML = '<i class="bi bi-info-circle me-1"></i>Workspace scope lock is enforced by your administrator. The scope cannot be unlocked.';
+          }
+        } else {
+          if (toggleBtn) toggleBtn.classList.remove('d-none');
+        }
+      } else {
+        // Currently unlocked — show lock mode
+        if (titleEl) titleEl.innerHTML = '<i class="bi bi-lock me-2"></i>Lock Workspace Scope';
+        if (descEl) descEl.textContent = 'Re-lock the scope to restrict this conversation to the workspaces that produced search results.';
+        if (alertEl) {
+          alertEl.className = 'alert alert-info mb-0';
+          alertEl.innerHTML = '<i class="bi bi-info-circle me-1"></i>Locking will restrict the scope dropdown to only the workspaces listed above.';
+        }
+        if (toggleBtn) {
+          toggleBtn.className = 'btn btn-success';
+          toggleBtn.innerHTML = '<i class="bi bi-lock me-1"></i>Lock Scope';
+          toggleBtn.classList.remove('d-none');
+        }
+      }
+    });
   }
 });

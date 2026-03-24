@@ -75,6 +75,12 @@ az acr build --registry <acr-name> --file application/single_app/Dockerfile --im
 
 If you use `az acr build`, run it from the repository root so the Docker build context includes the files referenced by `application/single_app/Dockerfile`.
 
+## Upgrading
+
+- For **code-only** container updates, publish a new image to ACR and follow the existing App Service container rollout process instead of rerunning Terraform for every release.
+- Use Terraform when you are intentionally changing infrastructure or configuration that belongs in Terraform state.
+- See [../../docs/how-to/upgrade_paths.md](../../docs/how-to/upgrade_paths.md) for the native-vs-container upgrade guide and the ACR/image-only rollout notes.
+
 ## Terraform deployment
 
 Initialize: Run terraform init to download the necessary providers.

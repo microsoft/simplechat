@@ -5,7 +5,7 @@ import {
   showLoadingIndicatorInChatbox,
   hideLoadingIndicatorInChatbox,
 } from "./chat-loading-indicator.js";
-import { docScopeSelect, getDocumentMetadata, personalDocs, groupDocs, publicDocs } from "./chat-documents.js";
+import { getDocumentMetadata, personalDocs, groupDocs, publicDocs, getSelectedTags, getEffectiveScopes, applyScopeLock } from "./chat-documents.js";
 import { promptSelect } from "./chat-prompts.js";
 import {
   createNewConversation,
@@ -17,9 +17,10 @@ import { escapeHtml, isColorLight, addTargetBlankToExternalLinks } from "./chat-
 import { showToast } from "./chat-toast.js";
 import { autoplayTTSIfEnabled } from "./chat-tts.js";
 import { saveUserSetting } from "./chat-layout.js";
-import { isStreamingEnabled, sendMessageWithStreaming } from "./chat-streaming.js";
+import { sendMessageWithStreaming } from "./chat-streaming.js";
 import { getCurrentReasoningEffort, isReasoningEffortEnabled } from './chat-reasoning.js';
 import { areAgentsEnabled } from './chat-agents.js';
+import { createThoughtsToggleHtml, attachThoughtsToggleListener } from './chat-thoughts.js';
 
 // Conditionally import TTS if enabled
 let ttsModule = null;
@@ -372,9 +373,12 @@ function createCitationsHtml(
     hybridCitations.forEach((cite, index) => {
       const citationId =
         cite.citation_id || `${cite.chunk_id}_${cite.page_number || index}`; // Fallback ID
-      const displayText = `${escapeHtml(cite.file_name)}, Page ${
-        cite.page_number || "N/A"
-      }`;
+      const locationLabel = cite.location_label || (cite.sheet_name ? 'Sheet' : 'Page');
+      const locationValue = cite.location_value || cite.sheet_name || cite.page_number || 'N/A';
+      const displayText = `${escapeHtml(cite.file_name)}, ${escapeHtml(locationLabel)}: ${escapeHtml(locationValue)}`;
+      const sheetNameAttribute = cite.sheet_name
+        ? `data-sheet-name="${escapeHtml(cite.sheet_name)}"`
+        : '';
 
       // Check if this is a metadata citation
       const isMetadata = cite.metadata_type ? true : false;
@@ -385,6 +389,7 @@ function createCitationsHtml(
               <a href="#"
                  class="btn btn-sm citation-button hybrid-citation-link ${isMetadata ? 'metadata-citation' : ''}"
                  data-citation-id="${escapeHtml(citationId)}"
+                  ${sheetNameAttribute}
                  data-is-metadata="${isMetadata}"
                  data-metadata-type="${escapeHtml(metadataType)}"
                  data-metadata-content="${escapeHtml(metadataContent)}"
@@ -663,6 +668,11 @@ export function appendMessage(
                     <li><a class="dropdown-item dropdown-delete-btn" href="#" data-message-id="${messageId}"><i class="bi bi-trash me-2"></i>Delete</a></li>
                     <li><a class="dropdown-item dropdown-retry-btn" href="#" data-message-id="${messageId}"><i class="bi bi-arrow-clockwise me-2"></i>Retry</a></li>
                     ${feedbackHtml}
+                    <li><hr class="dropdown-divider"></li>
+                    <li><a class="dropdown-item dropdown-export-md-btn" href="#" data-message-id="${messageId}"><i class="bi bi-markdown me-2"></i>Export to Markdown</a></li>
+                    <li><a class="dropdown-item dropdown-export-word-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-word me-2"></i>Export to Word</a></li>
+                    <li><a class="dropdown-item dropdown-copy-prompt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-clipboard-plus me-2"></i>Use as Prompt</a></li>
+                    <li><a class="dropdown-item dropdown-open-email-btn" href="#" data-message-id="${messageId}"><i class="bi bi-envelope me-2"></i>Open in Email</a></li>
                 </ul>
             </div>
         `;
@@ -743,11 +753,13 @@ export function appendMessage(
 
     const metadataContainerId = `metadata-${messageId || Date.now()}`;
     const metadataContainerHtml = `<div class="metadata-container mt-2 pt-2 border-top" id="${metadataContainerId}" style="display: none;"><div class="text-muted">Loading metadata...</div></div>`;
-    
+
+    const thoughtsHtml = createThoughtsToggleHtml(messageId);
+
     const footerContentHtml = `<div class="message-footer d-flex justify-content-between align-items-center mt-2">
       <div class="d-flex align-items-center">${copyAndFeedbackHtml}</div>
       <div class="d-flex align-items-center"></div>
-      <div class="d-flex align-items-center gap-2">${citationToggleHtml}<button class="btn btn-sm btn-link text-muted metadata-info-btn" data-message-id="${messageId}" title="Show metadata" aria-expanded="false" aria-controls="${metadataContainerId}">
+      <div class="d-flex align-items-center gap-2">${thoughtsHtml.toggleHtml}${citationToggleHtml}<button class="btn btn-sm btn-link text-muted metadata-info-btn" data-message-id="${messageId}" title="Show metadata" aria-expanded="false" aria-controls="${metadataContainerId}">
         <i class="bi bi-info-circle"></i>
       </button></div>
     </div>`;
@@ -760,6 +772,7 @@ export function appendMessage(
                     <div class="message-sender">${senderLabel}</div>
                     ${mainMessageHtml}
                     ${citationContentContainerHtml}
+                    ${thoughtsHtml.containerHtml}
                     ${metadataContainerHtml}
                     ${footerContentHtml}
                 </div>
@@ -816,6 +829,9 @@ export function appendMessage(
         }
       });
     }
+
+    // Attach thoughts toggle listener
+    attachThoughtsToggleListener(messageDiv, messageId, currentConversationId);
     
     const maskBtn = messageDiv.querySelector(".mask-btn");
     if (maskBtn) {
@@ -849,6 +865,50 @@ export function appendMessage(
         const currentMessageId = messageDiv.getAttribute('data-message-id');
         console.log(`🔄 AI Retry button clicked - using message ID from DOM: ${currentMessageId}`);
         handleRetryButtonClick(messageDiv, currentMessageId, 'assistant');
+      });
+    }
+
+    const dropdownExportMdBtn = messageDiv.querySelector(".dropdown-export-md-btn");
+    if (dropdownExportMdBtn) {
+      dropdownExportMdBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        const currentMessageId = messageDiv.getAttribute('data-message-id');
+        import('./chat-message-export.js').then(module => {
+          module.exportMessageAsMarkdown(messageDiv, currentMessageId, 'assistant');
+        }).catch(err => console.error('Error loading message export module:', err));
+      });
+    }
+
+    const dropdownExportWordBtn = messageDiv.querySelector(".dropdown-export-word-btn");
+    if (dropdownExportWordBtn) {
+      dropdownExportWordBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        const currentMessageId = messageDiv.getAttribute('data-message-id');
+        import('./chat-message-export.js').then(module => {
+          module.exportMessageAsWord(messageDiv, currentMessageId, 'assistant');
+        }).catch(err => console.error('Error loading message export module:', err));
+      });
+    }
+
+    const dropdownCopyPromptBtn = messageDiv.querySelector(".dropdown-copy-prompt-btn");
+    if (dropdownCopyPromptBtn) {
+      dropdownCopyPromptBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        const currentMessageId = messageDiv.getAttribute('data-message-id');
+        import('./chat-message-export.js').then(module => {
+          module.copyAsPrompt(messageDiv, currentMessageId, 'assistant');
+        }).catch(err => console.error('Error loading message export module:', err));
+      });
+    }
+
+    const dropdownOpenEmailBtn = messageDiv.querySelector(".dropdown-open-email-btn");
+    if (dropdownOpenEmailBtn) {
+      dropdownOpenEmailBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        const currentMessageId = messageDiv.getAttribute('data-message-id');
+        import('./chat-message-export.js').then(module => {
+          module.openInEmail(messageDiv, currentMessageId, 'assistant');
+        }).catch(err => console.error('Error loading message export module:', err));
       });
     }
     
@@ -1076,6 +1136,11 @@ export function appendMessage(
                 <li><a class="dropdown-item dropdown-edit-btn" href="#" data-message-id="${messageId}"><i class="bi bi-pencil me-2"></i>Edit</a></li>
                 <li><a class="dropdown-item dropdown-delete-btn" href="#" data-message-id="${messageId}"><i class="bi bi-trash me-2"></i>Delete</a></li>
                 <li><a class="dropdown-item dropdown-retry-btn" href="#" data-message-id="${messageId}"><i class="bi bi-arrow-clockwise me-2"></i>Retry</a></li>
+                <li><hr class="dropdown-divider"></li>
+                <li><a class="dropdown-item dropdown-export-md-btn" href="#" data-message-id="${messageId}"><i class="bi bi-markdown me-2"></i>Export to Markdown</a></li>
+                <li><a class="dropdown-item dropdown-export-word-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-word me-2"></i>Export to Word</a></li>
+                <li><a class="dropdown-item dropdown-copy-prompt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-clipboard-plus me-2"></i>Use as Prompt</a></li>
+                <li><a class="dropdown-item dropdown-open-email-btn" href="#" data-message-id="${messageId}"><i class="bi bi-envelope me-2"></i>Open in Email</a></li>
               </ul>
             </div>
             <button class="btn btn-sm btn-link text-muted copy-user-btn" data-message-id="${messageId}" title="Copy message">
@@ -1324,7 +1389,7 @@ export function sendMessage() {
   if (!currentConversationId) {
     createNewConversation(() => {
       actuallySendMessage(combinedMessage);
-    });
+    }, { preserveSelections: true });
   } else {
     actuallySendMessage(combinedMessage);
   }
@@ -1350,11 +1415,6 @@ export function actuallySendMessage(finalMessageToSend) {
   userInput.style.height = "";
   // Update send button visibility after clearing input
   updateSendButtonVisibility();
-  
-  // Only show loading indicator if NOT using streaming (streaming creates its own placeholder)
-  if (!isStreamingEnabled()) {
-    showLoadingIndicatorInChatbox();
-  }
 
   const modelDeployment = modelSelect?.value;
 
@@ -1366,24 +1426,16 @@ export function actuallySendMessage(finalMessageToSend) {
   }
 
   let selectedDocumentId = null;
-  let classificationsToSend = null;
+  let selectedDocumentIds = [];
   const docSel = document.getElementById("document-select");
-  const classificationInput = document.getElementById("classification-select");
 
-  // Always set selectedDocumentId if a document is selected, regardless of hybridSearchEnabled
+  // Read all selected document IDs (multi-select support)
   if (docSel) {
-    const selectedDocOption = docSel.options[docSel.selectedIndex];
-    if (selectedDocOption && selectedDocOption.value !== "") {
-      selectedDocumentId = selectedDocOption.value;
-    } else {
-      selectedDocumentId = null;
-    }
-  }
-
-  // Only set classificationsToSend if classificationInput exists
-  if (classificationInput) {
-    classificationsToSend =
-      classificationInput.value === "N/A" ? null : classificationInput.value;
+    selectedDocumentIds = Array.from(docSel.selectedOptions)
+      .map(o => o.value)
+      .filter(v => v); // Filter out empty strings
+    // For backwards compat, set single ID to first selected or null
+    selectedDocumentId = selectedDocumentIds.length > 0 ? selectedDocumentIds[0] : null;
   }
 
   let imageGenEnabled = false;
@@ -1439,44 +1491,68 @@ export function actuallySendMessage(finalMessageToSend) {
     }
   }
 
-  // Determine the correct doc_scope, especially when "all" is selected but a specific document is chosen
-  let effectiveDocScope = docScopeSelect ? docScopeSelect.value : "all";
-  
-  // If scope is "all" but a specific document is selected, determine the actual scope of that document
-  if (effectiveDocScope === "all" && selectedDocumentId) {
-    const documentMetadata = getDocumentMetadata(selectedDocumentId);
-    if (documentMetadata) {
-      // Check which list the document belongs to
-      if (personalDocs.find(doc => doc.id === selectedDocumentId || doc.document_id === selectedDocumentId)) {
-        effectiveDocScope = "personal";
-      } else if (groupDocs.find(doc => doc.id === selectedDocumentId || doc.document_id === selectedDocumentId)) {
-        effectiveDocScope = "group";
-      } else if (publicDocs.find(doc => doc.id === selectedDocumentId || doc.document_id === selectedDocumentId)) {
-        effectiveDocScope = "public";
+  // Get effective scopes from multi-select scope dropdown
+  const scopes = getEffectiveScopes();
+
+  // Determine the correct doc_scope based on selected scopes
+  let effectiveDocScope = "all";
+  if (scopes.personal && scopes.groupIds.length === 0 && scopes.publicWorkspaceIds.length === 0) {
+    effectiveDocScope = "personal";
+  } else if (!scopes.personal && scopes.groupIds.length > 0 && scopes.publicWorkspaceIds.length === 0) {
+    effectiveDocScope = "group";
+  } else if (!scopes.personal && scopes.groupIds.length === 0 && scopes.publicWorkspaceIds.length > 0) {
+    effectiveDocScope = "public";
+  }
+
+  // If documents are selected, determine the actual scope from the documents themselves
+  if (selectedDocumentIds.length > 0) {
+    const docScopes = new Set();
+    selectedDocumentIds.forEach(docId => {
+      if (personalDocs.find(doc => doc.id === docId || doc.document_id === docId)) {
+        docScopes.add("personal");
+      } else if (groupDocs.find(doc => doc.id === docId || doc.document_id === docId)) {
+        docScopes.add("group");
+      } else if (publicDocs.find(doc => doc.id === docId || doc.document_id === docId)) {
+        docScopes.add("public");
       }
-      console.log(`Document ${selectedDocumentId} scope detected as: ${effectiveDocScope}`);
+    });
+
+    // Only narrow scope if ALL selected docs are from the same scope
+    if (docScopes.size === 1) {
+      effectiveDocScope = docScopes.values().next().value;
+      console.log(`All selected documents are from scope: ${effectiveDocScope}`);
+    } else if (docScopes.size > 1) {
+      effectiveDocScope = "all";
+      console.log(`Selected documents span ${docScopes.size} scopes (${[...docScopes].join(', ')}), keeping scope as "all"`);
     }
   }
 
-  // Fallback: if group_id is null/empty, use window.activeGroupId
-  const finalGroupId = group_id || window.activeGroupId || null;
+  // Use group IDs from scope selector; fall back to window.activeGroupId for backwards compat
+  const finalGroupIds = scopes.groupIds.length > 0 ? scopes.groupIds : (window.activeGroupId ? [window.activeGroupId] : []);
+  const finalGroupId = finalGroupIds[0] || window.activeGroupId || null;
   const webSearchToggle = document.getElementById("search-web-btn");
   const webSearchEnabled = webSearchToggle ? webSearchToggle.classList.contains("active") : false;
-  
+
   // Prepare message data object
-  // Get active public workspace ID from user settings (similar to active_group_id)
-  const finalPublicWorkspaceId = window.activePublicWorkspaceId || null;
-  
+  // Get public workspace IDs from scope selector; fall back to window.activePublicWorkspaceId
+  const finalPublicWorkspaceId = scopes.publicWorkspaceIds[0] || window.activePublicWorkspaceId || null;
+
+  // Get selected tags from chat-documents module
+  const selectedTags = getSelectedTags();
+
   const messageData = {
     message: finalMessageToSend,
     conversation_id: currentConversationId,
     hybrid_search: hybridSearchEnabled,
     web_search_enabled: webSearchEnabled,
     selected_document_id: selectedDocumentId,
-    classifications: classificationsToSend,
+    selected_document_ids: selectedDocumentIds,
+    classifications: null,
+    tags: selectedTags,
     image_generation: imageGenEnabled,
     doc_scope: effectiveDocScope,
     chat_type: chat_type,
+    active_group_ids: finalGroupIds,
     active_group_id: finalGroupId,
     active_public_workspace_id: finalPublicWorkspaceId,
     model_deployment: modelDeployment,
@@ -1484,260 +1560,13 @@ export function actuallySendMessage(finalMessageToSend) {
     agent_info: agentInfo,
     reasoning_effort: getCurrentReasoningEffort()
   };
-  
-  // Check if streaming is enabled (but not for image generation)
-  const agentsEnabled = typeof areAgentsEnabled === 'function' && areAgentsEnabled();
-  if (isStreamingEnabled() && !imageGenEnabled) {
-    const streamInitiated = sendMessageWithStreaming(
-      messageData, 
-      tempUserMessageId, 
-      currentConversationId
-    );
-    if (streamInitiated) {
-      return; // Streaming handles the rest
-    }
-    // If streaming failed to initiate, fall through to regular fetch
-  }
-  
-  // Regular non-streaming fetch
-  fetch("/api/chat", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    credentials: "same-origin",
-    body: JSON.stringify(messageData),
-  })
-    .then((response) => {
-      if (!response.ok) {
-        // Handle non-OK responses, try to parse JSON error
-        return response
-          .json()
-          .then((errData) => {
-            // Throw an error object including the status and parsed data
-            const error = new Error(
-              errData.error || `HTTP error! status: ${response.status}`
-            );
-            error.status = response.status;
-            error.data = errData; // Attach full error data
-            throw error;
-          })
-          .catch(() => {
-            // If JSON parsing fails, throw a generic error
-            throw new Error(`HTTP error! status: ${response.status}`);
-          });
-      }
-      return response.json(); // Parse JSON for successful responses
-    })
-    .then((data) => {
-      // Only successful responses reach here
-      hideLoadingIndicatorInChatbox();
+  sendMessageWithStreaming(
+    messageData,
+    tempUserMessageId,
+    currentConversationId
+  );
 
-      console.log("--- Data received from /api/chat ---");
-      console.log("Full data object:", data);
-      console.log(
-        `data.augmented: ${data.augmented} (Type: ${typeof data.augmented})`
-      );
-      console.log("data.hybrid_citations:", data.hybrid_citations);
-      console.log("data.web_search_citations:", data.web_search_citations);
-      console.log("data.agent_citations:", data.agent_citations);
-      console.log(`data.message_id: ${data.message_id}`);
-      console.log(`data.user_message_id: ${data.user_message_id}`);
-      console.log(`tempUserMessageId: ${tempUserMessageId}`);
-
-      // Update the user message with the real message ID
-      if (data.user_message_id) {
-        console.log(`🔄 Calling updateUserMessageId(${tempUserMessageId}, ${data.user_message_id})`);
-        updateUserMessageId(tempUserMessageId, data.user_message_id);
-      } else {
-        console.warn(`⚠️ No user_message_id in response! User message will keep temporary ID: ${tempUserMessageId}`);
-      }
-
-      if (data.reply) {
-        // *** Pass the new fields to appendMessage ***
-        appendMessage(
-          "AI",
-          data.reply,
-          data.model_deployment_name,
-          data.message_id,
-          data.augmented, // Pass augmented flag
-          data.hybrid_citations, // Pass hybrid citations
-          data.web_search_citations, // Pass web citations
-          data.agent_citations, // Pass agent citations
-          data.agent_display_name, // Pass agent display name
-          data.agent_name, // Pass agent name
-          null, // fullMessageObject
-          true // isNewMessage - trigger autoplay for new responses
-        );
-      }
-      // Show kernel fallback notice if present
-      if (data.kernel_fallback_notice) {
-        showToast(data.kernel_fallback_notice, 'warning');
-      }
-      if (data.image_url) {
-        // Assuming image messages don't have citations in this flow
-        appendMessage(
-          "image",
-          data.image_url,
-          data.model_deployment_name,
-          null, // messageId
-          false, // augmented
-          [], // hybridCitations
-          [], // webCitations
-          [], // agentCitations
-          data.agent_display_name, // Pass agent display name
-          data.agent_name // Pass agent name
-        );
-      }
-
-      if (data.reload_messages && currentConversationId) {
-        console.log("Reload flag received from backend - refreshing messages.");
-        loadMessages(currentConversationId);
-      }
-
-      // Update conversation list item and header if needed
-      if (data.conversation_id) {
-        currentConversationId = data.conversation_id; // Update current ID
-        const convoItem = document.querySelector(
-          `.conversation-item[data-conversation-id="${currentConversationId}"]`
-        );
-        if (convoItem) {
-          let updated = false;
-          // Update Title
-          if (
-            data.conversation_title &&
-            convoItem.getAttribute("data-conversation-title") !==
-              data.conversation_title
-          ) {
-            convoItem.setAttribute(
-              "data-conversation-title",
-              data.conversation_title
-            );
-            const titleEl = convoItem.querySelector(".conversation-title");
-            if (titleEl) titleEl.textContent = data.conversation_title;
-            
-            // Update sidebar conversation title in real-time
-            updateSidebarConversationTitle(currentConversationId, data.conversation_title);
-            
-            updated = true;
-          }
-          // Update Classifications
-          if (data.classification) {
-            // Check if API returned classification
-            const currentClassificationJson =
-              convoItem.dataset.classifications || "[]";
-            const newClassificationJson = JSON.stringify(data.classification);
-            if (currentClassificationJson !== newClassificationJson) {
-              convoItem.dataset.classifications = newClassificationJson;
-              updated = true;
-            }
-          }
-          // Update Timestamp (optional, could be done on load)
-          const dateEl = convoItem.querySelector("small");
-          if (dateEl)
-            dateEl.textContent = new Date().toLocaleString([], {
-              dateStyle: "short",
-              timeStyle: "short",
-            });
-
-          if (updated) {
-            selectConversation(currentConversationId); // Re-select to update header
-          }
-        } else {
-          // New conversation case
-          console.log('[sendMessage] New conversation created, adding to list without reload');
-          addConversationToList(
-            currentConversationId,
-            data.conversation_title,
-            data.classification || []
-          );
-          // Don't call selectConversation here - messages are already displayed
-          // Just update the current conversation ID and title
-          window.currentConversationId = currentConversationId;
-          document.getElementById("current-conversation-title").textContent = data.conversation_title || "New Conversation";
-          console.log('[sendMessage] New conversation setup complete, conversation ID:', currentConversationId);
-        }
-      }
-    })
-    .catch((error) => {
-      hideLoadingIndicatorInChatbox();
-      console.error("Error sending message:", error);
-
-      // Display specific error messages based on status or content
-      if (error.status === 403 && error.data) {
-        // Check for status and data from thrown error
-        const categories = (error.data.triggered_categories || [])
-          .map((catObj) => `${catObj.category} (severity=${catObj.severity})`)
-          .join(", ");
-        const reasonMsg = Array.isArray(error.data.reason)
-          ? error.data.reason.join(", ")
-          : error.data.reason;
-
-        appendMessage(
-          "safety", // Use 'safety' sender type
-          `Your message was blocked by Content Safety.\n\n` +
-            `**Categories triggered**: ${categories}\n` +
-            `**Reason**: ${reasonMsg}`,
-          null, // No model name for safety message
-          error.data.message_id, // Use message_id if provided in error
-          false, // augmented
-          [], // hybridCitations
-          [], // webCitations
-          [], // agentCitations
-          null, // agentDisplayName
-          null // agentName
-        );
-      } else {
-        // Show specific embedding error if present, or if status is 500 (embedding backend error)
-        const errMsg = (error.message || "").toLowerCase();
-        
-        // Handle image generation content safety errors
-        if (errMsg.includes("safety system") || errMsg.includes("moderation_blocked") || errMsg.includes("content safety")) {
-          appendMessage(
-            "safety", // Use 'safety' sender type
-            `**Image Generation Blocked by Content Safety**\n\n` +
-            `Your image generation request was blocked by Azure OpenAI's content safety system. ` +
-            `Please try a different prompt that doesn't involve potentially harmful, violent, or illicit content.\n\n` +
-            `**Error**: ${error.message || "Content safety violation"}`,
-            null, // No model name for safety message
-            null, // No message ID for error
-            false, // augmented
-            [], // hybridCitations
-            [], // webCitations
-            [], // agentCitations
-            null, // agentDisplayName
-            null // agentName
-          );
-        } else if (errMsg.includes("embedding") || error.status === 500) {
-          appendMessage(
-            "Error",
-            "There was an issue with the embedding process. Please check with an admin on embedding configuration.",
-            null, // No model name for error message
-            null, // No message ID for error
-            false, // augmented
-            [], // hybridCitations
-            [], // webCitations
-            [], // agentCitations
-            null, // agentDisplayName
-            null // agentName
-          );
-        } else {
-          // General error message
-          appendMessage(
-            "Error",
-            `Could not get a response. ${error.message || ""}`,
-            null, // No model name for error message
-            null, // No message ID for error
-            false, // augmented
-            [], // hybridCitations
-            [], // webCitations
-            [], // agentCitations
-            null, // agentDisplayName
-            null // agentName
-          );
-        }
-      }
-    });
+  return;
 }
 
 function attachCodeBlockCopyButtons(parentElement) {
@@ -1957,6 +1786,50 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
       }).catch(err => {
         console.error('❌ Error loading chat-edit module:', err);
       });
+    });
+  }
+
+  const dropdownExportMdBtn = messageDiv.querySelector(".dropdown-export-md-btn");
+  if (dropdownExportMdBtn) {
+    dropdownExportMdBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      const currentMessageId = messageDiv.getAttribute('data-message-id');
+      import('./chat-message-export.js').then(module => {
+        module.exportMessageAsMarkdown(messageDiv, currentMessageId, 'user');
+      }).catch(err => console.error('Error loading message export module:', err));
+    });
+  }
+
+  const dropdownExportWordBtn = messageDiv.querySelector(".dropdown-export-word-btn");
+  if (dropdownExportWordBtn) {
+    dropdownExportWordBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      const currentMessageId = messageDiv.getAttribute('data-message-id');
+      import('./chat-message-export.js').then(module => {
+        module.exportMessageAsWord(messageDiv, currentMessageId, 'user');
+      }).catch(err => console.error('Error loading message export module:', err));
+    });
+  }
+
+  const dropdownCopyPromptBtn = messageDiv.querySelector(".dropdown-copy-prompt-btn");
+  if (dropdownCopyPromptBtn) {
+    dropdownCopyPromptBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      const currentMessageId = messageDiv.getAttribute('data-message-id');
+      import('./chat-message-export.js').then(module => {
+        module.copyAsPrompt(messageDiv, currentMessageId, 'user');
+      }).catch(err => console.error('Error loading message export module:', err));
+    });
+  }
+
+  const dropdownOpenEmailBtn = messageDiv.querySelector(".dropdown-open-email-btn");
+  if (dropdownOpenEmailBtn) {
+    dropdownOpenEmailBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      const currentMessageId = messageDiv.getAttribute('data-message-id');
+      import('./chat-message-export.js').then(module => {
+        module.openInEmail(messageDiv, currentMessageId, 'user');
+      }).catch(err => console.error('Error loading message export module:', err));
     });
   }
   

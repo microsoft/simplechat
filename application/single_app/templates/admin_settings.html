@@ -953,6 +953,12 @@
                                     <label class="form-check-label ms-2" for="toggle-fact-memory-plugin">Enable Fact Memory Action</label>
                                     <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to store and retrieve facts and information across conversations for improved memory and context retention."></i>
                                 </div>
+                                <div class="form-check form-switch mb-2" id="tabular-processing-toggle-wrapper">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-tabular-processing-plugin" name="enable_tabular_processing_plugin">
+                                    <label class="form-check-label ms-2" for="toggle-tabular-processing-plugin">Enable Tabular Processing Action</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to analyze tabular data files (CSV, XLSX) using pandas for aggregations, filtering, and full dataset operations. Requires Enhanced Citations."></i>
+                                    <small class="text-muted d-block ms-4" id="tabular-processing-dependency-note">Requires Enhanced Citations</small>
+                                </div>
                             </div>
                             <table class="table table-bordered" id="plugins-table">
                                 <thead>
@@ -1428,6 +1434,12 @@
                         <textarea class="form-control" id="default_system_prompt" name="default_system_prompt"
                             rows="5">{{ settings.default_system_prompt }}</textarea>
                     </div>
+                    <div class="mb-3">
+                        <label for="access_denied_message" class="form-label">Access Denied Message</label>
+                        <small class="text-muted d-block mb-1">Shown to signed-in users who lack the required roles. Use Enter for line breaks.</small>
+                        <textarea class="form-control" id="access_denied_message" name="access_denied_message"
+                            rows="3">{{ settings.access_denied_message }}</textarea>
+                    </div>
                 </div>
             </div>
 
@@ -1578,6 +1590,27 @@
                     Test GPT Connection
                 </button>
                 <div id="test_gpt_result" class="mt-2"></div>
+                </div>
+
+                <!-- Processing Thoughts Section -->
+                <div class="card p-3 mb-4" id="processing-thoughts-section">
+                    <h5>
+                        <i class="bi bi-stars me-2"></i>Processing Thoughts
+                    </h5>
+                    <p class="text-muted">When enabled, real-time processing steps are shown to users during chat responses and persisted for later review.</p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_thoughts"
+                            name="enable_thoughts"
+                            {% if settings.enable_thoughts %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_thoughts">
+                            Enable Processing Thoughts
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Show real-time processing steps (searching documents, web search, agent calls, etc.) to users during chat. Steps are stored in Cosmos DB and can be reviewed per-message via a stars icon."></i>
+                    </div>
                 </div>
 
                 <!-- Embeddings Configuration Section -->
@@ -2036,13 +2069,25 @@
                             <select class="form-select" id="redis_auth_type" name="redis_auth_type">
                                 <option value="key" {% if settings.redis_auth_type == 'key' or not settings.redis_auth_type %}selected{% endif %}>Key</option>
                                 <option value="managed_identity" {% if settings.redis_auth_type == 'managed_identity' %}selected{% endif %}>Managed Identity</option>
+                                <option value="key_vault" {% if settings.redis_auth_type == 'key_vault' %}selected{% endif %}>Key Vault</option>
                             </select>
                         </div>
-                        <div class="mb-3" id="redis_key_container" {% if settings.redis_auth_type != 'key' and settings.redis_auth_type %}style="display: none;"{% endif %}>
-                            <label for="redis_key" class="form-label">Redis Access Key</label>
+                        <div class="mb-3 {% if settings.redis_auth_type == 'managed_identity' %}d-none{% endif %}" id="redis_key_container">
+                            <label for="redis_key" class="form-label" id="redis_key_label">
+                                {%- if settings.redis_auth_type == 'key_vault' -%}
+                                    Key Vault Secret Name
+                                {%- else -%}
+                                    Redis Access Key
+                                {%- endif -%}
+                            </label>
                             <div class="input-group">
                                 <input type="password" class="form-control" id="redis_key" name="redis_key" value="{{ settings.redis_key or '' }}">
                                 <button type="button" class="btn btn-outline-secondary" id="toggle_redis_key">Show</button>
+                            </div>
+                            <div id="redis_key_vault_hint" class="form-text text-muted {% if settings.redis_auth_type != 'key_vault' %}d-none{% endif %}">
+                                Enter the full Key Vault secret name. <a href="#security" onclick="switchTab(event, 'security-tab')">
+                                Enable Key Vault for Agent and Action Secrets
+                            </a> must be enabled and configured.
                             </div>
                         </div>
                         <button type="button" class="btn btn-secondary mt-3" id="test_redis_button">
@@ -2173,6 +2218,24 @@
                         </div>
                         <p class="text-muted small mb-0">
                             If enabled, only users who are members of the 'CreateGroups' role (defined in your App registration) can create new groups. If disabled, any authenticated user can create groups (provided 'Enable My Groups' is active).
+                        </p>
+
+                        <hr>
+
+                        <!-- Require Owner to Manage Group Agents and Actions -->
+                        <div class="form-group form-check form-switch mb-2">
+                            <input type="checkbox"
+                                class="form-check-input"
+                                id="require_owner_for_group_agent_management"
+                                name="require_owner_for_group_agent_management"
+                                {% if settings.require_owner_for_group_agent_management %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="require_owner_for_group_agent_management">
+                                Require Owner to Manage Group Agents and Actions
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, only the group Owner can create, edit, and delete group agents and actions. Group Admins will have read-only access."></i>
+                        </div>
+                        <p class="text-muted small mb-0">
+                            If enabled, only the group Owner can create, edit, and delete group agents and group actions. Admins and other roles will only be able to view them.
                         </p>
                     </div>
                     
@@ -2673,6 +2736,27 @@
                     </div>
                 </div>
 
+                <!-- Workspace Scope Lock Section -->
+                <div class="card mb-3 p-3" id="workspace-scope-lock-section">
+                    <h5>
+                        <i class="bi bi-lock me-2"></i>Workspace Scope Lock
+                    </h5>
+                    <p class="text-muted">
+                        Control whether users can unlock workspace scope in chat conversations. When scope is locked, conversations are restricted to the workspaces that produced search results, preventing accidental cross-contamination with other data sources.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enforce_workspace_scope_lock"
+                            name="enforce_workspace_scope_lock"
+                            {% if settings.enforce_workspace_scope_lock %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enforce_workspace_scope_lock">
+                            Enforce Workspace Scope Lock
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, users cannot unlock the workspace scope on conversations. Scope automatically locks after the first AI search and remains locked. Disable this to allow users to manually unlock scope."></i>
+                    </div>
+                </div>
+
                 <!-- User Agreement Section -->
                 <div class="card mb-3 p-3" id="user-agreement-section">
                     <h5>
@@ -2870,6 +2954,23 @@
                                     >
                                     <button type="button" class="btn btn-outline-secondary" id="toggle_office_url">Show</button>
                                 </div>
+                            </div>
+                        </div>
+
+                        <div class="card mb-3 p-3">
+                            <h6><strong>Tabular Preview Limits</strong></h6>
+                            <div class="mb-3">
+                                <label for="tabular_preview_max_blob_size_mb" class="form-label">
+                                    Maximum File Size for Tabular Preview (MB)
+                                </label>
+                                <input type="number" class="form-control" id="tabular_preview_max_blob_size_mb"
+                                    name="tabular_preview_max_blob_size_mb"
+                                    min="1" max="1024"
+                                    value="{{ settings.tabular_preview_max_blob_size_mb or 200 }}">
+                                <small class="form-text text-muted">
+                                    Maximum blob size (in MB) allowed for tabular file previews (CSV, XLSX). Files larger than this will not be previewed. 
+                                    Increase for larger files if your compute has sufficient memory, or decrease to protect smaller instances. Default: 200 MB.
+                                </small>
                             </div>
                         </div>
 
@@ -3178,9 +3279,10 @@
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Archive conversations instead of permanently deleting them, allowing for recovery and compliance with data retention policies."></i>
                     </div>
                 </div>
+
             </div>
 
-            
+
             <div class="tab-pane fade" id="search-extract" role="tabpanel" aria-labelledby="search-extract-tab">
                 
                  <p class="text-muted">

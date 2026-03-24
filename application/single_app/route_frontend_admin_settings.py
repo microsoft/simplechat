@@ -9,9 +9,23 @@ from functions_logging import *
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta
 
+ALLOWED_PIL_IMAGE_UPLOAD_FORMATS = ('PNG', 'JPEG')
+
 def allowed_file(filename, allowed_extensions):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in allowed_extensions
+
+def open_allowed_uploaded_image(file_bytes, filename):
+    img = Image.open(BytesIO(file_bytes), formats=list(ALLOWED_PIL_IMAGE_UPLOAD_FORMATS))
+    img.load()
+
+    detected_format = (img.format or '').upper()
+    if detected_format not in ALLOWED_PIL_IMAGE_UPLOAD_FORMATS:
+        raise ValueError(
+            f"Unsupported image format for {filename}. Allowed formats: {', '.join(ALLOWED_PIL_IMAGE_UPLOAD_FORMATS)}"
+        )
+
+    return img, detected_format
 
 def register_route_frontend_admin_settings(app):
     @app.route('/admin/settings', methods=['GET', 'POST'])
@@ -98,6 +112,8 @@ def register_route_frontend_admin_settings(app):
             settings['enable_text_plugin'] = False
         if 'enable_fact_memory_plugin' not in settings:
             settings['enable_fact_memory_plugin'] = False
+        if 'enable_tabular_processing_plugin' not in settings:
+            settings['enable_tabular_processing_plugin'] = False
         if 'enable_default_embedding_model_plugin' not in settings:
             settings['enable_default_embedding_model_plugin'] = False
         if 'enable_multi_agent_orchestration' not in settings:
@@ -193,6 +209,10 @@ def register_route_frontend_admin_settings(app):
         if 'enable_left_nav_default' not in settings:
             settings['enable_left_nav_default'] = True
         
+        # --- Add defaults for workspace scope lock ---
+        if 'enforce_workspace_scope_lock' not in settings:
+            settings['enforce_workspace_scope_lock'] = True
+
         # --- Add defaults for multimodal vision ---
         if 'enable_multimodal_vision' not in settings:
             settings['enable_multimodal_vision'] = False
@@ -298,6 +318,7 @@ def register_route_frontend_admin_settings(app):
             multimodal_vision_model = form_data.get('multimodal_vision_model', '')
 
             require_member_of_create_group = form_data.get('require_member_of_create_group') == 'on'
+            require_owner_for_group_agent_management = form_data.get('require_owner_for_group_agent_management') == 'on'
             require_member_of_create_public_workspace = form_data.get('require_member_of_create_public_workspace') == 'on'
             require_member_of_safety_violation_admin = form_data.get('require_member_of_safety_violation_admin') == 'on'
             require_member_of_control_center_admin = form_data.get('require_member_of_control_center_admin') == 'on'
@@ -731,12 +752,14 @@ def register_route_frontend_admin_settings(app):
                 'enable_group_creation': form_data.get('disable_group_creation') != 'on',
                 'enable_public_workspaces': form_data.get('enable_public_workspaces') == 'on',
                 'enable_file_sharing': form_data.get('enable_file_sharing') == 'on',
+                'enforce_workspace_scope_lock': form_data.get('enforce_workspace_scope_lock') == 'on',
                 'enable_file_processing_logs': enable_file_processing_logs,
                 'file_processing_logs_timer_enabled': file_processing_logs_timer_enabled,
                 'file_timer_value': file_timer_value,
                 'file_timer_unit': file_timer_unit,
                 'file_processing_logs_turnoff_time': file_processing_logs_turnoff_time_str,
                 'require_member_of_create_group': require_member_of_create_group,
+                'require_owner_for_group_agent_management': require_owner_for_group_agent_management,
                 'require_member_of_create_public_workspace': require_member_of_create_public_workspace,
                 
                 # Retention Policy
@@ -780,6 +803,7 @@ def register_route_frontend_admin_settings(app):
                 'enable_enhanced_citations': enable_enhanced_citations,
                 'enable_enhanced_citations_mount': form_data.get('enable_enhanced_citations_mount') == 'on' and enable_enhanced_citations,
                 'enhanced_citations_mount': form_data.get('enhanced_citations_mount', '/view_documents').strip(),
+                'tabular_preview_max_blob_size_mb': int(form_data.get('tabular_preview_max_blob_size_mb', 200)),
                 'office_docs_storage_account_blob_endpoint': office_docs_storage_account_blob_endpoint,
                 'office_docs_storage_account_url': office_docs_storage_account_url,
                 'office_docs_authentication_type': form_data.get('office_docs_authentication_type', 'key'),
@@ -802,9 +826,10 @@ def register_route_frontend_admin_settings(app):
                 'require_member_of_safety_violation_admin': require_member_of_safety_violation_admin, # ADDED
                 'require_member_of_feedback_admin': require_member_of_feedback_admin, # ADDED
 
-                # Feedback & Archiving
+                # Feedback, Archiving & Thoughts
                 'enable_user_feedback': form_data.get('enable_user_feedback') == 'on',
                 'enable_conversation_archiving': form_data.get('enable_conversation_archiving') == 'on',
+                'enable_thoughts': form_data.get('enable_thoughts') == 'on',
 
                 # Search (Web Search via Azure AI Foundry agent)
                 'enable_web_search': enable_web_search,
@@ -862,6 +887,7 @@ def register_route_frontend_admin_settings(app):
                 'max_file_size_mb': max_file_size_mb,
                 'conversation_history_limit': conversation_history_limit,
                 'default_system_prompt': form_data.get('default_system_prompt', '').strip(),
+                'access_denied_message': form_data.get('access_denied_message', settings.get('access_denied_message', '')).strip(),
 
                 # Video file settings with Azure Video Indexer Settings
                 'video_indexer_endpoint': form_data.get('video_indexer_endpoint', video_indexer_endpoint).strip(),
@@ -931,13 +957,12 @@ def register_route_frontend_admin_settings(app):
                     )
 
                     # 3) Load into Pillow from the original bytes for processing
-                    in_memory_for_process = BytesIO(file_bytes) # Use original bytes
-                    img = Image.open(in_memory_for_process)
+                    img, detected_format = open_allowed_uploaded_image(file_bytes, logo_file.filename)
                     
                     add_file_task_to_file_processing_log(
                         document_id='Image_Upload', # Placeholder if needed
                         user_id='New_image',
-                        content=f"Loaded image for processing: {logo_file.filename}"
+                        content=f"Loaded image for processing: {logo_file.filename} (format: {detected_format})"
                     )
 
                     # Ensure image mode is compatible (e.g., convert palette modes)
@@ -1014,13 +1039,12 @@ def register_route_frontend_admin_settings(app):
                     )
 
                     # 2) Load into Pillow from the original bytes for processing
-                    in_memory_for_process = BytesIO(file_bytes) # Use original bytes
-                    img = Image.open(in_memory_for_process)
+                    img, detected_format = open_allowed_uploaded_image(file_bytes, logo_dark_file.filename)
                     
                     add_file_task_to_file_processing_log(
                         document_id='Image_Upload', # Placeholder if needed
                         user_id='New_image',
-                        content=f"Loaded dark mode logo image for processing: {logo_dark_file.filename}"
+                        content=f"Loaded dark mode logo image for processing: {logo_dark_file.filename} (format: {detected_format})"
                     )
 
                     # 3) Ensure image mode is compatible (e.g., convert palette modes)
@@ -1096,13 +1120,12 @@ def register_route_frontend_admin_settings(app):
                     )
 
                     # 2) Load into Pillow from the original bytes for processing
-                    in_memory_for_process = BytesIO(file_bytes) # Use original bytes
-                    img = Image.open(in_memory_for_process)
+                    img, detected_format = open_allowed_uploaded_image(file_bytes, favicon_file.filename)
                     
                     add_file_task_to_file_processing_log(
                         document_id='Image_Upload', # Placeholder if needed
                         user_id='New_image',
-                        content=f"Loaded favicon image for processing: {favicon_file.filename}"
+                        content=f"Loaded favicon image for processing: {favicon_file.filename} (format: {detected_format})"
                     )
 
                     # 3) Ensure image mode is compatible (e.g., convert palette modes)

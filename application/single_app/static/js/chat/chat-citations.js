@@ -11,6 +11,14 @@ import { showEnhancedCitationModal } from './chat-enhanced-citations.js';
 
 const chatboxEl = document.getElementById("chatbox");
 
+function escapeAttribute(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 export function parseDocIdAndPage(citationId) {
   // ... (keep existing implementation)
   const underscoreIndex = citationId.lastIndexOf("_");
@@ -24,9 +32,9 @@ export function parseDocIdAndPage(citationId) {
 
 export function parseCitations(message) {
   // ... (keep existing implementation)
-  const citationRegex = /\(Source:\s*([^,]+),\s*Page(?:s)?:\s*([^)]+)\)\s*((?:\[#.*?\]\s*)+)/gi;
+  const citationRegex = /\(Source:\s*([^,]+),\s*(Page(?:s)?|Sheet(?:s)?|Location):\s*([^)]+)\)\s*((?:\[#.*?\]\s*)+)/gi;
 
-  return message.replace(citationRegex, (whole, filename, pages, bracketSection) => {
+  let result = message.replace(citationRegex, (whole, filename, locationLabel, locations, bracketSection) => {
     let filenameHtml;
     if (/^https?:\/\/.+/i.test(filename.trim())) {
       filenameHtml = `<a href="${filename.trim()}" target="_blank" rel="noopener noreferrer">${filename.trim()}</a>`;
@@ -36,6 +44,7 @@ export function parseCitations(message) {
 
     const bracketMatches = bracketSection.match(/\[#.*?\]/g) || [];
     const pageToRefMap = {};
+    const orderedRefs = [];
 
     bracketMatches.forEach((match) => {
       let inner = match.slice(2, -1).trim();
@@ -43,6 +52,7 @@ export function parseCitations(message) {
       refs.forEach((r) => {
         let ref = r.trim();
         if (ref.startsWith('#')) ref = ref.slice(1);
+        orderedRefs.push(ref);
         const parts = ref.split('_');
         const pageNumber = parts.pop();
         // Ensure docId part is also captured if needed, though ref is the full ID here
@@ -56,8 +66,15 @@ export function parseCitations(message) {
       return underscoreIndex === -1 ? ref : ref.slice(0, underscoreIndex + 1);
     }
 
-    const pagesTokens = pages.split(/,/).map(tok => tok.trim());
-    const linkedTokens = pagesTokens.map(token => {
+    const normalizedLocationLabel = locationLabel.toLowerCase();
+    const locationTokens = locations.split(/,/).map(tok => tok.trim());
+    const linkedTokens = locationTokens.map((token, index) => {
+      if (!normalizedLocationLabel.startsWith('page')) {
+        const ref = orderedRefs[index] || orderedRefs[0];
+        const sheetName = normalizedLocationLabel.startsWith('sheet') ? token : null;
+        return buildAnchorIfExists(token, ref, sheetName);
+      }
+
       const dashParts = token.split(/[–—-]/).map(p => p.trim());
 
       if (dashParts.length === 2 && dashParts[0] && dashParts[1]) {
@@ -94,19 +111,28 @@ export function parseCitations(message) {
     });
 
     const linkedPagesText = linkedTokens.join(', ');
-    return `(Source: ${filenameHtml}, Pages: ${linkedPagesText})`;
+    return `(Source: ${filenameHtml}, ${locationLabel}: ${linkedPagesText})`;
   });
+
+  // Cleanup pass: strip any remaining [#guid...] bracket groups that the main regex didn't match.
+  // These appear when the model uses non-standard citation formats (e.g. "passim" instead of "Page: N").
+  // Pattern matches brackets containing one or more UUID-like citation IDs (with optional _suffix parts).
+  const guidBracketRegex = /\s*\[#?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[^\]]*\]/gi;
+  result = result.replace(guidBracketRegex, '');
+
+  return result;
 }
 
 
-export function buildAnchorIfExists(pageStr, citationId) {
+export function buildAnchorIfExists(pageStr, citationId, sheetName = null) {
   // ... (keep existing implementation)
    if (!citationId) {
     return pageStr;
   }
   // Ensure citationId doesn't have a leading # if passed accidentally
   const cleanCitationId = citationId.startsWith('#') ? citationId.slice(1) : citationId;
-  return `<a href="#" class="citation-link" data-citation-id="${cleanCitationId}" target="_blank" rel="noopener noreferrer">${pageStr}</a>`;
+  const sheetNameAttribute = sheetName ? ` data-sheet-name="${escapeAttribute(sheetName)}"` : '';
+  return `<a href="#" class="citation-link" data-citation-id="${cleanCitationId}"${sheetNameAttribute} target="_blank" rel="noopener noreferrer">${pageStr}</a>`;
 }
 
 // --- MODIFIED: fetchCitedText handles errors more gracefully ---
@@ -601,6 +627,7 @@ if (chatboxEl) {
       }
 
       const { docId, pageNumber } = parseDocIdAndPage(citationId);
+      const sheetName = target.getAttribute("data-sheet-name");
 
       // Safety check: Ensure docId and pageNumber were parsed correctly
       if (!docId || !pageNumber) {
@@ -641,7 +668,7 @@ if (chatboxEl) {
       if (attemptEnhanced) {
           // console.log(`Attempting Enhanced Citation for ${docId}, page/timestamp ${pageNumber}, citationId ${citationId}`);
           // Use new enhanced citation system that supports multiple file types
-          showEnhancedCitationModal(docId, pageNumber, citationId);
+          showEnhancedCitationModal(docId, pageNumber, citationId, sheetName);
       } else {
           // console.log(`Fetching Text Citation for ${citationId}`);
           // Use text citation if globally disabled OR explicitly disabled for this doc OR if parsing failed earlier

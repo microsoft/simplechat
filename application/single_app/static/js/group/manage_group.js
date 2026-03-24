@@ -117,6 +117,14 @@ $(document).ready(function () {
     loadActivityTimeline(limit);
   });
 
+  // Retention policy settings
+  $("#saveRetentionBtn").on("click", function () {
+    saveGroupRetentionSettings();
+  });
+  $('#settings-tab').on('shown.bs.tab', function () {
+    loadGroupRetentionSettings();
+  });
+
   // Bulk Actions Events
   $("#selectAllMembers").on("change", function () {
     const isChecked = $(this).prop("checked");
@@ -321,14 +329,16 @@ function loadGroupInfo(doneCallback) {
         $("#addMemberBtn").show();
         $("#addBulkMemberBtn").show();
       }
-      
+
       $("#pendingRequestsSection").show();
       $("#activityTimelineSection").show();
       $("#stats-tab-item").show();
+      $("#settings-tab-item").removeClass("d-none");
 
       loadPendingRequests();
       loadGroupStats();
       loadActivityTimeline(50);
+      loadGroupRetentionSettings();
     }
 
     if (typeof doneCallback === "function") {
@@ -575,7 +585,6 @@ function rejectRequest(requestId) {
   });
 }
 
-// Search users for manual add
 // Search users for manual add
 function searchUsers() {
   const term = $("#userSearchTerm").val().trim();
@@ -1423,7 +1432,7 @@ async function bulkAssignRole() {
 
 async function bulkRemoveMembers() {
   const selectedMembers = getSelectedMembers();
-  
+
   if (selectedMembers.length === 0) {
     alert("No members selected");
     return;
@@ -1431,21 +1440,21 @@ async function bulkRemoveMembers() {
 
   // Close modal
   $("#bulkRemoveMembersModal").modal("hide");
-  
+
   let successCount = 0;
   let failedCount = 0;
   const failures = [];
 
   for (let i = 0; i < selectedMembers.length; i++) {
     const member = selectedMembers[i];
-    
+
     try {
       const response = await fetch(`/api/groups/${groupId}/members/${member.userId}`, {
         method: 'DELETE'
       });
 
       const data = await response.json();
-      
+
       if (response.ok && data.success) {
         successCount++;
       } else {
@@ -1470,4 +1479,103 @@ async function bulkRemoveMembers() {
 
   // Reload members and clear selection
   loadMembers();
+}
+
+/* ===================== GROUP RETENTION POLICY ===================== */
+
+async function loadGroupRetentionSettings() {
+    const convSelect = document.getElementById('group-conversation-retention-days');
+    const docSelect = document.getElementById('group-document-retention-days');
+
+    if (!convSelect || !docSelect) return;
+
+    try {
+        const orgDefaultsResp = await fetch('/api/retention-policy/defaults/group');
+        const orgData = await orgDefaultsResp.json();
+
+        if (orgData.success) {
+            const convDefaultOption = convSelect.querySelector('option[value="default"]');
+            const docDefaultOption = docSelect.querySelector('option[value="default"]');
+
+            if (convDefaultOption) {
+                convDefaultOption.textContent = `Using organization default (${orgData.default_conversation_label})`;
+            }
+            if (docDefaultOption) {
+                docDefaultOption.textContent = `Using organization default (${orgData.default_document_label})`;
+            }
+        }
+    } catch (error) {
+        console.error('Error loading group retention defaults:', error);
+    }
+
+    try {
+        const groupResp = await fetch(`/api/groups/${groupId}`);
+
+        if (!groupResp.ok) {
+            throw new Error(`Failed to fetch group: ${groupResp.status}`);
+        }
+
+        const groupData = await groupResp.json();
+
+        if (groupData && groupData.retention_policy) {
+            const retentionPolicy = groupData.retention_policy;
+            let convRetention = retentionPolicy.conversation_retention_days;
+            let docRetention = retentionPolicy.document_retention_days;
+
+            if (convRetention === undefined || convRetention === null) convRetention = 'default';
+            if (docRetention === undefined || docRetention === null) docRetention = 'default';
+
+            convSelect.value = convRetention;
+            docSelect.value = docRetention;
+        } else {
+            convSelect.value = 'default';
+            docSelect.value = 'default';
+        }
+    } catch (error) {
+        console.error('Error loading group retention settings:', error);
+        convSelect.value = 'default';
+        docSelect.value = 'default';
+    }
+}
+
+async function saveGroupRetentionSettings() {
+    const convSelect = document.getElementById('group-conversation-retention-days');
+    const docSelect = document.getElementById('group-document-retention-days');
+    const statusSpan = document.getElementById('group-retention-save-status');
+
+    if (!convSelect || !docSelect) return;
+
+    const retentionData = {
+        conversation_retention_days: convSelect.value,
+        document_retention_days: docSelect.value
+    };
+
+    if (statusSpan) {
+        statusSpan.innerHTML = '<span class="text-info"><i class="bi bi-hourglass-split"></i> Saving...</span>';
+    }
+
+    try {
+        const response = await fetch(`/api/retention-policy/group/${groupId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(retentionData)
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+            if (statusSpan) {
+                statusSpan.innerHTML = '<span class="text-success"><i class="bi bi-check-circle-fill"></i> Saved successfully!</span>';
+                setTimeout(() => { statusSpan.innerHTML = ''; }, 3000);
+            }
+        } else {
+            throw new Error(data.error || 'Failed to save retention settings');
+        }
+    } catch (error) {
+        console.error('Error saving group retention settings:', error);
+        if (statusSpan) {
+            statusSpan.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-circle-fill"></i> Error: ${error.message}</span>`;
+        }
+        showToast(`Error saving retention settings: ${error.message}`, 'danger');
+    }
 }

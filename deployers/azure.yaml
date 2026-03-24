@@ -9,6 +9,9 @@ services:
     project: ../application/single_app
     language: python
     host: appservice
+        # Container-based App Service deployment.
+        # Gunicorn startup is provided by application/single_app/Dockerfile,
+        # so no App Service Stack Settings startup command is required.
     docker:
       context: ../../
       dockerfile: application/single_app/Dockerfile
@@ -213,7 +216,7 @@ hooks:
 
             echo ""
             echo "[3/4] Running post-deployment configuration..."
-            if python3 ./bicep/postconfig.py; then
+            if .venv/bin/python3 ./bicep/postconfig.py; then
                 echo "✓ Post-deployment configuration completed"
             else
                 echo "✗ ERROR: Post-deployment configuration failed" >&2

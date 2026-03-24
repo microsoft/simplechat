@@ -288,6 +288,11 @@
                 </a>
               </li>
               <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="ai-models" data-section="processing-thoughts-section">
+                  <i class="bi bi-stars me-2" style="font-size: 0.8em;"></i><span class="nav-text">Processing Thoughts</span>
+                </a>
+              </li>
+              <li class="nav-item">
                 <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="ai-models" data-section="embeddings-config">
                   <i class="bi bi-vector-pen me-2" style="font-size: 0.8em;"></i><span class="nav-text">Embeddings</span>
                 </a>
@@ -573,14 +578,17 @@
             <i class="bi bi-eye" style="font-size: 0.9em;"></i>
           </button>
           <div id="conversations-actions" class="d-flex align-items-center" style="display: none !important;">
-            <button id="sidebar-pin-selected-btn" class="btn btn-sm btn-outline-primary me-1" style="display: none; padding: 2px 6px; font-size: 0.75rem; border-radius: 4px;" title="Pin selected conversations">
+            <button id="sidebar-pin-selected-btn" class="btn btn-sm btn-outline-primary" style="display: none; padding: 2px 4px; font-size: 0.7rem; border-radius: 4px;" title="Pin selected conversations">
               <i class="bi bi-pin-angle"></i>
             </button>
-            <button id="sidebar-hide-selected-btn" class="btn btn-sm btn-outline-secondary me-1" style="display: none; padding: 2px 6px; font-size: 0.75rem; border-radius: 4px;" title="Hide selected conversations">
+            <button id="sidebar-hide-selected-btn" class="btn btn-sm btn-outline-secondary" style="display: none; padding: 2px 4px; font-size: 0.7rem; border-radius: 4px;" title="Hide selected conversations">
               <i class="bi bi-eye-slash"></i>
             </button>
-            <button id="sidebar-delete-selected-btn" class="btn btn-sm btn-outline-danger me-1" style="display: none; padding: 2px 6px; font-size: 0.75rem; border-radius: 4px;" title="Delete selected conversations">
+            <button id="sidebar-delete-selected-btn" class="btn btn-sm btn-outline-danger" style="display: none; padding: 2px 4px; font-size: 0.7rem; border-radius: 4px;" title="Delete selected conversations">
               <i class="bi bi-trash-fill"></i>
+            </button>
+            <button id="sidebar-export-selected-btn" class="btn btn-sm btn-outline-info" style="display: none; padding: 2px 4px; font-size: 0.7rem; border-radius: 4px;" title="Export selected conversations">
+              <i class="bi bi-download"></i>
             </button>
           </div>
         </div>

@@ -1,14 +1,18 @@
 # route_frontend_chats.py
 
+import logging
 from config import *
 from functions_authentication import *
 from functions_content import *
 from functions_settings import *
 from functions_documents import *
-from functions_group import find_group_by_id
+from functions_group import find_group_by_id, get_user_groups
+from functions_public_workspaces import find_public_workspace_by_id, get_user_visible_public_workspace_ids_from_settings
 from functions_appinsights import log_event
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_debug import debug_print
+
+logger = logging.getLogger(__name__)
 
 def register_route_frontend_chats(app):
     @app.route('/chats', methods=['GET'])
@@ -17,14 +21,18 @@ def register_route_frontend_chats(app):
     @user_required
     def chats():
         user_id = get_current_user_id()
+        if not user_id:
+            return redirect(url_for('login'))
+
         settings = get_settings()
         user_settings = get_user_settings(user_id)
+        user_settings_dict = user_settings.get("settings", {}) if isinstance(user_settings, dict) else {}
         public_settings = sanitize_settings_for_user(settings)
         enable_user_feedback = public_settings.get("enable_user_feedback", False)
         enable_enhanced_citations = public_settings.get("enable_enhanced_citations", False)
         enable_document_classification = public_settings.get("enable_document_classification", False)
         enable_extract_meta_data = public_settings.get("enable_extract_meta_data", False)
-        active_group_id = user_settings["settings"].get("activeGroupOid", "")
+        active_group_id = user_settings_dict.get("activeGroupOid", "")
         active_group_name = ""
         if active_group_id:
             group_doc = find_group_by_id(active_group_id)
@@ -32,16 +40,32 @@ def register_route_frontend_chats(app):
                 active_group_name = group_doc.get("name", "")
         
         # Get active public workspace ID from user settings
-        active_public_workspace_id = user_settings["settings"].get("activePublicWorkspaceOid", "")
+        active_public_workspace_id = user_settings_dict.get("activePublicWorkspaceOid", "")
         
         categories_list = public_settings.get("document_classification_categories","")
 
-        if not user_id:
-            return redirect(url_for('login'))
-        
         # Get user display name from user settings
         user_display_name = user_settings.get('display_name', '')
-        
+
+        # Get all groups the user belongs to (for multi-scope selector)
+        user_groups_simple = []
+        try:
+            user_groups_raw = get_user_groups(user_id)
+            user_groups_simple = [{'id': g['id'], 'name': g.get('name', 'Unnamed')} for g in user_groups_raw]
+        except Exception as e:
+            logger.warning(f"Failed to load user groups for chats page: {e}")
+
+        # Get visible public workspaces with names (for multi-scope selector)
+        user_visible_public_workspaces = []
+        try:
+            visible_ws_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
+            for ws_id in visible_ws_ids:
+                ws_doc = find_public_workspace_by_id(ws_id)
+                if ws_doc:
+                    user_visible_public_workspaces.append({'id': ws_id, 'name': ws_doc.get('name', 'Unknown')})
+        except Exception as e:
+            logger.warning(f"Failed to load visible public workspaces for chats page: {e}")
+
         return render_template(
             'chats.html',
             settings=public_settings,
@@ -55,6 +79,8 @@ def register_route_frontend_chats(app):
             enable_extract_meta_data=enable_extract_meta_data,
             user_id=user_id,
             user_display_name=user_display_name,
+            user_groups=user_groups_simple,
+            user_visible_public_workspaces=user_visible_public_workspaces,
         )
     
     @app.route('/upload', methods=['POST'])
@@ -211,8 +237,33 @@ def register_route_frontend_chats(app):
                 # Handle XML, YAML, and LOG files as text for inline chat
                 extracted_content  = extract_text_file(temp_file_path)
             elif file_ext_nodot in TABULAR_EXTENSIONS:
-                extracted_content = extract_table_file(temp_file_path, file_ext)
                 is_table = True
+
+                # Upload tabular file to blob storage for tabular processing plugin access
+                if settings.get('enable_enhanced_citations', False):
+                    try:
+                        blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+                        if blob_service_client:
+                            blob_path = f"{user_id}/{conversation_id}/{filename}"
+                            blob_client = blob_service_client.get_blob_client(
+                                container=storage_account_personal_chat_container_name,
+                                blob=blob_path
+                            )
+                            metadata = {
+                                "conversation_id": str(conversation_id),
+                                "user_id": str(user_id)
+                            }
+                            with open(temp_file_path, "rb") as blob_f:
+                                blob_client.upload_blob(blob_f, overwrite=True, metadata=metadata)
+                            log_event(f"Uploaded chat tabular file to blob storage: {blob_path}")
+                    except Exception as blob_err:
+                        log_event(
+                            f"Warning: Failed to upload chat tabular file to blob storage: {blob_err}",
+                            level=logging.WARNING
+                        )
+                else:
+                    # Only extract content for Cosmos storage when enhanced citations is disabled
+                    extracted_content = extract_table_file(temp_file_path, file_ext)
             else:
                 return jsonify({'error': 'Unsupported file type'}), 400
 
@@ -369,25 +420,50 @@ def register_route_frontend_chats(app):
 
                 current_thread_id = str(uuid.uuid4())
                 
-                file_message = {
-                    'id': file_message_id,
-                    'conversation_id': conversation_id,
-                    'role': 'file',
-                    'filename': filename,
-                    'file_content': extracted_content,
-                    'is_table': is_table,
-                    'timestamp': datetime.utcnow().isoformat(),
-                    'model_deployment_name': None,
-                    'metadata': {
-                        'thread_info': {
-                            'thread_id': current_thread_id,
-                            'previous_thread_id': previous_thread_id,
-                            'active_thread': True,
-                            'thread_attempt': 1
+                # When enhanced citations is enabled and file is tabular, store a lightweight
+                # reference without file_content to avoid Cosmos DB size limits.
+                # The tabular data lives in blob storage and is served from there.
+                if is_table and settings.get('enable_enhanced_citations', False):
+                    file_message = {
+                        'id': file_message_id,
+                        'conversation_id': conversation_id,
+                        'role': 'file',
+                        'filename': filename,
+                        'is_table': is_table,
+                        'file_content_source': 'blob',
+                        'blob_container': storage_account_personal_chat_container_name,
+                        'blob_path': f"{user_id}/{conversation_id}/{filename}",
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'model_deployment_name': None,
+                        'metadata': {
+                            'thread_info': {
+                                'thread_id': current_thread_id,
+                                'previous_thread_id': previous_thread_id,
+                                'active_thread': True,
+                                'thread_attempt': 1
+                            }
                         }
                     }
-                }
-                
+                else:
+                    file_message = {
+                        'id': file_message_id,
+                        'conversation_id': conversation_id,
+                        'role': 'file',
+                        'filename': filename,
+                        'file_content': extracted_content,
+                        'is_table': is_table,
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'model_deployment_name': None,
+                        'metadata': {
+                            'thread_info': {
+                                'thread_id': current_thread_id,
+                                'previous_thread_id': previous_thread_id,
+                                'active_thread': True,
+                                'thread_attempt': 1
+                            }
+                        }
+                    }
+
                 # Add vision analysis if available
                 if vision_analysis:
                     file_message['vision_analysis'] = vision_analysis

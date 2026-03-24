@@ -28,6 +28,23 @@ param keyVaultUri string
 param enablePrivateNetworking bool
 param appServiceSubnetId string = ''
 
+// --- Custom Azure Environment Parameters (for 'custom' azureEnvironment) ---
+@description('Custom blob storage URL suffix, e.g. blob.core.usgovcloudapi.net')
+param customBlobStorageSuffix string?
+@description('Custom Graph API URL, e.g. https://graph.microsoft.us')
+param customGraphUrl string?
+@description('Custom Identity URL, e.g. https://login.microsoftonline.us')
+param customIdentityUrl string?
+@description('Custom Resource Manager URL, e.g. https://management.usgovcloudapi.net')
+param customResourceManagerUrl string?
+@description('Custom Cognitive Services scope ex: https://cognitiveservices.azure.com/.default')
+param customCognitiveServicesScope string?
+@description('Custom search resource URL for token audience, e.g. https://search.azure.us')
+param customSearchResourceUrl string?
+
+var tenantId = tenant().tenantId
+var openIdMetadataUrl = '${az.environment().authentication.loginEndpoint}${tenantId}/v2.0/.well-known/openid-configuration'
+
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
   name: 'diagnosticConfigs'
@@ -52,12 +69,15 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' existing = {
   name: appInsightsName
 }
 
-var acrDomain = azurePlatform == 'AzureUSGovernment' ? '.azurecr.us' : '.azurecr.io'
+var acrDomain = az.environment().suffixes.acrLoginServer
 
 // add web app
 resource webApp 'Microsoft.Web/sites@2022-03-01' = {
   name: toLower('${appName}-${environment}-app')
   location: location
+  // This module deploys a Linux container App Service.
+  // Gunicorn startup comes from the container image entrypoint,
+  // so App Service native Python startup settings are not used here.
   kind: 'app,linux,container'
   properties: {
     serverFarmId: appServicePlanId
@@ -74,7 +94,7 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
       ftpsState: 'Disabled'
       healthCheckPath: '/external/healthcheck'
       appSettings: [
-        { name: 'AZURE_ENDPOINT', value: azurePlatform == 'AzureUSGovernment' ? 'usgovernment' : 'public' }
+        { name: 'AZURE_ENVIRONMENT', value: azurePlatform }
         { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'false' }
         { name: 'AZURE_COSMOS_ENDPOINT', value: cosmosDb.properties.documentEndpoint }
         { name: 'AZURE_COSMOS_AUTHENTICATION_TYPE', value: toLower(authenticationType) }
@@ -147,8 +167,18 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
         { name: 'InstrumentationEngine_EXTENSION_VERSION', value: 'disabled' }
         { name: 'SnapshotDebugger_EXTENSION_VERSION', value: 'disabled' }
         { name: 'XDT_MicrosoftApplicationInsights_BaseExtensions', value: 'disabled' }
-        { name: 'XDT_MicrosoftApplicationInsights_Mode', value: 'recommended' }
-        { name: 'XDT_MicrosoftApplicationInsights_PreemptSdk', value: 'disabled' }
+        {name: 'XDT_MicrosoftApplicationInsights_Mode', value: 'recommended' }
+        {name: 'XDT_MicrosoftApplicationInsights_PreemptSdk', value: 'disabled' }
+        ...(azurePlatform == 'custom' ? [
+        {name: 'CUSTOM_GRAPH_URL_VALUE', value: customGraphUrl ?? ''}
+        {name: 'CUSTOM_IDENTITY_URL_VALUE', value: customIdentityUrl ?? ''}
+        {name: 'CUSTOM_RESOURCE_MANAGER_URL_VALUE', value: customResourceManagerUrl ?? ''}
+        {name: 'CUSTOM_BLOB_STORAGE_URL_VALUE', value: customBlobStorageSuffix ?? ''}
+        {name: 'CUSTOM_COGNITIVE_SERVICES_URL_VALUE', value: customCognitiveServicesScope ?? ''}
+        {name: 'CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE', value: customSearchResourceUrl ?? ''}
+        {name: 'KEY_VAULT_DOMAIN', value: az.environment().suffixes.keyvaultDns}
+        {name: 'CUSTOM_OIDC_METADATA_URL_VALUE', value: openIdMetadataUrl ?? ''}]
+        : [])
       ]
     }
     clientAffinityEnabled: false
@@ -202,7 +232,7 @@ resource authSettings 'Microsoft.Web/sites/config@2022-03-01' = {
       azureActiveDirectory: {
         enabled: true
         registration: {
-          openIdIssuer: azurePlatform == 'AzureUSGovernment' ? 'https://login.microsoftonline.us/${tenant().tenantId}/' : 'https://sts.windows.net/${tenant().tenantId}/'
+          openIdIssuer: '${az.environment().authentication.loginEndpoint}${tenant().tenantId}/'
           clientId: enterpriseAppClientId
           clientSecretSettingName: 'MICROSOFT_PROVIDER_AUTHENTICATION_SECRET'
         }

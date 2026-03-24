@@ -238,6 +238,16 @@ body.sidebar-nav-enabled.has-classification-banner .container-fluid {
   transition: color 0.2s ease;
 }
 
+.sidebar-conversation-header {
+  min-width: 0;
+}
+
+.sidebar-conversation-unread-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  min-width: 0.55rem;
+}
+
 /* Edit mode input styling */
 .sidebar-conversation-item input.form-control {
   background: rgba(255, 255, 255, 0.95);
@@ -304,6 +314,22 @@ body.sidebar-nav-enabled.has-classification-banner .container-fluid {
 #conversations-actions {
   opacity: 1;
   transition: opacity 0.2s ease;
+  flex-shrink: 0;
+  gap: 2px;
+}
+
+/* Compact action buttons in selection mode */
+#conversations-actions .btn {
+  padding: 2px 4px !important;
+  font-size: 0.7rem !important;
+  margin-right: 0 !important;
+  line-height: 1;
+}
+
+/* Reduce toggle row padding when selection actions are visible */
+#conversations-toggle.selection-active {
+  padding-left: 0.5rem !important;
+  padding-right: 0.25rem !important;
 }
 
 #sidebar-delete-selected-btn {
