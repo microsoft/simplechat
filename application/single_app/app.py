@@ -360,7 +360,7 @@ def get_idle_timeout_settings(settings=None):
             level=logging.WARNING
         )
 
-    normalized_timeout = max(1, timeout_minutes)
+    normalized_timeout = max(10, timeout_minutes)
     if normalized_timeout != timeout_minutes:
         log_event(
             "Idle timeout value normalized to minimum allowed value.",
@@ -386,11 +386,11 @@ def get_idle_timeout_settings(settings=None):
         )
     warning_minutes = normalized_warning
 
-    if warning_minutes >= timeout_minutes:
+    if warning_minutes > timeout_minutes:
         previous_warning_minutes = warning_minutes
-        warning_minutes = max(0, timeout_minutes - 1)
+        warning_minutes = timeout_minutes
         log_event(
-            "Idle warning value adjusted to remain below idle timeout.",
+            "Idle warning value adjusted to not exceed idle timeout.",
             extra={
                 "idle_timeout_minutes": timeout_minutes,
                 "original_idle_warning_minutes": previous_warning_minutes,

@@ -4,8 +4,8 @@
 
 - **Issue**: App settings default-key merge changes were not being persisted back to Cosmos DB.
 - **Root Cause**: `deep_merge_dicts(default_settings, settings_item)` mutates `settings_item` in place, and `get_settings()` compared `merged` against the same mutated object, so `merged != settings_item` evaluated false.
-- **Fixed/Implemented in version: `0.239.012`**
-- **Related version update**: `application/single_app/config.py` updated to `VERSION = "0.239.012"`.
+- **Fixed/Implemented in version: `v0.240.002`**
+- **Related version update**: `application/single_app/config.py` updated to `VERSION = "v0.240.002"`.
 
 ## Technical Details
 

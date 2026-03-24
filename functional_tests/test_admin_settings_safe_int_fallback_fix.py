@@ -2,8 +2,8 @@
 # test_admin_settings_safe_int_fallback_fix.py
 """
 Functional test for admin safe_int fallback hardening.
-Version: 0.239.012
-Implemented in: 0.239.012
+Version: v0.240.002
+Implemented in: v0.240.002
 
 This test ensures admin settings integer parsing always returns ints,
 including when persisted fallback values are malformed.
@@ -147,7 +147,7 @@ def test_version_alignment_for_safe_int_fix():
     config_content = _read_file("application", "single_app", "config.py")
 
     required_markers = [
-        "VERSION = \"0.239.012\""
+        "VERSION = \"v0.240.002\""
     ]
 
     missing_markers = [marker for marker in required_markers if marker not in config_content]

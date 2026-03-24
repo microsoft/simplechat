@@ -4,8 +4,8 @@
 
 - **Issue**: Admin settings save flow could throw a `TypeError` when `safe_int()` returned a non-integer fallback value.
 - **Root Cause**: `safe_int()` returned `fallback_value` as-is after parse failure; if persisted fallback values were malformed (for example strings that cannot be converted), subsequent `max(1, ...)` / `max(0, ...)` operations could fail.
-- **Fixed/Implemented in version: `0.239.012`**
-- **Related version update**: `application/single_app/config.py` updated to `VERSION = "0.239.012"`.
+- **Fixed/Implemented in version: `v0.240.002`**
+- **Related version update**: `application/single_app/config.py` updated to `VERSION = "v0.240.002"`.
 
 ## Technical Details
 

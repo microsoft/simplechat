@@ -5,8 +5,8 @@
 - **Fix Title**: Background heartbeat reauth synchronization
 - **Issue Description**: Background heartbeat requests that returned non-OK responses (such as `401` after server-side idle expiry) could return without redirecting, leaving the UI active while the backend session was already cleared.
 - **Root Cause Analysis**: `refreshServerSession()` only forced logout for non-OK responses when `forceLogoutOnFailure` was `true` (user-initiated path), but the background path used `false` and silently returned.
-- **Version Implemented**: **0.239.012**
-- **Related Config Update**: `application/single_app/config.py` updated to `VERSION = "0.239.012"`.
+- **Version Implemented**: **v0.240.002**
+- **Related Config Update**: `application/single_app/config.py` updated to `VERSION = "v0.240.002"`.
 
 ## Technical Details
 

@@ -227,6 +227,8 @@ def register_route_frontend_admin_settings(app):
             settings['idle_timeout_minutes'] = 30
         if 'idle_warning_minutes' not in settings:
             settings['idle_warning_minutes'] = 28
+        if 'idle_warning_message' not in settings:
+            settings['idle_warning_message'] = "You've been inactive for a while."
             
         if request.method == 'GET':
             # --- Model fetching logic remains the same ---
@@ -361,10 +363,16 @@ def register_route_frontend_admin_settings(app):
             max_file_size_mb = int(form_data.get('max_file_size_mb', 16))
             conversation_history_limit = int(form_data.get('conversation_history_limit', 10))
             enable_idle_timeout = form_data.get('enable_idle_timeout') == 'on'
-            idle_timeout_minutes = max(1, parse_admin_int(form_data.get('idle_timeout_minutes'), settings.get('idle_timeout_minutes', 30), 'idle_timeout_minutes', 30))
+            idle_timeout_minutes = max(10, parse_admin_int(form_data.get('idle_timeout_minutes'), settings.get('idle_timeout_minutes', 30), 'idle_timeout_minutes', 30))
             idle_warning_minutes = max(0, parse_admin_int(form_data.get('idle_warning_minutes'), settings.get('idle_warning_minutes', 28), 'idle_warning_minutes', 28))
-            if idle_warning_minutes >= idle_timeout_minutes:
-                idle_warning_minutes = max(0, idle_timeout_minutes - 1)
+            idle_warning_message = form_data.get(
+                'idle_warning_message',
+                settings.get('idle_warning_message', "You've been inactive for a while.")
+            ).strip()
+            if idle_warning_minutes > idle_timeout_minutes:
+                idle_warning_minutes = idle_timeout_minutes
+            if not idle_warning_message:
+                idle_warning_message = "You've been inactive for a while."
             # ... (fetch all other fields using form_data.get) ...
             enable_video_file_support = form_data.get('enable_video_file_support') == 'on'
             enable_audio_file_support = form_data.get('enable_audio_file_support') == 'on'
@@ -946,6 +954,7 @@ def register_route_frontend_admin_settings(app):
                 'enable_idle_timeout': enable_idle_timeout,
                 'idle_timeout_minutes': idle_timeout_minutes,
                 'idle_warning_minutes': idle_warning_minutes,
+                'idle_warning_message': idle_warning_message,
                 'default_system_prompt': form_data.get('default_system_prompt', '').strip(),
                 'access_denied_message': form_data.get('access_denied_message', settings.get('access_denied_message', '')).strip(),
 

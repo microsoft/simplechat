@@ -5,8 +5,8 @@
 - **Fix Title**: Idle heartbeat timing alignment for short timeout configurations
 - **Issue Description**: The client initialized `lastServerHeartbeatAt` with `Date.now()` and used a fixed 60-second heartbeat minimum interval. With `timeoutMinutes = 1`, active users could miss a heartbeat before server-side timeout and be logged out unexpectedly.
 - **Root Cause Analysis**: Heartbeat throttling was static and did not account for short configured timeout windows, delaying the first heartbeat too long for aggressive timeout settings.
-- **Version Implemented**: **0.239.012**
-- **Related Config Update**: `application/single_app/config.py` updated to `VERSION = "0.239.012"`.
+- **Version Implemented**: **v0.240.002**
+- **Related Config Update**: `application/single_app/config.py` updated to `VERSION = "v0.240.002"`.
 
 ## Technical Details
 

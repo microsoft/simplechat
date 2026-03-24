@@ -40,12 +40,13 @@
             return;
         }
 
-        if (!Number.isFinite(warningMinutes) || warningMinutes < 0 || warningMinutes >= timeoutMinutes) {
+        if (!Number.isFinite(warningMinutes) || warningMinutes < 0 || warningMinutes > timeoutMinutes) {
             return;
         }
 
         const timeoutMs = timeoutMinutes * 60 * 1000;
         const warningMs = warningMinutes * 60 * 1000;
+        const warningDisabled = warningMinutes === timeoutMinutes;
         const warningModal = bootstrap.Modal.getOrCreateInstance(warningModalElement);
 
         let warningTimer = null;
@@ -121,10 +122,14 @@
             clearTimers();
             logoutDeadlineMs = Date.now() + timeoutMs;
 
-            warningTimer = setTimeout(function () {
-                warningModal.show();
-                startCountdown();
-            }, warningMs);
+            if (!warningDisabled) {
+                warningTimer = setTimeout(function () {
+                    warningModal.show();
+                    startCountdown();
+                }, warningMs);
+            } else {
+                hideWarningModal();
+            }
 
             logoutTimer = setTimeout(logoutNow, timeoutMs);
         }

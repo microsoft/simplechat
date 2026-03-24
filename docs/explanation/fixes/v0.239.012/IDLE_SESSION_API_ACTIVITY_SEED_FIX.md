@@ -5,8 +5,8 @@
 - **Fix Title**: Idle timeout API activity timestamp seeding
 - **Issue Description**: `enforce_idle_session_timeout()` returned early for `/api/...` requests without updating `session['last_activity_epoch']`. If an authenticated session did not already have that key, idle-timeout tracking could fail to start for API-only traffic.
 - **Root Cause Analysis**: API-path early return happened before timestamp update logic, and the function only updated `last_activity_epoch` for non-API requests (or when idle-timeout was disabled).
-- **Version Implemented**: **0.239.012**
-- **Related Config Update**: `application/single_app/config.py` updated to `VERSION = "0.239.012"`.
+- **Version Implemented**: **v0.240.002**
+- **Related Config Update**: `application/single_app/config.py` updated to `VERSION = "v0.240.002"`.
 
 ## Technical Details
 

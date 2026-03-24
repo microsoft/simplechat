@@ -2,8 +2,8 @@
 # test_idle_logout_timeout.py
 """
 Functional test for idle session auto-logout.
-Version: 0.239.012
-Implemented in: 0.239.012
+Version: v0.240.002
+Implemented in: v0.240.002
 
 This test ensures that server-side idle timeout enforcement and
 client-side warning/logout wiring are present and sourced from admin settings.
@@ -301,7 +301,7 @@ def test_server_idle_timeout_wiring():
     assert has_heartbeat_refresh_call, "Missing get_idle_timeout_settings(get_request_settings()) in session_heartbeat"
 
     required_config_markers = [
-        "VERSION = \"0.239.012\""
+        "VERSION = \"v0.240.002\""
     ]
 
     missing_config_markers = [marker for marker in required_config_markers if marker not in config_content]
@@ -398,6 +398,8 @@ def test_base_template_warning_modal_wiring():
         "idleStaySignedInButton",
         "idleLogoutNowButton",
         "js/idle-logout-warning.js",
+        "idle_warning_message",
+        "app_settings.idle_warning_message",
         "localLogoutUrl",
         "fullSsoLogoutUrl",
         "'enabled': idle_timeout_enabled | default(false)",
@@ -422,6 +424,8 @@ def test_idle_warning_javascript_wiring():
         "localLogoutUrl",
         "fullSsoLogoutUrl",
         "warningMinutes",
+        "const warningDisabled = warningMinutes === timeoutMinutes",
+        "if (!warningDisabled)",
         "logoutNow",
         "scheduleIdleTimers",
         "idleTimeoutWarningModal",
@@ -453,7 +457,8 @@ def test_admin_idle_settings_wiring():
     required_settings_markers = [
         "'enable_idle_timeout': False",
         "'idle_timeout_minutes': 30",
-        "'idle_warning_minutes': 28"
+        "'idle_warning_minutes': 28",
+        "'idle_warning_message': \"You've been inactive for a while.\""
     ]
     missing_settings_markers = [marker for marker in required_settings_markers if marker not in settings_content]
     assert not missing_settings_markers, f"Missing settings default markers: {missing_settings_markers}"
@@ -462,9 +467,12 @@ def test_admin_idle_settings_wiring():
         "form_data.get('enable_idle_timeout')",
         "form_data.get('idle_timeout_minutes')",
         "form_data.get('idle_warning_minutes')",
+        "max(10, parse_admin_int(form_data.get('idle_timeout_minutes')",
+        "idle_warning_message',",
         "'enable_idle_timeout': enable_idle_timeout",
         "'idle_timeout_minutes': idle_timeout_minutes",
-        "'idle_warning_minutes': idle_warning_minutes"
+        "'idle_warning_minutes': idle_warning_minutes",
+        "'idle_warning_message': idle_warning_message"
     ]
     missing_route_markers = [marker for marker in required_route_markers if marker not in admin_route_content]
     assert not missing_route_markers, f"Missing admin route markers: {missing_route_markers}"
@@ -475,8 +483,11 @@ def test_admin_idle_settings_wiring():
         "id=\"idle_timeout_settings\"",
         "id=\"idle_timeout_minutes\"",
         "name=\"idle_timeout_minutes\"",
+        "min=\"10\"",
         "id=\"idle_warning_minutes\"",
-        "name=\"idle_warning_minutes\""
+        "name=\"idle_warning_minutes\"",
+        "id=\"idle_warning_message\"",
+        "name=\"idle_warning_message\""
     ]
     missing_template_markers = [marker for marker in required_template_markers if marker not in admin_template_content]
     assert not missing_template_markers, f"Missing admin template markers: {missing_template_markers}"

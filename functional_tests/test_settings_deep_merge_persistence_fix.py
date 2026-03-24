@@ -2,8 +2,8 @@
 # test_settings_deep_merge_persistence_fix.py
 """
 Functional test for settings deep-merge persistence fix.
-Version: 0.239.012
-Implemented in: 0.239.012
+Version: v0.240.002
+Implemented in: v0.240.002
 
 This test ensures merge persistence logic is validated using AST structure checks
 and controlled runtime behavior validation for deep_merge_dicts.
@@ -211,7 +211,7 @@ def test_version_alignment_for_fix_release():
     config_content = _read_file("application", "single_app", "config.py")
 
     required_markers = [
-        "VERSION = \"0.239.012\""
+        "VERSION = \"v0.240.002\""
     ]
 
     missing_markers = [marker for marker in required_markers if marker not in config_content]

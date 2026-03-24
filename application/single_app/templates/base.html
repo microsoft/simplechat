@@ -380,7 +380,7 @@
           </h5>
         </div>
         <div class="modal-body">
-          <p class="mb-2">You've been inactive for a while.</p>
+          <p class="mb-2">{{ app_settings.idle_warning_message | default("You've been inactive for a while.") }}</p>
           <p class="mb-0">You will be signed out in <strong><span id="idleTimeoutCountdown" aria-live="polite" aria-atomic="true">60</span> seconds</strong> unless you continue your session.</p>
         </div>
         <div class="modal-footer">

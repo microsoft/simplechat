@@ -268,6 +268,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_idle_timeout': False,
         'idle_timeout_minutes': 30,
         'idle_warning_minutes': 28,
+        'idle_warning_message': "You've been inactive for a while.",
         'default_system_prompt': '',
         # Access denied message shown on the home page for signed-in users who lack required roles.
         # Default is hard-coded; admins can override via Admin Settings (persisted in Cosmos DB).
