@@ -127,11 +127,11 @@ export function fetchFileContent(conversationId, fileId) {
       hideLoadingIndicator();
 
       if (data.file_content && data.filename) {
-        showFileContentPopup(data.file_content, data.filename, data.is_table);
+        showFileContentPopup(data.file_content, data.filename, data.is_table, data.file_content_source, conversationId, fileId);
       } else if (data.error) {
         showToast(data.error, "danger");
       } else {
-        ashowToastlert("Unexpected response from server.", "danger");
+        showToast("Unexpected response from server.", "danger");
       }
     })
     .catch((error) => {
@@ -141,7 +141,7 @@ export function fetchFileContent(conversationId, fileId) {
     });
 }
 
-export function showFileContentPopup(fileContent, filename, isTable) {
+export function showFileContentPopup(fileContent, filename, isTable, fileContentSource, conversationId, fileId) {
   let modalContainer = document.getElementById("file-modal");
   if (!modalContainer) {
     modalContainer = document.createElement("div");
@@ -155,6 +155,7 @@ export function showFileContentPopup(fileContent, filename, isTable) {
         <div class="modal-content">
           <div class="modal-header">
             <h5 class="modal-title">Uploaded File: ${filename}</h5>
+            <div class="ms-auto me-2" id="file-modal-download-btn-container"></div>
             <button
               type="button"
               class="btn-close"
@@ -173,6 +174,16 @@ export function showFileContentPopup(fileContent, filename, isTable) {
     const modalTitle = modalContainer.querySelector(".modal-title");
     if (modalTitle) {
       modalTitle.textContent = `Uploaded File: ${filename}`;
+    }
+  }
+
+  // Add or remove download button for blob-stored files
+  const downloadBtnContainer = document.getElementById("file-modal-download-btn-container");
+  if (downloadBtnContainer) {
+    if (fileContentSource === 'blob' && conversationId && fileId) {
+      downloadBtnContainer.innerHTML = `<a href="/api/enhanced_citations/tabular?conversation_id=${encodeURIComponent(conversationId)}&file_id=${encodeURIComponent(fileId)}" class="btn btn-sm btn-outline-primary" download><i class="bi bi-download me-1"></i>Download Original</a>`;
+    } else {
+      downloadBtnContainer.innerHTML = '';
     }
   }
 
@@ -308,7 +319,6 @@ if (imageGenBtn) {
     const docBtn = document.getElementById("search-documents-btn");
     const webBtn = document.getElementById("search-web-btn");
     const fileBtn = document.getElementById("choose-file-btn");
-    const streamingBtn = document.getElementById("streaming-toggle-btn");
     const modelSelectContainer = document.getElementById("model-select-container");
 
     if (isImageGenEnabled) {
@@ -324,10 +334,6 @@ if (imageGenBtn) {
         fileBtn.disabled = true;
         fileBtn.classList.remove("active");
       }
-      // Hide streaming toggle and model selector for image generation
-      if (streamingBtn) {
-        streamingBtn.style.display = "none";
-      }
       if (modelSelectContainer) {
         modelSelectContainer.style.display = "none";
       }
@@ -335,10 +341,6 @@ if (imageGenBtn) {
       if (docBtn) docBtn.disabled = false;
       if (webBtn) webBtn.disabled = false;
       if (fileBtn) fileBtn.disabled = false;
-      // Show streaming toggle and model selector when not in image generation mode
-      if (streamingBtn) {
-        streamingBtn.style.display = "flex";
-      }
       if (modelSelectContainer) {
         modelSelectContainer.style.display = "block";
       }
@@ -409,7 +411,7 @@ if (fileInputEl) {
         if (!currentConversationId) {
           createNewConversation(() => {
             uploadFileToConversation(file);
-          });
+          }, { preserveSelections: true });
         } else {
           uploadFileToConversation(file);
         }
@@ -458,7 +460,7 @@ if (uploadBtn) {
       if (!currentConversationId) {
         createNewConversation(() => {
           uploadFileToConversation(file);
-        });
+        }, { preserveSelections: true });
       } else {
         uploadFileToConversation(file);
       }

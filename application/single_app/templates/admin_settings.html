@@ -953,6 +953,12 @@
                                     <label class="form-check-label ms-2" for="toggle-fact-memory-plugin">Enable Fact Memory Action</label>
                                     <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to store and retrieve facts and information across conversations for improved memory and context retention."></i>
                                 </div>
+                                <div class="form-check form-switch mb-2" id="tabular-processing-toggle-wrapper">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-tabular-processing-plugin" name="enable_tabular_processing_plugin">
+                                    <label class="form-check-label ms-2" for="toggle-tabular-processing-plugin">Enable Tabular Processing Action</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to analyze tabular data files (CSV, XLSX) using pandas for aggregations, filtering, and full dataset operations. Requires Enhanced Citations."></i>
+                                    <small class="text-muted d-block ms-4" id="tabular-processing-dependency-note">Requires Enhanced Citations</small>
+                                </div>
                             </div>
                             <table class="table table-bordered" id="plugins-table">
                                 <thead>
@@ -1627,6 +1633,27 @@
                     Test GPT Connection
                 </button>
                 <div id="test_gpt_result" class="mt-2"></div>
+                </div>
+
+                <!-- Processing Thoughts Section -->
+                <div class="card p-3 mb-4" id="processing-thoughts-section">
+                    <h5>
+                        <i class="bi bi-stars me-2"></i>Processing Thoughts
+                    </h5>
+                    <p class="text-muted">When enabled, real-time processing steps are shown to users during chat responses and persisted for later review.</p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_thoughts"
+                            name="enable_thoughts"
+                            {% if settings.enable_thoughts %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_thoughts">
+                            Enable Processing Thoughts
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Show real-time processing steps (searching documents, web search, agent calls, etc.) to users during chat. Steps are stored in Cosmos DB and can be reviewed per-message via a stars icon."></i>
+                    </div>
                 </div>
 
                 <!-- Embeddings Configuration Section -->
@@ -2973,6 +3000,23 @@
                             </div>
                         </div>
 
+                        <div class="card mb-3 p-3">
+                            <h6><strong>Tabular Preview Limits</strong></h6>
+                            <div class="mb-3">
+                                <label for="tabular_preview_max_blob_size_mb" class="form-label">
+                                    Maximum File Size for Tabular Preview (MB)
+                                </label>
+                                <input type="number" class="form-control" id="tabular_preview_max_blob_size_mb"
+                                    name="tabular_preview_max_blob_size_mb"
+                                    min="1" max="1024"
+                                    value="{{ settings.tabular_preview_max_blob_size_mb or 200 }}">
+                                <small class="form-text text-muted">
+                                    Maximum blob size (in MB) allowed for tabular file previews (CSV, XLSX). Files larger than this will not be previewed. 
+                                    Increase for larger files if your compute has sufficient memory, or decrease to protect smaller instances. Default: 200 MB.
+                                </small>
+                            </div>
+                        </div>
+
                         
                         <!-- <div class="card mb-3 p-3">
                             <h6><strong>Video Files</strong></h6>
@@ -3278,9 +3322,10 @@
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Archive conversations instead of permanently deleting them, allowing for recovery and compliance with data retention policies."></i>
                     </div>
                 </div>
+
             </div>
 
-            
+
             <div class="tab-pane fade" id="search-extract" role="tabpanel" aria-labelledby="search-extract-tab">
                 
                  <p class="text-muted">

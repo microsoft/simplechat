@@ -360,6 +360,9 @@ resource "azurerm_linux_web_app" "app" {
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
   service_plan_id     = azurerm_service_plan.asp.id
+  # This Terraform deployer uses a container-based Linux Web App.
+  # Gunicorn startup comes from the container image entrypoint,
+  # so native Python app_command_line/startup settings are not used here.
   ftp_publish_basic_authentication_enabled = false
   webdeploy_publish_basic_authentication_enabled = false   
 

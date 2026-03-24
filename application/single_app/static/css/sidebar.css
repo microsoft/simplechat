@@ -238,6 +238,16 @@ body.sidebar-nav-enabled.has-classification-banner .container-fluid {
   transition: color 0.2s ease;
 }
 
+.sidebar-conversation-header {
+  min-width: 0;
+}
+
+.sidebar-conversation-unread-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  min-width: 0.55rem;
+}
+
 /* Edit mode input styling */
 .sidebar-conversation-item input.form-control {
   background: rgba(255, 255, 255, 0.95);

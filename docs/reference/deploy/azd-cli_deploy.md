@@ -30,6 +30,17 @@ Azure Developer CLI (azd) provides the fastest and most automated way to deploy 
 
 ## Quick Start
 
+## Runtime Startup Behavior
+
+- The current `azd` deployment path in this repo is a **container-based App Service** deployment.
+- Gunicorn is started by the container entrypoint in `application/single_app/Dockerfile`.
+- You do **not** need to populate App Service Stack Settings Startup command when deploying through this `azd` path.
+- If you later switch to native Python App Service instead, deploy the `application/single_app` folder and use this startup command:
+
+```bash
+python -m gunicorn -c gunicorn.conf.py app:app
+```
+
 ### 1. Clone Repository
 ```bash
 git clone https://github.com/microsoft/simplechat.git
@@ -265,6 +276,18 @@ azd up
 
 ## Management Commands
 
+### Upgrade Decision Guide
+
+Use the command that matches the type of change you are making.
+
+| If you changed... | Use | Why |
+| :--- | :--- | :--- |
+| **Application code only** | `azd deploy` | Recommended default for routine container upgrades |
+| **Infrastructure only** | `azd provision` | Updates Azure resources without treating the release like a full app deployment |
+| **Application code and infrastructure together** | `azd up` | Runs the combined deployment flow |
+
+Do **not** assume `azd up` is required for every release. For normal code-only container updates, start with `azd deploy`.
+
 ### Application Lifecycle
 
 **Deploy application updates:**
@@ -272,16 +295,22 @@ azd up
 azd deploy
 ```
 
+Recommended for routine container-based application upgrades when infrastructure is unchanged.
+
 **Provision infrastructure changes:**
 ```bash
 azd provision
 ```
+
+Use `azd provision --preview` first when you want to review infrastructure impact before applying it.
 
 **Full redeployment:**
 ```bash  
 azd down --purge
 azd up
 ```
+
+Do not use this as a standard upgrade flow. This is a destructive reprovisioning path.
 
 ### Environment Management
 

@@ -288,10 +288,6 @@
                         <div class="font-monospace small">{{ user.get('oid', 'N/A') }}</div>
                     </div>
                     <div class="col-md-6">
-                        <label class="form-label text-muted small">Streaming</label>
-                        <div><span id="streaming-badge" class="badge bg-secondary">-</span></div>
-                    </div>
-                    <div class="col-md-6">
                         <label class="form-label text-muted small">Dark Mode</label>
                         <div><span id="darkmode-badge" class="badge bg-secondary">-</span></div>
                     </div>
@@ -731,9 +727,6 @@ function loadUserMetrics() {
             }
             
             // Update preferences badges
-            document.getElementById('streaming-badge').textContent = data.settings?.streamingEnabled ? 'Enabled' : 'Disabled';
-            document.getElementById('streaming-badge').className = `badge ${data.settings?.streamingEnabled ? 'bg-success' : 'bg-secondary'}`;
-            
             document.getElementById('darkmode-badge').textContent = data.settings?.darkModeEnabled ? 'Enabled' : 'Disabled';
             document.getElementById('darkmode-badge').className = `badge ${data.settings?.darkModeEnabled ? 'bg-dark' : 'bg-light text-dark'}`;
             

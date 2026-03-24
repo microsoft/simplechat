@@ -3572,8 +3572,15 @@ def register_route_backend_control_center(app):
                         deleted_count = 0
                         for doc in docs_to_delete:
                             try:
-                                delete_document_chunks(doc['id'])
-                                delete_document(doc['id'])
+                                delete_document_chunks(
+                                    document_id=doc['id'],
+                                    public_workspace_id=workspace_id,
+                                )
+                                delete_document(
+                                    user_id=None,
+                                    document_id=doc['id'],
+                                    public_workspace_id=workspace_id,
+                                )
                                 deleted_count += 1
                             except Exception as del_e:
                                 debug_print(f"Error deleting document {doc['id']}: {del_e}")
