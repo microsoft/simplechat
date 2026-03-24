@@ -198,22 +198,24 @@ param deployVideoIndexerService bool
 var rgName = '${appName}-${environment}-rg'
 var requiredTags = { application: appName, environment: environment, 'azd-env-name': azdEnvironmentName }
 var tags = union(requiredTags, specialTags)
-var acrCloudSuffix = cloudEnvironment == 'AzureCloud' ? '.azurecr.io' : '.azurecr.us'
+var isPublicCloud = scCloudEnvironment == 'public'
+var isUsGovernmentCloud = scCloudEnvironment == 'usgovernment'
+var acrCloudSuffix = isPublicCloud ? '.azurecr.io' : '.azurecr.us'
 var acrName = toLower('${appName}${environment}acr')
 var containerRegistry = '${acrName}${acrCloudSuffix}'
 var containerImageName = '${containerRegistry}/${imageName}'
 var vNetName = '${appName}-${environment}-vnet'
 var normalizedLocation = toLower(replace(location, ' ', ''))
-var resolvedOpenAIDeploymentType = cloudEnvironment == 'AzureUSGovernment' ? 'Standard' : openAIDeploymentType
+var resolvedOpenAIDeploymentType = isUsGovernmentCloud ? 'Standard' : openAIDeploymentType
 var defaultGptModels = [
   {
     modelName: 'gpt-4o'
-    modelVersion: cloudEnvironment == 'AzureUSGovernment' ? '2024-05-13' : '2024-11-20'
+    modelVersion: isUsGovernmentCloud ? '2024-05-13' : '2024-11-20'
     skuName: resolvedOpenAIDeploymentType
     skuCapacity: 100
   }
 ]
-var defaultEmbeddingModels = cloudEnvironment == 'AzureUSGovernment'
+var defaultEmbeddingModels = isUsGovernmentCloud
   ? [
       {
         modelName: normalizedLocation == 'usgovvirginia' ? 'text-embedding-ada-002' : 'text-embedding-3-small'

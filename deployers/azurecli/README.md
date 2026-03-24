@@ -10,6 +10,8 @@ This option is useful when you want a script-driven deployment flow without usin
 
 It is also useful when you want more script-level control over deployment sequencing and post-deployment recovery steps than the native AZD workflow provides.
 
+For day-to-day work on this deployer, Visual Studio Code and Dev Containers are recommended so the script, repository layout, and Docker build context stay consistent across environments.
+
 ## What this deployer does
 
 The Azure CLI deployer provisions the main Simple Chat application resources, including:
@@ -63,6 +65,12 @@ Before running the deployment:
 7. If private networking is enabled, make sure you can manage VNets, subnets, private endpoints, private DNS zones, and private DNS VNet links
 8. If `param_BuildContainerImageWithAcr = $true`, make sure the target source context contains [application/single_app/Dockerfile](application/single_app/Dockerfile) and the rest of the repository files needed by that Docker build
 
+Platform note:
+
+- Windows users can run the examples directly in PowerShell.
+- Linux and macOS users should run the same script with `pwsh`.
+- Keep PowerShell variable syntax in PowerShell. This deployer is PowerShell-first, even when Azure CLI commands are part of the workflow.
+
 For Azure Government:
 
 ```azurecli
@@ -97,6 +105,13 @@ Example:
 ```powershell
 cd deployers/azurecli
 .\deploy-simplechat.ps1
+```
+
+Linux or macOS example:
+
+```bash
+cd deployers/azurecli
+pwsh ./deploy-simplechat.ps1
 ```
 
 ## Configuration areas to review

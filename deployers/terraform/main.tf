@@ -449,7 +449,7 @@ resource "azurerm_linux_web_app" "app" {
   }
 
   app_settings = {
-    "AZURE_ENDPOINT"                                  = var.global_which_azure_platform == "AzureUSGovernment" ? "usgovernment" : "public"
+    "AZURE_ENVIRONMENT"                              = var.global_which_azure_platform == "AzureUSGovernment" ? "usgovernment" : "public"
     "SCM_DO_BUILD_DURING_DEPLOYMENT"                  = "false"
     "WEBSITE_PULL_IMAGE_OVER_VNET"                    = var.param_enable_private_networking ? "true" : "false"
     "AZURE_COSMOS_AUTHENTICATION_TYPE"                = "key"

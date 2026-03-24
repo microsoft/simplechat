@@ -1,11 +1,12 @@
 {
   "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+  "languageVersion": "2.0",
   "contentVersion": "1.0.0.0",
   "metadata": {
     "_generator": {
       "name": "bicep",
       "version": "0.41.2.15936",
-      "templateHash": "13825130652851399501"
+      "templateHash": "521914542700510995"
     }
   },
   "parameters": {
@@ -18,12 +19,16 @@
     },
     "cloudEnvironment": {
       "type": "string",
+      "defaultValue": "[if(equals(environment().name, 'AzureCloud'), 'public', if(equals(environment().name, 'AzureUSGovernment'), 'usgovernment', 'custom'))]",
       "allowedValues": [
         "AzureCloud",
-        "AzureUSGovernment"
+        "AzureUSGovernment",
+        "public",
+        "usgovernment",
+        "custom"
       ],
       "metadata": {
-        "description": "The target Azure Cloud environment.\n- Accepted values are: AzureCloud, AzureUSGovernment\n- Default is AzureCloud"
+        "description": "The target Azure Cloud environment.\n- Accepted values are: AzureCloud, AzureUSGovernment, public, usgovernment, custom\n- Default is based on the ARM cloud name"
       }
     },
     "appName": {
@@ -52,6 +57,7 @@
     },
     "imageName": {
       "type": "string",
+      "defaultValue": "simplechat:latest",
       "metadata": {
         "description": "The name of the container image to deploy to the web app.\n- should be in the format <repository>:<tag>"
       }
@@ -172,6 +178,59 @@
         "description": "Optional API key for an existing Azure OpenAI or Azure AI Foundry OpenAI-compatible endpoint.\n- Required for key-based authentication when reusing an external endpoint and automatic key retrieval is not available"
       }
     },
+    "openAIDeploymentType": {
+      "type": "string",
+      "allowedValues": [
+        "Standard",
+        "DatazoneStandard",
+        "GlobalStandard"
+      ],
+      "metadata": {
+        "description": "Azure OpenAI deployment type used for the default GPT and embedding model deployments.\n- Azure Commercial options: Standard, DatazoneStandard, GlobalStandard\n- Azure Government default model deployments use Standard regardless of this selection\n- Ignored when you provide custom gptModels or embeddingModels arrays"
+      }
+    },
+    "customBlobStorageSuffix": {
+      "type": "string",
+      "defaultValue": "[format('blob.{0}', environment().suffixes.storage)]",
+      "metadata": {
+        "description": "Custom blob storage URL suffix, e.g. blob.core.usgovcloudapi.net"
+      }
+    },
+    "customGraphUrl": {
+      "type": "string",
+      "nullable": true,
+      "metadata": {
+        "description": "Custom Graph API URL, e.g. https://graph.microsoft.us"
+      }
+    },
+    "customIdentityUrl": {
+      "type": "string",
+      "defaultValue": "[environment().authentication.loginEndpoint]",
+      "metadata": {
+        "description": "Custom Identity URL, e.g. https://login.microsoftonline.us/"
+      }
+    },
+    "customResourceManagerUrl": {
+      "type": "string",
+      "defaultValue": "[environment().resourceManager]",
+      "metadata": {
+        "description": "Custom Resource Manager URL, e.g. https://management.usgovcloudapi.net"
+      }
+    },
+    "customCognitiveServicesScope": {
+      "type": "string",
+      "defaultValue": "https://cognitiveservices.azure.com/.default",
+      "metadata": {
+        "description": "Custom Cognitive Services scope ex: https://cognitiveservices.azure.com/.default"
+      }
+    },
+    "customSearchResourceUrl": {
+      "type": "string",
+      "defaultValue": "https://search.azure.com",
+      "metadata": {
+        "description": "Custom search resource URL for token audience, e.g. https://search.azure.us"
+      }
+    },
     "gptModels": {
       "type": "array",
       "defaultValue": [],
@@ -188,6 +247,7 @@
     },
     "allowedIpAddresses": {
       "type": "string",
+      "defaultValue": "",
       "metadata": {
         "description": "Comma separated list of IP addresses or ranges to allow access to resources when private networking is enabled.\nLeave blank if not using private networking.\n- Format for single IP: 'x.x.x.x'\n- Format for range: 'x.x.x.x/y'\n- Example:  1.2.3.4, 2.3.4.5/32\n"
       }
@@ -240,6 +300,7 @@
         }
       }
     ],
+    "scCloudEnvironment": "[if(equals(parameters('cloudEnvironment'), 'AzureCloud'), 'public', if(equals(parameters('cloudEnvironment'), 'AzureUSGovernment'), 'usgovernment', parameters('cloudEnvironment')))]",
     "allowedIpAddressesSplit": "[if(empty(parameters('allowedIpAddresses')), createArray(), split(parameters('allowedIpAddresses'), ','))]",
     "rgName": "[format('{0}-{1}-rg', parameters('appName'), parameters('environment'))]",
     "requiredTags": {
@@ -248,21 +309,24 @@
       "azd-env-name": "[parameters('azdEnvironmentName')]"
     },
     "tags": "[union(variables('requiredTags'), parameters('specialTags'))]",
-    "acrCloudSuffix": "[if(equals(parameters('cloudEnvironment'), 'AzureCloud'), '.azurecr.io', '.azurecr.us')]",
+    "isPublicCloud": "[equals(variables('scCloudEnvironment'), 'public')]",
+    "isUsGovernmentCloud": "[equals(variables('scCloudEnvironment'), 'usgovernment')]",
+    "acrCloudSuffix": "[if(variables('isPublicCloud'), '.azurecr.io', '.azurecr.us')]",
     "acrName": "[toLower(format('{0}{1}acr', parameters('appName'), parameters('environment')))]",
     "containerRegistry": "[format('{0}{1}', variables('acrName'), variables('acrCloudSuffix'))]",
     "containerImageName": "[format('{0}/{1}', variables('containerRegistry'), parameters('imageName'))]",
     "vNetName": "[format('{0}-{1}-vnet', parameters('appName'), parameters('environment'))]",
     "normalizedLocation": "[toLower(replace(parameters('location'), ' ', ''))]",
+    "resolvedOpenAIDeploymentType": "[if(variables('isUsGovernmentCloud'), 'Standard', parameters('openAIDeploymentType'))]",
     "defaultGptModels": [
       {
         "modelName": "gpt-4o",
-        "modelVersion": "[if(equals(parameters('cloudEnvironment'), 'AzureUSGovernment'), '2024-05-13', '2024-11-20')]",
-        "skuName": "Standard",
+        "modelVersion": "[if(variables('isUsGovernmentCloud'), '2024-05-13', '2024-11-20')]",
+        "skuName": "[variables('resolvedOpenAIDeploymentType')]",
         "skuCapacity": 100
       }
     ],
-    "defaultEmbeddingModels": "[if(equals(parameters('cloudEnvironment'), 'AzureUSGovernment'), createArray(createObject('modelName', if(equals(variables('normalizedLocation'), 'usgovvirginia'), 'text-embedding-ada-002', 'text-embedding-3-small'), 'modelVersion', if(equals(variables('normalizedLocation'), 'usgovvirginia'), '2', '1'), 'skuName', 'Standard', 'skuCapacity', 100)), createArray(createObject('modelName', 'text-embedding-3-small', 'modelVersion', '1', 'skuName', 'Standard', 'skuCapacity', 100)))]",
+    "defaultEmbeddingModels": "[if(variables('isUsGovernmentCloud'), createArray(createObject('modelName', if(equals(variables('normalizedLocation'), 'usgovvirginia'), 'text-embedding-ada-002', 'text-embedding-3-small'), 'modelVersion', if(equals(variables('normalizedLocation'), 'usgovvirginia'), '2', '1'), 'skuName', variables('resolvedOpenAIDeploymentType'), 'skuCapacity', 100)), createArray(createObject('modelName', 'text-embedding-3-small', 'modelVersion', '1', 'skuName', variables('resolvedOpenAIDeploymentType'), 'skuCapacity', 100)))]",
     "resolvedGptModels": "[if(empty(parameters('gptModels')), variables('defaultGptModels'), parameters('gptModels'))]",
     "resolvedEmbeddingModels": "[if(empty(parameters('embeddingModels')), variables('defaultEmbeddingModels'), parameters('embeddingModels'))]",
     "hasExistingAppServiceSubnetId": "[not(empty(parameters('existingAppServiceSubnetId')))]",
@@ -272,15 +336,15 @@
     "useExistingVirtualNetwork": "[and(parameters('enablePrivateNetworking'), or(or(not(empty(variables('resolvedExistingVirtualNetworkId'))), variables('hasExistingAppServiceSubnetId')), variables('hasExistingPrivateEndpointSubnetId')))]",
     "allowedIpsForCosmos": "[union(createArray('0.0.0.0'), variables('allowedIpAddressesArray'))]"
   },
-  "resources": [
-    {
+  "resources": {
+    "rg": {
       "type": "Microsoft.Resources/resourceGroups",
       "apiVersion": "2022-09-01",
       "name": "[variables('rgName')]",
       "location": "[parameters('location')]",
       "tags": "[variables('tags')]"
     },
-    {
+    "virtualNetwork": {
       "condition": "[and(parameters('enablePrivateNetworking'), not(variables('useExistingVirtualNetwork')))]",
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
@@ -412,10 +476,10 @@
         }
       },
       "dependsOn": [
-        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]"
+        "rg"
       ]
     },
-    {
+    "logAnalytics": {
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
       "name": "logAnalytics",
@@ -486,10 +550,10 @@
         }
       },
       "dependsOn": [
-        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]"
+        "rg"
       ]
     },
-    {
+    "applicationInsights": {
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
       "name": "applicationInsights",
@@ -513,7 +577,7 @@
             "value": "[variables('tags')]"
           },
           "logAnalyticsId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics'), '2025-04-01').outputs.logAnalyticsId.value]"
+            "value": "[reference('logAnalytics').outputs.logAnalyticsId.value]"
           }
         },
         "template": {
@@ -566,11 +630,11 @@
         }
       },
       "dependsOn": [
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics')]",
-        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]"
+        "logAnalytics",
+        "rg"
       ]
     },
-    {
+    "keyVault": {
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
       "name": "keyVault",
@@ -597,7 +661,7 @@
             "value": "[parameters('enableDiagLogging')]"
           },
           "logAnalyticsId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics'), '2025-04-01').outputs.logAnalyticsId.value]"
+            "value": "[reference('logAnalytics').outputs.logAnalyticsId.value]"
           }
         },
         "template": {
@@ -821,11 +885,11 @@
         }
       },
       "dependsOn": [
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics')]",
-        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]"
+        "logAnalytics",
+        "rg"
       ]
     },
-    {
+    "storeEnterpriseAppSecret": {
       "condition": "[not(empty(parameters('enterpriseAppClientSecret')))]",
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
@@ -838,7 +902,7 @@
         "mode": "Incremental",
         "parameters": {
           "keyVaultName": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'keyVault'), '2025-04-01').outputs.keyVaultName.value]"
+            "value": "[reference('keyVault').outputs.keyVaultName.value]"
           },
           "secretName": {
             "value": "enterprise-app-client-secret"
@@ -887,11 +951,11 @@
         }
       },
       "dependsOn": [
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'keyVault')]",
-        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]"
+        "keyVault",
+        "rg"
       ]
     },
-    {
+    "cosmosDB": {
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
       "name": "cosmosDB",
@@ -918,10 +982,10 @@
             "value": "[parameters('enableDiagLogging')]"
           },
           "logAnalyticsId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics'), '2025-04-01').outputs.logAnalyticsId.value]"
+            "value": "[reference('logAnalytics').outputs.logAnalyticsId.value]"
           },
           "keyVault": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'keyVault'), '2025-04-01').outputs.keyVaultName.value]"
+            "value": "[reference('keyVault').outputs.keyVaultName.value]"
           },
           "authenticationType": {
             "value": "[parameters('authenticationType')]"
@@ -1275,12 +1339,12 @@
         }
       },
       "dependsOn": [
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'keyVault')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics')]",
-        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]"
+        "keyVault",
+        "logAnalytics",
+        "rg"
       ]
     },
-    {
+    "acr": {
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
       "name": "azureContainerRegistry",
@@ -1304,10 +1368,10 @@
             "value": "[parameters('enableDiagLogging')]"
           },
           "logAnalyticsId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics'), '2025-04-01').outputs.logAnalyticsId.value]"
+            "value": "[reference('logAnalytics').outputs.logAnalyticsId.value]"
           },
           "keyVault": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'keyVault'), '2025-04-01').outputs.keyVaultName.value]"
+            "value": "[reference('keyVault').outputs.keyVaultName.value]"
           },
           "authenticationType": {
             "value": "[parameters('authenticationType')]"
@@ -1329,7 +1393,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.41.2.15936",
-              "templateHash": "13779468623687321665"
+              "templateHash": "3987765018822910546"
             }
           },
           "parameters": {
@@ -1377,7 +1441,8 @@
               "properties": {
                 "adminUserEnabled": true,
                 "publicNetworkAccess": "Enabled",
-                "networkRuleSet": "[if(parameters('enablePrivateNetworking'), createObject('defaultAction', 'Deny', 'ipRules', parameters('allowedIpAddresses')), null())]"
+                "networkRuleBypassOptions": "[if(parameters('enablePrivateNetworking'), 'AzureServices', 'None')]",
+                "networkRuleSet": "[if(parameters('enablePrivateNetworking'), createObject('defaultAction', 'Allow', 'ipRules', parameters('allowedIpAddresses')), null())]"
               },
               "tags": "[parameters('tags')]"
             },
@@ -1611,12 +1676,12 @@
         }
       },
       "dependsOn": [
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'keyVault')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics')]",
-        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]"
+        "keyVault",
+        "logAnalytics",
+        "rg"
       ]
     },
-    {
+    "searchService": {
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
       "name": "searchService",
@@ -1643,10 +1708,10 @@
             "value": "[parameters('enableDiagLogging')]"
           },
           "logAnalyticsId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics'), '2025-04-01').outputs.logAnalyticsId.value]"
+            "value": "[reference('logAnalytics').outputs.logAnalyticsId.value]"
           },
           "keyVault": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'keyVault'), '2025-04-01').outputs.keyVaultName.value]"
+            "value": "[reference('keyVault').outputs.keyVaultName.value]"
           },
           "authenticationType": {
             "value": "[parameters('authenticationType')]"
@@ -1957,12 +2022,12 @@
         }
       },
       "dependsOn": [
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'keyVault')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics')]",
-        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]"
+        "keyVault",
+        "logAnalytics",
+        "rg"
       ]
     },
-    {
+    "docIntel": {
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
       "name": "docIntel",
@@ -1989,10 +2054,10 @@
             "value": "[parameters('enableDiagLogging')]"
           },
           "logAnalyticsId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics'), '2025-04-01').outputs.logAnalyticsId.value]"
+            "value": "[reference('logAnalytics').outputs.logAnalyticsId.value]"
           },
           "keyVault": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'keyVault'), '2025-04-01').outputs.keyVaultName.value]"
+            "value": "[reference('keyVault').outputs.keyVaultName.value]"
           },
           "authenticationType": {
             "value": "[parameters('authenticationType')]"
@@ -2296,12 +2361,12 @@
         }
       },
       "dependsOn": [
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'keyVault')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics')]",
-        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]"
+        "keyVault",
+        "logAnalytics",
+        "rg"
       ]
     },
-    {
+    "storageAccount": {
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
       "name": "storageAccount",
@@ -2328,10 +2393,10 @@
             "value": "[parameters('enableDiagLogging')]"
           },
           "logAnalyticsId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics'), '2025-04-01').outputs.logAnalyticsId.value]"
+            "value": "[reference('logAnalytics').outputs.logAnalyticsId.value]"
           },
           "keyVault": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'keyVault'), '2025-04-01').outputs.keyVaultName.value]"
+            "value": "[reference('keyVault').outputs.keyVaultName.value]"
           },
           "authenticationType": {
             "value": "[parameters('authenticationType')]"
@@ -2681,12 +2746,12 @@
         }
       },
       "dependsOn": [
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'keyVault')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics')]",
-        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]"
+        "keyVault",
+        "logAnalytics",
+        "rg"
       ]
     },
-    {
+    "openAI": {
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
       "name": "openAI",
@@ -2713,10 +2778,10 @@
             "value": "[parameters('enableDiagLogging')]"
           },
           "logAnalyticsId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics'), '2025-04-01').outputs.logAnalyticsId.value]"
+            "value": "[reference('logAnalytics').outputs.logAnalyticsId.value]"
           },
           "keyVault": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'keyVault'), '2025-04-01').outputs.keyVaultName.value]"
+            "value": "[reference('keyVault').outputs.keyVaultName.value]"
           },
           "authenticationType": {
             "value": "[parameters('authenticationType')]"
@@ -3161,12 +3226,12 @@
         }
       },
       "dependsOn": [
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'keyVault')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics')]",
-        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]"
+        "keyVault",
+        "logAnalytics",
+        "rg"
       ]
     },
-    {
+    "appServicePlan": {
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
       "name": "appServicePlan",
@@ -3193,7 +3258,7 @@
             "value": "[parameters('enableDiagLogging')]"
           },
           "logAnalyticsId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics'), '2025-04-01').outputs.logAnalyticsId.value]"
+            "value": "[reference('logAnalytics').outputs.logAnalyticsId.value]"
           }
         },
         "template": {
@@ -3411,11 +3476,11 @@
         }
       },
       "dependsOn": [
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics')]",
-        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]"
+        "logAnalytics",
+        "rg"
       ]
     },
-    {
+    "appService": {
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
       "name": "appService",
@@ -3439,43 +3504,43 @@
             "value": "[variables('tags')]"
           },
           "acrName": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'azureContainerRegistry'), '2025-04-01').outputs.acrName.value]"
+            "value": "[reference('acr').outputs.acrName.value]"
           },
           "enableDiagLogging": {
             "value": "[parameters('enableDiagLogging')]"
           },
           "logAnalyticsId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics'), '2025-04-01').outputs.logAnalyticsId.value]"
+            "value": "[reference('logAnalytics').outputs.logAnalyticsId.value]"
           },
           "appServicePlanId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'appServicePlan'), '2025-04-01').outputs.appServicePlanId.value]"
+            "value": "[reference('appServicePlan').outputs.appServicePlanId.value]"
           },
           "containerImageName": {
             "value": "[variables('containerImageName')]"
           },
           "azurePlatform": {
-            "value": "[parameters('cloudEnvironment')]"
+            "value": "[variables('scCloudEnvironment')]"
           },
           "cosmosDbName": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'cosmosDB'), '2025-04-01').outputs.cosmosDbName.value]"
+            "value": "[reference('cosmosDB').outputs.cosmosDbName.value]"
           },
           "searchServiceName": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'searchService'), '2025-04-01').outputs.searchServiceName.value]"
+            "value": "[reference('searchService').outputs.searchServiceName.value]"
           },
           "openAiServiceName": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'openAI'), '2025-04-01').outputs.openAIName.value]"
+            "value": "[reference('openAI').outputs.openAIName.value]"
           },
           "openAiEndpoint": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'openAI'), '2025-04-01').outputs.openAIEndpoint.value]"
+            "value": "[reference('openAI').outputs.openAIEndpoint.value]"
           },
           "openAiResourceGroupName": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'openAI'), '2025-04-01').outputs.openAIResourceGroup.value]"
+            "value": "[reference('openAI').outputs.openAIResourceGroup.value]"
           },
           "documentIntelligenceServiceName": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'docIntel'), '2025-04-01').outputs.documentIntelligenceServiceName.value]"
+            "value": "[reference('docIntel').outputs.documentIntelligenceServiceName.value]"
           },
           "appInsightsName": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'applicationInsights'), '2025-04-01').outputs.appInsightsName.value]"
+            "value": "[reference('applicationInsights').outputs.appInsightsName.value]"
           },
           "enterpriseAppClientId": {
             "value": "[parameters('enterpriseAppClientId')]"
@@ -3487,21 +3552,40 @@
             "value": "[parameters('authenticationType')]"
           },
           "keyVaultUri": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'keyVault'), '2025-04-01').outputs.keyVaultUri.value]"
+            "value": "[reference('keyVault').outputs.keyVaultUri.value]"
           },
           "enablePrivateNetworking": {
             "value": "[parameters('enablePrivateNetworking')]"
           },
-          "appServiceSubnetId": "[if(parameters('enablePrivateNetworking'), if(variables('useExistingVirtualNetwork'), createObject('value', parameters('existingAppServiceSubnetId')), createObject('value', reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'virtualNetwork'), '2025-04-01').outputs.appServiceSubnetId.value)), createObject('value', ''))]"
+          "appServiceSubnetId": "[if(parameters('enablePrivateNetworking'), if(variables('useExistingVirtualNetwork'), createObject('value', parameters('existingAppServiceSubnetId')), createObject('value', reference('virtualNetwork').outputs.appServiceSubnetId.value)), createObject('value', ''))]",
+          "customBlobStorageSuffix": {
+            "value": "[parameters('customBlobStorageSuffix')]"
+          },
+          "customGraphUrl": {
+            "value": "[parameters('customGraphUrl')]"
+          },
+          "customIdentityUrl": {
+            "value": "[parameters('customIdentityUrl')]"
+          },
+          "customResourceManagerUrl": {
+            "value": "[parameters('customResourceManagerUrl')]"
+          },
+          "customCognitiveServicesScope": {
+            "value": "[parameters('customCognitiveServicesScope')]"
+          },
+          "customSearchResourceUrl": {
+            "value": "[parameters('customSearchResourceUrl')]"
+          }
         },
         "template": {
           "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "languageVersion": "2.0",
           "contentVersion": "1.0.0.0",
           "metadata": {
             "_generator": {
               "name": "bicep",
               "version": "0.41.2.15936",
-              "templateHash": "15155999637546305218"
+              "templateHash": "6496170582734407734"
             }
           },
           "parameters": {
@@ -3576,13 +3660,87 @@
             "appServiceSubnetId": {
               "type": "string",
               "defaultValue": ""
+            },
+            "customBlobStorageSuffix": {
+              "type": "string",
+              "nullable": true,
+              "metadata": {
+                "description": "Custom blob storage URL suffix, e.g. blob.core.usgovcloudapi.net"
+              }
+            },
+            "customGraphUrl": {
+              "type": "string",
+              "nullable": true,
+              "metadata": {
+                "description": "Custom Graph API URL, e.g. https://graph.microsoft.us"
+              }
+            },
+            "customIdentityUrl": {
+              "type": "string",
+              "nullable": true,
+              "metadata": {
+                "description": "Custom Identity URL, e.g. https://login.microsoftonline.us"
+              }
+            },
+            "customResourceManagerUrl": {
+              "type": "string",
+              "nullable": true,
+              "metadata": {
+                "description": "Custom Resource Manager URL, e.g. https://management.usgovcloudapi.net"
+              }
+            },
+            "customCognitiveServicesScope": {
+              "type": "string",
+              "nullable": true,
+              "metadata": {
+                "description": "Custom Cognitive Services scope ex: https://cognitiveservices.azure.com/.default"
+              }
+            },
+            "customSearchResourceUrl": {
+              "type": "string",
+              "nullable": true,
+              "metadata": {
+                "description": "Custom search resource URL for token audience, e.g. https://search.azure.us"
+              }
             }
           },
           "variables": {
-            "acrDomain": "[if(equals(parameters('azurePlatform'), 'AzureUSGovernment'), '.azurecr.us', '.azurecr.io')]"
+            "tenantId": "[tenant().tenantId]",
+            "openIdMetadataUrl": "[format('{0}{1}/v2.0/.well-known/openid-configuration', environment().authentication.loginEndpoint, variables('tenantId'))]",
+            "acrDomain": "[environment().suffixes.acrLoginServer]"
           },
-          "resources": [
-            {
+          "resources": {
+            "acrService": {
+              "existing": true,
+              "type": "Microsoft.ContainerRegistry/registries",
+              "apiVersion": "2025-04-01",
+              "name": "[parameters('acrName')]"
+            },
+            "cosmosDb": {
+              "existing": true,
+              "type": "Microsoft.DocumentDB/databaseAccounts",
+              "apiVersion": "2023-04-15",
+              "name": "[parameters('cosmosDbName')]"
+            },
+            "searchService": {
+              "existing": true,
+              "type": "Microsoft.Search/searchServices",
+              "apiVersion": "2025-05-01",
+              "name": "[parameters('searchServiceName')]"
+            },
+            "documentIntelligence": {
+              "existing": true,
+              "type": "Microsoft.CognitiveServices/accounts",
+              "apiVersion": "2025-06-01",
+              "name": "[parameters('documentIntelligenceServiceName')]"
+            },
+            "appInsights": {
+              "existing": true,
+              "type": "Microsoft.Insights/components",
+              "apiVersion": "2020-02-02",
+              "name": "[parameters('appInsightsName')]"
+            },
+            "webApp": {
               "type": "Microsoft.Web/sites",
               "apiVersion": "2022-03-01",
               "name": "[toLower(format('{0}-{1}-app', parameters('appName'), parameters('environment')))]",
@@ -3600,7 +3758,7 @@
                   "alwaysOn": true,
                   "ftpsState": "Disabled",
                   "healthCheckPath": "/external/healthcheck",
-                  "appSettings": "[flatten(createArray(createArray(createObject('name', 'AZURE_ENDPOINT', 'value', if(equals(parameters('azurePlatform'), 'AzureUSGovernment'), 'usgovernment', 'public')), createObject('name', 'SCM_DO_BUILD_DURING_DEPLOYMENT', 'value', 'false'), createObject('name', 'AZURE_COSMOS_ENDPOINT', 'value', reference(resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosDbName')), '2023-04-15').documentEndpoint), createObject('name', 'AZURE_COSMOS_AUTHENTICATION_TYPE', 'value', toLower(parameters('authenticationType')))), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'AZURE_COSMOS_KEY', 'value', format('@Microsoft.KeyVault(SecretUri={0}secrets/cosmos-db-key)', parameters('keyVaultUri')))), createArray()), createArray(createObject('name', 'TENANT_ID', 'value', tenant().tenantId), createObject('name', 'CLIENT_ID', 'value', parameters('enterpriseAppClientId')), createObject('name', 'SECRET_KEY', 'value', if(not(empty(parameters('enterpriseAppClientSecret'))), parameters('enterpriseAppClientSecret'), format('@Microsoft.KeyVault(SecretUri={0}secrets/enterprise-app-client-secret)', parameters('keyVaultUri')))), createObject('name', 'MICROSOFT_PROVIDER_AUTHENTICATION_SECRET', 'value', format('@Microsoft.KeyVault(SecretUri={0}secrets/enterprise-app-client-secret)', parameters('keyVaultUri'))), createObject('name', 'DOCKER_REGISTRY_SERVER_URL', 'value', format('https://{0}{1}', parameters('acrName'), variables('acrDomain')))), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'DOCKER_REGISTRY_SERVER_USERNAME', 'value', listCredentials(resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName')), '2025-04-01').username)), createArray()), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'DOCKER_REGISTRY_SERVER_PASSWORD', 'value', format('@Microsoft.KeyVault(SecretUri={0}secrets/container-registry-key)', parameters('keyVaultUri')))), createArray()), createArray(createObject('name', 'WEBSITE_AUTH_AAD_ALLOWED_TENANTS', 'value', tenant().tenantId), createObject('name', 'AZURE_OPENAI_RESOURCE_NAME', 'value', parameters('openAiServiceName')), createObject('name', 'AZURE_OPENAI_RESOURCE_GROUP_NAME', 'value', parameters('openAiResourceGroupName')), createObject('name', 'AZURE_OPENAI_URL', 'value', parameters('openAiEndpoint')), createObject('name', 'AZURE_SEARCH_SERVICE_NAME', 'value', parameters('searchServiceName'))), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'AZURE_SEARCH_API_KEY', 'value', format('@Microsoft.KeyVault(SecretUri={0}secrets/search-service-key)', parameters('keyVaultUri')))), createArray()), createArray(createObject('name', 'AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT', 'value', reference(resourceId('Microsoft.CognitiveServices/accounts', parameters('documentIntelligenceServiceName')), '2025-06-01').endpoint)), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'AZURE_DOCUMENT_INTELLIGENCE_API_KEY', 'value', format('@Microsoft.KeyVault(SecretUri={0}secrets/document-intelligence-key)', parameters('keyVaultUri')))), createArray()), createArray(createObject('name', 'APPINSIGHTS_INSTRUMENTATIONKEY', 'value', reference(resourceId('Microsoft.Insights/components', parameters('appInsightsName')), '2020-02-02').InstrumentationKey), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', reference(resourceId('Microsoft.Insights/components', parameters('appInsightsName')), '2020-02-02').ConnectionString), createObject('name', 'APPINSIGHTS_PROFILERFEATURE_VERSION', 'value', '1.0.0'), createObject('name', 'APPINSIGHTS_SNAPSHOTFEATURE_VERSION', 'value', '1.0.0'), createObject('name', 'APPLICATIONINSIGHTS_CONFIGURATION_CONTENT', 'value', ''), createObject('name', 'ApplicationInsightsAgent_EXTENSION_VERSION', 'value', '~3'), createObject('name', 'DiagnosticServices_EXTENSION_VERSION', 'value', '~3'), createObject('name', 'InstrumentationEngine_EXTENSION_VERSION', 'value', 'disabled'), createObject('name', 'SnapshotDebugger_EXTENSION_VERSION', 'value', 'disabled'), createObject('name', 'XDT_MicrosoftApplicationInsights_BaseExtensions', 'value', 'disabled'), createObject('name', 'XDT_MicrosoftApplicationInsights_Mode', 'value', 'recommended'), createObject('name', 'XDT_MicrosoftApplicationInsights_PreemptSdk', 'value', 'disabled'))))]"
+                  "appSettings": "[flatten(createArray(createArray(createObject('name', 'AZURE_ENVIRONMENT', 'value', parameters('azurePlatform')), createObject('name', 'SCM_DO_BUILD_DURING_DEPLOYMENT', 'value', 'false'), createObject('name', 'AZURE_COSMOS_ENDPOINT', 'value', reference('cosmosDb').documentEndpoint), createObject('name', 'AZURE_COSMOS_AUTHENTICATION_TYPE', 'value', toLower(parameters('authenticationType')))), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'AZURE_COSMOS_KEY', 'value', format('@Microsoft.KeyVault(SecretUri={0}secrets/cosmos-db-key)', parameters('keyVaultUri')))), createArray()), createArray(createObject('name', 'TENANT_ID', 'value', tenant().tenantId), createObject('name', 'CLIENT_ID', 'value', parameters('enterpriseAppClientId')), createObject('name', 'SECRET_KEY', 'value', if(not(empty(parameters('enterpriseAppClientSecret'))), parameters('enterpriseAppClientSecret'), format('@Microsoft.KeyVault(SecretUri={0}secrets/enterprise-app-client-secret)', parameters('keyVaultUri')))), createObject('name', 'MICROSOFT_PROVIDER_AUTHENTICATION_SECRET', 'value', format('@Microsoft.KeyVault(SecretUri={0}secrets/enterprise-app-client-secret)', parameters('keyVaultUri'))), createObject('name', 'DOCKER_REGISTRY_SERVER_URL', 'value', format('https://{0}{1}', parameters('acrName'), variables('acrDomain')))), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'DOCKER_REGISTRY_SERVER_USERNAME', 'value', listCredentials('acrService', '2025-04-01').username)), createArray()), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'DOCKER_REGISTRY_SERVER_PASSWORD', 'value', format('@Microsoft.KeyVault(SecretUri={0}secrets/container-registry-key)', parameters('keyVaultUri')))), createArray()), createArray(createObject('name', 'WEBSITE_AUTH_AAD_ALLOWED_TENANTS', 'value', tenant().tenantId), createObject('name', 'AZURE_OPENAI_RESOURCE_NAME', 'value', parameters('openAiServiceName')), createObject('name', 'AZURE_OPENAI_RESOURCE_GROUP_NAME', 'value', parameters('openAiResourceGroupName')), createObject('name', 'AZURE_OPENAI_URL', 'value', parameters('openAiEndpoint')), createObject('name', 'AZURE_SEARCH_SERVICE_NAME', 'value', parameters('searchServiceName'))), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'AZURE_SEARCH_API_KEY', 'value', format('@Microsoft.KeyVault(SecretUri={0}secrets/search-service-key)', parameters('keyVaultUri')))), createArray()), createArray(createObject('name', 'AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT', 'value', reference('documentIntelligence').endpoint)), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'AZURE_DOCUMENT_INTELLIGENCE_API_KEY', 'value', format('@Microsoft.KeyVault(SecretUri={0}secrets/document-intelligence-key)', parameters('keyVaultUri')))), createArray()), createArray(createObject('name', 'APPINSIGHTS_INSTRUMENTATIONKEY', 'value', reference('appInsights').InstrumentationKey), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', reference('appInsights').ConnectionString), createObject('name', 'APPINSIGHTS_PROFILERFEATURE_VERSION', 'value', '1.0.0'), createObject('name', 'APPINSIGHTS_SNAPSHOTFEATURE_VERSION', 'value', '1.0.0'), createObject('name', 'APPLICATIONINSIGHTS_CONFIGURATION_CONTENT', 'value', ''), createObject('name', 'ApplicationInsightsAgent_EXTENSION_VERSION', 'value', '~3'), createObject('name', 'DiagnosticServices_EXTENSION_VERSION', 'value', '~3'), createObject('name', 'InstrumentationEngine_EXTENSION_VERSION', 'value', 'disabled'), createObject('name', 'SnapshotDebugger_EXTENSION_VERSION', 'value', 'disabled'), createObject('name', 'XDT_MicrosoftApplicationInsights_BaseExtensions', 'value', 'disabled'), createObject('name', 'XDT_MicrosoftApplicationInsights_Mode', 'value', 'recommended'), createObject('name', 'XDT_MicrosoftApplicationInsights_PreemptSdk', 'value', 'disabled')), if(equals(parameters('azurePlatform'), 'custom'), createArray(createObject('name', 'CUSTOM_GRAPH_URL_VALUE', 'value', coalesce(parameters('customGraphUrl'), '')), createObject('name', 'CUSTOM_IDENTITY_URL_VALUE', 'value', coalesce(parameters('customIdentityUrl'), '')), createObject('name', 'CUSTOM_RESOURCE_MANAGER_URL_VALUE', 'value', coalesce(parameters('customResourceManagerUrl'), '')), createObject('name', 'CUSTOM_BLOB_STORAGE_URL_VALUE', 'value', coalesce(parameters('customBlobStorageSuffix'), '')), createObject('name', 'CUSTOM_COGNITIVE_SERVICES_URL_VALUE', 'value', coalesce(parameters('customCognitiveServicesScope'), '')), createObject('name', 'CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE', 'value', coalesce(parameters('customSearchResourceUrl'), '')), createObject('name', 'KEY_VAULT_DOMAIN', 'value', environment().suffixes.keyvaultDns), createObject('name', 'CUSTOM_OIDC_METADATA_URL_VALUE', 'value', coalesce(variables('openIdMetadataUrl'), ''))), createArray())))]"
                 },
                 "clientAffinityEnabled": false,
                 "httpsOnly": true
@@ -3608,9 +3766,14 @@
               "identity": {
                 "type": "SystemAssigned"
               },
-              "tags": "[union(parameters('tags'), createObject('azd-service-name', 'web'))]"
+              "tags": "[union(parameters('tags'), createObject('azd-service-name', 'web'))]",
+              "dependsOn": [
+                "appInsights",
+                "cosmosDb",
+                "documentIntelligence"
+              ]
             },
-            {
+            "webAppLogging": {
               "type": "Microsoft.Web/sites/config",
               "apiVersion": "2022-03-01",
               "name": "[format('{0}/{1}', toLower(format('{0}-{1}-app', parameters('appName'), parameters('environment'))), 'logs')]",
@@ -3624,10 +3787,10 @@
                 }
               },
               "dependsOn": [
-                "[resourceId('Microsoft.Web/sites', toLower(format('{0}-{1}-app', parameters('appName'), parameters('environment'))))]"
+                "webApp"
               ]
             },
-            {
+            "webAppDiagnostics": {
               "condition": "[parameters('enableDiagLogging')]",
               "type": "Microsoft.Insights/diagnosticSettings",
               "apiVersion": "2021-05-01-preview",
@@ -3635,15 +3798,15 @@
               "name": "[toLower(format('{0}-diagnostics', toLower(format('{0}-{1}-app', parameters('appName'), parameters('environment')))))]",
               "properties": {
                 "workspaceId": "[parameters('logAnalyticsId')]",
-                "logs": "[reference(resourceId('Microsoft.Resources/deployments', 'diagnosticConfigs'), '2025-04-01').outputs.webAppLogCategories.value]",
-                "metrics": "[reference(resourceId('Microsoft.Resources/deployments', 'diagnosticConfigs'), '2025-04-01').outputs.standardMetricsCategories.value]"
+                "logs": "[reference('diagnosticConfigs').outputs.webAppLogCategories.value]",
+                "metrics": "[reference('diagnosticConfigs').outputs.standardMetricsCategories.value]"
               },
               "dependsOn": [
-                "[resourceId('Microsoft.Resources/deployments', 'diagnosticConfigs')]",
-                "[resourceId('Microsoft.Web/sites', toLower(format('{0}-{1}-app', parameters('appName'), parameters('environment'))))]"
+                "diagnosticConfigs",
+                "webApp"
               ]
             },
-            {
+            "authSettings": {
               "type": "Microsoft.Web/sites/config",
               "apiVersion": "2022-03-01",
               "name": "[format('{0}/{1}', toLower(format('{0}-{1}-app', parameters('appName'), parameters('environment'))), 'authsettingsV2')]",
@@ -3657,7 +3820,7 @@
                   "azureActiveDirectory": {
                     "enabled": true,
                     "registration": {
-                      "openIdIssuer": "[if(equals(parameters('azurePlatform'), 'AzureUSGovernment'), format('https://login.microsoftonline.us/{0}/', tenant().tenantId), format('https://sts.windows.net/{0}/', tenant().tenantId))]",
+                      "openIdIssuer": "[format('{0}{1}/', environment().authentication.loginEndpoint, tenant().tenantId)]",
                       "clientId": "[parameters('enterpriseAppClientId')]",
                       "clientSecretSettingName": "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET"
                     },
@@ -3704,10 +3867,10 @@
                 }
               },
               "dependsOn": [
-                "[resourceId('Microsoft.Web/sites', toLower(format('{0}-{1}-app', parameters('appName'), parameters('environment'))))]"
+                "webApp"
               ]
             },
-            {
+            "diagnosticConfigs": {
               "condition": "[parameters('enableDiagLogging')]",
               "type": "Microsoft.Resources/deployments",
               "apiVersion": "2025-04-01",
@@ -3843,7 +4006,7 @@
                 }
               }
             }
-          ],
+          },
           "outputs": {
             "name": {
               "type": "string",
@@ -3851,7 +4014,7 @@
             },
             "defaultHostName": {
               "type": "string",
-              "value": "[reference(resourceId('Microsoft.Web/sites', toLower(format('{0}-{1}-app', parameters('appName'), parameters('environment')))), '2022-03-01').defaultHostName]"
+              "value": "[reference('webApp').defaultHostName]"
             },
             "resourceId": {
               "type": "string",
@@ -3861,20 +4024,20 @@
         }
       },
       "dependsOn": [
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'azureContainerRegistry')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'applicationInsights')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'appServicePlan')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'cosmosDB')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'docIntel')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'keyVault')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'openAI')]",
-        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'searchService')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'virtualNetwork')]"
+        "acr",
+        "applicationInsights",
+        "appServicePlan",
+        "cosmosDB",
+        "docIntel",
+        "keyVault",
+        "logAnalytics",
+        "openAI",
+        "rg",
+        "searchService",
+        "virtualNetwork"
       ]
     },
-    {
+    "contentSafety": {
       "condition": "[parameters('deployContentSafety')]",
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
@@ -3902,10 +4065,10 @@
             "value": "[parameters('enableDiagLogging')]"
           },
           "logAnalyticsId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics'), '2025-04-01').outputs.logAnalyticsId.value]"
+            "value": "[reference('logAnalytics').outputs.logAnalyticsId.value]"
           },
           "keyVault": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'keyVault'), '2025-04-01').outputs.keyVaultName.value]"
+            "value": "[reference('keyVault').outputs.keyVaultName.value]"
           },
           "authenticationType": {
             "value": "[parameters('authenticationType')]"
@@ -4205,12 +4368,12 @@
         }
       },
       "dependsOn": [
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'keyVault')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics')]",
-        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]"
+        "keyVault",
+        "logAnalytics",
+        "rg"
       ]
     },
-    {
+    "redisCache": {
       "condition": "[parameters('deployRedisCache')]",
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
@@ -4238,10 +4401,10 @@
             "value": "[parameters('enableDiagLogging')]"
           },
           "logAnalyticsId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics'), '2025-04-01').outputs.logAnalyticsId.value]"
+            "value": "[reference('logAnalytics').outputs.logAnalyticsId.value]"
           },
           "keyVault": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'keyVault'), '2025-04-01').outputs.keyVaultName.value]"
+            "value": "[reference('keyVault').outputs.keyVaultName.value]"
           },
           "authenticationType": {
             "value": "[parameters('authenticationType')]"
@@ -4539,12 +4702,12 @@
         }
       },
       "dependsOn": [
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'keyVault')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics')]",
-        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]"
+        "keyVault",
+        "logAnalytics",
+        "rg"
       ]
     },
-    {
+    "speechService": {
       "condition": "[parameters('deploySpeechService')]",
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
@@ -4572,10 +4735,10 @@
             "value": "[parameters('enableDiagLogging')]"
           },
           "logAnalyticsId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics'), '2025-04-01').outputs.logAnalyticsId.value]"
+            "value": "[reference('logAnalytics').outputs.logAnalyticsId.value]"
           },
           "keyVault": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'keyVault'), '2025-04-01').outputs.keyVaultName.value]"
+            "value": "[reference('keyVault').outputs.keyVaultName.value]"
           },
           "authenticationType": {
             "value": "[parameters('authenticationType')]"
@@ -4882,12 +5045,12 @@
         }
       },
       "dependsOn": [
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'keyVault')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics')]",
-        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]"
+        "keyVault",
+        "logAnalytics",
+        "rg"
       ]
     },
-    {
+    "videoIndexerService": {
       "condition": "[parameters('deployVideoIndexerService')]",
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
@@ -4915,13 +5078,13 @@
             "value": "[parameters('enableDiagLogging')]"
           },
           "logAnalyticsId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics'), '2025-04-01').outputs.logAnalyticsId.value]"
+            "value": "[reference('logAnalytics').outputs.logAnalyticsId.value]"
           },
           "storageAccount": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'storageAccount'), '2025-04-01').outputs.name.value]"
+            "value": "[reference('storageAccount').outputs.name.value]"
           },
           "openAiServiceName": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'openAI'), '2025-04-01').outputs.openAIName.value]"
+            "value": "[reference('openAI').outputs.openAIName.value]"
           },
           "enablePrivateNetworking": {
             "value": "[parameters('enablePrivateNetworking')]"
@@ -5151,13 +5314,13 @@
         }
       },
       "dependsOn": [
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'openAI')]",
-        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'storageAccount')]"
+        "logAnalytics",
+        "openAI",
+        "rg",
+        "storageAccount"
       ]
     },
-    {
+    "setPermissions": {
       "condition": "[parameters('configureApplicationPermissions')]",
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
@@ -5170,7 +5333,7 @@
         "mode": "Incremental",
         "parameters": {
           "webAppName": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'appService'), '2025-04-01').outputs.name.value]"
+            "value": "[reference('appService').outputs.name.value]"
           },
           "authenticationType": {
             "value": "[parameters('authenticationType')]"
@@ -5179,36 +5342,36 @@
             "value": "[parameters('enterpriseAppServicePrincipalId')]"
           },
           "keyVaultName": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'keyVault'), '2025-04-01').outputs.keyVaultName.value]"
+            "value": "[reference('keyVault').outputs.keyVaultName.value]"
           },
           "cosmosDBName": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'cosmosDB'), '2025-04-01').outputs.cosmosDbName.value]"
+            "value": "[reference('cosmosDB').outputs.cosmosDbName.value]"
           },
           "acrName": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'azureContainerRegistry'), '2025-04-01').outputs.acrName.value]"
+            "value": "[reference('acr').outputs.acrName.value]"
           },
           "openAIName": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'openAI'), '2025-04-01').outputs.openAIName.value]"
+            "value": "[reference('openAI').outputs.openAIName.value]"
           },
           "openAIResourceGroupName": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'openAI'), '2025-04-01').outputs.openAIResourceGroup.value]"
+            "value": "[reference('openAI').outputs.openAIResourceGroup.value]"
           },
           "openAISubscriptionId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'openAI'), '2025-04-01').outputs.openAISubscriptionId.value]"
+            "value": "[reference('openAI').outputs.openAISubscriptionId.value]"
           },
           "docIntelName": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'docIntel'), '2025-04-01').outputs.documentIntelligenceServiceName.value]"
+            "value": "[reference('docIntel').outputs.documentIntelligenceServiceName.value]"
           },
           "storageAccountName": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'storageAccount'), '2025-04-01').outputs.name.value]"
+            "value": "[reference('storageAccount').outputs.name.value]"
           },
           "searchServiceName": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'searchService'), '2025-04-01').outputs.searchServiceName.value]"
+            "value": "[reference('searchService').outputs.searchServiceName.value]"
           },
-          "speechServiceName": "[if(parameters('deploySpeechService'), createObject('value', reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'speechService'), '2025-04-01').outputs.speechServiceName.value), createObject('value', ''))]",
-          "redisCacheName": "[if(parameters('deployRedisCache'), createObject('value', reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'redisCache'), '2025-04-01').outputs.redisCacheName.value), createObject('value', ''))]",
-          "contentSafetyName": "[if(parameters('deployContentSafety'), createObject('value', reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'contentSafety'), '2025-04-01').outputs.contentSafetyName.value), createObject('value', ''))]",
-          "videoIndexerName": "[if(parameters('deployVideoIndexerService'), createObject('value', reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'videoIndexerService'), '2025-04-01').outputs.videoIndexerServiceName.value), createObject('value', ''))]"
+          "speechServiceName": "[if(parameters('deploySpeechService'), createObject('value', reference('speechService').outputs.speechServiceName.value), createObject('value', ''))]",
+          "redisCacheName": "[if(parameters('deployRedisCache'), createObject('value', reference('redisCache').outputs.redisCacheName.value), createObject('value', ''))]",
+          "contentSafetyName": "[if(parameters('deployContentSafety'), createObject('value', reference('contentSafety').outputs.contentSafetyName.value), createObject('value', ''))]",
+          "videoIndexerName": "[if(parameters('deployVideoIndexerService'), createObject('value', reference('videoIndexerService').outputs.videoIndexerServiceName.value), createObject('value', ''))]"
         },
         "template": {
           "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
@@ -5582,22 +5745,22 @@
         }
       },
       "dependsOn": [
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'azureContainerRegistry')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'appService')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'contentSafety')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'cosmosDB')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'docIntel')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'keyVault')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'openAI')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'redisCache')]",
-        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'searchService')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'speechService')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'storageAccount')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'videoIndexerService')]"
+        "acr",
+        "appService",
+        "contentSafety",
+        "cosmosDB",
+        "docIntel",
+        "keyVault",
+        "openAI",
+        "redisCache",
+        "rg",
+        "searchService",
+        "speechService",
+        "storageAccount",
+        "videoIndexerService"
       ]
     },
-    {
+    "privateNetworking": {
       "condition": "[parameters('enablePrivateNetworking')]",
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
@@ -5609,8 +5772,8 @@
         },
         "mode": "Incremental",
         "parameters": {
-          "virtualNetworkId": "[if(parameters('enablePrivateNetworking'), if(variables('useExistingVirtualNetwork'), createObject('value', variables('resolvedExistingVirtualNetworkId')), createObject('value', reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'virtualNetwork'), '2025-04-01').outputs.vNetId.value)), createObject('value', ''))]",
-          "privateEndpointSubnetId": "[if(parameters('enablePrivateNetworking'), if(variables('useExistingVirtualNetwork'), createObject('value', parameters('existingPrivateEndpointSubnetId')), createObject('value', reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'virtualNetwork'), '2025-04-01').outputs.privateNetworkSubnetId.value)), createObject('value', ''))]",
+          "virtualNetworkId": "[if(parameters('enablePrivateNetworking'), if(variables('useExistingVirtualNetwork'), createObject('value', variables('resolvedExistingVirtualNetworkId')), createObject('value', reference('virtualNetwork').outputs.vNetId.value)), createObject('value', ''))]",
+          "privateEndpointSubnetId": "[if(parameters('enablePrivateNetworking'), if(variables('useExistingVirtualNetwork'), createObject('value', parameters('existingPrivateEndpointSubnetId')), createObject('value', reference('virtualNetwork').outputs.privateNetworkSubnetId.value)), createObject('value', ''))]",
           "privateDnsZoneConfigs": {
             "value": "[parameters('privateDnsZoneConfigs')]"
           },
@@ -5627,38 +5790,38 @@
             "value": "[variables('tags')]"
           },
           "keyVaultName": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'keyVault'), '2025-04-01').outputs.keyVaultName.value]"
+            "value": "[reference('keyVault').outputs.keyVaultName.value]"
           },
           "cosmosDBName": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'cosmosDB'), '2025-04-01').outputs.cosmosDbName.value]"
+            "value": "[reference('cosmosDB').outputs.cosmosDbName.value]"
           },
           "acrName": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'azureContainerRegistry'), '2025-04-01').outputs.acrName.value]"
+            "value": "[reference('acr').outputs.acrName.value]"
           },
           "searchServiceName": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'searchService'), '2025-04-01').outputs.searchServiceName.value]"
+            "value": "[reference('searchService').outputs.searchServiceName.value]"
           },
           "docIntelName": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'docIntel'), '2025-04-01').outputs.documentIntelligenceServiceName.value]"
+            "value": "[reference('docIntel').outputs.documentIntelligenceServiceName.value]"
           },
           "storageAccountName": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'storageAccount'), '2025-04-01').outputs.name.value]"
+            "value": "[reference('storageAccount').outputs.name.value]"
           },
           "openAIName": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'openAI'), '2025-04-01').outputs.openAIName.value]"
+            "value": "[reference('openAI').outputs.openAIName.value]"
           },
           "openAIResourceGroupName": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'openAI'), '2025-04-01').outputs.openAIResourceGroup.value]"
+            "value": "[reference('openAI').outputs.openAIResourceGroup.value]"
           },
           "openAISubscriptionId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'openAI'), '2025-04-01').outputs.openAISubscriptionId.value]"
+            "value": "[reference('openAI').outputs.openAISubscriptionId.value]"
           },
           "webAppName": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'appService'), '2025-04-01').outputs.name.value]"
+            "value": "[reference('appService').outputs.name.value]"
           },
-          "contentSafetyName": "[if(parameters('deployContentSafety'), createObject('value', reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'contentSafety'), '2025-04-01').outputs.contentSafetyName.value), createObject('value', ''))]",
-          "speechServiceName": "[if(parameters('deploySpeechService'), createObject('value', reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'speechService'), '2025-04-01').outputs.speechServiceName.value), createObject('value', ''))]",
-          "videoIndexerName": "[if(parameters('deployVideoIndexerService'), createObject('value', reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'videoIndexerService'), '2025-04-01').outputs.videoIndexerServiceName.value), createObject('value', ''))]"
+          "contentSafetyName": "[if(parameters('deployContentSafety'), createObject('value', reference('contentSafety').outputs.contentSafetyName.value), createObject('value', ''))]",
+          "speechServiceName": "[if(parameters('deploySpeechService'), createObject('value', reference('speechService').outputs.speechServiceName.value), createObject('value', ''))]",
+          "videoIndexerName": "[if(parameters('deployVideoIndexerService'), createObject('value', reference('videoIndexerService').outputs.videoIndexerServiceName.value), createObject('value', ''))]"
         },
         "template": {
           "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
@@ -8713,22 +8876,22 @@
         }
       },
       "dependsOn": [
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'azureContainerRegistry')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'appService')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'contentSafety')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'cosmosDB')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'docIntel')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'keyVault')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'openAI')]",
-        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName'))]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'searchService')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'speechService')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'storageAccount')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'videoIndexerService')]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'virtualNetwork')]"
+        "acr",
+        "appService",
+        "contentSafety",
+        "cosmosDB",
+        "docIntel",
+        "keyVault",
+        "openAI",
+        "rg",
+        "searchService",
+        "speechService",
+        "storageAccount",
+        "videoIndexerService",
+        "virtualNetwork"
       ]
     }
-  ],
+  },
   "outputs": {
     "var_acrName": {
       "type": "string",
@@ -8740,7 +8903,7 @@
     },
     "var_blobStorageEndpoint": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'storageAccount'), '2025-04-01').outputs.endpoint.value]"
+      "value": "[reference('storageAccount').outputs.endpoint.value]"
     },
     "var_configureApplication": {
       "type": "bool",
@@ -8748,35 +8911,35 @@
     },
     "var_contentSafetyEndpoint": {
       "type": "string",
-      "value": "[if(parameters('deployContentSafety'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'contentSafety'), '2025-04-01').outputs.contentSafetyEndpoint.value, '')]"
+      "value": "[if(parameters('deployContentSafety'), reference('contentSafety').outputs.contentSafetyEndpoint.value, '')]"
     },
     "var_cosmosDb_accountName": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'cosmosDB'), '2025-04-01').outputs.cosmosDbName.value]"
+      "value": "[reference('cosmosDB').outputs.cosmosDbName.value]"
     },
     "var_cosmosDb_uri": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'cosmosDB'), '2025-04-01').outputs.cosmosDbUri.value]"
+      "value": "[reference('cosmosDB').outputs.cosmosDbUri.value]"
     },
     "var_deploymentLocation": {
       "type": "string",
-      "value": "[reference(subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('rgName')), '2022-09-01', 'full').location]"
+      "value": "[reference('rg', '2022-09-01', 'full').location]"
     },
     "var_documentIntelligenceServiceEndpoint": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'docIntel'), '2025-04-01').outputs.documentIntelligenceServiceEndpoint.value]"
+      "value": "[reference('docIntel').outputs.documentIntelligenceServiceEndpoint.value]"
     },
     "var_keyVaultName": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'keyVault'), '2025-04-01').outputs.keyVaultName.value]"
+      "value": "[reference('keyVault').outputs.keyVaultName.value]"
     },
     "var_keyVaultUri": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'keyVault'), '2025-04-01').outputs.keyVaultUri.value]"
+      "value": "[reference('keyVault').outputs.keyVaultUri.value]"
     },
     "var_openAIEndpoint": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'openAI'), '2025-04-01').outputs.openAIEndpoint.value]"
+      "value": "[reference('openAI').outputs.openAIEndpoint.value]"
     },
     "var_openAIGPTModels": {
       "type": "array",
@@ -8784,7 +8947,7 @@
     },
     "var_openAIResourceGroup": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'openAI'), '2025-04-01').outputs.openAIResourceGroup.value]"
+      "value": "[reference('openAI').outputs.openAIResourceGroup.value]"
     },
     "var_openAIEmbeddingModels": {
       "type": "array",
@@ -8792,11 +8955,11 @@
     },
     "var_openAISubscriptionId": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'openAI'), '2025-04-01').outputs.openAISubscriptionId.value]"
+      "value": "[reference('openAI').outputs.openAISubscriptionId.value]"
     },
     "var_redisCacheHostName": {
       "type": "string",
-      "value": "[if(parameters('deployRedisCache'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'redisCache'), '2025-04-01').outputs.redisCacheHostName.value, '')]"
+      "value": "[if(parameters('deployRedisCache'), reference('redisCache').outputs.redisCacheHostName.value, '')]"
     },
     "var_rgName": {
       "type": "string",
@@ -8804,11 +8967,11 @@
     },
     "var_searchServiceEndpoint": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'searchService'), '2025-04-01').outputs.searchServiceEndpoint.value]"
+      "value": "[reference('searchService').outputs.searchServiceEndpoint.value]"
     },
     "var_speechServiceEndpoint": {
       "type": "string",
-      "value": "[if(parameters('deploySpeechService'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'speechService'), '2025-04-01').outputs.speechServiceEndpoint.value, '')]"
+      "value": "[if(parameters('deploySpeechService'), reference('speechService').outputs.speechServiceEndpoint.value, '')]"
     },
     "var_subscriptionId": {
       "type": "string",
@@ -8816,11 +8979,11 @@
     },
     "var_videoIndexerAccountId": {
       "type": "string",
-      "value": "[if(parameters('deployVideoIndexerService'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'videoIndexerService'), '2025-04-01').outputs.videoIndexerAccountId.value, '')]"
+      "value": "[if(parameters('deployVideoIndexerService'), reference('videoIndexerService').outputs.videoIndexerAccountId.value, '')]"
     },
     "var_videoIndexerName": {
       "type": "string",
-      "value": "[if(parameters('deployVideoIndexerService'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'videoIndexerService'), '2025-04-01').outputs.videoIndexerServiceName.value, '')]"
+      "value": "[if(parameters('deployVideoIndexerService'), reference('videoIndexerService').outputs.videoIndexerServiceName.value, '')]"
     },
     "var_containerRegistry": {
       "type": "string",
@@ -8836,7 +8999,7 @@
     },
     "var_webService": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgName')), 'Microsoft.Resources/deployments', 'appService'), '2025-04-01').outputs.name.value]"
+      "value": "[reference('appService').outputs.name.value]"
     },
     "var_enablePrivateNetworking": {
       "type": "bool",
