@@ -29,7 +29,7 @@ function getThoughtIcon(stepType) {
  * Start polling for pending thoughts while waiting for a non-streaming response.
  * @param {string} conversationId - The current conversation ID.
  */
-export function startThoughtPolling(conversationId) {
+function startThoughtPollingWithHandler(conversationId, thoughtHandler) {
     if (!conversationId) return;
     if (!window.appSettings?.enable_thoughts) return;
 
@@ -46,13 +46,27 @@ export function startThoughtPolling(conversationId) {
                     const latest = data.thoughts[data.thoughts.length - 1];
                     if (latest.step_index > lastSeenThoughtIndex) {
                         lastSeenThoughtIndex = latest.step_index;
-                        const icon = getThoughtIcon(latest.step_type);
-                        updateLoadingIndicatorText(latest.content, icon);
+                        thoughtHandler(latest);
                     }
                 }
             })
             .catch(() => { /* ignore polling errors */ });
     }, 2000);
+}
+
+
+export function startThoughtPolling(conversationId) {
+    startThoughtPollingWithHandler(conversationId, latest => {
+        const icon = getThoughtIcon(latest.step_type);
+        updateLoadingIndicatorText(latest.content, icon);
+    });
+}
+
+
+export function startStreamingThoughtPolling(conversationId) {
+    startThoughtPollingWithHandler(conversationId, latest => {
+        handleStreamingThought(latest);
+    });
 }
 
 /**

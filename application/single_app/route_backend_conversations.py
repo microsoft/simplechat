@@ -1436,7 +1436,7 @@ def register_route_backend_conversations(app):
                     )
                     if conversation.get('user_id') != user_id:
                         return jsonify({'error': 'You can only delete messages from your own conversations'}), 403
-                except:
+                except Exception as ex:
                     return jsonify({'error': 'Conversation not found'}), 404
             elif message_user_id != user_id:
                 return jsonify({'error': 'You can only delete your own messages'}), 403
@@ -1635,7 +1635,7 @@ def register_route_backend_conversations(app):
                     )
                     if conversation.get('user_id') != user_id:
                         return jsonify({'error': 'You can only retry messages from your own conversations'}), 403
-                except:
+                except Exception as ex:
                     return jsonify({'error': 'Conversation not found'}), 404
             elif message_user_id != user_id:
                 return jsonify({'error': 'You can only retry your own messages'}), 403
@@ -1854,7 +1854,7 @@ def register_route_backend_conversations(app):
                     )
                     if conversation.get('user_id') != user_id:
                         return jsonify({'error': 'You can only edit messages from your own conversations'}), 403
-                except:
+                except Exception as ex:
                     return jsonify({'error': 'Conversation not found'}), 404
             elif message_user_id != user_id:
                 return jsonify({'error': 'You can only edit your own messages'}), 403
@@ -2063,7 +2063,7 @@ def register_route_backend_conversations(app):
                     )
                     if conversation.get('user_id') != user_id:
                         return jsonify({'error': 'You can only switch attempts in your own conversations'}), 403
-                except:
+                except Exception as ex:
                     return jsonify({'error': 'Conversation not found'}), 404
             elif message_user_id != user_id:
                 return jsonify({'error': 'You can only switch attempts in your own conversations'}), 403

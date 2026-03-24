@@ -117,7 +117,7 @@ def log_event(
                 fallback_message += f" | Extra: {extra}"
 
             fallback_logger.log(level, fallback_message)
-        except:
+        except Exception as ex:
             # If even basic logging fails, print to console
             print(f"[LOG] {message}")
             if extra:

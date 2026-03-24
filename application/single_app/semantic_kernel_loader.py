@@ -14,8 +14,9 @@ from semantic_kernel import Kernel
 from semantic_kernel.agents import Agent
 from semantic_kernel.connectors.ai.prompt_execution_settings import PromptExecutionSettings
 from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
-from semantic_kernel.core_plugins import TimePlugin, HttpPlugin
-from semantic_kernel.core_plugins.wait_plugin import WaitPlugin
+from semantic_kernel.core_plugins import HttpPlugin
+from semantic_kernel_plugins.time_plugin import TimePlugin
+from semantic_kernel_plugins.wait_plugin import WaitPlugin
 from semantic_kernel_plugins.math_plugin import MathPlugin
 from semantic_kernel_plugins.text_plugin import TextPlugin
 from semantic_kernel.functions.kernel_plugin import KernelPlugin

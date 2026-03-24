@@ -74,7 +74,7 @@ def enhance_user_with_activity(user, force_refresh=False):
                         enhanced['access_status'] = 'allow'  # Expired, should be auto-restored
                     else:
                         enhanced['access_status'] = f"deny_until_{datetime_to_allow}"
-                except:
+                except Exception as ex:
                     enhanced['access_status'] = 'deny'
             else:
                 enhanced['access_status'] = 'deny'
@@ -91,7 +91,7 @@ def enhance_user_with_activity(user, force_refresh=False):
                         enhanced['file_upload_status'] = 'allow'  # Expired, should be auto-restored
                     else:
                         enhanced['file_upload_status'] = f"deny_until_{datetime_to_allow}"
-                except:
+                except Exception as ex:
                     enhanced['file_upload_status'] = 'deny'
             else:
                 enhanced['file_upload_status'] = 'deny'
@@ -158,7 +158,7 @@ def enhance_user_with_activity(user, force_refresh=False):
                         try:
                             date_obj = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
                             last_day_conversation = date_obj.strftime('%m/%d/%Y')
-                        except:
+                        except Exception as ex:
                             last_day_conversation = 'Invalid date'
             
             enhanced['activity']['chat_metrics']['last_day_conversation'] = last_day_conversation or 'Never'
@@ -2563,7 +2563,7 @@ def register_route_backend_control_center(app):
             # Get the group
             try:
                 group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Group not found'}), 404
             
             # Get admin user info
@@ -2646,7 +2646,7 @@ def register_route_backend_control_center(app):
             # Get the group
             try:
                 group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Group not found'}), 404
             
             # Enhance with activity data
@@ -2685,7 +2685,7 @@ def register_route_backend_control_center(app):
             # Validate group exists
             try:
                 group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Group not found'}), 404
             
             # Create approval request
@@ -2750,7 +2750,7 @@ def register_route_backend_control_center(app):
             # Validate group exists
             try:
                 group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Group not found'}), 404
             
             # Create approval request
@@ -2798,7 +2798,7 @@ def register_route_backend_control_center(app):
             # Get the group
             try:
                 group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Group not found'}), 404
             
             # Get member list with user details
@@ -2851,7 +2851,7 @@ def register_route_backend_control_center(app):
             # Validate group exists
             try:
                 group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Group not found'}), 404
             
             # Create approval request
@@ -2920,7 +2920,7 @@ def register_route_backend_control_center(app):
             # Get the group
             try:
                 group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Group not found'}), 404
             
             # Find the new owner in members list
@@ -3001,7 +3001,7 @@ def register_route_backend_control_center(app):
             # Get the group
             try:
                 group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Group not found'}), 404
             
             # Check if user already exists (skip duplicate)
@@ -3436,7 +3436,7 @@ def register_route_backend_control_center(app):
             # Get the workspace
             try:
                 workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Public workspace not found'}), 404
             
             # Get admin user info
@@ -3747,7 +3747,7 @@ def register_route_backend_control_center(app):
                             'displayName': user.get('display_name', user.get('email', '')),
                             'role': 'admin'
                         })
-                    except:
+                    except Exception as ex:
                         pass
             
             # Add document managers - documentManagers is an array of objects with userId, email, displayName
@@ -3774,7 +3774,7 @@ def register_route_backend_control_center(app):
                             'displayName': user.get('display_name', user.get('email', '')),
                             'role': 'documentManager'
                         })
-                    except:
+                    except Exception as ex:
                         pass
             
             return jsonify({
@@ -3817,7 +3817,7 @@ def register_route_backend_control_center(app):
             # Get the workspace
             try:
                 workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Public workspace not found'}), 404
             
             # Check if user already exists
@@ -3930,7 +3930,7 @@ def register_route_backend_control_center(app):
             # Get the workspace
             try:
                 workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Public workspace not found'}), 404
             
             # Check if user already exists
@@ -4228,7 +4228,7 @@ def register_route_backend_control_center(app):
             # Validate workspace exists
             try:
                 workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Workspace not found'}), 404
             
             # Get old owner info
@@ -4310,7 +4310,7 @@ def register_route_backend_control_center(app):
             # Get the workspace
             try:
                 workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Workspace not found'}), 404
             
             # Get new owner user details
@@ -4321,7 +4321,7 @@ def register_route_backend_control_center(app):
                 )
                 new_owner_email = new_owner_user.get('email', 'unknown')
                 new_owner_name = new_owner_user.get('display_name', new_owner_email)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'New owner user not found'}), 404
             
             # Check if new owner is a member of the workspace
@@ -4429,7 +4429,7 @@ def register_route_backend_control_center(app):
             # Validate workspace exists
             try:
                 workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Public workspace not found'}), 404
             
             # Create approval request
@@ -4497,7 +4497,7 @@ def register_route_backend_control_center(app):
                     item=workspace_id,
                     partition_key=workspace_id
                 )
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Public workspace not found'}), 404
             
             # Create approval request
@@ -4948,7 +4948,7 @@ def register_route_backend_control_center(app):
             from flask import request
             try:
                 request_data = request.get_json(force=True) or {}
-            except:
+            except Exception as ex:
                 # Handle case where no JSON body is sent
                 request_data = {}
                 
@@ -5606,7 +5606,7 @@ def register_route_backend_control_center(app):
                             'email': user_doc.get('email', ''),
                             'display_name': user_doc.get('display_name', '')
                         }
-                    except:
+                    except Exception as ex:
                         user_map[user_id] = {
                             'email': '',
                             'display_name': ''
@@ -6225,7 +6225,7 @@ def register_route_backend_control_center(app):
                     )
                     old_owner_email = old_owner_user.get('email', 'unknown')
                     old_owner_name = old_owner_user.get('display_name', old_owner_email)
-                except:
+                except Exception as ex:
                     old_owner_email = 'unknown'
                     old_owner_name = 'unknown'
             
@@ -6256,7 +6256,7 @@ def register_route_backend_control_center(app):
                                 'email': admin_user.get('email', 'unknown'),
                                 'displayName': admin_user.get('display_name', 'unknown')
                             })
-                        except:
+                        except Exception as ex:
                             pass
             workspace['admins'] = new_admins
             
@@ -6279,7 +6279,7 @@ def register_route_backend_control_center(app):
                                 'email': dm_user.get('email', 'unknown'),
                                 'displayName': dm_user.get('display_name', 'unknown')
                             })
-                        except:
+                        except Exception as ex:
                             pass
             workspace['documentManagers'] = new_dms
             
@@ -6450,7 +6450,7 @@ def register_route_backend_control_center(app):
                     )
                     old_owner_email = old_owner_user.get('email', 'unknown')
                     old_owner_name = old_owner_user.get('display_name', old_owner_email)
-                except:
+                except Exception as ex:
                     old_owner_email = 'unknown'
                     old_owner_name = 'unknown'
             
@@ -6481,7 +6481,7 @@ def register_route_backend_control_center(app):
                                 'email': admin_user.get('email', 'unknown'),
                                 'displayName': admin_user.get('display_name', 'unknown')
                             })
-                        except:
+                        except Exception as ex:
                             pass
             workspace['admins'] = new_admins
             
@@ -6504,7 +6504,7 @@ def register_route_backend_control_center(app):
                                 'email': dm_user.get('email', 'unknown'),
                                 'displayName': dm_user.get('display_name', 'unknown')
                             })
-                        except:
+                        except Exception as ex:
                             pass
             workspace['documentManagers'] = new_dms
             

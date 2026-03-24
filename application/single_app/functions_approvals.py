@@ -92,7 +92,11 @@ def create_approval_request(
                 
                 # Set group to workspace for notification purposes
                 group = workspace
-            except:
+            except Exception as ex:
+                log_event("[Approvals] Workspace not found for approval request", {
+                    'group_id': group_id,
+                    'request_type': request_type
+                }, level=logging.ERROR)
                 raise ValueError(f"Workspace {group_id} not found")
         else:
             # Get group details for group-based approvals

@@ -5,7 +5,7 @@ import { hideLoadingIndicatorInChatbox, showLoadingIndicatorInChatbox } from './
 import { showToast } from './chat-toast.js';
 import { updateSidebarConversationTitle } from './chat-sidebar-conversations.js';
 import { applyScopeLock } from './chat-documents.js';
-import { handleStreamingThought } from './chat-thoughts.js';
+import { handleStreamingThought, startStreamingThoughtPolling, stopThoughtPolling } from './chat-thoughts.js';
 
 let currentEventSource = null;
 
@@ -46,6 +46,9 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
     
     // Create placeholder message with streaming indicator
     appendMessage('AI', '<span class="text-muted"><i class="bi bi-three-dots-vertical"></i> Streaming...</span>', null, tempAiMessageId);
+
+    const thoughtConversationId = messageData?.conversation_id || currentConversationId;
+    startStreamingThoughtPolling(thoughtConversationId);
     
     // Create timeout (5 minutes)
     const streamTimeout = setTimeout(() => {
@@ -81,6 +84,7 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
         function processStreamData(data) {
             if (data.error) {
                 clearTimeout(streamTimeout);
+                stopThoughtPolling();
                 streamError = true;
                 streamErrorMessage = data.error;
                 handleStreamError(tempAiMessageId, data.partial_content || accumulatedContent, data.error);
@@ -108,6 +112,7 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
 
             if (data.done) {
                 clearTimeout(streamTimeout);
+                stopThoughtPolling();
                 streamCompleted = true;
 
                 finalizeStreamingMessage(
@@ -176,6 +181,7 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
             reader.read().then(({ done, value }) => {
                 if (done) {
                     clearTimeout(streamTimeout);
+                    stopThoughtPolling();
 
                     sseBuffer += decoder.decode();
                     const processedFinalEvent = processSseBuffer(true);
@@ -208,6 +214,7 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
                 readStream(); // Continue reading
             }).catch(err => {
                 clearTimeout(streamTimeout);
+                stopThoughtPolling();
                 console.error('Stream reading error:', err);
                 handleStreamError(tempAiMessageId, accumulatedContent, err.message);
                 if (typeof onError === 'function') {
@@ -223,6 +230,7 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
         
     }).catch(error => {
         clearTimeout(streamTimeout);
+        stopThoughtPolling();
         console.error('Streaming request error:', error);
         showToast(`Error: ${error.message}`, 'error');
         

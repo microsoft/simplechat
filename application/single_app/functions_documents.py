@@ -2614,7 +2614,7 @@ def detect_doc_type(document_id, user_id=None):
             pass
         else:
             return "personal", doc_item['user_id']
-    except:
+    except Exception as ex:
         pass
 
     try:
@@ -2623,7 +2623,7 @@ def detect_doc_type(document_id, user_id=None):
             partition_key=document_id
         )
         return "group", group_doc_item['group_id']
-    except:
+    except Exception as ex:
         pass
 
     try:
@@ -2632,7 +2632,7 @@ def detect_doc_type(document_id, user_id=None):
             partition_key=document_id
         )
         return "public", public_doc_item['public_workspace_id']
-    except:
+    except Exception as ex:
         pass
 
     return None

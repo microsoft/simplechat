@@ -637,7 +637,7 @@ def register_route_backend_public_workspaces(app):
                     details = get_user_details_from_graph(member_id)
                     member_name = details.get("displayName", "")
                     member_email = details.get("email", "")
-                except:
+                except Exception as ex:
                     pass
 
         # clear any existing

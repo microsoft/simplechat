@@ -327,7 +327,7 @@ def register_route_frontend_chats(app):
                         last_msgs = list(cosmos_messages_container.query_items(query=last_msg_query, partition_key=conversation_id))
                         if last_msgs:
                             previous_thread_id = last_msgs[0].get('thread_id')
-                    except:
+                    except Exception as ex:
                         pass
 
                     current_thread_id = str(uuid.uuid4())
@@ -395,7 +395,7 @@ def register_route_frontend_chats(app):
                         last_msgs = list(cosmos_messages_container.query_items(query=last_msg_query, partition_key=conversation_id))
                         if last_msgs:
                             previous_thread_id = last_msgs[0].get('thread_id')
-                    except:
+                    except Exception as ex:
                         pass
 
                     current_thread_id = str(uuid.uuid4())
@@ -440,7 +440,7 @@ def register_route_frontend_chats(app):
                     last_msgs = list(cosmos_messages_container.query_items(query=last_msg_query, partition_key=conversation_id))
                     if last_msgs:
                         previous_thread_id = last_msgs[0].get('thread_id')
-                except:
+                except Exception as ex:
                     pass
 
                 current_thread_id = str(uuid.uuid4())

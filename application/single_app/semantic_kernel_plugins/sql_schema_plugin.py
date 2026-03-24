@@ -612,5 +612,5 @@ class SQLSchemaPlugin(BasePlugin):
         if hasattr(self, '_connection') and self._connection:
             try:
                 self._connection.close()
-            except:
+            except Exception as ex:
                 pass

@@ -7,6 +7,10 @@ from semantic_kernel.connectors.ai.prompt_execution_settings import PromptExecut
 from semantic_kernel.connectors.ai.chat_completion_client_base import ChatCompletionClientBase
 from semantic_kernel_fact_memory_store import FactMemoryStore
 from semantic_kernel_loader import initialize_semantic_kernel
+from semantic_kernel_plugins.plugin_invocation_thoughts import (
+    format_plugin_invocation_thought,
+    register_plugin_invocation_thought_callback,
+)
 from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
 from foundry_agent_runtime import FoundryAgentInvocationError, execute_foundry_agent
 import builtins
@@ -2899,7 +2903,7 @@ def register_route_backend_chats(app):
                                     item=user_id, partition_key=user_id
                                 )
                                 selected_agent_info = user_settings_doc.get('settings', {}).get('selected_agent')
-                            except:
+                            except Exception as ex:
                                 pass
                         
                         if not selected_agent_info:
@@ -4640,19 +4644,14 @@ def register_route_backend_chats(app):
                     thought_tracker.add_thought('generation', f"Sending to '{agent_deployment_name}'")
 
                     # Register callback to write plugin thoughts to Cosmos in real-time
-                    callback_key = f"{user_id}:{conversation_id}"
                     plugin_logger = get_plugin_logger()
-
-                    def on_plugin_invocation(inv):
-                        duration_str = f" ({int(inv.duration_ms)}ms)" if inv.duration_ms else ""
-                        tool_name = f"{inv.plugin_name}.{inv.function_name}"
-                        thought_tracker.add_thought(
-                            'agent_tool_call',
-                            f"Agent called {tool_name}{duration_str}",
-                            detail=f"success={inv.success}"
-                        )
-
-                    plugin_logger.register_callback(callback_key, on_plugin_invocation)
+                    callback_key = register_plugin_invocation_thought_callback(
+                        plugin_logger,
+                        thought_tracker,
+                        user_id,
+                        conversation_id,
+                        actor_label='Agent'
+                    )
 
                     agent_invoke_start_time = time.time()
 
@@ -4876,39 +4875,52 @@ def register_route_backend_chats(app):
 
                 if kernel:
                     def invoke_kernel():
+                        plugin_logger = get_plugin_logger()
+                        callback_key = register_plugin_invocation_thought_callback(
+                            plugin_logger,
+                            thought_tracker,
+                            user_id,
+                            conversation_id,
+                            actor_label='Kernel'
+                        )
                         chat_history = "\n".join([
                             f"{msg['role']}: {msg['content']}" for msg in conversation_history_for_api
                         ])
-                        chat_func = None
-                        if hasattr(kernel, 'plugins'):
-                            for plugin in kernel.plugins.values():
-                                if hasattr(plugin, 'functions') and 'chat' in plugin.functions:
-                                    chat_func = plugin.functions['chat']
-                                    break
-                        if chat_func:
-                            return asyncio.run(run_sk_call(kernel.invoke, chat_func, input=chat_history))
-                        else:
-                            log_event(
-                                "No dedicated chat action/plugin found. Trying kernel-native chatcompletion via service lookup.",
-                                extra=extra, 
-                                level=logging.WARNING
-                            )
-                            chat_service = kernel.get_service(type=ChatCompletionClientBase)
-                            if chat_service is not None:
-                                chat_hist = ChatHistory()
-                                for msg in conversation_history_for_api:
-                                    chat_hist.add_message({"role": msg["role"], "content": msg["content"]})
-                                settings_obj = PromptExecutionSettings()
-                                async def run_chatcompletion():
-                                    return await chat_service.get_chat_message_contents(chat_hist, settings_obj)
-                                chat_result = asyncio.run(run_chatcompletion())
-                                if chat_result and hasattr(chat_result[0], 'content'):
-                                    return chat_result[0].content
-                                else:
-                                    return str(chat_result)
+                        try:
+                            chat_func = None
+                            if hasattr(kernel, 'plugins'):
+                                for plugin in kernel.plugins.values():
+                                    if hasattr(plugin, 'functions') and 'chat' in plugin.functions:
+                                        chat_func = plugin.functions['chat']
+                                        break
+                            if chat_func:
+                                return asyncio.run(run_sk_call(kernel.invoke, chat_func, input=chat_history))
                             else:
-                                log_event("No chat completion service found in kernel. Falling back to GPT.", extra=extra, level=logging.WARNING)
-                                raise Exception("No chat completion service found in kernel.")
+                                log_event(
+                                    "No dedicated chat action/plugin found. Trying kernel-native chatcompletion via service lookup.",
+                                    extra=extra, 
+                                    level=logging.WARNING
+                                )
+                                chat_service = kernel.get_service(type=ChatCompletionClientBase)
+                                if chat_service is not None:
+                                    chat_hist = ChatHistory()
+                                    for msg in conversation_history_for_api:
+                                        chat_hist.add_message({"role": msg["role"], "content": msg["content"]})
+                                    settings_obj = PromptExecutionSettings()
+
+                                    async def run_chatcompletion():
+                                        return await chat_service.get_chat_message_contents(chat_hist, settings_obj)
+
+                                    chat_result = asyncio.run(run_chatcompletion())
+                                    if chat_result and hasattr(chat_result[0], 'content'):
+                                        return chat_result[0].content
+                                    else:
+                                        return str(chat_result)
+                                else:
+                                    log_event("No chat completion service found in kernel. Falling back to GPT.", extra=extra, level=logging.WARNING)
+                                    raise Exception("No chat completion service found in kernel.")
+                        finally:
+                            plugin_logger.deregister_callbacks(callback_key)
                     def kernel_success(result):
                         msg = '[SK fallback] Running in kernel only mode. Ask your administrator to configure Semantic Kernel for richer responses.'
                         return (str(result), "kernel", "kernel", msg)
@@ -5417,28 +5429,10 @@ def register_route_backend_chats(app):
             try:
                 # Import debug_print for use in generator
                 from functions_debug import debug_print
-
-                last_keepalive_at = time.monotonic()
-
-                def maybe_emit_keepalive(force=False):
-                    nonlocal last_keepalive_at
-                    if not stream_keepalive_enabled:
-                        return None
-
-                    now = time.monotonic()
-                    if force or (now - last_keepalive_at) >= stream_keepalive_interval_seconds:
-                        last_keepalive_at = now
-                        return f": keepalive {datetime.utcnow().isoformat()}\n\n"
-
-                    return None
                 
                 if not user_id:
                     yield f"data: {json.dumps({'error': 'User not authenticated'})}\n\n"
                     return
-
-                initial_keepalive = maybe_emit_keepalive(force=True)
-                if initial_keepalive:
-                    yield initial_keepalive
                 
                 # Extract request parameters (same as non-streaming endpoint)
                 user_message = data.get('message', '')
@@ -5672,10 +5666,6 @@ def register_route_backend_chats(app):
                 except Exception as e:
                     yield f"data: {json.dumps({'error': f'Model initialization failed: {str(e)}'})}\n\n"
                     return
-
-                keepalive_frame = maybe_emit_keepalive()
-                if keepalive_frame:
-                    yield keepalive_frame
                 
                 # Load or create conversation (simplified)
                 if not conversation_id:
@@ -6519,10 +6509,6 @@ def register_route_backend_chats(app):
                 except Exception as e:
                     yield f"data: {json.dumps({'error': f'History error: {str(e)}'})}\n\n"
                     return
-
-                keepalive_frame = maybe_emit_keepalive()
-                if keepalive_frame:
-                    yield keepalive_frame
                 
                 # Add system prompt
                 default_system_prompt = settings.get('default_system_prompt', '').strip()
@@ -6623,24 +6609,17 @@ def register_route_backend_chats(app):
                         debug_print(f"--- Streaming from Agent: {agent_name_used} ---")
 
                         # Register callback to persist plugin thoughts to Cosmos in real-time
-                        callback_key = f"{user_id}:{conversation_id}"
                         plugin_logger_cb = get_plugin_logger()
+                        callback_key = register_plugin_invocation_thought_callback(
+                            plugin_logger_cb,
+                            thought_tracker,
+                            user_id,
+                            conversation_id,
+                            actor_label='Agent'
+                        )
                         debug_print(
                             f"[Streaming][Plugin Callback] Registering callback for key={callback_key}"
                         )
-
-                        def on_plugin_invocation_streaming(inv):
-                            duration_str = f" ({int(inv.duration_ms)}ms)" if inv.duration_ms else ""
-                            tool_name = f"{inv.plugin_name}.{inv.function_name}"
-                            debug_print(
-                                f"[Streaming][Plugin Callback] Received invocation {tool_name}{duration_str} | success={inv.success}"
-                            )
-                            thought_tracker.add_thought(
-                                'agent_tool_call',
-                                f"Agent called {tool_name}{duration_str}"
-                            )
-
-                        plugin_logger_cb.register_callback(callback_key, on_plugin_invocation_streaming)
 
                         # Import required classes
                         from semantic_kernel.contents.chat_message_content import ChatMessageContent
@@ -6722,10 +6701,8 @@ def register_route_backend_chats(app):
                         # Emit SSE-only events for streaming UI (Cosmos writes already done by callback)
                         agent_plugin_invocations = plugin_logger_cb.get_invocations_for_conversation(user_id, conversation_id)
                         for inv in agent_plugin_invocations:
-                            duration_str = f" ({int(inv.duration_ms)}ms)" if inv.duration_ms else ""
-                            tool_name = f"{inv.plugin_name}.{inv.function_name}"
-                            content = f"Agent called {tool_name}{duration_str}"
-                            yield f"data: {json.dumps({'type': 'thought', 'step_index': thought_tracker.current_index, 'step_type': 'agent_tool_call', 'content': content})}\n\n"
+                            thought_payload = format_plugin_invocation_thought(inv, actor_label='Agent')
+                            yield f"data: {json.dumps({'type': 'thought', 'step_index': thought_tracker.current_index, 'step_type': thought_payload['step_type'], 'content': thought_payload['content']})}\n\n"
                             thought_tracker.current_index += 1
 
                         # Yield chunks to frontend
@@ -6849,10 +6826,6 @@ def register_route_backend_chats(app):
                             debug_print(f"Using reasoning effort: {reasoning_effort}")
                         
                         final_model_used = gpt_model
-
-                        keepalive_frame = maybe_emit_keepalive()
-                        if keepalive_frame:
-                            yield keepalive_frame
                         
                         try:
                             stream = gpt_client.chat.completions.create(**stream_params)
@@ -6877,14 +6850,6 @@ def register_route_backend_chats(app):
                                 if delta.content:
                                     accumulated_content += delta.content
                                     yield f"data: {json.dumps({'content': delta.content})}\n\n"
-                                else:
-                                    keepalive_frame = maybe_emit_keepalive()
-                                    if keepalive_frame:
-                                        yield keepalive_frame
-                            else:
-                                keepalive_frame = maybe_emit_keepalive()
-                                if keepalive_frame:
-                                    yield keepalive_frame
                             
                             # Capture token usage from final chunk with stream_options
                             if hasattr(chunk, 'usage') and chunk.usage:
@@ -7089,7 +7054,7 @@ def register_route_backend_chats(app):
                         }
                         try:
                             cosmos_messages_container.upsert_item(assistant_doc)
-                        except:
+                        except Exception as ex:
                             pass
                     
                     yield f"data: {json.dumps({'error': error_msg, 'partial_content': accumulated_content})}\n\n"
@@ -7161,7 +7126,7 @@ def register_route_backend_chats(app):
                         )
                         if conversation.get('user_id') != user_id:
                             return jsonify({'error': 'You can only mask messages from your own conversations'}), 403
-                    except:
+                    except Exception as ex:
                         return jsonify({'error': 'Conversation not found'}), 404
                 elif message_user_id != user_id:
                     return jsonify({'error': 'You can only mask your own messages'}), 403
