@@ -301,7 +301,7 @@ def test_server_idle_timeout_wiring():
     assert has_heartbeat_refresh_call, "Missing get_idle_timeout_settings(get_request_settings()) in session_heartbeat"
 
     required_config_markers = [
-        "VERSION = \"v0.240.002\""
+        "VERSION = \"0.240.002\""
     ]
 
     missing_config_markers = [marker for marker in required_config_markers if marker not in config_content]

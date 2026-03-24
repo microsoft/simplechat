@@ -270,9 +270,9 @@ def register_route_frontend_authentication(app):
         else:
             logout_uri = url_for('index', _external=True)
         
-        print(f"Front Door enabled: {settings.get('enable_front_door', False)}")
-        print(f"Front Door URL: {settings.get('front_door_url')}")
-        print(f"Logout redirect URI: {logout_uri}")
+        # print(f"Front Door enabled: {settings.get('enable_front_door', False)}")
+        # print(f"Front Door URL: {settings.get('front_door_url')}")
+        # print(f"Logout redirect URI: {logout_uri}")
         
         logout_url = (
             f"{AUTHORITY}/oauth2/v2.0/logout"
@@ -282,5 +282,5 @@ def register_route_frontend_authentication(app):
         if user_email:
             logout_url += f"&logout_hint={quote(user_email)}"
         
-        print(f"{user_name} logged out. Redirecting to Azure AD logout.")
+        # print(f"{user_name} logged out. Redirecting to Azure AD logout.")
         return redirect(logout_url)
