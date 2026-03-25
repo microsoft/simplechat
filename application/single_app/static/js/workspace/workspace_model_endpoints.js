@@ -76,7 +76,10 @@ function setElementVisibility(element, isVisible) {
 
 function formatProviderLabel(provider) {
     if (provider === "aifoundry") {
-        return "Azure AI Foundry";
+        return "Foundry (classic)";
+    }
+    if (provider === "new_foundry") {
+        return "New Foundry";
     }
     return "Azure OpenAI";
 }
@@ -141,7 +144,7 @@ function updateAuthVisibility() {
     const authType = endpointAuthTypeSelect?.value || "managed_identity";
     const provider = endpointProviderSelect?.value || "aoai";
     const isApiKey = authType === "api_key";
-    const isFoundry = provider === "aifoundry";
+    const isFoundry = provider === "aifoundry" || provider === "new_foundry";
     setElementVisibility(endpointProjectGroup, isFoundry);
     setElementVisibility(endpointProjectApiVersionGroup, isFoundry);
     setElementVisibility(endpointOpenAiApiVersionGroup, true);
@@ -404,6 +407,7 @@ function buildEndpointPayload() {
     if (!endpointNameInput || !endpointUrlInput || !endpointOpenAiApiVersionInput) {
         return null;
     }
+    const endpointId = endpointIdInput?.value.trim() || "";
     const name = endpointNameInput.value.trim();
     const endpoint = endpointUrlInput.value.trim();
     const projectName = endpointProjectInput?.value.trim() || "";
@@ -419,12 +423,12 @@ function buildEndpointPayload() {
         return null;
     }
 
-    if (provider === "aifoundry" && !projectApiVersion) {
+    if ((provider === "aifoundry" || provider === "new_foundry") && !projectApiVersion) {
         showToast("Project API version is required for Foundry project discovery.", "warning");
         return null;
     }
 
-    if (provider === "aifoundry" && !endpoint.includes("/api/projects/") && !projectName) {
+    if ((provider === "aifoundry" || provider === "new_foundry") && !endpoint.includes("/api/projects/") && !projectName) {
         showToast("Foundry project name is required when the endpoint does not include /api/projects/.", "warning");
         return null;
     }
@@ -452,7 +456,7 @@ function buildEndpointPayload() {
         return null;
     }
 
-    if (provider === "aifoundry" && authType === "service_principal" && auth.management_cloud === "custom") {
+    if ((provider === "aifoundry" || provider === "new_foundry") && authType === "service_principal" && auth.management_cloud === "custom") {
         if (!auth.custom_authority) {
             showToast("Custom authority is required when Management Cloud is set to Custom.", "warning");
             return null;
@@ -478,7 +482,7 @@ function buildEndpointPayload() {
         openai_api_version: openAiApiVersion
     };
 
-    if (provider === "aifoundry") {
+    if (provider === "aifoundry" || provider === "new_foundry") {
         connection.project_api_version = projectApiVersion;
         if (projectName) {
             connection.project_name = projectName;
@@ -486,6 +490,7 @@ function buildEndpointPayload() {
     }
 
     return {
+        id: endpointId,
         provider,
         name,
         connection,
@@ -503,6 +508,10 @@ function saveEndpoint() {
 
         const models = collectModalModels();
         const endpointId = endpointIdInput?.value || generateId();
+        const existingEndpoint = workspaceEndpoints.find((endpoint) => endpoint.id === endpointId);
+        const authType = payload.auth?.type || "managed_identity";
+        const hasApiKey = authType === "api_key" && (Boolean(payload.auth?.api_key) || Boolean(existingEndpoint?.has_api_key));
+        const hasClientSecret = authType === "service_principal" && (Boolean(payload.auth?.client_secret) || Boolean(existingEndpoint?.has_client_secret));
 
         const endpointData = {
             id: endpointId,
@@ -512,7 +521,9 @@ function saveEndpoint() {
             auth: payload.auth,
             connection: payload.connection,
             management: payload.management,
-            models
+            models,
+            has_api_key: hasApiKey,
+            has_client_secret: hasClientSecret
         };
 
         const existingIndex = workspaceEndpoints.findIndex((endpoint) => endpoint.id === endpointId);

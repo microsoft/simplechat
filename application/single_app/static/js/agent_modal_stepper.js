@@ -79,6 +79,40 @@ export class AgentModalStepper {
     this.setupModelChangeListener();
   }
 
+  isClassicFoundryType(agentType = this.currentAgentType) {
+    return (agentType || '').toLowerCase() === 'aifoundry';
+  }
+
+  isNewFoundryType(agentType = this.currentAgentType) {
+    return (agentType || '').toLowerCase() === 'new_foundry';
+  }
+
+  isAnyFoundryType(agentType = this.currentAgentType) {
+    return this.isClassicFoundryType(agentType) || this.isNewFoundryType(agentType);
+  }
+
+  getCurrentFoundryProvider(agentType = this.currentAgentType) {
+    return this.isNewFoundryType(agentType) ? 'new_foundry' : 'aifoundry';
+  }
+
+  matchesFoundryEndpointProvider(provider) {
+    const normalizedProvider = (provider || '').toLowerCase();
+    if (!normalizedProvider) {
+      return false;
+    }
+    return normalizedProvider === this.getCurrentFoundryProvider();
+  }
+
+  getAgentTypeLabel(agentType = this.currentAgentType) {
+    if (this.isNewFoundryType(agentType)) {
+      return 'New Foundry';
+    }
+    if (this.isClassicFoundryType(agentType)) {
+      return 'Foundry (classic)';
+    }
+    return 'Local (Semantic Kernel)';
+  }
+
   setupNameGeneration() {
     const displayNameInput = document.getElementById('agent-display-name');
     const generatedNameInput = document.getElementById('agent-name');
@@ -127,7 +161,7 @@ export class AgentModalStepper {
     this.currentAgentType = agentType || 'local';
     this.applyAgentTypeVisibility();
     // Clear actions if switching to foundry
-    if (this.currentAgentType === 'aifoundry') {
+    if (this.isAnyFoundryType()) {
       this.clearSelectedActions();
       this.loadFoundryEndpoints();
     }
@@ -135,7 +169,9 @@ export class AgentModalStepper {
   }
 
   applyAgentTypeVisibility() {
-    const isFoundry = this.currentAgentType === 'aifoundry';
+    const isFoundry = this.isAnyFoundryType();
+    const isClassicFoundry = this.isClassicFoundryType();
+    const isNewFoundry = this.isNewFoundryType();
     const foundryFields = document.getElementById('agent-foundry-fields');
     const modelGroup = document.getElementById('agent-global-model-group');
     const customToggle = document.getElementById('agent-custom-connection-toggle');
@@ -150,11 +186,23 @@ export class AgentModalStepper {
     const instructionsInput = document.getElementById('agent-instructions');
     const advancedFoundryNote = document.getElementById('agent-advanced-foundry-note');
     const localAgentAdvancedSettings = document.getElementById('local-agent-advanced-settings');
+    const foundryModeNote = document.getElementById('agent-foundry-mode-note');
+    const foundryFetchBtnLabel = document.getElementById('agent-foundry-fetch-btn-label');
+    const foundrySelectLabel = document.getElementById('agent-foundry-select-label');
+    const foundrySelectHelp = document.getElementById('agent-foundry-select-help');
+    const classicOnly = document.getElementById('agent-classic-foundry-only');
+    const classicOnlyFields = document.getElementById('agent-classic-foundry-fields');
+    const classicApiVersionGroup = document.getElementById('agent-classic-foundry-api-version-group');
+    const newFoundryOnly = document.getElementById('agent-new-foundry-only');
 
     if (foundryFields) foundryFields.classList.toggle('d-none', !isFoundry);
     if (modelGroup) modelGroup.classList.toggle('d-none', isFoundry);
     if (customToggle) customToggle.classList.toggle('d-none', isFoundry);
     if (customFields) customFields.classList.toggle('d-none', isFoundry);
+    if (classicOnly) classicOnly.classList.toggle('d-none', !isClassicFoundry);
+    if (classicOnlyFields) classicOnlyFields.classList.toggle('d-none', !isClassicFoundry);
+    if (classicApiVersionGroup) classicApiVersionGroup.classList.toggle('d-none', !isClassicFoundry);
+    if (newFoundryOnly) newFoundryOnly.classList.toggle('d-none', !isNewFoundry);
 
     if (instructionsContainer) instructionsContainer.classList.toggle('d-none', isFoundry);
     if (instructionsFoundryNote) instructionsFoundryNote.classList.toggle('d-none', !isFoundry);
@@ -189,9 +237,37 @@ export class AgentModalStepper {
     // Update helper text
     const helper = document.getElementById('agent-type-helper');
     if (helper) {
-      helper.textContent = isFoundry
-        ? 'Foundry agents use Azure-managed tools. Actions step is disabled.'
-        : 'Local agents can attach actions and use SK plugins.';
+      if (isNewFoundry) {
+        helper.textContent = 'New Foundry applications use the Responses protocol endpoint. Actions are disabled.';
+      } else if (isClassicFoundry) {
+        helper.textContent = 'Classic Foundry agents use Azure-managed tools. Actions are disabled.';
+      } else {
+        helper.textContent = 'Local agents can attach actions and use SK plugins.';
+      }
+    }
+
+    if (foundryFetchBtnLabel) {
+      foundryFetchBtnLabel.textContent = isNewFoundry ? 'Fetch Applications' : 'Fetch Agents';
+    }
+
+    if (foundrySelectLabel) {
+      foundrySelectLabel.textContent = isNewFoundry ? 'New Foundry Application' : 'Foundry Agent';
+    }
+
+    if (foundrySelectHelp) {
+      if (isNewFoundry) {
+        foundrySelectHelp.textContent = 'Fetch a new Foundry application to populate the application name, version, and identifier fields.';
+      } else {
+        foundrySelectHelp.textContent = 'Select a classic Foundry agent to import its identity.';
+      }
+    }
+
+    if (foundryModeNote) {
+      if (isNewFoundry) {
+        foundryModeNote.textContent = 'New Foundry applications are invoked through the application Responses endpoint and use Foundry-managed tools.';
+      } else if (isClassicFoundry) {
+        foundryModeNote.textContent = 'Classic Foundry agents use Azure-managed tools and the existing SDK-backed invocation path.';
+      }
     }
   }
 
@@ -404,6 +480,13 @@ export class AgentModalStepper {
     const foundryApiVersionInput = document.getElementById('agent-foundry-api-version');
     const foundryDeploymentInput = document.getElementById('agent-foundry-deployment');
     const foundryAgentIdInput = document.getElementById('agent-foundry-agent-id');
+    const foundryResponsesApiVersionInput = document.getElementById('agent-new-foundry-responses-api-version');
+    const foundryApplicationIdInput = document.getElementById('agent-new-foundry-application-id');
+    const foundryApplicationNameInput = document.getElementById('agent-new-foundry-application-name');
+    const foundryApplicationVersionInput = document.getElementById('agent-new-foundry-application-version');
+    const foundryActivityApiVersionInput = document.getElementById('agent-new-foundry-activity-api-version');
+    const foundryNotesInput = document.getElementById('agent-foundry-notes');
+    const foundryStatus = document.getElementById('agent-foundry-fetch-status');
     
     if (displayName) displayName.value = '';
     if (generatedName) generatedName.value = '';
@@ -420,6 +503,13 @@ export class AgentModalStepper {
     if (foundryApiVersionInput) foundryApiVersionInput.value = '';
     if (foundryDeploymentInput) foundryDeploymentInput.value = '';
     if (foundryAgentIdInput) foundryAgentIdInput.value = '';
+    if (foundryResponsesApiVersionInput) foundryResponsesApiVersionInput.value = '';
+    if (foundryApplicationIdInput) foundryApplicationIdInput.value = '';
+    if (foundryApplicationNameInput) foundryApplicationNameInput.value = '';
+    if (foundryApplicationVersionInput) foundryApplicationVersionInput.value = '';
+    if (foundryActivityApiVersionInput) foundryActivityApiVersionInput.value = '';
+    if (foundryNotesInput) foundryNotesInput.value = '';
+    if (foundryStatus) foundryStatus.textContent = '';
     
     // Clear any selected actions
     this.clearSelectedActions();
@@ -467,7 +557,7 @@ export class AgentModalStepper {
       }
       const settings = await resp.json();
       const endpoints = Array.isArray(settings.model_endpoints) ? settings.model_endpoints : [];
-      this.foundryEndpoints = endpoints.filter(endpoint => (endpoint.provider || '').toLowerCase() === 'aifoundry');
+      this.foundryEndpoints = endpoints.filter(endpoint => this.matchesFoundryEndpointProvider(endpoint.provider));
 
       endpointSelect.innerHTML = '<option value="">Select a configured endpoint...</option>';
       this.foundryEndpoints.forEach(endpoint => {
@@ -481,7 +571,11 @@ export class AgentModalStepper {
       });
 
       const existingEndpointId =
-        (this.currentAgent && (this.currentAgent.model_endpoint_id || this.currentAgent.other_settings?.azure_ai_foundry?.endpoint_id)) || '';
+        (this.currentAgent && (
+          this.currentAgent.model_endpoint_id
+          || this.currentAgent.other_settings?.azure_ai_foundry?.endpoint_id
+          || this.currentAgent.other_settings?.new_foundry?.endpoint_id
+        )) || '';
       if (existingEndpointId) {
         endpointSelect.value = existingEndpointId;
       }
@@ -506,7 +600,7 @@ export class AgentModalStepper {
 
     const endpointId = endpointSelect.value || '';
     if (endpointIdInput) endpointIdInput.value = endpointId;
-    if (providerInput) providerInput.value = endpointId ? 'aifoundry' : '';
+    if (providerInput) providerInput.value = endpointId ? this.getCurrentFoundryProvider() : '';
 
     const selected = this.foundryEndpoints.find(endpoint => endpoint.id === endpointId);
     if (selected) {
@@ -518,6 +612,10 @@ export class AgentModalStepper {
       }
       if (deploymentInput) {
         deploymentInput.value = selected.connection?.project_name || '';
+      }
+      const responsesApiVersionInput = document.getElementById('agent-new-foundry-responses-api-version');
+      if (responsesApiVersionInput) {
+        responsesApiVersionInput.value = selected.connection?.openai_api_version || selected.connection?.api_version || '2025-11-15-preview';
       }
       const agentSelect = document.getElementById('agent-foundry-agent-select');
       if (agentSelect) {
@@ -541,7 +639,7 @@ export class AgentModalStepper {
     const endpointId = endpointSelect.value || '';
     const scope = endpointSelect.options[endpointSelect.selectedIndex]?.dataset?.scope || 'global';
     if (!endpointId) {
-      showToast('Select a Foundry endpoint before fetching agents.', 'warning');
+      showToast(`Select a ${this.isNewFoundryType() ? 'New Foundry' : 'Foundry'} endpoint before fetching ${this.isNewFoundryType() ? 'applications' : 'agents'}.`, 'warning');
       return;
     }
 
@@ -562,12 +660,17 @@ export class AgentModalStepper {
       agentSelect.innerHTML = '<option value="">Select an agent...</option>';
       this.foundryAgents.forEach(agent => {
         const opt = document.createElement('option');
-        opt.value = agent.id || '';
-        opt.textContent = agent.display_name || agent.name || agent.id || '';
+        const applicationValue = agent.application_id || agent.id || '';
+        const optionValue = this.isNewFoundryType() ? applicationValue : (agent.id || '');
+        const versionSuffix = agent.application_version ? ` (v${agent.application_version})` : '';
+        opt.value = optionValue;
+        opt.textContent = this.isNewFoundryType()
+          ? `${agent.display_name || agent.application_name || agent.name || applicationValue}${versionSuffix}`
+          : (agent.display_name || agent.name || agent.id || '');
         agentSelect.appendChild(opt);
       });
       if (statusEl) {
-        statusEl.textContent = `${this.foundryAgents.length} agent(s) found.`;
+        statusEl.textContent = `${this.foundryAgents.length} ${this.isNewFoundryType() ? 'application' : 'agent'}(s) found.`;
       }
     } catch (error) {
       console.error('Failed to fetch Foundry agents:', error);
@@ -581,21 +684,43 @@ export class AgentModalStepper {
   applyFoundryAgentSelection() {
     const agentSelect = document.getElementById('agent-foundry-agent-select');
     const agentIdInput = document.getElementById('agent-foundry-agent-id');
-    if (!agentSelect || !agentIdInput) {
+    if (!agentSelect) {
       return;
     }
 
-    const agentId = agentSelect.value || '';
-    agentIdInput.value = agentId;
-    const selected = this.foundryAgents.find(agent => agent.id === agentId);
+    const selectedId = agentSelect.value || '';
+    if (agentIdInput && this.isClassicFoundryType()) {
+      agentIdInput.value = selectedId;
+    }
+    const selected = this.foundryAgents.find(agent => {
+      if (this.isNewFoundryType()) {
+        return (agent.application_id || agent.id || '') === selectedId;
+      }
+      return (agent.id || '') === selectedId;
+    });
     if (!selected) {
       return;
+    }
+
+    if (this.isNewFoundryType()) {
+      const applicationIdInput = document.getElementById('agent-new-foundry-application-id');
+      const applicationNameInput = document.getElementById('agent-new-foundry-application-name');
+      const applicationVersionInput = document.getElementById('agent-new-foundry-application-version');
+      if (applicationIdInput) {
+        applicationIdInput.value = selected.application_id || selected.id || '';
+      }
+      if (applicationNameInput) {
+        applicationNameInput.value = selected.application_name || selected.name || '';
+      }
+      if (applicationVersionInput) {
+        applicationVersionInput.value = selected.application_version || '';
+      }
     }
 
     const displayNameInput = document.getElementById('agent-display-name');
     const descriptionInput = document.getElementById('agent-description');
     if (displayNameInput && !displayNameInput.value.trim()) {
-      displayNameInput.value = selected.display_name || selected.name || '';
+      displayNameInput.value = selected.display_name || selected.application_name || selected.name || '';
       this.updateGeneratedName();
     }
     if (descriptionInput && !descriptionInput.value.trim()) {
@@ -663,18 +788,30 @@ export class AgentModalStepper {
     }
 
     // Foundry-specific fields
-    if (agent.agent_type === 'aifoundry') {
+    if (this.isAnyFoundryType(agent.agent_type)) {
       const other = agent.other_settings || {};
-      const foundry = (other && other.azure_ai_foundry) || {};
+      const foundry = this.isNewFoundryType(agent.agent_type)
+        ? ((other && other.new_foundry) || {})
+        : ((other && other.azure_ai_foundry) || {});
       const endpointEl = document.getElementById('agent-foundry-endpoint');
       const apiEl = document.getElementById('agent-foundry-api-version');
       const depEl = document.getElementById('agent-foundry-deployment');
       const idEl = document.getElementById('agent-foundry-agent-id');
       const notesEl = document.getElementById('agent-foundry-notes');
+      const responsesApiEl = document.getElementById('agent-new-foundry-responses-api-version');
+      const applicationIdEl = document.getElementById('agent-new-foundry-application-id');
+      const applicationNameEl = document.getElementById('agent-new-foundry-application-name');
+      const applicationVersionEl = document.getElementById('agent-new-foundry-application-version');
+      const activityVersionEl = document.getElementById('agent-new-foundry-activity-api-version');
       if (endpointEl) endpointEl.value = agent.azure_openai_gpt_endpoint || '';
-      if (apiEl) apiEl.value = agent.azure_openai_gpt_api_version || '';
+      if (apiEl) apiEl.value = foundry.api_version || agent.azure_openai_gpt_api_version || '';
       if (depEl) depEl.value = agent.azure_openai_gpt_deployment || '';
       if (idEl) idEl.value = foundry.agent_id || '';
+      if (responsesApiEl) responsesApiEl.value = foundry.responses_api_version || agent.azure_openai_gpt_api_version || '';
+      if (applicationIdEl) applicationIdEl.value = foundry.application_id || '';
+      if (applicationNameEl) applicationNameEl.value = foundry.application_name || '';
+      if (applicationVersionEl) applicationVersionEl.value = foundry.application_version || '';
+      if (activityVersionEl) activityVersionEl.value = foundry.activity_api_version || '';
       if (notesEl) notesEl.value = foundry.notes || '';
       // ensure actions cleared for UI
       this.clearSelectedActions();
@@ -709,7 +846,7 @@ export class AgentModalStepper {
       skipBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Skipping...`;
     }
     try {
-      if (this.currentAgentType !== 'aifoundry') {
+      if (!this.isAnyFoundryType()) {
         await this.loadAvailableActions();
       }
       this.goToStep(this.maxSteps);
@@ -754,7 +891,7 @@ export class AgentModalStepper {
     }
 
     if (stepNumber === 2) {
-      const isFoundry = this.currentAgentType === 'aifoundry';
+      const isFoundry = this.isAnyFoundryType();
       const customConnectionToggle = document.getElementById('agent-custom-connection-toggle');
       const modelGroup = document.getElementById('agent-global-model-group');
 
@@ -778,7 +915,7 @@ export class AgentModalStepper {
     
     // Load actions when reaching step 4
     if (stepNumber === 4) {
-      if (this.currentAgentType !== 'aifoundry') {
+      if (!this.isAnyFoundryType()) {
         this.loadAvailableActions();
       }
     }
@@ -919,37 +1056,53 @@ export class AgentModalStepper {
         break;
         
       case 2: // Model & Connection
-        if (this.currentAgentType === 'aifoundry') {
+        if (this.isAnyFoundryType()) {
           const endpoint = document.getElementById('agent-foundry-endpoint');
-          const apiVersion = document.getElementById('agent-foundry-api-version');
           const deployment = document.getElementById('agent-foundry-deployment');
-          const agentId = document.getElementById('agent-foundry-agent-id');
           if (!endpoint || !endpoint.value.trim()) {
-            this.showError('Azure AI Foundry endpoint is required.');
+            this.showError('A Foundry project endpoint is required.');
             endpoint?.focus();
             return false;
           }
-          if (!apiVersion || !apiVersion.value.trim()) {
-            this.showError('Azure AI Foundry API version is required.');
-            apiVersion?.focus();
-            return false;
-          }
           if (!deployment || !deployment.value.trim()) {
-            this.showError('Foundry deployment/project is required.');
+            this.showError('A Foundry project name is required.');
             deployment?.focus();
             return false;
           }
-          if (!agentId || !agentId.value.trim()) {
-            this.showError('Foundry agent ID is required.');
-            agentId?.focus();
-            return false;
+          if (this.isClassicFoundryType()) {
+            const apiVersion = document.getElementById('agent-foundry-api-version');
+            const agentId = document.getElementById('agent-foundry-agent-id');
+            if (!apiVersion || !apiVersion.value.trim()) {
+              this.showError('Classic Foundry API version is required.');
+              apiVersion?.focus();
+              return false;
+            }
+            if (!agentId || !agentId.value.trim()) {
+              this.showError('Foundry agent ID is required.');
+              agentId?.focus();
+              return false;
+            }
+          } else {
+            const responsesApiVersion = document.getElementById('agent-new-foundry-responses-api-version');
+            const applicationId = document.getElementById('agent-new-foundry-application-id');
+            const applicationName = document.getElementById('agent-new-foundry-application-name');
+            if (!responsesApiVersion || !responsesApiVersion.value.trim()) {
+              this.showError('Responses API version is required for New Foundry.');
+              responsesApiVersion?.focus();
+              return false;
+            }
+            if ((!applicationId || !applicationId.value.trim()) && (!applicationName || !applicationName.value.trim())) {
+              this.showError('Provide an application ID or application name for New Foundry.');
+              applicationId?.focus();
+              return false;
+            }
           }
         }
         break;
         
       case 3: // Instructions
         const instructions = document.getElementById('agent-instructions');
-          if (this.currentAgentType !== 'aifoundry') {
+          if (!this.isAnyFoundryType()) {
             if (!instructions || !instructions.value.trim()) {
               this.showError('Please provide instructions for the agent.');
               if (instructions) instructions.focus();
@@ -964,7 +1117,7 @@ export class AgentModalStepper {
         break;
         
       case 4: // Actions
-        if (this.currentAgentType !== 'aifoundry') {
+        if (!this.isAnyFoundryType()) {
           // Actions validation would go here if needed
         }
         break;
@@ -1070,9 +1223,14 @@ export class AgentModalStepper {
   }
 
   getFormModelName() {
-    if (this.currentAgentType === 'aifoundry') {
+    if (this.isClassicFoundryType()) {
       const foundryDeployment = document.getElementById('agent-foundry-deployment');
       return foundryDeployment?.value?.trim() || '-';
+    }
+    if (this.isNewFoundryType()) {
+      const applicationName = document.getElementById('agent-new-foundry-application-name');
+      const applicationId = document.getElementById('agent-new-foundry-application-id');
+      return applicationName?.value?.trim() || applicationId?.value?.trim() || '-';
     }
     const customConnection = document.getElementById('agent-custom-connection')?.checked || false;
     let modelName = '-';
@@ -1120,8 +1278,12 @@ export class AgentModalStepper {
     document.getElementById('summary-custom-connection').textContent = customConnection;
     const typeBadge = document.getElementById('summary-agent-type-badge');
     if (typeBadge) {
-      typeBadge.textContent = agentType === 'aifoundry' ? 'Azure AI Foundry' : 'Local (Semantic Kernel)';
-      typeBadge.className = agentType === 'aifoundry' ? 'badge bg-warning text-dark' : 'badge bg-info';
+      typeBadge.textContent = this.getAgentTypeLabel(agentType);
+      typeBadge.className = this.isNewFoundryType(agentType)
+        ? 'badge bg-primary'
+        : this.isClassicFoundryType(agentType)
+          ? 'badge bg-warning text-dark'
+          : 'badge bg-info';
     }
     
     // Update instructions
@@ -1137,7 +1299,7 @@ export class AgentModalStepper {
     const actionsListContainer = document.getElementById('summary-actions-list');
     const actionsEmptyContainer = document.getElementById('summary-actions-empty');
     
-    if (this.currentAgentType === 'aifoundry') {
+    if (this.isAnyFoundryType()) {
       // Hide actions entirely for Foundry
       const actionsSection = document.getElementById('summary-actions-section');
       if (actionsSection) actionsSection.style.display = 'none';
@@ -1688,7 +1850,7 @@ export class AgentModalStepper {
       }
       
       // Add selected actions (skip for Foundry)
-      if (agentData.agent_type === 'aifoundry') {
+      if (this.isAnyFoundryType(agentData.agent_type)) {
         agentData.actions_to_load = [];
       } else {
         agentData.actions_to_load = this.getSelectedActionIds();
@@ -1806,6 +1968,46 @@ export class AgentModalStepper {
       formData.model_endpoint_id = modelEndpointId;
       formData.model_id = '';
       formData.model_provider = 'aifoundry';
+      return formData;
+    }
+
+    if (selectedAgentType === 'new_foundry') {
+      formData.azure_openai_gpt_endpoint = document.getElementById('agent-foundry-endpoint')?.value?.trim() || '';
+      formData.azure_openai_gpt_deployment = document.getElementById('agent-foundry-deployment')?.value?.trim() || '';
+      formData.azure_openai_gpt_api_version = document.getElementById('agent-new-foundry-responses-api-version')?.value?.trim() || '';
+      formData.instructions = document.getElementById('agent-instructions')?.value?.trim() || this.foundryPlaceholderInstructions;
+
+      let otherSettingsObj = {};
+      try {
+        otherSettingsObj = JSON.parse(formData.other_settings || '{}');
+      } catch (e) {
+        otherSettingsObj = {};
+      }
+      otherSettingsObj = otherSettingsObj || {};
+
+      const notesVal = document.getElementById('agent-foundry-notes')?.value || '';
+      const applicationId = document.getElementById('agent-new-foundry-application-id')?.value?.trim() || '';
+      const applicationName = document.getElementById('agent-new-foundry-application-name')?.value?.trim() || '';
+      const applicationVersion = document.getElementById('agent-new-foundry-application-version')?.value?.trim() || '';
+      const activityApiVersion = document.getElementById('agent-new-foundry-activity-api-version')?.value?.trim() || '';
+
+      otherSettingsObj.new_foundry = {
+        ...(otherSettingsObj.new_foundry || {}),
+        application_id: applicationId,
+        application_name: applicationName,
+        application_version: applicationVersion,
+        endpoint_id: modelEndpointId || '',
+        responses_api_version: formData.azure_openai_gpt_api_version,
+        ...(activityApiVersion ? { activity_api_version: activityApiVersion } : {}),
+        ...(notesVal ? { notes: notesVal } : {}),
+      };
+      formData.other_settings = JSON.stringify(otherSettingsObj);
+
+      formData.actions_to_load = [];
+      formData.enable_agent_gpt_apim = false;
+      formData.model_endpoint_id = modelEndpointId;
+      formData.model_id = '';
+      formData.model_provider = 'new_foundry';
       return formData;
     }
     

@@ -46,6 +46,9 @@ def get_settings(use_cosmos=False):
         'allow_ai_foundry_agents': False,
         'allow_group_ai_foundry_agents': False,
         'allow_personal_ai_foundry_agents': False,
+        'allow_new_foundry_agents': False,
+        'allow_group_new_foundry_agents': False,
+        'allow_personal_new_foundry_agents': False,
         'enable_agent_template_gallery': True,
         'agent_templates_allow_user_submission': True,
         'agent_templates_require_approval': True,
@@ -696,6 +699,8 @@ def normalize_model_endpoints(endpoints):
         if not isinstance(endpoint, dict):
             continue
         endpoint_copy = json.loads(json.dumps(endpoint))
+        endpoint_copy.pop("has_api_key", None)
+        endpoint_copy.pop("has_client_secret", None)
         connection = endpoint_copy.get("connection") or {}
 
         if not endpoint_copy.get("id"):
@@ -733,6 +738,63 @@ def normalize_model_endpoints(endpoints):
         normalized.append(endpoint_copy)
 
     return normalized, changed
+
+
+def merge_model_endpoint_auth(existing_auth, incoming_auth):
+    """Merge endpoint auth settings while preserving stored secrets when inputs are blank."""
+    if not isinstance(existing_auth, dict):
+        existing_auth = {}
+    if not isinstance(incoming_auth, dict):
+        incoming_auth = {}
+
+    merged = dict(existing_auth)
+    for key, value in incoming_auth.items():
+        if value in (None, ""):
+            continue
+        merged[key] = value
+    return merged
+
+
+def merge_model_endpoint_payload(existing_endpoint, incoming_endpoint):
+    """Merge an incoming endpoint payload with an existing saved endpoint."""
+    if not isinstance(existing_endpoint, dict):
+        return incoming_endpoint if isinstance(incoming_endpoint, dict) else {}
+    if not isinstance(incoming_endpoint, dict):
+        return dict(existing_endpoint)
+
+    merged = dict(existing_endpoint)
+    for key, value in incoming_endpoint.items():
+        if key == "auth":
+            merged["auth"] = merge_model_endpoint_auth(existing_endpoint.get("auth"), value)
+            continue
+        if value in (None, ""):
+            continue
+        merged[key] = value
+    return merged
+
+
+def merge_model_endpoints_with_existing(incoming_endpoints, existing_endpoints):
+    """Merge endpoint lists by endpoint ID so edits preserve stored auth values."""
+    if not isinstance(incoming_endpoints, list):
+        return []
+
+    existing_by_id = {}
+    if isinstance(existing_endpoints, list):
+        existing_by_id = {
+            endpoint.get("id"): endpoint
+            for endpoint in existing_endpoints
+            if isinstance(endpoint, dict) and endpoint.get("id")
+        }
+
+    merged = []
+    for endpoint in incoming_endpoints:
+        if not isinstance(endpoint, dict):
+            continue
+        endpoint_id = endpoint.get("id")
+        existing_endpoint = existing_by_id.get(endpoint_id)
+        merged.append(merge_model_endpoint_payload(existing_endpoint or {}, endpoint))
+
+    return merged
 
 
 def sanitize_model_endpoints_for_frontend(endpoints):

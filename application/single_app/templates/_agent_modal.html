@@ -26,9 +26,17 @@
             </div>
             <div class="form-check form-check-inline">
               <input class="form-check-input" type="radio" name="agent-type" id="agent-type-aifoundry" value="aifoundry">
-              <label class="form-check-label" for="agent-type-aifoundry">Azure AI Foundry</label>
-              <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Azure AI Foundry agents run in Azure AI Foundry, leverage Azure AI services, and use tools. They are created in a Foundry resource by a person with Azure AI User RBAC role."></i>
+              <label class="form-check-label" for="agent-type-aifoundry">Foundry (classic)</label>
+              <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Classic Foundry agents use the existing Azure AI Foundry agent experience and are invoked through the current SDK-backed path."></i>
             </div>
+            <!-- New Foundry and Classic Foundry use the same library, but are mutually exclusive between >=2.0.0 (new) and <2.0.0 (classic) -->
+            {% if false %}
+            <div class="form-check form-check-inline">
+              <input class="form-check-input" type="radio" name="agent-type" id="agent-type-new-foundry" value="new_foundry">
+              <label class="form-check-label" for="agent-type-new-foundry">New Foundry</label>
+              <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="New Foundry agents use the application-based experience and are invoked through the Responses protocol endpoint."></i>
+            </div>
+            {% endif %}
           </div>
           <div class="form-text" id="agent-type-helper">Choose the provider for this agent. Foundry agents cannot attach local actions.</div>
         </div>
@@ -83,10 +91,10 @@
         <div class="agent-step d-none" id="agent-step-2">
           <h6 class="mb-3">Model & Connection</h6>
 
-          <!-- Foundry-specific fields (shown only when agent_type = aifoundry) -->
+          <!-- Foundry-specific fields (shown only when agent_type is classic or new Foundry) -->
           <div id="agent-foundry-fields" class="d-none">
-            <div class="alert alert-warning py-2 small" role="note">
-              Azure AI Foundry agents use Azure-managed tools; local actions are disabled for this agent type.
+            <div class="alert alert-warning py-2 small" role="note" id="agent-foundry-mode-note">
+              Foundry-managed tools are used for this agent type and local actions are disabled.
             </div>
             <div class="mb-3">
               <label for="agent-foundry-endpoint-select" class="form-label">Foundry Endpoint</label>
@@ -97,39 +105,67 @@
             </div>
             <div class="mb-3 d-flex flex-wrap gap-2 align-items-center">
               <button type="button" class="btn btn-outline-primary btn-sm" id="agent-foundry-fetch-btn">
-                <i class="bi bi-cloud-download me-1"></i>Fetch Agents
+                <i class="bi bi-cloud-download me-1"></i><span id="agent-foundry-fetch-btn-label">Fetch Agents</span>
               </button>
               <span class="text-muted small" id="agent-foundry-fetch-status"></span>
             </div>
             <div class="mb-3">
-              <label for="agent-foundry-agent-select" class="form-label">Foundry Agent</label>
+              <label for="agent-foundry-agent-select" class="form-label" id="agent-foundry-select-label">Foundry Agent</label>
               <select class="form-select" id="agent-foundry-agent-select">
                 <option value="">Select an agent...</option>
               </select>
-              <div class="form-text">Select an agent to import its identity.</div>
+              <div class="form-text" id="agent-foundry-select-help">Select a classic Foundry agent to import its identity.</div>
             </div>
             <div class="mb-3">
-              <label for="agent-foundry-endpoint" class="form-label">Azure AI Foundry Endpoint <span class="text-danger" title="Required">*</span></label>
-              <input type="text" class="form-control" id="agent-foundry-endpoint" placeholder="https://&lt;resource&gt;.openai.azure.com/" />
+              <label for="agent-foundry-endpoint" class="form-label">Foundry Project Endpoint <span class="text-danger" title="Required">*</span></label>
+              <input type="text" class="form-control" id="agent-foundry-endpoint" placeholder="https://&lt;resource&gt;.services.ai.azure.com/ or full /api/projects/... endpoint" />
             </div>
             <div class="mb-3">
-              <label for="agent-foundry-api-version" class="form-label">Azure AI Foundry API Version <span class="text-danger" title="Required">*</span></label>
+              <label for="agent-foundry-deployment" class="form-label">Foundry Project Name <span class="text-danger" title="Required">*</span></label>
+              <input type="text" class="form-control" id="agent-foundry-deployment" placeholder="project identifier" />
+            </div>
+            <div class="mb-3" id="agent-classic-foundry-api-version-group">
+              <label for="agent-foundry-api-version" class="form-label">Classic Foundry API Version <span class="text-danger" title="Required">*</span></label>
               <input type="text" class="form-control" id="agent-foundry-api-version" placeholder="v1" />
             </div>
-            <div class="mb-3">
-              <label for="agent-foundry-deployment" class="form-label">Foundry Deployment / Project <span class="text-danger" title="Required">*</span></label>
-              <input type="text" class="form-control" id="agent-foundry-deployment" placeholder="deployment or project identifier" />
+            <div id="agent-classic-foundry-fields">
+              <div class="mb-3">
+                <label for="agent-foundry-agent-id" class="form-label">Foundry Agent ID <span class="text-danger" title="Required">*</span></label>
+                <input type="text" class="form-control" id="agent-foundry-agent-id" placeholder="ID from classic Foundry. Typically starts with asst_" />
+              </div>
             </div>
-            <div class="mb-3">
-              <label for="agent-foundry-agent-id" class="form-label">Foundry Agent ID <span class="text-danger" title="Required">*</span></label>
-              <input type="text" class="form-control" id="agent-foundry-agent-id" placeholder="ID from Azure AI Foundry. Typically starts with asst_" />
+            <div id="agent-new-foundry-only" class="d-none">
+              <div class="mb-3">
+                <label for="agent-new-foundry-responses-api-version" class="form-label">Responses API Version <span class="text-danger" title="Required">*</span></label>
+                <input type="text" class="form-control" id="agent-new-foundry-responses-api-version" placeholder="2025-11-15-preview" />
+              </div>
+              <div class="mb-3">
+                <label for="agent-new-foundry-application-id" class="form-label">Application ID <span class="text-danger" title="Required">*</span></label>
+                <input type="text" class="form-control" id="agent-new-foundry-application-id" placeholder="application-name:version" />
+                <div class="form-text">Use the application identifier from the new Foundry portal, or fetch an application above. Example: <span class="font-monospace">my-agent:3</span>.</div>
+              </div>
+              <div class="row g-3 mb-3">
+                <div class="col-md-8">
+                  <label for="agent-new-foundry-application-name" class="form-label">Application Name</label>
+                  <input type="text" class="form-control" id="agent-new-foundry-application-name" placeholder="application-name" />
+                </div>
+                <div class="col-md-4">
+                  <label for="agent-new-foundry-application-version" class="form-label">Version</label>
+                  <input type="text" class="form-control" id="agent-new-foundry-application-version" placeholder="3" />
+                </div>
+              </div>
+              <div class="mb-3">
+                <label for="agent-new-foundry-activity-api-version" class="form-label">Activity Protocol API Version</label>
+                <input type="text" class="form-control" id="agent-new-foundry-activity-api-version" placeholder="Optional for phase 1" />
+                <div class="form-text">Optional for now. Phase 1 uses the Responses endpoint; activity polling can be added later.</div>
+              </div>
             </div>
             <div class="mb-3">
               <label for="agent-foundry-notes" class="form-label">Admin Notes (optional)</label>
-              <textarea class="form-control" id="agent-foundry-notes" rows="2" placeholder="Internal notes for this Foundry agent"></textarea>
+              <textarea class="form-control" id="agent-foundry-notes" rows="2" placeholder="Internal notes for this Foundry configuration"></textarea>
             </div>
           </div>
-          
+
           <!-- Model Selection -->
           <div class="mb-3" id="agent-global-model-group">
             <label for="agent-global-model-select" class="form-label">Select Model <span class="text-danger" title="Required">*</span></label>
@@ -157,7 +193,7 @@
               <div class="alert alert-info py-2 small" role="note">
                 <strong>Note:</strong> If a value is not provided for an inheritable property, it will be inherited from the selected model.
               </div>
-              
+
               <div class="d-flex align-items-center mb-3">
                 <label for="agent-enable-apim" class="form-label mb-0 me-2">Enable APIM Integration</label>
                 <div class="form-check form-switch">
@@ -165,7 +201,7 @@
                   <label class="form-check-label" for="agent-enable-apim"></label>
                 </div>
               </div>
-              
+
               <div id="agent-gpt-fields">
                 <div class="mb-3">
                   <label for="agent-gpt-endpoint" class="form-label">Azure OpenAI GPT Endpoint</label>
@@ -201,7 +237,7 @@
                   <div class="form-text">Only applies to models that support reasoning (e.g., gpt-5, o1, o3)</div>
                 </div>
               </div>
-              
+
               <div id="agent-apim-fields" class="d-none">
                 <div class="mb-3">
                   <label for="agent-apim-endpoint" class="form-label">APIM GPT Endpoint</label>
@@ -232,7 +268,7 @@
         <div class="agent-step d-none" id="agent-step-3">
           <h6 class="mb-3">Instructions</h6>
           <div class="alert alert-info d-none" id="agent-instructions-foundry-note" role="alert">
-            Instructions are managed in Azure AI Foundry.
+            Instructions are managed in Foundry for this agent type.
           </div>
           <div class="mb-3" id="agent-instructions-container">
             <label for="agent-instructions" class="form-label">Agent Instructions <span class="text-danger" title="Required">*</span></label>
@@ -247,7 +283,7 @@
         <!-- Step 4: Action Selection -->
         <div class="agent-step d-none" id="agent-step-4">
           <div id="agent-actions-disabled" class="alert alert-info d-none" role="alert">
-            Actions are not available for Azure AI Foundry agents. Foundry-managed tools are used automatically.
+            Actions are not available for Foundry agents. Foundry-managed tools are used automatically.
           </div>
           <!-- Header Section -->
           <div class="card border-0 shadow-sm mb-4">
@@ -282,7 +318,7 @@
                   </select>
                 </div>
               </div>
-              
+
               <!-- Search Results Info -->
               <div class="mb-3">
                 <div class="d-flex justify-content-between align-items-center">
@@ -295,7 +331,7 @@
                   </div>
                 </div>
               </div>
-              
+
               <!-- Quick Action Buttons -->
               <div class="mb-3">
                 <div class="btn-group btn-group-sm" role="group" aria-label="Quick actions">
@@ -312,11 +348,11 @@
               </div>
             </div>
           </div>
-          
+
           <div id="agent-actions-container" class="row g-3">
             <!-- Action cards will be populated by JavaScript -->
           </div>
-          
+
           <!-- No Results Message -->
           <div id="agent-no-actions-message" class="text-center py-5 d-none">
             <div class="card border-0 bg-light">
@@ -351,7 +387,7 @@
         <div class="agent-step d-none" id="agent-step-5">
           <h6 class="mb-3">Advanced Settings</h6>
           <div class="alert alert-info d-none" id="agent-advanced-foundry-note" role="alert">
-            Advanced options are managed by Azure AI Foundry and are not available for Foundry agents.
+            Advanced options are managed by Foundry and are not available for Foundry agents.
           </div>
           <div id="local-agent-advanced-settings">
             <div class="mb-3">

@@ -3,6 +3,7 @@
 from config import *
 from functions_documents import *
 from functions_authentication import *
+from functions_keyvault import keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_save_helper, redact_model_endpoint_secret_values
 from functions_settings import *
 from functions_activity_logging import log_web_search_consent_acceptance, log_general_admin_action
 from functions_notifications import broadcast_system_notification
@@ -71,6 +72,7 @@ def register_route_frontend_admin_settings(app):
         if endpoints_changed:
             update_settings({'model_endpoints': normalized_endpoints})
         settings['model_endpoints'] = normalized_endpoints
+        frontend_model_endpoints = sanitize_model_endpoints_for_frontend(normalized_endpoints)
 
         # (get_settings should handle this, but explicit check is safe)
         if 'require_member_of_create_group' not in settings:
@@ -313,11 +315,13 @@ def register_route_frontend_admin_settings(app):
             # Get user settings for profile and navigation
             user_id = get_current_user_id()
             user_settings = get_user_settings(user_id)
+            settings_for_template = dict(settings)
+            settings_for_template['model_endpoints'] = frontend_model_endpoints
 
             return render_template(
                 'admin_settings.html',
-                app_settings=settings,  # Admin needs unsanitized settings to view/edit all configuration
-                settings=settings,
+                app_settings=settings_for_template,
+                settings=settings_for_template,
                 user_settings=user_settings,
                 update_available=update_available,
                 latest_version=latest_version,
@@ -490,6 +494,7 @@ def register_route_frontend_admin_settings(app):
 
             enable_multi_model_endpoints = form_data.get('enable_multi_model_endpoints') == 'on'
             model_endpoints_json = form_data.get('model_endpoints_json', '[]')
+            existing_model_endpoints = settings.get('model_endpoints', []) or []
             parsed_model_endpoints = []
             try:
                 parsed_model_endpoints_raw = json.loads(model_endpoints_json) if model_endpoints_json else []
@@ -560,9 +565,14 @@ def register_route_frontend_admin_settings(app):
                     'models': migrated_models
                 }]
                 debug_print(f"Migrated {len(migrated_models)} models to new multi-endpoint configuration.")
-                debug_print(f"Migrated Model Endpoints: {json.dumps(parsed_model_endpoints, indent=2)}")
+                debug_print(
+                    f"Migrated Model Endpoints: {json.dumps([redact_model_endpoint_secret_values(endpoint) for endpoint in parsed_model_endpoints], indent=2)}"
+                )
                 log_event(f"Migrated {len(migrated_models)} models to new multi-endpoint configuration.", level=logging.INFO)
-                log_event(f"Migrated Model Endpoints: {json.dumps(parsed_model_endpoints, indent=2)}", level=logging.INFO)
+                log_event(
+                    f"Migrated Model Endpoints: {json.dumps([redact_model_endpoint_secret_values(endpoint) for endpoint in parsed_model_endpoints], indent=2)}",
+                    level=logging.INFO,
+                )
                 log_general_admin_action(
                     admin_user_id=admin_user,
                     admin_email=admin_email,
@@ -575,7 +585,48 @@ def register_route_frontend_admin_settings(app):
                 migration_notice['enabled'] = True
                 migration_notice['created_at'] = migrated_at
 
+            parsed_model_endpoints = merge_model_endpoints_with_existing(parsed_model_endpoints, existing_model_endpoints)
             parsed_model_endpoints, _ = normalize_model_endpoints(parsed_model_endpoints)
+
+            existing_endpoints_by_id = {
+                endpoint.get('id'): endpoint
+                for endpoint in existing_model_endpoints
+                if isinstance(endpoint, dict) and endpoint.get('id')
+            }
+            parsed_model_endpoints = [
+                keyvault_model_endpoint_save_helper(
+                    endpoint,
+                    endpoint.get('id'),
+                    scope='global',
+                    existing_endpoint=existing_endpoints_by_id.get(endpoint.get('id')),
+                )
+                for endpoint in parsed_model_endpoints
+            ]
+
+            for endpoint in parsed_model_endpoints:
+                if not isinstance(endpoint, dict):
+                    continue
+                endpoint_id = endpoint.get('id')
+                if not endpoint_id:
+                    continue
+                keyvault_model_endpoint_cleanup_helper(
+                    existing_endpoints_by_id.get(endpoint_id),
+                    endpoint,
+                    endpoint_id,
+                    scope='global',
+                )
+
+            saved_endpoint_ids = {
+                endpoint.get('id')
+                for endpoint in parsed_model_endpoints
+                if isinstance(endpoint, dict) and endpoint.get('id')
+            }
+            for endpoint in existing_model_endpoints:
+                if not isinstance(endpoint, dict):
+                    continue
+                endpoint_id = endpoint.get('id')
+                if endpoint_id and endpoint_id not in saved_endpoint_ids:
+                    keyvault_model_endpoint_delete_helper(endpoint, endpoint_id, scope='global')
 
             default_model_selection_json = form_data.get('default_model_selection_json', '{}')
             parsed_default_model_selection = {}

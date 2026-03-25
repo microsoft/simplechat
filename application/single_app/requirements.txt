@@ -6,7 +6,7 @@ Flask-WTF==1.2.1
 gunicorn>=23.0.0
 Werkzeug==3.1.5
 requests==2.32.4
-openai>=1.98.0,<2.0.0
+openai>=1.98.0
 docx2txt==0.8
 Markdown==3.3.4
 bleach==6.1.0
@@ -22,6 +22,8 @@ threadpoolctl==3.5.0
 azure-search-documents==11.5.3
 python-dotenv==0.21.0
 azure-ai-formrecognizer==3.3.3
+azure-ai-projects>=1.0.0,<2.0.0
+azure-ai-agents>=1.0.0
 pyjwt>=2.9.0
 markdown2==2.5.3
 azure-mgmt-cognitiveservices==13.6.0

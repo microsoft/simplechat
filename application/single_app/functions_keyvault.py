@@ -26,6 +26,7 @@ supported_sources = [
     'action',
     'action-addset',
     'agent',
+    'model-endpoint',
     'other'
 ]
 
@@ -47,6 +48,10 @@ ui_trigger_word = "Stored_In_KeyVault"
 SQL_PLUGIN_TYPES = {"sql_query", "sql_schema"}
 SQL_PLUGIN_SENSITIVE_ADDITIONAL_FIELDS = {"connection_string", "password"}
 SQL_PLUGIN_SENSITIVE_AUTH_FIELDS = {"client_secret"}
+MODEL_ENDPOINT_SENSITIVE_AUTH_FIELDS = {
+    "api_key": {"api_key"},
+    "client_secret": {"service_principal"},
+}
 REDACTED_SECRET_VALUE = "***REDACTED***"
 
 class SecretReturnType(Enum):
@@ -90,6 +95,11 @@ def _get_existing_secret_reference(existing_plugin, path):
 def _build_plugin_additional_field_secret_name(plugin_name, field_name):
     """Build a stable Key Vault secret base name for plugin additional fields."""
     return f"{plugin_name}-{field_name}".replace("__", "-")
+
+
+def _build_model_endpoint_secret_name(field_name):
+    """Build a stable Key Vault secret base name for model endpoint auth fields."""
+    return f"model-endpoint-{field_name}".replace("_", "-")
 
 
 def _is_sql_plugin(plugin_dict):
@@ -161,6 +171,23 @@ def redact_plugin_secret_values(plugin_dict, redaction_value=REDACTED_SECRET_VAL
             if key.endswith("__Secret") or _is_sql_sensitive_additional_field(redacted, key):
                 new_additional_fields[key] = redaction_value
         redacted["additionalFields"] = new_additional_fields
+
+    return redacted
+
+
+def redact_model_endpoint_secret_values(endpoint_dict, redaction_value=REDACTED_SECRET_VALUE):
+    """Return a copy of a model endpoint manifest with secret-bearing auth values redacted."""
+    if not isinstance(endpoint_dict, dict):
+        return endpoint_dict
+
+    redacted = dict(endpoint_dict)
+    auth = redacted.get("auth", {})
+    if isinstance(auth, dict):
+        new_auth = dict(auth)
+        for auth_field in MODEL_ENDPOINT_SENSITIVE_AUTH_FIELDS:
+            if new_auth.get(auth_field):
+                new_auth[auth_field] = redaction_value
+        redacted["auth"] = new_auth
 
     return redacted
 
@@ -619,6 +646,163 @@ def keyvault_plugin_get_helper(plugin_dict, scope_value, scope="global", return_
                     raise Exception(f"Failed to retrieve action additionalField secret '{k}' from Key Vault: {e}")
         updated['additionalFields'] = new_additional_fields
     return updated
+
+
+def keyvault_model_endpoint_save_helper(endpoint_dict, scope_value, scope="global", existing_endpoint=None):
+    """Store model endpoint auth secrets in Key Vault and replace them with references."""
+    if scope not in supported_scopes:
+        log_event(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}", level=logging.ERROR)
+        raise ValueError(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}")
+
+    settings = app_settings_cache.get_settings_cache()
+    enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
+    key_vault_name = settings.get("key_vault_name", None)
+    if not enable_key_vault_secret_storage or not key_vault_name:
+        return endpoint_dict
+
+    updated = dict(endpoint_dict)
+    auth = updated.get("auth", {})
+    if not isinstance(auth, dict):
+        return updated
+
+    updated_auth = dict(auth)
+    updated["auth"] = updated_auth
+    auth_type = (updated_auth.get("type") or "managed_identity").lower()
+    source = "model-endpoint"
+
+    for auth_field, supported_auth_types in MODEL_ENDPOINT_SENSITIVE_AUTH_FIELDS.items():
+        existing_reference = _get_existing_secret_reference(existing_endpoint, ("auth", auth_field))
+        value = updated_auth.get(auth_field)
+
+        if auth_type not in supported_auth_types:
+            updated_auth.pop(auth_field, None)
+            continue
+
+        if value in (None, ""):
+            if existing_reference:
+                updated_auth[auth_field] = existing_reference
+            else:
+                updated_auth.pop(auth_field, None)
+            continue
+
+        if value == ui_trigger_word:
+            if existing_reference:
+                updated_auth[auth_field] = existing_reference
+            else:
+                updated_auth.pop(auth_field, None)
+            continue
+
+        if validate_secret_name_dynamic(value):
+            updated_auth[auth_field] = value
+            continue
+
+        secret_name = _build_model_endpoint_secret_name(auth_field)
+        updated_auth[auth_field] = store_secret_in_key_vault(
+            secret_name,
+            value,
+            scope_value,
+            source=source,
+            scope=scope,
+        )
+
+    return updated
+
+
+def keyvault_model_endpoint_get_helper(endpoint_dict, scope_value, scope="global", return_type=SecretReturnType.TRIGGER):
+    """Resolve model endpoint auth secrets from Key Vault for backend or frontend use."""
+    if scope not in supported_scopes:
+        log_event(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}", level=logging.ERROR)
+        raise ValueError(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}")
+
+    settings = app_settings_cache.get_settings_cache()
+    enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
+    key_vault_name = settings.get("key_vault_name", None)
+    if not enable_key_vault_secret_storage or not key_vault_name:
+        return endpoint_dict
+
+    updated = dict(endpoint_dict)
+    auth = updated.get("auth", {})
+    if not isinstance(auth, dict):
+        return updated
+
+    updated_auth = dict(auth)
+    auth_updated = False
+    for auth_field in MODEL_ENDPOINT_SENSITIVE_AUTH_FIELDS:
+        value = updated_auth.get(auth_field)
+        if not value or not validate_secret_name_dynamic(value):
+            continue
+        if return_type == SecretReturnType.VALUE:
+            updated_auth[auth_field] = retrieve_secret_from_key_vault_by_full_name(value)
+        elif return_type == SecretReturnType.NAME:
+            updated_auth[auth_field] = value
+        else:
+            updated_auth[auth_field] = ui_trigger_word
+        auth_updated = True
+
+    if auth_updated:
+        updated["auth"] = updated_auth
+    return updated
+
+
+def keyvault_model_endpoint_delete_helper(endpoint_dict, scope_value, scope="global"):
+    """Delete Key Vault-backed model endpoint auth secrets referenced by an endpoint."""
+    if scope not in supported_scopes:
+        log_event(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}", level=logging.WARNING)
+        raise ValueError(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}")
+
+    settings = app_settings_cache.get_settings_cache()
+    enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
+    key_vault_name = settings.get("key_vault_name", None)
+    if not enable_key_vault_secret_storage or not key_vault_name:
+        return endpoint_dict
+
+    auth = endpoint_dict.get("auth", {})
+    if not isinstance(auth, dict):
+        return endpoint_dict
+
+    key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+    client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
+    for auth_field in MODEL_ENDPOINT_SENSITIVE_AUTH_FIELDS:
+        secret_name = auth.get(auth_field)
+        if not secret_name or not validate_secret_name_dynamic(secret_name):
+            continue
+        try:
+            log_event(
+                f"Deleting model endpoint auth secret '{auth_field}' for '{scope}' '{scope_value}'",
+                level=logging.INFO,
+            )
+            client.begin_delete_secret(secret_name)
+        except Exception as e:
+            log_event(
+                f"Error deleting model endpoint auth secret '{auth_field}' for '{scope}' '{scope_value}': {e}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            raise Exception(f"Error deleting model endpoint auth secret '{auth_field}' for '{scope}' '{scope_value}': {e}")
+
+    return endpoint_dict
+
+
+def keyvault_model_endpoint_cleanup_helper(previous_endpoint, current_endpoint, scope_value, scope="global"):
+    """Delete obsolete Key Vault-backed endpoint auth secrets that are no longer referenced."""
+    previous_auth = (previous_endpoint or {}).get("auth", {})
+    current_auth = (current_endpoint or {}).get("auth", {})
+    if not isinstance(previous_auth, dict) or not isinstance(current_auth, dict):
+        return current_endpoint
+
+    obsolete_auth = {}
+    for auth_field in MODEL_ENDPOINT_SENSITIVE_AUTH_FIELDS:
+        previous_secret = previous_auth.get(auth_field)
+        current_secret = current_auth.get(auth_field)
+        if previous_secret and validate_secret_name_dynamic(previous_secret) and previous_secret != current_secret:
+            obsolete_auth[auth_field] = previous_secret
+
+    if obsolete_auth:
+        keyvault_model_endpoint_delete_helper({"auth": obsolete_auth}, scope_value, scope=scope)
+
+    return current_endpoint
+
+
 # Helper to delete plugin secrets from Key Vault
 def keyvault_plugin_delete_helper(plugin_dict, scope_value, scope="global"):
     """

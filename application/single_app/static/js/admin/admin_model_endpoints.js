@@ -116,7 +116,10 @@ function markModified() {
 
 function formatProviderLabel(provider) {
     if (provider === "aifoundry") {
-        return "Azure AI Foundry";
+        return "Foundry (classic)";
+    }
+    if (provider === "new_foundry") {
+        return "New Foundry";
     }
     return "Azure OpenAI";
 }
@@ -292,7 +295,7 @@ function updateAuthVisibility() {
     const authType = endpointAuthTypeSelect?.value || "managed_identity";
     const provider = endpointProviderSelect?.value || "aoai";
     const isApiKey = authType === "api_key";
-    const isFoundry = provider === "aifoundry";
+    const isFoundry = provider === "aifoundry" || provider === "new_foundry";
     setElementVisibility(endpointProjectGroup, isFoundry);
     setElementVisibility(endpointProjectApiVersionGroup, isFoundry);
     setElementVisibility(endpointOpenAiApiVersionGroup, true);
@@ -332,6 +335,8 @@ function resetModal() {
     if (clientIdInput) clientIdInput.value = "";
     if (clientSecretInput) clientSecretInput.value = "";
     if (apiKeyInput) apiKeyInput.value = "";
+    if (clientSecretInput) clientSecretInput.placeholder = "";
+    if (apiKeyInput) apiKeyInput.placeholder = "";
 
     modalModels = [];
     if (modelsListEl) modelsListEl.innerHTML = "<p class=\"text-muted\">Fetch models to begin selection.</p>";
@@ -368,8 +373,18 @@ function openModalForEndpoint(endpoint) {
         if (miClientIdInput) miClientIdInput.value = endpoint.auth?.managed_identity_client_id || "";
         if (tenantIdInput) tenantIdInput.value = endpoint.auth?.tenant_id || "";
         if (clientIdInput) clientIdInput.value = endpoint.auth?.client_id || "";
-        if (clientSecretInput) clientSecretInput.value = endpoint.auth?.client_secret || "";
-        if (apiKeyInput) apiKeyInput.value = endpoint.auth?.api_key || "";
+        if (clientSecretInput) {
+            clientSecretInput.value = endpoint.auth?.client_secret || "";
+            if (!clientSecretInput.value && endpoint.has_client_secret) {
+                clientSecretInput.placeholder = "Stored";
+            }
+        }
+        if (apiKeyInput) {
+            apiKeyInput.value = endpoint.auth?.api_key || "";
+            if (!apiKeyInput.value && endpoint.has_api_key) {
+                apiKeyInput.placeholder = "Stored";
+            }
+        }
         modalModels = Array.isArray(endpoint.models) ? [...endpoint.models] : [];
         renderModalModels(modalModels);
     }
@@ -545,6 +560,7 @@ function buildEndpointPayload() {
     if (!endpointNameInput || !endpointUrlInput || !endpointOpenAiApiVersionInput) {
         return null;
     }
+    const endpointId = endpointIdInput?.value.trim() || "";
     const name = endpointNameInput.value.trim();
     const endpoint = endpointUrlInput.value.trim();
     const projectName = endpointProjectInput?.value.trim() || "";
@@ -560,12 +576,12 @@ function buildEndpointPayload() {
         return null;
     }
 
-    if (provider === "aifoundry" && !projectApiVersion) {
+    if ((provider === "aifoundry" || provider === "new_foundry") && !projectApiVersion) {
         showToast("Project API version is required for Foundry project discovery.", "warning");
         return null;
     }
 
-    if (provider === "aifoundry" && !endpoint.includes("/api/projects/") && !projectName) {
+    if ((provider === "aifoundry" || provider === "new_foundry") && !endpoint.includes("/api/projects/") && !projectName) {
         showToast("Foundry project name is required when the endpoint does not include /api/projects/.", "warning");
         return null;
     }
@@ -593,7 +609,7 @@ function buildEndpointPayload() {
         return null;
     }
 
-    if (provider === "aifoundry" && authType === "service_principal" && auth.management_cloud === "custom") {
+    if ((provider === "aifoundry" || provider === "new_foundry") && authType === "service_principal" && auth.management_cloud === "custom") {
         if (!auth.custom_authority) {
             showToast("Custom authority is required when Management Cloud is set to Custom.", "warning");
             return null;
@@ -619,7 +635,7 @@ function buildEndpointPayload() {
         openai_api_version: openAiApiVersion
     };
 
-    if (provider === "aifoundry") {
+    if (provider === "aifoundry" || provider === "new_foundry") {
         connection.project_api_version = projectApiVersion;
         if (projectName) {
             connection.project_name = projectName;
@@ -627,6 +643,7 @@ function buildEndpointPayload() {
     }
 
     return {
+        id: endpointId,
         provider,
         name,
         connection,
@@ -644,6 +661,10 @@ function saveEndpoint() {
 
         const models = collectModalModels();
         const endpointId = endpointIdInput?.value || generateId();
+        const existingEndpoint = modelEndpoints.find((endpoint) => endpoint.id === endpointId);
+        const authType = payload.auth?.type || "managed_identity";
+        const hasApiKey = authType === "api_key" && (Boolean(payload.auth?.api_key) || Boolean(existingEndpoint?.has_api_key));
+        const hasClientSecret = authType === "service_principal" && (Boolean(payload.auth?.client_secret) || Boolean(existingEndpoint?.has_client_secret));
 
         const endpointData = {
             id: endpointId,
@@ -653,7 +674,9 @@ function saveEndpoint() {
             auth: payload.auth,
             connection: payload.connection,
             management: payload.management,
-            models
+            models,
+            has_api_key: hasApiKey,
+            has_client_secret: hasClientSecret
         };
 
         const existingIndex = modelEndpoints.findIndex((endpoint) => endpoint.id === endpointId);

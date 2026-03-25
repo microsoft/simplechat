@@ -4,7 +4,7 @@ applyTo: '**/*.html, **/*.js, **/*.css'
 
 # UI Tests
 
-- Always create or update Azure Playwright UI tests when changing HTML, CSS, or JavaScript that affects rendering, user interaction, layout, client-side state, or browser workflows.
+- Always create or update Azure Playwright UI tests when changing HTML, CSS, or JavaScript that affects rendering, user interaction, layout, client-side state, or browser workflows. Leverage the `azure-mgmt-playwright` Python library.
 
 ## Location
 

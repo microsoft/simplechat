@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for API key manual model entry in endpoint modal.
-Version: 0.236.019
-Implemented in: 0.236.019
+Version: 0.239.155
+Implemented in: 0.239.155
 
 This test ensures the API key flow exposes manual model entry UI,
 per-model test buttons, and management cloud fields for service principal.
@@ -20,7 +20,7 @@ def read_file_text(file_path):
 def test_model_endpoints_api_key_manual_models():
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
-    template_path = os.path.join(repo_root, 'application', 'single_app', 'templates', 'admin_settings.html')
+    template_path = os.path.join(repo_root, 'application', 'single_app', 'templates', '_multiendpoint_modal.html')
     js_path = os.path.join(repo_root, 'application', 'single_app', 'static', 'js', 'admin', 'admin_model_endpoints.js')
     backend_path = os.path.join(repo_root, 'application', 'single_app', 'route_backend_models.py')
 
@@ -36,8 +36,10 @@ def test_model_endpoints_api_key_manual_models():
     assert 'addManualModel' in js_content, "Missing manual model add handler."
     assert 'test-model' in js_content, "Missing per-model test action wiring."
     assert 'management_cloud' in js_content, "Missing management cloud payload wiring."
+    assert 'const endpointId = endpointIdInput?.value.trim() || "";' in js_content, "Missing endpoint ID request wiring."
 
     assert '/api/models/test-model' in backend_content, "Missing backend test-model endpoint."
+    assert 'resolve_request_endpoint_payload' in backend_content, "Missing stored-secret request resolution helper."
 
     print("✅ API key manual model entry and per-model test wiring verified.")
 

@@ -24,7 +24,10 @@ from semantic_kernel_plugins.embedding_model_plugin import EmbeddingModelPlugin
 from semantic_kernel_plugins.fact_memory_plugin import FactMemoryPlugin
 from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
 from functions_settings import get_settings, get_user_settings
-from foundry_agent_runtime import AzureAIFoundryChatCompletionAgent
+from foundry_agent_runtime import (
+    AzureAIFoundryChatCompletionAgent,
+    AzureAIFoundryNewChatCompletionAgent,
+)
 from functions_appinsights import log_event, get_appinsights_logger
 from functions_authentication import get_current_user_id
 from semantic_kernel_plugins.plugin_health_checker import PluginHealthChecker, PluginErrorRecovery
@@ -33,7 +36,7 @@ from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
 from semantic_kernel_plugins.smart_http_plugin import SmartHttpPlugin
 from functions_debug import debug_print
 from flask import g
-from functions_keyvault import validate_secret_name_dynamic, retrieve_secret_from_key_vault, retrieve_secret_from_key_vault_by_full_name, SecretReturnType
+from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper, retrieve_secret_from_key_vault, retrieve_secret_from_key_vault_by_full_name, validate_secret_name_dynamic
 from functions_global_actions import get_global_actions
 from functions_global_agents import get_global_agents
 from functions_group_agents import get_group_agent, get_group_agents
@@ -320,7 +323,7 @@ def resolve_agent_config(agent, settings):
             )
 
         scope = "https://cognitiveservices.azure.com/.default"
-        if provider == "aifoundry":
+        if provider in ("aifoundry", "new_foundry"):
             scope = resolve_foundry_scope(auth_settings, endpoint=endpoint)
 
         return get_bearer_token_provider(credential, scope)
@@ -361,16 +364,29 @@ def resolve_agent_config(agent, settings):
         if is_group_agent:
             if allow_custom_agent_endpoints:
                 group_id = require_active_group(get_current_user_id())
-                endpoints.extend(get_group_model_endpoints(group_id))
+                endpoints.extend([{**endpoint, "_endpoint_scope": "group"} for endpoint in get_group_model_endpoints(group_id)])
         elif not is_global_agent:
             if allow_custom_agent_endpoints:
                 user_settings = get_user_settings(get_current_user_id())
-                endpoints.extend(user_settings.get("settings", {}).get("personal_model_endpoints", []))
-        endpoints.extend(settings.get("model_endpoints", []) or [])
+                endpoints.extend([
+                    {**endpoint, "_endpoint_scope": "user"}
+                    for endpoint in user_settings.get("settings", {}).get("personal_model_endpoints", [])
+                ])
+        endpoints.extend([{**endpoint, "_endpoint_scope": "global"} for endpoint in (settings.get("model_endpoints", []) or [])])
 
         endpoint_cfg = next((e for e in endpoints if e.get("id") == endpoint_id), None)
         if not endpoint_cfg or not endpoint_cfg.get("enabled", True):
             return None
+
+        endpoint_scope = endpoint_cfg.get("_endpoint_scope", "global")
+        endpoint_cfg = dict(endpoint_cfg)
+        endpoint_cfg.pop("_endpoint_scope", None)
+        endpoint_cfg = keyvault_model_endpoint_get_helper(
+            endpoint_cfg,
+            endpoint_cfg.get("id") or endpoint_id,
+            scope=endpoint_scope,
+            return_type=SecretReturnType.VALUE,
+        )
 
         models = endpoint_cfg.get("models", []) or []
         model_cfg = next((m for m in models if m.get("id") == model_id), None)
@@ -393,9 +409,13 @@ def resolve_agent_config(agent, settings):
         }
 
     def resolve_foundry_endpoint_config():
+        foundry_settings_key = "new_foundry" if agent_type == "new_foundry" else "azure_ai_foundry"
+        allowed_providers = {"aifoundry"}
+        if agent_type == "new_foundry":
+            allowed_providers.add("new_foundry")
         endpoint_id = (agent.get("model_endpoint_id") or "").strip()
         if not endpoint_id:
-            foundry_settings = other_settings.get("azure_ai_foundry", {}) or {}
+            foundry_settings = other_settings.get(foundry_settings_key, {}) or {}
             endpoint_id = (foundry_settings.get("endpoint_id") or "").strip()
         if not endpoint_id:
             return None
@@ -404,33 +424,53 @@ def resolve_agent_config(agent, settings):
         if is_group_agent:
             if allow_custom_agent_endpoints:
                 group_id = require_active_group(get_current_user_id())
-                endpoints.extend(get_group_model_endpoints(group_id))
+                endpoints.extend([{**endpoint, "_endpoint_scope": "group"} for endpoint in get_group_model_endpoints(group_id)])
         elif not is_global_agent:
             if allow_custom_agent_endpoints:
                 user_settings = get_user_settings(get_current_user_id())
-                endpoints.extend(user_settings.get("settings", {}).get("personal_model_endpoints", []))
-        endpoints.extend(settings.get("model_endpoints", []) or [])
+                endpoints.extend([
+                    {**endpoint, "_endpoint_scope": "user"}
+                    for endpoint in user_settings.get("settings", {}).get("personal_model_endpoints", [])
+                ])
+        endpoints.extend([{**endpoint, "_endpoint_scope": "global"} for endpoint in (settings.get("model_endpoints", []) or [])])
 
         endpoint_cfg = next((e for e in endpoints if e.get("id") == endpoint_id), None)
         if not endpoint_cfg or not endpoint_cfg.get("enabled", True):
             return None
-        if (endpoint_cfg.get("provider") or "aoai").lower() != "aifoundry":
+        if (endpoint_cfg.get("provider") or "aoai").lower() not in allowed_providers:
             return None
+        endpoint_scope = endpoint_cfg.get("_endpoint_scope", "global")
+        endpoint_cfg = dict(endpoint_cfg)
+        endpoint_cfg.pop("_endpoint_scope", None)
+        endpoint_cfg = keyvault_model_endpoint_get_helper(
+            endpoint_cfg,
+            endpoint_cfg.get("id") or endpoint_id,
+            scope=endpoint_scope,
+            return_type=SecretReturnType.VALUE,
+        )
         return endpoint_cfg
 
     def enrich_foundry_settings(foundry_settings, endpoint_cfg):
-        if not endpoint_cfg or endpoint_cfg.get("provider") != "aifoundry":
+        provider = (endpoint_cfg.get("provider") or "aoai").lower() if endpoint_cfg else "aoai"
+        if provider not in {"aifoundry", "new_foundry"}:
             return foundry_settings
         connection = endpoint_cfg.get("connection", {}) or {}
         auth = endpoint_cfg.get("auth", {}) or {}
         foundry_settings["endpoint_id"] = endpoint_cfg.get("id") or foundry_settings.get("endpoint_id")
         foundry_settings["endpoint"] = connection.get("endpoint") or foundry_settings.get("endpoint")
-        foundry_settings["api_version"] = (
-            connection.get("project_api_version")
-            or connection.get("api_version")
-            or foundry_settings.get("api_version")
-        )
         foundry_settings["project_name"] = connection.get("project_name") or foundry_settings.get("project_name")
+        if agent_type == "new_foundry":
+            foundry_settings["responses_api_version"] = (
+                connection.get("openai_api_version")
+                or connection.get("api_version")
+                or foundry_settings.get("responses_api_version")
+            )
+        else:
+            foundry_settings["api_version"] = (
+                connection.get("project_api_version")
+                or connection.get("api_version")
+                or foundry_settings.get("api_version")
+            )
         foundry_settings["authentication_type"] = auth.get("type") or foundry_settings.get("authentication_type")
         foundry_settings["managed_identity_type"] = auth.get("managed_identity_type") or foundry_settings.get("managed_identity_type")
         foundry_settings["managed_identity_client_id"] = auth.get("managed_identity_client_id") or foundry_settings.get("managed_identity_client_id")
@@ -443,14 +483,19 @@ def resolve_agent_config(agent, settings):
         return foundry_settings
 
     # If per-user mode is not enabled, ignore all user/agent-specific config fields
-    if agent_type == "aifoundry":
-        foundry_settings = other_settings.get("azure_ai_foundry", {}) or {}
+    if agent_type in {"aifoundry", "new_foundry"}:
+        foundry_settings_key = "new_foundry" if agent_type == "new_foundry" else "azure_ai_foundry"
+        foundry_settings = other_settings.get(foundry_settings_key, {}) or {}
         endpoint_cfg = resolve_foundry_endpoint_config()
         if endpoint_cfg:
             foundry_settings = enrich_foundry_settings(foundry_settings, endpoint_cfg)
-            other_settings["azure_ai_foundry"] = foundry_settings
+            other_settings[foundry_settings_key] = foundry_settings
             agent["azure_openai_gpt_endpoint"] = foundry_settings.get("endpoint", "")
-            agent["azure_openai_gpt_api_version"] = foundry_settings.get("api_version", "")
+            agent["azure_openai_gpt_api_version"] = foundry_settings.get(
+                "responses_api_version" if agent_type == "new_foundry" else "api_version",
+                "",
+            )
+            agent["azure_openai_gpt_deployment"] = foundry_settings.get("project_name", agent.get("azure_openai_gpt_deployment", ""))
         return {
             "name": agent.get("name"),
             "display_name": agent.get("display_name", agent.get("name")),
@@ -461,7 +506,7 @@ def resolve_agent_config(agent, settings):
             "is_group": agent.get("is_group", False),
             "group_id": agent.get("group_id"),
             "group_name": agent.get("group_name"),
-            "agent_type": "aifoundry",
+            "agent_type": agent_type,
             "other_settings": other_settings,
             "max_completion_tokens": agent.get("max_completion_tokens", -1),
         }
@@ -471,7 +516,7 @@ def resolve_agent_config(agent, settings):
     if not per_user_enabled:
         try:
             token_provider = None
-            if multi_endpoint_config and multi_endpoint_config.get("provider") in ("aoai", "aifoundry"):
+            if multi_endpoint_config and multi_endpoint_config.get("provider") in ("aoai", "aifoundry", "new_foundry"):
                 auth = multi_endpoint_config.get("auth", {}) or {}
                 auth_type = (auth.get("type") or "managed_identity").lower()
                 provider = multi_endpoint_config.get("provider")
@@ -548,7 +593,7 @@ def resolve_agent_config(agent, settings):
     can_use_agent_endpoints = allow_custom_agent_endpoints
     user_apim_allowed = user_apim_enabled and can_use_agent_endpoints
 
-    if multi_endpoint_config and multi_endpoint_config.get("provider") in ("aoai", "aifoundry"):
+    if multi_endpoint_config and multi_endpoint_config.get("provider") in ("aoai", "aifoundry", "new_foundry"):
         auth = multi_endpoint_config.get("auth", {}) or {}
         auth_type = (auth.get("type") or "managed_identity").lower()
         provider = multi_endpoint_config.get("provider")
@@ -1283,8 +1328,9 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
             api_version=agent_config["api_version"],
         )
 
-    if agent_type == "aifoundry":
-        foundry_settings = (agent_config.get("other_settings") or {}).get("azure_ai_foundry") or {}
+    if agent_type in {"aifoundry", "new_foundry"}:
+        foundry_settings_key = "new_foundry" if agent_type == "new_foundry" else "azure_ai_foundry"
+        foundry_settings = (agent_config.get("other_settings") or {}).get(foundry_settings_key) or {}
         endpoint = resolve_foundry_endpoint_from_settings(foundry_settings, settings)
         if not endpoint:
             log_event(
@@ -1300,7 +1346,10 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
             )
             return kernel, None
 
-        foundry_agent = AzureAIFoundryChatCompletionAgent(agent_config, settings)
+        if agent_type == "new_foundry":
+            foundry_agent = AzureAIFoundryNewChatCompletionAgent(agent_config, settings)
+        else:
+            foundry_agent = AzureAIFoundryChatCompletionAgent(agent_config, settings)
         agent_objs[agent_config["name"]] = foundry_agent
         log_event(
             f"[SK Loader] Registered Foundry agent: {agent_config['name']} ({mode_label})",
@@ -1308,6 +1357,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 "agent_name": agent_config["name"],
                 "agent_id": agent_config.get("id"),
                 "is_global": agent_config.get("is_global", False),
+                "agent_type": agent_type,
             },
             level=logging.INFO,
         )
@@ -2093,7 +2143,7 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
     agent_cfg['agent_type'] = agent_type
     if agent_type == 'local':
         kernel, agent_objs = load_single_agent_for_kernel(kernel, agent_cfg, settings, g, redis_client=redis_client, mode_label="per-user")
-    elif agent_type == 'aifoundry':
+    elif agent_type in ('aifoundry', 'new_foundry'):
         kernel, agent_objs = load_single_agent_for_kernel(kernel, agent_cfg, settings, g, redis_client=redis_client, mode_label="per-user")
     else:
         log_event(

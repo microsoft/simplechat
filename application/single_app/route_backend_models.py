@@ -3,8 +3,9 @@
 from config import *
 from functions_authentication import *
 from functions_group import assert_group_role, get_group_model_endpoints, require_active_group, update_group_model_endpoints
+from functions_keyvault import SecretReturnType, keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_get_helper, keyvault_model_endpoint_save_helper
 from functions_settings import *
-from foundry_agent_runtime import list_foundry_agents_from_endpoint
+from foundry_agent_runtime import list_foundry_agents_from_endpoint, list_new_foundry_agents_from_project, resolve_foundry_project_base, resolve_foundry_project_api_version, build_project_credential, resolve_authority
 from functions_debug import debug_print
 from swagger_wrapper import swagger_route, get_auth_security
 from azure.identity import DefaultAzureCredential, ClientSecretCredential, get_bearer_token_provider
@@ -12,38 +13,10 @@ import re
 import requests
 
 
-def _merge_auth_settings(existing_auth, incoming_auth):
-    if not isinstance(existing_auth, dict):
-        existing_auth = {}
-    if not isinstance(incoming_auth, dict):
-        incoming_auth = {}
-    merged = dict(existing_auth)
-    for key, value in incoming_auth.items():
-        if value in (None, ""):
-            continue
-        merged[key] = value
-    return merged
-
-
-def _merge_endpoint_payload(existing, incoming):
-    if not isinstance(existing, dict):
-        return incoming
-    merged = dict(existing)
-    for key, value in incoming.items():
-        if key == "auth":
-            merged["auth"] = _merge_auth_settings(existing.get("auth"), value)
-            continue
-        if value in (None, ""):
-            continue
-        merged[key] = value
-    return merged
-
-
 def register_route_backend_models(app):
     """
     Register backend routes for fetching Azure OpenAI models.
     """
-
     def resolve_scoped_model_endpoints(user_id, scope):
         settings = get_settings()
         endpoints = []
@@ -62,12 +35,38 @@ def register_route_backend_models(app):
         endpoints = resolve_scoped_model_endpoints(user_id, scope)
         return next((endpoint for endpoint in endpoints if endpoint.get("id") == endpoint_id), None)
 
+    def resolve_endpoint_scope_value(endpoint_cfg, fallback_endpoint_id=""):
+        endpoint_id = (fallback_endpoint_id or endpoint_cfg.get("id") or "").strip()
+        if not endpoint_id:
+            raise ValueError("Endpoint ID is required to resolve stored secrets.")
+        return endpoint_id
+
+    def resolve_request_endpoint_payload(payload, scope="global"):
+        user_id = get_current_user_id()
+        endpoint_id = str(payload.get("endpoint_id") or payload.get("id") or "").strip()
+        persisted_endpoint = resolve_endpoint_by_id(user_id, scope, endpoint_id) if endpoint_id else None
+        merged_payload = merge_model_endpoint_payload(persisted_endpoint or {}, payload)
+        if endpoint_id:
+            merged_payload["id"] = endpoint_id
+
+        scope_value = merged_payload.get("id") or endpoint_id
+        if scope_value:
+            merged_payload = keyvault_model_endpoint_get_helper(
+                merged_payload,
+                resolve_endpoint_scope_value(merged_payload, scope_value),
+                scope=scope,
+                return_type=SecretReturnType.VALUE,
+            )
+        return merged_payload
+
     def build_foundry_settings_from_endpoint(endpoint_cfg):
         connection = endpoint_cfg.get("connection", {}) or {}
         auth = endpoint_cfg.get("auth", {}) or {}
         return {
             "endpoint": connection.get("endpoint"),
             "api_version": connection.get("project_api_version") or connection.get("api_version") or "v1",
+            "responses_api_version": connection.get("openai_api_version") or connection.get("api_version") or "",
+            "activity_api_version": connection.get("project_api_version") or connection.get("api_version") or "",
             "project_name": connection.get("project_name") or "",
             "authentication_type": auth.get("type") or "managed_identity",
             "managed_identity_type": auth.get("managed_identity_type") or "system_assigned",
@@ -91,26 +90,14 @@ def register_route_backend_models(app):
         return "https://ai.azure.com/.default"
 
     def build_foundry_token(auth_settings):
-        auth_type = (auth_settings.get("type") or "managed_identity").lower()
         management_cloud = (auth_settings.get("management_cloud") or "public").lower()
         scope = resolve_foundry_scope(auth_settings)
+        auth_type = (auth_settings.get("type") or "managed_identity").lower()
         debug_print(f"[Models] Foundry token auth_type={auth_type}, scope={scope}, cloud={management_cloud}")
-        if auth_type == "service_principal":
-            authority_override = resolve_authority(auth_settings)
-            credential = ClientSecretCredential(
-                tenant_id=auth_settings.get("tenant_id"),
-                client_id=auth_settings.get("client_id"),
-                client_secret=auth_settings.get("client_secret"),
-                authority=authority_override
-            )
-        elif auth_type == "api_key":
-            debug_print("[Models] API key auth requested for model discovery (not supported).")
-            raise ValueError("API key auth is not supported for model discovery.")
-        else:
-            managed_identity_client_id = auth_settings.get("managed_identity_client_id") or None
-            credential = DefaultAzureCredential(managed_identity_client_id=managed_identity_client_id)
+        credential = build_project_credential(auth_settings)
         token = credential.get_token(scope)
         return token.token
+
 
     def build_cognitive_services_client(subscription_id, auth_settings):
         auth_type = (auth_settings.get("type") or "managed_identity").lower()
@@ -144,15 +131,6 @@ def register_route_backend_models(app):
             subscription_id=subscription_id
         )
 
-    def resolve_authority(auth_settings):
-        management_cloud = (auth_settings.get("management_cloud") or "public").lower()
-        if management_cloud == "government":
-            return "https://login.microsoftonline.us"
-        if management_cloud == "custom":
-            custom_authority = auth_settings.get("custom_authority") or ""
-            return custom_authority.strip() or None
-        return None
-
     def build_inference_client(endpoint, api_version, auth_settings, provider="aoai"):
         auth_type = (auth_settings.get("type") or "managed_identity").lower()
         if auth_type == "api_key":
@@ -178,7 +156,7 @@ def register_route_backend_models(app):
             credential = DefaultAzureCredential(managed_identity_client_id=managed_identity_client_id)
 
         scope = cognitive_services_scope
-        if provider == "aifoundry":
+        if provider in ("aifoundry", "new_foundry"):
             scope = resolve_foundry_scope(auth_settings)
         debug_print(f"[Models] Inference token scope={scope} provider={provider}")
         token_provider = get_bearer_token_provider(credential, scope)
@@ -187,22 +165,6 @@ def register_route_backend_models(app):
             azure_endpoint=endpoint,
             azure_ad_token_provider=token_provider
         )
-
-    def resolve_foundry_project_base(endpoint, project_name):
-        if not endpoint:
-            raise ValueError("Missing Foundry endpoint")
-        base = endpoint.rstrip("/")
-        if "/api/projects/" in base:
-            return base
-        if project_name:
-            return f"{base}/api/projects/{project_name}"
-        raise ValueError("Foundry project name is required when endpoint does not include /api/projects/.")
-
-    def resolve_foundry_project_api_version(api_version):
-        version = (api_version or "").strip()
-        if version and version.startswith("v"):
-            return version
-        return "v1"
 
     def fetch_foundry_project_deployments(endpoint, api_version, auth_settings, project_name=None):
         if not endpoint:
@@ -243,8 +205,9 @@ def register_route_backend_models(app):
             return True
         return str(state).lower() == "succeeded"
 
-    def handle_fetch_model_list():
+    def handle_fetch_model_list(scope="global"):
         data = request.get_json() or {}
+        data = resolve_request_endpoint_payload(data, scope=scope)
         provider = (data.get("provider") or "aoai").lower()
         connection = data.get("connection") or {}
         auth_settings = data.get("auth") or {}
@@ -259,7 +222,7 @@ def register_route_backend_models(app):
         )
 
         try:
-            if provider == "aifoundry":
+            if provider in ("aifoundry", "new_foundry"):
                 endpoint = connection.get("endpoint")
                 api_version = connection.get("project_api_version") or connection.get("api_version") or "v1"
                 project_name = connection.get("project_name")
@@ -318,8 +281,9 @@ def register_route_backend_models(app):
             debug_print(f"[Models] Fetch model list error: {str(e)}")
             return jsonify({"error": str(e)}), 400
 
-    def handle_test_model_connection():
+    def handle_test_model_connection(scope="global"):
         data = request.get_json() or {}
+        data = resolve_request_endpoint_payload(data, scope=scope)
         provider = (data.get("provider") or "aoai").lower()
         connection = data.get("connection") or {}
         auth_settings = data.get("auth") or {}
@@ -340,7 +304,7 @@ def register_route_backend_models(app):
             return jsonify({"error": "Endpoint, API version, and deployment name are required."}), 400
 
         try:
-            if provider not in ("aoai", "aifoundry"):
+            if provider not in ("aoai", "aifoundry", "new_foundry"):
                 return jsonify({"error": "Model provider not found."}), 400
 
             gpt_client = build_inference_client(endpoint, api_version, auth_settings, provider=provider)
@@ -550,6 +514,7 @@ def register_route_backend_models(app):
     @admin_required
     def test_model_inference_connection():
         data = request.get_json() or {}
+        data = resolve_request_endpoint_payload(data, scope="global")
         provider = (data.get("provider") or "aoai").lower()
         connection = data.get("connection") or {}
         management = data.get("management") or {}
@@ -564,7 +529,7 @@ def register_route_backend_models(app):
         )
 
         try:
-            if provider == "aifoundry":
+            if provider in ("aifoundry", "new_foundry"):
                 endpoint = connection.get("endpoint")
                 api_version = connection.get("project_api_version") or connection.get("api_version") or "v1"
                 project_name = connection.get("project_name")
@@ -613,7 +578,7 @@ def register_route_backend_models(app):
     @user_required
     @admin_required
     def fetch_model_list():
-        return handle_fetch_model_list()
+        return handle_fetch_model_list(scope="global")
 
 
     @app.route('/api/user/model-endpoints', methods=['GET'])
@@ -645,16 +610,50 @@ def register_route_backend_models(app):
         user_settings = get_user_settings(user_id)
         existing = user_settings.get("settings", {}).get("personal_model_endpoints", [])
 
-        merged = []
-        for endpoint in incoming:
+        merged = merge_model_endpoints_with_existing(incoming, existing)
+
+        normalized, _ = normalize_model_endpoints(merged)
+        existing_by_id = {
+            endpoint.get("id"): endpoint
+            for endpoint in existing
+            if isinstance(endpoint, dict) and endpoint.get("id")
+        }
+        saved_endpoints = [
+            keyvault_model_endpoint_save_helper(
+                endpoint,
+                resolve_endpoint_scope_value(endpoint),
+                scope="user",
+                existing_endpoint=existing_by_id.get(endpoint.get("id")),
+            )
+            for endpoint in normalized
+        ]
+
+        for endpoint in saved_endpoints:
             if not isinstance(endpoint, dict):
                 continue
             endpoint_id = endpoint.get("id")
-            existing_endpoint = next((e for e in existing if e.get("id") == endpoint_id), None)
-            merged.append(_merge_endpoint_payload(existing_endpoint or {}, endpoint))
+            if not endpoint_id:
+                continue
+            keyvault_model_endpoint_cleanup_helper(
+                existing_by_id.get(endpoint_id),
+                endpoint,
+                endpoint_id,
+                scope="user",
+            )
 
-        normalized, _ = normalize_model_endpoints(merged)
-        update_user_settings(user_id, {"personal_model_endpoints": normalized})
+        saved_endpoint_ids = {
+            endpoint.get("id")
+            for endpoint in saved_endpoints
+            if isinstance(endpoint, dict) and endpoint.get("id")
+        }
+        for endpoint in existing:
+            if not isinstance(endpoint, dict):
+                continue
+            endpoint_id = endpoint.get("id")
+            if endpoint_id and endpoint_id not in saved_endpoint_ids:
+                keyvault_model_endpoint_delete_helper(endpoint, endpoint_id, scope="user")
+
+        update_user_settings(user_id, {"personal_model_endpoints": saved_endpoints})
         return jsonify({"success": True})
 
 
@@ -700,16 +699,51 @@ def register_route_backend_models(app):
             return jsonify({"error": str(exc)}), 403
 
         existing = get_group_model_endpoints(group_id)
-        merged = []
-        for endpoint in incoming:
+
+        merged = merge_model_endpoints_with_existing(incoming, existing)
+
+        normalized, _ = normalize_model_endpoints(merged)
+        existing_by_id = {
+            endpoint.get("id"): endpoint
+            for endpoint in existing
+            if isinstance(endpoint, dict) and endpoint.get("id")
+        }
+        saved_endpoints = [
+            keyvault_model_endpoint_save_helper(
+                endpoint,
+                resolve_endpoint_scope_value(endpoint),
+                scope="group",
+                existing_endpoint=existing_by_id.get(endpoint.get("id")),
+            )
+            for endpoint in normalized
+        ]
+
+        for endpoint in saved_endpoints:
             if not isinstance(endpoint, dict):
                 continue
             endpoint_id = endpoint.get("id")
-            existing_endpoint = next((e for e in existing if e.get("id") == endpoint_id), None)
-            merged.append(_merge_endpoint_payload(existing_endpoint or {}, endpoint))
+            if not endpoint_id:
+                continue
+            keyvault_model_endpoint_cleanup_helper(
+                existing_by_id.get(endpoint_id),
+                endpoint,
+                endpoint_id,
+                scope="group",
+            )
 
-        normalized, _ = normalize_model_endpoints(merged)
-        update_group_model_endpoints(group_id, normalized)
+        saved_endpoint_ids = {
+            endpoint.get("id")
+            for endpoint in saved_endpoints
+            if isinstance(endpoint, dict) and endpoint.get("id")
+        }
+        for endpoint in existing:
+            if not isinstance(endpoint, dict):
+                continue
+            endpoint_id = endpoint.get("id")
+            if endpoint_id and endpoint_id not in saved_endpoint_ids:
+                keyvault_model_endpoint_delete_helper(endpoint, endpoint_id, scope="group")
+
+        update_group_model_endpoints(group_id, saved_endpoints)
         return jsonify({"success": True})
 
 
@@ -741,17 +775,27 @@ def register_route_backend_models(app):
         endpoint_cfg = resolve_endpoint_by_id(user_id, scope, endpoint_id)
         if not endpoint_cfg:
             return jsonify({"error": "Model endpoint not found."}), 404
-        if (endpoint_cfg.get("provider") or "aoai").lower() != "aifoundry":
-            return jsonify({"error": "Selected endpoint is not an Azure AI Foundry endpoint."}), 400
+        endpoint_cfg = keyvault_model_endpoint_get_helper(
+            endpoint_cfg,
+            resolve_endpoint_scope_value(endpoint_cfg, endpoint_id),
+            scope=scope,
+            return_type=SecretReturnType.VALUE,
+        )
+        provider = (endpoint_cfg.get("provider") or "aoai").lower()
+        if provider not in ("aifoundry", "new_foundry"):
+            return jsonify({"error": "Selected endpoint is not a Foundry endpoint."}), 400
 
         foundry_settings = build_foundry_settings_from_endpoint(endpoint_cfg)
         try:
-            agents = list_foundry_agents_from_endpoint(foundry_settings, get_settings())
+            if provider == "new_foundry":
+                agents = list_new_foundry_agents_from_project(endpoint_cfg)
+            else:
+                agents = list_foundry_agents_from_endpoint(foundry_settings, get_settings())
         except Exception as exc:
             debug_print(f"[Models] Foundry agent list error: {str(exc)}")
             return jsonify({"error": str(exc)}), 400
 
-        return jsonify({"agents": agents})
+        return jsonify({"agents": agents, "provider": provider})
 
 
     @app.route('/api/models/test-model', methods=['POST'])
@@ -760,7 +804,7 @@ def register_route_backend_models(app):
     @user_required
     @admin_required
     def test_model_connection():
-        return handle_test_model_connection()
+        return handle_test_model_connection(scope="global")
 
 
     @app.route('/api/user/models/fetch', methods=['POST'])
@@ -768,7 +812,7 @@ def register_route_backend_models(app):
     @login_required
     @user_required
     def fetch_model_list_user():
-        return handle_fetch_model_list()
+        return handle_fetch_model_list(scope="user")
 
 
     @app.route('/api/user/models/test-model', methods=['POST'])
@@ -776,7 +820,7 @@ def register_route_backend_models(app):
     @login_required
     @user_required
     def test_model_connection_user():
-        return handle_test_model_connection()
+        return handle_test_model_connection(scope="user")
 
 
     @app.route('/api/group/models/fetch', methods=['POST'])
@@ -795,7 +839,7 @@ def register_route_backend_models(app):
             return jsonify({"error": str(exc)}), 404
         except PermissionError as exc:
             return jsonify({"error": str(exc)}), 403
-        return handle_fetch_model_list()
+        return handle_fetch_model_list(scope="group")
 
 
     @app.route('/api/group/models/test-model', methods=['POST'])
@@ -814,4 +858,4 @@ def register_route_backend_models(app):
             return jsonify({"error": str(exc)}), 404
         except PermissionError as exc:
             return jsonify({"error": str(exc)}), 403
-        return handle_test_model_connection()
+        return handle_test_model_connection(scope="group")

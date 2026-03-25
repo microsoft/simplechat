@@ -2,6 +2,16 @@
 
 # Feature Release
 
+### **(v0.239.156)**
+
+#### Bug Fixes
+
+*   **MultiGPT Endpoint Key Vault Secret Storage and Foundry Fetch Reliability**
+    *   MultiGPT endpoint secrets such as API keys and service principal client secrets now move into Azure Key Vault when Key Vault secret storage is enabled, instead of remaining in saved endpoint payloads.
+    *   Endpoint fetch, test, Foundry listing, and runtime execution now resolve stored secrets server-side by endpoint ID, so reopening an endpoint no longer depends on the browser still holding plaintext credentials.
+    *   Fixed a follow-up regression in Foundry model discovery where sync fetch routes could fail with `'coroutine' object has no attribute 'token'` because async credentials were being reused in a synchronous token acquisition path.
+    *   (Ref: `functions_keyvault.py`, `functions_settings.py`, `route_backend_models.py`, `route_frontend_admin_settings.py`, `semantic_kernel_loader.py`, `foundry_agent_runtime.py`, `admin_model_endpoints.js`, `workspace_model_endpoints.js`, `test_model_endpoints_key_vault_secret_storage.py`, `test_foundry_model_fetch_sync_credentials.py`)
+
 ### **(v0.239.153)**
 
 #### Bug Fixes
