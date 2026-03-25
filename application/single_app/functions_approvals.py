@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 from config import cosmos_approvals_container, cosmos_groups_container
 from functions_appinsights import log_event
-from functions_notifications import create_notification
+from functions_notifications import create_notification, delete_notifications_by_metadata
 from functions_group import find_group_by_id
 from functions_debug import debug_print
 
@@ -34,6 +34,8 @@ TYPE_DELETE_USER_DOCUMENTS = "delete_user_documents"
 # TTL settings
 TTL_AUTO_DENY_DAYS = 3
 TTL_AUTO_DENY_SECONDS = TTL_AUTO_DENY_DAYS * 24 * 60 * 60  # 3 days in seconds
+
+PENDING_APPROVAL_ADMIN_NOTIFICATION_TYPES = ['approval_request_pending']
 
 
 def create_approval_request(
@@ -153,6 +155,7 @@ def create_approval_request(
         
         # Create notifications for eligible approvers
         _create_approval_notifications(approval_request, group if request_type != TYPE_DELETE_USER_DOCUMENTS else None)
+        _create_requester_pending_notification(approval_request)
         
         return approval_request
         
@@ -323,6 +326,8 @@ def approve_request(
             'comment': comment
         })
         debug_print(f"Approved request: {approval}")    
+
+        _clear_pending_admin_notifications(approval_id)
         
         # Create notification for requester
         create_notification(
@@ -414,14 +419,20 @@ def deny_request(
             'comment': comment
         })
         debug_print(f"Request denied: {approval_id}")
+
+        _clear_pending_admin_notifications(approval_id)
         
         # Create notification for requester (only if not auto-denied)
         if not auto_denied:
+            reason_suffix = f" Reason provided: {comment}" if comment else ""
             create_notification(
                 user_id=approval['requester_id'],
                 notification_type='approval_request_denied',
                 title=f"Request Denied: {_format_request_type(approval['request_type'])}",
-                message=f"Your request for {approval['group_name']} was denied by {denier_name}.",
+                message=(
+                    f"Your request for {approval['group_name']} was denied by {denier_name}."
+                    f"{reason_suffix}"
+                ),
                 link_url='/approvals',
                 link_context={
                     'approval_id': approval_id
@@ -832,6 +843,50 @@ def _create_approval_notifications(
         })
         debug_print(f"Error notifying users about approval request {approval['id']}: {str(e)}")
         # Don't raise - notifications are non-critical
+
+
+def _create_requester_pending_notification(approval: Dict[str, Any]) -> None:
+    """Notify the requester that their approval request is awaiting review."""
+    try:
+        create_notification(
+            user_id=approval['requester_id'],
+            notification_type='approval_request_pending_submitter',
+            title=f"Request Submitted: {_format_request_type(approval['request_type'])}",
+            message=(
+                f"Your request for {approval['group_name']} is pending approval. "
+                "You'll be notified when a reviewer makes a decision."
+            ),
+            link_url='/approvals',
+            link_context={
+                'approval_id': approval['id']
+            },
+            metadata={
+                'approval_id': approval['id'],
+                'request_type': approval['request_type'],
+                'group_id': approval['group_id']
+            }
+        )
+    except Exception as e:
+        log_event("[Approvals] Error notifying requester of pending approval", {
+            'error': str(e),
+            'approval_id': approval['id']
+        }, level=logging.WARNING)
+        debug_print(f"Error notifying requester of pending approval {approval['id']}: {e}")
+
+
+def _clear_pending_admin_notifications(approval_id: str) -> None:
+    """Remove stale pending-review notifications once an approval is resolved."""
+    try:
+        delete_notifications_by_metadata(
+            metadata_filters={'approval_id': approval_id},
+            notification_types=PENDING_APPROVAL_ADMIN_NOTIFICATION_TYPES
+        )
+    except Exception as e:
+        log_event("[Approvals] Error clearing pending admin notifications", {
+            'error': str(e),
+            'approval_id': approval_id
+        }, level=logging.WARNING)
+        debug_print(f"Error clearing pending admin notifications for {approval_id}: {e}")
 
 
 def _format_request_type(request_type: str) -> str:

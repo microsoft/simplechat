@@ -58,6 +58,7 @@ def register_route_frontend_control_center(app):
             return redirect(url_for('admin_settings'))
     
     @app.route('/approvals', methods=['GET'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def approvals():
@@ -73,11 +74,13 @@ def register_route_frontend_control_center(app):
             # Get user settings for profile and navigation
             user_id = get_current_user_id()
             user_settings = get_user_settings(user_id)
+            user_roles = (session.get('user', {}) or {}).get('roles', [])
             
             return render_template('approvals.html', 
                                  app_settings=public_settings, 
                                  settings=public_settings,
-                                 user_settings=user_settings)
+                                 user_settings=user_settings,
+                                 has_agent_template_admin_access='Admin' in user_roles)
         except Exception as e:
             import traceback
             error_trace = traceback.format_exc()
