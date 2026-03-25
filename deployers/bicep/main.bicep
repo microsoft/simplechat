@@ -125,11 +125,6 @@ param existingOpenAIResourceGroup string = ''
 - Used when reusing a standard Azure OpenAI resource across subscriptions''')
 param existingOpenAISubscriptionId string = ''
 
-@description('''Optional API key for an existing Azure OpenAI or Azure AI Foundry OpenAI-compatible endpoint.
-- Required for key-based authentication when reusing an external endpoint and automatic key retrieval is not available''')
-@secure()
-param existingOpenAIKey string = ''
-
 @description('''Azure OpenAI deployment type used for the default GPT and embedding model deployments.
 - Azure Commercial options: Standard, DatazoneStandard, GlobalStandard
 - Azure Government default model deployments use Standard regardless of this selection
@@ -363,9 +358,6 @@ module cosmosDB 'modules/cosmosDb.bicep' = {
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
 
-    keyVault: keyVault.outputs.keyVaultName
-    authenticationType: authenticationType
-    configureApplicationPermissions: configureApplicationPermissions
     enablePrivateNetworking: enablePrivateNetworking
     allowedIpAddresses: cosmosDbIpRules
   }
@@ -384,9 +376,6 @@ module acr 'modules/azureContainerRegistry.bicep' = {
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
 
-    keyVault: keyVault.outputs.keyVaultName
-    authenticationType: authenticationType
-    configureApplicationPermissions: configureApplicationPermissions
     enablePrivateNetworking: enablePrivateNetworking
     allowedIpAddresses: acrIpRules
   }
@@ -406,10 +395,6 @@ module searchService 'modules/search.bicep' = {
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
 
-    keyVault: keyVault.outputs.keyVaultName
-    authenticationType: authenticationType
-    configureApplicationPermissions: configureApplicationPermissions
-
     enablePrivateNetworking: enablePrivateNetworking
   }
 }
@@ -427,10 +412,6 @@ module docIntel 'modules/documentIntelligence.bicep' = {
     tags: tags
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
-
-    keyVault: keyVault.outputs.keyVaultName
-    authenticationType: authenticationType
-    configureApplicationPermissions: configureApplicationPermissions
 
     enablePrivateNetworking: enablePrivateNetworking
   }
@@ -472,15 +453,10 @@ module openAI 'modules/openAI.bicep' = {
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
 
-    keyVault: keyVault.outputs.keyVaultName
-    authenticationType: authenticationType
-    configureApplicationPermissions: configureApplicationPermissions
-
     existingOpenAIEndpoint: existingOpenAIEndpoint
     existingOpenAIResourceName: existingOpenAIResourceName
     existingOpenAIResourceGroup: existingOpenAIResourceGroup
     existingOpenAISubscriptionId: existingOpenAISubscriptionId
-    existingOpenAIKey: existingOpenAIKey
     gptModels: resolvedGptModels
     embeddingModels: resolvedEmbeddingModels
 
@@ -564,10 +540,6 @@ module contentSafety 'modules/contentSafety.bicep' = if (deployContentSafety) {
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
 
-    keyVault: keyVault.outputs.keyVaultName
-    authenticationType: authenticationType
-    configureApplicationPermissions: configureApplicationPermissions
-
     enablePrivateNetworking: enablePrivateNetworking
   }
 }
@@ -586,10 +558,6 @@ module redisCache 'modules/redisCache.bicep' = if (deployRedisCache) {
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
 
-    keyVault: keyVault.outputs.keyVaultName
-    authenticationType: authenticationType
-    configureApplicationPermissions: configureApplicationPermissions
-
     //enablePrivateNetworking: enablePrivateNetworking
   }
 }
@@ -607,10 +575,6 @@ module speechService 'modules/speechService.bicep' = if (deploySpeechService) {
     tags: tags
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
-
-    keyVault: keyVault.outputs.keyVaultName
-    authenticationType: authenticationType
-    configureApplicationPermissions: configureApplicationPermissions
 
     enablePrivateNetworking: enablePrivateNetworking
   }

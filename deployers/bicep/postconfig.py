@@ -1,11 +1,205 @@
+# postconfig.py
 from azure.cosmos import CosmosClient
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from azure.identity import AzureCliCredential
-from azure.keyvault.secrets import SecretClient
-import os
 import json
+import os
+import shutil
+import subprocess
+from urllib.parse import urlparse
 
 credential = AzureCliCredential()
+
+
+def get_azure_cli_executable():
+    """Resolve the Azure CLI executable path for subprocess usage."""
+    configured_path = os.getenv("AZURE_CLI_PATH")
+    if configured_path and os.path.exists(configured_path):
+        return configured_path
+
+    candidate_names = ["az.cmd", "az.exe", "az"]
+    for candidate_name in candidate_names:
+        resolved_path = shutil.which(candidate_name)
+        if resolved_path:
+            return resolved_path
+
+    windows_fallback_paths = [
+        r"C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin\az.cmd",
+        r"C:\Program Files (x86)\Microsoft SDKs\Azure\CLI2\wbin\az.cmd",
+    ]
+    for fallback_path in windows_fallback_paths:
+        if os.path.exists(fallback_path):
+            return fallback_path
+
+    raise FileNotFoundError(
+        "Azure CLI executable was not found. Set AZURE_CLI_PATH or ensure az.cmd is installed and available on PATH."
+    )
+
+
+def run_azure_cli_command(command_args, description):
+    """Run an Azure CLI command and return the trimmed result."""
+    azure_cli_executable = get_azure_cli_executable()
+    result = subprocess.run(
+        [azure_cli_executable, *command_args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Failed to retrieve {description}: {result.stderr.strip() or result.stdout.strip()}"
+        )
+
+    value = result.stdout.strip()
+    if not value:
+        raise RuntimeError(f"Failed to retrieve {description}: empty response from Azure CLI")
+
+    print(f"Retrieved {description}")
+    return value
+
+
+def extract_resource_name_from_endpoint(endpoint):
+    """Extract the Azure resource name from a standard service endpoint."""
+    parsed_endpoint = urlparse(endpoint or "")
+    hostname = parsed_endpoint.netloc or parsed_endpoint.path
+
+    if not hostname:
+        return ""
+
+    return hostname.split(".")[0]
+
+
+def get_cognitive_services_key(resource_name, resource_group, subscription_id, description):
+    return run_azure_cli_command(
+        [
+            "cognitiveservices",
+            "account",
+            "keys",
+            "list",
+            "--name",
+            resource_name,
+            "--resource-group",
+            resource_group,
+            "--subscription",
+            subscription_id,
+            "--query",
+            "key1",
+            "-o",
+            "tsv",
+        ],
+        description,
+    )
+
+
+def get_search_service_key(resource_name, resource_group, subscription_id):
+    return run_azure_cli_command(
+        [
+            "search",
+            "admin-key",
+            "show",
+            "--service-name",
+            resource_name,
+            "--resource-group",
+            resource_group,
+            "--subscription",
+            subscription_id,
+            "--query",
+            "primaryKey",
+            "-o",
+            "tsv",
+        ],
+        "Azure AI Search admin key",
+    )
+
+
+def get_redis_cache_key(resource_name, resource_group, subscription_id):
+    return run_azure_cli_command(
+        [
+            "redis",
+            "list-keys",
+            "--name",
+            resource_name,
+            "--resource-group",
+            resource_group,
+            "--subscription",
+            subscription_id,
+            "--query",
+            "primaryKey",
+            "-o",
+            "tsv",
+        ],
+        "Redis cache primary key",
+    )
+
+
+def get_core_service_keys(
+    authentication_type,
+    openai_endpoint,
+    openai_resource_group,
+    openai_subscription_id,
+    subscription_id,
+    resource_group,
+    content_safety_endpoint,
+    search_service_endpoint,
+    document_intelligence_endpoint,
+    redis_cache_host_name,
+    speech_service_endpoint,
+):
+    if authentication_type != "key":
+        return {}
+
+    openai_resource_name = extract_resource_name_from_endpoint(openai_endpoint)
+    search_resource_name = extract_resource_name_from_endpoint(search_service_endpoint)
+    docintel_resource_name = extract_resource_name_from_endpoint(document_intelligence_endpoint)
+    redis_resource_name = extract_resource_name_from_endpoint(redis_cache_host_name)
+    content_safety_resource_name = extract_resource_name_from_endpoint(content_safety_endpoint)
+    speech_resource_name = extract_resource_name_from_endpoint(speech_service_endpoint)
+
+    keys = {
+        "azure_openai_key": get_cognitive_services_key(
+            openai_resource_name,
+            openai_resource_group,
+            openai_subscription_id or subscription_id,
+            "Azure OpenAI key",
+        ),
+        "azure_ai_search_key": get_search_service_key(
+            search_resource_name,
+            resource_group,
+            subscription_id,
+        ),
+        "azure_document_intelligence_key": get_cognitive_services_key(
+            docintel_resource_name,
+            resource_group,
+            subscription_id,
+            "Azure Document Intelligence key",
+        ),
+    }
+
+    if redis_resource_name:
+        keys["redis_key"] = get_redis_cache_key(
+            redis_resource_name,
+            resource_group,
+            subscription_id,
+        )
+
+    if content_safety_resource_name:
+        keys["content_safety_key"] = get_cognitive_services_key(
+            content_safety_resource_name,
+            resource_group,
+            subscription_id,
+            "Content Safety key",
+        )
+
+    if speech_resource_name:
+        keys["speech_service_key"] = get_cognitive_services_key(
+            speech_resource_name,
+            resource_group,
+            subscription_id,
+            "Speech Service key",
+        )
+
+    return keys
 
 cosmosEndpoint = os.getenv("var_cosmosDb_uri")
 cosmosKey = os.getenv("var_cosmosDb_key")
@@ -37,7 +231,6 @@ except CosmosResourceNotFoundError:
 
 # Get values from environment variables
 var_authenticationType = os.getenv("var_authenticationType")
-var_keyVaultUri = os.getenv("var_keyVaultUri")
 
 var_openAIEndpoint = os.getenv("var_openAIEndpoint")
 var_openAISubscriptionId = os.getenv("var_openAISubscriptionId")
@@ -59,12 +252,19 @@ var_videoIndexerAccountId = os.getenv("var_videoIndexerAccountId")
 var_speechServiceEndpoint = os.getenv("var_speechServiceEndpoint")
 var_speechServiceLocation = os.getenv("var_deploymentLocation")
 
-# Initialize Key Vault client if Key Vault URI is provided
-if var_keyVaultUri:
-    keyvault_client = SecretClient(
-        vault_url=var_keyVaultUri, credential=credential)
-else:
-    keyvault_client = None
+core_service_keys = get_core_service_keys(
+    authentication_type=var_authenticationType,
+    openai_endpoint=var_openAIEndpoint,
+    openai_resource_group=var_openAIResourceGroup,
+    openai_subscription_id=var_openAISubscriptionId,
+    subscription_id=var_subscriptionId,
+    resource_group=var_rgName,
+    content_safety_endpoint=var_contentSafetyEndpoint,
+    search_service_endpoint=var_searchServiceEndpoint,
+    document_intelligence_endpoint=var_documentIntelligenceServiceEndpoint,
+    redis_cache_host_name=var_redisCacheHostName,
+    speech_service_endpoint=var_speechServiceEndpoint,
+)
 
 # 4. Update the Configurations
 
@@ -76,13 +276,8 @@ item["azure_openai_gpt_endpoint"] = var_openAIEndpoint
 item["azure_openai_gpt_authentication_type"] = var_authenticationType
 item["azure_openai_gpt_subscription_id"] = var_openAISubscriptionId or var_subscriptionId
 item["azure_openai_gpt_resource_group"] = var_openAIResourceGroup
-if keyvault_client and var_authenticationType == "key":
-    try:
-        openai_key_secret = keyvault_client.get_secret("openAi-key")
-        item["azure_openai_gpt_key"] = openai_key_secret.value
-        print("Retrieved Azure OpenAI key from Key Vault for GPT settings")
-    except Exception as e:
-        print(f"Warning: Could not retrieve openAi-key from Key Vault for GPT settings: {e}")
+if var_authenticationType == "key":
+    item["azure_openai_gpt_key"] = core_service_keys["azure_openai_key"]
 item["gpt_model"] = {
     "selected": [
         {
@@ -103,13 +298,8 @@ item["azure_openai_embedding_endpoint"] = var_openAIEndpoint
 item["azure_openai_embedding_authentication_type"] = var_authenticationType
 item["azure_openai_embedding_subscription_id"] = var_openAISubscriptionId or var_subscriptionId
 item["azure_openai_embedding_resource_group"] = var_openAIResourceGroup
-if keyvault_client and var_authenticationType == "key":
-    try:
-        openai_key_secret = keyvault_client.get_secret("openAi-key")
-        item["azure_openai_embedding_key"] = openai_key_secret.value
-        print("Retrieved Azure OpenAI key from Key Vault for embedding settings")
-    except Exception as e:
-        print(f"Warning: Could not retrieve openAi-key from Key Vault for embedding settings: {e}")
+if var_authenticationType == "key":
+    item["azure_openai_embedding_key"] = core_service_keys["azure_openai_key"]
 item["embedding_model"] = {
     "selected": [
         {
@@ -153,29 +343,16 @@ if var_contentSafetyEndpoint and var_contentSafetyEndpoint.strip():
     item["enable_content_safety"] = True
 item["content_safety_endpoint"] = var_contentSafetyEndpoint
 item["content_safety_authentication_type"] = var_authenticationType
-if keyvault_client and var_authenticationType == "key":
-    try:
-        contentSafety_key_secret = keyvault_client.get_secret(
-            "content-safety-key")
-        item["content_safety_key"] = contentSafety_key_secret.value
-        print("Retrieved contentSafety service key from Key Vault")
-    except Exception as e:
-        print(
-            f"Warning: Could not retrieve content-safety-key from Key Vault: {e}")
+if var_authenticationType == "key" and "content_safety_key" in core_service_keys:
+    item["content_safety_key"] = core_service_keys["content_safety_key"]
 
 # Redis Cache Configuration
 if var_redisCacheHostName and var_redisCacheHostName.strip():
     item["enable_redis_cache"] = True
 item["redis_url"] = var_redisCacheHostName
 item["redis_auth_type"] = var_authenticationType
-if keyvault_client and var_authenticationType == "key":
-    try:
-        redis_key_secret = keyvault_client.get_secret("redis-cache-key")
-        item["redis_key"] = redis_key_secret.value
-        print("Retrieved redis cache key from Key Vault")
-    except Exception as e:
-        print(
-            f"Warning: Could not retrieve redis-cache-key from Key Vault: {e}")
+if var_authenticationType == "key" and "redis_key" in core_service_keys:
+    item["redis_key"] = core_service_keys["redis_key"]
 
 # Safety > Conversation Archiving
 item["enable_conversation_archiving"] = True
@@ -183,27 +360,14 @@ item["enable_conversation_archiving"] = True
 # Search and Extract > Azure AI Search
 item["azure_ai_search_endpoint"] = var_searchServiceEndpoint
 item["azure_ai_search_authentication_type"] = var_authenticationType
-if keyvault_client and var_authenticationType == "key":
-    try:
-        search_key_secret = keyvault_client.get_secret("search-service-key")
-        item["azure_ai_search_key"] = search_key_secret.value
-        print("Retrieved search service key from Key Vault")
-    except Exception as e:
-        print(
-            f"Warning: Could not retrieve search-service-key from Key Vault: {e}")
+if var_authenticationType == "key":
+    item["azure_ai_search_key"] = core_service_keys["azure_ai_search_key"]
 
 # Search and Extract > Azure Document Intelligence
 item["azure_document_intelligence_endpoint"] = var_documentIntelligenceServiceEndpoint
 item["azure_document_intelligence_authentication_type"] = var_authenticationType
-if keyvault_client and var_authenticationType == "key":
-    try:
-        documentIntelligence_key_secret = keyvault_client.get_secret(
-            "document-intelligence-key")
-        item["azure_document_intelligence_key"] = documentIntelligence_key_secret.value
-        print("Retrieved document intelligence service key from Key Vault")
-    except Exception as e:
-        print(
-            f"Warning: Could not retrieve document-intelligence-key from Key Vault: {e}")
+if var_authenticationType == "key":
+    item["azure_document_intelligence_key"] = core_service_keys["azure_document_intelligence_key"]
 
 # Search and Extract > Multimedia Support
 # Video Indexer Configuration
@@ -220,14 +384,8 @@ if var_speechServiceEndpoint and var_speechServiceEndpoint.strip():
     item["enable_audio_file_support"] = True
 item["speech_service_endpoint"] = var_speechServiceEndpoint
 item["speech_service_location"] = var_speechServiceLocation
-if keyvault_client and var_authenticationType == "key":
-    try:
-        speech_key_secret = keyvault_client.get_secret("speech-service-key")
-        item["speech_service_key"] = speech_key_secret.value
-        print("Retrieved speech service key from Key Vault")
-    except Exception as e:
-        print(
-            f"Warning: Could not retrieve speech-service-key from Key Vault: {e}")
+if var_authenticationType == "key" and "speech_service_key" in core_service_keys:
+    item["speech_service_key"] = core_service_keys["speech_service_key"]
 
 # 5. Upsert the updated items back into Cosmos DB
 response = container.upsert_item(item)

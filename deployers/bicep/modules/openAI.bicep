@@ -8,16 +8,10 @@ param tags object
 param enableDiagLogging bool
 param logAnalyticsId string
 
-param keyVault string
-param authenticationType string
-param configureApplicationPermissions bool
 param existingOpenAIEndpoint string = ''
 param existingOpenAIResourceName string = ''
 param existingOpenAIResourceGroup string = ''
 param existingOpenAISubscriptionId string = ''
-
-@secure()
-param existingOpenAIKey string = ''
 
 param gptModels array
 param embeddingModels array
@@ -78,19 +72,6 @@ module aiModel 'aiModel.bicep' = [
     }
   }
 ]
-
-//=========================================================
-// store openAI keys in key vault if using key authentication and configure app permissions = true
-//=========================================================
-module openAISecret 'keyVault-Secrets.bicep' = if (authenticationType == 'key' && configureApplicationPermissions && (!useExistingOpenAIEndpoint || !empty(existingOpenAIKey))) {
-  name: 'storeOpenAISecret'
-  params: {
-    keyVaultName: keyVault
-    secretName: 'openAi-key'
-    #disable-next-line BCP422 // guarded by useExistingOpenAIEndpoint condition above
-    secretValue: useExistingOpenAIEndpoint ? existingOpenAIKey : openAI.listKeys().key1
-  }
-}
 
 output openAIName string = useExistingOpenAIEndpoint ? existingOpenAIResourceName : openAI.name
 output openAIResourceGroup string = resolvedOpenAIResourceGroup

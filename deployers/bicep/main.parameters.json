@@ -71,9 +71,6 @@
     "existingOpenAISubscriptionId": {
       "value": "${EXISTING_AZURE_OPENAI_SUBSCRIPTION_ID}"
     },
-    "existingOpenAIKey": {
-      "value": "${EXISTING_AZURE_OPENAI_KEY}"
-    },
     "openAIDeploymentType": {
       "value": "${OPENAI_DEPLOYMENT_TYPE}"
     },

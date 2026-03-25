@@ -101,7 +101,7 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
 
         // Only add this setting if authenticationType is 'key'
         ...(authenticationType == 'key'
-          ? [{ name: 'AZURE_COSMOS_KEY', value: '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/cosmos-db-key)' }]
+          ? [{ name: 'AZURE_COSMOS_KEY', value: cosmosDb.listKeys().primaryMasterKey }]
           : [])
 
         { name: 'TENANT_ID', value: tenant().tenantId }
@@ -128,7 +128,7 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
           ? [
               {
                 name: 'DOCKER_REGISTRY_SERVER_PASSWORD'
-                value: '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/container-registry-key)'
+                value: acrService.listCredentials().passwords[0].value
               }
             ]
           : [])
@@ -143,7 +143,7 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
           ? [
               {
                 name: 'AZURE_SEARCH_API_KEY'
-                value: '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/search-service-key)'
+                value: searchService.listAdminKeys().primaryKey
               }
             ]
           : [])
@@ -153,7 +153,7 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
           ? [
               {
                 name: 'AZURE_DOCUMENT_INTELLIGENCE_API_KEY'
-                value: '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/document-intelligence-key)'
+                value: documentIntelligence.listKeys().key1
               }
             ]
           : [])
