@@ -7,8 +7,8 @@
    <link rel="stylesheet" href="/static/css/simplemde.min.css" />
 
   <style>
-    /* Force fixed layout so columns don't expand when content changes */
-    #documents-table, #prompts-table, #agents-table { /* Apply to all tables */
+    /* Keep fixed layout for document and prompt tables only. */
+    #documents-table, #prompts-table {
       table-layout: fixed;
       width: 100%;
     }
@@ -93,24 +93,25 @@
     /* --- Agents Table Styles --- */
     #agents-table th:nth-child(1), /* Display Name */
     #agents-table td:nth-child(1) {
-        width: 25%; /* Agent name column */
+      width: 28%;
         overflow: hidden;
         white-space: nowrap;
         text-overflow: ellipsis;
-        min-width: 120px;
+      min-width: 140px;
     }
     #agents-table th:nth-child(2), /* Description */
     #agents-table td:nth-child(2) {
-        width: 55%; /* Description column - largest */
+      width: 47%;
         overflow: hidden;
         white-space: nowrap;
         text-overflow: ellipsis;
-        min-width: 200px;
+      max-width: 0;
     }
     #agents-table th:nth-child(3), /* Actions */
     #agents-table td:nth-child(3) {
-        width: 20%; /* Actions column */
-        min-width: 120px;
+      width: 25%;
+      min-width: 160px;
+      white-space: nowrap;
     }
 
     /* Style for the classification badge */

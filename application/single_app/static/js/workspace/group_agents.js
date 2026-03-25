@@ -164,7 +164,8 @@ function renderAgentsGrid(list) {
         const found = agents.find(x => x.id === (a.id || a.name || a) || x.name === (a.name || a));
         openAgentModal(found || null);
       } : null,
-      onDelete: canManage ? a => deleteGroupAgent(a.id || a.name || a) : null
+      onDelete: canManage ? a => deleteGroupAgent(a.id || a.name || a) : null,
+      canManage
     });
     agentsGridView.appendChild(col);
   });

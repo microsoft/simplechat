@@ -2,6 +2,16 @@
 
 # Feature Release
 
+### **(v0.239.158)**
+
+#### Bug Fixes
+
+*   **Workspace Agent View Consistency**
+    *   Fixed personal and group workspace agent lists so table-view actions now use the same button order, making agent management behavior more predictable across both workspaces.
+    *   Fixed group workspace agent grid cards so editable group agents once again show Edit and Delete actions when the current user has permission to manage them.
+    *   Fixed personal workspace agent table layout so action buttons stay inside the table instead of overflowing past the Actions column.
+    *   (Ref: `workspace.html`, `workspace_agents.js`, `group_agents.js`, `view-utils.js`, `test_workspace_agent_views_consistency.py`)
+
 ### **(v0.239.156)**
 
 #### Bug Fixes
