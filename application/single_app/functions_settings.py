@@ -25,6 +25,7 @@ def get_settings(use_cosmos=False):
         'enable_text_plugin': True,
         'enable_default_embedding_model_plugin': False,
         'enable_fact_memory_plugin': True,
+        'enable_tabular_processing_plugin': False,
         'enable_multi_agent_orchestration': False,
         'max_rounds_per_agent': 1,
         'enable_semantic_kernel': False,
@@ -205,6 +206,9 @@ def get_settings(use_cosmos=False):
         'require_member_of_feedback_admin': False,
         'enable_conversation_archiving': False,
 
+        # Processing Thoughts
+        'enable_thoughts': False,
+
         # Search and Extract
         'azure_ai_search_endpoint': '',
         'azure_ai_search_key': '',
@@ -258,8 +262,12 @@ def get_settings(use_cosmos=False):
 
         # Other
         'max_file_size_mb': 150,
+        'tabular_preview_max_blob_size_mb': 200,
         'conversation_history_limit': 10,
         'default_system_prompt': '',
+        # Access denied message shown on the home page for signed-in users who lack required roles.
+        # Default is hard-coded; admins can override via Admin Settings (persisted in Cosmos DB).
+        'access_denied_message': 'You are logged in but do not have the required permissions to access this application.\nPlease contact an administrator for access.',
         'enable_file_processing_logs': True,
         'file_processing_logs_timer_enabled': False,
         'file_timer_value': 1,
@@ -268,7 +276,7 @@ def get_settings(use_cosmos=False):
         'enable_external_healthcheck': False,
         
         # Streaming settings
-        'streamingEnabled': False,
+        'streamingEnabled': True,
         
         # Reasoning effort settings (per-model)
         'reasoningEffortSettings': {},
@@ -391,6 +399,9 @@ def update_settings(new_settings):
         # always fetch the latest settings doc, which includes your merges
         settings_item = get_settings()
         settings_item.update(new_settings)
+        # Dependency enforcement: tabular processing requires enhanced citations
+        if not settings_item.get('enable_enhanced_citations', False):
+            settings_item['enable_tabular_processing_plugin'] = False
         cosmos_settings_container.upsert_item(settings_item)
         cache_updater = getattr(app_settings_cache, "update_settings_cache", None)
         if callable(cache_updater):

@@ -4,10 +4,17 @@ import { showToast } from './chat-toast.js';
 
 let reasoningEffortSettings = {}; // Per-model settings: {modelName: 'low', ...}
 
+function applyReasoningSettings(settings = {}) {
+    console.log('Loaded reasoning settings:', settings);
+    reasoningEffortSettings = settings.reasoningEffortSettings || {};
+    console.log('Reasoning effort settings:', reasoningEffortSettings);
+    syncReasoningStateForCurrentModel();
+}
+
 /**
  * Initialize the reasoning effort toggle button
  */
-export function initializeReasoningToggle() {
+export function initializeReasoningToggle(initialSettings = null) {
     const reasoningToggleBtn = document.getElementById('reasoning-toggle-btn');
     if (!reasoningToggleBtn) {
         console.warn('Reasoning toggle button not found');
@@ -17,16 +24,16 @@ export function initializeReasoningToggle() {
     console.log('Initializing reasoning toggle...');
     
     // Load initial state from user settings
-    loadUserSettings().then(settings => {
-        console.log('Loaded reasoning settings:', settings);
-        reasoningEffortSettings = settings.reasoningEffortSettings || {};
-        console.log('Reasoning effort settings:', reasoningEffortSettings);
-        
-        // Update icon based on current model
-        updateReasoningIconForCurrentModel();
-    }).catch(error => {
-        console.error('Error loading reasoning settings:', error);
-    });
+    if (initialSettings) {
+        applyReasoningSettings(initialSettings);
+    } else {
+        loadUserSettings().then(settings => {
+            applyReasoningSettings(settings);
+        }).catch(error => {
+            console.error('Error loading reasoning settings:', error);
+            syncReasoningStateForCurrentModel();
+        });
+    }
     
     // Handle toggle click - show slider modal
     reasoningToggleBtn.addEventListener('click', () => {
@@ -37,8 +44,7 @@ export function initializeReasoningToggle() {
     const modelSelect = document.getElementById('model-select');
     if (modelSelect) {
         modelSelect.addEventListener('change', () => {
-            updateReasoningIconForCurrentModel();
-            updateReasoningButtonVisibility();
+            syncReasoningStateForCurrentModel();
         });
     }
     
@@ -60,6 +66,11 @@ export function initializeReasoningToggle() {
         observer.observe(enableAgentsBtn, { attributes: true, attributeFilter: ['class'] });
     }
     
+    updateReasoningButtonVisibility();
+}
+
+export function syncReasoningStateForCurrentModel() {
+    updateReasoningIconForCurrentModel();
     updateReasoningButtonVisibility();
 }
 

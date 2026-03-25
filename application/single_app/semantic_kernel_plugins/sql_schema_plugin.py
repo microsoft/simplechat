@@ -165,11 +165,11 @@ class SQLSchemaPlugin(BasePlugin):
         user_desc = self._metadata.get("description", f"SQL Schema plugin for {self.database_type} database")
         api_desc = (
             "This plugin connects to SQL databases and extracts schema information including tables, columns, "
-            "data types, primary keys, foreign keys, and relationships. It supports SQL Server, PostgreSQL, "
-            "MySQL, and SQLite databases. The plugin provides structured schema data that can be used by "
-            "AI agents to understand database structure and generate appropriate SQL queries. "
-            "Authentication supports connection strings, username/password, and integrated authentication. "
-            "The plugin handles database-specific SQL variations for schema extraction."
+            "data types, primary keys, foreign keys, and relationships. WORKFLOW: ALWAYS call get_database_schema "
+            "or get_table_list FIRST before executing any SQL queries via the SQL Query plugin. This ensures "
+            "you have accurate table names, column names, and relationship information to construct valid queries. "
+            "It supports SQL Server, PostgreSQL, MySQL, and SQLite databases. "
+            "Authentication supports connection strings, username/password, and integrated authentication."
         )
         full_desc = f"{user_desc}\n\n{api_desc}"
         
@@ -219,7 +219,7 @@ class SQLSchemaPlugin(BasePlugin):
         return ["get_database_schema", "get_table_schema", "get_table_list", "get_relationships"]
 
     @plugin_function_logger("SQLSchemaPlugin")
-    @kernel_function(description="Get complete database schema including all tables, columns, and relationships")
+    @kernel_function(description="Get complete database schema including all tables, columns, data types, primary keys, foreign keys, and relationships. If the database schema is already provided in your instructions, use that directly and do NOT call this function. Only call this function if you need to discover the schema and it was not already provided. The returned schema should be used to construct valid SQL queries with the correct fully-qualified table names (e.g., dbo.TableName) and column references.")
     def get_database_schema(
         self, 
         include_system_tables: bool = False,
@@ -255,24 +255,26 @@ class SQLSchemaPlugin(BasePlugin):
             
             # Get schema for each table
             for table in tables:
-                if isinstance(table, tuple) and len(table) >= 2:
+                try:
+                    # Robust row parsing — works with pyodbc.Row, tuple, list, etc.
                     table_name = table[0]
-                    schema_name = table[1]
-                    qualified_table_name = f"{schema_name}.{table_name}"
-                else:
-                    table_name = table[0] if isinstance(table, tuple) else table
+                    schema_name = table[1] if len(table) >= 2 else None
+                    qualified_table_name = f"{schema_name}.{table_name}" if schema_name else str(table_name)
+                except (TypeError, IndexError):
+                    table_name = str(table)
                     schema_name = None
                     qualified_table_name = table_name
                     
                 try:
-                    table_schema = self._get_table_schema_data(cursor, table_name, schema_name)
-                    schema_data["tables"][table_name] = table_schema
-                    print(f"[SQLSchemaPlugin] Got schema for table: {qualified_table_name}")
+                    table_schema = self._get_table_schema_data(cursor, str(table_name), str(schema_name) if schema_name else None)
+                    schema_data["tables"][str(table_name)] = table_schema
+                    print(f"[SQLSchemaPlugin] Got schema for table: {qualified_table_name} ({len(table_schema.get('columns', []))} columns)")
                 except Exception as e:
                     print(f"[SQLSchemaPlugin] Error getting schema for table {qualified_table_name}: {e}")
                     log_event(f"[SQLSchemaPlugin] Error getting table schema", extra={
                         "table_name": qualified_table_name,
-                        "error": str(e)
+                        "error": str(e),
+                        "raw_row": repr(table)
                     })
             
             # Get relationships
@@ -310,30 +312,8 @@ class SQLSchemaPlugin(BasePlugin):
                 {"error": error_msg},
                 {"source": "sql_schema_plugin", "success": False}
             )
-            
-            # Get tables
-            tables_query = self._get_tables_query(include_system_tables, table_filter)
-            cursor.execute(tables_query)
-            tables = cursor.fetchall()
-            
-            # Get schema for each table
-            for table_row in tables:
-                table_name = table_row[0] if isinstance(table_row, (list, tuple)) else table_row
-                table_schema = self._get_table_schema_data(cursor, table_name)
-                schema_data["tables"][table_name] = table_schema
-            
-            # Get relationships
-            relationships = self._get_relationships_data(cursor)
-            schema_data["relationships"] = relationships
-            
-            log_event(f"[SQLSchemaPlugin] Retrieved schema for {len(schema_data['tables'])} tables")
-            return ResultWithMetadata(schema_data, self.metadata)
-            
-        except Exception as e:
-            log_event(f"[SQLSchemaPlugin] Error getting database schema: {e}")
-            raise
 
-    @kernel_function(description="Get detailed schema for a specific table")
+    @kernel_function(description="Get the detailed schema (column names, data types, constraints) for a specific table. If the database schema is already provided in your instructions, use that directly instead of calling this function. Only call this if you need details for a specific table not already in your instructions.")
     @plugin_function_logger("SQLSchemaPlugin")
     def get_table_schema(self, table_name: str) -> ResultWithMetadata:
         """Get detailed schema for a specific table"""
@@ -350,7 +330,7 @@ class SQLSchemaPlugin(BasePlugin):
             log_event(f"[SQLSchemaPlugin] Error getting table schema for {table_name}: {e}")
             raise
 
-    @kernel_function(description="Get list of all tables in the database")
+    @kernel_function(description="Return the names of all tables in the database. If the database schema is already provided in your instructions, use that directly instead of calling this function. Only call this if you need to discover available tables and they are not already listed in your instructions.")
     @plugin_function_logger("SQLSchemaPlugin")
     def get_table_list(
         self, 
@@ -368,14 +348,14 @@ class SQLSchemaPlugin(BasePlugin):
             
             table_list = []
             for table_row in tables:
-                if isinstance(table_row, (list, tuple)):
+                try:
                     table_info = {
-                        "table_name": table_row[0],
-                        "schema": table_row[1] if len(table_row) > 1 else None,
-                        "table_type": table_row[2] if len(table_row) > 2 else "TABLE"
+                        "table_name": str(table_row[0]),
+                        "schema": str(table_row[1]) if len(table_row) > 1 else None,
+                        "table_type": str(table_row[2]) if len(table_row) > 2 else "TABLE"
                     }
-                else:
-                    table_info = {"table_name": table_row, "schema": None, "table_type": "TABLE"}
+                except (TypeError, IndexError):
+                    table_info = {"table_name": str(table_row), "schema": None, "table_type": "TABLE"}
                 table_list.append(table_info)
             
             log_event(f"[SQLSchemaPlugin] Retrieved {len(table_list)} tables")
@@ -385,7 +365,7 @@ class SQLSchemaPlugin(BasePlugin):
             log_event(f"[SQLSchemaPlugin] Error getting table list: {e}")
             raise
 
-    @kernel_function(description="Get foreign key relationships between tables")
+    @kernel_function(description="Get foreign key relationships between tables. If the database schema and relationships are already provided in your instructions, use those directly instead of calling this function. Only call this if you need relationship details not already in your instructions.")
     def get_relationships(self, table_name: Optional[str] = None) -> ResultWithMetadata:
         """Get foreign key relationships between tables"""
         try:
@@ -402,17 +382,20 @@ class SQLSchemaPlugin(BasePlugin):
             raise
 
     def _get_tables_query(self, include_system_tables: bool, table_filter: Optional[str]) -> str:
-        """Get database-specific query for listing tables"""
+        """Get database-specific query for listing tables.
+        Uses sys.tables/sys.schemas for SQL Server (more reliable than INFORMATION_SCHEMA
+        in Azure SQL environments with restricted permissions)."""
         if self.database_type == 'sqlserver':
             base_query = """
-                SELECT TABLE_NAME, TABLE_SCHEMA, TABLE_TYPE 
-                FROM INFORMATION_SCHEMA.TABLES 
-                WHERE TABLE_TYPE = 'BASE TABLE'
+                SELECT t.name AS TABLE_NAME, s.name AS TABLE_SCHEMA, 'BASE TABLE' AS TABLE_TYPE
+                FROM sys.tables t
+                INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
+                WHERE t.type = 'U'
             """
             if not include_system_tables:
-                base_query += " AND TABLE_SCHEMA NOT IN ('sys', 'information_schema')"
+                base_query += " AND s.name NOT IN ('sys', 'information_schema')"
             if table_filter:
-                base_query += f" AND TABLE_NAME LIKE '{table_filter.replace('*', '%')}'"
+                base_query += f" AND t.name LIKE '{table_filter.replace('*', '%')}'"
             return base_query
             
         elif self.database_type == 'postgresql':
@@ -467,22 +450,30 @@ class SQLSchemaPlugin(BasePlugin):
         if pk_query:
             cursor.execute(pk_query)
             pks = cursor.fetchall()
-            schema_data["primary_keys"] = [pk[0] if isinstance(pk, (list, tuple)) else pk for pk in pks]
+            schema_data["primary_keys"] = [str(pk[0]) for pk in pks]
         
         return schema_data
 
     def _get_columns_query(self, table_name: str, schema_name: str = None) -> str:
-        """Get database-specific query for table columns"""
+        """Get database-specific query for table columns.
+        Uses sys.columns/sys.types for SQL Server (consistent with sys.tables used for enumeration)."""
         if self.database_type == 'sqlserver':
-            where_clause = f"WHERE TABLE_NAME = '{table_name}'"
-            if schema_name:
-                where_clause += f" AND TABLE_SCHEMA = '{schema_name}'"
+            schema_filter = f"AND s.name = '{schema_name}'" if schema_name else ""
             return f"""
-                SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT, 
-                       CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE
-                FROM INFORMATION_SCHEMA.COLUMNS 
-                {where_clause}
-                ORDER BY ORDINAL_POSITION
+                SELECT 
+                    c.name AS COLUMN_NAME,
+                    TYPE_NAME(c.user_type_id) AS DATA_TYPE,
+                    CASE WHEN c.is_nullable = 1 THEN 'YES' ELSE 'NO' END AS IS_NULLABLE,
+                    dc.definition AS COLUMN_DEFAULT,
+                    c.max_length AS CHARACTER_MAXIMUM_LENGTH,
+                    c.precision AS NUMERIC_PRECISION,
+                    c.scale AS NUMERIC_SCALE
+                FROM sys.columns c
+                INNER JOIN sys.tables t ON c.object_id = t.object_id
+                INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
+                LEFT JOIN sys.default_constraints dc ON c.default_object_id = dc.object_id
+                WHERE t.name = '{table_name}' {schema_filter}
+                ORDER BY c.column_id
             """
         elif self.database_type == 'postgresql':
             return f"""
@@ -498,16 +489,18 @@ class SQLSchemaPlugin(BasePlugin):
             return f"PRAGMA table_info({table_name})"
 
     def _get_primary_keys_query(self, table_name: str, schema_name: str = None) -> Optional[str]:
-        """Get database-specific query for primary keys"""
+        """Get database-specific query for primary keys.
+        Uses sys.indexes/sys.index_columns for SQL Server (consistent with sys.tables)."""
         if self.database_type == 'sqlserver':
-            where_clause = f"WHERE TABLE_NAME = '{table_name}'"
-            if schema_name:
-                where_clause += f" AND TABLE_SCHEMA = '{schema_name}'"
+            schema_filter = f"AND s.name = '{schema_name}'" if schema_name else ""
             return f"""
-                SELECT COLUMN_NAME
-                FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
-                {where_clause}
-                AND CONSTRAINT_NAME LIKE 'PK_%'
+                SELECT c.name AS COLUMN_NAME
+                FROM sys.index_columns ic
+                INNER JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+                INNER JOIN sys.indexes i ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+                INNER JOIN sys.tables t ON i.object_id = t.object_id
+                INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
+                WHERE i.is_primary_key = 1 AND t.name = '{table_name}' {schema_filter}
             """
         elif self.database_type == 'postgresql':
             return f"""

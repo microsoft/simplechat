@@ -471,7 +471,7 @@ Deploy the application code from your local repository to the Azure App Service.
    - Expand **App Service**, find your subscription and the App Service instance you created.
    - **Right-click** on the App Service name.
    - Select **Deploy to Web App...**.
-   - Browse and select the folder containing the application code (the root folder you cloned, e.g., SimpleChat).
+    - Browse and select the `application/single_app` folder from the repository.
    - VS Code will prompt to confirm the deployment, potentially warning about overwriting existing content. Click **Deploy**.
    - Make sure your requirements.txt file is up-to-date before deploying. The deployment process (SCM_DO_BUILD_DURING_DEPLOYMENT=true) will use this file to install dependencies on the App Service.
    - Monitor the deployment progress in the VS Code Output window.
@@ -484,7 +484,7 @@ This method involves creating a zip file of the application code and uploading i
 
 1. **Create the ZIP file**:
 
-   - Navigate into the application's root directory (e.g., SimpleChat) in your terminal.
+    - Navigate into `application/single_app` in your terminal.
    - Create a zip file containing **only** the necessary application files and folders. **Crucially, zip the contents, not the parent folder itself.**
    - **Include**:
      - static/ folder
@@ -528,6 +528,20 @@ This method involves creating a zip file of the application code and uploading i
 ## Upgrading the Application
 
 > <a href="#simple-chat---manual-setup-instructions" style="text-decoration: none;">Return to top</a>
+
+This section covers **native Python Azure App Service** upgrades for the manual deployment path.
+
+Before upgrading a native Python deployment, confirm that the App Service Stack Settings Startup command is set correctly and is not blank.
+
+Deploy and run the `application/single_app` folder in App Service.
+
+Use this Startup command:
+
+```bash
+python -m gunicorn -c gunicorn.conf.py app:app
+```
+
+For a shorter decision guide that also covers container-based upgrades, see [Upgrade Paths](./how-to/upgrade_paths.md).
 
 Keeping your Simple Chat application up-to-date involves deploying the newer version of the code. Using **Deployment Slots** is the recommended approach for production environments to ensure zero downtime and provide easy rollback capabilities.
 

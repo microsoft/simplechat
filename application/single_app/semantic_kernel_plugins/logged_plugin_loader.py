@@ -80,6 +80,10 @@ class LoggedPluginLoader:
             # Register the plugin with the kernel
             self._register_plugin_with_kernel(plugin_instance, plugin_name)
             
+            # Auto-create companion SQL Schema plugin when loading a SQL Query plugin
+            if plugin_type == 'sql_query':
+                self._auto_create_companion_schema_plugin(manifest, plugin_name)
+            
             log_event(
                 f"[Logged Plugin Loader] Successfully loaded plugin: {plugin_name}",
                 extra={
@@ -117,8 +121,8 @@ class LoggedPluginLoader:
             return self._create_openapi_plugin(manifest)
         elif plugin_type == 'python':
             return self._create_python_plugin(manifest)
-        #elif plugin_type in ['sql_schema', 'sql_query']:
-        #    return self._create_sql_plugin(manifest)
+        elif plugin_type in ['sql_schema', 'sql_query']:
+            return self._create_sql_plugin(manifest)
         else:
             try:
                 debug_print(f"[Logged Plugin Loader] Attempting to discover plugin type: {plugin_type}")
@@ -220,6 +224,60 @@ class LoggedPluginLoader:
         except ImportError as e:
             self.logger.error(f"Failed to import SQL plugin class for {plugin_type}: {e}")
             return None
+    
+    def _auto_create_companion_schema_plugin(self, query_manifest: Dict[str, Any], query_plugin_name: str):
+        """
+        Auto-create a companion SQLSchemaPlugin when a SQLQueryPlugin is loaded.
+        This ensures the agent has access to database schema information for constructing queries.
+        The schema plugin uses the same connection details as the query plugin.
+        """
+        try:
+            # Derive schema plugin name from query plugin name
+            if query_plugin_name.endswith('_query'):
+                schema_plugin_name = query_plugin_name[:-6] + '_schema'
+            else:
+                schema_plugin_name = query_plugin_name + '_schema'
+            
+            # Check if schema plugin already exists in kernel
+            if schema_plugin_name in self.kernel.plugins:
+                log_event(
+                    f"[Logged Plugin Loader] Companion schema plugin already exists: {schema_plugin_name}",
+                    level=logging.DEBUG
+                )
+                return
+            
+            # Create schema manifest from query manifest (same connection details)
+            schema_manifest = dict(query_manifest)
+            schema_manifest['type'] = 'sql_schema'
+            schema_manifest['name'] = schema_plugin_name
+            
+            # Create the schema plugin instance
+            schema_instance = SQLSchemaPlugin(schema_manifest)
+            
+            # Enable logging if supported
+            if hasattr(schema_instance, 'enable_invocation_logging'):
+                schema_instance.enable_invocation_logging(True)
+            
+            # Wrap functions if it's a BasePlugin
+            if isinstance(schema_instance, BasePlugin):
+                self._wrap_plugin_functions(schema_instance, schema_plugin_name)
+            
+            # Register with kernel
+            self._register_plugin_with_kernel(schema_instance, schema_plugin_name)
+            
+            log_event(
+                f"[Logged Plugin Loader] Auto-created companion SQL Schema plugin: {schema_plugin_name}",
+                extra={"query_plugin": query_plugin_name, "schema_plugin": schema_plugin_name},
+                level=logging.INFO
+            )
+            
+        except Exception as e:
+            log_event(
+                f"[Logged Plugin Loader] Warning: Failed to auto-create companion schema plugin",
+                extra={"query_plugin": query_plugin_name, "error": str(e)},
+                level=logging.WARNING,
+                exceptionTraceback=True
+            )
     
     def _wrap_plugin_functions(self, plugin_instance, plugin_name: str):
         """Wrap all kernel functions in a plugin with logging."""

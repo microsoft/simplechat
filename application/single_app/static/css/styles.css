@@ -502,6 +502,95 @@ main {
     flex-grow: 1;
 }
 
+/* ============================================
+   Item cards (agents/actions grid view)
+   ============================================ */
+.item-card {
+    cursor: default;
+    transition: all 0.3s ease;
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+    background-color: #ffffff;
+}
+
+.item-card:hover {
+    border-color: #adb5bd;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.item-card .card-title {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: #212529;
+}
+
+.item-card .card-text {
+    color: #6c757d;
+    font-size: 0.8rem;
+    line-height: 1.4;
+}
+
+.item-card .item-card-icon {
+    color: #0d6efd;
+}
+
+.item-card .item-card-buttons {
+    border-top: 1px solid #f0f0f0;
+    padding-top: 0.5rem;
+}
+
+/* Dark mode for item cards */
+[data-bs-theme="dark"] .item-card {
+    background-color: #343a40;
+    border: 1px solid #495057;
+    color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .item-card:hover {
+    background-color: #3d444b;
+    border-color: #6c757d;
+}
+
+[data-bs-theme="dark"] .item-card .card-title {
+    color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .item-card .card-text {
+    color: #adb5bd;
+}
+
+[data-bs-theme="dark"] .item-card .item-card-icon {
+    color: #6ea8fe;
+}
+
+[data-bs-theme="dark"] .item-card .item-card-buttons {
+    border-top-color: #495057;
+}
+
+/* Improved table column layout for agents and actions */
+.item-list-table th:nth-child(1),
+.item-list-table td:nth-child(1) {
+    width: 28%;
+    min-width: 140px;
+}
+
+.item-list-table th:nth-child(2),
+.item-list-table td:nth-child(2) {
+    width: 47%;
+    max-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.item-list-table th:nth-child(3),
+.item-list-table td:nth-child(3) {
+    width: 25%;
+    min-width: 160px;
+    white-space: nowrap;
+}
+
 /* Connection type buttons */
 .connection-type-btn {
     border: 2px solid #dee2e6;
@@ -853,4 +942,172 @@ main {
 [data-bs-theme="dark"] .assistant-message a:visited,
 [data-bs-theme="dark"] .message-content a:visited {
     color: #b399ff !important; /* Purple-ish for visited links */
+}
+
+/* ============================================
+   Rendered Markdown — table & code block styles
+   Shared by agent detail view, template preview,
+   and any non-chat area that renders Markdown.
+   ============================================ */
+
+/* --- Tables --- */
+.rendered-markdown table {
+    width: 100%;
+    max-width: 100%;
+    margin: 0.75rem 0;
+    border-collapse: collapse;
+    border-spacing: 0;
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+    overflow: hidden;
+    background-color: var(--bs-body-bg);
+    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+    font-size: 0.875rem;
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+}
+
+@media (min-width: 768px) {
+    .rendered-markdown table {
+        display: table;
+        white-space: normal;
+    }
+}
+
+.rendered-markdown table th,
+.rendered-markdown table td {
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid #dee2e6;
+    border-right: 1px solid #dee2e6;
+    text-align: left;
+    vertical-align: top;
+    word-wrap: break-word;
+    line-height: 1.4;
+}
+
+.rendered-markdown table th:last-child,
+.rendered-markdown table td:last-child {
+    border-right: none;
+}
+
+.rendered-markdown table thead th {
+    background-color: #f8f9fa;
+    font-weight: 600;
+    color: #495057;
+    border-bottom: 2px solid #dee2e6;
+}
+
+.rendered-markdown table tbody tr:nth-child(even) {
+    background-color: rgba(0, 0, 0, 0.02);
+}
+
+.rendered-markdown table tbody tr:hover {
+    background-color: rgba(0, 0, 0, 0.04);
+    transition: background-color 0.15s ease-in-out;
+}
+
+.rendered-markdown table th[align="center"],
+.rendered-markdown table td[align="center"] {
+    text-align: center;
+}
+
+.rendered-markdown table th[align="right"],
+.rendered-markdown table td[align="right"] {
+    text-align: right;
+}
+
+/* Dark mode tables */
+[data-bs-theme="dark"] .rendered-markdown table {
+    border-color: #495057;
+    background-color: var(--bs-dark);
+    color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .rendered-markdown table th,
+[data-bs-theme="dark"] .rendered-markdown table td {
+    border-color: #495057;
+}
+
+[data-bs-theme="dark"] .rendered-markdown table thead th {
+    background-color: #343a40;
+    color: #e9ecef;
+    border-bottom-color: #495057;
+}
+
+[data-bs-theme="dark"] .rendered-markdown table tbody tr:nth-child(even) {
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+[data-bs-theme="dark"] .rendered-markdown table tbody tr:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.rendered-markdown table code {
+    background-color: rgba(0, 0, 0, 0.1);
+    padding: 0.125rem 0.25rem;
+    border-radius: 0.25rem;
+    font-size: 0.8em;
+}
+
+[data-bs-theme="dark"] .rendered-markdown table code {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+/* --- Code blocks --- */
+.rendered-markdown pre,
+.rendered-markdown pre[class*="language-"] {
+    overflow-x: auto;
+    max-width: 100%;
+    width: 100%;
+    box-sizing: border-box;
+    display: block;
+    white-space: pre;
+    background-color: #1e1e1e;
+    color: #d4d4d4;
+    border-radius: 0.375rem;
+    padding: 1rem;
+    margin: 0.75rem 0;
+    font-size: 0.85rem;
+    line-height: 1.5;
+}
+
+.rendered-markdown pre code {
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+    white-space: pre;
+    background: transparent;
+    color: inherit;
+    padding: 0;
+    font-size: inherit;
+}
+
+/* Inline code */
+.rendered-markdown code:not(pre code) {
+    background-color: rgba(0, 0, 0, 0.06);
+    padding: 0.15rem 0.35rem;
+    border-radius: 0.25rem;
+    font-size: 0.85em;
+    color: #d63384;
+}
+
+[data-bs-theme="dark"] .rendered-markdown code:not(pre code) {
+    background-color: rgba(255, 255, 255, 0.1);
+    color: #e685b5;
+}
+
+/* Blockquotes */
+.rendered-markdown blockquote {
+    border-left: 4px solid #dee2e6;
+    padding-left: 1em;
+    color: #6c757d;
+    margin: 0.75rem 0;
+}
+
+[data-bs-theme="dark"] .rendered-markdown blockquote {
+    border-left-color: #495057;
+    color: #adb5bd;
 }

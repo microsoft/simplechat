@@ -82,14 +82,36 @@ def get_group_action(
     return _clean_action(action, group_id, return_type)
 
 
-def save_group_action(group_id: str, action_data: Dict[str, Any]) -> Dict[str, Any]:
+def save_group_action(group_id: str, action_data: Dict[str, Any], user_id: Optional[str] = None) -> Dict[str, Any]:
     """Create or update a group action entry."""
     payload = dict(action_data)
     action_id = payload.get("id") or str(uuid.uuid4())
 
     payload["id"] = action_id
     payload["group_id"] = group_id
-    payload["last_updated"] = datetime.utcnow().isoformat()
+    now = datetime.utcnow().isoformat()
+    payload["last_updated"] = now
+
+    # Track who created/modified this action
+    existing_action = None
+    try:
+        existing_action = cosmos_group_actions_container.read_item(
+            item=action_id,
+            partition_key=group_id,
+        )
+    except exceptions.CosmosResourceNotFoundError:
+        pass
+    except Exception:
+        pass
+
+    if existing_action:
+        payload["created_by"] = existing_action.get("created_by", user_id)
+        payload["created_at"] = existing_action.get("created_at", now)
+    else:
+        payload["created_by"] = user_id
+        payload["created_at"] = now
+    payload["modified_by"] = user_id
+    payload["modified_at"] = now
 
     payload.setdefault("name", "")
     payload.setdefault("displayName", payload.get("name", ""))
@@ -107,7 +129,12 @@ def save_group_action(group_id: str, action_data: Dict[str, Any]) -> Dict[str, A
 
     payload.pop("user_id", None)
 
-    payload = keyvault_plugin_save_helper(payload, scope_value=group_id, scope="group")
+    payload = keyvault_plugin_save_helper(
+        payload,
+        scope_value=group_id,
+        scope="group",
+        existing_plugin=existing_action,
+    )
 
     try:
         stored = cosmos_group_actions_container.upsert_item(body=payload)

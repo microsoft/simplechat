@@ -291,9 +291,9 @@
 
             <div class="p-3 border-top flex-shrink-0">
                 
-                 <div class="d-flex align-items-center mb-2 justify-content-between">
+                      <div class="chat-toolbar mb-2">
                     <!-- Left side buttons -->
-                    <div class="d-flex align-items-center flex-wrap gap-2">
+                          <div class="chat-toolbar-actions">
                         {% if settings.enable_image_generation %}
                         <button
                             id="image-generate-btn"
@@ -342,68 +342,98 @@
                     </div>
                     
                     <!-- Right side selectors -->
-                    <div class="d-flex align-items-center gap-2">
-
-                        <!-- TTS Autoplay toggle button -->
-                        {% if app_settings.enable_text_to_speech %}
-                        <button 
-                            id="tts-autoplay-toggle-btn" 
-                            class="btn btn-outline-secondary btn-sm rounded-circle" 
-                            data-bs-toggle="tooltip" 
-                            data-bs-placement="top" 
-                            data-bs-title="Toggle AI voice response"
-                            title="Auto voice response disabled - click to enable"
-                            style="width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center;"
-                        >
-                            <i class="bi bi-volume-mute"></i>
-                        </button>
-                        {% endif %}
-
-                        <!-- Streaming toggle button -->
-                        <button 
-                            id="streaming-toggle-btn" 
-                            class="btn btn-outline-secondary btn-sm rounded-circle" 
-                            data-bs-toggle="tooltip" 
-                            data-bs-placement="top" 
-                            title="Toggle streaming responses."
-                            style="width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center;"
-                        >
-                            <i class="bi bi-lightning"></i>
-                        </button>
-
-                        <!-- Reasoning effort toggle button -->
-                        <button 
-                            id="reasoning-toggle-btn" 
-                            class="btn btn-outline-secondary btn-sm rounded-circle" 
-                            data-bs-toggle="tooltip" 
-                            data-bs-placement="top" 
-                            title="Configure reasoning effort"
-                            style="width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center;"
-                        >
-                            <i class="bi bi-reception-2"></i>
-                        </button>
-
+                    <div class="chat-toolbar-controls">
                         <!-- Prompt Selector -->
+                        <div class="chat-toolbar-selectors">
                         {% if settings.enable_user_workspace or settings.enable_group_workspaces %}
-                        <div id="prompt-selection-container" class="flex-shrink-0" style="display: none;">
-                            <select class="form-select" id="prompt-select"></select>
+                        <div id="prompt-selection-container" class="chat-toolbar-selector" style="display: none;">
+                            <label for="prompt-select" class="visually-hidden">Prompt</label>
+                            <div class="dropdown chat-searchable-select" id="prompt-dropdown">
+                                <button class="form-select chat-searchable-select-button"
+                                        type="button"
+                                        id="prompt-dropdown-button"
+                                        data-bs-toggle="dropdown"
+                                        data-bs-auto-close="outside"
+                                        aria-expanded="false">
+                                    <span class="chat-searchable-select-text text-truncate">Select a Prompt...</span>
+                                </button>
+                                <div class="dropdown-menu p-2 chat-searchable-select-menu" id="prompt-dropdown-menu">
+                                    <div class="chat-searchable-select-search mb-2">
+                                        <input type="text"
+                                               class="form-control form-control-sm"
+                                               placeholder="Search prompts..."
+                                               id="prompt-search-input">
+                                    </div>
+                                    <div class="dropdown-items-container chat-searchable-select-items" id="prompt-dropdown-items"></div>
+                                </div>
+                            </div>
+                            <select class="form-select d-none" id="prompt-select"></select>
                         </div>
                         {% endif %}
 
 
                         <!-- Agent selector -->
-                        <div id="agent-select-container" style="display: none;">
+                        <div id="agent-select-container" class="chat-toolbar-selector" style="display: none;">
                             <label for="agent-select" class="visually-hidden">Agent</label>
-                            <select id="agent-select" class="form-select me-4">
+                            <div class="dropdown chat-searchable-select" id="agent-dropdown">
+                                <button class="form-select chat-searchable-select-button"
+                                        type="button"
+                                        id="agent-dropdown-button"
+                                        data-bs-toggle="dropdown"
+                                        data-bs-auto-close="outside"
+                                        aria-expanded="false">
+                                    <span class="chat-searchable-select-text text-truncate">Select an Agent</span>
+                                </button>
+                                <div class="dropdown-menu p-2 chat-searchable-select-menu" id="agent-dropdown-menu">
+                                    <div class="chat-searchable-select-search mb-2">
+                                        <input type="text"
+                                               class="form-control form-control-sm"
+                                               placeholder="Search agents..."
+                                               id="agent-search-input">
+                                    </div>
+                                    <div class="dropdown-items-container chat-searchable-select-items" id="agent-dropdown-items"></div>
+                                </div>
+                            </div>
+                            <select id="agent-select" class="form-select d-none">
                                 <!-- Agents will be populated dynamically by JS -->
                             </select>
                         </div>
                         
                         
                         <!-- Model selector - right aligned -->
-                        <div id="model-select-container" class="flex-shrink-0">
+                        <div id="model-select-container" class="chat-toolbar-selector">
                             <label for="model-select" class="visually-hidden">Model</label>
-                            <select id="model-select" class="form-select">
+                            <div class="dropdown chat-searchable-select" id="model-dropdown">
+                                <button class="form-select chat-searchable-select-button"
+                                        type="button"
+                                        id="model-dropdown-button"
+                                        data-bs-toggle="dropdown"
+                                        data-bs-auto-close="outside"
+                                        aria-expanded="false">
+                                    <span class="chat-searchable-select-text text-truncate">
+                                    {% if settings.enable_gpt_apim %}
+                                        {% set raw = settings.azure_apim_gpt_deployment or "" %}
+                                        {% set apim_list = raw.split(',') %}
+                                        {% set first_dep = apim_list[0].strip() if apim_list and apim_list[0].strip() else 'Select a Model' %}
+                                        {{ first_dep }}
+                                    {% elif settings.gpt_model.selected %}
+                                        {{ settings.gpt_model.selected[0].modelName }}
+                                    {% else %}
+                                        Select a Model
+                                    {% endif %}
+                                    </span>
+                                </button>
+                                <div class="dropdown-menu p-2 chat-searchable-select-menu" id="model-dropdown-menu">
+                                    <div class="chat-searchable-select-search mb-2">
+                                        <input type="text"
+                                               class="form-control form-control-sm"
+                                               placeholder="Search models..."
+                                               id="model-search-input">
+                                    </div>
+                                    <div class="dropdown-items-container chat-searchable-select-items" id="model-dropdown-items"></div>
+                                </div>
+                            </div>
+                            <select id="model-select" class="form-select d-none">
                             {% if settings.enable_gpt_apim %}
                                 {# when using APIM, azure_apim_gpt_deployment may be "dep1" or "dep1,dep2,…" #}
                                 {% set raw = settings.azure_apim_gpt_deployment or "" %}
@@ -426,6 +456,38 @@
                                 {% endfor %}
                             {% endif %}
                             </select>
+                        </div>
+
+                        <div class="chat-toolbar-toggles">
+
+                        <!-- Reasoning effort toggle button -->
+                        <button 
+                            id="reasoning-toggle-btn" 
+                            class="btn btn-outline-secondary btn-sm rounded-circle" 
+                            data-bs-toggle="tooltip" 
+                            data-bs-placement="top" 
+                            title="Configure reasoning effort"
+                            style="width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center;"
+                        >
+                            <i class="bi bi-reception-2"></i>
+                        </button>
+
+                        <!-- TTS Autoplay toggle button -->
+                        {% if app_settings.enable_text_to_speech %}
+                        <button 
+                            id="tts-autoplay-toggle-btn" 
+                            class="btn btn-outline-secondary btn-sm rounded-circle" 
+                            data-bs-toggle="tooltip" 
+                            data-bs-placement="top" 
+                            data-bs-title="Toggle AI voice response"
+                            title="Auto voice response disabled - click to enable"
+                            style="width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center;"
+                        >
+                            <i class="bi bi-volume-mute"></i>
+                        </button>
+                        {% endif %}
+
+                        </div>
                         </div>
                     </div>
                 </div>
@@ -457,7 +519,13 @@
                                     <span class="selected-scope-text text-truncate">All</span>
                                 </button>
                                 <div class="dropdown-menu p-2" id="scope-dropdown-menu" style="width: 280px; max-height: 400px; overflow-y: auto;">
-                                    <div id="scope-dropdown-items">
+                                    <div class="chat-dropdown-search mb-2">
+                                        <input type="text"
+                                               class="form-control form-control-sm"
+                                               placeholder="Search workspaces..."
+                                               id="scope-search-input">
+                                    </div>
+                                    <div class="dropdown-items-container" id="scope-dropdown-items">
                                         <!-- Populated by JS from window.userGroups and window.userVisiblePublicWorkspaces -->
                                     </div>
                                 </div>
@@ -477,6 +545,12 @@
                                     <span class="selected-tags-text text-truncate">All Tags</span>
                                 </button>
                                 <div class="dropdown-menu p-2" id="tags-dropdown-menu" style="width: 250px; max-height: 300px; overflow-y: auto;">
+                                    <div class="chat-dropdown-search mb-2">
+                                        <input type="text"
+                                               class="form-control form-control-sm"
+                                               placeholder="Search tags..."
+                                               id="tags-search-input">
+                                    </div>
                                     <div class="dropdown-items-container" id="tags-dropdown-items">
                                         <!-- Tags will be populated here -->
                                     </div>
@@ -1053,7 +1127,8 @@
         enable_text_to_speech: {{ 'true' if app_settings.enable_text_to_speech else 'false' }},
         enable_speech_to_text_input: {{ 'true' if app_settings.enable_speech_to_text_input else 'false' }},
         enable_web_search_user_notice: {{ 'true' if settings.enable_web_search_user_notice else 'false' }},
-        enforce_workspace_scope_lock: {{ 'true' if settings.enforce_workspace_scope_lock else 'false' }}
+        enforce_workspace_scope_lock: {{ 'true' if settings.enforce_workspace_scope_lock else 'false' }},
+        enable_thoughts: {{ 'true' if settings.enable_thoughts else 'false' }}
     };
 
     // Layout related globals (can stay here or move entirely into chat-layout.js if preferred)

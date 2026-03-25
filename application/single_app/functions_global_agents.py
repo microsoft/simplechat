@@ -163,25 +163,46 @@ def get_global_agent(agent_id):
         return None
 
 
-def save_global_agent(agent_data):
+def save_global_agent(agent_data, user_id=None):
     """
     Save or update a global agent.
     
     Args:
         agent_data (dict): Agent data to save
+        user_id (str, optional): The user ID of the person performing the action
         
     Returns:
         dict: Saved agent data or None if failed
     """
     try:
-        user_id = get_current_user_id()
+        if user_id is None:
+            user_id = get_current_user_id()
         cleaned_agent = sanitize_agent_payload(agent_data)
         if 'id' not in cleaned_agent:
             cleaned_agent['id'] = str(uuid.uuid4())
         cleaned_agent['is_global'] = True
         cleaned_agent['is_group'] = False
-        cleaned_agent['created_at'] = datetime.utcnow().isoformat()
-        cleaned_agent['updated_at'] = datetime.utcnow().isoformat()
+        now = datetime.utcnow().isoformat()
+
+        # Check if this is a new agent or an update to preserve created_by/created_at
+        existing_agent = None
+        try:
+            existing_agent = cosmos_global_agents_container.read_item(
+                item=cleaned_agent['id'],
+                partition_key=cleaned_agent['id']
+            )
+        except Exception:
+            pass
+
+        if existing_agent:
+            cleaned_agent['created_by'] = existing_agent.get('created_by', user_id)
+            cleaned_agent['created_at'] = existing_agent.get('created_at', now)
+        else:
+            cleaned_agent['created_by'] = user_id
+            cleaned_agent['created_at'] = now
+        cleaned_agent['modified_by'] = user_id
+        cleaned_agent['modified_at'] = now
+        cleaned_agent['updated_at'] = now
         log_event(
             "Saving global agent.",
             extra={"agent_name": cleaned_agent.get('name', 'Unknown')},

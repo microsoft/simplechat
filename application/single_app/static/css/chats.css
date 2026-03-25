@@ -20,6 +20,13 @@
   z-index: 1050 !important; /* Ensure it's above other elements */
 }
 
+.chat-searchable-select .dropdown-menu.show {
+  display: block !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  z-index: 1050 !important;
+}
+
 /* Handle dropdown positioning at the edge of viewport */
 #document-dropdown.dropup .dropdown-menu {
   bottom: 100% !important;
@@ -37,6 +44,188 @@
   position: absolute;
   left: 0 !important; /* Keep it aligned to the left of its container */
   right: auto !important; /* Prevent right positioning */
+}
+
+.chat-searchable-select {
+  min-width: 120px;
+}
+
+.chat-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.chat-toolbar-actions,
+.chat-toolbar-controls,
+.chat-toolbar-toggles,
+.chat-toolbar-selectors {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.chat-toolbar-actions {
+  flex: 1 1 320px;
+  flex-wrap: wrap;
+}
+
+.chat-toolbar-controls {
+  flex: 1 1 540px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  margin-left: auto;
+}
+
+.chat-toolbar-toggles {
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.chat-toolbar-selectors {
+  flex: 1 1 460px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.chat-toolbar-selector {
+  flex: 1 1 200px;
+  min-width: 180px;
+  max-width: 280px;
+}
+
+.chat-toolbar-selector .chat-searchable-select {
+  width: 100%;
+  min-width: 0;
+}
+
+#prompt-selection-container.chat-toolbar-selector {
+  max-width: 300px;
+}
+
+#model-select-container.chat-toolbar-selector,
+#agent-select-container.chat-toolbar-selector {
+  max-width: 230px;
+}
+
+.chat-searchable-select .dropdown-menu {
+  min-width: 100%;
+  max-width: 360px;
+  max-height: 60vh;
+  overflow: hidden;
+  padding: 8px;
+}
+
+.chat-searchable-select-button {
+  text-align: left;
+  position: relative;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-right: 1.5rem;
+}
+
+.chat-searchable-select-text {
+  display: inline-block;
+  max-width: calc(100% - 20px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-searchable-select-search,
+.chat-dropdown-search {
+  padding: 0 0.25rem;
+}
+
+.chat-searchable-select-items {
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: 0;
+}
+
+.chat-searchable-select-items .dropdown-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  padding: 0.5rem 0.75rem;
+}
+
+.chat-searchable-select-items .dropdown-item.active {
+  background-color: #e9ecef;
+  color: #212529;
+}
+
+.chat-searchable-select-items .dropdown-item:hover {
+  background-color: #f8f9fa;
+}
+
+.chat-searchable-select-items .dropdown-item.disabled {
+  color: #6c757d;
+  cursor: default;
+}
+
+.chat-searchable-select-items .dropdown-item.disabled:hover {
+  background-color: transparent;
+}
+
+#scope-dropdown-menu,
+#tags-dropdown-menu {
+  overflow: hidden !important;
+}
+
+@media (max-width: 1200px) {
+  .chat-toolbar-controls,
+  .chat-toolbar-selectors {
+    justify-content: flex-start;
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 768px) {
+  .chat-toolbar-controls {
+    flex-basis: 100%;
+    justify-content: flex-start;
+    margin-left: 0;
+  }
+
+  .chat-toolbar-selectors {
+    flex-basis: 100%;
+  }
+
+  .chat-toolbar-toggles {
+    width: 100%;
+  }
+
+  .chat-toolbar-selector {
+    flex: 1 1 100%;
+    min-width: 0;
+    max-width: none;
+  }
+}
+
+#scope-dropdown-items {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+#tags-dropdown-items {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+#scope-dropdown-items .dropdown-item,
+#tags-dropdown-items .dropdown-item {
+  width: 100%;
+  text-align: left;
 }
 
 /* Document dropdown items must be explicitly displayed */
@@ -501,6 +690,25 @@ body.layout-split .gutter {
   /* Dark grey text for better contrast */
 }
 
+.conversation-title-row {
+  min-width: 0;
+}
+
+.conversation-unread-dot {
+  width: 0.625rem;
+  height: 0.625rem;
+  min-width: 0.625rem;
+  border-radius: 999px;
+  background-color: #198754;
+  box-shadow: 0 0 0 2px rgba(25, 135, 84, 0.15);
+  flex-shrink: 0;
+}
+
+[data-bs-theme="dark"] .conversation-unread-dot {
+  background-color: #39d98a;
+  box-shadow: 0 0 0 2px rgba(57, 217, 138, 0.2);
+}
+
 .message-footer {
   /* position: absolute; bottom: 8px; left: 10px; right: 10px; */ /* Removed absolute positioning */
   display: flex;
@@ -816,6 +1024,12 @@ a.citation-link:hover {
   justify-content: center;
 }
 
+.search-btn,
+.file-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 /* Hide the text initially */
 .search-btn .search-btn-text {
   opacity: 0;
@@ -1092,7 +1306,7 @@ a.citation-link:hover {
 .message-content {
   display: flex;
   align-items: flex-end;
-  overflow: visible; /* Allow dropdown menus to appear outside content */
+  overflow: auto; /* Preserving higher level visible property while allowing response message scroll if needed */
 }
 
 .message-content.flex-row-reverse {
@@ -1304,8 +1518,7 @@ ol {
   align-items: flex-end;
 }
 #prompt-selection-container {
-  /* Prevent the container from growing vertically */
-  align-self: flex-end; /* Align item itself to bottom */
+  align-self: auto;
 }
 #prompt-select {
   /* Adjust max-width as needed */
@@ -1722,4 +1935,160 @@ mark.search-highlight {
     100% {
         transform: scale(1.05);
     }
+}
+
+/* =============================================
+   Processing Thoughts
+   ============================================= */
+
+/* Loading indicator thought text */
+.thought-live-text {
+    font-style: italic;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 300px;
+}
+
+/* Toggle button in message footer */
+.thoughts-toggle-btn {
+    font-size: 0.9rem;
+    color: #6c757d;
+    padding: 0 0.25rem;
+    border: none;
+    background: none;
+    cursor: pointer;
+    transition: color 0.15s ease-in-out;
+}
+
+.thoughts-toggle-btn:hover {
+    color: #ffc107;
+}
+
+/* Collapsible container inside message bubble */
+.thoughts-container {
+    max-height: 300px;
+    overflow-y: auto;
+    font-size: 0.85rem;
+}
+
+/* Timeline wrapper */
+.thoughts-list {
+    position: relative;
+    padding-left: 1.25rem;
+}
+
+/* Vertical timeline line */
+.thoughts-list::before {
+    content: '';
+    position: absolute;
+    left: 0.5rem;
+    top: 0.25rem;
+    bottom: 0.25rem;
+    width: 2px;
+    background: linear-gradient(to bottom, #0d6efd, #6ea8fe);
+    border-radius: 1px;
+}
+
+/* Individual thought step */
+.thought-step {
+    display: flex;
+    align-items: flex-start;
+    padding-left: 0.75rem;
+    padding-top: 0.25rem;
+    padding-bottom: 0.25rem;
+    position: relative;
+}
+
+/* Timeline node dot */
+.thought-step::before {
+    content: '';
+    position: absolute;
+    left: -1rem;
+    top: 0.55rem;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: #0d6efd;
+    border: 2px solid #fff;
+    box-shadow: 0 0 0 1px #0d6efd;
+    z-index: 1;
+}
+
+/* Last thought step gets a slightly different dot */
+.thought-step:last-child::before {
+    background-color: #198754;
+    box-shadow: 0 0 0 1px #198754;
+}
+
+.thought-step i {
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+
+/* Streaming cursor thought badge pulse animation */
+.animate-pulse {
+    animation: thought-pulse 1.5s ease-in-out infinite;
+}
+
+/* Streaming thought display (before content arrives) */
+.streaming-thought-display {
+    display: flex;
+    align-items: center;
+    padding: 0.5rem 0;
+}
+
+/* Light mode: use darker, more readable colors */
+.streaming-thought-display .badge {
+    background-color: rgba(13, 110, 253, 0.08) !important;
+    color: #0a58ca !important;
+    border-color: rgba(13, 110, 253, 0.25) !important;
+}
+
+/* Dark mode: lighter accent colors */
+[data-bs-theme="dark"] .streaming-thought-display .badge {
+    background-color: rgba(13, 202, 240, 0.15) !important;
+    color: #6edff6 !important;
+    border-color: rgba(13, 202, 240, 0.3) !important;
+}
+
+@keyframes thought-pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.6;
+    }
+}
+
+/* Dark mode overrides */
+[data-bs-theme="dark"] .thoughts-toggle-btn {
+    color: #adb5bd;
+}
+
+[data-bs-theme="dark"] .thoughts-toggle-btn:hover {
+    color: #ffc107;
+}
+
+[data-bs-theme="dark"] .thought-step {
+    /* Dark mode dot border matches dark background */
+}
+
+[data-bs-theme="dark"] .thought-step::before {
+    border-color: #212529;
+    background-color: #6ea8fe;
+    box-shadow: 0 0 0 1px #6ea8fe;
+}
+
+[data-bs-theme="dark"] .thought-step:last-child::before {
+    background-color: #75b798;
+    box-shadow: 0 0 0 1px #75b798;
+}
+
+[data-bs-theme="dark"] .thoughts-list::before {
+    background: linear-gradient(to bottom, #6ea8fe, #9ec5fe);
+}
+
+[data-bs-theme="dark"] .thoughts-container {
+    border-top-color: #495057 !important;
 }

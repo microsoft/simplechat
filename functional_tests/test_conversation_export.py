@@ -1,365 +1,545 @@
 #!/usr/bin/env python3
 # test_conversation_export.py
 """
-Functional test for conversation export feature.
-Version: 0.237.050
-Implemented in: 0.237.050
+Functional test for conversation export enhancements.
+Version: 0.239.029
+Implemented in: 0.239.022 (base), 0.239.023 (PDF export), 0.239.025 (tag formatting fix), 0.239.028 (summary token budget fix)
 
-This test validates the conversation export backend endpoint
-and ensures JSON/Markdown formats and single/ZIP packaging work correctly.
+This test ensures conversation export now includes normalized and raw citations,
+processing thoughts, transcript-style Markdown appendices, deleted-message filtering,
+optional summary-intro metadata, PDF export with chat-bubble styling, and properly
+formatted tag/classification rendering.
 """
 
-import sys
-import os
-import json
-import zipfile
 import io
+import json
+import os
+import sys
+import zipfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'application', 'single_app'))
 
+from route_backend_conversation_export import (  # noqa: E402
+    _build_citation_counts,
+    _build_pdf_html_body,
+    _collect_raw_citation_buckets,
+    _conversation_to_markdown,
+    _conversation_to_pdf_bytes,
+    _filter_messages_for_export,
+    _format_tag,
+    _normalize_citations,
+    _normalize_content,
+    _pdf_bubble_class,
+    _safe_filename,
+    _sanitize_conversation,
+    _sanitize_message,
+    _truncate_for_summary,
+)
 
-def test_sanitize_conversation():
-    """Test that _sanitize_conversation strips internal fields."""
-    print("🔍 Testing _sanitize_conversation...")
 
-    raw_conversation = {
-        'id': 'conv-123',
-        'title': 'Test Conversation',
-        'last_updated': '2025-01-01T00:00:00Z',
-        'chat_type': 'personal',
-        'tags': ['test'],
-        'is_pinned': False,
-        'context': [],
-        'user_id': 'secret-user-id',
-        '_rid': 'cosmos-internal-rid',
-        '_self': 'cosmos-self-link',
-        '_etag': 'some-etag',
-        '_attachments': 'attachments',
-        '_ts': 1234567890,
-        'partition_key': 'should-not-appear'
-    }
+def test_filter_messages_for_export():
+    """Test that deleted and inactive-thread messages are excluded."""
+    print("🔍 Testing export message filtering...")
 
-    # Import after path setup — may fail if dependencies aren't installed
-    try:
-        from route_backend_conversation_export import register_route_backend_conversation_export
-        print("  Module imported successfully (dependencies available)")
-    except ImportError as ie:
-        print(f"  Skipping import test (missing dependency: {ie})")
-        print("  Verifying sanitization logic inline instead...")
+    messages = [
+        {'id': 'm1', 'role': 'user', 'content': 'Keep me', 'metadata': {}},
+        {'id': 'm2', 'role': 'assistant', 'content': 'Delete me', 'metadata': {'is_deleted': True}},
+        {'id': 'm3', 'role': 'assistant', 'content': 'Inactive retry', 'metadata': {'thread_info': {'active_thread': False}}},
+        {'id': 'm4', 'role': 'assistant', 'content': 'Active reply', 'metadata': {'thread_info': {'active_thread': True}}},
+        {'id': 'm5', 'role': 'user', 'content': 'Legacy message', 'metadata': {'thread_info': {}}},
+    ]
 
-    # We test the logic manually since inner functions are not directly accessible
-    sanitized = {
-        'id': raw_conversation.get('id'),
-        'title': raw_conversation.get('title', 'Untitled'),
-        'last_updated': raw_conversation.get('last_updated', ''),
-        'chat_type': raw_conversation.get('chat_type', 'personal'),
-        'tags': raw_conversation.get('tags', []),
-        'is_pinned': raw_conversation.get('is_pinned', False),
-        'context': raw_conversation.get('context', [])
-    }
+    filtered = _filter_messages_for_export(messages)
+    filtered_ids = [message['id'] for message in filtered]
 
-    assert 'id' in sanitized, "Should retain id"
-    assert 'title' in sanitized, "Should retain title"
-    assert 'user_id' not in sanitized, "Should strip user_id"
-    assert '_rid' not in sanitized, "Should strip Cosmos internal fields"
-    assert '_etag' not in sanitized, "Should strip _etag"
-    assert 'partition_key' not in sanitized, "Should strip partition_key"
+    assert filtered_ids == ['m1', 'm4', 'm5'], f"Unexpected filtered IDs: {filtered_ids}"
 
-    print("✅ _sanitize_conversation test passed!")
+    print("✅ Export message filtering test passed!")
     return True
 
 
-def test_sanitize_message():
-    """Test that _sanitize_message strips internal fields."""
-    print("🔍 Testing _sanitize_message...")
+def test_sanitize_message_with_citations_and_thoughts():
+    """Test that sanitized messages retain normalized/raw citations and thoughts."""
+    print("🔍 Testing message sanitization with citations and thoughts...")
 
-    raw_message = {
-        'id': 'msg-456',
+    assistant_message = {
+        'id': 'assistant-1',
         'role': 'assistant',
-        'content': 'Hello, how can I help?',
-        'timestamp': '2025-01-01T00:00:01Z',
-        'citations': [{'title': 'Doc1', 'url': 'https://example.com'}],
-        'conversation_id': 'conv-123',
-        'user_id': 'secret-user-id',
-        '_rid': 'cosmos-internal',
-        'metadata': {'thread_info': {'active_thread': True}},
+        'content': [{'type': 'text', 'text': 'Answer with evidence.'}],
+        'timestamp': '2026-03-06T12:00:02Z',
+        'augmented': True,
+        'hybrid_citations': [
+            {
+                'file_name': 'paper.pdf',
+                'page_number': 4,
+                'citation_id': 'doc-1_4',
+                'chunk_id': 'chunk-1',
+                'metadata_type': 'abstract',
+                'metadata_content': 'Study abstract text.'
+            }
+        ],
+        'web_search_citations': [
+            {'title': 'Example Source', 'url': 'https://example.com/source'}
+        ],
+        'agent_citations': [
+            {
+                'tool_name': 'web_lookup',
+                'function_name': 'azure_ai_foundry_web_search',
+                'plugin_name': 'azure_ai_foundry',
+                'function_arguments': {'query': 'test'},
+                'function_result': {'answer': 'done'},
+                'timestamp': '2026-03-06T12:00:01Z',
+                'success': True
+            }
+        ],
+        'metadata': {
+            'reasoning_effort': 'medium',
+            'token_usage': {
+                'prompt_tokens': 10,
+                'completion_tokens': 20,
+                'total_tokens': 30
+            }
+        },
+        'model_deployment_name': 'gpt-5-mini',
+        'hybridsearch_query': 'refined search query'
     }
+    thoughts = [
+        {
+            'step_index': 0,
+            'step_type': 'search',
+            'content': 'Searching documents...',
+            'detail': 'query=refined search query',
+            'duration_ms': 123,
+            'timestamp': '2026-03-06T12:00:01Z'
+        }
+    ]
 
-    result = {
-        'role': raw_message.get('role', ''),
-        'content': raw_message.get('content', ''),
-        'timestamp': raw_message.get('timestamp', ''),
-    }
-    if raw_message.get('citations'):
-        result['citations'] = raw_message['citations']
+    sanitized = _sanitize_message(assistant_message, sequence_index=2, transcript_index=2, thoughts=thoughts)
 
-    assert result['role'] == 'assistant', "Should retain role"
-    assert result['content'] == 'Hello, how can I help?', "Should retain content"
-    assert 'citations' in result, "Should retain citations"
-    assert 'user_id' not in result, "Should strip user_id"
-    assert '_rid' not in result, "Should strip Cosmos internal fields"
-    assert 'conversation_id' not in result, "Should strip conversation_id"
-    assert 'metadata' not in result, "Should strip metadata"
+    assert sanitized['content_text'] == 'Answer with evidence.', 'Content should normalize list-based text.'
+    assert sanitized['label'] == 'Turn 2', 'Transcript messages should use turn labels.'
+    assert sanitized['citation_counts']['document'] == 1, 'Document citation count should be preserved.'
+    assert sanitized['citation_counts']['web'] == 1, 'Web citation count should be preserved.'
+    assert sanitized['citation_counts']['agent_tool'] == 1, 'Agent citation count should be preserved.'
+    assert len(sanitized['citations']) == 3, 'Normalized citations should include all raw buckets.'
+    assert sanitized['hybrid_citations'][0]['file_name'] == 'paper.pdf', 'Raw hybrid citations should be preserved.'
+    assert sanitized['thoughts'][0]['step_type'] == 'search', 'Thoughts should be attached to the message.'
+    assert sanitized['details']['generation']['model_deployment'] == 'gpt-5-mini', 'Generation details should include the model.'
 
-    print("✅ _sanitize_message test passed!")
+    print("✅ Message sanitization test passed!")
     return True
 
 
-def test_conversation_to_markdown():
-    """Test markdown generation from a conversation entry."""
-    print("🔍 Testing markdown generation...")
+def test_conversation_metadata_and_json_shape():
+    """Test that conversation-level metadata captures counts for export JSON."""
+    print("🔍 Testing conversation metadata and JSON shape...")
+
+    messages = [
+        {
+            'id': 'u1',
+            'role': 'user',
+            'is_transcript_message': True,
+            'citation_counts': {'document': 0, 'web': 0, 'agent_tool': 0, 'legacy': 0, 'total': 0},
+            'thoughts': []
+        },
+        {
+            'id': 'a1',
+            'role': 'assistant',
+            'is_transcript_message': True,
+            'citation_counts': {'document': 1, 'web': 1, 'agent_tool': 0, 'legacy': 0, 'total': 2},
+            'thoughts': [{'step_type': 'search'}]
+        },
+        {
+            'id': 'f1',
+            'role': 'file',
+            'is_transcript_message': False,
+            'citation_counts': {'document': 0, 'web': 0, 'agent_tool': 0, 'legacy': 0, 'total': 0},
+            'thoughts': []
+        }
+    ]
+
+    conversation = _sanitize_conversation(
+        {
+            'id': 'conv-123',
+            'title': 'Export Test',
+            'last_updated': '2026-03-06T12:00:00Z',
+            'chat_type': 'personal',
+            'tags': ['export', 'thoughts'],
+            'context': ['workspace-a'],
+            'classification': ['research'],
+            'strict': False,
+            'is_pinned': True,
+            'scope_locked': True,
+            'locked_contexts': ['workspace-a']
+        },
+        messages=messages,
+        role_counts={'user': 1, 'assistant': 1, 'file': 1},
+        citation_counts={'document': 1, 'web': 1, 'agent_tool': 0, 'legacy': 0, 'total': 2},
+        thought_count=1
+    )
+
+    exported = [{'conversation': conversation, 'summary_intro': {'enabled': False, 'generated': False}, 'messages': messages}]
+    parsed = json.loads(json.dumps(exported, indent=2, ensure_ascii=False, default=str))
+
+    assert parsed[0]['conversation']['transcript_message_count'] == 2, 'Transcript count should exclude supplemental messages.'
+    assert parsed[0]['conversation']['citation_counts']['total'] == 2, 'Conversation citation counts should be included.'
+    assert parsed[0]['summary_intro']['enabled'] is False, 'Summary intro status should be included in JSON.'
+
+    print("✅ Conversation metadata and JSON shape test passed!")
+    return True
+
+
+def test_markdown_export_structure():
+    """Test transcript-style Markdown with appendices, citations, and thoughts."""
+    print("🔍 Testing Markdown export structure...")
 
     entry = {
         'conversation': {
             'id': 'conv-123',
-            'title': 'My Test Chat',
-            'last_updated': '2025-01-01T12:00:00Z',
+            'title': 'My Exported Chat',
+            'last_updated': '2026-03-06T12:00:00Z',
             'chat_type': 'personal',
-            'tags': ['important', 'test'],
+            'tags': ['science'],
+            'classification': ['research'],
+            'context': ['workspace-a'],
+            'strict': False,
             'is_pinned': False,
-            'context': []
+            'scope_locked': True,
+            'locked_contexts': ['workspace-a'],
+            'message_count': 3,
+            'message_counts_by_role': {'user': 1, 'assistant': 1, 'file': 1},
+            'citation_counts': {'document': 1, 'web': 1, 'agent_tool': 1, 'legacy': 0, 'total': 3},
+            'thought_count': 1
+        },
+        'summary_intro': {
+            'enabled': True,
+            'generated': True,
+            'model_deployment': 'gpt-5-mini',
+            'generated_at': '2026-03-06T12:05:00Z',
+            'content': 'A concise abstract.\n\n- Key point one\n- Key point two',
+            'error': None
         },
         'messages': [
             {
+                'id': 'u1',
                 'role': 'user',
-                'content': 'Hello!',
-                'timestamp': '2025-01-01T12:00:01Z'
+                'speaker_label': 'User',
+                'label': 'Turn 1',
+                'sequence_index': 1,
+                'transcript_index': 1,
+                'is_transcript_message': True,
+                'timestamp': '2026-03-06T12:00:01Z',
+                'content': 'What did the paper conclude?',
+                'content_text': 'What did the paper conclude?',
+                'details': {'interaction_mode': {'workspace_search': {'search_enabled': True, 'document_scope': 'personal'}}},
+                'citations': [],
+                'citation_counts': {'document': 0, 'web': 0, 'agent_tool': 0, 'legacy': 0, 'total': 0},
+                'thoughts': [],
+                'legacy_citations': [],
+                'hybrid_citations': [],
+                'web_search_citations': [],
+                'agent_citations': []
             },
             {
+                'id': 'a1',
                 'role': 'assistant',
-                'content': 'Hi there! How can I help you?',
-                'timestamp': '2025-01-01T12:00:02Z',
-                'citations': [{'title': 'Doc1'}]
+                'speaker_label': 'Assistant',
+                'label': 'Turn 2',
+                'sequence_index': 2,
+                'transcript_index': 2,
+                'is_transcript_message': True,
+                'timestamp': '2026-03-06T12:00:02Z',
+                'content': 'The paper concluded the intervention improved outcomes.',
+                'content_text': 'The paper concluded the intervention improved outcomes.',
+                'details': {'generation': {'model_deployment': 'gpt-5-mini', 'citation_counts': {'document': 1, 'web': 1, 'agent_tool': 1, 'legacy': 0, 'total': 3}}},
+                'citations': [
+                    {'citation_type': 'document', 'label': 'paper.pdf — Page 4', 'citation_id': 'doc-1_4', 'page_number': 4, 'classification': 'research', 'metadata_type': 'abstract', 'metadata_content': 'Study abstract text.'},
+                    {'citation_type': 'web', 'label': 'Example Source', 'title': 'Example Source', 'url': 'https://example.com/source'},
+                    {'citation_type': 'agent_tool', 'label': 'web_lookup'}
+                ],
+                'citation_counts': {'document': 1, 'web': 1, 'agent_tool': 1, 'legacy': 0, 'total': 3},
+                'thoughts': [{'step_type': 'search', 'content': 'Searching documents...', 'detail': 'query=paper outcome', 'duration_ms': 88, 'timestamp': '2026-03-06T12:00:01Z'}],
+                'legacy_citations': [],
+                'hybrid_citations': [{'file_name': 'paper.pdf'}],
+                'web_search_citations': [{'title': 'Example Source', 'url': 'https://example.com/source'}],
+                'agent_citations': [{'tool_name': 'web_lookup', 'function_name': 'azure_ai_foundry_web_search', 'plugin_name': 'azure_ai_foundry', 'function_arguments': {'query': 'paper outcome'}, 'function_result': {'answer': 'done'}, 'timestamp': '2026-03-06T12:00:01Z', 'success': True}]
+            },
+            {
+                'id': 'f1',
+                'role': 'file',
+                'speaker_label': 'File',
+                'label': 'Message 3',
+                'sequence_index': 3,
+                'transcript_index': None,
+                'is_transcript_message': False,
+                'timestamp': '2026-03-06T12:00:00Z',
+                'content': 'paper.pdf',
+                'content_text': 'paper.pdf',
+                'details': {'message_context': {'filename': 'paper.pdf'}},
+                'citations': [],
+                'citation_counts': {'document': 0, 'web': 0, 'agent_tool': 0, 'legacy': 0, 'total': 0},
+                'thoughts': [],
+                'legacy_citations': [],
+                'hybrid_citations': [],
+                'web_search_citations': [],
+                'agent_citations': []
             }
         ]
     }
 
-    # Replicate the markdown conversion logic
-    conv = entry['conversation']
-    messages = entry['messages']
-    lines = []
-    lines.append(f"# {conv['title']}")
-    lines.append('')
-    lines.append(f"**Last Updated:** {conv['last_updated']}  ")
-    lines.append(f"**Chat Type:** {conv['chat_type']}  ")
-    if conv.get('tags'):
-        lines.append(f"**Tags:** {', '.join(conv['tags'])}  ")
-    lines.append(f"**Messages:** {len(messages)}  ")
-    lines.append('')
-    lines.append('---')
-    lines.append('')
+    markdown = _conversation_to_markdown(entry)
 
-    for msg in messages:
-        role = msg.get('role', 'unknown')
-        role_label = role.capitalize()
-        if role == 'assistant':
-            role_label = 'Assistant'
-        elif role == 'user':
-            role_label = 'User'
-        lines.append(f"### {role_label}")
-        if msg.get('timestamp'):
-            lines.append(f"*{msg['timestamp']}*")
-        lines.append('')
-        lines.append(msg.get('content', ''))
-        lines.append('')
-        if msg.get('citations'):
-            lines.append('**Citations:**')
-            for cit in msg['citations']:
-                if isinstance(cit, dict):
-                    source = cit.get('title') or cit.get('filepath') or cit.get('url', 'Unknown')
-                    lines.append(f"- {source}")
-            lines.append('')
-        lines.append('---')
-        lines.append('')
+    assert '# My Exported Chat' in markdown, 'Markdown should include the title heading.'
+    assert '## Abstract' in markdown, 'Markdown should include the abstract section.'
+    assert '## Transcript' in markdown, 'Markdown should include the transcript section.'
+    assert '## Appendix B — Message Details' in markdown, 'Markdown should include the message-details appendix.'
+    assert '## Appendix C — References' in markdown, 'Markdown should include the references appendix.'
+    assert '## Appendix D — Processing Thoughts' in markdown, 'Markdown should include the thoughts appendix.'
+    assert '## Appendix E — Supplemental Messages' in markdown, 'Markdown should include supplemental messages.'
+    assert 'paper.pdf — Page 4' in markdown, 'Document citation labels should appear in references.'
+    assert 'Example Source' in markdown, 'Web citations should appear in references.'
+    assert 'Searching documents...' in markdown, 'Thought content should appear in the appendix.'
 
-    markdown = '\n'.join(lines)
-
-    assert '# My Test Chat' in markdown, "Should have title as H1"
-    assert '**Last Updated:**' in markdown, "Should have last updated"
-    assert '**Tags:** important, test' in markdown, "Should list tags"
-    assert '### User' in markdown, "Should have user heading"
-    assert '### Assistant' in markdown, "Should have assistant heading"
-    assert 'Hello!' in markdown, "Should contain user message"
-    assert 'Hi there! How can I help you?' in markdown, "Should contain assistant reply"
-    assert '**Citations:**' in markdown, "Should include citations section"
-    assert '- Doc1' in markdown, "Should list citation title"
-
-    print("✅ Markdown generation test passed!")
+    print("✅ Markdown export structure test passed!")
     return True
 
 
-def test_json_export_structure():
-    """Test that JSON export produces the expected structure."""
-    print("🔍 Testing JSON export structure...")
+def test_safe_filename_and_zip_packaging():
+    """Test filename sanitization and ZIP naming consistency."""
+    print("🔍 Testing safe filename and ZIP packaging...")
+
+    assert _safe_filename('Normal Title') == 'Normal_Title', 'Spaces should become underscores.'
+    assert _safe_filename('File/With:Bad*Chars') == 'File_With_Bad_Chars', 'Unsafe characters should be replaced.'
+    assert _safe_filename('A' * 100) == 'A' * 50, 'Long names should be truncated.'
+    assert _safe_filename('') == 'Untitled', 'Empty titles should use Untitled.'
 
     exported = [
-        {
-            'conversation': {
-                'id': 'conv-abc',
-                'title': 'Test Convo',
-                'last_updated': '2025-01-01T00:00:00Z',
-                'chat_type': 'personal',
-                'tags': [],
-                'is_pinned': False,
-                'context': []
-            },
-            'messages': [
-                {'role': 'user', 'content': 'Hello', 'timestamp': '2025-01-01T00:00:01Z'},
-                {'role': 'assistant', 'content': 'World', 'timestamp': '2025-01-01T00:00:02Z'}
-            ]
-        }
+        {'conversation': {'id': 'conv-001-extra', 'title': 'First Chat'}, 'messages': []},
+        {'conversation': {'id': 'conv-002-extra', 'title': 'Second Chat'}, 'messages': []}
     ]
-
-    content = json.dumps(exported, indent=2, ensure_ascii=False, default=str)
-    parsed = json.loads(content)
-
-    assert isinstance(parsed, list), "Export should be a list"
-    assert len(parsed) == 1, "Should have one conversation"
-    assert 'conversation' in parsed[0], "Each entry should have conversation"
-    assert 'messages' in parsed[0], "Each entry should have messages"
-    assert len(parsed[0]['messages']) == 2, "Should have 2 messages"
-    assert parsed[0]['conversation']['title'] == 'Test Convo', "Title should match"
-
-    print("✅ JSON export structure test passed!")
-    return True
-
-
-def test_zip_packaging():
-    """Test that ZIP packaging creates valid archive with correct entries."""
-    print("🔍 Testing ZIP packaging...")
-
-    exported = [
-        {
-            'conversation': {
-                'id': 'conv-001-abc-def',
-                'title': 'First Chat',
-                'last_updated': '2025-01-01',
-                'chat_type': 'personal',
-                'tags': [],
-                'is_pinned': False,
-                'context': []
-            },
-            'messages': [
-                {'role': 'user', 'content': 'Hello', 'timestamp': '2025-01-01'}
-            ]
-        },
-        {
-            'conversation': {
-                'id': 'conv-002-xyz-ghi',
-                'title': 'Second Chat',
-                'last_updated': '2025-01-02',
-                'chat_type': 'personal',
-                'tags': [],
-                'is_pinned': False,
-                'context': []
-            },
-            'messages': [
-                {'role': 'user', 'content': 'Goodbye', 'timestamp': '2025-01-02'}
-            ]
-        }
-    ]
-
-    import re
-
-    def safe_filename(title):
-        safe = re.sub(r'[<>:"/\\|?*]', '_', title)
-        safe = re.sub(r'\s+', '_', safe)
-        safe = safe.strip('_. ')
-        if len(safe) > 50:
-            safe = safe[:50]
-        return safe or 'Untitled'
 
     buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+    with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as archive:
         for entry in exported:
-            conv = entry['conversation']
-            safe_title = safe_filename(conv.get('title', 'Untitled'))
-            conv_id_short = conv.get('id', 'unknown')[:8]
-            file_content = json.dumps(entry, indent=2, ensure_ascii=False, default=str)
-            file_name = f"{safe_title}_{conv_id_short}.json"
-            zf.writestr(file_name, file_content)
+            conversation = entry['conversation']
+            safe_title = _safe_filename(conversation.get('title', 'Untitled'))
+            conversation_id_short = conversation.get('id', 'unknown')[:8]
+            archive.writestr(f"{safe_title}_{conversation_id_short}.json", json.dumps(entry))
 
     buffer.seek(0)
+    with zipfile.ZipFile(buffer, 'r') as archive:
+        names = archive.namelist()
+        assert 'First_Chat_conv-001.json' in names, f"Unexpected ZIP entries: {names}"
+        assert 'Second_Chat_conv-002.json' in names, f"Unexpected ZIP entries: {names}"
 
-    with zipfile.ZipFile(buffer, 'r') as zf:
-        names = zf.namelist()
-        assert len(names) == 2, f"ZIP should have 2 files, got {len(names)}"
-        assert 'First_Chat_conv-001.json' in names, f"Expected First_Chat_conv-001.json, got {names}"
-        assert 'Second_Chat_conv-002.json' in names, f"Expected Second_Chat_conv-002.json, got {names}"
-
-        # Verify content
-        first_content = json.loads(zf.read('First_Chat_conv-001.json'))
-        assert first_content['conversation']['title'] == 'First Chat'
-        assert len(first_content['messages']) == 1
-
-    print("✅ ZIP packaging test passed!")
+    print("✅ Safe filename and ZIP packaging test passed!")
     return True
 
 
-def test_safe_filename():
-    """Test filename sanitization."""
-    print("🔍 Testing safe filename generation...")
+def test_content_and_citation_helpers():
+    """Test content normalization, citation normalization, and summary truncation helpers."""
+    print("🔍 Testing helper utilities...")
 
-    import re
+    content_text = _normalize_content([
+        {'type': 'text', 'text': 'Line one'},
+        {'type': 'image_url', 'image_url': {'url': 'https://example.com/image.png'}},
+        {'type': 'text', 'text': 'Line two'}
+    ])
+    assert content_text == 'Line one\n[Image]\nLine two', 'Content normalization should flatten list-based content.'
 
-    def safe_filename(title):
-        safe = re.sub(r'[<>:"/\\|?*]', '_', title)
-        safe = re.sub(r'\s+', '_', safe)
-        safe = safe.strip('_. ')
-        if len(safe) > 50:
-            safe = safe[:50]
-        return safe or 'Untitled'
+    raw_buckets = _collect_raw_citation_buckets({
+        'citations': [{'title': 'Legacy'}],
+        'hybrid_citations': [{'file_name': 'doc.pdf', 'page_number': 2}],
+        'web_search_citations': [{'title': 'Web', 'url': 'https://example.com'}],
+        'agent_citations': [{'tool_name': 'lookup'}]
+    })
+    normalized = _normalize_citations(raw_buckets)
+    counts = _build_citation_counts(normalized)
 
-    assert safe_filename('Normal Title') == 'Normal_Title', "Spaces should become underscores"
-    assert safe_filename('File/With:Bad*Chars') == 'File_With_Bad_Chars', "Bad chars should be replaced"
-    assert safe_filename('A' * 100) == 'A' * 50, "Long names should be truncated"
-    assert safe_filename('') == 'Untitled', "Empty should become Untitled"
-    assert safe_filename('   ') == 'Untitled', "Whitespace-only should become Untitled"
+    assert counts == {'document': 1, 'web': 1, 'agent_tool': 1, 'legacy': 1, 'total': 4}, f"Unexpected citation counts: {counts}"
 
-    print("✅ Safe filename test passed!")
+    truncated = _truncate_for_summary('A' * 70000)
+    assert '[... transcript truncated for export summary generation ...]' in truncated, 'Summary truncation marker should be inserted for long transcripts.'
+    assert len(truncated) < 70000, 'Truncated summary source should be shorter than the original transcript.'
+
+    print("✅ Helper utilities test passed!")
     return True
 
 
-def test_active_thread_filter():
-    """Test that only active thread messages are included."""
-    print("🔍 Testing active thread message filtering...")
+def test_pdf_export_generation():
+    """Test PDF export generates valid HTML body and PDF bytes."""
+    print("🔍 Testing PDF export generation...")
 
-    messages = [
-        {'role': 'user', 'content': 'Hello', 'metadata': {}},
-        {'role': 'assistant', 'content': 'Reply 1', 'metadata': {'thread_info': {'active_thread': True}}},
-        {'role': 'assistant', 'content': 'Reply 2 (inactive)', 'metadata': {'thread_info': {'active_thread': False}}},
-        {'role': 'user', 'content': 'Follow up', 'metadata': {'thread_info': {}}},
-        {'role': 'assistant', 'content': 'Final', 'metadata': {'thread_info': {'active_thread': None}}},
-    ]
+    entry = {
+        'conversation': {
+            'id': 'conv-pdf-001',
+            'title': 'PDF Export Test',
+            'last_updated': '2026-03-06T14:00:00Z',
+            'chat_type': 'personal',
+            'tags': ['pdf', 'test'],
+            'classification': [],
+            'context': [],
+            'strict': False,
+            'is_pinned': False,
+            'scope_locked': False,
+            'locked_contexts': [],
+            'message_count': 2,
+            'message_counts_by_role': {'user': 1, 'assistant': 1},
+            'citation_counts': {'document': 0, 'web': 0, 'agent_tool': 0, 'legacy': 0, 'total': 0},
+            'thought_count': 0
+        },
+        'summary_intro': {
+            'enabled': False,
+            'generated': False,
+            'model_deployment': None,
+            'generated_at': None,
+            'content': '',
+            'error': None
+        },
+        'messages': [
+            {
+                'id': 'u1',
+                'role': 'user',
+                'speaker_label': 'User',
+                'label': 'Turn 1',
+                'sequence_index': 1,
+                'transcript_index': 1,
+                'is_transcript_message': True,
+                'timestamp': '2026-03-06T14:00:01Z',
+                'content': 'Hello, can you help me?',
+                'content_text': 'Hello, can you help me?',
+                'details': {},
+                'citations': [],
+                'citation_counts': {'document': 0, 'web': 0, 'agent_tool': 0, 'legacy': 0, 'total': 0},
+                'thoughts': [],
+                'legacy_citations': [],
+                'hybrid_citations': [],
+                'web_search_citations': [],
+                'agent_citations': []
+            },
+            {
+                'id': 'a1',
+                'role': 'assistant',
+                'speaker_label': 'Assistant',
+                'label': 'Turn 2',
+                'sequence_index': 2,
+                'transcript_index': 2,
+                'is_transcript_message': True,
+                'timestamp': '2026-03-06T14:00:02Z',
+                'content': 'Of course! How can I assist you today?',
+                'content_text': 'Of course! How can I assist you today?',
+                'details': {},
+                'citations': [],
+                'citation_counts': {'document': 0, 'web': 0, 'agent_tool': 0, 'legacy': 0, 'total': 0},
+                'thoughts': [],
+                'legacy_citations': [],
+                'hybrid_citations': [],
+                'web_search_citations': [],
+                'agent_citations': []
+            }
+        ]
+    }
 
-    filtered = []
-    for msg in messages:
-        thread_info = msg.get('metadata', {}).get('thread_info', {})
-        active = thread_info.get('active_thread')
-        if active is True or active is None or 'active_thread' not in thread_info:
-            filtered.append(msg)
+    # Test HTML body generation
+    html_body = _build_pdf_html_body(entry)
+    assert '<h1>PDF Export Test</h1>' in html_body, 'HTML should contain the conversation title.'
+    assert 'user-bubble' in html_body, 'HTML should contain user bubble CSS class.'
+    assert 'assistant-bubble' in html_body, 'HTML should contain assistant bubble CSS class.'
+    assert 'Transcript' in html_body, 'HTML should contain Transcript section.'
+    assert 'Appendix A' in html_body, 'HTML should contain Appendix A.'
+    assert 'Hello, can you help me?' in html_body, 'HTML should contain user message content.'
+    assert 'Of course! How can I assist you today?' in html_body, 'HTML should contain assistant message content.'
 
-    assert len(filtered) == 4, f"Expected 4 active messages, got {len(filtered)}"
-    contents = [m['content'] for m in filtered]
-    assert 'Reply 2 (inactive)' not in contents, "Inactive thread message should be excluded"
-    assert 'Hello' in contents, "Message without thread info should be included"
-    assert 'Reply 1' in contents, "Active=True message should be included"
-    assert 'Follow up' in contents, "Message with empty thread_info should be included"
-    assert 'Final' in contents, "Message with active_thread=None should be included"
+    # Test bubble class helper
+    assert _pdf_bubble_class('user') == 'user-bubble', 'User role should map to user-bubble.'
+    assert _pdf_bubble_class('assistant') == 'assistant-bubble', 'Assistant role should map to assistant-bubble.'
+    assert _pdf_bubble_class('system') == 'system-bubble', 'System role should map to system-bubble.'
+    assert _pdf_bubble_class('file') == 'file-bubble', 'File role should map to file-bubble.'
+    assert _pdf_bubble_class('unknown') == 'other-bubble', 'Unknown roles should map to other-bubble.'
 
-    print("✅ Active thread filter test passed!")
+    # Test PDF bytes generation
+    pdf_bytes = _conversation_to_pdf_bytes(entry)
+    assert isinstance(pdf_bytes, bytes), 'PDF output should be bytes.'
+    assert pdf_bytes[:5] == b'%PDF-', f'PDF should start with %PDF- header, got: {pdf_bytes[:10]}'
+    assert len(pdf_bytes) > 100, 'PDF should have a reasonable size.'
+
+    print("✅ PDF export generation test passed!")
+    return True
+
+
+def test_tag_formatting():
+    """Test that dict-style tags and classifications render as readable strings."""
+    print("🔍 Testing tag/classification formatting...")
+
+    # Category/value tag
+    assert _format_tag({'category': 'model', 'value': 'gpt-5'}) == 'model: gpt-5'
+
+    # Participant tag with name
+    assert _format_tag({'category': 'participant', 'name': 'Alice', 'user_id': 'u1'}) == 'participant: Alice'
+
+    # Participant tag with email fallback
+    assert _format_tag({'category': 'participant', 'email': 'bob@test.com'}) == 'participant: bob@test.com'
+
+    # Document tag with title
+    assert _format_tag({'category': 'document', 'title': 'Study.pdf', 'document_id': 'd1'}) == 'document: Study.pdf'
+
+    # Document tag with only document_id
+    assert _format_tag({'category': 'document', 'document_id': 'd1'}) == 'document: d1'
+
+    # Plain string tag (older data)
+    assert _format_tag('science') == 'science'
+
+    # Category only (no value)
+    assert _format_tag({'category': 'semantic'}) == 'semantic'
+
+    # Verify Markdown export uses formatted tags
+    entry = {
+        'conversation': {
+            'id': 'conv-tags-001',
+            'title': 'Tag Format Test',
+            'last_updated': '2026-03-08T00:00:00Z',
+            'chat_type': 'personal',
+            'tags': [
+                {'category': 'model', 'value': 'gpt-5'},
+                {'category': 'semantic', 'value': 'cubesats'}
+            ],
+            'classification': [],
+            'context': [],
+            'strict': False,
+            'is_pinned': False,
+            'scope_locked': False,
+            'locked_contexts': [],
+            'message_count': 0,
+            'message_counts_by_role': {},
+            'citation_counts': {'document': 0, 'web': 0, 'agent_tool': 0, 'legacy': 0, 'total': 0},
+            'thought_count': 0
+        },
+        'summary_intro': {'enabled': False, 'generated': False},
+        'messages': []
+    }
+
+    md = _conversation_to_markdown(entry)
+    assert 'model: gpt-5' in md, f'Markdown should contain formatted tag, got: {md[:500]}'
+    assert "{'category'" not in md, 'Markdown should not contain raw dict strings'
+
+    html = _build_pdf_html_body(entry)
+    assert 'model: gpt-5' in html, f'PDF HTML should contain formatted tag'
+    assert "{'category'" not in html, 'PDF HTML should not contain raw dict strings'
+
+    print("✅ Tag formatting test passed!")
     return True
 
 
 if __name__ == "__main__":
     tests = [
-        test_sanitize_conversation,
-        test_sanitize_message,
-        test_conversation_to_markdown,
-        test_json_export_structure,
-        test_zip_packaging,
-        test_safe_filename,
-        test_active_thread_filter
+        test_filter_messages_for_export,
+        test_sanitize_message_with_citations_and_thoughts,
+        test_conversation_metadata_and_json_shape,
+        test_markdown_export_structure,
+        test_safe_filename_and_zip_packaging,
+        test_content_and_citation_helpers,
+        test_pdf_export_generation,
+        test_tag_formatting,
     ]
     results = []
 
@@ -367,8 +547,8 @@ if __name__ == "__main__":
         print(f"\n🧪 Running {test.__name__}...")
         try:
             results.append(test())
-        except Exception as e:
-            print(f"❌ {test.__name__} failed: {e}")
+        except Exception as exc:
+            print(f"❌ {test.__name__} failed: {exc}")
             import traceback
             traceback.print_exc()
             results.append(False)
