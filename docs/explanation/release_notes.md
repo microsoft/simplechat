@@ -6,6 +6,12 @@
 
 #### Bug Fixes
 
+*   **Chat Tutorial Coverage Refresh**
+    *   Updated the chat-page tutorial to follow the current merged chat UI instead of stale or hidden controls, fixing walkthrough steps that could disappear or point at removed selectors.
+    *   The tutorial now covers the visible searchable dropdowns and newer chat actions including image generation, workspace scope, tag filters, scope lock, voice input, and the send button.
+    *   Added a regression test so future merges do not reintroduce hidden-select or removed-selector drift in the tutorial.
+    *   (Ref: `chat-tutorial.js`, `chats.html`, `test_chat_tutorial_selector_coverage.py`, chat tutorial walkthrough)
+
 *   **Pillow PSD Upload Hardening**
     *   Updated the application to use `pillow==12.1.1`, moving the app off the vulnerable Pillow range for specially crafted PSD image parsing.
     *   Hardened admin logo and favicon uploads so Pillow now only opens the PNG and JPEG formats already allowed by the route, preventing disguised PSD content from being decoded during upload processing.

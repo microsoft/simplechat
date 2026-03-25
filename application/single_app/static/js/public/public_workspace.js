@@ -55,6 +55,12 @@ const publicPromptContentEl = document.getElementById('public-prompt-content');
 if (publicPromptContentEl && window.SimpleMDE) {
   publicSimplemde = new SimpleMDE({ element: publicPromptContentEl, spellChecker:false, autoDownloadFontAwesome: false });
 }
+document.getElementById('publicPromptModal')?.addEventListener('shown.bs.modal', () => {
+  if (publicSimplemde?.codemirror) {
+    publicSimplemde.codemirror.refresh();
+    publicSimplemde.codemirror.focus();
+  }
+});
 
 // DOM elements
 const publicSelect = document.getElementById('public-select');

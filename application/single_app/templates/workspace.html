@@ -272,6 +272,166 @@
         overflow-y: auto;
     }
 
+    #workspace-tutorial-launch {
+      z-index: 1099;
+      pointer-events: none;
+      top: 80px;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(-8px);
+      transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s ease;
+    }
+
+    #workspace-tutorial-launch.is-ready {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0);
+    }
+
+    #workspace-tutorial-btn {
+      pointer-events: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 0;
+      overflow: hidden;
+      white-space: nowrap;
+      border-radius: 999px;
+      padding: 0.5rem 0.75rem;
+      transition: gap 0.2s ease, padding 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    #workspace-tutorial-btn:hover,
+    #workspace-tutorial-btn:focus-visible {
+      gap: 0.5rem;
+      padding-right: 1rem;
+      box-shadow: 0 0.35rem 0.9rem rgba(13, 110, 253, 0.28) !important;
+    }
+
+    #workspace-tutorial-btn .tutorial-btn-label {
+      max-width: 0;
+      opacity: 0;
+      overflow: hidden;
+      transition: max-width 0.2s ease, opacity 0.2s ease;
+      font-weight: 600;
+    }
+
+    #workspace-tutorial-btn:hover .tutorial-btn-label,
+    #workspace-tutorial-btn:focus-visible .tutorial-btn-label {
+      max-width: 120px;
+      opacity: 1;
+    }
+
+    .chat-tutorial-tooltip {
+      --bs-tooltip-zindex: 1115;
+    }
+
+    .workspace-tutorial-layer {
+        position: fixed;
+        inset: 0;
+        z-index: 1100;
+        pointer-events: auto;
+        overflow: visible;
+    }
+
+    .workspace-tutorial-highlight {
+        position: fixed;
+        border-radius: 12px;
+        box-shadow: 0 0 0 3px var(--bs-primary), 0 0 0 9999px rgba(0, 0, 0, 0.55);
+        transition: all 0.2s ease;
+        pointer-events: none;
+    }
+
+    .workspace-tutorial-card {
+        position: fixed;
+        max-width: 360px;
+      z-index: 1105;
+    }
+
+    .workspace-tutorial-actions .btn {
+        min-width: 80px;
+    }
+
+    .workspace-tutorial-surface {
+      position: fixed;
+      inset: 0;
+    }
+
+    .workspace-tutorial-surface .workspace-tutorial-modal-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.12);
+    }
+
+    .workspace-tutorial-surface .workspace-tutorial-modal-dialog {
+      position: absolute;
+      z-index: 1;
+    }
+
+    .workspace-tutorial-surface .modal-content,
+    .workspace-tutorial-menu-clone .dropdown-menu {
+      background: var(--bs-body-bg, #fff);
+      opacity: 1;
+    }
+
+    .workspace-tutorial-surface .modal-content {
+      border: 1px solid rgba(0, 0, 0, 0.12);
+      box-shadow: 0 1rem 2.5rem rgba(0, 0, 0, 0.22);
+    }
+
+    .workspace-tutorial-target-highlight {
+      position: relative;
+      z-index: 2;
+      border-radius: 0.75rem !important;
+      background: var(--bs-body-bg, #fff) !important;
+      box-shadow: 0 0 0 3px var(--bs-primary), 0 0 0 6px rgba(13, 110, 253, 0.18), 0 0.75rem 1.5rem rgba(0, 0, 0, 0.18);
+    }
+
+    .workspace-tutorial-static-field {
+      background: var(--bs-body-bg, #fff);
+      color: var(--bs-body-color, #212529);
+      min-height: calc(1.5em + 0.75rem + 2px);
+      display: flex;
+      align-items: center;
+    }
+
+    .workspace-tutorial-static-field.is-textarea {
+      display: block;
+      min-height: 120px;
+      white-space: pre-wrap;
+    }
+
+    .workspace-tutorial-static-field.is-select {
+      position: relative;
+      padding-right: 2.25rem;
+    }
+
+    .workspace-tutorial-static-field.is-select::after {
+      content: "";
+      position: absolute;
+      right: 0.9rem;
+      top: 50%;
+      width: 0.7rem;
+      height: 0.7rem;
+      border-right: 2px solid currentColor;
+      border-bottom: 2px solid currentColor;
+      transform: translateY(-65%) rotate(45deg);
+      opacity: 0.7;
+    }
+
+    .workspace-tutorial-static-field.is-color {
+      width: 3rem;
+      min-width: 3rem;
+      min-height: 2.5rem;
+      padding: 0.25rem;
+    }
+
+    .workspace-tutorial-static-color-swatch {
+      width: 100%;
+      height: 100%;
+      border-radius: 0.375rem;
+      border: 1px solid rgba(0, 0, 0, 0.12);
+    }
+
   </style>
 {% endblock %}
 
@@ -1264,6 +1424,24 @@
     </form>
   </div>
 </div>
+
+<div id="workspace-tutorial-launch" class="position-fixed top-0 end-0 p-3 is-ready">
+  <button
+      id="workspace-tutorial-btn"
+      class="btn btn-primary btn-sm shadow"
+      type="button"
+      aria-label="Open workspace walkthrough"
+      data-bs-toggle="tooltip"
+      data-bs-trigger="hover"
+      data-bs-custom-class="chat-tutorial-tooltip"
+      data-bs-placement="left"
+      data-bs-offset="0,132"
+      title="Let us walk you through getting the most out of your workspace"
+  >
+      <i class="bi bi-question-circle"></i>
+      <span class="tutorial-btn-label">Workspace Tutorial</span>
+  </button>
+</div>
 <!-- Approve Shared Document Modal -->
 <div class="modal fade" id="approveSharedModal" tabindex="-1" aria-labelledby="approveSharedModalLabel" aria-hidden="true">
   <div class="modal-dialog">
@@ -1408,5 +1586,6 @@
   <script src="{{ url_for('static', filename='js/workspace_sidebar_nav.js') }}"></script>
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-migration.js') }}"></script>
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-init.js') }}"></script>
+  <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-tutorial.js') }}"></script>
 
 {% endblock %}
