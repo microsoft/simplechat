@@ -179,6 +179,68 @@ def log_admin_feedback_email_submission(
         debug_print(f"Error logging admin feedback email submission for user {user_id}: {str(e)}")
 
 
+def log_admin_release_notifications_registration(
+    user_id: str,
+    admin_email: str,
+    registrant_name: str,
+    registrant_email: str,
+    organization: str,
+    registered_at: str,
+    updated_at: str,
+    recipient_email: str = 'simplechat@microsoft.com',
+    source: str = 'admin_settings'
+) -> None:
+    """
+    Log an admin release notifications registration email draft event.
+
+    This records that an admin prepared a registration email for release
+    and community call notifications from Admin Settings.
+    """
+
+    try:
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'partitionKey': user_id,
+            'user_id': user_id,
+            'timestamp': datetime.utcnow().isoformat(),
+            'activity_type': 'admin_release_notifications_registration',
+            'registration_channel': 'mailto',
+            'admin_email': admin_email,
+            'recipient_email': recipient_email,
+            'source': source,
+            'release_notifications_registration': {
+                'registered': True,
+                'name': registrant_name,
+                'email': registrant_email,
+                'organization': organization,
+                'registered_at': registered_at,
+                'updated_at': updated_at
+            }
+        }
+
+        cosmos_activity_logs_container.create_item(body=activity_record)
+
+        log_event(
+            message=f"Admin release notifications registration prepared for user {user_id}",
+            extra=activity_record,
+            level=logging.INFO
+        )
+        debug_print(f"Logged admin release notifications registration for user {user_id}")
+
+    except Exception as e:
+        log_event(
+            message=f"Error logging admin release notifications registration: {str(e)}",
+            extra={
+                'user_id': user_id,
+                'admin_email': admin_email,
+                'registrant_email': registrant_email,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+        debug_print(f"Error logging admin release notifications registration for user {user_id}: {str(e)}")
+
+
 def log_web_search_consent_acceptance(
     user_id: str,
     admin_email: str,

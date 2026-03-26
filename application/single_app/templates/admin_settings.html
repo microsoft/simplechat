@@ -140,6 +140,31 @@
             min-height: 1px;
         }
 
+        .release-notifications-status-btn {
+            border: 0;
+            padding: 0.35rem 0.6rem;
+            line-height: 1;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .release-notifications-status-btn:hover,
+        .release-notifications-status-btn:focus {
+            opacity: 0.95;
+        }
+
+        .release-notifications-summary dt {
+            font-size: 0.78rem;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+            color: #6c757d;
+        }
+
+        .release-notifications-summary dd {
+            margin-bottom: 0.9rem;
+            word-break: break-word;
+        }
+
         @media (max-width: 768px) {
             .latest-feature-header {
                 gap: 0.75rem;
@@ -216,6 +241,63 @@
         </div>
     </div>
 </div>
+<div class="modal fade" id="releaseNotificationsModal" tabindex="-1" aria-labelledby="releaseNotificationsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h5 class="modal-title mb-0" id="releaseNotificationsModalLabel">Release Notifications Registration</h5>
+                    <small class="text-muted">Register for latest release updates and community call notifications.</small>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert d-none admin-send-feedback-status" id="release-notifications-status" role="alert"></div>
+                <div id="release-notifications-read-view" class="d-none">
+                    <div class="alert alert-success" role="alert">
+                        This admin settings instance is registered to receive latest release and community call notifications.
+                    </div>
+                    <dl class="release-notifications-summary mb-0">
+                        <dt>Name</dt>
+                        <dd id="release-notifications-read-name">-</dd>
+                        <dt>Email</dt>
+                        <dd id="release-notifications-read-email">-</dd>
+                        <dt>Organization</dt>
+                        <dd id="release-notifications-read-org">-</dd>
+                        <dt>Registered</dt>
+                        <dd id="release-notifications-read-registered-at">-</dd>
+                        <dt>Last Updated</dt>
+                        <dd id="release-notifications-read-updated-at">-</dd>
+                    </dl>
+                </div>
+                <div id="release-notifications-edit-view" class="d-none">
+                    <div class="alert alert-warning" role="alert">
+                        Submitting this form opens a prefilled email draft to simplechat@microsoft.com and updates Admin Settings with the registration details.
+                    </div>
+                    <div class="mb-3">
+                        <label for="release_notifications_modal_name" class="form-label">Your Name</label>
+                        <input type="text" class="form-control" id="release_notifications_modal_name" autocomplete="name">
+                    </div>
+                    <div class="mb-3">
+                        <label for="release_notifications_modal_email" class="form-label">Email</label>
+                        <input type="email" class="form-control" id="release_notifications_modal_email" autocomplete="email">
+                    </div>
+                    <div class="mb-0">
+                        <label for="release_notifications_modal_org" class="form-label">Organization</label>
+                        <input type="text" class="form-control" id="release_notifications_modal_org" autocomplete="organization">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary d-none" id="release-notifications-edit-btn">Edit Registration</button>
+                <button type="button" class="btn btn-outline-secondary d-none" id="release-notifications-cancel-edit-btn">Cancel</button>
+                <button type="button" class="btn btn-primary d-none" id="release-notifications-submit-btn">
+                    <i class="bi bi-envelope me-1"></i>Submit Registration
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
 <div id="index-warning-user" class="alert alert-warning" style="display:none;">
     <strong>⚠️ User-index schema mismatch:</strong>
     Missing fields: <span id="missing-fields-user"></span>
@@ -249,8 +331,24 @@
 <div class="container">
     <h2>Admin Settings</h2>
     <form method="post" enctype="multipart/form-data" id="admin-settings-form" style="padding-bottom:80px;" novalidate autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
+        <input type="hidden" id="release_notifications_registered" name="release_notifications_registered" value="{{ 'true' if settings.release_notifications_registered else 'false' }}">
+        <input type="hidden" id="release_notifications_name" name="release_notifications_name" value="{{ settings.release_notifications_name or '' }}">
+        <input type="hidden" id="release_notifications_email" name="release_notifications_email" value="{{ settings.release_notifications_email or '' }}">
+        <input type="hidden" id="release_notifications_org" name="release_notifications_org" value="{{ settings.release_notifications_org or '' }}">
+        <input type="hidden" id="release_notifications_registered_at" name="release_notifications_registered_at" value="{{ settings.release_notifications_registered_at or '' }}">
+        <input type="hidden" id="release_notifications_updated_at" name="release_notifications_updated_at" value="{{ settings.release_notifications_updated_at or '' }}">
         <p class="text-muted">Use this form to configure the administrative settings for your application.</p>
-        <p class="text-muted">
+        <p class="text-muted d-flex flex-wrap align-items-center gap-2">
+            <button
+                type="button"
+                class="badge release-notifications-status-btn {{ 'bg-success text-white' if settings.release_notifications_registered else 'bg-secondary text-white' }}"
+                id="release-notifications-status-badge"
+                data-registered="{{ 'true' if settings.release_notifications_registered else 'false' }}"
+                data-bs-toggle="modal"
+                data-bs-target="#releaseNotificationsModal"
+            >
+                {{ 'Registered' if settings.release_notifications_registered else 'Unregistered' }}
+            </button>
             Version: {{ config['VERSION'] }}
             {% if update_available %}
                 <span class="ms-2 badge bg-warning text-dark align-middle"> 
@@ -4901,6 +4999,16 @@
     window.enableExternalLinks = "{{ enable_external_links }}";
     window.externalLinksMenuName = "{{ settings.external_links_menu_name or 'External Links' }}";
     window.externalLinksForceMenu = "{{ settings.external_links_force_menu }}";
+    window.releaseNotificationsRegistration = {
+        registered: {{ 'true' if settings.release_notifications_registered else 'false' }},
+        name: {{ (settings.release_notifications_name or session.get('user', {}).get('name', ''))|tojson|safe }},
+        email: {{ (settings.release_notifications_email or session.get('user', {}).get('preferred_username', session.get('user', {}).get('email', '')))|tojson|safe }},
+        organization: {{ (settings.release_notifications_org or '')|tojson|safe }},
+        registeredAt: {{ (settings.release_notifications_registered_at or '')|tojson|safe }},
+        updatedAt: {{ (settings.release_notifications_updated_at or '')|tojson|safe }},
+        recipientEmail: 'simplechat@microsoft.com',
+        appVersion: {{ config['VERSION']|tojson|safe }}
+    };
 
 </script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_settings.js') }}"></script>

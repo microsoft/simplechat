@@ -66,6 +66,12 @@ def get_settings(use_cosmos=False):
         'favicon_version': 1,
         'enable_dark_mode_default': False,
         'enable_left_nav_default': True,
+        'release_notifications_registered': False,
+        'release_notifications_name': '',
+        'release_notifications_email': '',
+        'release_notifications_org': '',
+        'release_notifications_registered_at': '',
+        'release_notifications_updated_at': '',
 
         # GPT Settings
         'enable_gpt_apim': False,

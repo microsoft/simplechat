@@ -4,7 +4,10 @@ from config import *
 from functions_documents import *
 from functions_authentication import *
 from functions_settings import *
-from functions_activity_logging import log_admin_feedback_email_submission
+from functions_activity_logging import (
+    log_admin_feedback_email_submission,
+    log_admin_release_notifications_registration,
+)
 from functions_appinsights import log_event
 from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
@@ -485,6 +488,71 @@ def register_route_backend_settings(app):
         except Exception as e:
             current_app.logger.error(f"Error logging admin feedback email request: {str(e)}")
             return jsonify({'error': f'Failed to prepare feedback email: {str(e)}'}), 500
+
+    @app.route('/api/admin/settings/release_notifications_registration', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def release_notifications_registration():
+        """Persist release/community call registration and prepare a mailto draft."""
+        try:
+            data = request.get_json(force=True)
+
+            registrant_name = (data.get('name') or '').strip()
+            registrant_email = (data.get('email') or '').strip()
+            organization = (data.get('organization') or '').strip()
+
+            if not registrant_name or not registrant_email or not organization:
+                return jsonify({'error': 'Name, email, and organization are required'}), 400
+
+            if '@' not in registrant_email:
+                return jsonify({'error': 'Email must be a valid email address'}), 400
+
+            existing_settings = get_settings()
+            now_iso = datetime.now(timezone.utc).isoformat()
+            registered_at = existing_settings.get('release_notifications_registered_at') or now_iso
+
+            new_settings = {
+                'release_notifications_registered': True,
+                'release_notifications_name': registrant_name,
+                'release_notifications_email': registrant_email,
+                'release_notifications_org': organization,
+                'release_notifications_registered_at': registered_at,
+                'release_notifications_updated_at': now_iso,
+            }
+
+            if not update_settings(new_settings):
+                return jsonify({'error': 'Failed to persist registration settings'}), 500
+
+            user = session.get('user', {})
+            admin_email = user.get('preferred_username', user.get('email', registrant_email))
+            user_id = get_current_user_id() or 'unknown'
+            subject_line = f'[SimpleChat Registration] Release and Community Call Notifications - {organization}'
+
+            log_admin_release_notifications_registration(
+                user_id=user_id,
+                admin_email=admin_email,
+                registrant_name=registrant_name,
+                registrant_email=registrant_email,
+                organization=organization,
+                registered_at=registered_at,
+                updated_at=now_iso,
+                recipient_email='simplechat@microsoft.com',
+                source='admin_settings'
+            )
+
+            return jsonify({
+                'success': True,
+                'recipientEmail': 'simplechat@microsoft.com',
+                'subjectLine': subject_line,
+                'registered': True,
+                'registeredAt': registered_at,
+                'updatedAt': now_iso,
+            }), 200
+
+        except Exception as e:
+            current_app.logger.error(f"Error preparing release notifications registration: {str(e)}")
+            return jsonify({'error': f'Failed to prepare registration email: {str(e)}'}), 500
 
 def _test_multimodal_vision_connection(payload):
     """Test multi-modal vision analysis with a sample image."""

@@ -16,6 +16,16 @@ let enableDocumentClassification = window.enableDocumentClassification || false;
 let externalLinks = window.externalLinks || [];
 let enableExternalLinks = window.enableExternalLinks || false;
 let externalLinksMenuName = window.externalLinksMenuName || 'External Links';
+let releaseNotificationsRegistration = window.releaseNotificationsRegistration || {
+    registered: false,
+    name: '',
+    email: '',
+    organization: '',
+    registeredAt: '',
+    updatedAt: '',
+    recipientEmail: 'simplechat@microsoft.com',
+    appVersion: ''
+};
 
 // Track whether form has been modified since last save
 let formModified = false;
@@ -89,6 +99,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     setupLatestFeaturesMirrors();
     setupSendFeedbackForms();
+    setupReleaseNotificationsRegistration();
 
     document.querySelectorAll('.nav-link').forEach(tab => {
         tab.addEventListener('click', function () {
@@ -2750,6 +2761,276 @@ function setupSendFeedbackForms() {
 }
 
 
+function setupReleaseNotificationsRegistration() {
+    const statusBadge = document.getElementById('release-notifications-status-badge');
+    const modalElement = document.getElementById('releaseNotificationsModal');
+    const readView = document.getElementById('release-notifications-read-view');
+    const editView = document.getElementById('release-notifications-edit-view');
+    const editButton = document.getElementById('release-notifications-edit-btn');
+    const cancelEditButton = document.getElementById('release-notifications-cancel-edit-btn');
+    const submitButton = document.getElementById('release-notifications-submit-btn');
+
+    if (!statusBadge || !modalElement || !readView || !editView || !editButton || !cancelEditButton || !submitButton) {
+        return;
+    }
+
+    modalElement.addEventListener('show.bs.modal', () => {
+        clearStatusAlert(document.getElementById('release-notifications-status'));
+        populateReleaseNotificationsModal();
+        if (releaseNotificationsRegistration.registered) {
+            showReleaseNotificationsReadView();
+        } else {
+            showReleaseNotificationsEditView();
+        }
+    });
+
+    editButton.addEventListener('click', () => {
+        clearStatusAlert(document.getElementById('release-notifications-status'));
+        showReleaseNotificationsEditView();
+    });
+
+    cancelEditButton.addEventListener('click', () => {
+        clearStatusAlert(document.getElementById('release-notifications-status'));
+        populateReleaseNotificationsModal();
+        if (releaseNotificationsRegistration.registered) {
+            showReleaseNotificationsReadView();
+        } else {
+            showReleaseNotificationsEditView();
+        }
+    });
+
+    submitButton.addEventListener('click', submitReleaseNotificationsRegistration);
+}
+
+
+function populateReleaseNotificationsModal() {
+    const nameInput = document.getElementById('release_notifications_modal_name');
+    const emailInput = document.getElementById('release_notifications_modal_email');
+    const orgInput = document.getElementById('release_notifications_modal_org');
+
+    if (nameInput) {
+        nameInput.value = releaseNotificationsRegistration.name || '';
+    }
+    if (emailInput) {
+        emailInput.value = releaseNotificationsRegistration.email || '';
+    }
+    if (orgInput) {
+        orgInput.value = releaseNotificationsRegistration.organization || '';
+    }
+
+    const readName = document.getElementById('release-notifications-read-name');
+    const readEmail = document.getElementById('release-notifications-read-email');
+    const readOrg = document.getElementById('release-notifications-read-org');
+    const readRegisteredAt = document.getElementById('release-notifications-read-registered-at');
+    const readUpdatedAt = document.getElementById('release-notifications-read-updated-at');
+
+    if (readName) {
+        readName.textContent = releaseNotificationsRegistration.name || '-';
+    }
+    if (readEmail) {
+        readEmail.textContent = releaseNotificationsRegistration.email || '-';
+    }
+    if (readOrg) {
+        readOrg.textContent = releaseNotificationsRegistration.organization || '-';
+    }
+    if (readRegisteredAt) {
+        readRegisteredAt.textContent = formatIsoDateTime(releaseNotificationsRegistration.registeredAt);
+    }
+    if (readUpdatedAt) {
+        readUpdatedAt.textContent = formatIsoDateTime(releaseNotificationsRegistration.updatedAt);
+    }
+}
+
+
+function showReleaseNotificationsReadView() {
+    const readView = document.getElementById('release-notifications-read-view');
+    const editView = document.getElementById('release-notifications-edit-view');
+    const editButton = document.getElementById('release-notifications-edit-btn');
+    const cancelEditButton = document.getElementById('release-notifications-cancel-edit-btn');
+    const submitButton = document.getElementById('release-notifications-submit-btn');
+
+    readView.classList.remove('d-none');
+    editView.classList.add('d-none');
+    editButton.classList.remove('d-none');
+    cancelEditButton.classList.add('d-none');
+    submitButton.classList.add('d-none');
+}
+
+
+function showReleaseNotificationsEditView() {
+    const readView = document.getElementById('release-notifications-read-view');
+    const editView = document.getElementById('release-notifications-edit-view');
+    const editButton = document.getElementById('release-notifications-edit-btn');
+    const cancelEditButton = document.getElementById('release-notifications-cancel-edit-btn');
+    const submitButton = document.getElementById('release-notifications-submit-btn');
+
+    readView.classList.add('d-none');
+    editView.classList.remove('d-none');
+    editButton.classList.add('d-none');
+    cancelEditButton.classList.toggle('d-none', !releaseNotificationsRegistration.registered);
+    submitButton.classList.remove('d-none');
+}
+
+
+async function submitReleaseNotificationsRegistration() {
+    const statusAlert = document.getElementById('release-notifications-status');
+    const submitButton = document.getElementById('release-notifications-submit-btn');
+    const nameInput = document.getElementById('release_notifications_modal_name');
+    const emailInput = document.getElementById('release_notifications_modal_email');
+    const orgInput = document.getElementById('release_notifications_modal_org');
+
+    const name = nameInput?.value.trim() || '';
+    const email = emailInput?.value.trim() || '';
+    const organization = orgInput?.value.trim() || '';
+
+    if (!name || !email || !organization) {
+        setStatusAlert(statusAlert, 'Please complete name, email, and organization before submitting registration.', 'danger');
+        showToast('Please complete the registration form first.', 'warning');
+        return;
+    }
+
+    if (!email.includes('@')) {
+        setStatusAlert(statusAlert, 'Please enter a valid email address.', 'danger');
+        showToast('Please enter a valid email address.', 'warning');
+        return;
+    }
+
+    submitButton.disabled = true;
+
+    try {
+        const response = await fetch('/api/admin/settings/release_notifications_registration', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                name,
+                email,
+                organization
+            })
+        });
+
+        const result = await response.json();
+        if (!response.ok) {
+            throw new Error(result.error || 'Unable to prepare the registration email draft.');
+        }
+
+        releaseNotificationsRegistration = {
+            ...releaseNotificationsRegistration,
+            registered: true,
+            name,
+            email,
+            organization,
+            registeredAt: result.registeredAt || releaseNotificationsRegistration.registeredAt,
+            updatedAt: result.updatedAt || releaseNotificationsRegistration.updatedAt
+        };
+        syncReleaseNotificationsHiddenInputs();
+        updateReleaseNotificationsBadge();
+        populateReleaseNotificationsModal();
+        showReleaseNotificationsReadView();
+
+        const mailtoUrl = buildReleaseNotificationsMailtoUrl({
+            recipientEmail: result.recipientEmail || releaseNotificationsRegistration.recipientEmail,
+            subjectLine: result.subjectLine || '[SimpleChat Registration] Release and Community Call Notifications',
+            name,
+            email,
+            organization,
+            registeredAt: releaseNotificationsRegistration.registeredAt,
+            updatedAt: releaseNotificationsRegistration.updatedAt
+        });
+
+        setStatusAlert(statusAlert, 'Registration saved. Your local email client should open next.', 'success');
+        showToast('Release notifications registration prepared.', 'success');
+        window.location.href = mailtoUrl;
+    } catch (error) {
+        setStatusAlert(statusAlert, error.message || 'Unable to prepare the registration email draft.', 'danger');
+        showToast(error.message || 'Unable to prepare the registration email draft.', 'danger');
+    } finally {
+        submitButton.disabled = false;
+    }
+}
+
+
+function buildReleaseNotificationsMailtoUrl({
+    recipientEmail,
+    subjectLine,
+    name,
+    email,
+    organization,
+    registeredAt,
+    updatedAt
+}) {
+    const bodyLines = [
+        'Registration submission to receive the latest release updates and community call notifications.',
+        '',
+        `Name: ${name}`,
+        `Email: ${email}`,
+        `Organization: ${organization}`,
+        `App Version: ${releaseNotificationsRegistration.appVersion || 'Unknown'}`,
+        `Registered At: ${registeredAt || 'Pending'}`,
+    ];
+
+    return `mailto:${recipientEmail}?subject=${encodeURIComponent(subjectLine)}&body=${encodeURIComponent(bodyLines.join('\n'))}`;
+}
+
+
+function syncReleaseNotificationsHiddenInputs() {
+    const registeredInput = document.getElementById('release_notifications_registered');
+    const nameInput = document.getElementById('release_notifications_name');
+    const emailInput = document.getElementById('release_notifications_email');
+    const orgInput = document.getElementById('release_notifications_org');
+    const registeredAtInput = document.getElementById('release_notifications_registered_at');
+    const updatedAtInput = document.getElementById('release_notifications_updated_at');
+
+    if (registeredInput) {
+        registeredInput.value = releaseNotificationsRegistration.registered ? 'true' : 'false';
+    }
+    if (nameInput) {
+        nameInput.value = releaseNotificationsRegistration.name || '';
+    }
+    if (emailInput) {
+        emailInput.value = releaseNotificationsRegistration.email || '';
+    }
+    if (orgInput) {
+        orgInput.value = releaseNotificationsRegistration.organization || '';
+    }
+    if (registeredAtInput) {
+        registeredAtInput.value = releaseNotificationsRegistration.registeredAt || '';
+    }
+    if (updatedAtInput) {
+        updatedAtInput.value = releaseNotificationsRegistration.updatedAt || '';
+    }
+}
+
+
+function updateReleaseNotificationsBadge() {
+    const statusBadge = document.getElementById('release-notifications-status-badge');
+    if (!statusBadge) {
+        return;
+    }
+
+    statusBadge.dataset.registered = releaseNotificationsRegistration.registered ? 'true' : 'false';
+    statusBadge.textContent = releaseNotificationsRegistration.registered ? 'Registered' : 'Unregistered';
+    statusBadge.classList.toggle('bg-success', releaseNotificationsRegistration.registered);
+    statusBadge.classList.toggle('bg-secondary', !releaseNotificationsRegistration.registered);
+}
+
+
+function formatIsoDateTime(value) {
+    if (!value) {
+        return '-';
+    }
+
+    const parsedDate = new Date(value);
+    if (Number.isNaN(parsedDate.getTime())) {
+        return value;
+    }
+
+    return parsedDate.toLocaleString();
+}
+
+
 async function submitAdminFeedbackForm(form) {
     const feedbackType = form.dataset.feedbackType;
     const feedbackLabel = form.dataset.feedbackLabel || 'Feedback';
@@ -2767,13 +3048,13 @@ async function submitAdminFeedbackForm(form) {
     const details = detailsInput?.value.trim() || '';
 
     if (!reporterName || !reporterEmail || !organization || !details) {
-        updateSendFeedbackStatus(statusAlert, 'Please complete name, email, organization, and details before opening the email draft.', 'danger');
+        setStatusAlert(statusAlert, 'Please complete name, email, organization, and details before opening the email draft.', 'danger');
         showToast('Please complete the Send Feedback form first.', 'warning');
         return;
     }
 
     if (!reporterEmail.includes('@')) {
-        updateSendFeedbackStatus(statusAlert, 'Please enter a valid email address.', 'danger');
+        setStatusAlert(statusAlert, 'Please enter a valid email address.', 'danger');
         showToast('Please enter a valid email address.', 'warning');
         return;
     }
@@ -2811,7 +3092,7 @@ async function submitAdminFeedbackForm(form) {
             details
         });
 
-        updateSendFeedbackStatus(
+        setStatusAlert(
             statusAlert,
             'Email draft prepared. Your local email client should open next.',
             'success'
@@ -2819,7 +3100,7 @@ async function submitAdminFeedbackForm(form) {
         showToast(`${feedbackLabel} email draft prepared.`, 'success');
         window.location.href = mailtoUrl;
     } catch (error) {
-        updateSendFeedbackStatus(statusAlert, error.message || 'Unable to prepare the feedback email draft.', 'danger');
+        setStatusAlert(statusAlert, error.message || 'Unable to prepare the feedback email draft.', 'danger');
         showToast(error.message || 'Unable to prepare the feedback email draft.', 'danger');
     } finally {
         submitButton.disabled = false;
@@ -2854,13 +3135,24 @@ function buildAdminFeedbackMailtoUrl({
 }
 
 
-function updateSendFeedbackStatus(statusAlert, message, variant) {
+function setStatusAlert(statusAlert, message, variant) {
     if (!statusAlert) {
         return;
     }
 
     statusAlert.className = `alert alert-${variant} admin-send-feedback-status`;
     statusAlert.textContent = message;
+    statusAlert.classList.remove('d-none');
+}
+
+
+function clearStatusAlert(statusAlert) {
+    if (!statusAlert) {
+        return;
+    }
+
+    statusAlert.className = 'alert d-none admin-send-feedback-status';
+    statusAlert.textContent = '';
 }
 
 
