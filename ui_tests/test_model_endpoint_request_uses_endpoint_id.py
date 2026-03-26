@@ -1,10 +1,11 @@
 # test_model_endpoint_request_uses_endpoint_id.py
 """
 UI test for model endpoint request identity wiring.
-Version: 0.239.155
-Implemented in: 0.239.155
+Version: 0.239.166
+Implemented in: 0.239.166
 
-This test ensures the admin multi-endpoint modal sends the endpoint ID in the
+This test ensures the admin multi-endpoint modal only exposes the supported
+providers, shows the APIM provider guidance, and sends the endpoint ID in the
 test-model request payload so the backend can resolve Key Vault-backed secrets.
 """
 
@@ -52,6 +53,10 @@ def test_model_endpoint_request_uses_endpoint_id(playwright):
 
         page.locator("#add-model-endpoint-btn").click()
         expect(page.locator("#modelEndpointModal")).to_be_visible()
+
+        provider_options = page.locator("#model-endpoint-provider option").all_text_contents()
+        assert provider_options == ["Azure OpenAI", "Foundry (classic)"]
+        expect(page.get_by_text("If Foundry is behind APIM, use Foundry (classic); otherwise use Azure OpenAI.")).to_be_visible()
 
         page.evaluate(
             """

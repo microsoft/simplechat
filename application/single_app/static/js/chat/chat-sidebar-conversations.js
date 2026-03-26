@@ -169,6 +169,14 @@ function createSidebarConversationItem(convo) {
   if (groupName) {
     convoItem.setAttribute("data-group-name", groupName);
   }
+
+  const getShortGroupLabel = (name) => {
+    const normalizedName = (name || '').trim();
+    if (!normalizedName) {
+      return 'group';
+    }
+    return normalizedName.slice(0, 8);
+  };
   
   const isPinned = convo.is_pinned || false;
   const isHidden = convo.is_hidden || false;
@@ -224,22 +232,12 @@ function createSidebarConversationItem(convo) {
     }
 
     const isGroupConversation = (convo.chat_type && convo.chat_type.startsWith('group')) || groupName;
-    const isPersonalConversation = !isGroupConversation && (
-      (convo.chat_type && convo.chat_type.startsWith('personal')) ||
-      (Array.isArray(convo.context) && convo.context.some(ctx => ctx.type === "primary" && ctx.scope === "personal"))
-    );
 
     if (isGroupConversation) {
       const badge = document.createElement('span');
       badge.classList.add('badge', 'bg-info', 'sidebar-conversation-group-badge');
-      badge.textContent = 'group';
+      badge.textContent = getShortGroupLabel(groupName);
       badge.title = groupName ? `Group conversation: ${groupName}` : 'Group conversation';
-      titleWrapper.appendChild(badge);
-    } else if (isPersonalConversation) {
-      const badge = document.createElement('span');
-      badge.classList.add('badge', 'bg-primary', 'sidebar-conversation-personal-badge');
-      badge.textContent = 'personal';
-      badge.title = 'Personal conversation';
       titleWrapper.appendChild(badge);
     }
     

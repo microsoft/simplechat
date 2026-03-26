@@ -19,8 +19,10 @@
                         <select class="form-select" id="model-endpoint-provider">
                             <option value="aoai">Azure OpenAI</option>
                             <option value="aifoundry">Foundry (classic)</option>
-                            <option value="new_foundry">New Foundry</option>
                         </select>
+                        <div class="form-text">
+                            For APIM, choose the matching provider with API key auth. If Foundry is behind APIM, use Foundry (classic); otherwise use Azure OpenAI.
+                        </div>
                     </div>
                     <div class="col-md-6">
                         <label for="model-endpoint-endpoint" class="form-label">Endpoint Fully Qualified Domain Name (FQDN)</label>

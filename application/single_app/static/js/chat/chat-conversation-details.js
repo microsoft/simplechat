@@ -540,24 +540,20 @@ function formatClassifications(classifications) {
 function formatChatType(chatType, context = []) {
   // Use the actual chat_type value from the metadata
   if (chatType === 'personal' || chatType === 'personal_single_user') {
-    return '<span class="badge bg-primary">personal</span>';
+    return '<span class="text-muted">personal</span>';
   } else if (chatType === 'new') {
     return '<span class="badge bg-secondary">new</span>';
   } else if (chatType === 'group' || chatType.startsWith('group')) {
     // For group chats, try to find the group name from context
     const primaryContext = context.find(c => c.type === 'primary' && c.scope === 'group');
     const groupName = primaryContext ? primaryContext.name || 'Group' : 'Group';
-    
-    // Determine if single-user or multi-user based on chat_type
-    const userType = chatType.includes('multi-user') ? 'multi-user' : 'single-user';
-    
-    return `
-      <span class="badge bg-info me-1">group - ${groupName}</span>
-      <span class="badge bg-secondary">${userType}</span>
-    `;
+
+    return `<span class="badge bg-info" title="${escapeHtml(groupName)}">${escapeHtml(groupName)}</span>`;
+  } else if (chatType && chatType.startsWith('public')) {
+    return '<span class="badge bg-success">public</span>';
   } else {
     // Fallback for unknown types
-    return `<span class="badge bg-secondary">${chatType}</span>`;
+    return `<span class="text-muted">${escapeHtml(chatType)}</span>`;
   }
 }
 

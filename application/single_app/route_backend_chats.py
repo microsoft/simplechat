@@ -6285,6 +6285,7 @@ def register_route_backend_chats(app):
                 
                 # Check if agents are enabled and should be used
                 selected_agent = None
+                selected_agent_metadata = None
                 agent_name_used = None
                 agent_display_name_used = None
                 use_agent_streaming = False
@@ -6301,6 +6302,15 @@ def register_route_backend_chats(app):
                             selected_agent_info = user_settings.get('selected_agent')
                             if isinstance(selected_agent_info, dict):
                                 agent_name_to_select = selected_agent_info.get('name')
+                                selected_agent_metadata = {
+                                    'selected_agent': selected_agent_info.get('name'),
+                                    'agent_display_name': selected_agent_info.get('display_name'),
+                                    'is_global': selected_agent_info.get('is_global', False),
+                                    'is_group': selected_agent_info.get('is_group', False),
+                                    'group_id': selected_agent_info.get('group_id'),
+                                    'group_name': selected_agent_info.get('group_name'),
+                                    'agent_id': selected_agent_info.get('id')
+                                }
                             elif isinstance(selected_agent_info, str):
                                 agent_name_to_select = selected_agent_info
                             debug_print(f"[Streaming] Per-user agent name to select: {agent_name_to_select}")
@@ -6308,6 +6318,15 @@ def register_route_backend_chats(app):
                             global_selected_agent_info = settings.get('global_selected_agent')
                             if global_selected_agent_info:
                                 agent_name_to_select = global_selected_agent_info.get('name')
+                                selected_agent_metadata = {
+                                    'selected_agent': global_selected_agent_info.get('name'),
+                                    'agent_display_name': global_selected_agent_info.get('display_name'),
+                                    'is_global': global_selected_agent_info.get('is_global', False),
+                                    'is_group': global_selected_agent_info.get('is_group', False),
+                                    'group_id': global_selected_agent_info.get('group_id'),
+                                    'group_name': global_selected_agent_info.get('group_name'),
+                                    'agent_id': global_selected_agent_info.get('id')
+                                }
                             debug_print(f"[Streaming] Global agent name to select: {agent_name_to_select}")
                         
                         # Find the agent
@@ -6338,6 +6357,16 @@ def register_route_backend_chats(app):
                             use_agent_streaming = True
                             agent_name_used = getattr(selected_agent, 'name', 'agent')
                             agent_display_name_used = getattr(selected_agent, 'display_name', agent_name_used)
+                            if not selected_agent_metadata:
+                                selected_agent_metadata = {
+                                    'selected_agent': agent_name_used,
+                                    'agent_display_name': agent_display_name_used,
+                                    'is_global': getattr(selected_agent, 'is_global', False),
+                                    'is_group': getattr(selected_agent, 'is_group', False),
+                                    'group_id': getattr(selected_agent, 'group_id', None),
+                                    'group_name': getattr(selected_agent, 'group_name', None),
+                                    'agent_id': getattr(selected_agent, 'id', None)
+                                }
                             actual_model_used = getattr(selected_agent, 'deployment_name', None) or gpt_model
                             debug_print(f"--- Streaming from Agent: {agent_name_used} (model: {actual_model_used}) ---")
                         else:
@@ -6715,8 +6744,8 @@ def register_route_backend_chats(app):
                             hybrid_search_enabled=hybrid_search_enabled,
                             image_gen_enabled=False,
                             selected_documents=combined_documents if combined_documents else None,
-                            selected_agent=None,
-                            selected_agent_details=None,
+                            selected_agent=agent_name_used if use_agent_streaming else None,
+                            selected_agent_details=selected_agent_metadata if use_agent_streaming else None,
                             search_results=search_results if search_results else None,
                             conversation_item=conversation_item
                         )

@@ -1,5 +1,6 @@
 # functions_documents.py that has some changes I need to merge into Development
 
+import traceback
 from config import *
 from functions_content import *
 from functions_settings import *
@@ -1089,7 +1090,6 @@ def process_video_document(
             total += 1
         except Exception as e:
             debug_print(f"[VIDEO INDEXER] Failed to save chunk {chunk_num + 1}: {str(e)}")
-            import traceback
             debug_print(f"[VIDEO INDEXER] Chunk save traceback: {traceback.format_exc()}")
     
     debug_print(f"[VIDEO INDEXER] Chunk processing complete - Total chunks saved: {total}")
@@ -3542,7 +3542,6 @@ Format your response as JSON with these keys:
         
     except Exception as e:
         print(f"Error in vision analysis for {document_id}: {str(e)}")
-        import traceback
         traceback.print_exc()
         return None
 
@@ -5266,7 +5265,6 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
                         
                 except Exception as e:
                     print(f"Warning: Error in vision analysis for {document_id}: {str(e)}")
-                    import traceback
                     traceback.print_exc()
                     # Don't fail the whole process, just update status
                     update_callback(status=f"Processing continues (vision analysis warning)")

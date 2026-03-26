@@ -1872,42 +1872,35 @@ function addChatTypeBadges(convoItem, classificationsEl) {
   
   // Debug logging
   console.log(`addChatTypeBadges: chatType="${chatType}", groupName="${groupName}"`);
+
+  const appendBadgeSpacer = () => {
+    if (classificationsEl.children.length > 0) {
+      const spacer = document.createElement("span");
+      spacer.innerHTML = "&nbsp;&nbsp;";
+      classificationsEl.appendChild(spacer);
+    }
+  };
+
+  const getShortGroupLabel = (name) => {
+    const normalizedName = (name || "").trim();
+    if (!normalizedName) {
+      return "group";
+    }
+    return normalizedName.slice(0, 8);
+  };
   
   // Only show badges if there's a valid chat type (meaning documents were used for primary context)
   // Don't show badges for Model-only conversations
   if (chatType === 'personal' || chatType === 'personal_single_user') {
-    // Personal workspace was used
-    const personalBadge = document.createElement("span");
-    personalBadge.classList.add("badge", "bg-primary");
-    personalBadge.textContent = "personal";
-    
-    // Add some spacing between classification badges and chat type badges
-    if (classificationsEl.children.length > 0) {
-      const spacer = document.createElement("span");
-      spacer.innerHTML = "&nbsp;&nbsp;";
-      classificationsEl.appendChild(spacer);
-    }
-    
-    classificationsEl.appendChild(personalBadge);
+    return;
   } else if (chatType && chatType.startsWith('group')) {
     // Group workspace was used
     const groupBadge = document.createElement("span");
-    groupBadge.classList.add("badge", "bg-info", "me-1");
-    groupBadge.textContent = groupName ? `group - ${groupName}` : 'group';
-    
-    const userTypeBadge = document.createElement("span");
-    userTypeBadge.classList.add("badge", "bg-secondary");
-    userTypeBadge.textContent = chatType.includes('multi-user') ? 'multi-user' : 'single-user';
-    
-    // Add some spacing between classification badges and chat type badges
-    if (classificationsEl.children.length > 0) {
-      const spacer = document.createElement("span");
-      spacer.innerHTML = "&nbsp;&nbsp;";
-      classificationsEl.appendChild(spacer);
-    }
-    
+    groupBadge.classList.add("badge", "bg-info");
+    groupBadge.textContent = (groupName || 'group').trim() || 'group';
+
+    appendBadgeSpacer();
     classificationsEl.appendChild(groupBadge);
-    classificationsEl.appendChild(userTypeBadge);
   } else if (chatType && chatType.startsWith('public')) {
     // Public workspace was used
     const publicBadge = document.createElement("span");
@@ -1915,11 +1908,7 @@ function addChatTypeBadges(convoItem, classificationsEl) {
     publicBadge.textContent = groupName ? `public - ${groupName}` : 'public';
     
     // Add some spacing between classification badges and chat type badges
-    if (classificationsEl.children.length > 0) {
-      const spacer = document.createElement("span");
-      spacer.innerHTML = "&nbsp;&nbsp;";
-      classificationsEl.appendChild(spacer);
-    }
+    appendBadgeSpacer();
     
     classificationsEl.appendChild(publicBadge);
   } else {

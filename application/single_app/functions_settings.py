@@ -740,6 +740,12 @@ def normalize_model_endpoints(endpoints):
     return normalized, changed
 
 
+def is_frontend_visible_model_endpoint_provider(provider):
+    """Return whether the provider should be exposed in user-facing endpoint UIs."""
+    normalized_provider = (provider or "aoai").lower()
+    return normalized_provider in {"aoai", "aifoundry"}
+
+
 def merge_model_endpoint_auth(existing_auth, incoming_auth):
     """Merge endpoint auth settings while preserving stored secrets when inputs are blank."""
     if not isinstance(existing_auth, dict):
@@ -787,12 +793,26 @@ def merge_model_endpoints_with_existing(incoming_endpoints, existing_endpoints):
         }
 
     merged = []
+    incoming_endpoint_ids = set()
     for endpoint in incoming_endpoints:
         if not isinstance(endpoint, dict):
             continue
         endpoint_id = endpoint.get("id")
+        if endpoint_id:
+            incoming_endpoint_ids.add(endpoint_id)
         existing_endpoint = existing_by_id.get(endpoint_id)
         merged.append(merge_model_endpoint_payload(existing_endpoint or {}, endpoint))
+
+    if isinstance(existing_endpoints, list):
+        for endpoint in existing_endpoints:
+            if not isinstance(endpoint, dict):
+                continue
+            endpoint_id = endpoint.get("id")
+            if endpoint_id in incoming_endpoint_ids:
+                continue
+            if is_frontend_visible_model_endpoint_provider(endpoint.get("provider")):
+                continue
+            merged.append(json.loads(json.dumps(endpoint)))
 
     return merged
 
@@ -806,6 +826,8 @@ def sanitize_model_endpoints_for_frontend(endpoints):
     sanitized = []
     for endpoint in normalized:
         if not isinstance(endpoint, dict):
+            continue
+        if not is_frontend_visible_model_endpoint_provider(endpoint.get("provider")):
             continue
         endpoint_copy = json.loads(json.dumps(endpoint))
         auth = endpoint_copy.get("auth") or {}
@@ -1085,6 +1107,9 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
 
     for k, v in full_settings.items():
         if any(term in k.lower() for term in sensitive_terms):
+            continue
+        if k in ('model_endpoints', 'personal_model_endpoints') and isinstance(v, list):
+            sanitized[k] = sanitize_model_endpoints_for_frontend(v)
             continue
         if isinstance(v, dict):
             sanitized[k] = sanitize_settings_for_user(v)
