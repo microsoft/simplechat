@@ -136,6 +136,7 @@ def find_agent_by_scope(agents_cfg, selected_agent_data):
 
     return None
 
+
 def resolve_foundry_endpoint_from_settings(foundry_settings, settings):
     endpoint = (foundry_settings or {}).get("endpoint")
     if endpoint:
@@ -1870,14 +1871,8 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
         load_core_plugins_only(kernel, settings)
         return kernel, None
 
-    # Ensure migration is complete (will migrate any remaining legacy data)
-    ensure_agents_migration_complete(user_id)
-
-    agents_cfg = []
-    active_group_id = None
     if selected_agent_is_group:
         resolved_group_id = selected_agent_data.get('group_id')
-        active_group_id = None
         
         # Group agent MUST have a group_id
         if not resolved_group_id:
@@ -1927,7 +1922,15 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
                 group_agent_cfg['is_group'] = True
                 group_agent_cfg.setdefault('group_id', resolved_group_id)
                 group_agent_cfg['group_name'] = selected_agent_data.get('group_name')
-                if not any(agent.get('id') == group_agent_cfg.get('id') for agent in agents_cfg):
+                if not any(
+                    agent.get('id') == group_agent_cfg.get('id')
+                    or (
+                        agent.get('name') == group_agent_cfg.get('name')
+                        and bool(agent.get('is_group', False))
+                        and str(agent.get('group_id') or '') == str(resolved_group_id)
+                    )
+                    for agent in agents_cfg
+                ):
                     agents_cfg.append(group_agent_cfg)
                 log_event(
                     f"[SK Loader] Added group agent '{group_agent_cfg.get('name')}' from group {resolved_group_id} to candidate list.",
@@ -2116,7 +2119,7 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
                     level=logging.WARNING
                 )
 
-    # If still not found, DON'T use first agent - only load when explicitly selected
+    # If still not found, stop here instead of masking the loading issue with a fallback.
     if agent_cfg is None and agents_cfg:
         debug_print(f"[SK Loader] User {user_id} Agent selection final status: agent_cfg is None")
         debug_print(f"[SK Loader] User {user_id} Available agents: {[{a.get('name'): a.get('is_global', False)} for a in agents_cfg]}")

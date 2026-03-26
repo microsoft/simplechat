@@ -1,0 +1,66 @@
+C:\Repos\simplechatmsft\.venv\Lib\site-packages\requests\__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (7.3.0)/charset_normalizer (3.4.6) doesn't match a supported version!
+  warnings.warn(
+[Plugin Function Logger] Function completed successfully
+Plugin function executed successfully
+[Plugin Invocation] MSGraphPlugin.get_my_messages
+[Plugin Function Logger] Function completed successfully
+Plugin function executed successfully
+[Plugin Invocation] MSGraphPlugin.get_my_timezone
+[Plugin Function Logger] Function completed successfully
+[Log] [Plugin Function Logger] Decorating function for plugin -- {'function_name': 'get_my_profile', 'plugin_name': 'MSGraphPlugin'}
+[Log] [Plugin Function Logger] Decorating function for plugin -- {'function_name': 'get_my_timezone', 'plugin_name': 'MSGraphPlugin'}
+[Log] [Plugin Function Logger] Decorating function for plugin -- {'function_name': 'get_my_events', 'plugin_name': 'MSGraphPlugin'}
+[Log] [Plugin Function Logger] Decorating function for plugin -- {'function_name': 'get_my_messages', 'plugin_name': 'MSGraphPlugin'}
+[Log] [Plugin Function Logger] Decorating function for plugin -- {'function_name': 'search_users', 'plugin_name': 'MSGraphPlugin'}
+[Log] [Plugin Function Logger] Decorating function for plugin -- {'function_name': 'get_user_by_email', 'plugin_name': 'MSGraphPlugin'}
+[Log] [Plugin Function Logger] Decorating function for plugin -- {'function_name': 'list_drive_items', 'plugin_name': 'MSGraphPlugin'}
+[Log] [Plugin Function Logger] Decorating function for plugin -- {'function_name': 'get_my_security_alerts', 'plugin_name': 'MSGraphPlugin'}
+
+Running test_msgraph_plugin_exposes_expected_operations...
+Testing Microsoft Graph plugin metadata and function registration...
+Microsoft Graph plugin metadata includes the expected operations
+
+Running test_msgraph_plugin_paginates_and_truncates_list_results...
+Testing Microsoft Graph helper pagination behavior...
+[Log] [Plugin Function Logger] Function call started -- {'plugin_name': 'MSGraphPlugin', 'function_name': 'get_my_messages'}
+[Log] [Plugin Function Logger] Function parameters -- {'plugin_name': 'MSGraphPlugin', 'function_name': 'get_my_messages', 'parameters': {'top': 3}, 'param_string': 'top=3'}
+Warning: Failed to get settings from cache, read from Cosmos DB instead. Called from C:\Repos\simplechatmsft\application\single_app\functions_debug.py:46 in debug_print().
+[DEBUG] [INFO]: [MSGraphPlugin] get_my_messages requesting https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages params={'$top': 3, '$select': 'id,subject,from,receivedDateTime,isRead,importance,webLink', '$orderby': 'receivedDateTime desc'}
+Warning: Failed to get settings from cache, read from Cosmos DB instead. Called from C:\Repos\simplechatmsft\application\single_app\functions_debug.py:46 in debug_print().
+[DEBUG] [INFO]: [MSGraphPlugin] get_my_messages requesting https://graph.microsoft.com/v1.0/me/messages?page=2 params=None
+[Log] [Plugin Function Logger] Function completed successfully -- {'plugin_name': 'MSGraphPlugin', 'function_name': 'get_my_messages', 'result_preview': "{'operation': 'get_my_messages', 'count': 3, 'value': [{'id': '1'}, {'id': '2'}, {'id': '3'}], 'next_link': None, 'truncated': True}", 'duration_ms': 190.74654579162598, 'full_function_name': 'MSGraphPlugin.get_my_messages'}
+Warning: Failed to get settings from cache, read from Cosmos DB instead. Called from C:\Repos\simplechatmsft\application\single_app\functions_debug.py:46 in debug_print().
+[DEBUG] [INFO]: [Plugin SUCCESS] MSGraphPlugin.get_my_messages (190.7ms)
+[Log] Plugin function executed successfully -- {'plugin_name': 'MSGraphPlugin', 'function_name': 'get_my_messages', 'duration_ms': 190.74654579162598, 'success': True, 'user_id': None, 'timestamp': '2026-03-26T03:02:20.809761', 'parameter_count': 1, 'parameters': {'top': '3'}, 'result_preview': "{'operation': 'get_my_messages', 'count': 3, 'value': [{'id': '1'}, {'id': '2'}, {'id': '3'}], 'next_link': None, 'truncated': True}", 'result_type': 'dict'}
+[Log] [Plugin Invocation] MSGraphPlugin.get_my_messages -- {'plugin_name': 'MSGraphPlugin', 'function_name': 'get_my_messages', 'duration_ms': 190.74654579162598, 'success': True, 'user_id': None, 'timestamp': '2026-03-26T03:02:20.809761', 'parameter_count': 1, 'result_type': 'dict', 'error_message': None, 'parameters': {'top': '3'}, 'result_preview': "{'operation': 'get_my_messages', 'count': 3, 'value': [{'id': '1'}, {'id': '2'}, {'id': '3'}], 'next_link': None, 'truncated': True}"}
+Microsoft Graph helper paginates and truncates list results safely
+
+Running test_msgraph_plugin_reads_mailbox_timezone...
+Testing Microsoft Graph mailbox timezone lookup...
+[Log] [Plugin Function Logger] Function call started -- {'plugin_name': 'MSGraphPlugin', 'function_name': 'get_my_timezone'}
+[Log] [Plugin Function Logger] Function parameters -- {'plugin_name': 'MSGraphPlugin', 'function_name': 'get_my_timezone', 'parameters': {}, 'param_string': 'no parameters'}
+Warning: Failed to get settings from cache, read from Cosmos DB instead. Called from C:\Repos\simplechatmsft\application\single_app\functions_debug.py:46 in debug_print().
+[DEBUG] [INFO]: [MSGraphPlugin] get_my_timezone requesting https://graph.microsoft.com/v1.0/me/mailboxSettings params={}
+[Log] [Plugin Function Logger] Function completed successfully -- {'plugin_name': 'MSGraphPlugin', 'function_name': 'get_my_timezone', 'result_preview': "{'operation': 'get_my_timezone', 'time_zone': 'Pacific Standard Time', 'date_format': 'M/d/yyyy', 'time_format': 'h:mm tt', 'language': {'locale': 'en-US', 'displayName': 'English (United States)'}, '...", 'duration_ms': 95.86191177368164, 'full_function_name': 'MSGraphPlugin.get_my_timezone'}
+Warning: Failed to get settings from cache, read from Cosmos DB instead. Called from C:\Repos\simplechatmsft\application\single_app\functions_debug.py:46 in debug_print().
+[DEBUG] [INFO]: [Plugin SUCCESS] MSGraphPlugin.get_my_timezone (95.9ms)
+[Log] Plugin function executed successfully -- {'plugin_name': 'MSGraphPlugin', 'function_name': 'get_my_timezone', 'duration_ms': 95.86191177368164, 'success': True, 'user_id': None, 'timestamp': '2026-03-26T03:02:21.010018', 'result_preview': "{'operation': 'get_my_timezone', 'time_zone': 'Pacific Standard Time', 'date_format': 'M/d/yyyy', 'time_format': 'h:mm tt', 'language': {'locale': 'en-US', 'displayName': 'English (United States)'}, '...", 'result_type': 'dict'}
+[Log] [Plugin Invocation] MSGraphPlugin.get_my_timezone -- {'plugin_name': 'MSGraphPlugin', 'function_name': 'get_my_timezone', 'duration_ms': 95.86191177368164, 'success': True, 'user_id': None, 'timestamp': '2026-03-26T03:02:21.010018', 'parameter_count': 0, 'result_type': 'dict', 'error_message': None, 'result_preview': '{\'operation\': \'get_my_timezone\', \'time_zone\': \'Pacific Standard Time\', \'date_format\': \'M/d/yyyy\', \'time_format\': \'h:mm tt\', \'language\': {\'locale\': \'en-US\', \'displayName\': \'English (United States)\'}, \'working_hours_time_zone\': {\'name\': \'Pacific Standard Time\'}, \'message\': "Use the user\'s mailbox time_zone instead of assuming UTC when answering user-facing date and time questions."}'}
+Microsoft Graph plugin reads mailbox timezone settings safely
+
+Running test_msgraph_plugin_surfaces_token_consent_errors...
+Testing Microsoft Graph token consent error handling...
+[Log] [Plugin Function Logger] Function call started -- {'plugin_name': 'MSGraphPlugin', 'function_name': 'search_users'}
+[Log] [Plugin Function Logger] Function parameters -- {'plugin_name': 'MSGraphPlugin', 'function_name': 'search_users', 'parameters': {'arg_0': 'Ada'}, 'param_string': 'arg_0=Ada'}
+Warning: Failed to get settings from cache, read from Cosmos DB instead. Called from C:\Repos\simplechatmsft\application\single_app\functions_debug.py:46 in debug_print().
+[DEBUG] [INFO]: [MSGraphPlugin] search_users token acquisition failed: {'error': 'consent_required', 'message': 'Consent is required.', 'consent_url': 'https://example.test/consent', 'scopes': ['User.ReadBasic.All'], 'operation': 'search_users'}
+[Log] [Plugin Function Logger] Function completed successfully -- {'plugin_name': 'MSGraphPlugin', 'function_name': 'search_users', 'result_preview': "{'error': 'consent_required', 'message': 'Consent is required.', 'consent_url': 'https://example.test/consent', 'scopes': ['User.ReadBasic.All'], 'operation': 'search_users'}", 'duration_ms': 95.50833702087402, 'full_function_name': 'MSGraphPlugin.search_users'}
+Plugin function executed successfully
+[Plugin Invocation] MSGraphPlugin.search_users
+Warning: Failed to get settings from cache, read from Cosmos DB instead. Called from C:\Repos\simplechatmsft\application\single_app\functions_debug.py:46 in debug_print().
+[DEBUG] [INFO]: [Plugin SUCCESS] MSGraphPlugin.search_users (95.5ms)
+[Log] Plugin function executed successfully -- {'plugin_name': 'MSGraphPlugin', 'function_name': 'search_users', 'duration_ms': 95.50833702087402, 'success': True, 'user_id': None, 'timestamp': '2026-03-26T03:02:21.202137', 'parameter_count': 1, 'parameters': {'arg_0': 'Ada'}, 'result_preview': "{'error': 'consent_required', 'message': 'Consent is required.', 'consent_url': 'https://example.test/consent', 'scopes': ['User.ReadBasic.All'], 'operation': 'search_users'}", 'result_type': 'dict'}
+[Log] [Plugin Invocation] MSGraphPlugin.search_users -- {'plugin_name': 'MSGraphPlugin', 'function_name': 'search_users', 'duration_ms': 95.50833702087402, 'success': True, 'user_id': None, 'timestamp': '2026-03-26T03:02:21.202137', 'parameter_count': 1, 'result_type': 'dict', 'error_message': None, 'parameters': {'arg_0': 'Ada'}, 'result_preview': "{'error': 'consent_required', 'message': 'Consent is required.', 'consent_url': 'https://example.test/consent', 'scopes': ['User.ReadBasic.All'], 'operation': 'search_users'}"}
+Microsoft Graph plugin surfaces consent requirements safely
+
+Results: 4/4 tests passed

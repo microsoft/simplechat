@@ -4287,8 +4287,12 @@ def register_route_backend_chats(app):
                     log_event(f"[SKChat] Using agent from request agent_info: {agent_name_to_select}")
                 # Priority 2: Use user settings
                 elif per_user_semantic_kernel:
-                    agent_name_to_select = user_settings.get('selected_agent')
-                    log_event(f"[SKChat] Per-user mode: selected_agent from user_settings: {agent_name_to_select}")
+                    selected_agent_info = user_settings.get('selected_agent')
+                    if isinstance(selected_agent_info, dict):
+                        agent_name_to_select = selected_agent_info.get('name')
+                    else:
+                        agent_name_to_select = selected_agent_info
+                    log_event(f"[SKChat] Per-user mode: selected_agent from user_settings: {selected_agent_info}")
                 # Priority 3: Use global settings
                 else:
                     global_selected_agent_info = settings.get('global_selected_agent')

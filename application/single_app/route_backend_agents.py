@@ -32,6 +32,92 @@ from functions_activity_logging import (
 
 bpa = Blueprint('admin_agents', __name__)
 
+
+def _build_user_selectable_agents(user_id, requested_agent=None):
+    """Build the set of agents the current user is allowed to select."""
+    settings = get_settings()
+    requested_agent = requested_agent or {}
+    candidates = []
+
+    for agent in get_personal_agents(user_id):
+        candidate = dict(agent)
+        candidate['is_global'] = False
+        candidate['is_group'] = False
+        candidate['group_id'] = None
+        candidate['group_name'] = None
+        candidates.append(candidate)
+
+    merge_global = settings.get('per_user_semantic_kernel', False) and settings.get('merge_global_semantic_kernel_with_workspace', False)
+    if merge_global or requested_agent.get('is_global'):
+        for agent in get_global_agents():
+            candidate = dict(agent)
+            candidate['is_global'] = True
+            candidate['is_group'] = False
+            candidate['group_id'] = None
+            candidate['group_name'] = None
+            candidates.append(candidate)
+
+    requested_group_id = str(requested_agent.get('group_id') or '').strip()
+    if requested_agent.get('is_group') and not requested_group_id:
+        try:
+            requested_group_id = require_active_group(user_id)
+        except Exception:
+            requested_group_id = ''
+
+    if requested_group_id:
+        requested_group_name = requested_agent.get('group_name')
+        for agent in get_group_agents(requested_group_id):
+            candidate = dict(agent)
+            candidate['is_global'] = False
+            candidate['is_group'] = True
+            candidate['group_id'] = requested_group_id
+            if requested_group_name and not candidate.get('group_name'):
+                candidate['group_name'] = requested_group_name
+            candidates.append(candidate)
+
+    return candidates
+
+
+def _find_matching_user_selected_agent(candidates, requested_agent):
+    """Return the canonical agent record matching the requested selection payload."""
+    if not isinstance(requested_agent, dict):
+        return None
+
+    requested_name = str(requested_agent.get('name') or '').strip()
+    requested_id = str(requested_agent.get('id') or '').strip()
+    requested_is_global = bool(requested_agent.get('is_global', False))
+    requested_is_group = bool(requested_agent.get('is_group', False))
+    requested_group_id = str(requested_agent.get('group_id') or '').strip()
+
+    def scope_matches(candidate):
+        candidate_is_global = bool(candidate.get('is_global', False))
+        candidate_is_group = bool(candidate.get('is_group', False))
+        if requested_is_group:
+            if not candidate_is_group:
+                return False
+            if requested_group_id:
+                return str(candidate.get('group_id') or '') == requested_group_id
+            return True
+        if requested_is_global:
+            return candidate_is_global and not candidate_is_group
+        return not candidate_is_global and not candidate_is_group
+
+    if requested_id:
+        match = next(
+            (candidate for candidate in candidates if str(candidate.get('id') or '') == requested_id and scope_matches(candidate)),
+            None,
+        )
+        if match:
+            return match
+
+    if requested_name:
+        return next(
+            (candidate for candidate in candidates if candidate.get('name') == requested_name and scope_matches(candidate)),
+            None,
+        )
+
+    return None
+
 # === AGENT GUID GENERATION ENDPOINT ===
 @bpa.route('/api/agents/generate_id', methods=['GET'])
 @swagger_route(
@@ -429,23 +515,31 @@ def set_user_selected_agent():
     selected_agent = data.get('selected_agent')
     if not selected_agent:
         return jsonify({'error': 'selected_agent is required.'}), 400
+    if not isinstance(selected_agent, dict):
+        return jsonify({'error': 'selected_agent must be an object.'}), 400
+
+    candidates = _build_user_selectable_agents(user_id, requested_agent=selected_agent)
+    matched_agent = _find_matching_user_selected_agent(candidates, selected_agent)
+    if not matched_agent:
+        return jsonify({'error': 'Selected agent is not available for this user or scope.'}), 400
+
     user_settings = get_user_settings(user_id)
     settings_to_update = user_settings.get('settings', {})
-    agent_name = (selected_agent.get('name') or '').strip()
+    agent_name = (matched_agent.get('name') or '').strip()
     if not agent_name:
         return jsonify({'error': 'selected_agent.name is required.'}), 400
     agent = {
-        "id": selected_agent.get('id'),
+        "id": matched_agent.get('id'),
         "name": agent_name,
-        "display_name": selected_agent.get('display_name'),
-        "is_global": selected_agent.get('is_global', False),
-        "is_group": selected_agent.get('is_group', False),
-        "group_id": selected_agent.get('group_id'),
-        "group_name": selected_agent.get('group_name')
+        "display_name": matched_agent.get('display_name', matched_agent.get('name')),
+        "is_global": matched_agent.get('is_global', False),
+        "is_group": matched_agent.get('is_group', False),
+        "group_id": matched_agent.get('group_id'),
+        "group_name": matched_agent.get('group_name')
     }
     settings_to_update['selected_agent'] = agent
     update_user_settings(user_id, settings_to_update)
-    log_event("User selected agent set", extra={"user_id": user_id, "selected_agent": selected_agent})
+    log_event("User selected agent set", extra={"user_id": user_id, "selected_agent": agent})
     return jsonify({'success': True})
 
 @bpa.route('/api/user/agent/settings', methods=['GET'])
