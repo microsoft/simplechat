@@ -4,6 +4,7 @@ from config import *
 from functions_documents import *
 from functions_authentication import *
 from functions_settings import *
+from functions_activity_logging import log_admin_feedback_email_submission
 from functions_appinsights import log_event
 from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
@@ -432,6 +433,58 @@ def register_route_backend_settings(app):
 
         except Exception as e:
             return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/admin/settings/send_feedback_email', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def send_feedback_email():
+        """Log an admin feedback email draft request before the client opens mailto."""
+        try:
+            data = request.get_json(force=True)
+
+            feedback_type = (data.get('feedbackType') or '').strip()
+            reporter_name = (data.get('reporterName') or '').strip()
+            reporter_email = (data.get('reporterEmail') or '').strip()
+            organization = (data.get('organization') or '').strip()
+            details = (data.get('details') or '').strip()
+            if feedback_type not in ['bug_report', 'feature_request']:
+                return jsonify({'error': 'Invalid feedback type'}), 400
+
+            if not reporter_name or not reporter_email or not organization or not details:
+                return jsonify({'error': 'Name, email, organization, and details are required'}), 400
+
+            if '@' not in reporter_email:
+                return jsonify({'error': 'Reporter email must be a valid email address'}), 400
+
+            user = session.get('user', {})
+            admin_email = user.get('preferred_username', user.get('email', reporter_email))
+            user_id = get_current_user_id() or 'unknown'
+
+            feedback_label = 'Bug Report' if feedback_type == 'bug_report' else 'Feature Request'
+            subject_line = f'[SimpleChat Admin Feedback] {feedback_label} - {organization}'
+
+            log_admin_feedback_email_submission(
+                user_id=user_id,
+                admin_email=admin_email,
+                feedback_type=feedback_type,
+                reporter_name=reporter_name,
+                reporter_email=reporter_email,
+                organization=organization,
+                details=details,
+                recipient_email='simplechat@microsoft.com'
+            )
+
+            return jsonify({
+                'success': True,
+                'recipientEmail': 'simplechat@microsoft.com',
+                'subjectLine': subject_line,
+                'feedbackLabel': feedback_label
+            }), 200
+
+        except Exception as e:
+            current_app.logger.error(f"Error logging admin feedback email request: {str(e)}")
+            return jsonify({'error': f'Failed to prepare feedback email: {str(e)}'}), 500
 
 def _test_multimodal_vision_connection(payload):
     """Test multi-modal vision analysis with a sample image."""

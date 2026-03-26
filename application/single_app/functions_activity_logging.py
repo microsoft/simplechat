@@ -118,6 +118,67 @@ def log_user_activity(
         debug_print(f"Error logging user activity for user {user_id}: {str(e)}")
 
 
+def log_admin_feedback_email_submission(
+    user_id: str,
+    admin_email: str,
+    feedback_type: str,
+    reporter_name: str,
+    reporter_email: str,
+    organization: str,
+    details: str,
+    recipient_email: str = 'simplechat@microsoft.com'
+) -> None:
+    """
+    Log an admin-initiated feedback email draft event to the activity log.
+
+    This records that an admin prepared a bug report or feature request email
+    from Admin Settings.
+    """
+
+    try:
+        timestamp = datetime.utcnow().isoformat()
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'partitionKey': user_id,
+            'user_id': user_id,
+            'timestamp': timestamp,
+            'activity_type': 'admin_feedback_email_submission',
+            'submission_channel': 'mailto',
+            'admin_email': admin_email,
+            'recipient_email': recipient_email,
+            'feedback_submission': {
+                'feedback_type': feedback_type,
+                'reporter_name': reporter_name,
+                'reporter_email': reporter_email,
+                'organization': organization,
+                'details_length': len(details or ''),
+                'details_preview': (details or '')[:250]
+            }
+        }
+
+        cosmos_activity_logs_container.create_item(body=activity_record)
+
+        log_event(
+            message=f"Admin feedback email prepared: {feedback_type} for user {user_id}",
+            extra=activity_record,
+            level=logging.INFO
+        )
+        debug_print(f"Logged admin feedback email submission: {feedback_type} for user {user_id}")
+
+    except Exception as e:
+        log_event(
+            message=f"Error logging admin feedback email submission: {str(e)}",
+            extra={
+                'user_id': user_id,
+                'admin_email': admin_email,
+                'feedback_type': feedback_type,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+        debug_print(f"Error logging admin feedback email submission for user {user_id}: {str(e)}")
+
+
 def log_web_search_consent_acceptance(
     user_id: str,
     admin_email: str,

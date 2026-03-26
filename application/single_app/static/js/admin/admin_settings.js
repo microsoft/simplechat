@@ -37,7 +37,38 @@ const saveButton = document.getElementById('floating-save-btn') || (adminForm ? 
 const enableGroupWorkspacesToggle = document.getElementById('enable_group_workspaces');
 const createGroupPermissionSettingDiv = document.getElementById('create_group_permission_setting');
 
+function setupAdminFormAutofillMetadata() {
+    if (!adminForm) {
+        return;
+    }
+
+    adminForm.setAttribute('autocomplete', 'off');
+    adminForm.setAttribute('data-lpignore', 'true');
+    adminForm.setAttribute('data-1p-ignore', 'true');
+    adminForm.setAttribute('data-bwignore', 'true');
+
+    adminForm.querySelectorAll('input, select, textarea').forEach(field => {
+        if (!field.hasAttribute('autocomplete')) {
+            field.setAttribute('autocomplete', 'off');
+        }
+
+        if (!field.hasAttribute('data-lpignore')) {
+            field.setAttribute('data-lpignore', 'true');
+        }
+
+        if (!field.hasAttribute('data-1p-ignore')) {
+            field.setAttribute('data-1p-ignore', 'true');
+        }
+
+        if (!field.hasAttribute('data-bwignore')) {
+            field.setAttribute('data-bwignore', 'true');
+        }
+    });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+    setupAdminFormAutofillMetadata();
+
     // --- Existing Setup ---
     renderGPTModels();
     renderEmbeddingModels();
@@ -55,6 +86,9 @@ document.addEventListener('DOMContentLoaded', () => {
     setupTestButtons();
 
     activateTabFromHash(); // Keep tab activation logic
+
+    setupLatestFeaturesMirrors();
+    setupSendFeedbackForms();
 
     document.querySelectorAll('.nav-link').forEach(tab => {
         tab.addEventListener('click', function () {
@@ -2557,19 +2591,303 @@ function setupTestButtons() {
     }
 }
 
+function setupLatestFeaturesMirrors() {
+    const canonicalThoughts = document.getElementById('enable_thoughts');
+    const mirroredThoughts = document.getElementById('latest_features_enable_thoughts');
+
+    if (canonicalThoughts && mirroredThoughts) {
+        mirroredThoughts.checked = canonicalThoughts.checked;
+
+        canonicalThoughts.addEventListener('change', () => {
+            mirroredThoughts.checked = canonicalThoughts.checked;
+        });
+
+        mirroredThoughts.addEventListener('change', () => {
+            canonicalThoughts.checked = mirroredThoughts.checked;
+            markFormAsModified();
+        });
+    }
+
+    const canonicalEnhancedCitations = document.getElementById('enable_enhanced_citations');
+    const mirroredEnhancedCitations = document.getElementById('latest_features_enable_enhanced_citations');
+    const canonicalOfficeAuthType = document.getElementById('office_docs_authentication_type');
+    const mirroredOfficeAuthType = document.getElementById('latest_features_office_docs_authentication_type');
+    const canonicalOfficeConnString = document.getElementById('office_docs_storage_account_url');
+    const mirroredOfficeConnString = document.getElementById('latest_features_office_docs_storage_account_url');
+    const canonicalOfficeBlobEndpoint = document.getElementById('office_docs_storage_account_blob_endpoint');
+    const mirroredOfficeBlobEndpoint = document.getElementById('latest_features_office_docs_storage_account_blob_endpoint');
+    const canonicalTabularPreviewLimit = document.getElementById('tabular_preview_max_blob_size_mb');
+    const mirroredTabularPreviewLimit = document.getElementById('latest_features_tabular_preview_max_blob_size_mb');
+
+    if (canonicalEnhancedCitations && mirroredEnhancedCitations) {
+        mirroredEnhancedCitations.checked = canonicalEnhancedCitations.checked;
+        updateLatestFeaturesEnhancedCitationMirror();
+
+        canonicalEnhancedCitations.addEventListener('change', () => {
+            mirroredEnhancedCitations.checked = canonicalEnhancedCitations.checked;
+            updateLatestFeaturesEnhancedCitationMirror();
+        });
+
+        mirroredEnhancedCitations.addEventListener('change', () => {
+            canonicalEnhancedCitations.checked = mirroredEnhancedCitations.checked;
+            toggleEnhancedCitation(mirroredEnhancedCitations.checked);
+            updateLatestFeaturesEnhancedCitationMirror();
+            markFormAsModified();
+        });
+    }
+
+    if (canonicalOfficeAuthType && mirroredOfficeAuthType) {
+        mirroredOfficeAuthType.value = canonicalOfficeAuthType.value;
+        updateOfficeStorageMirrorVisibility(canonicalOfficeAuthType.value);
+
+        canonicalOfficeAuthType.addEventListener('change', () => {
+            mirroredOfficeAuthType.value = canonicalOfficeAuthType.value;
+            updateOfficeStorageMirrorVisibility(canonicalOfficeAuthType.value);
+        });
+
+        mirroredOfficeAuthType.addEventListener('change', () => {
+            canonicalOfficeAuthType.value = mirroredOfficeAuthType.value;
+            updateOfficeStorageCanonicalVisibility(mirroredOfficeAuthType.value);
+            updateOfficeStorageMirrorVisibility(mirroredOfficeAuthType.value);
+            markFormAsModified();
+        });
+    }
+
+    syncMirroredField(canonicalOfficeConnString, mirroredOfficeConnString);
+    syncMirroredField(canonicalOfficeBlobEndpoint, mirroredOfficeBlobEndpoint);
+    syncMirroredField(canonicalTabularPreviewLimit, mirroredTabularPreviewLimit);
+}
+
+function syncMirroredField(canonicalField, mirroredField, eventName = 'input') {
+    if (!canonicalField || !mirroredField) {
+        return;
+    }
+
+    mirroredField.value = canonicalField.value;
+
+    canonicalField.addEventListener(eventName, () => {
+        mirroredField.value = canonicalField.value;
+    });
+
+    mirroredField.addEventListener(eventName, () => {
+        canonicalField.value = mirroredField.value;
+        markFormAsModified();
+    });
+}
+
+function updateLatestFeaturesEnhancedCitationMirror() {
+    const canonicalEnhancedCitations = document.getElementById('enable_enhanced_citations');
+    const mirroredEnhancedCitations = document.getElementById('latest_features_enable_enhanced_citations');
+    const mirroredContainer = document.getElementById('latest_features_enhanced_citation_settings');
+    const canonicalOfficeAuthType = document.getElementById('office_docs_authentication_type');
+    const mirroredOfficeAuthType = document.getElementById('latest_features_office_docs_authentication_type');
+
+    if (!canonicalEnhancedCitations || !mirroredEnhancedCitations || !mirroredContainer) {
+        return;
+    }
+
+    mirroredEnhancedCitations.checked = canonicalEnhancedCitations.checked;
+    mirroredContainer.classList.toggle('d-none', !canonicalEnhancedCitations.checked);
+
+    if (canonicalOfficeAuthType && mirroredOfficeAuthType) {
+        mirroredOfficeAuthType.value = canonicalOfficeAuthType.value;
+        updateOfficeStorageMirrorVisibility(canonicalOfficeAuthType.value);
+    }
+}
+
+function updateOfficeStorageCanonicalVisibility(authTypeValue) {
+    const connStrGroup = document.getElementById('office_docs_storage_conn_str_group');
+    const urlGroup = document.getElementById('office_docs_storage_url_group');
+
+    if (connStrGroup) {
+        connStrGroup.style.display = authTypeValue === 'managed_identity' ? 'none' : '';
+    }
+
+    if (urlGroup) {
+        urlGroup.style.display = authTypeValue === 'managed_identity' ? '' : 'none';
+    }
+}
+
+function updateOfficeStorageMirrorVisibility(authTypeValue) {
+    const connStrGroup = document.getElementById('latest_features_office_docs_storage_conn_str_group');
+    const urlGroup = document.getElementById('latest_features_office_docs_storage_url_group');
+
+    if (connStrGroup) {
+        connStrGroup.classList.toggle('d-none', authTypeValue === 'managed_identity');
+    }
+
+    if (urlGroup) {
+        urlGroup.classList.toggle('d-none', authTypeValue !== 'managed_identity');
+    }
+}
+
 function toggleEnhancedCitation(isEnabled) {
     const container = document.getElementById('enhanced_citation_settings');
-    if (!container) return;
-    container.style.display = isEnabled ? 'block' : 'none';
+    if (container) {
+        container.style.display = isEnabled ? 'block' : 'none';
+    }
+
+    const mirroredContainer = document.getElementById('latest_features_enhanced_citation_settings');
+    if (mirroredContainer) {
+        mirroredContainer.classList.toggle('d-none', !isEnabled);
+    }
+}
+
+
+function setupSendFeedbackForms() {
+    const feedbackForms = document.querySelectorAll('.admin-send-feedback-form');
+    feedbackForms.forEach(form => {
+        const submitButton = form.querySelector('.admin-send-feedback-submit');
+        if (!submitButton) {
+            return;
+        }
+
+        submitButton.addEventListener('click', event => {
+            event.preventDefault();
+            submitAdminFeedbackForm(form);
+        });
+    });
+}
+
+
+async function submitAdminFeedbackForm(form) {
+    const feedbackType = form.dataset.feedbackType;
+    const feedbackLabel = form.dataset.feedbackLabel || 'Feedback';
+    const inputs = form.querySelectorAll('input[type="text"], input[type="email"], textarea');
+    const nameInput = inputs[0];
+    const emailInput = inputs[1];
+    const organizationInput = inputs[2];
+    const detailsInput = inputs[3];
+    const statusAlert = form.querySelector('.admin-send-feedback-status');
+    const submitButton = form.querySelector('.admin-send-feedback-submit');
+
+    const reporterName = nameInput?.value.trim() || '';
+    const reporterEmail = emailInput?.value.trim() || '';
+    const organization = organizationInput?.value.trim() || '';
+    const details = detailsInput?.value.trim() || '';
+
+    if (!reporterName || !reporterEmail || !organization || !details) {
+        updateSendFeedbackStatus(statusAlert, 'Please complete name, email, organization, and details before opening the email draft.', 'danger');
+        showToast('Please complete the Send Feedback form first.', 'warning');
+        return;
+    }
+
+    if (!reporterEmail.includes('@')) {
+        updateSendFeedbackStatus(statusAlert, 'Please enter a valid email address.', 'danger');
+        showToast('Please enter a valid email address.', 'warning');
+        return;
+    }
+
+    submitButton.disabled = true;
+
+    try {
+        const response = await fetch('/api/admin/settings/send_feedback_email', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                feedbackType,
+                reporterName,
+                reporterEmail,
+                organization,
+                details
+            })
+        });
+
+        const result = await response.json();
+        if (!response.ok) {
+            throw new Error(result.error || 'Unable to prepare the feedback email draft.');
+        }
+
+        const mailtoUrl = buildAdminFeedbackMailtoUrl({
+            recipientEmail: result.recipientEmail,
+            subjectLine: result.subjectLine,
+            feedbackLabel,
+            reporterName,
+            reporterEmail,
+            organization,
+            details
+        });
+
+        updateSendFeedbackStatus(
+            statusAlert,
+            'Email draft prepared. Your local email client should open next.',
+            'success'
+        );
+        showToast(`${feedbackLabel} email draft prepared.`, 'success');
+        window.location.href = mailtoUrl;
+    } catch (error) {
+        updateSendFeedbackStatus(statusAlert, error.message || 'Unable to prepare the feedback email draft.', 'danger');
+        showToast(error.message || 'Unable to prepare the feedback email draft.', 'danger');
+    } finally {
+        submitButton.disabled = false;
+    }
+}
+
+
+function buildAdminFeedbackMailtoUrl({
+    recipientEmail,
+    subjectLine,
+    feedbackLabel,
+    reporterName,
+    reporterEmail,
+    organization,
+    details
+}) {
+    const sendFeedbackPane = document.getElementById('send-feedback');
+    const appVersion = sendFeedbackPane?.dataset.appVersion || '';
+    const bodyLines = [
+        `Feedback Type: ${feedbackLabel}`,
+        `Name: ${reporterName}`,
+        `Email: ${reporterEmail}`,
+        `Organization: ${organization}`,
+        `App Version: ${appVersion || 'Unknown'}`,
+        ''
+    ];
+
+    bodyLines.push('Details:');
+    bodyLines.push(details);
+
+    return `mailto:${recipientEmail}?subject=${encodeURIComponent(subjectLine)}&body=${encodeURIComponent(bodyLines.join('\n'))}`;
+}
+
+
+function updateSendFeedbackStatus(statusAlert, message, variant) {
+    if (!statusAlert) {
+        return;
+    }
+
+    statusAlert.className = `alert alert-${variant} admin-send-feedback-status`;
+    statusAlert.textContent = message;
 }
 
 
 function switchTab(event, tabButtonId) {
     event.preventDefault();
     const triggerEl = document.getElementById(tabButtonId);
-    const tabObj = new bootstrap.Tab(triggerEl);
-    tabObj.show();
-  }
+    if (triggerEl) {
+        const tabObj = new bootstrap.Tab(triggerEl);
+        tabObj.show();
+        return;
+    }
+
+    const inferredTabId = tabButtonId.replace(/-tab$/, '');
+    if (typeof window.showAdminTab === 'function') {
+        window.showAdminTab(inferredTabId);
+
+        const navLink = document.querySelector(`.admin-nav-tab[data-tab="${inferredTabId}"]`);
+        if (navLink) {
+            document.querySelectorAll('.admin-nav-tab, .admin-nav-section').forEach(link => {
+                link.classList.remove('active');
+            });
+            navLink.classList.add('active');
+        }
+    }
+}
+
+window.switchTab = switchTab;
 
 function togglePassword(btnId, inputId) {
     const btn = document.getElementById(btnId);
@@ -2913,6 +3231,8 @@ togglePassword('toggle_video_indexer_api_key', 'video_indexer_api_key');
 togglePassword('toggle_speech_service_key', 'speech_service_key');
 togglePassword('toggle_redis_key', 'redis_key');
 togglePassword('toggle_azure_apim_redis_subscription_key', 'azure_apim_redis_subscription_key');
+togglePassword('toggle_latest_features_office_conn_str', 'latest_features_office_docs_storage_account_url');
+togglePassword('toggle_latest_features_office_url', 'latest_features_office_docs_storage_account_blob_endpoint');
 
 /**
  * Checks if this is a first-time setup based on critical settings
@@ -3947,7 +4267,7 @@ function setupFormChangeTracking() {
     updateSaveButtonState();
     
     // Add event listeners to all form inputs, selects, and textareas
-    const formElements = adminForm.querySelectorAll('input, select, textarea');
+    const formElements = adminForm.querySelectorAll('input:not([data-ignore-settings-change="true"]), select:not([data-ignore-settings-change="true"]), textarea:not([data-ignore-settings-change="true"])');
     formElements.forEach(element => {
         // For checkboxes and radios, listen for change event
         if (element.type === 'checkbox' || element.type === 'radio') {
