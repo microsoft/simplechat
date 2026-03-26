@@ -133,6 +133,27 @@ def get_redis_cache_key(resource_name, resource_group, subscription_id):
     )
 
 
+def get_storage_account_connection_string(resource_name, resource_group, subscription_id):
+    return run_azure_cli_command(
+        [
+            "storage",
+            "account",
+            "show-connection-string",
+            "--name",
+            resource_name,
+            "--resource-group",
+            resource_group,
+            "--subscription",
+            subscription_id,
+            "--query",
+            "connectionString",
+            "-o",
+            "tsv",
+        ],
+        "Storage account connection string",
+    )
+
+
 def get_core_service_keys(
     authentication_type,
     openai_endpoint,
@@ -337,6 +358,15 @@ item["multimodal_vision_model"] = gpt_models_list[0]["modelName"]
 item["enable_enhanced_citations"] = True
 item["office_docs_authentication_type"] = var_authenticationType
 item["office_docs_storage_account_blob_endpoint"] = var_blobStorageEndpoint
+if var_authenticationType == "key" and var_blobStorageEndpoint and var_blobStorageEndpoint.strip():
+    storage_account_name = extract_resource_name_from_endpoint(var_blobStorageEndpoint)
+    item["office_docs_storage_account_url"] = get_storage_account_connection_string(
+        storage_account_name,
+        var_rgName,
+        var_subscriptionId,
+    )
+else:
+    item["office_docs_storage_account_url"] = ""
 
 # Safety > Content Safety
 if var_contentSafetyEndpoint and var_contentSafetyEndpoint.strip():

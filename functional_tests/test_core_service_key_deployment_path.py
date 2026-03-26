@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for core service key deployment path.
-Version: 0.240.002
+Version: 0.240.003
 Implemented in: 0.240.002
 
 This test ensures that core service key authentication is populated directly from
@@ -140,7 +140,7 @@ def test_version_updated():
     print("🔍 Testing config version update...")
 
     content = read_text(CONFIG_PATH)
-    expected_version = 'VERSION = "0.240.002"'
+    expected_version = 'VERSION = "0.240.003"'
 
     if expected_version not in content:
         print(f"❌ Expected version not found in config.py: {expected_version}")
