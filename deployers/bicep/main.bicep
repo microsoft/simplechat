@@ -113,6 +113,16 @@ param privateDnsZoneConfigs object = {}
 - Public Azure AI Foundry project endpoints are supported for application configuration, but do not support private endpoint automation''')
 param existingOpenAIEndpoint string = ''
 
+@description('''Optional Video Indexer ARM API version override for custom cloud deployments.
+- Leave blank to use the cloud default
+- Public defaults to 2025-04-01
+- Azure Government defaults to 2024-01-01''')
+param customVideoIndexerArmApiVersion string = ''
+
+@description('''Optional Video Indexer endpoint override for custom cloud deployments.
+- Leave blank to use the public endpoint default''')
+param customVideoIndexerEndpoint string = ''
+
 @description('''Optional existing Azure OpenAI resource name.
 - Provide this when reusing a standard Azure OpenAI resource and you want managed identity permissions or private endpoint integration configured automatically''')
 param existingOpenAIResourceName string = ''
@@ -229,6 +239,14 @@ var defaultEmbeddingModels = isUsGovernmentCloud
     ]
 var resolvedGptModels = empty(gptModels) ? defaultGptModels : gptModels
 var resolvedEmbeddingModels = empty(embeddingModels) ? defaultEmbeddingModels : embeddingModels
+var resolvedVideoIndexerArmApiVersion = scCloudEnvironment == 'usgovernment'
+  ? '2024-01-01'
+  : (scCloudEnvironment == 'custom' && !empty(customVideoIndexerArmApiVersion) ? customVideoIndexerArmApiVersion : '2025-04-01')
+var resolvedVideoIndexerEndpoint = scCloudEnvironment == 'usgovernment'
+  ? 'https://api.videoindexer.ai.azure.us'
+  : (scCloudEnvironment == 'custom' && !empty(customVideoIndexerEndpoint) ? customVideoIndexerEndpoint : 'https://api.videoindexer.ai')
+var videoIndexerSupportsOpenAiIntegration = resolvedVideoIndexerArmApiVersion == '2025-04-01'
+var videoIndexerSupportsPrivateEndpoints = resolvedVideoIndexerArmApiVersion == '2025-04-01'
 var hasExistingAppServiceSubnetId = !empty(existingAppServiceSubnetId)
 var hasExistingPrivateEndpointSubnetId = !empty(existingPrivateEndpointSubnetId)
 var inferredVirtualNetworkId = hasExistingAppServiceSubnetId ? split(existingAppServiceSubnetId, '/subnets/')[0] : (hasExistingPrivateEndpointSubnetId ? split(existingPrivateEndpointSubnetId, '/subnets/')[0] : '')
@@ -519,6 +537,7 @@ module appService 'modules/appService.bicep' = {
     customResourceManagerUrl: customResourceManagerUrl
     customCognitiveServicesScope: customCognitiveServicesScope
     customSearchResourceUrl: customSearchResourceUrl
+    customVideoIndexerEndpoint: resolvedVideoIndexerEndpoint
   }
 }
 
@@ -596,6 +615,7 @@ module videoIndexerService 'modules/videoIndexer.bicep' = if (deployVideoIndexer
 
     storageAccount: storageAccount.outputs.name
     openAiServiceName: openAI.outputs.openAIName
+    videoIndexerArmApiVersion: resolvedVideoIndexerArmApiVersion
 
     enablePrivateNetworking: enablePrivateNetworking
   }
@@ -630,6 +650,7 @@ module setPermissions 'modules/setPermissions.bicep' = if (configureApplicationP
     contentSafetyName: deployContentSafety ? contentSafety.outputs.contentSafetyName : ''
     #disable-next-line BCP318 // expect one value to be null
     videoIndexerName: deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerServiceName : ''
+    videoIndexerSupportsOpenAiIntegration: videoIndexerSupportsOpenAiIntegration
   }
 }
 
@@ -667,6 +688,7 @@ module privateNetworking 'modules/privateNetworking.bicep' = if (enablePrivateNe
     speechServiceName: deploySpeechService ? speechService.outputs.speechServiceName : ''
     #disable-next-line BCP318 // expect one value to be null
     videoIndexerName: deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerServiceName : ''
+    videoIndexerSupportsPrivateEndpoints: videoIndexerSupportsPrivateEndpoints
   }
 }
 
@@ -701,8 +723,10 @@ output var_searchServiceEndpoint string = searchService.outputs.searchServiceEnd
 #disable-next-line BCP318 // expect one value to be null
 output var_speechServiceEndpoint string = deploySpeechService ? speechService.outputs.speechServiceEndpoint : ''
 output var_subscriptionId string = subscription().subscriptionId
+output var_videoIndexerArmApiVersion string = resolvedVideoIndexerArmApiVersion
 #disable-next-line BCP318 // expect one value to be null
 output var_videoIndexerAccountId string = deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerAccountId : ''
+output var_videoIndexerEndpoint string = resolvedVideoIndexerEndpoint
 #disable-next-line BCP318 // expect one value to be null
 output var_videoIndexerName string = deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerServiceName : ''
 

@@ -25,6 +25,7 @@ param webAppName string
 param contentSafetyName string
 param speechServiceName string
 param videoIndexerName string
+param videoIndexerSupportsPrivateEndpoints bool = true
 
 var useExternalOpenAIResource = openAIName != '' && !empty(openAIResourceGroupName) && !empty(openAISubscriptionId)
 
@@ -452,11 +453,11 @@ module speechServicePE 'privateEndpoint.bicep' = if (speechServiceName != '') {
 //=========================================================
 // video indexer service - Optional
 //=========================================================
-resource videoIndexerService 'Microsoft.VideoIndexer/accounts@2025-04-01' existing = if (videoIndexerName != '') {
+resource videoIndexerService 'Microsoft.VideoIndexer/accounts@2025-04-01' existing = if (videoIndexerName != '' && videoIndexerSupportsPrivateEndpoints) {
   name: videoIndexerName
 }
 
-module videoIndexerPE 'privateEndpoint.bicep' = if (videoIndexerName != '') {
+module videoIndexerPE 'privateEndpoint.bicep' = if (videoIndexerName != '' && videoIndexerSupportsPrivateEndpoints) {
   name: 'videoIndexerPE'
   dependsOn: [
     videoIndexerService

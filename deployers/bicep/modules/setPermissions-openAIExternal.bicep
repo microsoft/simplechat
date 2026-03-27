@@ -6,6 +6,7 @@ param webAppPrincipalId string
 param enterpriseAppServicePrincipalId string
 param videoIndexerPrincipalId string = ''
 param videoIndexerName string = ''
+param videoIndexerSupportsOpenAiIntegration bool = true
 
 resource openAiService 'Microsoft.CognitiveServices/accounts@2024-10-01' existing = {
   name: openAIName
@@ -37,7 +38,7 @@ resource openAIenterpriseAppUserRole 'Microsoft.Authorization/roleAssignments@20
   }
 }
 
-resource videoIndexerStorageCogServicesContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (videoIndexerName != '' && !empty(videoIndexerPrincipalId)) {
+resource videoIndexerStorageCogServicesContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (videoIndexerName != '' && !empty(videoIndexerPrincipalId) && videoIndexerSupportsOpenAiIntegration) {
   name: guid(openAiService.id, videoIndexerPrincipalId, 'video-indexer-cog-services-contributor')
   scope: openAiService
   properties: {
@@ -50,7 +51,7 @@ resource videoIndexerStorageCogServicesContributorRole 'Microsoft.Authorization/
   }
 }
 
-resource videoIndexerStorageCogServicesUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (videoIndexerName != '' && !empty(videoIndexerPrincipalId)) {
+resource videoIndexerStorageCogServicesUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (videoIndexerName != '' && !empty(videoIndexerPrincipalId) && videoIndexerSupportsOpenAiIntegration) {
   name: guid(openAiService.id, videoIndexerPrincipalId, 'video-indexer-cog-services-user')
   scope: openAiService
   properties: {

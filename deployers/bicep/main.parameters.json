@@ -62,6 +62,12 @@
     "existingOpenAIEndpoint": {
       "value": "${EXISTING_AZURE_OPENAI_ENDPOINT}"
     },
+    "customVideoIndexerArmApiVersion": {
+      "value": "${CUSTOM_VIDEO_INDEXER_ARM_API_VERSION}"
+    },
+    "customVideoIndexerEndpoint": {
+      "value": "${CUSTOM_VIDEO_INDEXER_ENDPOINT}"
+    },
     "existingOpenAIResourceName": {
       "value": "${EXISTING_AZURE_OPENAI_RESOURCE_NAME}"
     },

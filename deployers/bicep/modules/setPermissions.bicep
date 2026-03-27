@@ -16,6 +16,7 @@ param searchServiceName string
 param redisCacheName string
 param contentSafetyName string
 param videoIndexerName string
+param videoIndexerSupportsOpenAiIntegration bool = true
 
 var useExternalOpenAIResource = openAIName != '' && !empty(openAIResourceGroupName) && !empty(openAISubscriptionId)
 
@@ -63,7 +64,7 @@ resource contentSafety 'Microsoft.CognitiveServices/accounts@2025-06-01' existin
   name: contentSafetyName
 }
 
-resource videoIndexerService 'Microsoft.VideoIndexer/accounts@2025-04-01' existing = if (videoIndexerName != '') {
+resource videoIndexerService 'Microsoft.VideoIndexer/accounts@2024-01-01' existing = if (videoIndexerName != '') {
   name: videoIndexerName
 }
 
@@ -161,6 +162,7 @@ module openAIExternalPermissions 'setPermissions-openAIExternal.bicep' = if (use
     #disable-next-line BCP318 // may be null if video indexer not deployed
     videoIndexerPrincipalId: videoIndexerName != '' ? videoIndexerService.identity.principalId : ''
     videoIndexerName: videoIndexerName
+    videoIndexerSupportsOpenAiIntegration: videoIndexerSupportsOpenAiIntegration
   }
 }
 
@@ -264,7 +266,7 @@ resource videoIndexerStorageBlobDataContributorRole 'Microsoft.Authorization/rol
 }
 
 // grant the video indexer service access to OpenAI service as cognitive services Contributor
-resource videoIndexerStorageCogServicesContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (videoIndexerName != '' && !useExternalOpenAIResource) {
+resource videoIndexerStorageCogServicesContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (videoIndexerName != '' && !useExternalOpenAIResource && videoIndexerSupportsOpenAiIntegration) {
   name: guid(openAiService.id, videoIndexerService.id, 'video-indexer-cog-services-contributor')
   scope: openAiService
   properties: {
@@ -279,7 +281,7 @@ resource videoIndexerStorageCogServicesContributorRole 'Microsoft.Authorization/
 }
 
 // grant the video indexer service access to OpenAI service as cognitive services user
-resource videoIndexerStorageCogServicesUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (videoIndexerName != '' && !useExternalOpenAIResource) {
+resource videoIndexerStorageCogServicesUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (videoIndexerName != '' && !useExternalOpenAIResource && videoIndexerSupportsOpenAiIntegration) {
   name: guid(openAiService.id, videoIndexerService.id, 'video-indexer-cog-services-user')
   scope: openAiService
   properties: {

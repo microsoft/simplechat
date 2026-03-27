@@ -66,6 +66,8 @@ hooks:
         export var_searchServiceEndpoint=${var_searchServiceEndpoint}
         export var_documentIntelligenceServiceEndpoint=${var_documentIntelligenceServiceEndpoint}
         export var_redisCacheHostName=${var_redisCacheHostName}
+        export var_videoIndexerArmApiVersion=${var_videoIndexerArmApiVersion}
+        export var_videoIndexerEndpoint=${var_videoIndexerEndpoint}
         export var_videoIndexerName=${var_videoIndexerName}
         export var_deploymentLocation=${var_deploymentLocation}
         export var_videoIndexerAccountId=${var_videoIndexerAccountId}

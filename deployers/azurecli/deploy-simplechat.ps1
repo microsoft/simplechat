@@ -174,7 +174,8 @@ $ErrorActionPreference = "Continue"
 #---------------------------------------------------------------------------------------------
 # Configuration Variables - MODIFY THESE VALUES AS NEEDED
 #---------------------------------------------------------------------------------------------
-$globalWhichAzurePlatform = "AzureCloud" # Set to "AzureUSGovernment" for Azure Government, "AzureCloud" for Azure Commercial
+$globalWhichAzurePlatform = "AzureCloud" # Set to "AzureUSGovernment" for Azure Government, "AzureCloud" for Azure Commercial, or "Custom" for a registered customer cloud
+$param_AzureCliCustomCloudName = "" # Required when globalWhichAzurePlatform is Custom. Must match an az cloud show/list name.
 $paramTenantId = "" # Tenant ID
 $paramLocation = "EastUS2" # Primary Azure region for deployments (e.g., eastus, eastus2, usgovvirginia, usgovarizona, usgovtexas)
 $paramResourceOwnerId = "" # used for tagging resources
@@ -201,6 +202,14 @@ $param_AzureOpenAiEmbeddingDeploymentName = ""
 $param_AzureOpenAiEmbeddingModelName = ""
 $param_AzureOpenAiEmbeddingModelVersion = "" # Leave blank to use the default for the selected cloud and region.
 $param_AzureOpenAiEmbeddingDeploymentCapacity = 80
+$param_DeployVideoIndexerService = $false
+$param_CustomGraphUrl = ""
+$param_CustomIdentityUrl = ""
+$param_CustomResourceManagerUrl = ""
+$param_CustomCognitiveServicesScope = ""
+$param_CustomSearchResourceUrl = ""
+$param_CustomVideoIndexerEndpoint = ""
+$param_CustomVideoIndexerArmApiVersion = ""
 
 $paramCreateEntraSecurityGroups = $true # Set to true to create Entra ID security groups
 $param_Existing_ResourceGroupName = "RG-SimpleChat-Experiemental" # Leave empty if not using an existing resource group name, one will be dynamically generated
@@ -251,6 +260,8 @@ if ($globalWhichAzurePlatform -eq "AzureCloud") {
     $param_AzureOpenAi_Url = "https://{0}.openai.azure.com/"
     $param_AiSearch_Url = "https://{0}.search.windows.net"
     $param_AppService_Environment = "public"
+    $param_VideoIndexerEndpoint = "https://api.videoindexer.ai"
+    $param_VideoIndexerArmApiVersion = "2025-04-01"
     $script:PrivateDnsZoneNames = @{
         aiSearch          = "privatelink.search.windows.net"
         blobStorage       = "privatelink.blob.core.windows.net"
@@ -269,10 +280,12 @@ if ($globalWhichAzurePlatform -eq "AzureCloud") {
     $APPREG_REDIRECT_URI1 = "https://{0}.azurewebsites.us/getAToken"
     $APPREG_LOGOUT_URL = "https://{0}.azurewebsites.us/logout"
     $paramGraphUrl = "https://graph.microsoft.us"
-    $paramArmUrl = "https://management.core.usgovcloudapi.net/"
+    $paramArmUrl = "https://management.usgovcloudapi.net/"
     $param_AzureOpenAi_Url = "https://{0}.openai.azure.us/"
     $param_AiSearch_Url = "https://{0}.search.azure.us"
     $param_AppService_Environment = "usgovernment"
+    $param_VideoIndexerEndpoint = "https://api.videoindexer.ai.azure.us"
+    $param_VideoIndexerArmApiVersion = "2024-01-01"
     $script:PrivateDnsZoneNames = @{
         aiSearch          = "privatelink.search.azure.us"
         blobStorage       = "privatelink.blob.core.usgovcloudapi.net"
@@ -283,18 +296,32 @@ if ($globalWhichAzurePlatform -eq "AzureCloud") {
         openAi            = "privatelink.openai.azure.us"
         webSites          = "privatelink.azurewebsites.us"
     }
-} elseif ($globalWhichAzurePlatform -eq "AzureSecret") {
-    # SET THESE VALUES FOR il6 (information is tented)
-    $paramCosmosDbUrlTemplate = ""
-    $ACR_BASE_URL = ""
-    $paramRegistryServer = ""
-    $APPREG_REDIRECT_URI = ""
-    $APPREG_REDIRECT_URI1 = ""
-    $APPREG_LOGOUT_URL = ""
-    $paramGraphUrl = ""
-    $param_AzureOpenAi_Url = ""
+} elseif ($globalWhichAzurePlatform -eq "Custom") {
+    $paramCosmosDbUrlTemplate = "https://{0}.documents.azure.com:443/"
+    $ACR_BASE_URL = "$ACR_NAME.azurecr.io"
+    $paramRegistryServer = "https://$ACR_NAME.azurecr.io"
+    $APPREG_REDIRECT_URI = "https://{0}.azurewebsites.net/.auth/login/aad/callback"
+    $APPREG_REDIRECT_URI1 = "https://{0}.azurewebsites.net/getAToken"
+    $APPREG_LOGOUT_URL = "https://{0}.azurewebsites.net/logout"
+    $paramGraphUrl = $param_CustomGraphUrl
+    $paramArmUrl = $param_CustomResourceManagerUrl
+    $param_AzureOpenAi_Url = "https://{0}.openai.azure.com/"
+    $param_AiSearch_Url = "https://{0}.search.windows.net"
+    $param_AppService_Environment = "custom"
+    $param_VideoIndexerEndpoint = if ([string]::IsNullOrWhiteSpace($param_CustomVideoIndexerEndpoint)) { "https://api.videoindexer.ai" } else { $param_CustomVideoIndexerEndpoint }
+    $param_VideoIndexerArmApiVersion = if ([string]::IsNullOrWhiteSpace($param_CustomVideoIndexerArmApiVersion)) { "2025-04-01" } else { $param_CustomVideoIndexerArmApiVersion }
+    $script:PrivateDnsZoneNames = @{
+        aiSearch          = "privatelink.search.windows.net"
+        blobStorage       = "privatelink.blob.core.windows.net"
+        cognitiveServices = "privatelink.cognitiveservices.azure.com"
+        containerRegistry = "privatelink.azurecr.io"
+        cosmosDb          = "privatelink.documents.azure.com"
+        keyVault          = "privatelink.vaultcore.azure.net"
+        openAi            = "privatelink.openai.azure.com"
+        webSites          = "privatelink.azurewebsites.net"
+    }
 } else {
-    Write-Error "Invalid Azure platform specified. Please set to 'AzureUSGovernment', 'AzureCloud', or 'AzureSecret"
+    Write-Error "Invalid Azure platform specified. Please set to 'AzureUSGovernment', 'AzureCloud', or 'Custom'"
     exit 1
 }
 
@@ -373,6 +400,7 @@ $paramKeyVaultSuffix = "kv" # Note: Key Vault names need to be globally unique
 $paramLogAnalyticsSuffix = "la"
 $paramManagedIdentitySuffix = "id"
 $paramSearchServiceSuffix = "search" # Note: Search service names need to be globally unique
+$paramVideoIndexerSuffix = "video"
 $paramStorageAccountSuffix = "sa" # Note: Storage account names need to be globally unique, lowercase alphanumeric, 3-24 chars
 #$paramContainerRegistrySuffix = "acr" # Note: ACR names need to be globally unique, lowercase alphanumeric
 
@@ -444,11 +472,12 @@ function Ensure-AzureCliAuthenticated {
     $expectedCloudName = switch ($globalWhichAzurePlatform) {
         'AzureCloud' { 'AzureCloud' }
         'AzureUSGovernment' { 'AzureUSGovernment' }
+        'Custom' { $param_AzureCliCustomCloudName }
         default { $null }
     }
 
     if (-not $expectedCloudName) {
-        Write-Error "Automatic Azure CLI login is only supported for AzureCloud and AzureUSGovernment. Current platform: $globalWhichAzurePlatform"
+        Write-Error "Automatic Azure CLI login requires AzureCloud, AzureUSGovernment, or a registered custom cloud name via param_AzureCliCustomCloudName. Current platform: $globalWhichAzurePlatform"
         exit 1
     }
 
@@ -1222,6 +1251,7 @@ $keyVaultName = Get-ResourceName -ResourceTypeSuffix $paramKeyVaultSuffix
 $logAnalyticsName = Get-ResourceName -ResourceTypeSuffix $paramLogAnalyticsSuffix
 $managedIdentityName = Get-ResourceName -ResourceTypeSuffix $paramManagedIdentitySuffix
 $searchServiceName = Get-ResourceName -ResourceTypeSuffix $paramSearchServiceSuffix
+$videoIndexerName = Get-ResourceName -ResourceTypeSuffix $paramVideoIndexerSuffix
 $storageAccountName = Get-GloballyUniqueResourceName -ResourceTypeSuffix $paramStorageAccountSuffix # Storage names are strict (lowercase, no hyphens, 3-24 chars)
 if ($storageAccountName.Length -gt 24) { $storageAccountName = $storageAccountName.Substring(0, 24) }
 if ($storageAccountName.Length -lt 3) { Write-Error "Generated storage account name '$storageAccountName' is too short. Adjust base name or suffix." ; exit 1 }
@@ -1778,6 +1808,57 @@ if (-not $searchService) {
 
 $searchServiceUrl = $param_AiSearch_Url -f $searchServiceName
 
+# --- Create Azure Video Indexer Service ---
+if ($param_DeployVideoIndexerService) {
+    Write-Host "`n=====> Creating Azure Video Indexer Service: $($videoIndexerName)..."
+    $videoIndexerSubscriptionId = az account show --query id --output tsv
+    $videoIndexerArmBaseUrl = $paramArmUrl.TrimEnd('/')
+    $videoIndexerUri = "$videoIndexerArmBaseUrl/subscriptions/$videoIndexerSubscriptionId/resourceGroups/$resourceGroupName/providers/Microsoft.VideoIndexer/accounts/$videoIndexerName?api-version=$param_VideoIndexerArmApiVersion"
+    $existingVideoIndexer = az rest --method get --uri $videoIndexerUri 2>$null | ConvertFrom-Json
+
+    if (-not $existingVideoIndexer) {
+        $videoIndexerProperties = @{
+            storageServices = @{
+                resourceId = $(az storage account show --name $storageAccountName --resource-group $resourceGroupName --query id --output tsv)
+            }
+        }
+
+        if ($param_VideoIndexerArmApiVersion -eq '2025-04-01') {
+            $openAiVideoIndexerResourceId = if ($param_UseExisting_OpenAi_Instance -eq $true) {
+                az resource show --name $param_Existing_AzureOpenAi_ResourceName --resource-group $param_Existing_AzureOpenAi_ResourceGroupName --resource-type 'Microsoft.CognitiveServices/accounts' --subscription $resolvedExistingOpenAiSubscriptionId --query "id" --output tsv
+            } else {
+                az cognitiveservices account show --name $openAIName --resource-group $resourceGroupName --query "id" --output tsv
+            }
+
+            $videoIndexerProperties.publicNetworkAccess = if ($param_EnablePrivateNetworking) { 'Disabled' } else { 'Enabled' }
+            if (-not [string]::IsNullOrWhiteSpace($openAiVideoIndexerResourceId)) {
+                $videoIndexerProperties.openAiServices = @{
+                    resourceId = $openAiVideoIndexerResourceId
+                }
+            }
+        }
+
+        $videoIndexerBody = @{
+            location = $paramLocation
+            identity = @{
+                type = 'SystemAssigned'
+            }
+            properties = $videoIndexerProperties
+            tags = $tags
+        } | ConvertTo-Json -Depth 10 -Compress
+
+        az rest --method put --uri $videoIndexerUri --headers 'Content-Type=application/json' --body $videoIndexerBody | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Failed to create Azure Video Indexer Service '$($videoIndexerName)'."
+        } else {
+            Write-Host "Azure Video Indexer Service '$($videoIndexerName)' created successfully."
+            $existingVideoIndexer = az rest --method get --uri $videoIndexerUri 2>$null | ConvertFrom-Json
+        }
+    } else {
+        Write-Host "Azure Video Indexer Service '$videoIndexerName' already exists."
+    }
+}
+
 # --- Create App Service Settings ---
 Write-Host "`n=====> Setting Azure App Service App Settings : $($appServiceName)..."
 $paramCosmosDbPrimaryKey = $(az cosmosdb keys list --name $cosmosDbName --resource-group $resourceGroupName --query primaryMasterKey --output tsv)
@@ -1803,6 +1884,26 @@ $jsonAsText | Out-File -FilePath ".\appsettings-temp.json" -ErrorAction Stop
 az webapp config appsettings set --resource-group $resourceGroupName --name $appServiceName --settings '@appsettings-temp.json'
 if ($LASTEXITCODE -ne 0) { Write-Warning "Failed to update Azure App Service App Settings." }
 else { Write-Host "Azure App Service App Settings configured." }
+
+$additionalAppSettings = @(
+    "VIDEO_INDEXER_ARM_API_VERSION=$param_VideoIndexerArmApiVersion"
+)
+
+if ($param_AppService_Environment -eq 'custom') {
+    $additionalAppSettings += @(
+        "CUSTOM_GRAPH_URL_VALUE=$param_CustomGraphUrl",
+        "CUSTOM_IDENTITY_URL_VALUE=$param_CustomIdentityUrl",
+        "CUSTOM_RESOURCE_MANAGER_URL_VALUE=$param_CustomResourceManagerUrl",
+        "CUSTOM_COGNITIVE_SERVICES_URL_VALUE=$param_CustomCognitiveServicesScope",
+        "CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE=$param_CustomSearchResourceUrl",
+        "CUSTOM_VIDEO_INDEXER_ENDPOINT=$param_VideoIndexerEndpoint"
+    )
+}
+
+az webapp config appsettings set --resource-group $resourceGroupName --name $appServiceName --settings $additionalAppSettings | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Warning "Failed to update additional Video Indexer or custom cloud app settings."
+}
 
 $openAiResourceIdForNetworking = ""
 if ($param_UseExisting_OpenAi_Instance -eq $false) {
@@ -1985,6 +2086,34 @@ if (-not $assignment) {
       --scope "$resourceId"
 } else {
     Write-Host "RBAC assignment already exists."
+}
+
+if ($param_DeployVideoIndexerService) {
+    Write-Host "`nGetting Azure Video Indexer principal"
+    $videoIndexerResourceId = az resource show --name $videoIndexerName --resource-group $resourceGroupName --resource-type 'Microsoft.VideoIndexer/accounts' --query "id" --output tsv 2>$null
+    $videoIndexerPrincipalId = az resource show --ids $videoIndexerResourceId --api-version $param_VideoIndexerArmApiVersion --query "identity.principalId" --output tsv 2>$null
+
+    if (-not [string]::IsNullOrWhiteSpace($videoIndexerPrincipalId)) {
+        $storageResourceId = az storage account show --name $storageAccountName --resource-group $resourceGroupName --query "id" --output tsv
+        $assignment = az role assignment list --assignee $videoIndexerPrincipalId --scope "$storageResourceId" --query "[?roleDefinitionName=='Storage Blob Data Contributor']" --output json | ConvertFrom-Json
+        if (-not $assignment) {
+            az role assignment create --assignee $videoIndexerPrincipalId --role "Storage Blob Data Contributor" --scope "$storageResourceId" | Out-Null
+        }
+
+        if ($param_VideoIndexerArmApiVersion -eq '2025-04-01') {
+            $assignment = az role assignment list --assignee $videoIndexerPrincipalId --scope "$resourceId" --query "[?roleDefinitionName=='Cognitive Services Contributor']" --output json | ConvertFrom-Json
+            if (-not $assignment) {
+                az role assignment create --assignee $videoIndexerPrincipalId --role "Cognitive Services Contributor" --scope "$resourceId" | Out-Null
+            }
+
+            $assignment = az role assignment list --assignee $videoIndexerPrincipalId --scope "$resourceId" --query "[?roleDefinitionName=='Cognitive Services User']" --output json | ConvertFrom-Json
+            if (-not $assignment) {
+                az role assignment create --assignee $videoIndexerPrincipalId --role "Cognitive Services User" --scope "$resourceId" | Out-Null
+            }
+        }
+    } else {
+        Write-Warning "Azure Video Indexer principal ID could not be resolved. Skipping Video Indexer RBAC assignments."
+    }
 }
 
 

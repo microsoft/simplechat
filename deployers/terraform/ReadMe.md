@@ -13,6 +13,12 @@ az login --scope https://graph.microsoft.us//.default --service-principal --user
 az account set -s '@AZURE_SUBSCRIPTION_ID'
 ```
 
+`global_which_azure_platform` now accepts `AzureCloud`, `AzureUSGovernment`, and `Custom`.
+
+- `AzureCloud` deploys the commercial Video Indexer profile (`2025-04-01`).
+- `AzureUSGovernment` deploys the government Video Indexer profile (`2024-01-01`).
+- `Custom` currently supports custom runtime settings for Video Indexer, but Terraform blocks Video Indexer resource provisioning until provider-level custom cloud support is validated.
+
 ## Execute Initalize-AzureEnvironment.ps1
 
 After logging into the target Azure subscription, execute the Initalize-AzureEnvironment.ps1 script.  This will configure items not set in the terraform script but is required for the remaining deployment steps.
@@ -118,6 +124,7 @@ param_base_name = "rudy1"
 param_use_existing_openai_instance = true
 param_existing_azure_openai_resource_name = "gregazureopenai1"
 param_existing_azure_openai_resource_group_name = "azureopenairg"
+param_deploy_video_indexer_service = true
 param_existing_azure_openai_subscription_id = "00000000-0000-0000-0000-000000000000"
 # Optional endpoint override for existing Azure OpenAI or Azure AI Foundry-compatible endpoints
 # param_existing_azure_openai_endpoint = "https://my-openai-resource.openai.azure.com/"

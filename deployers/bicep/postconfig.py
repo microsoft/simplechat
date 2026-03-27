@@ -406,8 +406,10 @@ if var_videoIndexerName and var_videoIndexerName.strip():
 item["video_indexer_resource_group"] = var_rgName
 item["video_indexer_subscription_id"] = var_subscriptionId
 item["video_indexer_account_name"] = var_videoIndexerName
+item["video_indexer_endpoint"] = os.getenv("var_videoIndexerEndpoint", item.get("video_indexer_endpoint", ""))
 item["video_indexer_location"] = var_videoIndexerLocation
 item["video_indexer_account_id"] = var_videoIndexerAccountId
+item["video_indexer_arm_api_version"] = os.getenv("var_videoIndexerArmApiVersion", item.get("video_indexer_arm_api_version", "2024-01-01"))
 
 # Speech Service Configuration
 if var_speechServiceEndpoint and var_speechServiceEndpoint.strip():

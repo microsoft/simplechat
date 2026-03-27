@@ -26,7 +26,7 @@ The following variables will be used within this document:
 
 - *\<appName\>* - This will become the beginning of each of the objects created.  Minimum of 3 characters, maximum of 12 characters.  No Spaces or special characters.
 - *\<environment\>* - This will be used as part of the object names as well as with the AZD environments.  **Example:** *dev/qa/prod*.
-- *\<cloudEnvironment\>* - Options will be *AzureCloud | AzureUSGovernment*
+- *\<cloudEnvironment\>* - Options will be *AzureCloud | AzureUSGovernment | custom*
 - *\<openAIDeploymentType\>* - Azure OpenAI deployment type for default model deployments.  **Options:** *Standard | DatazoneStandard | GlobalStandard* for Azure Commercial. Use *Standard* for Azure Government.
 - *\<imageName\>* - Should be presented in the form *imageName:label* **Default:** *simplechat:latest*
 
@@ -218,8 +218,8 @@ During `azd up`, the predeploy hook now builds the application image in Azure Co
 
 > ⚠️ **Important:** Review this section carefully before deploying to Azure Government.
 
-- **Services NOT available in Azure Government:**
-    - Azure Video Indexer - Set `deployVideoIndexerService` to `false`
+- **Services with cloud-specific deployment behavior in Azure Government:**
+  - Azure Video Indexer - use the government ARM API profile (`2024-01-01`), which does not support the newer OpenAI integration and private endpoint properties used in Azure Commercial
 
 - **SKU Restrictions:**
   - **GlobalStandard SKU is NOT available** - Azure OpenAI models must use `Standard` SKU instead
@@ -433,7 +433,7 @@ az resource update --name <appName>-<environment>-app --resource-group <appName>
 | Log Analytics | ✅ | ✅ | |
 | Content Safety | ✅ | ⚠️ Limited | Not all regions |
 | Speech Service | ✅ | ⚠️ Limited | Feature restrictions |
-| Video Indexer | ✅ | ❌ Not Available | |
+| Video Indexer | ✅ | ✅ Limited | Azure Government uses the `2024-01-01` ARM API profile; newer OpenAI integration and private endpoint properties remain commercial/custom-cloud only |
 | Redis Cache | ✅ | ✅ | Standard tier |
 
 ### Endpoint Differences
@@ -540,8 +540,8 @@ If you do not want this deployment to create new Azure OpenAI model deployments,
 - **Solution:** Use `Standard` SKU for all models in Azure Government
 
 **Error: "Resource 'Microsoft.VideoIndexer/accounts' not found"**
-- **Cause:** Video Indexer not available in region (especially USGov)
-- **Solution:** Set `deployVideoIndexerService` to `false`
+- **Cause:** Video Indexer API capabilities differ by cloud and region
+- **Solution:** Use the cloud-appropriate API profile. Azure Government deployments use the `2024-01-01` profile; commercial deployments use `2025-04-01`; custom clouds can override the API version and endpoint.
 
 ### Post-Deployment Issues
 

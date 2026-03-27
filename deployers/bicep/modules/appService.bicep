@@ -41,6 +41,8 @@ param customResourceManagerUrl string?
 param customCognitiveServicesScope string?
 @description('Custom search resource URL for token audience, e.g. https://search.azure.us')
 param customSearchResourceUrl string?
+@description('Custom Video Indexer endpoint, e.g. https://api.videoindexer.ai')
+param customVideoIndexerEndpoint string?
 
 var tenantId = tenant().tenantId
 var openIdMetadataUrl = '${az.environment().authentication.loginEndpoint}${tenantId}/v2.0/.well-known/openid-configuration'
@@ -137,6 +139,7 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
         { name: 'AZURE_OPENAI_RESOURCE_NAME', value: openAiServiceName }
         { name: 'AZURE_OPENAI_RESOURCE_GROUP_NAME', value: openAiResourceGroupName }
         { name: 'AZURE_OPENAI_URL', value: openAiEndpoint }
+        { name: 'VIDEO_INDEXER_ARM_API_VERSION', value: azurePlatform == 'usgovernment' ? '2024-01-01' : '2025-04-01' }
         { name: 'AZURE_SEARCH_SERVICE_NAME', value: searchService.name }
         // Only add this setting if authenticationType is 'key'
         ...(authenticationType == 'key'
@@ -176,6 +179,7 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
         {name: 'CUSTOM_BLOB_STORAGE_URL_VALUE', value: customBlobStorageSuffix ?? ''}
         {name: 'CUSTOM_COGNITIVE_SERVICES_URL_VALUE', value: customCognitiveServicesScope ?? ''}
         {name: 'CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE', value: customSearchResourceUrl ?? ''}
+        {name: 'CUSTOM_VIDEO_INDEXER_ENDPOINT', value: customVideoIndexerEndpoint ?? ''}
         {name: 'KEY_VAULT_DOMAIN', value: az.environment().suffixes.keyvaultDns}
         {name: 'CUSTOM_OIDC_METADATA_URL_VALUE', value: openIdMetadataUrl ?? ''}]
         : [])

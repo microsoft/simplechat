@@ -59,7 +59,7 @@ provider "azurerm" {
     }
   }
   storage_use_azuread = true
-  environment         = var.global_which_azure_platform == "AzureUSGovernment" ? "usgovernment" : (var.global_which_azure_platform == "AzureCloud" ? "public" : null)
+  environment         = var.global_which_azure_platform == "AzureUSGovernment" ? "usgovernment" : "public"
   tenant_id           = var.param_tenant_id
   subscription_id     = var.param_subscription_id
 }
@@ -86,26 +86,74 @@ provider "azurerm" {
   }
 
   storage_use_azuread = true
-  environment         = var.global_which_azure_platform == "AzureUSGovernment" ? "usgovernment" : (var.global_which_azure_platform == "AzureCloud" ? "public" : null)
+  environment         = var.global_which_azure_platform == "AzureUSGovernment" ? "usgovernment" : "public"
   tenant_id           = var.param_tenant_id
   subscription_id     = var.param_existing_azure_openai_subscription_id != "" ? var.param_existing_azure_openai_subscription_id : var.param_subscription_id
 }
 
 # Configure the AzureAD Provider
 provider "azuread" {
-  environment = var.global_which_azure_platform == "AzureUSGovernment" ? "usgovernment" : (var.global_which_azure_platform == "AzureCloud" ? "public" : null)
+  environment = var.global_which_azure_platform == "AzureUSGovernment" ? "usgovernment" : "public"
   tenant_id   = var.param_tenant_id
 }
 
 # Variables
 variable "global_which_azure_platform" {
-  description = "Set to 'AzureUSGovernment' for Azure Government, 'AzureCloud' for Azure Commercial."
+  description = "Set to 'AzureUSGovernment' for Azure Government, 'AzureCloud' for Azure Commercial, or 'Custom' for a customer-managed cloud."
   type        = string
   default     = "AzureUSGovernment" # Default from script
   validation {
-    condition     = contains(["AzureUSGovernment", "AzureCloud"], var.global_which_azure_platform)
-    error_message = "Invalid Azure platform. Must be 'AzureUSGovernment' or 'AzureCloud'."
+    condition     = contains(["AzureUSGovernment", "AzureCloud", "Custom"], var.global_which_azure_platform)
+    error_message = "Invalid Azure platform. Must be 'AzureUSGovernment', 'AzureCloud', or 'Custom'."
   }
+}
+
+variable "param_deploy_video_indexer_service" {
+  description = "Set to true to deploy an Azure Video Indexer resource."
+  type        = bool
+  default     = false
+}
+
+variable "param_custom_identity_url" {
+  description = "Custom cloud login endpoint used by the app when global_which_azure_platform is Custom."
+  type        = string
+  default     = ""
+}
+
+variable "param_custom_resource_manager_url" {
+  description = "Custom cloud ARM endpoint used by the app when global_which_azure_platform is Custom."
+  type        = string
+  default     = ""
+}
+
+variable "param_custom_graph_url" {
+  description = "Custom cloud Graph endpoint used by the app when global_which_azure_platform is Custom."
+  type        = string
+  default     = ""
+}
+
+variable "param_custom_cognitive_services_scope" {
+  description = "Custom cloud Cognitive Services scope used by the app when global_which_azure_platform is Custom."
+  type        = string
+  default     = ""
+}
+
+variable "param_custom_search_resource_url" {
+  description = "Custom cloud Search token audience used by the app when global_which_azure_platform is Custom."
+  type        = string
+  default     = ""
+}
+
+variable "param_custom_video_indexer_endpoint" {
+  description = "Custom cloud Video Indexer data-plane endpoint used by the app when global_which_azure_platform is Custom."
+  type        = string
+  default     = ""
+}
+
+variable "param_custom_video_indexer_arm_api_version" {
+  description = "Optional custom cloud Video Indexer ARM API version override."
+  type        = string
+  default     = ""
 }
 
 variable "param_subscription_id" {
@@ -207,6 +255,8 @@ variable "acr_password" {
 
 # Resource Naming Convention (matching PowerShell script logic)
 locals {
+  is_usgovernment_cloud = var.global_which_azure_platform == "AzureUSGovernment"
+  is_custom_cloud       = var.global_which_azure_platform == "Custom"
   resource_group_name   = "sc-${var.param_base_name}-${var.param_environment}-rg"
   app_registration_name = "${var.param_base_name}-${var.param_environment}-ar"
   app_service_plan_name = "${var.param_base_name}-${var.param_environment}-asp"
@@ -219,16 +269,48 @@ locals {
   log_analytics_name    = "${var.param_base_name}-${var.param_environment}-la"
   managed_identity_name = "${var.param_base_name}-${var.param_environment}-id"
   search_service_name   = "${var.param_base_name}-${var.param_environment}-search"
+  video_indexer_name    = "${var.param_base_name}-${var.param_environment}-video"
   storage_account_base  = "${var.param_base_name}${var.param_environment}sa"
   storage_account_name  = substr(replace(local.storage_account_base, "/[^a-z0-9]/", ""), 0, 24)
 
-  acr_base_url          = var.global_which_azure_platform == "AzureUSGovernment" ? "${var.acr_name}.azurecr.us" : "${var.acr_name}.azurecr.io"
-  param_registry_server = var.global_which_azure_platform == "AzureUSGovernment" ? "https://${var.acr_name}.azurecr.us" : "https://${var.acr_name}.azurecr.io"
+  acr_base_url          = local.is_usgovernment_cloud ? "${var.acr_name}.azurecr.us" : "${var.acr_name}.azurecr.io"
+  param_registry_server = local.is_usgovernment_cloud ? "https://${var.acr_name}.azurecr.us" : "https://${var.acr_name}.azurecr.io"
 
-  app_service_fqdn_suffix               = var.global_which_azure_platform == "AzureUSGovernment" ? ".azurewebsites.us" : ".azurewebsites.net"
-  graph_url                             = var.global_which_azure_platform == "AzureUSGovernment" ? "https://graph.microsoft.us" : "https://graph.microsoft.com"
-  cosmos_db_url_template                = var.global_which_azure_platform == "AzureUSGovernment" ? "https://%s.documents.azure.us:443/" : "https://%s.documents.azure.com:443/"
-  openai_url_template                   = var.global_which_azure_platform == "AzureUSGovernment" ? "https://%s.openai.azure.us/" : "https://%s.openai.azure.com/"
+  app_service_fqdn_suffix                  = local.is_usgovernment_cloud ? ".azurewebsites.us" : ".azurewebsites.net"
+  graph_url                                = local.is_usgovernment_cloud ? "https://graph.microsoft.us" : "https://graph.microsoft.com"
+  cosmos_db_url_template                   = local.is_usgovernment_cloud ? "https://%s.documents.azure.us:443/" : "https://%s.documents.azure.com:443/"
+  openai_url_template                      = local.is_usgovernment_cloud ? "https://%s.openai.azure.us/" : "https://%s.openai.azure.com/"
+  azure_environment_name                   = local.is_usgovernment_cloud ? "usgovernment" : (local.is_custom_cloud ? "custom" : "public")
+  video_indexer_arm_api_version            = local.is_usgovernment_cloud ? "2024-01-01" : (local.is_custom_cloud && var.param_custom_video_indexer_arm_api_version != "" ? var.param_custom_video_indexer_arm_api_version : "2025-04-01")
+  video_indexer_endpoint                   = local.is_usgovernment_cloud ? "https://api.videoindexer.ai.azure.us" : (local.is_custom_cloud && var.param_custom_video_indexer_endpoint != "" ? var.param_custom_video_indexer_endpoint : "https://api.videoindexer.ai")
+  video_indexer_supports_openai            = local.video_indexer_arm_api_version == "2025-04-01"
+  video_indexer_supports_private_endpoints = local.video_indexer_arm_api_version == "2025-04-01"
+  video_indexer_body_json = local.video_indexer_supports_openai ? jsonencode({
+    identity = {
+      type = "SystemAssigned"
+    }
+    properties = {
+      storageServices = {
+        resourceId = azurerm_storage_account.sa.id
+      }
+      openAiServices = {
+        resourceId = local.openai_resource_id
+      }
+      publicNetworkAccess = var.param_enable_private_networking ? "Disabled" : "Enabled"
+    }
+    tags = local.common_tags
+    }) : jsonencode({
+    identity = {
+      type = "SystemAssigned"
+    }
+    properties = {
+      storageServices = {
+        resourceId = azurerm_storage_account.sa.id
+      }
+    }
+    tags = local.common_tags
+  })
+  openai_resource_id                    = var.param_use_existing_openai_instance ? (local.use_existing_openai_resource_metadata ? data.azurerm_cognitive_account.existing_openai[0].id : "") : azurerm_cognitive_account.openai[0].id
   existing_openai_subscription_id       = var.param_existing_azure_openai_subscription_id != "" ? var.param_existing_azure_openai_subscription_id : var.param_subscription_id
   use_existing_openai_resource_metadata = var.param_use_existing_openai_instance && var.param_existing_azure_openai_resource_name != "" && var.param_existing_azure_openai_resource_group_name != ""
   enable_openai_rbac_assignments        = !var.param_use_existing_openai_instance || local.use_existing_openai_resource_metadata
@@ -402,10 +484,10 @@ resource "azurerm_service_plan" "asp" {
 
 # --- App Service (Web App) ---
 resource "azurerm_linux_web_app" "app" {
-  name                                           = local.app_service_name
-  location                                       = azurerm_resource_group.rg.location
-  resource_group_name                            = azurerm_resource_group.rg.name
-  service_plan_id                                = azurerm_service_plan.asp.id
+  name                = local.app_service_name
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  service_plan_id     = azurerm_service_plan.asp.id
   # This Terraform deployer uses a container-based Linux Web App.
   # Gunicorn startup comes from the container image entrypoint,
   # so native Python app_command_line/startup settings are not used here.
@@ -449,7 +531,7 @@ resource "azurerm_linux_web_app" "app" {
   }
 
   app_settings = {
-    "AZURE_ENVIRONMENT"                              = var.global_which_azure_platform == "AzureUSGovernment" ? "usgovernment" : "public"
+    "AZURE_ENVIRONMENT"                               = local.azure_environment_name
     "SCM_DO_BUILD_DURING_DEPLOYMENT"                  = "false"
     "WEBSITE_PULL_IMAGE_OVER_VNET"                    = var.param_enable_private_networking ? "true" : "false"
     "AZURE_COSMOS_AUTHENTICATION_TYPE"                = "key"
@@ -463,6 +545,7 @@ resource "azurerm_linux_web_app" "app" {
     "AZURE_OPENAI_RESOURCE_GROUP_NAME"                = var.param_use_existing_openai_instance ? var.param_existing_azure_openai_resource_group_name : azurerm_resource_group.rg.name
     "AZURE_OPENAI_SUBSCRIPTION_ID"                    = var.param_use_existing_openai_instance ? local.existing_openai_subscription_id : var.param_subscription_id
     "AZURE_OPENAI_URL"                                = var.param_use_existing_openai_instance ? (var.param_existing_azure_openai_endpoint != "" ? var.param_existing_azure_openai_endpoint : (local.use_existing_openai_resource_metadata ? data.azurerm_cognitive_account.existing_openai[0].endpoint : "")) : azurerm_cognitive_account.openai[0].endpoint
+    "VIDEO_INDEXER_ARM_API_VERSION"                   = local.video_indexer_arm_api_version
     "AZURE_SEARCH_SERVICE_NAME"                       = azurerm_search_service.search.name
     "AZURE_SEARCH_API_KEY"                            = azurerm_search_service.search.primary_key
     "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT"            = azurerm_cognitive_account.docintel.endpoint
@@ -480,6 +563,12 @@ resource "azurerm_linux_web_app" "app" {
     "XDT_MicrosoftApplicationInsights_BaseExtensions" = "disabled"
     "XDT_MicrosoftApplicationInsights_Mode"           = "recommended"
     "XDT_MicrosoftApplicationInsights_PreemptSdk"     = "disabled"
+    "CUSTOM_GRAPH_URL_VALUE"                          = local.is_custom_cloud ? var.param_custom_graph_url : ""
+    "CUSTOM_IDENTITY_URL_VALUE"                       = local.is_custom_cloud ? var.param_custom_identity_url : ""
+    "CUSTOM_RESOURCE_MANAGER_URL_VALUE"               = local.is_custom_cloud ? var.param_custom_resource_manager_url : ""
+    "CUSTOM_COGNITIVE_SERVICES_URL_VALUE"             = local.is_custom_cloud ? var.param_custom_cognitive_services_scope : ""
+    "CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE"        = local.is_custom_cloud ? var.param_custom_search_resource_url : ""
+    "CUSTOM_VIDEO_INDEXER_ENDPOINT"                   = local.is_custom_cloud ? local.video_indexer_endpoint : ""
   }
 
   site_config {
@@ -726,6 +815,36 @@ resource "azurerm_search_service" "search" {
   tags                          = local.common_tags
 }
 
+resource "terraform_data" "video_indexer_custom_cloud_validation" {
+  input = {
+    deploy_video_indexer = var.param_deploy_video_indexer_service
+    custom_cloud         = local.is_custom_cloud
+  }
+
+  lifecycle {
+    precondition {
+      condition     = !(local.is_custom_cloud && var.param_deploy_video_indexer_service)
+      error_message = "Terraform can inject custom-cloud Video Indexer runtime settings, but Video Indexer resource provisioning is only implemented for AzureCloud and AzureUSGovernment right now. Set param_deploy_video_indexer_service=false for Custom and configure an existing account."
+    }
+  }
+}
+
+resource "azapi_resource" "video_indexer" {
+  count                     = var.param_deploy_video_indexer_service ? 1 : 0
+  type                      = "Microsoft.VideoIndexer/accounts@${local.video_indexer_arm_api_version}"
+  name                      = local.video_indexer_name
+  parent_id                 = azurerm_resource_group.rg.id
+  location                  = azurerm_resource_group.rg.location
+  schema_validation_enabled = false
+  response_export_values    = ["identity.principalId", "properties.accountId"]
+
+  body = jsondecode(local.video_indexer_body_json)
+
+  depends_on = [
+    terraform_data.video_indexer_custom_cloud_validation,
+  ]
+}
+
 
 #########################################
 #
@@ -795,6 +914,27 @@ resource "azurerm_role_assignment" "app_service_smi_storage_contributor" {
   scope                = azurerm_storage_account.sa.id
   role_definition_name = "Storage Blob Data Contributor"
   principal_id         = azurerm_linux_web_app.app.identity[0].principal_id
+}
+
+resource "azurerm_role_assignment" "video_indexer_storage_contributor" {
+  count                = var.param_deploy_video_indexer_service ? 1 : 0
+  scope                = azurerm_storage_account.sa.id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = jsondecode(azapi_resource.video_indexer[0].output).identity.principalId
+}
+
+resource "azurerm_role_assignment" "video_indexer_openai_contributor" {
+  count                = var.param_deploy_video_indexer_service && local.video_indexer_supports_openai && local.openai_resource_id != "" ? 1 : 0
+  scope                = local.openai_resource_id
+  role_definition_name = "Cognitive Services Contributor"
+  principal_id         = jsondecode(azapi_resource.video_indexer[0].output).identity.principalId
+}
+
+resource "azurerm_role_assignment" "video_indexer_openai_user" {
+  count                = var.param_deploy_video_indexer_service && local.video_indexer_supports_openai && local.openai_resource_id != "" ? 1 : 0
+  scope                = local.openai_resource_id
+  role_definition_name = "Cognitive Services User"
+  principal_id         = jsondecode(azapi_resource.video_indexer[0].output).identity.principalId
 }
 
 # Storage Blob Data Contributor on Storage Account

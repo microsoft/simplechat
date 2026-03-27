@@ -282,6 +282,14 @@ locals {
         subresource  = "account"
         dns_zone_key = "openAi"
       }
+    } : {},
+    var.param_deploy_video_indexer_service && local.video_indexer_supports_private_endpoints ? {
+      videoIndexer = {
+        name         = "videoindexer"
+        resource_id  = azapi_resource.video_indexer[0].id
+        subresource  = "account"
+        dns_zone_key = "cognitiveServices"
+      }
     } : {}
   ) : {}
 }
