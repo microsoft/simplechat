@@ -58,6 +58,7 @@ def register_route_frontend_control_center(app):
             return redirect(url_for('admin_settings'))
     
     @app.route('/approvals', methods=['GET'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def approvals():
