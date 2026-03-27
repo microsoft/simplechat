@@ -270,7 +270,6 @@ function updatePublicRoleDisplay(){
     if (nameRoleEl) nameRoleEl.textContent = activePublicName;
     if (display) display.style.display = 'block';
     if (uploadSection) uploadSection.style.display = ['Owner','Admin','DocumentManager'].includes(userRoleInActivePublic) ? 'block' : 'none';
-
     // Control visibility of Settings tab (only for Owners and Admins)
     const settingsTabNav = document.getElementById('public-settings-tab-nav');
     const canManageSettings = ['Owner', 'Admin'].includes(userRoleInActivePublic);

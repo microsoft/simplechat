@@ -55,11 +55,13 @@ The issue was in multiple places:
    ```
 
 1. **JavaScript Permission Variable**:
+   {% raw %}
    ```html
    <script>
      window.canCreatePublicWorkspaces = {{ can_create_public_workspaces|tojson }};
    </script>
    ```
+   {% endraw %}
 
 #### JavaScript Changes (`my_public_workspaces.js`)
 1. **Conditional Modal Initialization**:
