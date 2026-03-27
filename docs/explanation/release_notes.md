@@ -41,6 +41,12 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   This allows the web app to use Gunicorn with `workers=2` without duplicating scheduler loops inside every worker process, while keeping a legacy override available for single-process environments.
     *   (Ref: `app.py`, `background_tasks.py`, `simplechat_scheduler.py`, `SIMPLECHAT_STARTUP.md`, `test_startup_scheduler_support.py`)
 
+*   **Deployment, Setup, and Upgrade Documentation Refresh**
+    *   Expanded the deployment guidance so teams can more quickly choose between manual deployment, Azure CLI, Bicep, Terraform, and special-environment setup paths from the main setup documentation.
+    *   Added a dedicated upgrade guide for existing deployments that separates native Python App Service upgrades from container-based App Service upgrades, including when to use VS Code deployment, ZIP deploy, deployment slots, `azd deploy`, `azd provision`, or `azd up`.
+    *   Clarified developer and production runtime documentation with explicit local-development guidance, Azure production startup expectations, Gunicorn startup rules, container entrypoint behavior, and scheduler-separation recommendations.
+    *   (Ref: `setup_instructions.md`, `setup_instructions_manual.md`, `how-to/upgrade_paths.md`, `running_simplechat_azure_production.md`, `running_simplechat_locally.md`, `SIMPLECHAT_STARTUP.md`, deployment and developer documentation)
+
 *   **Chat Completion Notifications**
     *   Added personal chat completion notifications so users who leave a streaming conversation before the assistant finishes now receive a notification when the AI response is ready.
     *   Notification clicks deep-link directly back to the completed conversation, and personal conversations now show a green unread dot in both chat conversation lists until that response is opened.
