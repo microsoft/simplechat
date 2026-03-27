@@ -1,10 +1,10 @@
 # test_model_endpoint_request_uses_endpoint_id.py
 """
 UI test for model endpoint request identity wiring.
-Version: 0.239.166
-Implemented in: 0.239.166
+Version: 0.239.178
+Implemented in: 0.239.178
 
-This test ensures the admin multi-endpoint modal only exposes the supported
+This test ensures the admin multi-endpoint modal exposes the supported
 providers, shows the APIM provider guidance, and sends the endpoint ID in the
 test-model request payload so the backend can resolve Key Vault-backed secrets.
 """
@@ -55,8 +55,11 @@ def test_model_endpoint_request_uses_endpoint_id(playwright):
         expect(page.locator("#modelEndpointModal")).to_be_visible()
 
         provider_options = page.locator("#model-endpoint-provider option").all_text_contents()
-        assert provider_options == ["Azure OpenAI", "Foundry (classic)"]
-        expect(page.get_by_text("If Foundry is behind APIM, use Foundry (classic); otherwise use Azure OpenAI.")).to_be_visible()
+        assert provider_options == ["Azure OpenAI", "Foundry (classic)", "New Foundry"]
+        expect(page.get_by_text("If using classic Foundry, use Foundry (classic). If using the application-based runtime, use New Foundry.")).to_be_visible()
+
+        page.locator("#model-endpoint-provider").select_option("new_foundry")
+        expect(page.locator("#model-endpoint-openai-api-version")).to_have_value("")
 
         page.evaluate(
             """
@@ -68,6 +71,7 @@ def test_model_endpoint_request_uses_endpoint_id(playwright):
             }
             """
         )
+        page.locator("#model-endpoint-provider").select_option("aoai")
         page.locator("#model-endpoint-name").fill("Stored Endpoint")
         page.locator("#model-endpoint-endpoint").fill("https://example.openai.azure.com")
         page.locator("#model-endpoint-auth-type").select_option("api_key")

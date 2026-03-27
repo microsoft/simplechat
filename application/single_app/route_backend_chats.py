@@ -18,6 +18,7 @@ import asyncio, types
 import ast
 import json
 import os
+import app_settings_cache
 import queue
 import re
 from urllib.parse import urlparse
@@ -294,7 +295,18 @@ class BackgroundStreamBridge:
     def iter_events(self):
         """Yield queued SSE events until the worker finishes."""
         while True:
-            next_item = self._queue.get()
+            try:
+                next_item = self._queue.get(timeout=15)
+            except queue.Empty:
+                with self._state_lock:
+                    consumer_attached = self._consumer_attached
+
+                if not consumer_attached:
+                    break
+
+                yield ': keep-alive\n\n'
+                continue
+
             if next_item is self._sentinel:
                 break
             yield next_item
@@ -313,6 +325,209 @@ class BackgroundStreamBridge:
                 self._queue.get_nowait()
             except queue.Empty:
                 break
+
+
+def _extract_sse_event_payload(event_text):
+    """Parse JSON data lines from a raw SSE event string."""
+    if not isinstance(event_text, str):
+        return None
+
+    data_lines = [
+        line[5:].lstrip()
+        for line in event_text.splitlines()
+        if line.startswith('data:')
+    ]
+    if not data_lines:
+        return None
+
+    try:
+        return json.loads('\n'.join(data_lines))
+    except (TypeError, ValueError):
+        return None
+
+
+class ActiveConversationStreamSession:
+    """Keep an in-flight stream replayable for reconnecting consumers."""
+
+    HEARTBEAT_EVENT = ': keep-alive\n\n'
+
+    def __init__(self, user_id, conversation_id, heartbeat_interval_seconds=15, session_ttl_seconds=600):
+        self.user_id = user_id
+        self.conversation_id = conversation_id
+        self.heartbeat_interval_seconds = heartbeat_interval_seconds
+        self.session_ttl_seconds = session_ttl_seconds
+        self.cache_key = f'{user_id}:{conversation_id}'
+        self._condition = threading.Condition()
+        self._accepting_events = True
+
+    def _build_metadata(self, active):
+        return {
+            'user_id': self.user_id,
+            'conversation_id': self.conversation_id,
+            'active': bool(active),
+            'heartbeat_interval_seconds': self.heartbeat_interval_seconds,
+            'updated_at': datetime.utcnow().isoformat(),
+        }
+
+    def initialize(self):
+        """Initialize the stream session cache state for a new live response."""
+        app_settings_cache.initialize_stream_session_cache(
+            self.cache_key,
+            self._build_metadata(active=True),
+            ttl_seconds=self.session_ttl_seconds,
+        )
+
+    def publish(self, event_text):
+        """Append an SSE event to the replay history and notify listeners."""
+        if event_text is None:
+            return False
+
+        with self._condition:
+            if not self._accepting_events:
+                return False
+
+        payload = _extract_sse_event_payload(event_text)
+        is_terminal_event = isinstance(payload, dict) and (payload.get('done') or payload.get('error'))
+
+        app_settings_cache.append_stream_session_event(
+            self.cache_key,
+            event_text,
+            ttl_seconds=self.session_ttl_seconds,
+        )
+        app_settings_cache.set_stream_session_meta(
+            self.cache_key,
+            self._build_metadata(active=not is_terminal_event),
+            ttl_seconds=self.session_ttl_seconds,
+        )
+
+        with self._condition:
+            self._condition.notify_all()
+            return True
+
+    def close(self):
+        """Mark the session as closed once the worker has no more events."""
+        with self._condition:
+            self._accepting_events = False
+            self._condition.notify_all()
+
+        app_settings_cache.set_stream_session_meta(
+            self.cache_key,
+            self._build_metadata(active=False),
+            ttl_seconds=self.session_ttl_seconds,
+        )
+
+    def is_active(self):
+        metadata = app_settings_cache.get_stream_session_meta(self.cache_key) or {}
+        return bool(metadata.get('active'))
+
+    def is_expired(self, ttl_seconds):
+        metadata = app_settings_cache.get_stream_session_meta(self.cache_key)
+        return metadata is None
+
+    def iter_events(self, start_index=0):
+        """Yield replayed and live SSE events, with heartbeat comments while idle."""
+        next_index = max(int(start_index or 0), 0)
+        last_heartbeat_at = time.time()
+
+        while True:
+            pending_events = app_settings_cache.get_stream_session_events(
+                self.cache_key,
+                start_index=next_index,
+            ) or []
+            if pending_events:
+                for event_to_yield in pending_events:
+                    next_index += 1
+                    last_heartbeat_at = time.time()
+                    yield event_to_yield
+                continue
+
+            metadata = app_settings_cache.get_stream_session_meta(self.cache_key)
+            if not metadata:
+                return
+
+            heartbeat_interval_seconds = int(
+                metadata.get('heartbeat_interval_seconds') or self.heartbeat_interval_seconds
+            )
+            if not metadata.get('active'):
+                return
+
+            remaining_heartbeat_seconds = max(
+                heartbeat_interval_seconds - (time.time() - last_heartbeat_at),
+                0.25,
+            )
+            with self._condition:
+                self._condition.wait(timeout=min(1.0, remaining_heartbeat_seconds))
+
+            if (time.time() - last_heartbeat_at) >= heartbeat_interval_seconds:
+                last_heartbeat_at = time.time()
+                yield self.HEARTBEAT_EVENT
+
+
+class ActiveConversationStreamRegistry:
+    """Track live chat streams per user and conversation for reconnect support."""
+
+    def __init__(self, completed_session_ttl_seconds=600, heartbeat_interval_seconds=15):
+        self.completed_session_ttl_seconds = completed_session_ttl_seconds
+        self.heartbeat_interval_seconds = heartbeat_interval_seconds
+        self._sessions = {}
+        self._lock = threading.Lock()
+
+    def _cleanup_locked(self):
+        expired_keys = [
+            key for key, session in self._sessions.items()
+            if session.is_expired(self.completed_session_ttl_seconds)
+        ]
+        for key in expired_keys:
+            self._sessions.pop(key, None)
+
+    def start_session(self, user_id, conversation_id):
+        if not user_id or not conversation_id:
+            return None
+
+        with self._lock:
+            self._cleanup_locked()
+            key = (user_id, conversation_id)
+            existing_session = self._sessions.get(key)
+            if existing_session and existing_session.is_active():
+                existing_session.close()
+
+            session = ActiveConversationStreamSession(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                heartbeat_interval_seconds=self.heartbeat_interval_seconds,
+                session_ttl_seconds=self.completed_session_ttl_seconds,
+            )
+            self._sessions[key] = session
+            session.initialize()
+            return session
+
+    def get_session(self, user_id, conversation_id, active_only=False):
+        if not user_id or not conversation_id:
+            return None
+
+        with self._lock:
+            self._cleanup_locked()
+            key = (user_id, conversation_id)
+            session = self._sessions.get(key)
+            if not session:
+                metadata = app_settings_cache.get_stream_session_meta(f'{user_id}:{conversation_id}')
+                if not metadata:
+                    return None
+                session = ActiveConversationStreamSession(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    heartbeat_interval_seconds=int(
+                        metadata.get('heartbeat_interval_seconds') or self.heartbeat_interval_seconds
+                    ),
+                    session_ttl_seconds=self.completed_session_ttl_seconds,
+                )
+                self._sessions[key] = session
+            if active_only and not session.is_active():
+                return None
+            return session
+
+
+CHAT_STREAM_REGISTRY = ActiveConversationStreamRegistry()
 
 
 def get_new_plugin_invocations(invocations, baseline_count):
@@ -2066,7 +2281,7 @@ def determine_tabular_source_hint(document_scope, active_group_id=None, active_p
 
 
 def register_route_backend_chats(app):
-    def build_background_stream_response(event_generator_factory):
+    def build_background_stream_response(event_generator_factory, stream_session=None):
         """Run SSE generation in background execution so it survives disconnects."""
         stream_bridge = BackgroundStreamBridge()
 
@@ -2074,13 +2289,18 @@ def register_route_backend_chats(app):
         def stream_worker():
             try:
                 for event in event_generator_factory():
+                    if stream_session:
+                        stream_session.publish(event)
                     stream_bridge.push(event)
             except Exception as e:
                 debug_print(f"[STREAM BACKGROUND] Worker error: {e}")
-                stream_bridge.push(
-                    f"data: {json.dumps({'error': f'Internal server error: {str(e)}'})}\n\n"
-                )
+                error_event = f"data: {json.dumps({'error': f'Internal server error: {str(e)}'})}\n\n"
+                if stream_session:
+                    stream_session.publish(error_event)
+                stream_bridge.push(error_event)
             finally:
+                if stream_session:
+                    stream_session.close()
                 stream_bridge.finish()
 
         executor = current_app.extensions.get('executor')
@@ -5087,6 +5307,8 @@ def register_route_backend_chats(app):
         compatibility_mode = bool(data.get('image_generation')) or bool(
             data.get('retry_user_message_id') or data.get('edited_user_message_id')
         )
+        requested_conversation_id = data.get('conversation_id')
+        stream_session = CHAT_STREAM_REGISTRY.start_session(user_id, requested_conversation_id)
 
         request_message = (data.get('message') or '').strip()
         request_preview = request_message[:120] + '...' if len(request_message) > 120 else request_message
@@ -5185,7 +5407,7 @@ def register_route_backend_chats(app):
 
         if compatibility_mode:
             debug_print("[Streaming] Routing request through compatibility bridge")
-            return build_background_stream_response(generate_compatibility_response)
+            return build_background_stream_response(generate_compatibility_response, stream_session=stream_session)
         
         def generate():
             try:
@@ -5664,7 +5886,7 @@ def register_route_backend_chats(app):
                 def emit_thought(step_type, content, detail=None):
                     """Add a thought to Cosmos and return an SSE event string."""
                     thought_tracker.add_thought(step_type, content, detail)
-                    return f"data: {json.dumps({'type': 'thought', 'step_index': thought_tracker.current_index - 1, 'step_type': step_type, 'content': content})}\n\n"
+                    return f"data: {json.dumps({'type': 'thought', 'message_id': assistant_message_id, 'step_index': thought_tracker.current_index - 1, 'step_type': step_type, 'content': content})}\n\n"
 
                 # Content Safety check (matching non-streaming path)
                 blocked = False
@@ -6391,6 +6613,11 @@ def register_route_backend_chats(app):
                     f"selected_agent={getattr(selected_agent, 'name', None) if selected_agent else None} | "
                     f"model={gpt_model}"
                 )
+                stream_selected_agent_type = (
+                    str(getattr(selected_agent, 'agent_type', 'local') or 'local').lower()
+                    if selected_agent
+                    else 'local'
+                )
                 
                 try:
                     if use_agent_streaming and selected_agent:
@@ -6424,34 +6651,7 @@ def register_route_backend_chats(app):
                             )
                             for msg in conversation_history_for_api
                         ]
-                        
-                        agent_stream_start_time = time.time()
-
-                        # Stream agent responses - collect chunks first then yield
-                        async def stream_agent_async():
-                            """Collect all streaming chunks from agent"""
-                            chunks = []
-                            usage_data = None
-                            
-                            # invoke_stream doesn't need a thread parameter - it works like invoke but streams
-                            async for response in selected_agent.invoke_stream(messages=agent_message_history):
-                                # Extract content from StreamingChatMessageContent
-                                if hasattr(response, 'content') and response.content:
-                                    chunks.append(str(response.content))
-                                elif isinstance(response, str):
-                                    chunks.append(response)
-                                else:
-                                    # Fallback: convert to string
-                                    chunks.append(str(response))
-                                
-                                # Check for usage metadata in the last response
-                                # Don't break early - keep collecting all chunks
-                                if hasattr(response, 'metadata') and isinstance(response.metadata, dict):
-                                    usage = response.metadata.get('usage')
-                                    if usage:
-                                        usage_data = usage  # Keep updating, last one wins
-                            
-                            return chunks, usage_data
+                        stream_usage = None
                         
                         # Execute async streaming
                         try:
@@ -6466,8 +6666,31 @@ def register_route_backend_chats(app):
                             asyncio.set_event_loop(loop)
                         
                         try:
-                            # Run streaming and collect chunks and usage
-                            chunks, stream_usage = loop.run_until_complete(stream_agent_async())
+                            agent_stream = selected_agent.invoke_stream(messages=agent_message_history)
+                            while True:
+                                try:
+                                    response = loop.run_until_complete(agent_stream.__anext__())
+                                except StopAsyncIteration:
+                                    break
+
+                                response_metadata = getattr(response, 'metadata', None)
+                                if isinstance(response_metadata, dict):
+                                    usage = response_metadata.get('usage')
+                                    if usage:
+                                        stream_usage = usage
+                                    response_model = response_metadata.get('model')
+                                    if isinstance(response_model, str) and response_model.strip():
+                                        actual_model_used = response_model.strip()
+
+                                chunk_content = None
+                                if hasattr(response, 'content') and response.content:
+                                    chunk_content = str(response.content)
+                                elif isinstance(response, str) and response:
+                                    chunk_content = response
+
+                                if chunk_content:
+                                    accumulated_content += chunk_content
+                                    yield f"data: {json.dumps({'content': chunk_content})}\n\n"
                         except Exception as stream_error:
                             plugin_logger_cb.deregister_callbacks(callback_key)
                             debug_print(
@@ -6478,6 +6701,11 @@ def register_route_backend_chats(app):
                             traceback.print_exc()
                             yield f"data: {json.dumps({'error': f'Agent streaming failed: {str(stream_error)}'})}\n\n"
                             return
+
+                        actual_model_used = (
+                            getattr(selected_agent, 'last_run_model', None)
+                            or actual_model_used
+                        )
 
                         # Emit responded thought with total duration from user message
                         agent_stream_total_duration_s = round(time.time() - request_start_time, 1)
@@ -6493,20 +6721,19 @@ def register_route_backend_chats(app):
                         agent_plugin_invocations = plugin_logger_cb.get_invocations_for_conversation(user_id, conversation_id)
                         for inv in agent_plugin_invocations:
                             thought_payload = format_plugin_invocation_thought(inv, actor_label='Agent')
-                            yield f"data: {json.dumps({'type': 'thought', 'step_index': thought_tracker.current_index, 'step_type': thought_payload['step_type'], 'content': thought_payload['content']})}\n\n"
+                            yield f"data: {json.dumps({'type': 'thought', 'message_id': assistant_message_id, 'step_index': thought_tracker.current_index, 'step_type': thought_payload['step_type'], 'content': thought_payload['content']})}\n\n"
                             thought_tracker.current_index += 1
-
-                        # Yield chunks to frontend
-                        for chunk_content in chunks:
-                            accumulated_content += chunk_content
-                            yield f"data: {json.dumps({'content': chunk_content})}\n\n"
 
                         # Try to capture token usage from stream metadata
                         if stream_usage:
-                            # stream_usage is a CompletionUsage object, not a dict
-                            prompt_tokens = getattr(stream_usage, 'prompt_tokens', 0)
-                            completion_tokens = getattr(stream_usage, 'completion_tokens', 0)
-                            total_tokens = getattr(stream_usage, 'total_tokens', None)
+                            if isinstance(stream_usage, dict):
+                                prompt_tokens = int(stream_usage.get('prompt_tokens') or 0)
+                                completion_tokens = int(stream_usage.get('completion_tokens') or 0)
+                                total_tokens = stream_usage.get('total_tokens')
+                            else:
+                                prompt_tokens = getattr(stream_usage, 'prompt_tokens', 0)
+                                completion_tokens = getattr(stream_usage, 'completion_tokens', 0)
+                                total_tokens = getattr(stream_usage, 'total_tokens', None)
 
                             # Calculate total if not provided
                             if total_tokens is None or total_tokens == 0:
@@ -6594,6 +6821,26 @@ def register_route_backend_chats(app):
                                 'user_id': inv.user_id
                             }
                             agent_citations_list.append(citation)
+
+                        foundry_citations = getattr(selected_agent, 'last_run_citations', []) or []
+                        if stream_selected_agent_type in ('aifoundry', 'new_foundry') and foundry_citations:
+                            foundry_plugin_name = 'new_foundry' if stream_selected_agent_type == 'new_foundry' else 'azure_ai_foundry'
+                            foundry_label = agent_name_used or ('New Foundry Application' if stream_selected_agent_type == 'new_foundry' else 'Azure AI Foundry Agent')
+                            for citation in foundry_citations:
+                                yield emit_thought('agent_tool_call', 'Agent retrieved citation from Azure AI Foundry')
+                                try:
+                                    serializable = json.loads(json.dumps(citation, default=str))
+                                except (TypeError, ValueError):
+                                    serializable = {'value': str(citation)}
+                                agent_citations_list.append({
+                                    'tool_name': foundry_label,
+                                    'function_name': 'foundry_citation',
+                                    'plugin_name': foundry_plugin_name,
+                                    'function_arguments': serializable,
+                                    'function_result': serializable,
+                                    'timestamp': datetime.utcnow().isoformat(),
+                                    'success': True
+                                })
                         
                         debug_print(f"[Agent Streaming] Captured {len(agent_citations_list)} citations")
                         final_model_used = actual_model_used
@@ -6857,7 +7104,48 @@ def register_route_backend_chats(app):
                 debug_print(f"[STREAM API ERROR] Full traceback:\n{error_traceback}")
                 yield f"data: {json.dumps({'error': f'Internal server error: {str(e)}'})}\n\n"
         
-        return build_background_stream_response(generate)
+        return build_background_stream_response(generate, stream_session=stream_session)
+
+    @app.route('/api/chat/stream/status/<conversation_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def chat_stream_status_api(conversation_id):
+        """Report whether a conversation has a live stream that can be reattached."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        stream_session = CHAT_STREAM_REGISTRY.get_session(user_id, conversation_id, active_only=True)
+        return jsonify({
+            'conversation_id': conversation_id,
+            'pending': bool(stream_session),
+            'reattachable': bool(stream_session),
+        })
+
+    @app.route('/api/chat/stream/reattach/<conversation_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def chat_stream_reattach_api(conversation_id):
+        """Replay and continue an in-flight stream for a previously opened conversation."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        stream_session = CHAT_STREAM_REGISTRY.get_session(user_id, conversation_id, active_only=True)
+        if not stream_session:
+            return jsonify({'error': 'No active stream is available for this conversation'}), 404
+
+        return Response(
+            stream_with_context(stream_session.iter_events()),
+            mimetype='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'X-Accel-Buffering': 'no',
+                'Connection': 'keep-alive'
+            }
+        )
 
     @app.route('/api/message/<message_id>/mask', methods=['POST'])
     @swagger_route(security=get_auth_security())

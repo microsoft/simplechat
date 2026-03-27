@@ -30,7 +30,7 @@ def assert_not_contains(file_path: Path, forbidden: str) -> None:
         raise AssertionError(f"Did not expect to find {forbidden!r} in {file_path}")
 
 
-def test_streaming_only_chat_path() -> bool:
+def test_streaming_only_chat_path() -> None:
     print("Testing streaming-only chat path migration...")
 
     chat_messages = ROOT / "application" / "single_app" / "static" / "js" / "chat" / "chat-messages.js"
@@ -62,17 +62,17 @@ def test_streaming_only_chat_path() -> bool:
 
     assert_not_contains(chats_template, "streaming-toggle-btn")
     assert_not_contains(chats_template, "streaming-badge")
-    assert_contains(route_backend_chats, "return build_background_stream_response(generate_compatibility_response)")
-    assert_contains(route_backend_chats, "return build_background_stream_response(generate)")
-    assert_contains(config_file, 'VERSION = "0.239.137"')
+    assert_contains(route_backend_chats, "return build_background_stream_response(generate_compatibility_response, stream_session=stream_session)")
+    assert_contains(route_backend_chats, "return build_background_stream_response(generate, stream_session=stream_session)")
+    assert_contains(config_file, 'VERSION = "0.239.183"')
 
     print("Streaming-only chat path checks passed!")
-    return True
 
 
 if __name__ == "__main__":
     try:
-        success = test_streaming_only_chat_path()
+        test_streaming_only_chat_path()
+        success = True
     except Exception as exc:
         print(f"Test failed: {exc}")
         import traceback

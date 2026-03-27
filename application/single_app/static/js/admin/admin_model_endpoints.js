@@ -65,6 +65,8 @@ let defaultModelSelection = window.defaultModelSelection && typeof window.defaul
     ? { ...window.defaultModelSelection }
     : {};
 
+const DEFAULT_AOAI_OPENAI_API_VERSION = "2024-05-01-preview";
+
 function generateId() {
     if (window.crypto && window.crypto.randomUUID) {
         return window.crypto.randomUUID();
@@ -122,6 +124,29 @@ function formatProviderLabel(provider) {
         return "New Foundry";
     }
     return "Azure OpenAI";
+}
+
+function getDefaultOpenAiApiVersion(provider) {
+    return provider === "new_foundry" ? "" : DEFAULT_AOAI_OPENAI_API_VERSION;
+}
+
+function syncOpenAiApiVersionForProvider() {
+    if (!endpointOpenAiApiVersionInput) {
+        return;
+    }
+
+    const provider = endpointProviderSelect?.value || "aoai";
+    const currentValue = endpointOpenAiApiVersionInput.value.trim();
+    if (provider === "new_foundry") {
+        if (!currentValue || currentValue === DEFAULT_AOAI_OPENAI_API_VERSION) {
+            endpointOpenAiApiVersionInput.value = "";
+        }
+        return;
+    }
+
+    if (!currentValue) {
+        endpointOpenAiApiVersionInput.value = getDefaultOpenAiApiVersion(provider);
+    }
 }
 
 function collectSelectedModels(endpoint) {
@@ -322,7 +347,7 @@ function resetModal() {
     if (endpointUrlInput) endpointUrlInput.value = "";
     if (endpointProjectInput) endpointProjectInput.value = "";
     if (endpointProjectApiVersionInput) endpointProjectApiVersionInput.value = "v1";
-    if (endpointOpenAiApiVersionInput) endpointOpenAiApiVersionInput.value = "2024-05-01-preview";
+    if (endpointOpenAiApiVersionInput) endpointOpenAiApiVersionInput.value = getDefaultOpenAiApiVersion("aoai");
     if (endpointSubscriptionInput) endpointSubscriptionInput.value = "";
     if (endpointResourceGroupInput) endpointResourceGroupInput.value = "";
     if (endpointAuthTypeSelect) endpointAuthTypeSelect.value = "managed_identity";
@@ -361,7 +386,7 @@ function openModalForEndpoint(endpoint) {
             endpointProjectApiVersionInput.value = endpoint.connection?.project_api_version || endpoint.connection?.api_version || "v1";
         }
         if (endpointOpenAiApiVersionInput) {
-            endpointOpenAiApiVersionInput.value = endpoint.connection?.openai_api_version || endpoint.connection?.api_version || "2024-05-01-preview";
+            endpointOpenAiApiVersionInput.value = endpoint.connection?.openai_api_version || endpoint.connection?.api_version || getDefaultOpenAiApiVersion(endpoint.provider || "aoai");
         }
         if (endpointSubscriptionInput) endpointSubscriptionInput.value = endpoint.management?.subscription_id || "";
         if (endpointResourceGroupInput) endpointResourceGroupInput.value = endpoint.management?.resource_group || "";
@@ -816,7 +841,10 @@ function init() {
         endpointAuthTypeSelect.addEventListener("change", updateAuthVisibility);
     }
     if (endpointProviderSelect) {
-        endpointProviderSelect.addEventListener("change", updateAuthVisibility);
+        endpointProviderSelect.addEventListener("change", () => {
+            updateAuthVisibility();
+            syncOpenAiApiVersionForProvider();
+        });
     }
     if (miTypeSelect) {
         miTypeSelect.addEventListener("change", updateAuthVisibility);

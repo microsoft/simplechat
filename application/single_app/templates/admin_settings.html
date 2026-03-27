@@ -3709,6 +3709,7 @@
                                 <label for="chunk_size_json" class="form-label">JSON (characters)</label>
                                 <input type="number" min="1" class="form-control chunk-size-input" data-label="JSON" id="chunk_size_json" name="chunk_size_json" value="{{ chunk_settings.get('json', {}).get('value', chunk_defaults.get('json', {}).get('value')) }}">
                             </div>
+                            <!--
                             <div class="col-md-6">
                                 <label for="chunk_size_csv" class="form-label">CSV (characters)</label>
                                 <input type="number" min="1" class="form-control chunk-size-input" data-label="CSV" id="chunk_size_csv" name="chunk_size_csv" value="{{ chunk_settings.get('csv', {}).get('value', chunk_defaults.get('csv', {}).get('value')) }}">
@@ -3717,6 +3718,7 @@
                                 <label for="chunk_size_excel" class="form-label">Excel (characters)</label>
                                 <input type="number" min="1" class="form-control chunk-size-input" data-label="EXCEL" id="chunk_size_excel" name="chunk_size_excel" value="{{ chunk_settings.get('excel', {}).get('value', chunk_defaults.get('excel', {}).get('value')) }}">
                             </div>
+                            -->
                             <div class="col-md-6">
                                 <label for="chunk_size_transcript" class="form-label">Transcripts (words)</label>
                                 <input type="number" min="1" class="form-control chunk-size-input" data-label="TRANSCRIPT" id="chunk_size_transcript" name="chunk_size_transcript" value="{{ chunk_settings.get('transcript', {}).get('value', chunk_defaults.get('transcript', {}).get('value')) }}">

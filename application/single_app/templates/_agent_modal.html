@@ -29,14 +29,11 @@
               <label class="form-check-label" for="agent-type-aifoundry">Foundry (classic)</label>
               <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Classic Foundry agents use the existing Azure AI Foundry agent experience and are invoked through the current SDK-backed path."></i>
             </div>
-            <!-- New Foundry and Classic Foundry use the same library, but are mutually exclusive between >=2.0.0 (new) and <2.0.0 (classic) -->
-            {% if false %}
             <div class="form-check form-check-inline">
               <input class="form-check-input" type="radio" name="agent-type" id="agent-type-new-foundry" value="new_foundry">
               <label class="form-check-label" for="agent-type-new-foundry">New Foundry</label>
               <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="New Foundry agents use the application-based experience and are invoked through the Responses protocol endpoint."></i>
             </div>
-            {% endif %}
           </div>
           <div class="form-text" id="agent-type-helper">Choose the provider for this agent. Foundry agents cannot attach local actions.</div>
         </div>
@@ -137,22 +134,15 @@
             <div id="agent-new-foundry-only" class="d-none">
               <div class="mb-3">
                 <label for="agent-new-foundry-responses-api-version" class="form-label">Responses API Version <span class="text-danger" title="Required">*</span></label>
-                <input type="text" class="form-control" id="agent-new-foundry-responses-api-version" placeholder="2025-11-15-preview" />
+                <input type="text" class="form-control" id="agent-new-foundry-responses-api-version" placeholder="Fetched or inherited from endpoint" />
+                <div class="form-text">This is populated from the selected endpoint or fetch response when available, but you can override it if your Foundry project requires a different supported Responses API version.</div>
               </div>
+              <input type="hidden" id="agent-new-foundry-application-id" />
+              <input type="hidden" id="agent-new-foundry-application-version" />
               <div class="mb-3">
-                <label for="agent-new-foundry-application-id" class="form-label">Application ID <span class="text-danger" title="Required">*</span></label>
-                <input type="text" class="form-control" id="agent-new-foundry-application-id" placeholder="application-name:version" />
-                <div class="form-text">Use the application identifier from the new Foundry portal, or fetch an application above. Example: <span class="font-monospace">my-agent:3</span>.</div>
-              </div>
-              <div class="row g-3 mb-3">
-                <div class="col-md-8">
                   <label for="agent-new-foundry-application-name" class="form-label">Application Name</label>
                   <input type="text" class="form-control" id="agent-new-foundry-application-name" placeholder="application-name" />
-                </div>
-                <div class="col-md-4">
-                  <label for="agent-new-foundry-application-version" class="form-label">Version</label>
-                  <input type="text" class="form-control" id="agent-new-foundry-application-version" placeholder="3" />
-                </div>
+                  <div class="form-text" id="agent-new-foundry-application-help">Fetch an application above to populate the published version automatically. The runtime invokes the application by name, so you do not need to type a version manually.</div>
               </div>
               <div class="mb-3">
                 <label for="agent-new-foundry-activity-api-version" class="form-label">Activity Protocol API Version</label>

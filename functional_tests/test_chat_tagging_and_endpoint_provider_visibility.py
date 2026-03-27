@@ -2,11 +2,11 @@
 #!/usr/bin/env python3
 """
 Functional test for chat tagging and endpoint provider visibility.
-Version: 0.239.167
-Implemented in: 0.239.167
+Version: 0.239.177
+Implemented in: 0.239.177
 
-This test ensures unsupported New Foundry endpoints remain hidden from user-
-facing endpoint payloads, streaming group-agent conversations preserve group
+This test ensures supported New Foundry endpoints are exposed to user-facing
+endpoint payloads, streaming group-agent conversations preserve group
 metadata, personal conversations no longer render visible tags, the active
 conversation header shows the full group name, and the sidebar shows the first
 8 characters of the group name.
@@ -25,8 +25,8 @@ def _read_text(relative_path):
         return handle.read()
 
 
-def test_endpoint_provider_visibility_guard():
-    """Verify only supported endpoint providers are exposed to frontend flows."""
+def test_endpoint_provider_visibility_guard() -> None:
+    """Verify supported endpoint providers are exposed to frontend flows."""
     print("🔍 Testing endpoint provider visibility guard...")
 
     try:
@@ -34,26 +34,24 @@ def test_endpoint_provider_visibility_guard():
 
         required_snippets = [
             "def is_frontend_visible_model_endpoint_provider(provider):",
-            'return normalized_provider in {"aoai", "aifoundry"}',
+            'return normalized_provider in {"aoai", "aifoundry", "new_foundry"}',
             'if not is_frontend_visible_model_endpoint_provider(endpoint.get("provider")):',
             'if is_frontend_visible_model_endpoint_provider(endpoint.get("provider")):',
         ]
 
         missing = [snippet for snippet in required_snippets if snippet not in settings_text]
         if missing:
-            print(f"❌ Missing endpoint visibility snippets: {', '.join(missing)}")
-            return False
+            raise AssertionError(f"Missing endpoint visibility snippets: {', '.join(missing)}")
 
         print("✅ Frontend endpoint provider filtering is wired")
-        return True
     except Exception as exc:
         print(f"❌ Test failed: {exc}")
         import traceback
         traceback.print_exc()
-        return False
+        raise
 
 
-def test_group_agent_tagging_and_personal_badge_removal():
+def test_group_agent_tagging_and_personal_badge_removal() -> None:
     """Verify group-agent metadata survives streaming and UI tags render correctly."""
     print("🔍 Testing group-agent tagging and personal badge removal...")
 
@@ -78,20 +76,17 @@ def test_group_agent_tagging_and_personal_badge_removal():
             if snippet not in f"{chat_conversations_text}\n{chat_details_text}\n{chat_sidebar_text}\n{chat_backend_text}"
         ]
         if missing:
-            print(f"❌ Missing tagging snippets: {', '.join(missing)}")
-            return False
+            raise AssertionError(f"Missing tagging snippets: {', '.join(missing)}")
 
         if 'badge.textContent = \'personal\'' in chat_sidebar_text:
-            print("❌ Personal conversations still render a visible personal badge in the sidebar")
-            return False
+            raise AssertionError("Personal conversations still render a visible personal badge in the sidebar")
 
         print("✅ Group-agent metadata and conversation tag rendering are wired correctly")
-        return True
     except Exception as exc:
         print(f"❌ Test failed: {exc}")
         import traceback
         traceback.print_exc()
-        return False
+        raise
 
 
 if __name__ == "__main__":

@@ -1218,7 +1218,13 @@ export async function selectConversation(conversationId) {
     addChatTypeBadges(convoItem, currentConversationClassificationsEl);
   }
 
-  loadMessages(conversationId);
+  await loadMessages(conversationId);
+  try {
+    const streamingModule = await import('./chat-streaming.js');
+    await streamingModule.reattachStreamingConversation(conversationId);
+  } catch (error) {
+    console.warn('Failed to reattach active stream for conversation:', error);
+  }
   markConversationRead(conversationId, { force: true, suppressErrorToast: true }).catch(error => {
     console.warn('Failed to clear unread state for conversation:', error);
   });

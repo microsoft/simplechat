@@ -468,7 +468,7 @@ export function loadMessages(conversationId) {
   // Clear search highlights when loading a different conversation
   clearSearchHighlight();
   
-  fetch(`/conversation/${conversationId}/messages`)
+  return fetch(`/conversation/${conversationId}/messages`)
     .then((response) => response.json())
     .then((data) => {
       const chatbox = document.getElementById("chatbox");

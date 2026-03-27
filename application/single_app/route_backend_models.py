@@ -5,7 +5,7 @@ from functions_authentication import *
 from functions_group import assert_group_role, get_group_model_endpoints, require_active_group, update_group_model_endpoints
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_get_helper, keyvault_model_endpoint_save_helper
 from functions_settings import *
-from foundry_agent_runtime import list_foundry_agents_from_endpoint, list_new_foundry_agents_from_project, resolve_foundry_project_base, resolve_foundry_project_api_version, build_project_credential, resolve_authority
+from foundry_agent_runtime import list_foundry_agents_from_endpoint, list_new_foundry_agents_from_endpoint, resolve_foundry_project_base, resolve_foundry_project_api_version, build_project_credential, resolve_authority
 from functions_debug import debug_print
 from swagger_wrapper import swagger_route, get_auth_security
 from azure.identity import DefaultAzureCredential, ClientSecretCredential, get_bearer_token_provider
@@ -788,14 +788,27 @@ def register_route_backend_models(app):
         foundry_settings = build_foundry_settings_from_endpoint(endpoint_cfg)
         try:
             if provider == "new_foundry":
-                agents = list_new_foundry_agents_from_project(endpoint_cfg)
+                agents = list_new_foundry_agents_from_endpoint(foundry_settings, get_settings())
             else:
                 agents = list_foundry_agents_from_endpoint(foundry_settings, get_settings())
         except Exception as exc:
             debug_print(f"[Models] Foundry agent list error: {str(exc)}")
             return jsonify({"error": str(exc)}), 400
 
-        return jsonify({"agents": agents, "provider": provider})
+        connection = endpoint_cfg.get("connection", {}) or {}
+        responses_api_version = ""
+        if provider == "new_foundry":
+            responses_api_version = str(
+                connection.get("openai_api_version")
+                or connection.get("api_version")
+                or ""
+            ).strip()
+
+        return jsonify({
+            "agents": agents,
+            "provider": provider,
+            "responses_api_version": responses_api_version,
+        })
 
 
     @app.route('/api/models/test-model', methods=['POST'])

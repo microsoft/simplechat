@@ -113,6 +113,27 @@ export class AgentModalStepper {
     return 'Local (Semantic Kernel)';
   }
 
+  getCurrentFoundrySettings(agentType = this.currentAgentType) {
+    const otherSettings = this.currentAgent?.other_settings || {};
+    if (this.isNewFoundryType(agentType)) {
+      return otherSettings.new_foundry || {};
+    }
+    if (this.isClassicFoundryType(agentType)) {
+      return otherSettings.azure_ai_foundry || {};
+    }
+    return {};
+  }
+
+  shouldPreserveCurrentFoundrySelection(endpointId) {
+    if (!endpointId || !this.currentAgent || !this.isAnyFoundryType()) {
+      return false;
+    }
+
+    const currentFoundrySettings = this.getCurrentFoundrySettings();
+    const currentEndpointId = this.currentAgent.model_endpoint_id || currentFoundrySettings.endpoint_id || '';
+    return currentEndpointId === endpointId;
+  }
+
   setupNameGeneration() {
     const displayNameInput = document.getElementById('agent-display-name');
     const generatedNameInput = document.getElementById('agent-name');
@@ -593,6 +614,9 @@ export class AgentModalStepper {
     const endpointIdInput = document.getElementById('agent-model-endpoint-id');
     const providerInput = document.getElementById('agent-model-provider');
     const statusEl = document.getElementById('agent-foundry-fetch-status');
+    const applicationIdInput = document.getElementById('agent-new-foundry-application-id');
+    const applicationVersionInput = document.getElementById('agent-new-foundry-application-version');
+    const applicationNameInput = document.getElementById('agent-new-foundry-application-name');
 
     if (!endpointSelect) {
       return;
@@ -604,6 +628,8 @@ export class AgentModalStepper {
 
     const selected = this.foundryEndpoints.find(endpoint => endpoint.id === endpointId);
     if (selected) {
+      const currentFoundrySettings = this.getCurrentFoundrySettings();
+      const preserveCurrentSelection = this.shouldPreserveCurrentFoundrySelection(endpointId);
       if (endpointInput) {
         endpointInput.value = selected.connection?.endpoint || '';
       }
@@ -615,11 +641,24 @@ export class AgentModalStepper {
       }
       const responsesApiVersionInput = document.getElementById('agent-new-foundry-responses-api-version');
       if (responsesApiVersionInput) {
-        responsesApiVersionInput.value = selected.connection?.openai_api_version || selected.connection?.api_version || '2025-11-15-preview';
+        const endpointResponsesApiVersion = selected.connection?.openai_api_version || selected.connection?.api_version || '';
+        const storedResponsesApiVersion = currentFoundrySettings.responses_api_version || '';
+        responsesApiVersionInput.value = preserveCurrentSelection && storedResponsesApiVersion
+          ? storedResponsesApiVersion
+          : endpointResponsesApiVersion;
       }
       const agentSelect = document.getElementById('agent-foundry-agent-select');
       if (agentSelect) {
         agentSelect.innerHTML = '<option value="">Select an agent...</option>';
+      }
+      if (applicationIdInput) applicationIdInput.value = preserveCurrentSelection ? (currentFoundrySettings.application_id || '') : '';
+      if (applicationVersionInput) applicationVersionInput.value = preserveCurrentSelection ? (currentFoundrySettings.application_version || '') : '';
+      if (applicationNameInput) {
+        if (preserveCurrentSelection) {
+          applicationNameInput.value = currentFoundrySettings.application_name || applicationNameInput.value || '';
+        } else if (!this.currentAgent) {
+          applicationNameInput.value = '';
+        }
       }
       this.foundryAgents = [];
       if (statusEl) {
@@ -657,6 +696,11 @@ export class AgentModalStepper {
         throw new Error(payload.error || 'Failed to fetch Foundry agents');
       }
       this.foundryAgents = Array.isArray(payload.agents) ? payload.agents : [];
+      const responsesApiVersionInput = document.getElementById('agent-new-foundry-responses-api-version');
+      const fetchedResponsesApiVersion = payload.responses_api_version || '';
+      if (this.isNewFoundryType() && responsesApiVersionInput && fetchedResponsesApiVersion) {
+        responsesApiVersionInput.value = fetchedResponsesApiVersion;
+      }
       agentSelect.innerHTML = '<option value="">Select an agent...</option>';
       this.foundryAgents.forEach(agent => {
         const opt = document.createElement('option');
@@ -706,6 +750,7 @@ export class AgentModalStepper {
       const applicationIdInput = document.getElementById('agent-new-foundry-application-id');
       const applicationNameInput = document.getElementById('agent-new-foundry-application-name');
       const applicationVersionInput = document.getElementById('agent-new-foundry-application-version');
+      const responsesApiVersionInput = document.getElementById('agent-new-foundry-responses-api-version');
       if (applicationIdInput) {
         applicationIdInput.value = selected.application_id || selected.id || '';
       }
@@ -714,6 +759,9 @@ export class AgentModalStepper {
       }
       if (applicationVersionInput) {
         applicationVersionInput.value = selected.application_version || '';
+      }
+      if (responsesApiVersionInput && selected.responses_api_version) {
+        responsesApiVersionInput.value = selected.responses_api_version;
       }
     }
 
@@ -1084,16 +1132,14 @@ export class AgentModalStepper {
             }
           } else {
             const responsesApiVersion = document.getElementById('agent-new-foundry-responses-api-version');
-            const applicationId = document.getElementById('agent-new-foundry-application-id');
             const applicationName = document.getElementById('agent-new-foundry-application-name');
             if (!responsesApiVersion || !responsesApiVersion.value.trim()) {
-              this.showError('Responses API version is required for New Foundry.');
-              responsesApiVersion?.focus();
+              this.showError('Select a New Foundry endpoint that provides an OpenAI API version before continuing.');
               return false;
             }
-            if ((!applicationId || !applicationId.value.trim()) && (!applicationName || !applicationName.value.trim())) {
-              this.showError('Provide an application ID or application name for New Foundry.');
-              applicationId?.focus();
+            if (!applicationName || !applicationName.value.trim()) {
+              this.showError('Provide or fetch an application name for New Foundry.');
+              applicationName?.focus();
               return false;
             }
           }

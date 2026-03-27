@@ -5,9 +5,9 @@ import { hideLoadingIndicatorInChatbox, showLoadingIndicatorInChatbox } from './
 import { showToast } from './chat-toast.js';
 import { updateSidebarConversationTitle } from './chat-sidebar-conversations.js';
 import { applyScopeLock } from './chat-documents.js';
-import { handleStreamingThought, startStreamingThoughtPolling, stopThoughtPolling } from './chat-thoughts.js';
+import { beginStreamingThoughtSession, clearStreamingThoughtSession, handleStreamingThought, stopThoughtPolling } from './chat-thoughts.js';
 
-let currentEventSource = null;
+let currentStreamController = null;
 
 function parseSseEventPayload(eventBlock) {
     const dataLines = eventBlock
@@ -23,57 +23,49 @@ function parseSseEventPayload(eventBlock) {
         .join('\n');
 }
 
-export function sendMessageWithStreaming(messageData, tempUserMessageId, currentConversationId, options = {}) {
+function createStreamingPlaceholder(statusLabel = 'Streaming...') {
+    const tempAiMessageId = `temp_ai_${Date.now()}`;
+    appendMessage('AI', `<span class="text-muted"><i class="bi bi-three-dots-vertical"></i> ${statusLabel}</span>`, null, tempAiMessageId);
+    beginStreamingThoughtSession(tempAiMessageId);
+    return tempAiMessageId;
+}
+
+function clearCurrentStreamController(controller) {
+    if (currentStreamController === controller) {
+        currentStreamController = null;
+    }
+}
+
+function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessageId, options = {}) {
     const {
         onDone = null,
         onError = null,
         onFinally = null,
     } = options;
-    
-    // Close any existing connection
-    if (currentEventSource) {
-        currentEventSource.close();
-        currentEventSource = null;
+
+    if (currentStreamController) {
+        currentStreamController.abort('replaced');
     }
-    
-    // Create a unique message ID for the AI response
-    const tempAiMessageId = `temp_ai_${Date.now()}`;
+
+    const abortController = new AbortController();
+    currentStreamController = abortController;
     let accumulatedContent = '';
     let hasStreamedContent = false;
     let streamError = false;
-    let streamErrorMessage = '';
     let streamCompleted = false;
-    
-    // Create placeholder message with streaming indicator
-    appendMessage('AI', '<span class="text-muted"><i class="bi bi-three-dots-vertical"></i> Streaming...</span>', null, tempAiMessageId);
 
-    const thoughtConversationId = messageData?.conversation_id || currentConversationId;
-    startStreamingThoughtPolling(thoughtConversationId);
-    
-    // Create timeout (5 minutes)
-    const streamTimeout = setTimeout(() => {
-        if (currentEventSource) {
-            currentEventSource.close();
-            currentEventSource = null;
-            streamError = true;
-            streamErrorMessage = 'Stream timeout (5 minutes exceeded)';
-            handleStreamError(tempAiMessageId, accumulatedContent, streamErrorMessage);
-        }
-    }, 5 * 60 * 1000); // 5 minutes
-    
-    // Use fetch to POST, then read the streaming response
-    fetch('/api/chat/stream', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        credentials: 'same-origin',
-        body: JSON.stringify(messageData)
-    }).then(response => {
+    requestFactory(abortController.signal).then(response => {
         if (!response.ok) {
+            if (response.status === 404) {
+                throw new Error('No active stream is available for this conversation.');
+            }
             return response.json().then(errData => {
                 throw new Error(errData.error || `HTTP error! status: ${response.status}`);
             });
+        }
+
+        if (!response.body) {
+            throw new Error('Streaming response body is unavailable.');
         }
         
         // Read the streaming response
@@ -83,11 +75,11 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
 
         function processStreamData(data) {
             if (data.error) {
-                clearTimeout(streamTimeout);
                 stopThoughtPolling();
                 streamError = true;
-                streamErrorMessage = data.error;
+                clearStreamingThoughtSession(tempAiMessageId);
                 handleStreamError(tempAiMessageId, data.partial_content || accumulatedContent, data.error);
+                clearCurrentStreamController(abortController);
                 if (typeof onError === 'function') {
                     onError(data.error, data);
                 }
@@ -99,7 +91,7 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
 
             if (data.type === 'thought') {
                 if (!hasStreamedContent && !streamCompleted) {
-                    handleStreamingThought(data);
+                    handleStreamingThought(data, tempAiMessageId);
                 }
                 return false;
             }
@@ -111,9 +103,9 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
             }
 
             if (data.done) {
-                clearTimeout(streamTimeout);
                 stopThoughtPolling();
                 streamCompleted = true;
+                clearStreamingThoughtSession(tempAiMessageId);
 
                 finalizeStreamingMessage(
                     tempAiMessageId,
@@ -129,7 +121,7 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
                     onFinally();
                 }
 
-                currentEventSource = null;
+                clearCurrentStreamController(abortController);
                 return true;
             }
 
@@ -180,13 +172,13 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
         function readStream() {
             reader.read().then(({ done, value }) => {
                 if (done) {
-                    clearTimeout(streamTimeout);
                     stopThoughtPolling();
 
                     sseBuffer += decoder.decode();
                     const processedFinalEvent = processSseBuffer(true);
 
                     if (!processedFinalEvent && !streamCompleted && !streamError) {
+                        clearStreamingThoughtSession(tempAiMessageId);
                         handleStreamError(
                             tempAiMessageId,
                             accumulatedContent,
@@ -213,10 +205,20 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
                 
                 readStream(); // Continue reading
             }).catch(err => {
-                clearTimeout(streamTimeout);
+                if (abortController.signal.aborted) {
+                    clearStreamingThoughtSession(tempAiMessageId);
+                    clearCurrentStreamController(abortController);
+                    if (typeof onFinally === 'function') {
+                        onFinally();
+                    }
+                    return;
+                }
+
                 stopThoughtPolling();
                 console.error('Stream reading error:', err);
+                clearStreamingThoughtSession(tempAiMessageId);
                 handleStreamError(tempAiMessageId, accumulatedContent, err.message);
+                clearCurrentStreamController(abortController);
                 if (typeof onError === 'function') {
                     onError(err.message, err);
                 }
@@ -229,10 +231,20 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
         readStream();
         
     }).catch(error => {
-        clearTimeout(streamTimeout);
+        if (abortController.signal.aborted) {
+            clearStreamingThoughtSession(tempAiMessageId);
+            clearCurrentStreamController(abortController);
+            if (typeof onFinally === 'function') {
+                onFinally();
+            }
+            return;
+        }
+
         stopThoughtPolling();
         console.error('Streaming request error:', error);
         showToast(`Error: ${error.message}`, 'error');
+        clearStreamingThoughtSession(tempAiMessageId);
+        clearCurrentStreamController(abortController);
         
         // Remove placeholder message
         const msgElement = document.querySelector(`[data-message-id="${tempAiMessageId}"]`);
@@ -248,8 +260,57 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
             onFinally();
         }
     });
-    
+
     return true; // Indicates streaming was initiated
+}
+
+export function sendMessageWithStreaming(messageData, tempUserMessageId, currentConversationId, options = {}) {
+    const tempAiMessageId = createStreamingPlaceholder('Streaming...');
+
+    return consumeStreamingResponse(
+        signal => fetch('/api/chat/stream', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify(messageData),
+            signal,
+        }),
+        tempAiMessageId,
+        tempUserMessageId,
+        options,
+    );
+}
+
+export async function reattachStreamingConversation(conversationId) {
+    if (!conversationId) {
+        return false;
+    }
+
+    try {
+        const statusResponse = await fetch(`/api/chat/stream/status/${conversationId}`, {
+            credentials: 'same-origin',
+        });
+        const statusData = await statusResponse.json().catch(() => ({}));
+        if (!statusResponse.ok || !statusData.pending) {
+            return false;
+        }
+
+        const tempAiMessageId = createStreamingPlaceholder('Reconnecting...');
+        return consumeStreamingResponse(
+            signal => fetch(`/api/chat/stream/reattach/${conversationId}`, {
+                method: 'GET',
+                credentials: 'same-origin',
+                signal,
+            }),
+            tempAiMessageId,
+            null,
+        );
+    } catch (error) {
+        console.warn('Failed to reattach streaming conversation:', error);
+        return false;
+    }
 }
 
 function updateStreamingMessage(messageId, content) {
@@ -406,9 +467,9 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData) {
 }
 
 export function cancelStreaming() {
-    if (currentEventSource) {
-        currentEventSource.close();
-        currentEventSource = null;
+    if (currentStreamController) {
+        currentStreamController.abort('cancelled');
+        currentStreamController = null;
         showToast('Streaming cancelled', 'info');
     }
 }

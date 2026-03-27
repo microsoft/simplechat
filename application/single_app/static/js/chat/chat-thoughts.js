@@ -5,6 +5,8 @@ import { escapeHtml } from './chat-utils.js';
 
 let thoughtPollingInterval = null;
 let lastSeenThoughtIndex = -1;
+let activeStreamingThoughtTargetId = null;
+let activeStreamingServerMessageId = null;
 
 // ---------------------------------------------------------------------------
 // Icon map: step_type → Bootstrap Icon class
@@ -69,6 +71,20 @@ export function startStreamingThoughtPolling(conversationId) {
     });
 }
 
+export function beginStreamingThoughtSession(targetMessageId) {
+    activeStreamingThoughtTargetId = targetMessageId || null;
+    activeStreamingServerMessageId = null;
+}
+
+export function clearStreamingThoughtSession(targetMessageId = null) {
+    if (targetMessageId && activeStreamingThoughtTargetId && activeStreamingThoughtTargetId !== targetMessageId) {
+        return;
+    }
+
+    activeStreamingThoughtTargetId = null;
+    activeStreamingServerMessageId = null;
+}
+
 /**
  * Stop the thought polling interval.
  */
@@ -88,15 +104,35 @@ export function stopThoughtPolling() {
  * Handle a streaming thought event received via SSE.
  * Updates the streaming message placeholder with a styled thought indicator.
  * When actual content starts streaming, updateStreamingMessage() will overwrite this.
- * @param {object} thoughtData - { step_index, step_type, content }
+ * @param {object} thoughtData - { message_id, step_index, step_type, content }
+ * @param {string|null} targetMessageId - Temporary DOM message ID for the active stream.
  */
-export function handleStreamingThought(thoughtData) {
-    // Find the streaming message's content area
-    const messageElement = document.querySelector('[data-message-id^="temp_ai_"]');
+export function handleStreamingThought(thoughtData, targetMessageId = null) {
+    if (targetMessageId) {
+        activeStreamingThoughtTargetId = targetMessageId;
+    }
+
+    if (!activeStreamingThoughtTargetId) {
+        return;
+    }
+
+    if (thoughtData.message_id) {
+        if (activeStreamingServerMessageId && activeStreamingServerMessageId !== thoughtData.message_id) {
+            return;
+        }
+
+        activeStreamingServerMessageId = thoughtData.message_id;
+    }
+
+    const messageElement = document.querySelector(`[data-message-id="${activeStreamingThoughtTargetId}"]`);
     if (!messageElement) return;
 
     if (messageElement.dataset.streamingHasContent === 'true') {
         return;
+    }
+
+    if (activeStreamingServerMessageId) {
+        messageElement.dataset.streamingServerMessageId = activeStreamingServerMessageId;
     }
 
     const contentElement = messageElement.querySelector('.message-text');

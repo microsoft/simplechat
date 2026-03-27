@@ -1,8 +1,8 @@
 # test_agent_modal_dual_foundry_modes.py
 """
 UI test for dual Foundry agent modal modes.
-Version: 0.239.154
-Implemented in: 0.239.154
+Version: 0.239.176
+Implemented in: 0.239.176
 
 This test ensures that the agent modal exposes both Foundry modes and that the
 mode-specific form sections toggle correctly in the browser.

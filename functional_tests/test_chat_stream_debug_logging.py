@@ -2,7 +2,7 @@
 # test_chat_stream_debug_logging.py
 """
 Functional test for chat stream debug logging.
-Version: 0.239.143
+Version: 0.239.183
 Implemented in: 0.239.142
 
 This test ensures that the streaming chat route retains unconditional
@@ -25,7 +25,7 @@ def assert_contains(file_path: Path, expected: str) -> None:
         raise AssertionError(f"Expected to find {expected!r} in {file_path}")
 
 
-def test_chat_stream_debug_logging() -> bool:
+def test_chat_stream_debug_logging() -> None:
     print("Testing chat stream debug logging markers...")
 
     assert_contains(ROUTE_FILE, '[Streaming] Incoming /api/chat/stream request | ')
@@ -34,18 +34,17 @@ def test_chat_stream_debug_logging() -> bool:
     assert_contains(ROUTE_FILE, '[Streaming] Cleared plugin invocations for user_id=')
     assert_contains(ROUTE_FILE, '[Streaming] Selected response path | ')
     assert_contains(ROUTE_FILE, '[Streaming][Plugin Callback] Registering callback for key=')
-    assert_contains(ROUTE_FILE, '[Streaming][Plugin Callback] Received invocation ')
     assert_contains(ROUTE_FILE, '[Streaming][Plugin Callback] Deregistered callback after successful stream for key=')
     assert_contains(ROUTE_FILE, '[Streaming] Finalizing stream response | ')
-    assert_contains(CONFIG_FILE, 'VERSION = "0.239.143"')
+    assert_contains(CONFIG_FILE, 'VERSION = "0.239.183"')
 
     print("Chat stream debug logging checks passed!")
-    return True
 
 
 if __name__ == "__main__":
     try:
-        success = test_chat_stream_debug_logging()
+        test_chat_stream_debug_logging()
+        success = True
     except Exception as exc:
         print(f"Test failed: {exc}")
         import traceback

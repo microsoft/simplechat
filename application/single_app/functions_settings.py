@@ -743,7 +743,7 @@ def normalize_model_endpoints(endpoints):
 def is_frontend_visible_model_endpoint_provider(provider):
     """Return whether the provider should be exposed in user-facing endpoint UIs."""
     normalized_provider = (provider or "aoai").lower()
-    return normalized_provider in {"aoai", "aifoundry"}
+    return normalized_provider in {"aoai", "aifoundry", "new_foundry"}
 
 
 def merge_model_endpoint_auth(existing_auth, incoming_auth):

@@ -461,10 +461,14 @@ def resolve_agent_config(agent, settings):
         foundry_settings["endpoint"] = connection.get("endpoint") or foundry_settings.get("endpoint")
         foundry_settings["project_name"] = connection.get("project_name") or foundry_settings.get("project_name")
         if agent_type == "new_foundry":
+            stored_responses_api_version = (
+                foundry_settings.get("responses_api_version")
+                or agent.get("azure_openai_gpt_api_version")
+            )
             foundry_settings["responses_api_version"] = (
-                connection.get("openai_api_version")
+                stored_responses_api_version
+                or connection.get("openai_api_version")
                 or connection.get("api_version")
-                or foundry_settings.get("responses_api_version")
             )
         else:
             foundry_settings["api_version"] = (

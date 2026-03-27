@@ -19,9 +19,10 @@
                         <select class="form-select" id="model-endpoint-provider">
                             <option value="aoai">Azure OpenAI</option>
                             <option value="aifoundry">Foundry (classic)</option>
+                            <option value="new_foundry">New Foundry</option>
                         </select>
                         <div class="form-text">
-                            For APIM, choose the matching provider with API key auth. If Foundry is behind APIM, use Foundry (classic); otherwise use Azure OpenAI.
+                            For APIM, choose the matching provider with API key auth. If using classic Foundry, use Foundry (classic). If using the application-based runtime, use New Foundry.
                         </div>
                     </div>
                     <div class="col-md-6">
@@ -36,7 +37,7 @@
                     <div class="col-md-3" id="model-endpoint-openai-api-version-group">
                         <label for="model-endpoint-openai-api-version" class="form-label">OpenAI API Version</label>
                         <input type="text" class="form-control" id="model-endpoint-openai-api-version" />
-                        <div class="form-text">OpenAI API versions use a dated format (for example, 2024-05-01-preview).</div>
+                        <div class="form-text">OpenAI API versions use a dated format. For New Foundry, this value is used for Responses API calls and is inherited by the agent modal. No default is applied for New Foundry, so enter the supported version for your Foundry project explicitly.</div>
                     </div>
                     <div class="col-md-6" id="model-endpoint-project-group">
                         <label for="model-endpoint-project-name" class="form-label">Foundry Project Name</label>

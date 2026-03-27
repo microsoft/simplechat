@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for new Foundry fetch support.
-Version: 0.239.154
-Implemented in: 0.239.154
+Version: 0.239.180
+Implemented in: 0.239.180
 
 This test ensures that the backend exposes a new_foundry fetch path and that
 the agent modal can fetch and apply New Foundry application metadata.
@@ -34,11 +34,14 @@ def test_new_foundry_fetch_support_present():
     modal_html_content = read_file_text(modal_html_path)
 
     required_snippets = [
-        "from azure.ai.projects import AIProjectClient",
-        "def list_new_foundry_agents_from_project",
+        "list_new_foundry_agents_from_endpoint",
         'if provider == "new_foundry":',
-        'agents = list_new_foundry_agents_from_project(endpoint_cfg)',
+        'agents = list_new_foundry_agents_from_endpoint(foundry_settings, get_settings())',
+        'id="agent-type-new-foundry" value="new_foundry"',
         "foundryFetchBtnLabel.textContent = isNewFoundry ? 'Fetch Applications' : 'Fetch Agents';",
+        "const versionSuffix = agent.application_version ? ` (v${agent.application_version})` : '';",
+        '"responses_api_version": responses_api_version,',
+        "const fetchedResponsesApiVersion = payload.responses_api_version || '';",
         "return normalizedProvider === this.getCurrentFoundryProvider();",
         "applicationIdInput.value = selected.application_id || selected.id || '';",
         'id="agent-foundry-fetch-btn-label"',

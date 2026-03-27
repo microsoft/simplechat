@@ -5,7 +5,7 @@ import asyncio
 import json
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, Iterable, List, Optional
 from urllib.parse import quote
 
@@ -40,6 +40,24 @@ class FoundryAgentInvocationResult:
     model: Optional[str]
     citations: List[Dict[str, Any]]
     metadata: Dict[str, Any]
+
+
+@dataclass
+class FoundryAgentStreamMessage:
+    """Represents a streaming content or metadata event from a Foundry runtime."""
+
+    content: str = ""
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class NewFoundryStreamState:
+    """Tracks new Foundry response state while processing an event stream."""
+
+    text_parts: List[str] = field(default_factory=list)
+    citations: List[Dict[str, Any]] = field(default_factory=list)
+    model: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 class FoundryAgentInvocationError(RuntimeError):
@@ -185,19 +203,23 @@ class AzureAIFoundryNewChatCompletionAgent:
     async def invoke_stream(
         self,
         messages: Iterable[ChatMessageContent],
-    ) -> AsyncIterator[str]:
-        """Yield a single final chunk for stream mode compatibility."""
+    ) -> AsyncIterator[FoundryAgentStreamMessage]:
+        """Yield incremental content for the new Foundry application runtime."""
 
-        result = await execute_new_foundry_agent(
+        async for stream_message in execute_new_foundry_agent_stream(
             foundry_settings=self._new_foundry_settings,
             global_settings=self._global_settings,
             message_history=list(messages),
             metadata={},
-        )
-        self.last_run_citations = result.citations
-        self.last_run_model = result.model
-        if result.message:
-            yield result.message
+        ):
+            if stream_message.metadata:
+                citations = stream_message.metadata.get("citations")
+                if isinstance(citations, list):
+                    self.last_run_citations = citations
+                model_value = stream_message.metadata.get("model")
+                if isinstance(model_value, str) and model_value.strip():
+                    self.last_run_model = model_value.strip()
+            yield stream_message
 
 
 async def execute_foundry_agent(
@@ -321,7 +343,7 @@ async def execute_new_foundry_agent(
         f"{endpoint.rstrip('/')}/applications/{quote(application_name, safe='')}/"
         "protocols/openai/responses"
     )
-    payload = _build_new_foundry_request_payload(message_history, metadata)
+    payload = _build_new_foundry_request_payload(message_history, metadata, stream=False)
     headers = {
         "Authorization": f"Bearer {token.token}",
         "Content-Type": "application/json",
@@ -342,39 +364,136 @@ async def execute_new_foundry_agent(
                 _build_http_error_message("new Foundry response", response, response_payload)
             )
 
-        text = _extract_new_foundry_response_text(response_payload)
-        if not text:
-            raise FoundryAgentInvocationError(
-                "New Foundry application returned no assistant content."
-            )
-
-        citations = _extract_new_foundry_citations(response_payload)
-        model_value = str(response_payload.get("model") or application_name)
-        result_metadata = response_payload.get("metadata") or {}
-        if isinstance(response_payload.get("conversation"), dict):
-            result_metadata = dict(result_metadata)
-            result_metadata["conversation"] = response_payload.get("conversation")
-        if response_payload.get("id"):
-            result_metadata = dict(result_metadata)
-            result_metadata["response_id"] = response_payload.get("id")
+        result = _build_new_foundry_invocation_result(
+            response_payload=response_payload,
+            application_name=application_name,
+        )
 
         log_event(
             "[NewFoundryAgent] Invocation complete",
             extra={
                 "application_name": application_name,
                 "endpoint": endpoint,
-                "model": model_value,
-                "message_length": len(text),
+                "model": result.model,
+                "message_length": len(result.message),
             },
         )
 
-        return FoundryAgentInvocationResult(
-            message=text,
-            model=model_value,
-            citations=citations,
-            metadata=result_metadata,
-        )
+        return result
     finally:
+        await credential.close()
+
+
+async def execute_new_foundry_agent_stream(
+    *,
+    foundry_settings: Dict[str, Any],
+    global_settings: Dict[str, Any],
+    message_history: List[ChatMessageContent],
+    metadata: Dict[str, Any],
+) -> AsyncIterator[FoundryAgentStreamMessage]:
+    """Stream a new Foundry application response through the Responses API."""
+
+    application_name = _resolve_new_foundry_application_name(foundry_settings)
+    endpoint = _resolve_endpoint(foundry_settings, global_settings)
+    responses_api_version = (
+        foundry_settings.get("responses_api_version")
+        or foundry_settings.get("api_version")
+        or global_settings.get("azure_ai_foundry_api_version")
+    )
+    if not responses_api_version:
+        raise FoundryAgentInvocationError(
+            "New Foundry agents require a responses_api_version setting."
+        )
+
+    credential = _build_async_credential(foundry_settings, global_settings)
+    scope = _resolve_foundry_scope(foundry_settings, global_settings)
+    token = await credential.get_token(scope)
+    url = (
+        f"{endpoint.rstrip('/')}/applications/{quote(application_name, safe='')}/"
+        "protocols/openai/responses"
+    )
+    debug_print(f"Invoking new Foundry application '{application_name}' at {endpoint} with streaming to url {url} with api-version {responses_api_version}")
+    payload = _build_new_foundry_request_payload(message_history, metadata, stream=True)
+    headers = {
+        "Authorization": f"Bearer {token.token}",
+        "Content-Type": "application/json",
+    }
+    response: Optional[requests.Response] = None
+    state = NewFoundryStreamState()
+
+    try:
+        response = requests.post(
+            url,
+            params={"api-version": responses_api_version},
+            headers=headers,
+            json=payload,
+            timeout=(30, 90),
+            stream=True,
+        )
+        if response.status_code >= 400:
+            response_payload = _try_parse_json_response(response)
+            raise FoundryAgentInvocationError(
+                _build_http_error_message(
+                    "new Foundry stream",
+                    response,
+                    response_payload or {},
+                )
+            )
+
+        content_type = (response.headers.get("Content-Type") or "").lower()
+        if "text/event-stream" not in content_type:
+            response_payload = _parse_json_response(response)
+            result = _build_new_foundry_invocation_result(
+                response_payload=response_payload,
+                application_name=application_name,
+            )
+            if result.message:
+                yield FoundryAgentStreamMessage(content=result.message)
+            yield FoundryAgentStreamMessage(
+                metadata={
+                    **result.metadata,
+                    "citations": result.citations,
+                    "model": result.model,
+                }
+            )
+            return
+
+        for event_name, event_data in _iter_sse_events(response):
+            if event_data == "[DONE]":
+                break
+
+            event_payload = _parse_sse_json_payload(event_name, event_data)
+            event_type = str(event_payload.get("type") or event_name or "").strip()
+            if not event_type:
+                continue
+
+            if event_type in {"error", "response.error", "response.failed"}:
+                raise FoundryAgentInvocationError(
+                    _extract_new_foundry_event_error(event_payload)
+                )
+
+            delta_text = _extract_new_foundry_stream_delta(event_payload)
+            if delta_text:
+                state.text_parts.append(delta_text)
+                yield FoundryAgentStreamMessage(content=delta_text)
+
+            _update_new_foundry_stream_state(
+                state=state,
+                event_payload=event_payload,
+                application_name=application_name,
+            )
+
+        full_text = "".join(state.text_parts).strip()
+        if not full_text:
+            fallback_text = _extract_new_foundry_stream_text(state)
+            if fallback_text:
+                state.text_parts = [fallback_text]
+                yield FoundryAgentStreamMessage(content=fallback_text)
+
+        yield FoundryAgentStreamMessage(metadata=_build_new_foundry_stream_metadata(state, application_name))
+    finally:
+        if response is not None:
+            response.close()
         await credential.close()
 
 
@@ -572,6 +691,7 @@ def _extract_citations(message: ChatMessageContent) -> List[Dict[str, Any]]:
 def _build_new_foundry_request_payload(
     message_history: List[ChatMessageContent],
     metadata: Dict[str, Any],
+    stream: bool = False,
 ) -> Dict[str, Any]:
     input_items: List[Dict[str, Any]] = []
     for message in message_history:
@@ -604,7 +724,7 @@ def _build_new_foundry_request_payload(
 
     payload: Dict[str, Any] = {
         "input": input_items,
-        "stream": False,
+        "stream": stream,
     }
     normalized_metadata = {
         key: str(value)
@@ -626,6 +746,14 @@ def _parse_json_response(response: requests.Response) -> Dict[str, Any]:
     if not isinstance(payload, dict):
         raise FoundryAgentInvocationError("Foundry endpoint returned an unexpected payload.")
     return payload
+
+
+def _try_parse_json_response(response: requests.Response) -> Optional[Dict[str, Any]]:
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def _build_http_error_message(
@@ -665,6 +793,50 @@ def _extract_new_foundry_response_text(payload: Dict[str, Any]) -> str:
     return ""
 
 
+def _extract_new_foundry_response_metadata(payload: Dict[str, Any]) -> Dict[str, Any]:
+    result_metadata = payload.get("metadata") or {}
+    if not isinstance(result_metadata, dict):
+        result_metadata = {}
+    else:
+        result_metadata = dict(result_metadata)
+
+    usage = _normalize_usage_payload(payload.get("usage"))
+    if usage:
+        result_metadata["usage"] = usage
+
+    conversation = payload.get("conversation")
+    if isinstance(conversation, dict):
+        result_metadata["conversation"] = conversation
+
+    response_id = payload.get("id")
+    if response_id:
+        result_metadata["response_id"] = response_id
+
+    return result_metadata
+
+
+def _build_new_foundry_invocation_result(
+    *,
+    response_payload: Dict[str, Any],
+    application_name: str,
+) -> FoundryAgentInvocationResult:
+    text = _extract_new_foundry_response_text(response_payload)
+    if not text:
+        raise FoundryAgentInvocationError(
+            "New Foundry application returned no assistant content."
+        )
+
+    citations = _extract_new_foundry_citations(response_payload)
+    model_value = str(response_payload.get("model") or application_name)
+    result_metadata = _extract_new_foundry_response_metadata(response_payload)
+    return FoundryAgentInvocationResult(
+        message=text,
+        model=model_value,
+        citations=citations,
+        metadata=result_metadata,
+    )
+
+
 def _extract_new_foundry_citations(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     citations: List[Dict[str, Any]] = []
     for item in payload.get("output") or []:
@@ -689,6 +861,204 @@ def _extract_new_foundry_citations(payload: Dict[str, Any]) -> List[Dict[str, An
                         }
                     )
     return citations
+
+
+def _extract_nested_version_value(version_source: Any) -> str:
+    if isinstance(version_source, dict):
+        latest = version_source.get("latest")
+        if isinstance(latest, dict):
+            latest_version = str(latest.get("version") or "").strip()
+            if latest_version:
+                return latest_version
+
+        direct_version = str(version_source.get("version") or "").strip()
+        if direct_version:
+            return direct_version
+
+        items = version_source.get("items") or version_source.get("data") or version_source.get("value")
+        if isinstance(items, list) and items:
+            for item in items:
+                item_version = _extract_nested_version_value(item)
+                if item_version:
+                    return item_version
+    elif isinstance(version_source, list):
+        for item in version_source:
+            item_version = _extract_nested_version_value(item)
+            if item_version:
+                return item_version
+    return ""
+
+
+def _extract_new_foundry_api_version(item: Dict[str, Any], properties: Dict[str, Any]) -> str:
+    return str(
+        item.get("responses_api_version")
+        or item.get("response_api_version")
+        or item.get("openai_api_version")
+        or item.get("api_version")
+        or properties.get("responses_api_version")
+        or properties.get("response_api_version")
+        or properties.get("openai_api_version")
+        or properties.get("api_version")
+        or ""
+    ).strip()
+
+
+def _normalize_usage_payload(usage_payload: Any) -> Optional[Dict[str, int]]:
+    if isinstance(usage_payload, dict):
+        prompt_tokens = int(usage_payload.get("input_tokens") or usage_payload.get("prompt_tokens") or 0)
+        completion_tokens = int(usage_payload.get("output_tokens") or usage_payload.get("completion_tokens") or 0)
+        total_tokens = int(usage_payload.get("total_tokens") or (prompt_tokens + completion_tokens))
+        return {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+        }
+    return None
+
+
+def _iter_sse_events(response: requests.Response):
+    event_name: Optional[str] = None
+    data_lines: List[str] = []
+
+    for raw_line in response.iter_lines(decode_unicode=True):
+        line = raw_line if isinstance(raw_line, str) else ""
+        if line == "":
+            if data_lines:
+                yield event_name, "\n".join(data_lines)
+            event_name = None
+            data_lines = []
+            continue
+        if line.startswith(":"):
+            continue
+        if line.startswith("event:"):
+            event_name = line[6:].strip()
+            continue
+        if line.startswith("data:"):
+            data_lines.append(line[5:].lstrip())
+
+    if data_lines:
+        yield event_name, "\n".join(data_lines)
+
+
+def _parse_sse_json_payload(event_name: Optional[str], event_data: str) -> Dict[str, Any]:
+    try:
+        payload = json.loads(event_data)
+    except ValueError as exc:
+        raise FoundryAgentInvocationError(
+            f"New Foundry stream returned invalid JSON payload: {event_data[:500]}"
+        ) from exc
+
+    if not isinstance(payload, dict):
+        raise FoundryAgentInvocationError("New Foundry stream returned an unexpected payload.")
+    if event_name and not payload.get("type"):
+        payload["type"] = event_name
+    return payload
+
+
+def _extract_new_foundry_event_error(event_payload: Dict[str, Any]) -> str:
+    error_payload = event_payload.get("error")
+    if isinstance(error_payload, dict):
+        message = error_payload.get("message") or json.dumps(error_payload)
+        return f"New Foundry stream failed: {message}"
+    if isinstance(error_payload, str) and error_payload.strip():
+        return f"New Foundry stream failed: {error_payload.strip()}"
+    return f"New Foundry stream failed: {json.dumps(event_payload, default=str)[:500]}"
+
+
+def _extract_new_foundry_stream_delta(event_payload: Dict[str, Any]) -> str:
+    event_type = str(event_payload.get("type") or "").strip()
+    if event_type != "response.output_text.delta":
+        return ""
+    delta_text = event_payload.get("delta")
+    return delta_text if isinstance(delta_text, str) else ""
+
+
+def _extract_response_payload_from_stream_event(event_payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    response_payload = event_payload.get("response")
+    if isinstance(response_payload, dict):
+        return response_payload
+    if isinstance(event_payload.get("output"), list):
+        return event_payload
+    return None
+
+
+def _extract_new_foundry_annotation(annotation: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(annotation, dict):
+        return None
+    url = annotation.get("url") or annotation.get("uri")
+    title = annotation.get("title") or annotation.get("name")
+    quote_text = annotation.get("quote") or annotation.get("text")
+    if not (url or title or quote_text):
+        return None
+    return {
+        "url": url,
+        "title": title,
+        "quote": quote_text,
+        "citation_type": annotation.get("type") or annotation.get("annotation_type"),
+    }
+
+
+def _merge_citations(existing: List[Dict[str, Any]], incoming: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    merged = list(existing)
+    seen = {json.dumps(item, sort_keys=True, default=str) for item in existing}
+    for item in incoming:
+        key = json.dumps(item, sort_keys=True, default=str)
+        if key in seen:
+            continue
+        merged.append(item)
+        seen.add(key)
+    return merged
+
+
+def _update_new_foundry_stream_state(
+    *,
+    state: NewFoundryStreamState,
+    event_payload: Dict[str, Any],
+    application_name: str,
+) -> None:
+    response_payload = _extract_response_payload_from_stream_event(event_payload)
+    if response_payload:
+        state.model = str(response_payload.get("model") or state.model or application_name)
+        state.metadata.update(_extract_new_foundry_response_metadata(response_payload))
+        citations = _extract_new_foundry_citations(response_payload)
+        if citations:
+            state.citations = _merge_citations(state.citations, citations)
+        fallback_text = _extract_new_foundry_response_text(response_payload)
+        if fallback_text and not state.text_parts:
+            state.text_parts = [fallback_text]
+        return
+
+    event_type = str(event_payload.get("type") or "").strip()
+    if event_type == "response.output_text.annotation.added":
+        annotation = _extract_new_foundry_annotation(event_payload.get("annotation"))
+        if annotation:
+            state.citations = _merge_citations(state.citations, [annotation])
+        return
+
+    if event_type in {"response.output_item.added", "response.output_item.done"}:
+        item = event_payload.get("item")
+        if isinstance(item, dict):
+            item_citations = _extract_new_foundry_citations({"output": [item]})
+            if item_citations:
+                state.citations = _merge_citations(state.citations, item_citations)
+
+
+def _extract_new_foundry_stream_text(state: NewFoundryStreamState) -> str:
+    text = "".join(state.text_parts).strip()
+    if text:
+        return text
+    metadata_text = state.metadata.get("output_text")
+    return metadata_text.strip() if isinstance(metadata_text, str) else ""
+
+
+def _build_new_foundry_stream_metadata(
+    state: NewFoundryStreamState,
+    application_name: str,
+) -> Dict[str, Any]:
+    metadata = dict(state.metadata)
+    metadata["citations"] = state.citations
+    metadata["model"] = state.model or application_name
+    return metadata
 
 
 async def _list_foundry_agents_async(
@@ -809,15 +1179,6 @@ async def _list_new_foundry_agents_async(
                 continue
 
             properties = item.get("properties") if isinstance(item.get("properties"), dict) else {}
-            name = str(
-                item.get("name")
-                or item.get("agent_name")
-                or item.get("agentName")
-                or properties.get("name")
-                or properties.get("agent_name")
-                or properties.get("agentName")
-                or ""
-            ).strip()
             version = str(
                 item.get("version")
                 or item.get("latest_version")
@@ -829,6 +1190,17 @@ async def _list_new_foundry_agents_async(
                 or properties.get("latestVersion")
                 or properties.get("agent_version")
                 or properties.get("agentVersion")
+                or _extract_nested_version_value(item.get("versions"))
+                or _extract_nested_version_value(properties.get("versions"))
+                or ""
+            ).strip()
+            name = str(
+                item.get("name")
+                or item.get("agent_name")
+                or item.get("agentName")
+                or properties.get("name")
+                or properties.get("agent_name")
+                or properties.get("agentName")
                 or ""
             ).strip()
             if not name:
@@ -847,6 +1219,7 @@ async def _list_new_foundry_agents_async(
                 or properties.get("description")
                 or ""
             ).strip()
+            responses_api_version = _extract_new_foundry_api_version(item, properties)
 
             normalized.append(
                 {
@@ -857,6 +1230,7 @@ async def _list_new_foundry_agents_async(
                     "application_id": application_id,
                     "application_name": name,
                     "application_version": version,
+                    "responses_api_version": responses_api_version,
                 }
             )
 
@@ -917,56 +1291,21 @@ def build_project_credential(auth_settings):
     return SyncDefaultAzureCredential(managed_identity_client_id=managed_identity_client_id)
 
 def list_new_foundry_agents_from_project(endpoint_cfg):
-    try:
-        from azure.ai.projects import AIProjectClient
-    except ImportError as exc:
-        raise ImportError(
-            "azure-ai-projects is required for new Foundry application discovery."
-        ) from exc
-
     connection = endpoint_cfg.get("connection", {}) or {}
     auth = endpoint_cfg.get("auth", {}) or {}
-    project_endpoint = resolve_foundry_project_base(
-        connection.get("endpoint"),
-        connection.get("project_name"),
-    )
-    api_version = resolve_foundry_project_api_version(
-        connection.get("project_api_version") or connection.get("api_version") or "v1"
-    )
-    credential = build_project_credential(auth)
-    try:
-        with AIProjectClient(
-            endpoint=project_endpoint,
-            credential=credential,
-            api_version=api_version,
-        ) as project_client:
-            items = list(project_client.agents.list_agents())
-    finally:
-        credential.close()
-
-    normalized = []
-    for item in items:
-        item_id = getattr(item, "id", None) or getattr(item, "agent_id", None)
-        name = getattr(item, "name", None) or getattr(item, "agent_name", None)
-        display_name = getattr(item, "display_name", None) or name
-        description = getattr(item, "description", None) or ""
-        version = str(
-            getattr(item, "version", None)
-            or getattr(item, "agent_version", None)
-            or ""
-        ).strip()
-        if not name:
-            continue
-        application_id = f"{name}:{version}" if version else (item_id or name)
-        normalized.append(
-            {
-                "id": application_id,
-                "name": name,
-                "display_name": display_name,
-                "description": description,
-                "application_id": application_id,
-                "application_name": name,
-                "application_version": version,
-            }
-        )
-    return normalized
+    foundry_settings = {
+        "endpoint": connection.get("endpoint"),
+        "project_name": connection.get("project_name") or "",
+        "activity_api_version": resolve_foundry_project_api_version(
+            connection.get("project_api_version") or connection.get("api_version") or "v1"
+        ),
+        "authentication_type": auth.get("type") or "managed_identity",
+        "managed_identity_type": auth.get("managed_identity_type") or "system_assigned",
+        "managed_identity_client_id": auth.get("managed_identity_client_id") or "",
+        "tenant_id": auth.get("tenant_id") or "",
+        "client_id": auth.get("client_id") or "",
+        "client_secret": auth.get("client_secret") or "",
+        "cloud": auth.get("management_cloud") or "",
+        "authority": auth.get("custom_authority") or "",
+    }
+    return list_new_foundry_agents_from_endpoint(foundry_settings, {})
