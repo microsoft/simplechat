@@ -16,6 +16,7 @@ from foundry_agent_runtime import FoundryAgentInvocationError, execute_foundry_a
 import builtins
 import asyncio, types
 import ast
+import inspect
 import json
 import os
 import app_settings_cache
@@ -2285,19 +2286,32 @@ def register_route_backend_chats(app):
         """Run SSE generation in background execution so it survives disconnects."""
         stream_bridge = BackgroundStreamBridge()
 
+        def publish_background_event(event_text):
+            if event_text is None:
+                return False
+
+            if stream_session:
+                stream_session.publish(event_text)
+
+            return stream_bridge.push(event_text)
+
         @copy_current_request_context
         def stream_worker():
             try:
-                for event in event_generator_factory():
-                    if stream_session:
-                        stream_session.publish(event)
-                    stream_bridge.push(event)
+                generator_signature = inspect.signature(event_generator_factory)
+                if 'publish_background_event' in generator_signature.parameters:
+                    event_iterator = event_generator_factory(
+                        publish_background_event=publish_background_event
+                    )
+                else:
+                    event_iterator = event_generator_factory()
+
+                for event in event_iterator:
+                    publish_background_event(event)
             except Exception as e:
                 debug_print(f"[STREAM BACKGROUND] Worker error: {e}")
                 error_event = f"data: {json.dumps({'error': f'Internal server error: {str(e)}'})}\n\n"
-                if stream_session:
-                    stream_session.publish(error_event)
-                stream_bridge.push(error_event)
+                publish_background_event(error_event)
             finally:
                 if stream_session:
                     stream_session.close()
@@ -5409,7 +5423,7 @@ def register_route_backend_chats(app):
             debug_print("[Streaming] Routing request through compatibility bridge")
             return build_background_stream_response(generate_compatibility_response, stream_session=stream_session)
         
-        def generate():
+        def generate(publish_background_event=None):
             try:
                 # Import debug_print for use in generator
                 from functions_debug import debug_print
@@ -5883,10 +5897,30 @@ def register_route_backend_chats(app):
                     user_id=user_id
                 )
 
+                def serialize_thought_event(step_type, content, step_index, message_id=None):
+                    return f"data: {json.dumps({'type': 'thought', 'message_id': message_id or assistant_message_id, 'step_index': step_index, 'step_type': step_type, 'content': content})}\n\n"
+
                 def emit_thought(step_type, content, detail=None):
                     """Add a thought to Cosmos and return an SSE event string."""
                     thought_tracker.add_thought(step_type, content, detail)
-                    return f"data: {json.dumps({'type': 'thought', 'message_id': assistant_message_id, 'step_index': thought_tracker.current_index - 1, 'step_type': step_type, 'content': content})}\n\n"
+                    return serialize_thought_event(step_type, content, thought_tracker.current_index - 1)
+
+                def publish_live_plugin_thought(thought_payload):
+                    if not callable(publish_background_event):
+                        return
+
+                    step_index = thought_payload.get('step_index')
+                    if step_index is None:
+                        return
+
+                    publish_background_event(
+                        serialize_thought_event(
+                            thought_payload.get('step_type', 'agent_tool_call'),
+                            thought_payload.get('content', ''),
+                            step_index,
+                            message_id=thought_payload.get('message_id') or assistant_message_id,
+                        )
+                    )
 
                 # Content Safety check (matching non-streaming path)
                 blocked = False
@@ -6633,7 +6667,8 @@ def register_route_backend_chats(app):
                             thought_tracker,
                             user_id,
                             conversation_id,
-                            actor_label='Agent'
+                            actor_label='Agent',
+                            live_thought_callback=publish_live_plugin_thought,
                         )
                         debug_print(
                             f"[Streaming][Plugin Callback] Registering callback for key={callback_key}"
@@ -6717,12 +6752,7 @@ def register_route_backend_chats(app):
                             f"[Streaming][Plugin Callback] Deregistered callback after successful stream for key={callback_key}"
                         )
 
-                        # Emit SSE-only events for streaming UI (Cosmos writes already done by callback)
                         agent_plugin_invocations = plugin_logger_cb.get_invocations_for_conversation(user_id, conversation_id)
-                        for inv in agent_plugin_invocations:
-                            thought_payload = format_plugin_invocation_thought(inv, actor_label='Agent')
-                            yield f"data: {json.dumps({'type': 'thought', 'message_id': assistant_message_id, 'step_index': thought_tracker.current_index, 'step_type': thought_payload['step_type'], 'content': thought_payload['content']})}\n\n"
-                            thought_tracker.current_index += 1
 
                         # Try to capture token usage from stream metadata
                         if stream_usage:

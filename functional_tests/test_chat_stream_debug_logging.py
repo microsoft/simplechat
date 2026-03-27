@@ -2,7 +2,7 @@
 # test_chat_stream_debug_logging.py
 """
 Functional test for chat stream debug logging.
-Version: 0.239.183
+Version: 0.239.185
 Implemented in: 0.239.142
 
 This test ensures that the streaming chat route retains unconditional
@@ -36,7 +36,7 @@ def test_chat_stream_debug_logging() -> None:
     assert_contains(ROUTE_FILE, '[Streaming][Plugin Callback] Registering callback for key=')
     assert_contains(ROUTE_FILE, '[Streaming][Plugin Callback] Deregistered callback after successful stream for key=')
     assert_contains(ROUTE_FILE, '[Streaming] Finalizing stream response | ')
-    assert_contains(CONFIG_FILE, 'VERSION = "0.239.183"')
+    assert_contains(CONFIG_FILE, 'VERSION = "0.239.185"')
 
     print("Chat stream debug logging checks passed!")
 

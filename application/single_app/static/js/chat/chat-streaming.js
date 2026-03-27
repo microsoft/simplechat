@@ -5,7 +5,7 @@ import { hideLoadingIndicatorInChatbox, showLoadingIndicatorInChatbox } from './
 import { showToast } from './chat-toast.js';
 import { updateSidebarConversationTitle } from './chat-sidebar-conversations.js';
 import { applyScopeLock } from './chat-documents.js';
-import { beginStreamingThoughtSession, clearStreamingThoughtSession, handleStreamingThought, stopThoughtPolling } from './chat-thoughts.js';
+import { beginStreamingThoughtSession, clearStreamingThoughtSession, handleStreamingThought, markStreamingThoughtContentStarted, stopThoughtPolling } from './chat-thoughts.js';
 
 let currentStreamController = null;
 
@@ -24,7 +24,7 @@ function parseSseEventPayload(eventBlock) {
 }
 
 function createStreamingPlaceholder(statusLabel = 'Streaming...') {
-    const tempAiMessageId = `temp_ai_${Date.now()}`;
+    const tempAiMessageId = `temp_ai_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
     appendMessage('AI', `<span class="text-muted"><i class="bi bi-three-dots-vertical"></i> ${statusLabel}</span>`, null, tempAiMessageId);
     beginStreamingThoughtSession(tempAiMessageId);
     return tempAiMessageId;
@@ -317,7 +317,7 @@ function updateStreamingMessage(messageId, content) {
     const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
     if (!messageElement) return;
 
-    messageElement.dataset.streamingHasContent = 'true';
+    markStreamingThoughtContentStarted(messageId);
     
     const contentElement = messageElement.querySelector('.message-text');
     if (contentElement) {

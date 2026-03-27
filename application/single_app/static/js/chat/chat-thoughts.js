@@ -5,6 +5,7 @@ import { escapeHtml } from './chat-utils.js';
 
 let thoughtPollingInterval = null;
 let lastSeenThoughtIndex = -1;
+let lastSeenThoughtMessageId = null;
 let activeStreamingThoughtTargetId = null;
 let activeStreamingServerMessageId = null;
 
@@ -23,6 +24,40 @@ function getThoughtIcon(stepType) {
     return iconMap[stepType] || 'bi-stars';
 }
 
+function buildPendingThoughtsUrl(conversationId, messageId = null) {
+    const queryParams = new URLSearchParams();
+
+    if (messageId) {
+        queryParams.set('message_id', messageId);
+    }
+
+    const queryString = queryParams.toString();
+    if (!queryString) {
+        return `/api/conversations/${conversationId}/thoughts/pending`;
+    }
+
+    return `/api/conversations/${conversationId}/thoughts/pending?${queryString}`;
+}
+
+function getStreamingMessageElement(messageId) {
+    if (!messageId) {
+        return null;
+    }
+
+    return document.querySelector(`[data-message-id="${messageId}"]`);
+}
+
+function resetStreamingPlaceholderState(messageElement) {
+    if (!messageElement) {
+        return;
+    }
+
+    delete messageElement.dataset.streamingServerMessageId;
+    delete messageElement.dataset.streamingHasContent;
+    delete messageElement.dataset.streamingThoughtIndex;
+    delete messageElement.dataset.streamingThoughtSignature;
+}
+
 // ---------------------------------------------------------------------------
 // Polling (non-streaming mode)
 // ---------------------------------------------------------------------------
@@ -31,22 +66,31 @@ function getThoughtIcon(stepType) {
  * Start polling for pending thoughts while waiting for a non-streaming response.
  * @param {string} conversationId - The current conversation ID.
  */
-function startThoughtPollingWithHandler(conversationId, thoughtHandler) {
+function startThoughtPollingWithHandler(conversationId, thoughtHandler, messageId = null) {
     if (!conversationId) return;
     if (!window.appSettings?.enable_thoughts) return;
 
     stopThoughtPolling(); // clear any previous interval
     lastSeenThoughtIndex = -1;
+    lastSeenThoughtMessageId = messageId || null;
 
     thoughtPollingInterval = setInterval(() => {
-        fetch(`/api/conversations/${conversationId}/thoughts/pending`, {
+        fetch(buildPendingThoughtsUrl(conversationId, messageId), {
             credentials: 'same-origin'
         })
             .then(r => r.json())
             .then(data => {
                 if (data.thoughts && data.thoughts.length > 0) {
                     const latest = data.thoughts[data.thoughts.length - 1];
-                    if (latest.step_index > lastSeenThoughtIndex) {
+                    const latestStepIndex = Number(latest.step_index);
+                    const latestMessageId = latest.message_id || messageId || null;
+
+                    if (latestMessageId && lastSeenThoughtMessageId && latestMessageId !== lastSeenThoughtMessageId) {
+                        lastSeenThoughtIndex = -1;
+                    }
+
+                    if (latestMessageId !== lastSeenThoughtMessageId || !Number.isFinite(latestStepIndex) || latestStepIndex > lastSeenThoughtIndex) {
+                        lastSeenThoughtMessageId = latestMessageId;
                         lastSeenThoughtIndex = latest.step_index;
                         thoughtHandler(latest);
                     }
@@ -57,23 +101,25 @@ function startThoughtPollingWithHandler(conversationId, thoughtHandler) {
 }
 
 
-export function startThoughtPolling(conversationId) {
+export function startThoughtPolling(conversationId, messageId = null) {
     startThoughtPollingWithHandler(conversationId, latest => {
         const icon = getThoughtIcon(latest.step_type);
         updateLoadingIndicatorText(latest.content, icon);
-    });
+    }, messageId);
 }
 
 
-export function startStreamingThoughtPolling(conversationId) {
+export function startStreamingThoughtPolling(conversationId, messageId = null) {
     startThoughtPollingWithHandler(conversationId, latest => {
         handleStreamingThought(latest);
-    });
+    }, messageId);
 }
 
 export function beginStreamingThoughtSession(targetMessageId) {
     activeStreamingThoughtTargetId = targetMessageId || null;
     activeStreamingServerMessageId = null;
+
+    resetStreamingPlaceholderState(getStreamingMessageElement(activeStreamingThoughtTargetId));
 }
 
 export function clearStreamingThoughtSession(targetMessageId = null) {
@@ -81,8 +127,22 @@ export function clearStreamingThoughtSession(targetMessageId = null) {
         return;
     }
 
+    const messageIdToReset = targetMessageId || activeStreamingThoughtTargetId;
+    resetStreamingPlaceholderState(getStreamingMessageElement(messageIdToReset));
+
     activeStreamingThoughtTargetId = null;
     activeStreamingServerMessageId = null;
+}
+
+export function markStreamingThoughtContentStarted(targetMessageId) {
+    const messageElement = getStreamingMessageElement(targetMessageId);
+    if (!messageElement) {
+        return;
+    }
+
+    messageElement.dataset.streamingHasContent = 'true';
+    delete messageElement.dataset.streamingThoughtIndex;
+    delete messageElement.dataset.streamingThoughtSignature;
 }
 
 /**
@@ -94,6 +154,7 @@ export function stopThoughtPolling() {
         thoughtPollingInterval = null;
     }
     lastSeenThoughtIndex = -1;
+    lastSeenThoughtMessageId = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -108,8 +169,8 @@ export function stopThoughtPolling() {
  * @param {string|null} targetMessageId - Temporary DOM message ID for the active stream.
  */
 export function handleStreamingThought(thoughtData, targetMessageId = null) {
-    if (targetMessageId) {
-        activeStreamingThoughtTargetId = targetMessageId;
+    if (targetMessageId && targetMessageId !== activeStreamingThoughtTargetId) {
+        beginStreamingThoughtSession(targetMessageId);
     }
 
     if (!activeStreamingThoughtTargetId) {
@@ -124,16 +185,44 @@ export function handleStreamingThought(thoughtData, targetMessageId = null) {
         activeStreamingServerMessageId = thoughtData.message_id;
     }
 
-    const messageElement = document.querySelector(`[data-message-id="${activeStreamingThoughtTargetId}"]`);
+    const messageElement = getStreamingMessageElement(activeStreamingThoughtTargetId);
     if (!messageElement) return;
 
     if (messageElement.dataset.streamingHasContent === 'true') {
         return;
     }
 
+    const thoughtStepIndex = Number(thoughtData.step_index);
+    const lastRenderedStepIndex = Number(messageElement.dataset.streamingThoughtIndex ?? -1);
+    const thoughtSignature = [
+        thoughtData.message_id || '',
+        Number.isFinite(thoughtStepIndex) ? thoughtStepIndex : '',
+        thoughtData.step_type || '',
+        thoughtData.content || ''
+    ].join('::');
+
+    if (thoughtData.message_id && messageElement.dataset.streamingServerMessageId && messageElement.dataset.streamingServerMessageId !== thoughtData.message_id) {
+        return;
+    }
+
+    if (Number.isFinite(thoughtStepIndex) && thoughtStepIndex < lastRenderedStepIndex) {
+        return;
+    }
+
+    if (messageElement.dataset.streamingThoughtSignature === thoughtSignature) {
+        return;
+    }
+
     if (activeStreamingServerMessageId) {
         messageElement.dataset.streamingServerMessageId = activeStreamingServerMessageId;
     }
+
+    if (Number.isFinite(thoughtStepIndex)) {
+        messageElement.dataset.streamingThoughtIndex = String(thoughtStepIndex);
+    } else {
+        delete messageElement.dataset.streamingThoughtIndex;
+    }
+    messageElement.dataset.streamingThoughtSignature = thoughtSignature;
 
     const contentElement = messageElement.querySelector('.message-text');
     if (!contentElement) return;

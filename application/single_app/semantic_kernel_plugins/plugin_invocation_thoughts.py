@@ -161,25 +161,37 @@ def format_plugin_invocation_thought(invocation, actor_label='Agent'):
     }
 
 
-def register_plugin_invocation_thought_callback(plugin_logger, thought_tracker, user_id, conversation_id, actor_label='Agent'):
+def register_plugin_invocation_thought_callback(
+    plugin_logger,
+    thought_tracker,
+    user_id,
+    conversation_id,
+    actor_label='Agent',
+    live_thought_callback=None,
+):
     """Register a logger callback that writes plugin invocation thoughts."""
     callback_key = f"{user_id}:{conversation_id}"
 
-    def on_plugin_invocation_start(invocation_start):
-        thought_payload = format_plugin_invocation_start_thought(invocation_start)
+    def add_and_publish_live_thought(thought_payload):
         thought_tracker.add_thought(
             thought_payload['step_type'],
             thought_payload['content'],
             detail=thought_payload['detail']
         )
 
+        if callable(live_thought_callback):
+            live_payload = dict(thought_payload)
+            live_payload['message_id'] = getattr(thought_tracker, 'message_id', None)
+            live_payload['step_index'] = thought_tracker.current_index - 1
+            live_thought_callback(live_payload)
+
+    def on_plugin_invocation_start(invocation_start):
+        thought_payload = format_plugin_invocation_start_thought(invocation_start)
+        add_and_publish_live_thought(thought_payload)
+
     def on_plugin_invocation(invocation):
         thought_payload = format_plugin_invocation_thought(invocation, actor_label=actor_label)
-        thought_tracker.add_thought(
-            thought_payload['step_type'],
-            thought_payload['content'],
-            detail=thought_payload['detail']
-        )
+        add_and_publish_live_thought(thought_payload)
 
     plugin_logger.register_start_callback(callback_key, on_plugin_invocation_start)
     plugin_logger.register_callback(callback_key, on_plugin_invocation)

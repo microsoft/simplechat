@@ -2,8 +2,8 @@
 
 import uuid
 import time
-from datetime import datetime, timezone
-from config import cosmos_thoughts_container, cosmos_archived_thoughts_container, cosmos_messages_container
+from datetime import datetime, timedelta, timezone
+from config import cosmos_thoughts_container, cosmos_archived_thoughts_container
 from functions_appinsights import log_event
 from functions_settings import get_settings
 
@@ -136,27 +136,33 @@ def get_thoughts_for_message(conversation_id, message_id, user_id):
         return []
 
 
-def get_pending_thoughts(conversation_id, user_id):
+def get_pending_thoughts(conversation_id, user_id, message_id=None):
     """Return the latest thoughts for a conversation that are still in-progress.
 
     Used by the polling endpoint.  Retrieves thoughts created within the last
-    5 minutes for the conversation, grouped by the most recent message_id.
+    5 minutes for the conversation. When a message_id is provided, only
+    thoughts for that assistant message are returned.
     """
     try:
-        five_minutes_ago = datetime.now(timezone.utc)
-        from datetime import timedelta
-        five_minutes_ago = (five_minutes_ago - timedelta(minutes=5)).isoformat()
+        five_minutes_ago = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
 
-        query = (
-            "SELECT * FROM c "
-            "WHERE c.conversation_id = @conv_id "
-            "AND c.timestamp >= @since "
-            "ORDER BY c.timestamp DESC"
-        )
+        query_parts = [
+            "SELECT * FROM c ",
+            "WHERE c.conversation_id = @conv_id ",
+            "AND c.timestamp >= @since ",
+        ]
         params = [
             {"name": "@conv_id", "value": conversation_id},
             {"name": "@since", "value": five_minutes_ago},
         ]
+
+        if message_id:
+            query_parts.append("AND c.message_id = @msg_id ")
+            params.append({"name": "@msg_id", "value": message_id})
+
+        query_parts.append("ORDER BY c.timestamp DESC")
+        query = ''.join(query_parts)
+
         results = list(cosmos_thoughts_container.query_items(
             query=query,
             parameters=params,
@@ -166,14 +172,16 @@ def get_pending_thoughts(conversation_id, user_id):
         if not results:
             return []
 
-        # Group by the most recent message_id
-        latest_message_id = results[0].get('message_id')
-        latest_thoughts = [
-            t for t in results if t.get('message_id') == latest_message_id
-        ]
-        # Return in ascending step_index order
-        latest_thoughts.sort(key=lambda t: t.get('step_index', 0))
-        return latest_thoughts
+        if message_id:
+            pending_thoughts = results
+        else:
+            latest_message_id = results[0].get('message_id')
+            pending_thoughts = [
+                t for t in results if t.get('message_id') == latest_message_id
+            ]
+
+        pending_thoughts.sort(key=lambda t: t.get('step_index', 0))
+        return pending_thoughts
     except Exception as e:
         log_event(f"get_pending_thoughts failed: {e}", level="WARNING")
         return []
