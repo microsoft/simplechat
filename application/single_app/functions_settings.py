@@ -5,6 +5,11 @@ from functions_appinsights import log_event
 import app_settings_cache
 import inspect
 
+
+def is_tabular_processing_enabled(settings):
+    """Tabular processing is available whenever enhanced citations is enabled."""
+    return bool((settings or {}).get('enable_enhanced_citations', False))
+
 def get_settings(use_cosmos=False):
     import secrets
     default_settings = {
@@ -382,6 +387,8 @@ def get_settings(use_cosmos=False):
         # Merge default_settings in, to fill in any missing or nested keys
         merged = deep_merge_dicts(default_settings, settings_item)
 
+        merged['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(merged)
+
         # If merging added anything new, upsert back to Cosmos so future reads remain up to date
         if merged != settings_item:
             cosmos_settings_container.upsert_item(merged)
@@ -405,9 +412,7 @@ def update_settings(new_settings):
         # always fetch the latest settings doc, which includes your merges
         settings_item = get_settings()
         settings_item.update(new_settings)
-        # Dependency enforcement: tabular processing requires enhanced citations
-        if not settings_item.get('enable_enhanced_citations', False):
-            settings_item['enable_tabular_processing_plugin'] = False
+        settings_item['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(settings_item)
         cosmos_settings_container.upsert_item(settings_item)
         cache_updater = getattr(app_settings_cache, "update_settings_cache", None)
         if callable(cache_updater):

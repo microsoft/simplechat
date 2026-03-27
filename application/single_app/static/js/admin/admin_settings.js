@@ -98,6 +98,7 @@ document.addEventListener('DOMContentLoaded', () => {
     activateTabFromHash(); // Keep tab activation logic
 
     setupLatestFeaturesMirrors();
+    setupLatestFeatureImageModal();
     setupSendFeedbackForms();
     setupReleaseNotificationsRegistration();
 
@@ -1282,11 +1283,10 @@ function setupToggles() {
         const mathToggle = document.getElementById('toggle-math-plugin');
         const textToggle = document.getElementById('toggle-text-plugin');
         const factMemoryToggle = document.getElementById('toggle-fact-memory-plugin');
-        const tabularProcessingToggle = document.getElementById('toggle-tabular-processing-plugin');
         const embeddingToggle = document.getElementById('toggle-default-embedding-model-plugin');
         const allowUserPluginsToggle = document.getElementById('toggle-allow-user-plugins');
         const allowGroupPluginsToggle = document.getElementById('toggle-allow-group-plugins');
-        const toggles = [timeToggle, httpToggle, waitToggle, mathToggle, textToggle, factMemoryToggle, tabularProcessingToggle, embeddingToggle, allowUserPluginsToggle, allowGroupPluginsToggle];
+        const toggles = [timeToggle, httpToggle, waitToggle, mathToggle, textToggle, factMemoryToggle, embeddingToggle, allowUserPluginsToggle, allowGroupPluginsToggle];
         // Feedback area
         let feedbackDiv = document.getElementById('core-plugin-toggles-feedback');
         if (!feedbackDiv) {
@@ -1316,15 +1316,13 @@ function setupToggles() {
                 if (textToggle) textToggle.checked = !!settings.enable_text_plugin;
                 if (embeddingToggle) embeddingToggle.checked = !!settings.enable_default_embedding_model_plugin;
                 if (factMemoryToggle) factMemoryToggle.checked = !!settings.enable_fact_memory_plugin;
-                if (tabularProcessingToggle) {
-                    tabularProcessingToggle.checked = !!settings.enable_tabular_processing_plugin;
-                    const ecEnabled = !!settings.enable_enhanced_citations;
-                    tabularProcessingToggle.disabled = !ecEnabled;
-                    const depNote = document.getElementById('tabular-processing-dependency-note');
-                    if (depNote) {
-                        depNote.textContent = ecEnabled ? 'Requires Enhanced Citations' : 'Requires Enhanced Citations (currently disabled)';
-                        depNote.className = ecEnabled ? 'text-muted d-block ms-4' : 'text-danger d-block ms-4';
-                    }
+                const depNote = document.getElementById('tabular-processing-dependency-note');
+                if (depNote) {
+                    const tabularEnabled = !!settings.enable_tabular_processing_plugin;
+                    depNote.textContent = tabularEnabled
+                        ? 'Enabled automatically because Enhanced Citations is enabled'
+                        : 'Enhanced Citations must be enabled to use tabular processing';
+                    depNote.className = tabularEnabled ? 'text-muted d-block ms-4' : 'text-danger d-block ms-4';
                 }
                 if (allowUserPluginsToggle) allowUserPluginsToggle.checked = !!settings.allow_user_plugins;
                 if (allowGroupPluginsToggle) allowGroupPluginsToggle.checked = !!settings.allow_group_plugins;
@@ -1347,7 +1345,6 @@ function setupToggles() {
                 enable_text_plugin: textToggle ? textToggle.checked : false,
                 enable_default_embedding_model_plugin: embeddingToggle ? embeddingToggle.checked : false,
                 enable_fact_memory_plugin: factMemoryToggle ? factMemoryToggle.checked : false,
-                enable_tabular_processing_plugin: tabularProcessingToggle ? tabularProcessingToggle.checked : false,
                 allow_user_plugins: allowUserPluginsToggle ? allowUserPluginsToggle.checked : false,
                 allow_group_plugins: allowGroupPluginsToggle ? allowGroupPluginsToggle.checked : false
             };
@@ -1923,30 +1920,11 @@ function setupToggles() {
     // Redis auth type dropdown logic
     const redisAuthType = document.getElementById('redis_auth_type');
     if (redisAuthType) {
-        const redisKeyContainer = document.getElementById('redis_key_container');
-        const redisKeyLabel = document.getElementById('redis_key_label');
-
-        // Helper to update the label text based on auth type
-        function updateRedisKeyLabel(authTypeValue) {
-            if (!redisKeyLabel) return;
-            redisKeyLabel.textContent = authTypeValue === 'key_vault' ? 'Key Vault Secret Name' : 'Redis Access Key';
-        }
-
-        // Set initial state on load
-        if (redisKeyContainer) {
-            redisKeyContainer.classList.toggle('d-none', !(redisAuthType.value === 'key' || redisAuthType.value === 'key_vault'));
-        }
-        updateRedisKeyLabel(redisAuthType.value);
+        updateRedisCanonicalAuthVisibility(redisAuthType.value);
 
         redisAuthType.addEventListener('change', function () {
-            if (redisKeyContainer) {
-                redisKeyContainer.classList.toggle('d-none', !(this.value === 'key' || this.value === 'key_vault'));
-            }
-            const redisKeyVaultHint = document.getElementById('redis_key_vault_hint');
-            if (redisKeyVaultHint) {
-                redisKeyVaultHint.classList.toggle('d-none', this.value !== 'key_vault');
-            }
-            updateRedisKeyLabel(this.value);
+            updateRedisCanonicalAuthVisibility(this.value);
+            updateRedisMirrorVisibility(this.value);
             markFormAsModified();
         });
     }
@@ -2629,6 +2607,14 @@ function setupLatestFeaturesMirrors() {
     const mirroredOfficeBlobEndpoint = document.getElementById('latest_features_office_docs_storage_account_blob_endpoint');
     const canonicalTabularPreviewLimit = document.getElementById('tabular_preview_max_blob_size_mb');
     const mirroredTabularPreviewLimit = document.getElementById('latest_features_tabular_preview_max_blob_size_mb');
+    const canonicalRedisToggle = document.getElementById('enable_redis_cache');
+    const mirroredRedisToggle = document.getElementById('latest_features_enable_redis_cache');
+    const canonicalRedisUrl = document.getElementById('redis_url');
+    const mirroredRedisUrl = document.getElementById('latest_features_redis_url');
+    const canonicalRedisAuthType = document.getElementById('redis_auth_type');
+    const mirroredRedisAuthType = document.getElementById('latest_features_redis_auth_type');
+    const canonicalRedisKey = document.getElementById('redis_key');
+    const mirroredRedisKey = document.getElementById('latest_features_redis_key');
 
     if (canonicalEnhancedCitations && mirroredEnhancedCitations) {
         mirroredEnhancedCitations.checked = canonicalEnhancedCitations.checked;
@@ -2667,6 +2653,44 @@ function setupLatestFeaturesMirrors() {
     syncMirroredField(canonicalOfficeConnString, mirroredOfficeConnString);
     syncMirroredField(canonicalOfficeBlobEndpoint, mirroredOfficeBlobEndpoint);
     syncMirroredField(canonicalTabularPreviewLimit, mirroredTabularPreviewLimit);
+
+    if (canonicalRedisToggle && mirroredRedisToggle) {
+        mirroredRedisToggle.checked = canonicalRedisToggle.checked;
+        updateLatestFeaturesRedisMirror();
+
+        canonicalRedisToggle.addEventListener('change', () => {
+            mirroredRedisToggle.checked = canonicalRedisToggle.checked;
+            updateLatestFeaturesRedisMirror();
+        });
+
+        mirroredRedisToggle.addEventListener('change', () => {
+            canonicalRedisToggle.checked = mirroredRedisToggle.checked;
+            updateRedisCanonicalCacheVisibility(mirroredRedisToggle.checked);
+            updateLatestFeaturesRedisMirror();
+            markFormAsModified();
+        });
+    }
+
+    if (canonicalRedisAuthType && mirroredRedisAuthType) {
+        mirroredRedisAuthType.value = canonicalRedisAuthType.value;
+        updateRedisCanonicalAuthVisibility(canonicalRedisAuthType.value);
+        updateRedisMirrorVisibility(canonicalRedisAuthType.value);
+
+        canonicalRedisAuthType.addEventListener('change', () => {
+            mirroredRedisAuthType.value = canonicalRedisAuthType.value;
+            updateRedisMirrorVisibility(canonicalRedisAuthType.value);
+        });
+
+        mirroredRedisAuthType.addEventListener('change', () => {
+            canonicalRedisAuthType.value = mirroredRedisAuthType.value;
+            updateRedisCanonicalAuthVisibility(mirroredRedisAuthType.value);
+            updateRedisMirrorVisibility(mirroredRedisAuthType.value);
+            markFormAsModified();
+        });
+    }
+
+    syncMirroredField(canonicalRedisUrl, mirroredRedisUrl);
+    syncMirroredField(canonicalRedisKey, mirroredRedisKey);
 }
 
 function syncMirroredField(canonicalField, mirroredField, eventName = 'input') {
@@ -2706,6 +2730,26 @@ function updateLatestFeaturesEnhancedCitationMirror() {
     }
 }
 
+function updateLatestFeaturesRedisMirror() {
+    const canonicalRedisToggle = document.getElementById('enable_redis_cache');
+    const mirroredRedisToggle = document.getElementById('latest_features_enable_redis_cache');
+    const mirroredContainer = document.getElementById('latest_features_redis_settings');
+    const canonicalRedisAuthType = document.getElementById('redis_auth_type');
+    const mirroredRedisAuthType = document.getElementById('latest_features_redis_auth_type');
+
+    if (!canonicalRedisToggle || !mirroredRedisToggle || !mirroredContainer) {
+        return;
+    }
+
+    mirroredRedisToggle.checked = canonicalRedisToggle.checked;
+    mirroredContainer.classList.toggle('d-none', !canonicalRedisToggle.checked);
+
+    if (canonicalRedisAuthType && mirroredRedisAuthType) {
+        mirroredRedisAuthType.value = canonicalRedisAuthType.value;
+        updateRedisMirrorVisibility(canonicalRedisAuthType.value);
+    }
+}
+
 function updateOfficeStorageCanonicalVisibility(authTypeValue) {
     const connStrGroup = document.getElementById('office_docs_storage_conn_str_group');
     const urlGroup = document.getElementById('office_docs_storage_url_group');
@@ -2729,6 +2773,54 @@ function updateOfficeStorageMirrorVisibility(authTypeValue) {
 
     if (urlGroup) {
         urlGroup.classList.toggle('d-none', authTypeValue !== 'managed_identity');
+    }
+}
+
+function getRedisKeyLabelText(authTypeValue) {
+    return authTypeValue === 'key_vault' ? 'Key Vault Secret Name' : 'Redis Access Key';
+}
+
+function updateRedisCanonicalCacheVisibility(isEnabled) {
+    const redisSettingsDiv = document.getElementById('redis_cache_settings');
+
+    if (redisSettingsDiv) {
+        redisSettingsDiv.style.display = isEnabled ? 'block' : 'none';
+    }
+}
+
+function updateRedisCanonicalAuthVisibility(authTypeValue) {
+    const redisKeyContainer = document.getElementById('redis_key_container');
+    const redisKeyLabel = document.getElementById('redis_key_label');
+    const redisKeyVaultHint = document.getElementById('redis_key_vault_hint');
+
+    if (redisKeyContainer) {
+        redisKeyContainer.classList.toggle('d-none', !(authTypeValue === 'key' || authTypeValue === 'key_vault'));
+    }
+
+    if (redisKeyLabel) {
+        redisKeyLabel.textContent = getRedisKeyLabelText(authTypeValue);
+    }
+
+    if (redisKeyVaultHint) {
+        redisKeyVaultHint.classList.toggle('d-none', authTypeValue !== 'key_vault');
+    }
+}
+
+function updateRedisMirrorVisibility(authTypeValue) {
+    const redisKeyContainer = document.getElementById('latest_features_redis_key_container');
+    const redisKeyLabel = document.getElementById('latest_features_redis_key_label');
+    const redisKeyVaultHint = document.getElementById('latest_features_redis_key_vault_hint');
+
+    if (redisKeyContainer) {
+        redisKeyContainer.classList.toggle('d-none', !(authTypeValue === 'key' || authTypeValue === 'key_vault'));
+    }
+
+    if (redisKeyLabel) {
+        redisKeyLabel.textContent = getRedisKeyLabelText(authTypeValue);
+    }
+
+    if (redisKeyVaultHint) {
+        redisKeyVaultHint.classList.toggle('d-none', authTypeValue !== 'key_vault');
     }
 }
 
@@ -3525,6 +3617,7 @@ togglePassword('toggle_redis_key', 'redis_key');
 togglePassword('toggle_azure_apim_redis_subscription_key', 'azure_apim_redis_subscription_key');
 togglePassword('toggle_latest_features_office_conn_str', 'latest_features_office_docs_storage_account_url');
 togglePassword('toggle_latest_features_office_url', 'latest_features_office_docs_storage_account_blob_endpoint');
+togglePassword('toggle_latest_features_redis_key', 'latest_features_redis_key');
 
 /**
  * Checks if this is a first-time setup based on critical settings
@@ -4605,4 +4698,42 @@ function updateSaveButtonState() {
         saveButton.classList.add('btn-secondary');
         saveButton.innerHTML = '<i class="bi bi-floppy"></i> Save Settings';
     }
+}
+
+function setupLatestFeatureImageModal() {
+    const modalElement = document.getElementById('latestFeatureImageModal');
+    const modalImage = document.getElementById('latestFeatureImageModalImage');
+    const modalTitle = document.getElementById('latestFeatureImageModalLabel');
+    const modalCaption = document.getElementById('latestFeatureImageModalCaption');
+    const imageTriggers = document.querySelectorAll('[data-latest-feature-image-src]');
+
+    if (!modalElement || !modalImage || !modalTitle || !modalCaption || imageTriggers.length === 0) {
+        return;
+    }
+
+    const imageModal = bootstrap.Modal.getOrCreateInstance(modalElement);
+
+    imageTriggers.forEach(trigger => {
+        trigger.addEventListener('click', () => {
+            const imageSrc = trigger.dataset.latestFeatureImageSrc;
+            const imageTitle = trigger.dataset.latestFeatureImageTitle || 'Latest Feature Preview';
+            const imageCaption = trigger.dataset.latestFeatureImageCaption || 'Click outside the popup to close it.';
+            const imageAlt = trigger.querySelector('img')?.getAttribute('alt') || imageTitle;
+
+            if (!imageSrc) {
+                return;
+            }
+
+            modalImage.src = imageSrc;
+            modalImage.alt = imageAlt;
+            modalTitle.textContent = imageTitle;
+            modalCaption.textContent = imageCaption;
+            imageModal.show();
+        });
+    });
+
+    modalElement.addEventListener('hidden.bs.modal', () => {
+        modalImage.src = '';
+        modalImage.alt = 'Latest feature preview';
+    });
 }

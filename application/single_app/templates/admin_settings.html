@@ -122,6 +122,142 @@
             padding: 0.9rem 1rem;
         }
 
+        .latest-feature-gallery {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 340px));
+            justify-content: flex-start;
+            gap: 1rem;
+        }
+
+        .latest-feature-thumbnail-trigger {
+            border: 0;
+            background: transparent;
+            padding: 0;
+            text-align: left;
+            width: 100%;
+            color: inherit;
+        }
+
+        .latest-feature-thumbnail-card {
+            border: 1px solid rgba(13, 110, 253, 0.16);
+            border-radius: 0.75rem;
+            background: #fff;
+            overflow: hidden;
+            box-shadow: 0 0.35rem 1.1rem rgba(15, 23, 42, 0.08);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            height: 100%;
+        }
+
+        .latest-feature-thumbnail-trigger:hover .latest-feature-thumbnail-card,
+        .latest-feature-thumbnail-trigger:focus-visible .latest-feature-thumbnail-card {
+            transform: translateY(-2px);
+            box-shadow: 0 0.7rem 1.6rem rgba(15, 23, 42, 0.12);
+        }
+
+        .latest-feature-thumbnail-trigger:focus-visible {
+            outline: none;
+        }
+
+        .latest-feature-thumbnail-image {
+            display: block;
+            width: 100%;
+            aspect-ratio: 16 / 10;
+            object-fit: cover;
+            background: linear-gradient(135deg, rgba(13, 110, 253, 0.08), rgba(25, 135, 84, 0.08));
+        }
+
+        .latest-feature-thumbnail-body {
+            padding: 0.8rem 0.95rem 0.95rem;
+        }
+
+        .latest-feature-thumbnail-title {
+            font-weight: 600;
+            margin-bottom: 0.2rem;
+        }
+
+        .latest-feature-thumbnail-meta {
+            color: #6c757d;
+            font-size: 0.9rem;
+        }
+
+        .latest-feature-image-modal .modal-dialog {
+            max-width: min(1100px, calc(100vw - 2rem));
+        }
+
+        .latest-feature-image-modal .modal-content {
+            background: linear-gradient(180deg, rgba(25, 33, 52, 0.98), rgba(14, 20, 34, 0.98));
+            color: #f8f9fa;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 1rem;
+            overflow: hidden;
+            box-shadow: 0 1.4rem 3rem rgba(0, 0, 0, 0.38);
+        }
+
+        .latest-feature-image-modal .modal-header,
+        .latest-feature-image-modal .modal-footer {
+            border-color: rgba(248, 249, 250, 0.12);
+        }
+
+        .latest-feature-image-modal .modal-header {
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .latest-feature-image-modal .modal-body {
+            padding: 1rem 1.2rem 1.2rem;
+            background: radial-gradient(circle at top, rgba(96, 165, 250, 0.08), transparent 45%), rgba(12, 18, 30, 0.92);
+        }
+
+        .latest-feature-image-modal .modal-title {
+            color: #ffffff;
+        }
+
+        .latest-feature-image-modal-caption {
+            color: rgba(248, 250, 252, 0.9);
+            font-size: 0.98rem;
+        }
+
+        .latest-feature-image-modal .btn-close {
+            filter: invert(1) grayscale(100%) brightness(200%);
+        }
+
+        .latest-feature-image-frame {
+            border-radius: 1rem;
+            padding: 0.9rem;
+            border: 1px solid rgba(148, 163, 184, 0.24);
+            background: linear-gradient(180deg, rgba(30, 41, 59, 0.9), rgba(15, 23, 42, 0.88));
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+        }
+
+        .latest-feature-image-modal img {
+            display: block;
+            width: 100%;
+            max-height: 75vh;
+            object-fit: contain;
+            border-radius: 0.9rem;
+            background: rgba(248, 250, 252, 0.98);
+            box-shadow: 0 0.8rem 2rem rgba(0, 0, 0, 0.24);
+        }
+
+        [data-bs-theme="dark"] .latest-feature-image-modal .modal-content {
+            background: linear-gradient(180deg, rgba(26, 32, 44, 0.99), rgba(10, 14, 24, 0.99));
+            border-color: rgba(148, 163, 184, 0.22);
+            box-shadow: 0 1.5rem 3.2rem rgba(0, 0, 0, 0.55);
+        }
+
+        [data-bs-theme="dark"] .latest-feature-image-modal .modal-header {
+            background: rgba(255, 255, 255, 0.025);
+        }
+
+        [data-bs-theme="dark"] .latest-feature-image-modal .modal-body {
+            background: radial-gradient(circle at top, rgba(59, 130, 246, 0.12), transparent 42%), rgba(8, 12, 20, 0.96);
+        }
+
+        [data-bs-theme="dark"] .latest-feature-image-frame {
+            background: linear-gradient(180deg, rgba(17, 24, 39, 0.96), rgba(30, 41, 59, 0.92));
+            border-color: rgba(96, 165, 250, 0.18);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 0.75rem 1.8rem rgba(0, 0, 0, 0.28);
+        }
+
         .latest-feature-placeholder-path {
             font-family: monospace;
             font-size: 0.9rem;
@@ -129,11 +265,21 @@
         }
 
         .latest-feature-command {
-            background: #f8f9fa;
+            background: #f8fafc;
+            color: #0f172a;
+            border: 1px solid rgba(148, 163, 184, 0.35);
             border-radius: 0.5rem;
             padding: 0.75rem 1rem;
             font-family: monospace;
             margin-bottom: 0;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+        }
+
+        [data-bs-theme="dark"] .latest-feature-command {
+            background: rgba(15, 23, 42, 0.95);
+            color: #e5eefb;
+            border-color: rgba(96, 165, 250, 0.28);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
         }
 
         .admin-send-feedback-status {
@@ -294,6 +440,24 @@
                 <button type="button" class="btn btn-primary d-none" id="release-notifications-submit-btn">
                     <i class="bi bi-envelope me-1"></i>Submit Registration
                 </button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal fade latest-feature-image-modal" id="latestFeatureImageModal" tabindex="-1" aria-labelledby="latestFeatureImageModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h5 class="modal-title mb-1" id="latestFeatureImageModalLabel">Latest Feature Preview</h5>
+                    <small class="latest-feature-image-modal-caption" id="latestFeatureImageModalCaption">Click outside the popup to close it.</small>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body pt-2">
+                <div class="latest-feature-image-frame">
+                    <img id="latestFeatureImageModalImage" src="" alt="Latest feature preview">
+                </div>
             </div>
         </div>
     </div>
@@ -1125,11 +1289,12 @@
                                     <label class="form-check-label ms-2" for="toggle-fact-memory-plugin">Enable Fact Memory Action</label>
                                     <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to store and retrieve facts and information across conversations for improved memory and context retention."></i>
                                 </div>
-                                <div class="form-check form-switch mb-2" id="tabular-processing-toggle-wrapper">
-                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-tabular-processing-plugin" name="enable_tabular_processing_plugin">
-                                    <label class="form-check-label ms-2" for="toggle-tabular-processing-plugin">Enable Tabular Processing Action</label>
-                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to analyze tabular data files (CSV, XLSX) using pandas for aggregations, filtering, and full dataset operations. Requires Enhanced Citations."></i>
-                                    <small class="text-muted d-block ms-4" id="tabular-processing-dependency-note">Requires Enhanced Citations</small>
+                                <div class="mb-2" id="tabular-processing-toggle-wrapper">
+                                    <div class="d-flex align-items-center">
+                                        <span class="fw-semibold">Tabular Processing Action</span>
+                                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Agents can analyze tabular data files (CSV, XLSX) using pandas for aggregations, filtering, and full dataset operations. This action is automatically enabled whenever Enhanced Citations is enabled."></i>
+                                    </div>
+                                    <small class="text-muted d-block ms-4" id="tabular-processing-dependency-note">Automatically enabled when Enhanced Citations is enabled</small>
                                 </div>
                             </div>
                             <table class="table table-bordered" id="plugins-table">
@@ -1636,9 +1801,22 @@
                                     <i class="bi bi-box-arrow-up-right me-1"></i>Runtime Notes
                                 </a>
                             </div>
-                            <div class="latest-feature-placeholder">
-                                <div class="fw-semibold">Suggested screenshot</div>
-                                <div class="latest-feature-placeholder-path">static/images/features/gunicorn_startup_guidance.png</div>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/gunicorn_startup_guidance.png') }}"
+                                    data-latest-feature-image-title="Gunicorn Startup Guidance"
+                                    data-latest-feature-image-caption="Native Python App Service startup command guidance preview."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/gunicorn_startup_guidance.png') }}" alt="Gunicorn startup guidance screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Gunicorn Startup Guidance</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -1663,10 +1841,37 @@
                                 <li>Guided Chat Tutorial covers the active chat experience, message actions, search flows, citations, thoughts, and export-related actions.</li>
                                 <li>Personal Workspace Guided Tutorial walks through uploads, search, filters, list and grid views, prompts, agents, actions, and tags.</li>
                             </ul>
-                            <div class="latest-feature-placeholder">
-                                <div class="fw-semibold">Suggested screenshots</div>
-                                <div class="latest-feature-placeholder-path">static/images/features/guided_tutorials_chat.png</div>
-                                <div class="latest-feature-placeholder-path">static/images/features/guided_tutorials_workspace.png</div>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/guided_tutorials_chat.png') }}"
+                                    data-latest-feature-image-title="Guided Chat Tutorial"
+                                    data-latest-feature-image-caption="Chat walkthrough preview for end users."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/guided_tutorials_chat.png') }}" alt="Guided chat tutorial screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Guided Chat Tutorial</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/guided_tutorials_workspace.png') }}"
+                                    data-latest-feature-image-title="Workspace Guided Tutorial"
+                                    data-latest-feature-image-caption="Personal workspace walkthrough preview."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/guided_tutorials_workspace.png') }}" alt="Workspace guided tutorial screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Workspace Guided Tutorial</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -1692,9 +1897,37 @@
                                 <li>Unread markers remain visible until the response is actually opened.</li>
                                 <li>Personal, workspace, and navigation flows now behave more consistently while chat completion continues in the background.</li>
                             </ul>
-                            <div class="latest-feature-placeholder">
-                                <div class="fw-semibold">Suggested screenshot</div>
-                                <div class="latest-feature-placeholder-path">static/images/features/background_completion_notifications.png</div>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/background_completion_notifications-01.png') }}"
+                                    data-latest-feature-image-title="Background Completion Notification"
+                                    data-latest-feature-image-caption="Unread completion notification state for background chat responses."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/background_completion_notifications-01.png') }}" alt="Background completion notification screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Notification State</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/background_completion_notifications-02.png') }}"
+                                    data-latest-feature-image-title="Background Completion Deep Link"
+                                    data-latest-feature-image-caption="Finished response entry point back into the completed chat."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/background_completion_notifications-02.png') }}" alt="Background completion deep link screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Deep Link Back to Chat</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -1813,9 +2046,22 @@
                                 </div>
                             </div>
 
-                            <div class="latest-feature-placeholder">
-                                <div class="fw-semibold">Suggested screenshot</div>
-                                <div class="latest-feature-placeholder-path">static/images/features/tabular_analysis_enhanced_citations.png</div>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/tabular_analysis_enhanced_citations.png') }}"
+                                    data-latest-feature-image-title="Tabular Analysis with Enhanced Citations"
+                                    data-latest-feature-image-caption="Enhanced citations and tabular analysis preview."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/tabular_analysis_enhanced_citations.png') }}" alt="Tabular analysis enhanced citations screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Tabular Analysis Preview</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -1842,16 +2088,54 @@
                             </ul>
                             <div class="row g-3">
                                 <div class="col-lg-6">
-                                    <div class="latest-feature-placeholder h-100">
-                                        <div class="fw-semibold">Suggested screenshot</div>
-                                        <div class="latest-feature-placeholder-path">static/images/features/conversation_summary_card.png</div>
-                                    </div>
+                                    <button
+                                        type="button"
+                                        class="latest-feature-thumbnail-trigger"
+                                        data-latest-feature-image-src="{{ url_for('static', filename='images/features/conversation_summary_card.png') }}"
+                                        data-latest-feature-image-title="Conversation Summary Card"
+                                        data-latest-feature-image-caption="Conversation summary panel preview in the chat experience."
+                                    >
+                                        <div class="latest-feature-thumbnail-card h-100">
+                                            <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/conversation_summary_card.png') }}" alt="Conversation summary card screenshot">
+                                            <div class="latest-feature-thumbnail-body">
+                                                <div class="latest-feature-thumbnail-title">Conversation Summary Card</div>
+                                                <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                            </div>
+                                        </div>
+                                    </button>
                                 </div>
                                 <div class="col-lg-6">
-                                    <div class="latest-feature-placeholder h-100">
-                                        <div class="fw-semibold">Suggested screenshots</div>
-                                        <div class="latest-feature-placeholder-path">static/images/features/pdf_export_option.png</div>
-                                        <div class="latest-feature-placeholder-path">static/images/features/per_message_export_menu.png</div>
+                                    <div class="latest-feature-gallery h-100">
+                                        <button
+                                            type="button"
+                                            class="latest-feature-thumbnail-trigger"
+                                            data-latest-feature-image-src="{{ url_for('static', filename='images/features/pdf_export_option.png') }}"
+                                            data-latest-feature-image-title="PDF Export Option"
+                                            data-latest-feature-image-caption="PDF export entry in the conversation export workflow."
+                                        >
+                                            <div class="latest-feature-thumbnail-card h-100">
+                                                <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/pdf_export_option.png') }}" alt="PDF export option screenshot">
+                                                <div class="latest-feature-thumbnail-body">
+                                                    <div class="latest-feature-thumbnail-title">PDF Export Option</div>
+                                                    <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                                </div>
+                                            </div>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="latest-feature-thumbnail-trigger"
+                                            data-latest-feature-image-src="{{ url_for('static', filename='images/features/per_message_export_menu.png') }}"
+                                            data-latest-feature-image-title="Per-Message Export Menu"
+                                            data-latest-feature-image-caption="Expanded per-message export and reuse actions."
+                                        >
+                                            <div class="latest-feature-thumbnail-card h-100">
+                                                <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/per_message_export_menu.png') }}" alt="Per-message export menu screenshot">
+                                                <div class="latest-feature-thumbnail-body">
+                                                    <div class="latest-feature-thumbnail-title">Per-Message Export Menu</div>
+                                                    <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                                </div>
+                                            </div>
+                                        </button>
                                     </div>
                                 </div>
                             </div>
@@ -1878,10 +2162,37 @@
                                 <li>SQL actions now include an inline Test Connection button before save.</li>
                                 <li>User tracking and activity logging improve auditability for agent and action changes.</li>
                             </ul>
-                            <div class="latest-feature-placeholder">
-                                <div class="fw-semibold">Suggested screenshots</div>
-                                <div class="latest-feature-placeholder-path">static/images/features/agent_action_grid_view.png</div>
-                                <div class="latest-feature-placeholder-path">static/images/features/sql_test_connection.png</div>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/agent_action_grid_view.png') }}"
+                                    data-latest-feature-image-title="Agent and Action Grid View"
+                                    data-latest-feature-image-caption="Grid browsing experience for agents and actions."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/agent_action_grid_view.png') }}" alt="Agent and action grid view screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Grid View</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/sql_test_connection.png') }}"
+                                    data-latest-feature-image-title="SQL Test Connection"
+                                    data-latest-feature-image-caption="Inline SQL connection test preview before save."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/sql_test_connection.png') }}" alt="SQL test connection screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">SQL Test Connection</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -1922,9 +2233,22 @@
                                     Enable Processing Thoughts
                                 </label>
                             </div>
-                            <div class="latest-feature-placeholder">
-                                <div class="fw-semibold">Suggested screenshot</div>
-                                <div class="latest-feature-placeholder-path">static/images/features/thoughts_visibility.png</div>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/thoughts_visibility.png') }}"
+                                    data-latest-feature-image-title="Processing Thoughts Visibility"
+                                    data-latest-feature-image-caption="Processing thoughts state and timing details preview."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/thoughts_visibility.png') }}" alt="Processing thoughts visibility screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Processing Thoughts</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -1949,9 +2273,107 @@
                                 <li>Use Redis authentication type <strong>Key Vault</strong> when you want the stored value to represent a secret name instead of a raw Redis key.</li>
                                 <li>This works best when Key Vault is already configured for the app.</li>
                             </ul>
-                            <div class="latest-feature-placeholder">
-                                <div class="fw-semibold">Suggested screenshot</div>
-                                <div class="latest-feature-placeholder-path">static/images/features/redis_key_vault.png</div>
+                            <div class="alert alert-secondary mb-3" role="alert">
+                                These controls mirror the saved values in the <a href="#scale" onclick="switchTab(event, 'scale-tab')">Scale</a> tab.
+                            </div>
+                            <div class="form-check form-switch mb-3">
+                                <input
+                                    type="checkbox"
+                                    class="form-check-input"
+                                    id="latest_features_enable_redis_cache"
+                                    name="latest_features_enable_redis_cache_proxy"
+                                    autocomplete="off"
+                                    data-ignore-settings-change="true"
+                                    data-lpignore="true"
+                                    data-1p-ignore="true"
+                                    data-bwignore="true"
+                                    {% if settings.enable_redis_cache %}checked{% endif %}
+                                >
+                                <label class="form-check-label ms-2" for="latest_features_enable_redis_cache">
+                                    Enable Redis Cache
+                                </label>
+                            </div>
+
+                            <div id="latest_features_redis_settings" class="{% if not settings.enable_redis_cache %}d-none{% endif %}">
+                                <div class="card mb-3 p-3">
+                                    <h6><strong>Redis Cache Settings</strong></h6>
+                                    <div class="mb-3">
+                                        <label for="latest_features_redis_url" class="form-label">Redis Server Host Name</label>
+                                        <input
+                                            type="text"
+                                            class="form-control"
+                                            id="latest_features_redis_url"
+                                            name="latest_features_redis_url_proxy"
+                                            autocomplete="off"
+                                            data-ignore-settings-change="true"
+                                            data-lpignore="true"
+                                            data-1p-ignore="true"
+                                            data-bwignore="true"
+                                            value="{{ settings.redis_url or '' }}"
+                                        >
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="latest_features_redis_auth_type" class="form-label">Redis Authentication Type</label>
+                                        <select
+                                            class="form-select"
+                                            id="latest_features_redis_auth_type"
+                                            name="latest_features_redis_auth_type_proxy"
+                                            autocomplete="off"
+                                            data-ignore-settings-change="true"
+                                            data-lpignore="true"
+                                            data-1p-ignore="true"
+                                            data-bwignore="true"
+                                        >
+                                            <option value="key" {% if settings.redis_auth_type == 'key' or not settings.redis_auth_type %}selected{% endif %}>Key</option>
+                                            <option value="managed_identity" {% if settings.redis_auth_type == 'managed_identity' %}selected{% endif %}>Managed Identity</option>
+                                            <option value="key_vault" {% if settings.redis_auth_type == 'key_vault' %}selected{% endif %}>Key Vault</option>
+                                        </select>
+                                    </div>
+                                    <div class="mb-3 {% if settings.redis_auth_type == 'managed_identity' %}d-none{% endif %}" id="latest_features_redis_key_container">
+                                        <label for="latest_features_redis_key" class="form-label" id="latest_features_redis_key_label">
+                                            {%- if settings.redis_auth_type == 'key_vault' -%}
+                                                Key Vault Secret Name
+                                            {%- else -%}
+                                                Redis Access Key
+                                            {%- endif -%}
+                                        </label>
+                                        <div class="input-group">
+                                            <input
+                                                type="password"
+                                                class="form-control"
+                                                id="latest_features_redis_key"
+                                                name="latest_features_redis_key_proxy"
+                                                autocomplete="off"
+                                                data-ignore-settings-change="true"
+                                                data-lpignore="true"
+                                                data-1p-ignore="true"
+                                                data-bwignore="true"
+                                                value="{{ settings.redis_key or '' }}"
+                                            >
+                                            <button type="button" class="btn btn-outline-secondary" id="toggle_latest_features_redis_key">Show</button>
+                                        </div>
+                                        <div id="latest_features_redis_key_vault_hint" class="form-text text-muted {% if settings.redis_auth_type != 'key_vault' %}d-none{% endif %}">
+                                            When using Key Vault, store the secret name here instead of the raw Redis key.
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/redis_key_vault.png') }}"
+                                    data-latest-feature-image-title="Redis Key Vault Configuration"
+                                    data-latest-feature-image-caption="Redis authentication with Key Vault secret name preview."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/redis_key_vault.png') }}" alt="Redis Key Vault configuration screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Redis Key Vault</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
                             </div>
                         </div>
                     </div>

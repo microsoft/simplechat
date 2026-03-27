@@ -2,6 +2,12 @@
 
 # Feature Release
 
+This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.240.001, and the per-version entries continue immediately after it.
+
+For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
+
+![Simple Chat release timeline](../images/release-timeline.png)
+
 ### **(v0.240.001)**
 
 #### New Features

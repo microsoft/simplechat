@@ -2,12 +2,13 @@
 # test_admin_latest_features_tab.py
 """
 Functional test for admin Latest Features tab.
-Version: 0.240.007
+Version: 0.240.003
 Implemented in: 0.240.002
 
 This test ensures that the Admin Settings page exposes the Latest Features tab,
-renders the expected grouped cards, and includes the mirrored controls and
-JavaScript synchronization needed to keep shared settings aligned.
+renders the expected grouped cards, uses the saved feature screenshots, and
+includes the mirrored controls and JavaScript synchronization needed to keep
+shared settings aligned.
 """
 
 import os
@@ -48,9 +49,13 @@ def test_latest_features_template_structure():
         'id="latest-features-deployment-card"',
         'id="latest-features-redis-card"',
         'id="latest-features-send-feedback-card"',
-        'static/images/features/guided_tutorials_chat.png',
-        'static/images/features/gunicorn_startup_guidance.png',
-        'static/images/features/redis_key_vault.png'
+        'id="latestFeatureImageModal"',
+        'class="latest-feature-image-frame"',
+        'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/guided_tutorials_chat.png\') }}"',
+        'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/background_completion_notifications-01.png\') }}"',
+        'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/background_completion_notifications-02.png\') }}"',
+        'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/gunicorn_startup_guidance.png\') }}"',
+        'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/redis_key_vault.png\') }}"'
     ]
 
     missing_markers = [marker for marker in required_markers if marker not in template_content]
@@ -75,7 +80,11 @@ def test_latest_features_mirrored_controls():
         'id="latest_features_office_docs_authentication_type"',
         'id="latest_features_office_docs_storage_account_url"',
         'id="latest_features_office_docs_storage_account_blob_endpoint"',
-        'id="latest_features_tabular_preview_max_blob_size_mb"'
+        'id="latest_features_tabular_preview_max_blob_size_mb"',
+        'id="latest_features_enable_redis_cache"',
+        'id="latest_features_redis_url"',
+        'id="latest_features_redis_auth_type"',
+        'id="latest_features_redis_key"'
     ]
 
     for marker in required_ids:
@@ -88,6 +97,10 @@ def test_latest_features_mirrored_controls():
         'name="latest_features_office_docs_storage_account_url_proxy"',
         'name="latest_features_office_docs_storage_account_blob_endpoint_proxy"',
         'name="latest_features_tabular_preview_max_blob_size_mb_proxy"',
+        'name="latest_features_enable_redis_cache_proxy"',
+        'name="latest_features_redis_url_proxy"',
+        'name="latest_features_redis_auth_type_proxy"',
+        'name="latest_features_redis_key_proxy"',
         'autocomplete="off"',
         'data-ignore-settings-change="true"',
         'data-lpignore="true"',
@@ -105,7 +118,11 @@ def test_latest_features_mirrored_controls():
         'name="latest_features_office_docs_authentication_type"',
         'name="latest_features_office_docs_storage_account_url"',
         'name="latest_features_office_docs_storage_account_blob_endpoint"',
-        'name="latest_features_tabular_preview_max_blob_size_mb"'
+        'name="latest_features_tabular_preview_max_blob_size_mb"',
+        'name="latest_features_enable_redis_cache"',
+        'name="latest_features_redis_url"',
+        'name="latest_features_redis_auth_type"',
+        'name="latest_features_redis_key"'
     ]
 
     duplicates = [marker for marker in disallowed_names if marker in template_content]
@@ -126,15 +143,25 @@ def test_latest_features_sync_javascript():
         'setupAdminFormAutofillMetadata()',
         'function setupAdminFormAutofillMetadata() {',
         'setupLatestFeaturesMirrors()',
+        'setupLatestFeatureImageModal()',
         'function setupLatestFeaturesMirrors()',
+        'function setupLatestFeatureImageModal() {',
         'function syncMirroredField(',
         'function updateLatestFeaturesEnhancedCitationMirror()',
+        'function updateLatestFeaturesRedisMirror()',
         'function updateOfficeStorageMirrorVisibility(',
+        'function updateRedisCanonicalAuthVisibility(',
+        'function updateRedisMirrorVisibility(',
         'latest_features_enable_thoughts',
         'latest_features_enable_enhanced_citations',
+        'latest_features_enable_redis_cache',
+        'latest_features_redis_auth_type',
+        'data-latest-feature-image-src',
+        'latestFeatureImageModal',
         "field.setAttribute('autocomplete', 'off');",
         'toggle_latest_features_office_conn_str',
-        'toggle_latest_features_office_url'
+        'toggle_latest_features_office_url',
+        'toggle_latest_features_redis_key'
     ]
 
     missing_markers = [marker for marker in required_markers if marker not in js_content]
@@ -208,14 +235,34 @@ def test_admin_settings_tab_uniqueness():
 
 
 def test_latest_features_supporting_assets():
-    """Feature documentation and placeholder image directory must exist."""
+    """Feature documentation and saved feature screenshots must exist."""
     print('🔍 Testing supporting assets for Latest Features...')
 
     assert os.path.exists(FEATURE_DOC), 'Missing feature documentation for Latest Features tab'
     assert os.path.isdir(FEATURE_IMAGE_DIR), 'Missing placeholder image directory for Latest Features'
 
     doc_content = read_text(FEATURE_DOC)
-    assert 'Version Implemented: 0.240.003' in doc_content, 'Feature documentation version header missing or incorrect'
+    assert 'Version Updated: 0.240.003' in doc_content, 'Feature documentation version header missing or incorrect'
+
+    required_images = [
+        'agent_action_grid_view.png',
+        'background_completion_notifications-01.png',
+        'background_completion_notifications-02.png',
+        'conversation_summary_card.png',
+        'guided_tutorials_chat.png',
+        'guided_tutorials_workspace.png',
+        'gunicorn_startup_guidance.png',
+        'pdf_export_option.png',
+        'per_message_export_menu.png',
+        'redis_key_vault.png',
+        'sql_test_connection.png',
+        'tabular_analysis_enhanced_citations.png',
+        'thoughts_visibility.png'
+    ]
+
+    missing_images = [image_name for image_name in required_images if not os.path.exists(os.path.join(FEATURE_IMAGE_DIR, image_name))]
+    if missing_images:
+        raise AssertionError(f'Missing Latest Features screenshot assets: {missing_images}')
 
     print('✅ Supporting documentation and image directory are present')
     return True
