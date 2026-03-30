@@ -2369,7 +2369,9 @@ def register_route_backend_chats(app):
 
             # Extract from request
             user_message = data.get('message', '')
-            conversation_id = data.get('conversation_id')
+            conversation_id = getattr(g, 'conversation_id', None) or data.get('conversation_id')
+            if conversation_id is not None:
+                conversation_id = str(conversation_id).strip() or None
             hybrid_search_enabled = data.get('hybrid_search')
             web_search_enabled = data.get('web_search_enabled')
             selected_document_id = data.get('selected_document_id')
@@ -5321,14 +5323,18 @@ def register_route_backend_chats(app):
         compatibility_mode = bool(data.get('image_generation')) or bool(
             data.get('retry_user_message_id') or data.get('edited_user_message_id')
         )
-        requested_conversation_id = data.get('conversation_id')
-        stream_session = CHAT_STREAM_REGISTRY.start_session(user_id, requested_conversation_id)
+        requested_conversation_id = str(data.get('conversation_id') or '').strip() or None
+        finalized_conversation_id = requested_conversation_id or str(uuid.uuid4())
+        is_new_stream_conversation = requested_conversation_id is None
+        data['conversation_id'] = finalized_conversation_id
+        stream_session = CHAT_STREAM_REGISTRY.start_session(user_id, finalized_conversation_id)
 
         request_message = (data.get('message') or '').strip()
         request_preview = request_message[:120] + '...' if len(request_message) > 120 else request_message
         debug_print(
             "[Streaming] Incoming /api/chat/stream request | "
-            f"conversation_id={data.get('conversation_id')} | "
+            f"requested_conversation_id={requested_conversation_id} | "
+            f"conversation_id={finalized_conversation_id} | "
             f"compatibility_mode={compatibility_mode} | "
             f"hybrid_search={data.get('hybrid_search')} | "
             f"web_search={data.get('web_search_enabled')} | "
@@ -5370,6 +5376,8 @@ def register_route_backend_chats(app):
         def generate_compatibility_response():
             """Bridge legacy JSON chat handling into a terminal SSE event for parity cases."""
             try:
+                g.conversation_id = finalized_conversation_id
+
                 if data.get('image_generation'):
                     prompt_text = (data.get('message') or '').strip()
                     prompt_preview = prompt_text[:120] + '...' if len(prompt_text) > 120 else prompt_text
@@ -5434,7 +5442,7 @@ def register_route_backend_chats(app):
                 
                 # Extract request parameters (same as non-streaming endpoint)
                 user_message = data.get('message', '')
-                conversation_id = data.get('conversation_id')
+                conversation_id = finalized_conversation_id
                 hybrid_search_enabled = data.get('hybrid_search')
                 web_search_enabled = data.get('web_search_enabled')
                 selected_document_id = data.get('selected_document_id')
@@ -5666,8 +5674,7 @@ def register_route_backend_chats(app):
                     return
                 
                 # Load or create conversation (simplified)
-                if not conversation_id:
-                    conversation_id = str(uuid.uuid4())
+                if is_new_stream_conversation:
                     conversation_item = {
                         'id': conversation_id,
                         'user_id': user_id,

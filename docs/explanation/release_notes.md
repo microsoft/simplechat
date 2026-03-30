@@ -2,6 +2,16 @@
 
 # Feature Release
 
+### **(v0.239.187)**
+
+#### Bug Fixes
+
+*   **Workspace Model Endpoint Scope Gate Enforcement**
+    *   Fixed personal and group workspace model discovery and model test routes so they now enforce the same custom-endpoint feature gates as the corresponding endpoint management routes.
+    *   Restored the intended endpoint modal workflow so users can still fetch and test models before saving a new personal or group endpoint when those scope features are enabled.
+    *   Requests that reference a saved endpoint now resolve against the caller's authorized persisted endpoint configuration instead of allowing raw request payloads to override stored settings.
+    *   (Ref: `route_backend_models.py`, `workspace_model_endpoints.js`, `test_model_endpoint_scope_gate_enforcement.py`, model endpoint scope gating)
+
 ### **(v0.239.158)**
 
 #### Bug Fixes

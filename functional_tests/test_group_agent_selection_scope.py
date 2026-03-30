@@ -1,10 +1,11 @@
 # test_group_agent_selection_scope.py
 """
 Functional test for scope-aware agent selection.
-Version: 0.236.059
+Version: 0.239.193
 Implemented in: 0.236.059
 
-This test ensures scope-aware agent matching respects group IDs and global/personal scopes.
+This test ensures scope-aware agent matching respects group IDs and global/personal scopes
+without importing the full Semantic Kernel loader module.
 """
 
 import os
@@ -13,7 +14,7 @@ import sys
 repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(repo_root)
 
-from application.single_app.semantic_kernel_loader import find_agent_by_scope
+from application.single_app.functions_agent_scope import find_agent_by_scope
 
 
 def test_group_agent_selection_requires_group_id_match():

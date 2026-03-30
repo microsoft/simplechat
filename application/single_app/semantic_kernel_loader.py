@@ -41,14 +41,13 @@ from functions_global_actions import get_global_actions
 from functions_global_agents import get_global_agents
 from functions_group_agents import get_group_agent, get_group_agents
 from functions_group_actions import get_group_actions
-from functions_group import get_group_model_endpoints, require_active_group
+from functions_group import assert_group_role, get_group_model_endpoints, require_active_group
 from functions_personal_actions import get_personal_actions, ensure_migration_complete as ensure_actions_migration_complete
 from functions_personal_agents import get_personal_agents, ensure_migration_complete as ensure_agents_migration_complete
 from semantic_kernel_plugins.plugin_loader import discover_plugins
 from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
+from functions_agent_scope import find_agent_by_scope
 import app_settings_cache
-
-
 
 # Agent and Azure OpenAI chat service imports
 log_event("[SK Loader] Starting loader imports")
@@ -107,35 +106,6 @@ def first_if_comma(val):
             return val.split(",")[0].strip()
         return val
 
-def find_agent_by_scope(agents_cfg, selected_agent_data):
-    if not isinstance(selected_agent_data, dict) or not agents_cfg:
-        return None
-
-    selected_agent_name = selected_agent_data.get("name")
-    selected_agent_id = selected_agent_data.get("id")
-    is_global_flag = selected_agent_data.get("is_global", False)
-    is_group_flag = selected_agent_data.get("is_group", False)
-    selected_agent_group_id = selected_agent_data.get("group_id")
-
-    def scope_matches(candidate):
-        if is_group_flag:
-            if not candidate.get("is_group", False):
-                return False
-            return selected_agent_group_id is None or candidate.get("group_id") == selected_agent_group_id
-        if is_global_flag:
-            return candidate.get("is_global", False) and not candidate.get("is_group", False)
-        return not candidate.get("is_global", False) and not candidate.get("is_group", False)
-
-    if selected_agent_id:
-        found = next((a for a in agents_cfg if a.get("id") == selected_agent_id and scope_matches(a)), None)
-        if found:
-            return found
-
-    if selected_agent_name:
-        return next((a for a in agents_cfg if a.get("name") == selected_agent_name and scope_matches(a)), None)
-
-    return None
-
 
 def resolve_foundry_endpoint_from_settings(foundry_settings, settings):
     endpoint = (foundry_settings or {}).get("endpoint")
@@ -143,7 +113,7 @@ def resolve_foundry_endpoint_from_settings(foundry_settings, settings):
         return endpoint
     return settings.get("azure_ai_foundry_endpoint") or os.getenv("AZURE_AI_AGENT_ENDPOINT")
 
-def resolve_agent_config(agent, settings):
+def resolve_agent_config(agent, settings, group_scope_id=None):
     debug_print(f"[SK Loader] resolve_agent_config called for agent: {agent.get('name')}")
     debug_print(f"[SK Loader] Agent config: {agent}")
     debug_print(f"[SK Loader] Agent is_global flag: {agent.get('is_global')}")
@@ -162,9 +132,10 @@ def resolve_agent_config(agent, settings):
     global_apim_enabled = settings.get("enable_gpt_apim", False)
     per_user_enabled = settings.get('per_user_semantic_kernel', False)
     allow_user_custom_endpoints = settings.get('allow_user_custom_endpoints', False) or settings.get('allow_user_custom_agent_endpoints', False)
-    allow_group_custom_endpoints = settings.get('allow_group_custom_endpoints', False) or settings.get('allow_user_custom_agent_endpoints', False)
+    allow_group_custom_endpoints = settings.get('allow_group_custom_endpoints', False) or settings.get('allow_group_custom_agent_endpoints', False)
     is_group_agent = agent.get("is_group", False)
     is_global_agent = agent.get("is_global", False)
+    explicit_group_scope_id = str(group_scope_id or "").strip()
 
     if is_group_agent:
         allow_custom_agent_endpoints = allow_group_custom_endpoints
@@ -187,6 +158,28 @@ def resolve_agent_config(agent, settings):
 
     def all_filled(*fields):
         return all(bool(f) for f in fields)
+
+    def get_group_scope_id():
+        if not is_group_agent:
+            return ""
+
+        if explicit_group_scope_id:
+            return explicit_group_scope_id
+
+        persisted_group_id = str(agent.get("group_id") or "").strip()
+        if persisted_group_id:
+            return persisted_group_id
+
+        try:
+            return require_active_group(get_current_user_id())
+        except ValueError as err:
+            debug_print(f"[SK Loader] No active group available while resolving group endpoint scope: {err}")
+            log_event(
+                "[SK Loader] Group endpoint resolution could not determine a group scope.",
+                level=logging.WARNING,
+                extra={"agent_name": agent.get("name")}
+            )
+            return ""
 
     def get_user_apim():
         endpoint = agent.get("azure_apim_gpt_endpoint")
@@ -364,8 +357,9 @@ def resolve_agent_config(agent, settings):
         endpoints = []
         if is_group_agent:
             if allow_custom_agent_endpoints:
-                group_id = require_active_group(get_current_user_id())
-                endpoints.extend([{**endpoint, "_endpoint_scope": "group"} for endpoint in get_group_model_endpoints(group_id)])
+                group_id = get_group_scope_id()
+                if group_id:
+                    endpoints.extend([{**endpoint, "_endpoint_scope": "group"} for endpoint in get_group_model_endpoints(group_id)])
         elif not is_global_agent:
             if allow_custom_agent_endpoints:
                 user_settings = get_user_settings(get_current_user_id())
@@ -424,8 +418,9 @@ def resolve_agent_config(agent, settings):
         endpoints = []
         if is_group_agent:
             if allow_custom_agent_endpoints:
-                group_id = require_active_group(get_current_user_id())
-                endpoints.extend([{**endpoint, "_endpoint_scope": "group"} for endpoint in get_group_model_endpoints(group_id)])
+                group_id = get_group_scope_id()
+                if group_id:
+                    endpoints.extend([{**endpoint, "_endpoint_scope": "group"} for endpoint in get_group_model_endpoints(group_id)])
         elif not is_global_agent:
             if allow_custom_agent_endpoints:
                 user_settings = get_user_settings(get_current_user_id())
@@ -1274,7 +1269,7 @@ def _extract_sql_schema_for_instructions(kernel) -> str:
     return "\n".join(schema_parts)
 
 
-def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis_client=None, mode_label="global"):
+def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis_client=None, mode_label="global", group_scope_id=None):
     """
     DRY helper to load a single agent (default agent) for the kernel.
     - context_obj: g (per-user) or builtins (global)
@@ -1289,7 +1284,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
     if mode_label == "per-user":
         context_obj.redis_client = redis_client
     agent_objs = {}
-    agent_config = resolve_agent_config(agent_cfg, settings)
+    agent_config = resolve_agent_config(agent_cfg, settings, group_scope_id=group_scope_id)
     agent_type = (agent_config.get("agent_type") or agent_cfg.get("agent_type") or "local").lower()
     service_id = f"aoai-chat-{agent_config['name']}"
     chat_service = None
@@ -1875,48 +1870,81 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
         load_core_plugins_only(kernel, settings)
         return kernel, None
 
+    effective_group_id = None
     if selected_agent_is_group:
-        resolved_group_id = selected_agent_data.get('group_id')
-        
-        # Group agent MUST have a group_id
-        if not resolved_group_id:
-            log_event(
-                "[SK Loader] Group agent selected but no group_id provided in selection data.",
-                level=logging.ERROR
+        selected_group_id = str(selected_agent_data.get('group_id') or '').strip()
+        conversation_scope_group_id = str(conversation_group_id or '').strip()
+
+        if conversation_scope_group_id and selected_group_id and conversation_scope_group_id != selected_group_id:
+            debug_print(
+                f"[SK Loader] Group agent scope mismatch. conversation_group_id={conversation_scope_group_id}, selected_group_id={selected_group_id}."
             )
-            load_core_plugins_only(kernel, settings)
-            return kernel, None
-        
-        try:
-            active_group_id = require_active_group(user_id)
-            if resolved_group_id != active_group_id:
-                debug_print(
-                    f"[SK Loader] Selected group agent references group {resolved_group_id}, active group is {active_group_id}."
-                )
-                log_event(
-                    "[SK Loader] Group agent selected from the non-active group.",
-                    level=logging.ERROR
-                )
-                load_core_plugins_only(kernel, settings)
-                return kernel, None
-        except ValueError as err:
-            active_group_id = None
-            debug_print(f"[SK Loader] No active group available while loading group agent: {err}")
             log_event(
-                "[SK Loader] Group agent selected but no active group in settings.",
-                level=logging.ERROR
+                "[SK Loader] Group agent scope mismatch between conversation and selection.",
+                level=logging.ERROR,
+                extra={
+                    'conversation_group_id': conversation_scope_group_id,
+                    'selected_group_id': selected_group_id,
+                    'agent_name': selected_agent_data.get('name')
+                }
             )
             load_core_plugins_only(kernel, settings)
             return kernel, None
 
-        if resolved_group_id:
+        effective_group_id = conversation_scope_group_id or selected_group_id
+        if not effective_group_id:
+            try:
+                effective_group_id = require_active_group(user_id)
+                log_event(
+                    "[SK Loader] Group agent scope missing from selection; falling back to active group.",
+                    level=logging.WARNING,
+                    extra={'agent_name': selected_agent_data.get('name')}
+                )
+            except ValueError as err:
+                debug_print(f"[SK Loader] No group scope available while loading group agent: {err}")
+                log_event(
+                    "[SK Loader] Group agent selected but no group scope could be resolved.",
+                    level=logging.ERROR,
+                    extra={'agent_name': selected_agent_data.get('name')}
+                )
+                load_core_plugins_only(kernel, settings)
+                return kernel, None
+
+        try:
+            assert_group_role(
+                user_id,
+                effective_group_id,
+                allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+            )
+        except LookupError as err:
+            debug_print(f"[SK Loader] Group {effective_group_id} not found while loading group agent: {err}")
+            log_event(
+                "[SK Loader] Group agent selected but referenced group no longer exists.",
+                level=logging.ERROR,
+                extra={'group_id': effective_group_id, 'agent_name': selected_agent_data.get('name')}
+            )
+            load_core_plugins_only(kernel, settings)
+            return kernel, None
+        except PermissionError as err:
+            debug_print(f"[SK Loader] User {user_id} is not authorized for group {effective_group_id}: {err}")
+            log_event(
+                "[SK Loader] Group agent selected but user is not authorized for the resolved group.",
+                level=logging.ERROR,
+                extra={'group_id': effective_group_id, 'agent_name': selected_agent_data.get('name')}
+            )
+            load_core_plugins_only(kernel, settings)
+            return kernel, None
+
+        selected_agent_data['group_id'] = effective_group_id
+
+        if effective_group_id:
             agent_identifier = selected_agent_data.get('id') or selected_agent_data.get('name')
             group_agent_cfg = None
             if agent_identifier:
-                group_agent_cfg = get_group_agent(resolved_group_id, agent_identifier)
+                group_agent_cfg = get_group_agent(effective_group_id, agent_identifier)
             if not group_agent_cfg:
                 # Fallback: search by name across group agents if ID lookup failed
-                for candidate in get_group_agents(resolved_group_id):
+                for candidate in get_group_agents(effective_group_id):
                     if candidate.get('name') == selected_agent_data.get('name'):
                         group_agent_cfg = candidate
                         break
@@ -1924,25 +1952,25 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
             if group_agent_cfg:
                 group_agent_cfg['is_global'] = False
                 group_agent_cfg['is_group'] = True
-                group_agent_cfg.setdefault('group_id', resolved_group_id)
+                group_agent_cfg.setdefault('group_id', effective_group_id)
                 group_agent_cfg['group_name'] = selected_agent_data.get('group_name')
                 if not any(
                     agent.get('id') == group_agent_cfg.get('id')
                     or (
                         agent.get('name') == group_agent_cfg.get('name')
                         and bool(agent.get('is_group', False))
-                        and str(agent.get('group_id') or '') == str(resolved_group_id)
+                        and str(agent.get('group_id') or '') == str(effective_group_id)
                     )
                     for agent in agents_cfg
                 ):
                     agents_cfg.append(group_agent_cfg)
                 log_event(
-                    f"[SK Loader] Added group agent '{group_agent_cfg.get('name')}' from group {resolved_group_id} to candidate list.",
+                    f"[SK Loader] Added group agent '{group_agent_cfg.get('name')}' from group {effective_group_id} to candidate list.",
                     level=logging.INFO
                 )
             else:
                 log_event(
-                    f"[SK Loader] Selected group agent '{selected_agent_data.get('name')}' not found for group {resolved_group_id}.",
+                    f"[SK Loader] Selected group agent '{selected_agent_data.get('name')}' not found for group {effective_group_id}.",
                     level=logging.WARNING
                 )
 
@@ -2149,16 +2177,16 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
     agent_type = (agent_cfg.get('agent_type') or 'local').lower()
     agent_cfg['agent_type'] = agent_type
     if agent_type == 'local':
-        kernel, agent_objs = load_single_agent_for_kernel(kernel, agent_cfg, settings, g, redis_client=redis_client, mode_label="per-user")
+        kernel, agent_objs = load_single_agent_for_kernel(kernel, agent_cfg, settings, g, redis_client=redis_client, mode_label="per-user", group_scope_id=effective_group_id)
     elif agent_type in ('aifoundry', 'new_foundry'):
-        kernel, agent_objs = load_single_agent_for_kernel(kernel, agent_cfg, settings, g, redis_client=redis_client, mode_label="per-user")
+        kernel, agent_objs = load_single_agent_for_kernel(kernel, agent_cfg, settings, g, redis_client=redis_client, mode_label="per-user", group_scope_id=effective_group_id)
     else:
         log_event(
             f"[SK Loader] Unsupported agent_type '{agent_type}' for agent '{agent_cfg.get('name')}'. Defaulting to local path.",
             level=logging.WARNING,
             extra={'agent_type': agent_type, 'agent_name': agent_cfg.get('name')}
         )
-        kernel, agent_objs = load_single_agent_for_kernel(kernel, agent_cfg, settings, g, redis_client=redis_client, mode_label="per-user")
+        kernel, agent_objs = load_single_agent_for_kernel(kernel, agent_cfg, settings, g, redis_client=redis_client, mode_label="per-user", group_scope_id=effective_group_id)
     print(f"[SK Loader] User {user_id} Agent loading completed. Agent objects: {type(agent_objs)} with {len(agent_objs) if agent_objs else 0} items")
     return kernel, agent_objs
 

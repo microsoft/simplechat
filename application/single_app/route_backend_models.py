@@ -1,12 +1,14 @@
 # route_backend_models.py
 
+import logging
+
 from config import *
 from functions_authentication import *
 from functions_group import assert_group_role, get_group_model_endpoints, require_active_group, update_group_model_endpoints
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_get_helper, keyvault_model_endpoint_save_helper
 from functions_settings import *
 from foundry_agent_runtime import list_foundry_agents_from_endpoint, list_new_foundry_agents_from_endpoint, resolve_foundry_project_base, resolve_foundry_project_api_version, build_project_credential, resolve_authority
-from functions_debug import debug_print
+from functions_appinsights import log_event
 from swagger_wrapper import swagger_route, get_auth_security
 from azure.identity import DefaultAzureCredential, ClientSecretCredential, get_bearer_token_provider
 import re
@@ -17,6 +19,56 @@ def register_route_backend_models(app):
     """
     Register backend routes for fetching Azure OpenAI models.
     """
+
+    def log_models_debug(message, extra=None):
+        log_event(f"[Models] {message}", extra=extra, debug_only=True, category="Models")
+
+    def log_models_exception(message, exception, extra=None, level=logging.ERROR):
+        properties = dict(extra or {})
+        properties["exception_type"] = type(exception).__name__
+        log_event(
+            f"[Models] {message}",
+            extra=properties,
+            level=level,
+            exceptionTraceback=level >= logging.ERROR,
+        )
+
+    def build_safe_error_response(user_message, status_code):
+        return jsonify({"error": user_message}), status_code
+
+    def build_group_access_error_response(user_id, exception, resource_name):
+        extra = {
+            "user_id": user_id,
+            "resource": resource_name,
+        }
+        if isinstance(exception, ValueError):
+            log_event(
+                "[Models] Group access blocked because no active group was selected",
+                extra=extra,
+                level=logging.WARNING,
+            )
+            return build_safe_error_response(
+                f"Select an active group before accessing {resource_name}.",
+                400,
+            )
+        if isinstance(exception, LookupError):
+            log_event(
+                "[Models] Group access blocked because the group could not be found",
+                extra=extra,
+                level=logging.WARNING,
+            )
+            return build_safe_error_response("The selected group could not be found.", 404)
+
+        log_event(
+            "[Models] Group access denied",
+            extra=extra,
+            level=logging.WARNING,
+        )
+        return build_safe_error_response(
+            f"You do not have access to {resource_name}.",
+            403,
+        )
+
     def resolve_scoped_model_endpoints(user_id, scope):
         settings = get_settings()
         endpoints = []
@@ -45,7 +97,24 @@ def register_route_backend_models(app):
         user_id = get_current_user_id()
         endpoint_id = str(payload.get("endpoint_id") or payload.get("id") or "").strip()
         persisted_endpoint = resolve_endpoint_by_id(user_id, scope, endpoint_id) if endpoint_id else None
-        merged_payload = merge_model_endpoint_payload(persisted_endpoint or {}, payload)
+
+        if scope in ("user", "group") and endpoint_id:
+            if not persisted_endpoint:
+                log_models_debug(f"Rejecting {scope} request for unknown endpoint_id={endpoint_id}.")
+                log_event(
+                    "[Models] Model endpoint lookup failed",
+                    extra={"user_id": user_id, "scope": scope, "endpoint_id": endpoint_id},
+                    level=logging.WARNING,
+                )
+                raise LookupError("Model endpoint not found.")
+
+            # Persisted non-admin endpoints must resolve from stored configuration only.
+            merged_payload = merge_model_endpoint_payload(persisted_endpoint, {})
+            if "model" in payload:
+                merged_payload["model"] = payload.get("model")
+        else:
+            merged_payload = merge_model_endpoint_payload(persisted_endpoint or {}, payload)
+
         if endpoint_id:
             merged_payload["id"] = endpoint_id
 
@@ -93,7 +162,7 @@ def register_route_backend_models(app):
         management_cloud = (auth_settings.get("management_cloud") or "public").lower()
         scope = resolve_foundry_scope(auth_settings)
         auth_type = (auth_settings.get("type") or "managed_identity").lower()
-        debug_print(f"[Models] Foundry token auth_type={auth_type}, scope={scope}, cloud={management_cloud}")
+        log_models_debug(f"Foundry token auth_type={auth_type}, scope={scope}, cloud={management_cloud}")
         credential = build_project_credential(auth_settings)
         token = credential.get_token(scope)
         return token.token
@@ -102,7 +171,7 @@ def register_route_backend_models(app):
     def build_cognitive_services_client(subscription_id, auth_settings):
         auth_type = (auth_settings.get("type") or "managed_identity").lower()
         management_cloud = (auth_settings.get("management_cloud") or "public").lower()
-        debug_print(f"[Models] Building ARM client auth_type={auth_type}, subscription_id={subscription_id}, cloud={management_cloud}")
+        log_models_debug(f"Building ARM client auth_type={auth_type}, subscription_id={subscription_id}, cloud={management_cloud}")
         if auth_type == "service_principal":
             authority_override = resolve_authority(auth_settings)
             credential = ClientSecretCredential(
@@ -112,7 +181,7 @@ def register_route_backend_models(app):
                 authority=authority_override
             )
         elif auth_type == "api_key":
-            debug_print("[Models] API key auth requested for model discovery (not supported).")
+            log_models_debug("API key auth requested for model discovery (not supported).")
             raise ValueError("API key auth is not supported for model discovery.")
         else:
             managed_identity_client_id = auth_settings.get("managed_identity_client_id") or None
@@ -158,7 +227,7 @@ def register_route_backend_models(app):
         scope = cognitive_services_scope
         if provider in ("aifoundry", "new_foundry"):
             scope = resolve_foundry_scope(auth_settings)
-        debug_print(f"[Models] Inference token scope={scope} provider={provider}")
+        log_models_debug(f"Inference token scope={scope} provider={provider}")
         token_provider = get_bearer_token_provider(credential, scope)
         return AzureOpenAI(
             api_version=api_version,
@@ -172,7 +241,7 @@ def register_route_backend_models(app):
 
         auth_type = (auth_settings.get("type") or "managed_identity").lower()
         if auth_type == "api_key":
-            debug_print("[Models] API key auth requested for Foundry project discovery (not supported).")
+            log_models_debug("API key auth requested for Foundry project discovery (not supported).")
             raise ValueError("API key auth is not supported for Foundry project model discovery.")
 
         token = build_foundry_token(auth_settings)
@@ -186,7 +255,7 @@ def register_route_backend_models(app):
             "deploymentType": "ModelDeployment"
         }
         url = f"{base}/deployments"
-        debug_print(f"[Models] Foundry project deployments URL={url}")
+        log_models_debug(f"Foundry project deployments URL={url}")
 
         response = requests.get(url, headers=headers, params=params, timeout=30)
         response.raise_for_status()
@@ -206,27 +275,27 @@ def register_route_backend_models(app):
         return str(state).lower() == "succeeded"
 
     def handle_fetch_model_list(scope="global"):
-        data = request.get_json() or {}
-        data = resolve_request_endpoint_payload(data, scope=scope)
-        provider = (data.get("provider") or "aoai").lower()
-        connection = data.get("connection") or {}
-        auth_settings = data.get("auth") or {}
-        management = data.get("management") or {}
-        auth_type = (auth_settings.get("type") or "managed_identity").lower()
-        debug_print(
-            "[Models] Fetch model list request"
-            f" provider={provider} auth_type={auth_type}"
-            f" endpoint={connection.get('endpoint') or ''}"
-            f" subscription_id_present={bool(management.get('subscription_id'))}"
-            f" resource_group_present={bool(management.get('resource_group'))}"
-        )
-
         try:
+            data = request.get_json() or {}
+            data = resolve_request_endpoint_payload(data, scope=scope)
+            provider = (data.get("provider") or "aoai").lower()
+            connection = data.get("connection") or {}
+            auth_settings = data.get("auth") or {}
+            management = data.get("management") or {}
+            auth_type = (auth_settings.get("type") or "managed_identity").lower()
+            log_models_debug(
+                "Fetch model list request"
+                f" provider={provider} auth_type={auth_type}"
+                f" endpoint={connection.get('endpoint') or ''}"
+                f" subscription_id_present={bool(management.get('subscription_id'))}"
+                f" resource_group_present={bool(management.get('resource_group'))}"
+            )
+
             if provider in ("aifoundry", "new_foundry"):
                 endpoint = connection.get("endpoint")
                 api_version = connection.get("project_api_version") or connection.get("api_version") or "v1"
                 project_name = connection.get("project_name")
-                debug_print(f"[Models] Foundry fetch project endpoint={endpoint or ''} api_version={api_version}")
+                log_models_debug(f"Foundry fetch project endpoint={endpoint or ''} api_version={api_version}")
                 deployments = fetch_foundry_project_deployments(endpoint, api_version, auth_settings, project_name=project_name)
                 mapped = []
                 for item in deployments:
@@ -247,8 +316,8 @@ def register_route_backend_models(app):
                 resource_group = management.get("resource_group")
                 endpoint = connection.get("endpoint") or ""
                 account_name = endpoint.split('.')[0].replace("https://", "").replace("http://", "")
-                debug_print(
-                    f"[Models] AOAI fetch account_name={account_name}"
+                log_models_debug(
+                    f"AOAI fetch account_name={account_name}"
                     f" subscription_id={subscription_id or ''}"
                     f" resource_group={resource_group or ''}"
                 )
@@ -277,33 +346,54 @@ def register_route_backend_models(app):
                 return jsonify({"models": mapped})
 
             return jsonify({"error": "Model provider not found."}), 400
+        except LookupError as exc:
+            log_event(
+                "[Models] Fetch model list blocked because the model endpoint was not found",
+                extra={"scope": scope},
+                level=logging.WARNING,
+            )
+            return build_safe_error_response("The selected model endpoint could not be found.", 404)
+        except ValueError as exc:
+            log_models_exception(
+                "Fetch model list validation failed",
+                exc,
+                extra={"scope": scope},
+                level=logging.WARNING,
+            )
+            return build_safe_error_response(
+                "Unable to fetch models. Review the endpoint configuration and try again.",
+                400,
+            )
         except Exception as e:
-            debug_print(f"[Models] Fetch model list error: {str(e)}")
-            return jsonify({"error": str(e)}), 400
+            log_models_exception("Fetch model list failed", e, extra={"scope": scope})
+            return build_safe_error_response(
+                "Unable to fetch models right now. Try again later or contact an administrator.",
+                400,
+            )
 
     def handle_test_model_connection(scope="global"):
-        data = request.get_json() or {}
-        data = resolve_request_endpoint_payload(data, scope=scope)
-        provider = (data.get("provider") or "aoai").lower()
-        connection = data.get("connection") or {}
-        auth_settings = data.get("auth") or {}
-        model = data.get("model") or {}
-
-        endpoint = connection.get("endpoint") or ""
-        api_version = connection.get("openai_api_version") or connection.get("api_version") or ""
-        deployment_name = model.get("deploymentName") or ""
-
-        auth_type = (auth_settings.get("type") or "managed_identity").lower()
-        debug_print(
-            "[Models] Test model request"
-            f" provider={provider} auth_type={auth_type}"
-            f" endpoint={endpoint} deployment={deployment_name}"
-        )
-
-        if not endpoint or not api_version or not deployment_name:
-            return jsonify({"error": "Endpoint, API version, and deployment name are required."}), 400
-
         try:
+            data = request.get_json() or {}
+            data = resolve_request_endpoint_payload(data, scope=scope)
+            provider = (data.get("provider") or "aoai").lower()
+            connection = data.get("connection") or {}
+            auth_settings = data.get("auth") or {}
+            model = data.get("model") or {}
+
+            endpoint = connection.get("endpoint") or ""
+            api_version = connection.get("openai_api_version") or connection.get("api_version") or ""
+            deployment_name = model.get("deploymentName") or ""
+
+            auth_type = (auth_settings.get("type") or "managed_identity").lower()
+            log_models_debug(
+                "Test model request"
+                f" provider={provider} auth_type={auth_type}"
+                f" endpoint={endpoint} deployment={deployment_name}"
+            )
+
+            if not endpoint or not api_version or not deployment_name:
+                return jsonify({"error": "Endpoint, API version, and deployment name are required."}), 400
+
             if provider not in ("aoai", "aifoundry", "new_foundry"):
                 return jsonify({"error": "Model provider not found."}), 400
 
@@ -318,9 +408,30 @@ def register_route_backend_models(app):
 
             return jsonify({"error": "No response returned from model."}), 400
 
+        except LookupError as exc:
+            log_event(
+                "[Models] Test model request blocked because the model endpoint was not found",
+                extra={"scope": scope},
+                level=logging.WARNING,
+            )
+            return build_safe_error_response("The selected model endpoint could not be found.", 404)
+        except ValueError as exc:
+            log_models_exception(
+                "Test model validation failed",
+                exc,
+                extra={"scope": scope},
+                level=logging.WARNING,
+            )
+            return build_safe_error_response(
+                "Unable to test the model connection. Review the endpoint configuration and try again.",
+                400,
+            )
         except Exception as e:
-            debug_print(f"[Models] Test model error: {str(e)}")
-            return jsonify({"error": str(e)}), 400
+            log_models_exception("Test model connection failed", e, extra={"scope": scope})
+            return build_safe_error_response(
+                "Unable to test the model connection right now. Try again later or contact an administrator.",
+                400,
+            )
 
     @app.route('/api/models/gpt', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -380,7 +491,11 @@ def register_route_backend_models(app):
                     })
 
         except Exception as e:
-            return jsonify({"error": str(e)}), 500
+            log_models_exception("Fetch GPT models failed", e)
+            return build_safe_error_response(
+                "Unable to fetch available GPT models right now.",
+                500,
+            )
 
         return jsonify({"models": models})
 
@@ -441,7 +556,11 @@ def register_route_backend_models(app):
                         "modelName": model_name
                     })
         except Exception as e:
-            return jsonify({"error": str(e)}), 500
+            log_models_exception("Fetch embedding models failed", e)
+            return build_safe_error_response(
+                "Unable to fetch available embedding models right now.",
+                500,
+            )
 
         return jsonify({"models": models})
 
@@ -502,7 +621,11 @@ def register_route_backend_models(app):
                         "modelName": model_name
                     })
         except Exception as e:
-            return jsonify({"error": str(e)}), 500
+            log_models_exception("Fetch image models failed", e)
+            return build_safe_error_response(
+                "Unable to fetch available image models right now.",
+                500,
+            )
 
         return jsonify({"models": models})
 
@@ -520,8 +643,8 @@ def register_route_backend_models(app):
         management = data.get("management") or {}
         auth_settings = data.get("auth") or {}
         auth_type = (auth_settings.get("type") or "managed_identity").lower()
-        debug_print(
-            "[Models] Test connection request"
+        log_models_debug(
+            "Test connection request"
             f" provider={provider} auth_type={auth_type}"
             f" endpoint={connection.get('endpoint') or ''}"
             f" subscription_id_present={bool(management.get('subscription_id'))}"
@@ -533,7 +656,7 @@ def register_route_backend_models(app):
                 endpoint = connection.get("endpoint")
                 api_version = connection.get("project_api_version") or connection.get("api_version") or "v1"
                 project_name = connection.get("project_name")
-                debug_print(f"[Models] Foundry test project endpoint={endpoint or ''} api_version={api_version}")
+                log_models_debug(f"Foundry test project endpoint={endpoint or ''} api_version={api_version}")
                 deployments = fetch_foundry_project_deployments(endpoint, api_version, auth_settings, project_name=project_name)
                 return jsonify({"success": True, "count": len(deployments)})
 
@@ -542,8 +665,8 @@ def register_route_backend_models(app):
                 resource_group = management.get("resource_group")
                 endpoint = connection.get("endpoint") or ""
                 account_name = endpoint.split('.')[0].replace("https://", "").replace("http://", "")
-                debug_print(
-                    f"[Models] AOAI test account_name={account_name}"
+                log_models_debug(
+                    f"AOAI test account_name={account_name}"
                     f" subscription_id={subscription_id or ''}"
                     f" resource_group={resource_group or ''}"
                 )
@@ -567,9 +690,24 @@ def register_route_backend_models(app):
                 return jsonify({"success": True, "count": count})
 
             return jsonify({"error": "Model provider not found."}), 400
+        except LookupError as e:
+            log_event(
+                "[Models] Test connection blocked because the model endpoint was not found",
+                level=logging.WARNING,
+            )
+            return build_safe_error_response("The selected model endpoint could not be found.", 404)
+        except ValueError as e:
+            log_models_exception("Test connection validation failed", e, level=logging.WARNING)
+            return build_safe_error_response(
+                "Unable to validate the model connection. Review the endpoint configuration and try again.",
+                400,
+            )
         except Exception as e:
-            debug_print(f"[Models] Test connection error: {str(e)}")
-            return jsonify({"error": str(e)}), 400
+            log_models_exception("Test connection failed", e)
+            return build_safe_error_response(
+                "Unable to validate the model connection right now. Try again later or contact an administrator.",
+                400,
+            )
 
 
     @app.route('/api/models/fetch', methods=['POST'])
@@ -667,8 +805,17 @@ def register_route_backend_models(app):
         user_id = get_current_user_id()
         try:
             group_id = require_active_group(user_id)
+            assert_group_role(
+                user_id,
+                group_id,
+                allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+            )
         except ValueError as exc:
-            return jsonify({"error": str(exc)}), 400
+            return build_group_access_error_response(user_id, exc, "group model endpoints")
+        except LookupError as exc:
+            return build_group_access_error_response(user_id, exc, "group model endpoints")
+        except PermissionError as exc:
+            return build_group_access_error_response(user_id, exc, "group model endpoints")
         endpoints = get_group_model_endpoints(group_id)
         return jsonify({
             "endpoints": sanitize_model_endpoints_for_frontend(endpoints)
@@ -690,13 +837,13 @@ def register_route_backend_models(app):
 
         try:
             group_id = require_active_group(user_id)
-            assert_group_role(user_id, group_id)
+            assert_group_role(user_id, group_id, allowed_roles=("Owner", "Admin"))
         except ValueError as exc:
-            return jsonify({"error": str(exc)}), 400
+            return build_group_access_error_response(user_id, exc, "group model endpoint settings")
         except LookupError as exc:
-            return jsonify({"error": str(exc)}), 404
+            return build_group_access_error_response(user_id, exc, "group model endpoint settings")
         except PermissionError as exc:
-            return jsonify({"error": str(exc)}), 403
+            return build_group_access_error_response(user_id, exc, "group model endpoint settings")
 
         existing = get_group_model_endpoints(group_id)
 
@@ -766,11 +913,11 @@ def register_route_backend_models(app):
                 group_id = require_active_group(user_id)
                 assert_group_role(user_id, group_id)
             except ValueError as exc:
-                return jsonify({"error": str(exc)}), 400
+                return build_group_access_error_response(user_id, exc, "group Foundry agents")
             except LookupError as exc:
-                return jsonify({"error": str(exc)}), 404
+                return build_group_access_error_response(user_id, exc, "group Foundry agents")
             except PermissionError as exc:
-                return jsonify({"error": str(exc)}), 403
+                return build_group_access_error_response(user_id, exc, "group Foundry agents")
 
         endpoint_cfg = resolve_endpoint_by_id(user_id, scope, endpoint_id)
         if not endpoint_cfg:
@@ -792,8 +939,15 @@ def register_route_backend_models(app):
             else:
                 agents = list_foundry_agents_from_endpoint(foundry_settings, get_settings())
         except Exception as exc:
-            debug_print(f"[Models] Foundry agent list error: {str(exc)}")
-            return jsonify({"error": str(exc)}), 400
+            log_models_exception(
+                "Foundry agent list failed",
+                exc,
+                extra={"scope": scope, "provider": provider, "endpoint_id": endpoint_id},
+            )
+            return build_safe_error_response(
+                "Unable to load Foundry agents for the selected endpoint right now.",
+                400,
+            )
 
         connection = endpoint_cfg.get("connection", {}) or {}
         responses_api_version = ""
@@ -824,6 +978,7 @@ def register_route_backend_models(app):
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
+    @enabled_required('allow_user_custom_endpoints')
     def fetch_model_list_user():
         return handle_fetch_model_list(scope="user")
 
@@ -832,6 +987,7 @@ def register_route_backend_models(app):
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
+    @enabled_required('allow_user_custom_endpoints')
     def test_model_connection_user():
         return handle_test_model_connection(scope="user")
 
@@ -841,17 +997,18 @@ def register_route_backend_models(app):
     @login_required
     @user_required
     @enabled_required('enable_group_workspaces')
+    @enabled_required('allow_group_custom_endpoints')
     def fetch_model_list_group():
         user_id = get_current_user_id()
         try:
             group_id = require_active_group(user_id)
             assert_group_role(user_id, group_id)
         except ValueError as exc:
-            return jsonify({"error": str(exc)}), 400
+            return build_group_access_error_response(user_id, exc, "group model discovery")
         except LookupError as exc:
-            return jsonify({"error": str(exc)}), 404
+            return build_group_access_error_response(user_id, exc, "group model discovery")
         except PermissionError as exc:
-            return jsonify({"error": str(exc)}), 403
+            return build_group_access_error_response(user_id, exc, "group model discovery")
         return handle_fetch_model_list(scope="group")
 
 
@@ -860,15 +1017,16 @@ def register_route_backend_models(app):
     @login_required
     @user_required
     @enabled_required('enable_group_workspaces')
+    @enabled_required('allow_group_custom_endpoints')
     def test_model_connection_group():
         user_id = get_current_user_id()
         try:
             group_id = require_active_group(user_id)
-            assert_group_role(user_id, group_id)
+            assert_group_role(user_id, group_id, allowed_roles=("Owner", "Admin"))
         except ValueError as exc:
-            return jsonify({"error": str(exc)}), 400
+            return build_group_access_error_response(user_id, exc, "group model connection tests")
         except LookupError as exc:
-            return jsonify({"error": str(exc)}), 404
+            return build_group_access_error_response(user_id, exc, "group model connection tests")
         except PermissionError as exc:
-            return jsonify({"error": str(exc)}), 403
+            return build_group_access_error_response(user_id, exc, "group model connection tests")
         return handle_test_model_connection(scope="group")

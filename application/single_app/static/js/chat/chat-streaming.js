@@ -36,11 +36,83 @@ function clearCurrentStreamController(controller) {
     }
 }
 
+function removeStreamingPlaceholder(messageId) {
+    const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
+    if (messageElement) {
+        messageElement.remove();
+    }
+}
+
+async function getStreamingStatus(conversationId) {
+    if (!conversationId) {
+        return null;
+    }
+
+    const statusResponse = await fetch(`/api/chat/stream/status/${conversationId}`, {
+        credentials: 'same-origin',
+    });
+    const statusData = await statusResponse.json().catch(() => ({}));
+
+    if (!statusResponse.ok) {
+        return null;
+    }
+
+    return statusData;
+}
+
+async function attemptStreamingRecovery(conversationId, failedMessageId, tempUserMessageId, options = {}) {
+    const {
+        onDone = null,
+        onError = null,
+        onFinally = null,
+        reconnectStatusLabel = 'Reconnecting...',
+    } = options;
+
+    if (!conversationId) {
+        return false;
+    }
+
+    try {
+        const statusData = await getStreamingStatus(conversationId);
+        if (!statusData?.pending) {
+            return false;
+        }
+
+        clearStreamingThoughtSession(failedMessageId);
+        removeStreamingPlaceholder(failedMessageId);
+
+        const reconnectMessageId = createStreamingPlaceholder(reconnectStatusLabel);
+        return consumeStreamingResponse(
+            signal => fetch(`/api/chat/stream/reattach/${conversationId}`, {
+                method: 'GET',
+                credentials: 'same-origin',
+                signal,
+            }),
+            reconnectMessageId,
+            tempUserMessageId,
+            {
+                onDone,
+                onError,
+                onFinally,
+                allowRecovery: false,
+                recoveryConversationId: conversationId,
+                reconnectStatusLabel,
+            },
+        );
+    } catch (error) {
+        console.warn('Failed to recover streaming conversation automatically:', error);
+        return false;
+    }
+}
+
 function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessageId, options = {}) {
     const {
         onDone = null,
         onError = null,
         onFinally = null,
+        allowRecovery = true,
+        recoveryConversationId = null,
+        reconnectStatusLabel = 'Reconnecting...',
     } = options;
 
     if (currentStreamController) {
@@ -170,7 +242,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         }
         
         function readStream() {
-            reader.read().then(({ done, value }) => {
+            reader.read().then(async ({ done, value }) => {
                 if (done) {
                     stopThoughtPolling();
 
@@ -178,6 +250,25 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                     const processedFinalEvent = processSseBuffer(true);
 
                     if (!processedFinalEvent && !streamCompleted && !streamError) {
+                        clearCurrentStreamController(abortController);
+
+                        if (allowRecovery) {
+                            const recovered = await attemptStreamingRecovery(
+                                recoveryConversationId,
+                                tempAiMessageId,
+                                tempUserMessageId,
+                                {
+                                    onDone,
+                                    onError,
+                                    onFinally,
+                                    reconnectStatusLabel,
+                                },
+                            );
+                            if (recovered) {
+                                return;
+                            }
+                        }
+
                         clearStreamingThoughtSession(tempAiMessageId);
                         handleStreamError(
                             tempAiMessageId,
@@ -204,7 +295,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                 }
                 
                 readStream(); // Continue reading
-            }).catch(err => {
+            }).catch(async err => {
                 if (abortController.signal.aborted) {
                     clearStreamingThoughtSession(tempAiMessageId);
                     clearCurrentStreamController(abortController);
@@ -216,9 +307,27 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
 
                 stopThoughtPolling();
                 console.error('Stream reading error:', err);
+
+                clearCurrentStreamController(abortController);
+                if (allowRecovery) {
+                    const recovered = await attemptStreamingRecovery(
+                        recoveryConversationId,
+                        tempAiMessageId,
+                        tempUserMessageId,
+                        {
+                            onDone,
+                            onError,
+                            onFinally,
+                            reconnectStatusLabel,
+                        },
+                    );
+                    if (recovered) {
+                        return;
+                    }
+                }
+
                 clearStreamingThoughtSession(tempAiMessageId);
                 handleStreamError(tempAiMessageId, accumulatedContent, err.message);
-                clearCurrentStreamController(abortController);
                 if (typeof onError === 'function') {
                     onError(err.message, err);
                 }
@@ -230,7 +339,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         
         readStream();
         
-    }).catch(error => {
+    }).catch(async error => {
         if (abortController.signal.aborted) {
             clearStreamingThoughtSession(tempAiMessageId);
             clearCurrentStreamController(abortController);
@@ -242,15 +351,30 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
 
         stopThoughtPolling();
         console.error('Streaming request error:', error);
+
+        clearCurrentStreamController(abortController);
+        if (allowRecovery) {
+            const recovered = await attemptStreamingRecovery(
+                recoveryConversationId,
+                tempAiMessageId,
+                tempUserMessageId,
+                {
+                    onDone,
+                    onError,
+                    onFinally,
+                    reconnectStatusLabel,
+                },
+            );
+            if (recovered) {
+                return;
+            }
+        }
+
         showToast(`Error: ${error.message}`, 'error');
         clearStreamingThoughtSession(tempAiMessageId);
-        clearCurrentStreamController(abortController);
         
         // Remove placeholder message
-        const msgElement = document.querySelector(`[data-message-id="${tempAiMessageId}"]`);
-        if (msgElement) {
-            msgElement.remove();
-        }
+        removeStreamingPlaceholder(tempAiMessageId);
 
         if (typeof onError === 'function') {
             onError(error.message, error);
@@ -266,6 +390,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
 
 export function sendMessageWithStreaming(messageData, tempUserMessageId, currentConversationId, options = {}) {
     const tempAiMessageId = createStreamingPlaceholder('Streaming...');
+    const recoveryConversationId = currentConversationId || messageData?.conversation_id || window.currentConversationId || null;
 
     return consumeStreamingResponse(
         signal => fetch('/api/chat/stream', {
@@ -279,25 +404,27 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
         }),
         tempAiMessageId,
         tempUserMessageId,
-        options,
+        {
+            ...options,
+            recoveryConversationId,
+        },
     );
 }
 
-export async function reattachStreamingConversation(conversationId) {
+export async function reattachStreamingConversation(conversationId, options = {}) {
+    const { statusLabel = 'Reconnecting...' } = options;
+
     if (!conversationId) {
         return false;
     }
 
     try {
-        const statusResponse = await fetch(`/api/chat/stream/status/${conversationId}`, {
-            credentials: 'same-origin',
-        });
-        const statusData = await statusResponse.json().catch(() => ({}));
-        if (!statusResponse.ok || !statusData.pending) {
+        const statusData = await getStreamingStatus(conversationId);
+        if (!statusData?.pending) {
             return false;
         }
 
-        const tempAiMessageId = createStreamingPlaceholder('Reconnecting...');
+        const tempAiMessageId = createStreamingPlaceholder(statusLabel);
         return consumeStreamingResponse(
             signal => fetch(`/api/chat/stream/reattach/${conversationId}`, {
                 method: 'GET',
@@ -306,6 +433,11 @@ export async function reattachStreamingConversation(conversationId) {
             }),
             tempAiMessageId,
             null,
+            {
+                allowRecovery: false,
+                recoveryConversationId: conversationId,
+                reconnectStatusLabel: statusLabel,
+            },
         );
     } catch (error) {
         console.warn('Failed to reattach streaming conversation:', error);
