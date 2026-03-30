@@ -2458,6 +2458,9 @@ def register_route_backend_chats(app):
             # Keep single ID for backwards compat in metadata/context
             active_group_id = active_group_ids[0] if active_group_ids else data.get('active_group_id')
             active_public_workspace_id = data.get('active_public_workspace_id')  # Extract active public workspace ID
+            active_public_workspace_ids = data.get('active_public_workspace_ids', [])
+            if not active_public_workspace_ids and active_public_workspace_id:
+                active_public_workspace_ids = [active_public_workspace_id]
             frontend_gpt_model = data.get('model_deployment')
             top_n_results = data.get('top_n')  # Extract top_n parameter from request
             classifications_to_send = data.get('classifications')  # Extract classifications parameter from request
@@ -5232,6 +5235,7 @@ def register_route_backend_chats(app):
                     conversation_id=conversation_id,
                     user_id=user_id,
                     active_group_id=active_group_id,
+                    active_group_ids=active_group_ids,
                     document_scope=document_scope,
                     selected_document_id=selected_document_id,
                     model_deployment=actual_model_used,
@@ -5241,7 +5245,9 @@ def register_route_backend_chats(app):
                     selected_agent=selected_agent_name,
                     selected_agent_details=user_metadata.get('agent_selection'),
                     search_results=search_results if 'search_results' in locals() else None,
-                    conversation_item=conversation_item
+                    conversation_item=conversation_item,
+                    active_public_workspace_id=active_public_workspace_id,
+                    active_public_workspace_ids=active_public_workspace_ids
                 )
             except Exception as e:
                 debug_print(f"Error collecting conversation metadata: {e}")
@@ -5262,6 +5268,10 @@ def register_route_backend_chats(app):
                 'conversation_id': conversation_id,
                 'conversation_title': conversation_item['title'], # Send updated title
                 'classification': conversation_item.get('classification', []), # Send classifications if any
+                'context': conversation_item.get('context', []),
+                'chat_type': conversation_item.get('chat_type'),
+                'scope_locked': conversation_item.get('scope_locked'),
+                'locked_contexts': conversation_item.get('locked_contexts', []),
                 'model_deployment_name': actual_model_used,
                 'agent_display_name': agent_display_name,
                 'agent_name': agent_name,
@@ -5468,6 +5478,9 @@ def register_route_backend_chats(app):
                 # Keep single ID for backwards compat in metadata/context
                 active_group_id = active_group_ids[0] if active_group_ids else data.get('active_group_id')
                 active_public_workspace_id = data.get('active_public_workspace_id')  # Extract active public workspace ID
+                active_public_workspace_ids = data.get('active_public_workspace_ids', [])
+                if not active_public_workspace_ids and active_public_workspace_id:
+                    active_public_workspace_ids = [active_public_workspace_id]
                 frontend_gpt_model = data.get('model_deployment')
                 classifications_to_send = data.get('classifications')
                 chat_type = data.get('chat_type', 'user')
@@ -7026,6 +7039,7 @@ def register_route_backend_chats(app):
                             conversation_id=conversation_id,
                             user_id=user_id,
                             active_group_id=active_group_id,
+                            active_group_ids=active_group_ids,
                             document_scope=document_scope,
                             selected_document_id=selected_document_id,
                             model_deployment=gpt_model,
@@ -7035,7 +7049,9 @@ def register_route_backend_chats(app):
                             selected_agent=agent_name_used if use_agent_streaming else None,
                             selected_agent_details=selected_agent_metadata if use_agent_streaming else None,
                             search_results=search_results if search_results else None,
-                            conversation_item=conversation_item
+                            conversation_item=conversation_item,
+                            active_public_workspace_id=active_public_workspace_id,
+                            active_public_workspace_ids=active_public_workspace_ids
                         )
                     except Exception as e:
                         debug_print(f"Error collecting conversation metadata: {e}")
@@ -7071,6 +7087,10 @@ def register_route_backend_chats(app):
                         'conversation_id': conversation_id,
                         'conversation_title': conversation_item['title'],
                         'classification': conversation_item.get('classification', []),
+                        'context': conversation_item.get('context', []),
+                        'chat_type': conversation_item.get('chat_type'),
+                        'scope_locked': conversation_item.get('scope_locked'),
+                        'locked_contexts': conversation_item.get('locked_contexts', []),
                         'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
                         'message_id': assistant_message_id,
                         'user_message_id': user_message_id,

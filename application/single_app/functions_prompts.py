@@ -92,6 +92,42 @@ def list_prompts(user_id, prompt_type, args, group_id=None, public_workspace_id=
 
     return items, total_count, page, page_size
 
+
+def list_all_prompts_for_scope(user_id, prompt_type, group_id=None, public_workspace_id=None):
+    """
+    List all prompts for a user, group, or public workspace without pagination.
+    Returns a full list of prompt documents for chat bootstrap scenarios.
+    """
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    if is_public_workspace:
+        cosmos_container = cosmos_public_prompts_container
+        id_field = 'public_id'
+        id_value = public_workspace_id
+    elif is_group:
+        cosmos_container = cosmos_group_prompts_container
+        id_field = 'group_id'
+        id_value = group_id
+    else:
+        cosmos_container = cosmos_user_prompts_container
+        id_field = 'user_id'
+        id_value = user_id
+
+    query = f"SELECT * FROM c WHERE c.{id_field} = @id_value AND c.type = @prompt_type"
+    parameters = [
+        {"name": "@id_value", "value": id_value},
+        {"name": "@prompt_type", "value": prompt_type}
+    ]
+
+    return list(
+        cosmos_container.query_items(
+            query=query,
+            parameters=parameters,
+            enable_cross_partition_query=True
+        )
+    )
+
 def create_prompt_doc(name, content, prompt_type, user_id, group_id=None, public_workspace_id=None):
     """
     Create a new prompt for a user or a group.

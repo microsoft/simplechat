@@ -139,7 +139,8 @@ export async function handleRetryButtonClick(messageDiv, messageId, messageType)
         let showReasoning = false;
         
         if (retryModeModel && retryModeModel.checked) {
-            const selectedModel = retryModelSelect ? retryModelSelect.value : null;
+            const selectedOption = retryModelSelect ? retryModelSelect.options[retryModelSelect.selectedIndex] : null;
+            const selectedModel = selectedOption?.dataset?.modelId || selectedOption?.dataset?.deploymentName || (retryModelSelect ? retryModelSelect.value : null);
             showReasoning = selectedModel && selectedModel.includes('o1');
         } else if (retryModeAgent && retryModeAgent.checked) {
             // Check if agent uses o1 model (you could enhance this by checking agent config)
@@ -238,7 +239,8 @@ window.executeMessageRetry = function() {
     } else {
         // Model mode - get model and reasoning effort
         const retryModelSelect = document.getElementById('retry-model-select');
-        const selectedModel = retryModelSelect ? retryModelSelect.value : null;
+        const selectedOption = retryModelSelect ? retryModelSelect.options[retryModelSelect.selectedIndex] : null;
+        const selectedModel = selectedOption?.dataset?.deploymentName || (retryModelSelect ? retryModelSelect.value : null);
         requestBody.model = selectedModel;
         
         let reasoningEffort = null;

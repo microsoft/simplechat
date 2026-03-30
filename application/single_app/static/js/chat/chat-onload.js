@@ -5,7 +5,7 @@ import { loadConversations, selectConversation, ensureConversationPresent, creat
 import { loadAllDocs, populateDocumentSelectScope, handleDocumentSelectChange, loadTagsForScope, filterDocumentsBySelectedTags, setScopeFromUrlParam } from "./chat-documents.js";
 import { getUrlParameter } from "./chat-utils.js"; // Assuming getUrlParameter is in chat-utils.js now
 import { loadUserPrompts, loadGroupPrompts, initializePromptInteractions } from "./chat-prompts.js";
-import { initializeModelSelector } from "./chat-model-selector.js";
+import { initializeModelSelector, populateModelDropdown } from "./chat-model-selector.js";
 import { loadUserSettings } from "./chat-layout.js";
 import { showToast } from "./chat-toast.js";
 import { initConversationInfoButton } from "./chat-conversation-info-button.js";
@@ -81,19 +81,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   try {
       const userSettings = await userSettingsPromise;
       
-        // Set the preferred model if available
-        const preferredModelId = userSettings?.preferredModelId;
-        const preferredModelDeployment = userSettings?.preferredModelDeployment;
-        const modelSelect = document.getElementById("model-select");
-        if (modelSelect) {
-          if (preferredModelId) {
-            console.log(`Setting preferred model ID: ${preferredModelId}`);
-            modelSelect.value = preferredModelId;
-          } else if (preferredModelDeployment) {
-            console.log(`Setting preferred model deployment: ${preferredModelDeployment}`);
-            modelSelect.value = preferredModelDeployment;
-          }
-        }
+                const preferredModelId = userSettings?.preferredModelId;
+                const preferredModelDeployment = userSettings?.preferredModelDeployment;
 
         // Multi-endpoint migration notice
         const notice = window.multiEndpointNotice || {};
@@ -109,7 +98,12 @@ window.addEventListener('DOMContentLoaded', async () => {
           }
         }
 
-      initializeModelSelector();
+            initializeModelSelector();
+            await populateModelDropdown({
+                preferredModelId,
+                preferredModelDeployment,
+                preserveCurrentSelection: false,
+            });
       initializeReasoningToggle(userSettings);
 
       const [docsResult, userPromptsResult, groupPromptsResult] = await Promise.all([

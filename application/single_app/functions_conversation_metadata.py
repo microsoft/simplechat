@@ -41,12 +41,76 @@ def get_user_info_by_id(user_id):
         }
 
 
+def _normalize_scope_id_list(raw_ids):
+    if raw_ids is None:
+        return []
+
+    if not isinstance(raw_ids, list):
+        raw_ids = [raw_ids]
+
+    normalized_ids = []
+    for raw_id in raw_ids:
+        normalized_id = str(raw_id or '').strip()
+        if not normalized_id:
+            continue
+        if normalized_id.lower() in ('none', 'null', 'undefined'):
+            continue
+        if normalized_id not in normalized_ids:
+            normalized_ids.append(normalized_id)
+
+    return normalized_ids
+
+
+def _build_primary_context_from_scope_selection(
+    user_id,
+    document_scope=None,
+    active_group_id=None,
+    active_group_ids=None,
+    active_public_workspace_id=None,
+    active_public_workspace_ids=None,
+):
+    normalized_group_ids = _normalize_scope_id_list(active_group_ids or active_group_id)
+    normalized_public_workspace_ids = _normalize_scope_id_list(active_public_workspace_ids or active_public_workspace_id)
+
+    if document_scope == 'group' and len(normalized_group_ids) == 1:
+        group_id = normalized_group_ids[0]
+        group_info = find_group_by_id(group_id)
+        return {
+            "type": "primary",
+            "scope": "group",
+            "id": group_id,
+            "name": group_info.get('name', 'Unknown Group') if group_info else 'Unknown Group'
+        }
+
+    if document_scope == 'public' and len(normalized_public_workspace_ids) == 1:
+        workspace_id = normalized_public_workspace_ids[0]
+        workspace_info = find_public_workspace_by_id(workspace_id)
+        return {
+            "type": "primary",
+            "scope": "public",
+            "id": workspace_id,
+            "name": workspace_info.get('name', 'Unknown Workspace') if workspace_info else 'Unknown Workspace'
+        }
+
+    if document_scope == 'personal':
+        user_info = get_user_info_by_id(user_id)
+        return {
+            "type": "primary",
+            "scope": "personal",
+            "id": user_id,
+            "name": user_info.get('name', 'Personal') if user_info else 'Personal'
+        }
+
+    return None
+
+
 def collect_conversation_metadata(user_message, conversation_id, user_id, active_group_id=None, 
                                 document_scope=None, selected_document_id=None, model_deployment=None,
                                 hybrid_search_enabled=False, 
                                 image_gen_enabled=False, selected_documents=None, 
                                 selected_agent=None, selected_agent_details=None, search_results=None, web_search_results=None,
-                                conversation_item=None, additional_participants=None):
+                                conversation_item=None, additional_participants=None,
+                                active_group_ids=None, active_public_workspace_id=None, active_public_workspace_ids=None):
     """
     Collect comprehensive metadata for a conversation based on the user's interaction.
     
@@ -164,6 +228,16 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
             "id": scope_id,
             "name": context_name
         }
+    elif not agent_primary_context:
+        primary_context = _build_primary_context_from_scope_selection(
+            user_id=user_id,
+            document_scope=document_scope,
+            active_group_id=active_group_id,
+            active_group_ids=active_group_ids,
+            active_public_workspace_id=active_public_workspace_id,
+            active_public_workspace_ids=active_public_workspace_ids,
+        )
+
     # If no documents were used, fall back to agent-based primary context
     if not primary_context and agent_primary_context:
         primary_context = agent_primary_context

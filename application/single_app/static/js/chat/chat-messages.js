@@ -1422,7 +1422,7 @@ export function actuallySendMessage(finalMessageToSend) {
   let modelProvider = null;
   if (window.appSettings?.enable_multi_model_endpoints && modelSelect) {
     const selectedOption = modelSelect.options[modelSelect.selectedIndex];
-    modelId = selectedOption?.value || null;
+    modelId = selectedOption?.dataset?.modelId || selectedOption?.value || null;
     modelEndpointId = selectedOption?.dataset?.endpointId || null;
     modelProvider = selectedOption?.dataset?.provider || null;
     modelDeployment = selectedOption?.dataset?.deploymentName || null;
@@ -1564,6 +1564,7 @@ export function actuallySendMessage(finalMessageToSend) {
     chat_type: chat_type,
     active_group_ids: finalGroupIds,
     active_group_id: finalGroupId,
+    active_public_workspace_ids: scopes.publicWorkspaceIds,
     active_public_workspace_id: finalPublicWorkspaceId,
     model_deployment: modelDeployment,
     model_id: modelId,
@@ -2360,8 +2361,10 @@ if (modelSelect) {
   modelSelect.addEventListener("change", function() {
     const selectedModel = modelSelect.value;
     if (window.appSettings?.enable_multi_model_endpoints) {
-      console.log(`Saving preferred model ID: ${selectedModel}`);
-      saveUserSetting({ preferredModelId: selectedModel });
+      const selectedOption = modelSelect.options[modelSelect.selectedIndex];
+      const selectionKey = selectedOption?.dataset?.selectionKey || selectedModel;
+      console.log(`Saving preferred model ID: ${selectionKey}`);
+      saveUserSetting({ preferredModelId: selectionKey });
     } else {
       console.log(`Saving preferred model deployment: ${selectedModel}`);
       saveUserSetting({ preferredModelDeployment: selectedModel });

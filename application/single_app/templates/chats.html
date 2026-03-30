@@ -343,7 +343,7 @@
                             <i class="bi bi-globe"></i> <span class="search-btn-text d-none d-md-inline">Web</span>
                         </button>
                         {% endif %}
-                        {% if settings.enable_user_workspace or settings.enable_group_workspaces %}
+                        {% if settings.enable_user_workspace or settings.enable_group_workspaces or settings.enable_public_workspaces %}
                         <button id="search-prompts-btn" class="btn btn-outline-secondary btn-sm search-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="Select a saved prompt">
                             <i class="bi bi-lightbulb"></i> <span class="search-btn-text d-none d-md-inline">Prompts</span>
                         </button>
@@ -359,7 +359,7 @@
                     <div class="chat-toolbar-controls">
                         <!-- Prompt Selector -->
                         <div class="chat-toolbar-selectors">
-                        {% if settings.enable_user_workspace or settings.enable_group_workspaces %}
+                        {% if settings.enable_user_workspace or settings.enable_group_workspaces or settings.enable_public_workspaces %}
                         <div id="prompt-selection-container" class="chat-toolbar-selector" style="display: none;">
                             <label for="prompt-select" class="visually-hidden">Prompt</label>
                             <div class="dropdown chat-searchable-select" id="prompt-dropdown">
@@ -1122,6 +1122,9 @@
     window.activePublicWorkspaceId = "{{ active_public_workspace_id }}";
     window.userGroups = JSON.parse('{{ user_groups|tojson|safe }}');
     window.userVisiblePublicWorkspaces = JSON.parse('{{ user_visible_public_workspaces|tojson|safe }}');
+    window.chatPromptOptions = JSON.parse('{{ chat_prompt_options|tojson|safe }}');
+    window.chatAgentOptions = JSON.parse('{{ chat_agent_options|tojson|safe }}');
+    window.chatModelOptions = JSON.parse('{{ chat_model_options|tojson|safe }}');
     window.enableEnhancedCitations = "{{ enable_enhanced_citations }}";
     window.enable_document_classification = "{{ enable_document_classification }}";
     window.classification_categories = JSON.parse('{{ settings.document_classification_categories|tojson(indent=None)|safe }}' || '[]');

@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 # test_chat_searchable_selectors.py
 """
-Functional test for searchable chat selectors.
-Version: 0.239.125
-Implemented in: 0.239.124
+Functional test for grouped searchable chat selectors.
+Version: 0.239.195
+Implemented in: 0.239.195
 
-This test ensures that the chat page adds search support for workspace scope,
-tags, prompts, models, and agents, and that prompt loading fetches all pages so
-the searchable prompt picker is not capped at the first prompt page. It also
-verifies that the chat action buttons and selector controls use a responsive
-toolbar layout instead of compressing active buttons into narrow columns.
+This test ensures that the chat page exposes grouped searchable selectors for
+documents, prompts, models, and agents, that grouped headers are preserved by
+the shared renderer during search, and that chat prompt data is preloaded for
+personal, group, and public workspace scopes.
 """
 
 import os
@@ -78,6 +77,18 @@ CHAT_CSS_FILE = os.path.join(
     'css',
     'chats.css',
 )
+ROUTE_FRONTEND_CHATS_FILE = os.path.join(
+    ROOT_DIR,
+    'application',
+    'single_app',
+    'route_frontend_chats.py',
+)
+PROMPTS_FUNCTIONS_FILE = os.path.join(
+    ROOT_DIR,
+    'application',
+    'single_app',
+    'functions_prompts.py',
+)
 CONFIG_FILE = os.path.join(
     ROOT_DIR,
     'application',
@@ -119,6 +130,9 @@ def test_chat_template_contains_searchable_selectors():
             'id="prompt-select"',
             'id="model-select"',
             'id="agent-select"',
+            'window.chatPromptOptions = JSON.parse',
+            'window.chatAgentOptions = JSON.parse',
+            'window.chatModelOptions = JSON.parse',
         ]
 
         missing = [snippet for snippet in required_snippets if snippet not in content]
@@ -167,9 +181,9 @@ def test_chat_toolbar_layout_supports_wrapping_without_button_compression():
         return False
 
 
-def test_shared_search_helper_supports_dropdown_filtering_and_single_selects():
-    """Verify the shared helper supports both filterable dropdowns and searchable single-selects."""
-    print('🔍 Testing shared searchable select helper...')
+def test_shared_search_helper_supports_grouped_single_selects():
+    """Verify the shared helper supports grouped searchable single-select sections."""
+    print('🔍 Testing shared searchable select helper grouped rendering...')
 
     try:
         content = read_file(CHAT_SEARCHABLE_SELECT_FILE)
@@ -177,6 +191,9 @@ def test_shared_search_helper_supports_dropdown_filtering_and_single_selects():
         required_snippets = [
             'export function initializeFilterableDropdownSearch',
             'export function createSearchableSingleSelect',
+            'function createDropdownHeader(label) {',
+            'const getTopLevelEntries = () => Array.from(selectEl.children)',
+            "if (entry.tagName === 'OPTGROUP') {",
             'updateDropdownStructure(itemsContainerEl);',
             "itemsContainerEl.appendChild(createNoMatchesElement(emptyMessage));",
             "selectEl.dispatchEvent(new Event('change', { bubbles: true }));",
@@ -186,7 +203,7 @@ def test_shared_search_helper_supports_dropdown_filtering_and_single_selects():
         missing = [snippet for snippet in required_snippets if snippet not in content]
         assert not missing, f'Missing shared helper logic: {missing}'
 
-        print('✅ Shared searchable select helper passed')
+        print('✅ Shared grouped searchable select helper passed')
         return True
 
     except Exception as exc:
@@ -197,8 +214,8 @@ def test_shared_search_helper_supports_dropdown_filtering_and_single_selects():
 
 
 def test_scope_tag_and_document_search_are_wired_in_chat_documents():
-    """Verify scope, tags, and documents all use the shared filter helper."""
-    print('🔍 Testing scope/tag/document search wiring...')
+    """Verify scope, tags, and documents all use grouped searchable dropdown wiring."""
+    print('🔍 Testing scope/tag/document grouped search wiring...')
 
     try:
         content = read_file(CHAT_DOCUMENTS_FILE)
@@ -211,6 +228,11 @@ def test_scope_tag_and_document_search_are_wired_in_chat_documents():
             'const tagsSearchController = initializeFilterableDropdownSearch({',
             "allItem.setAttribute('data-search-role', 'action');",
             "item.setAttribute('data-search-role', 'item');",
+            'function appendDocumentSection(sectionLabel, documents, sectionIndex) {',
+            "docDropdownItems.appendChild(createDropdownHeader(sectionLabel));",
+            "label: `[Group] ${group.name || 'Unnamed Group'}`",
+            "label: `[Public] ${workspace.name || 'Unnamed Workspace'}`",
+            'appendDocumentSection(section.label, section.documents, sectionIndex);',
             "documentSearchController?.applyFilter(docSearchInput ? docSearchInput.value : '');",
             "tagsSearchController?.applyFilter(tagsSearchInput ? tagsSearchInput.value : '');",
             "scopeSearchController?.applyFilter(scopeSearchInput ? scopeSearchInput.value : '');",
@@ -219,7 +241,7 @@ def test_scope_tag_and_document_search_are_wired_in_chat_documents():
         missing = [snippet for snippet in required_snippets if snippet not in content]
         assert not missing, f'Missing scope/tag/document search wiring: {missing}'
 
-        print('✅ Scope/tag/document search wiring passed')
+        print('✅ Scope/tag/document grouped search wiring passed')
         return True
 
     except Exception as exc:
@@ -229,20 +251,22 @@ def test_scope_tag_and_document_search_are_wired_in_chat_documents():
         return False
 
 
-def test_prompt_selector_pages_all_prompts_and_uses_searchable_select():
-    """Verify prompt loading walks all pages and renders through the shared searchable select."""
-    print('🔍 Testing prompt selector pagination and search wiring...')
+def test_prompt_selector_uses_preloaded_grouped_catalog():
+    """Verify prompt loading uses preloaded grouped chat prompt catalogs."""
+    print('🔍 Testing prompt selector grouped preloaded catalog wiring...')
 
     try:
         content = read_file(CHAT_PROMPTS_FILE)
 
         required_snippets = [
             'import { createSearchableSingleSelect } from "./chat-searchable-select.js";',
-            'const promptPageSize = 100;',
-            'async function fetchAllPromptPages(endpoint, emptyStatuses = []) {',
-            'page_size: String(promptPageSize)',
-            'prompts.length >= totalCount',
+            'function getPreloadedPromptOptions() {',
+            'window.chatPromptOptions',
+            'function buildPromptSections(scopes) {',
             'promptSelectorController = createSearchableSingleSelect({',
+            'const optGroup = document.createElement("optgroup");',
+            'optGroup.label = section.label;',
+            'window.addEventListener("chat:scope-changed", () => {',
             'promptSelect.dispatchEvent(new Event("change", { bubbles: true }));',
             'loadAllPromptsPromise = Promise.all([loadUserPrompts(), loadGroupPrompts(), loadPublicPrompts()])',
         ]
@@ -250,7 +274,7 @@ def test_prompt_selector_pages_all_prompts_and_uses_searchable_select():
         missing = [snippet for snippet in required_snippets if snippet not in content]
         assert not missing, f'Missing prompt searchable selector logic: {missing}'
 
-        print('✅ Prompt selector pagination and search wiring passed')
+        print('✅ Prompt selector grouped preloaded catalog wiring passed')
         return True
 
     except Exception as exc:
@@ -260,9 +284,9 @@ def test_prompt_selector_pages_all_prompts_and_uses_searchable_select():
         return False
 
 
-def test_model_and_agent_selectors_use_searchable_wrapper():
-    """Verify model and agent selectors initialize the shared searchable wrapper."""
-    print('🔍 Testing model and agent searchable selector wiring...')
+def test_model_and_agent_selectors_use_grouped_scope_sections():
+    """Verify model and agent selectors build grouped sections and clear-scope actions."""
+    print('🔍 Testing model and agent grouped selector wiring...')
 
     try:
         model_content = read_file(CHAT_MODEL_SELECTOR_FILE)
@@ -272,11 +296,19 @@ def test_model_and_agent_selectors_use_searchable_wrapper():
             "import { createSearchableSingleSelect } from './chat-searchable-select.js';",
             'export function initializeModelSelector()',
             'modelSelectorController = createSearchableSingleSelect({',
+            "[Group] ${group.name || 'Unnamed Group'}",
+            "actionButton.textContent = 'Use all available workspaces';",
+            "const optGroup = document.createElement('optgroup');",
+            'modelOption.disabled = option.disabled;',
         ]
         agent_snippets = [
             "import { createSearchableSingleSelect } from './chat-searchable-select.js';",
             'function initializeAgentSelector() {',
             'agentSelectorController = createSearchableSingleSelect({',
+            "[Group] ${group.name || 'Unnamed Group'}",
+            "actionButton.textContent = 'Use all available workspaces';",
+            "const optGroup = document.createElement('optgroup');",
+            'option.disabled = agent.disabled;',
             'agentSelectorController?.refresh();',
         ]
 
@@ -285,7 +317,7 @@ def test_model_and_agent_selectors_use_searchable_wrapper():
         assert not missing_model, f'Missing model selector wiring: {missing_model}'
         assert not missing_agent, f'Missing agent selector wiring: {missing_agent}'
 
-        print('✅ Model and agent searchable selector wiring passed')
+        print('✅ Model and agent grouped selector wiring passed')
         return True
 
     except Exception as exc:
@@ -295,13 +327,51 @@ def test_model_and_agent_selectors_use_searchable_wrapper():
         return False
 
 
-def test_version_bumped_for_searchable_chat_selector_change():
-    """Verify config version was bumped for the searchable selector feature."""
+def test_chat_prompt_catalog_is_bootstrapped_from_backend_scope_data():
+    """Verify chat prompt catalogs are built on the chats route from scoped prompt data."""
+    print('🔍 Testing backend chat prompt catalog bootstrap...')
+
+    try:
+        route_content = read_file(ROUTE_FRONTEND_CHATS_FILE)
+        prompt_functions_content = read_file(PROMPTS_FUNCTIONS_FILE)
+
+        required_route_snippets = [
+            'def _serialize_chat_prompt_option(prompt, *, scope_type, scope_id=None, scope_name=None):',
+            'def _build_chat_prompt_catalog(*, user_id, settings, user_groups_raw, user_visible_public_workspaces):',
+            "list_all_prompts_for_scope(user_id, 'user_prompt')",
+            "'group_prompt',",
+            "public_workspace_id=workspace_id",
+            'chat_prompt_options=chat_prompt_options,',
+        ]
+        required_prompt_function_snippets = [
+            'def list_all_prompts_for_scope(user_id, prompt_type, group_id=None, public_workspace_id=None):',
+            'cosmos_public_prompts_container',
+            'cosmos_group_prompts_container',
+            'cosmos_user_prompts_container',
+        ]
+
+        missing_route = [snippet for snippet in required_route_snippets if snippet not in route_content]
+        missing_prompt_functions = [snippet for snippet in required_prompt_function_snippets if snippet not in prompt_functions_content]
+        assert not missing_route, f'Missing chats route prompt bootstrap snippets: {missing_route}'
+        assert not missing_prompt_functions, f'Missing prompt helper snippets: {missing_prompt_functions}'
+
+        print('✅ Backend chat prompt catalog bootstrap passed')
+        return True
+
+    except Exception as exc:
+        print(f'❌ Test failed: {exc}')
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_version_bumped_for_grouped_chat_selector_change():
+    """Verify config version was bumped for the grouped selector feature."""
     print('🔍 Testing config version bump...')
 
     try:
         config_content = read_file(CONFIG_FILE)
-        assert 'VERSION = "0.239.125"' in config_content, 'Expected config.py version 0.239.125'
+        assert 'VERSION = "0.239.195"' in config_content, 'Expected config.py version 0.239.195'
 
         print('✅ Config version bump passed')
         return True
@@ -317,11 +387,12 @@ if __name__ == '__main__':
     tests = [
         test_chat_template_contains_searchable_selectors,
         test_chat_toolbar_layout_supports_wrapping_without_button_compression,
-        test_shared_search_helper_supports_dropdown_filtering_and_single_selects,
+        test_shared_search_helper_supports_grouped_single_selects,
         test_scope_tag_and_document_search_are_wired_in_chat_documents,
-        test_prompt_selector_pages_all_prompts_and_uses_searchable_select,
-        test_model_and_agent_selectors_use_searchable_wrapper,
-        test_version_bumped_for_searchable_chat_selector_change,
+        test_prompt_selector_uses_preloaded_grouped_catalog,
+        test_model_and_agent_selectors_use_grouped_scope_sections,
+        test_chat_prompt_catalog_is_bootstrapped_from_backend_scope_data,
+        test_version_bumped_for_grouped_chat_selector_change,
     ]
 
     results = []

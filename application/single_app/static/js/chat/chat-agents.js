@@ -1,14 +1,13 @@
 // chat-agents.js
 import {
-    fetchUserAgents,
-    fetchGroupAgentsForActiveGroup,
     fetchSelectedAgent,
-    populateAgentSelect,
     setSelectedAgent,
     getUserSetting,
     setUserSetting
 } from '../agents_common.js';
 import { createSearchableSingleSelect } from './chat-searchable-select.js';
+import { getEffectiveScopes, setEffectiveScopes } from './chat-documents.js';
+import { getConversationFilteringContext } from './chat-conversation-scope.js';
 
 const enableAgentsBtn = document.getElementById("enable-agents-btn");
 const agentSelectContainer = document.getElementById("agent-select-container");
@@ -24,6 +23,10 @@ const agentSearchInput = document.getElementById('agent-search-input');
 const agentDropdownItems = document.getElementById('agent-dropdown-items');
 
 let agentSelectorController = null;
+let scopeChangeListenerInitialized = false;
+let pendingScopeNarrowingAgent = null;
+let scopeClearActionInitialized = false;
+let dropdownHideListenerInitialized = false;
 
 function initializeAgentSelector() {
     if (agentSelectorController || !agentSelect) {
@@ -46,45 +49,347 @@ function initializeAgentSelector() {
     return agentSelectorController;
 }
 
-function sanitizeGroupId(groupId) {
-    if (!groupId && groupId !== 0) return null;
-    const normalized = String(groupId).trim();
-    if (!normalized) return null;
-    const lower = normalized.toLowerCase();
-    if (lower === 'none' || lower === 'null' || lower === 'undefined') return null;
-    return normalized;
+function compareByName(leftValue, rightValue) {
+    return String(leftValue || '').localeCompare(String(rightValue || ''), undefined, {
+        sensitivity: 'base',
+    });
 }
 
-function getActiveConversationContext() {
-    const activeItem = document.querySelector('.conversation-item.active');
-    const chatType = activeItem?.getAttribute('data-chat-type') || '';
-    const chatState = activeItem?.getAttribute('data-chat-state') || '';
-    const itemGroupId = sanitizeGroupId(activeItem?.getAttribute('data-group-id'));
-
+function getBroadScopes() {
     return {
-        chatType,
-        chatState,
-        groupId: itemGroupId
+        personal: true,
+        groupIds: getKnownGroupIds(),
+        publicWorkspaceIds: getKnownPublicWorkspaceIds(),
     };
 }
 
-function getActiveConversationScope() {
-    const activeItem = document.querySelector('.conversation-item.active');
-    const chatType = activeItem?.getAttribute('data-chat-type') || '';
-    const chatState = activeItem?.getAttribute('data-chat-state') || '';
-    if (chatType === 'new') {
-        return null;
+function getSortedGroups() {
+    return (window.userGroups || []).slice().sort((leftGroup, rightGroup) => {
+        return compareByName(leftGroup?.name, rightGroup?.name);
+    });
+}
+
+function getAgentDisplayName(agent) {
+    return (agent.display_name || agent.displayName || agent.name || 'Unnamed Agent').trim() || 'Unnamed Agent';
+}
+
+function getAgentSearchText(agent, sectionLabel) {
+    return [
+        getAgentDisplayName(agent),
+        agent.name || '',
+        sectionLabel,
+    ].join(' ').trim();
+}
+
+function getSectionDuplicateCounts(agents) {
+    return agents.reduce((counts, agent) => {
+        const key = getAgentDisplayName(agent).toLowerCase();
+        counts[key] = (counts[key] || 0) + 1;
+        return counts;
+    }, {});
+}
+
+function getAgentOptionLabel(agent, duplicateCounts) {
+    const displayName = getAgentDisplayName(agent);
+    const duplicateCount = duplicateCounts[displayName.toLowerCase()] || 0;
+    if (duplicateCount <= 1) {
+        return displayName;
     }
-    if (chatState === 'new') {
-        return null;
+
+    return `${displayName} (${agent.name || agent.id || 'agent'})`;
+}
+
+function isAgentEnabledForContext(agent, scopes, filteringContext) {
+    if (!filteringContext.isNewConversation && filteringContext.conversationScope === 'group') {
+        return agent.is_global || String(agent.group_id || '') === String(filteringContext.groupId || '');
     }
-    if (!chatType) {
-        return 'personal';
+
+    if (!filteringContext.isNewConversation && filteringContext.conversationScope === 'public') {
+        return agent.is_global;
     }
-    if (chatType.startsWith('group')) {
-        return 'group';
+
+    if (!filteringContext.isNewConversation && filteringContext.conversationScope === 'personal') {
+        return !agent.is_group;
     }
-    return 'personal';
+
+    if (agent.is_global) {
+        return true;
+    }
+
+    if (agent.is_group) {
+        return normalizeStringArray(scopes.groupIds || []).includes(String(agent.group_id || ''));
+    }
+
+    return scopes.personal === true;
+}
+
+function buildAgentSections(agentOptions, scopes, filteringContext) {
+    const sections = [];
+
+    const globalAgents = agentOptions
+        .filter(agent => agent.is_global)
+        .slice()
+        .sort((leftAgent, rightAgent) => compareByName(getAgentDisplayName(leftAgent), getAgentDisplayName(rightAgent)));
+    if (globalAgents.length > 0) {
+        sections.push({
+            label: 'Global',
+            agents: globalAgents,
+        });
+    }
+
+    const personalAgents = agentOptions
+        .filter(agent => !agent.is_global && !agent.is_group)
+        .slice()
+        .sort((leftAgent, rightAgent) => compareByName(getAgentDisplayName(leftAgent), getAgentDisplayName(rightAgent)));
+    if (personalAgents.length > 0) {
+        sections.push({
+            label: 'Personal',
+            agents: personalAgents,
+        });
+    }
+
+    getSortedGroups().forEach(group => {
+        const sectionAgents = agentOptions
+            .filter(agent => agent.is_group && String(agent.group_id || '') === String(group.id))
+            .slice()
+            .sort((leftAgent, rightAgent) => compareByName(getAgentDisplayName(leftAgent), getAgentDisplayName(rightAgent)));
+
+        if (sectionAgents.length > 0) {
+            sections.push({
+                label: `[Group] ${group.name || 'Unnamed Group'}`,
+                agents: sectionAgents,
+            });
+        }
+    });
+
+    return sections.map(section => {
+        const duplicateCounts = getSectionDuplicateCounts(section.agents);
+        return {
+            label: section.label,
+            agents: section.agents.map(agent => ({
+                ...agent,
+                optionLabel: getAgentOptionLabel(agent, duplicateCounts),
+                searchText: getAgentSearchText(agent, section.label),
+                disabled: !isAgentEnabledForContext(agent, scopes, filteringContext),
+            })),
+        };
+    });
+}
+
+function doesAgentMatchSelection(agent, selectedAgentObj) {
+    if (!selectedAgentObj) {
+        return false;
+    }
+
+    const selectedAgentId = selectedAgentObj.id || selectedAgentObj.agent_id || null;
+    const selectedAgentIsGlobal = !!selectedAgentObj.is_global;
+    const selectedAgentIsGroup = !!selectedAgentObj.is_group;
+    const selectedAgentGroupId = selectedAgentObj.group_id || selectedAgentObj.groupId || null;
+    const agentId = agent.id || agent.agent_id || agent.name;
+
+    const idMatches = selectedAgentId && String(agentId || '') === String(selectedAgentId);
+    const nameMatches = String(agent.name || '') === String(selectedAgentObj.name || '');
+    const contextMatches = !!agent.is_global === selectedAgentIsGlobal && !!agent.is_group === selectedAgentIsGroup;
+    const groupMatches = !selectedAgentIsGroup || String(agent.group_id || '') === String(selectedAgentGroupId || '');
+
+    return (idMatches || nameMatches) && contextMatches && groupMatches;
+}
+
+function rebuildAgentOptions(sections, selectedAgentObj) {
+    if (!agentSelect) {
+        return;
+    }
+
+    agentSelect.innerHTML = '';
+
+    const flattenedAgents = sections.flatMap(section => section.agents);
+    if (!flattenedAgents.length) {
+        agentSelect.disabled = true;
+        return;
+    }
+
+    const selectedAgent = flattenedAgents.find(agent => !agent.disabled && doesAgentMatchSelection(agent, selectedAgentObj));
+    const fallbackAgent = flattenedAgents.find(agent => !agent.disabled) || null;
+    const selectedKey = selectedAgent
+        ? String(selectedAgent.id || selectedAgent.agent_id || selectedAgent.name || '')
+        : String(fallbackAgent?.id || fallbackAgent?.agent_id || fallbackAgent?.name || '');
+
+    sections.forEach(section => {
+        const optGroup = document.createElement('optgroup');
+        optGroup.label = section.label;
+
+        section.agents.forEach(agent => {
+            const option = document.createElement('option');
+            const agentId = agent.id || agent.agent_id || agent.name;
+            const contextPrefix = agent.is_group ? 'group' : (agent.is_global ? 'global' : 'personal');
+            const optionKey = String(agentId || '');
+
+            option.value = `${contextPrefix}_${agentId}`;
+            option.textContent = agent.optionLabel;
+            option.dataset.name = agent.name || '';
+            option.dataset.displayName = getAgentDisplayName(agent);
+            option.dataset.searchText = agent.searchText;
+            option.dataset.agentId = agentId || '';
+            option.dataset.isGlobal = agent.is_global ? 'true' : 'false';
+            option.dataset.isGroup = agent.is_group ? 'true' : 'false';
+            option.dataset.groupId = agent.group_id || '';
+            option.dataset.groupName = agent.group_name || '';
+            option.disabled = agent.disabled;
+            option.selected = !agent.disabled && optionKey === selectedKey;
+
+            optGroup.appendChild(option);
+        });
+
+        agentSelect.appendChild(optGroup);
+    });
+
+    agentSelect.disabled = !flattenedAgents.some(agent => !agent.disabled);
+}
+
+function ensureScopeClearAction() {
+    if (scopeClearActionInitialized || !agentDropdownMenu || !agentDropdownItems) {
+        return;
+    }
+
+    const actionContainer = document.createElement('div');
+    actionContainer.classList.add('d-none');
+    actionContainer.setAttribute('data-agent-scope-action-container', 'true');
+
+    const divider = document.createElement('div');
+    divider.classList.add('dropdown-divider');
+
+    const actionButton = document.createElement('button');
+    actionButton.type = 'button';
+    actionButton.classList.add('dropdown-item', 'text-muted', 'small');
+    actionButton.textContent = 'Use all available workspaces';
+    actionButton.addEventListener('click', async event => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        await setEffectiveScopes(getBroadScopes(), {
+            source: 'agent-clear',
+        });
+    });
+
+    actionContainer.appendChild(divider);
+    actionContainer.appendChild(actionButton);
+    agentDropdownItems.before(actionContainer);
+    scopeClearActionInitialized = true;
+}
+
+function updateScopeClearAction(scopes, filteringContext) {
+    ensureScopeClearAction();
+
+    const actionContainer = agentDropdownMenu?.querySelector('[data-agent-scope-action-container="true"]');
+    if (!actionContainer) {
+        return;
+    }
+
+    const shouldShowAction = filteringContext.isNewConversation && !areScopesBroad(scopes);
+    actionContainer.classList.toggle('d-none', !shouldShowAction);
+}
+
+function getKnownGroupIds() {
+    return (window.userGroups || [])
+        .map(group => group?.id)
+        .filter(Boolean)
+        .map(String);
+}
+
+function getKnownPublicWorkspaceIds() {
+    return (window.userVisiblePublicWorkspaces || [])
+        .map(workspace => workspace?.id)
+        .filter(Boolean)
+        .map(String);
+}
+
+function normalizeStringArray(values = []) {
+    return Array.from(new Set(values.filter(Boolean).map(String)));
+}
+
+function areScopesBroad(scopes) {
+    const knownGroupIds = normalizeStringArray(getKnownGroupIds());
+    const selectedGroupIds = normalizeStringArray(scopes.groupIds || []);
+    const knownPublicWorkspaceIds = normalizeStringArray(getKnownPublicWorkspaceIds());
+    const selectedPublicWorkspaceIds = normalizeStringArray(scopes.publicWorkspaceIds || []);
+
+    return scopes.personal === true
+        && knownGroupIds.length === selectedGroupIds.length
+        && knownGroupIds.every(groupId => selectedGroupIds.includes(groupId))
+        && knownPublicWorkspaceIds.length === selectedPublicWorkspaceIds.length
+        && knownPublicWorkspaceIds.every(workspaceId => selectedPublicWorkspaceIds.includes(workspaceId));
+}
+
+function getPreloadedAgentOptions() {
+    return Array.isArray(window.chatAgentOptions) ? window.chatAgentOptions : [];
+}
+
+async function maybeNarrowScopeForSelectedAgent(payload) {
+    const filteringContext = getConversationFilteringContext();
+    if (!filteringContext.isNewConversation) {
+        return;
+    }
+
+    if (payload.is_group && payload.group_id) {
+        await setEffectiveScopes(
+            {
+                personal: false,
+                groupIds: [payload.group_id],
+                publicWorkspaceIds: [],
+            },
+            {
+                source: 'agent',
+            }
+        );
+        return;
+    }
+
+    if (!payload.is_global) {
+        await setEffectiveScopes(
+            {
+                personal: true,
+                groupIds: [],
+                publicWorkspaceIds: [],
+            },
+            {
+                source: 'agent',
+            }
+        );
+    }
+}
+
+function initializeDropdownHideListener() {
+    if (dropdownHideListenerInitialized || !agentDropdown) {
+        return;
+    }
+
+    agentDropdown.addEventListener('hidden.bs.dropdown', async () => {
+        if (!pendingScopeNarrowingAgent) {
+            return;
+        }
+
+        const pendingPayload = pendingScopeNarrowingAgent;
+        pendingScopeNarrowingAgent = null;
+        await maybeNarrowScopeForSelectedAgent(pendingPayload);
+    });
+
+    dropdownHideListenerInitialized = true;
+}
+
+function initializeScopeChangeListener() {
+    if (scopeChangeListenerInitialized) {
+        return;
+    }
+
+    window.addEventListener('chat:scope-changed', async () => {
+        if (!areAgentsEnabled()) {
+            return;
+        }
+
+        await populateAgentDropdown();
+    });
+
+    scopeChangeListenerInitialized = true;
 }
 
 /**
@@ -99,6 +404,9 @@ export function areAgentsEnabled() {
 export async function initializeAgentInteractions() {
     if (enableAgentsBtn && agentSelectContainer) {
         initializeAgentSelector();
+        initializeScopeChangeListener();
+        initializeDropdownHideListener();
+        ensureScopeClearAction();
 
         // On load, sync UI with enable_agents setting
         const enableAgents = await getUserSetting('enable_agents');
@@ -135,49 +443,17 @@ export async function initializeAgentInteractions() {
 
 export async function populateAgentDropdown() {
     initializeAgentSelector();
+    initializeDropdownHideListener();
+    ensureScopeClearAction();
 
     try {
-        const conversationScope = getActiveConversationScope();
-        const { chatType, chatState, groupId: conversationGroupId } = getActiveConversationContext();
-        const activeConversation = document.querySelector('.conversation-item.active');
-        const userActiveGroupId = sanitizeGroupId(await getUserSetting('activeGroupOid'));
-        const workspaceGroupId = sanitizeGroupId(window.groupWorkspaceContext?.activeGroupId || window.activeGroupId);
+        const selectedAgent = await fetchSelectedAgent();
+        const scopes = getEffectiveScopes();
+        const filteringContext = getConversationFilteringContext();
+        const sections = buildAgentSections(getPreloadedAgentOptions(), scopes, filteringContext);
 
-        // Only allow group agents when a group context exists or no conversation is selected.
-        const allowGroupAgents = !activeConversation
-            || conversationScope === 'group'
-            || !!conversationGroupId
-            || chatState === 'new'
-            || chatType === 'new';
-
-        const activeGroupId = allowGroupAgents
-            ? (conversationGroupId || userActiveGroupId || workspaceGroupId || null)
-            : null;
-        const [userAgents, selectedAgent] = await Promise.all([
-            fetchUserAgents(),
-            fetchSelectedAgent()
-        ]);
-        const groupAgents = activeGroupId ? await fetchGroupAgentsForActiveGroup(activeGroupId) : [];
-        const personalAgents = userAgents.filter(agent => !agent.is_global && !agent.is_group);
-        const globalAgents = userAgents.filter(agent => agent.is_global);
-        let orderedAgents = [];
-        const includeGroupAgents = allowGroupAgents && groupAgents.length > 0;
-
-        if (!conversationScope) {
-            orderedAgents = includeGroupAgents
-                ? [...personalAgents, ...groupAgents, ...globalAgents]
-                : [...personalAgents, ...globalAgents];
-        } else if (conversationScope === 'group') {
-            orderedAgents = includeGroupAgents
-                ? [...groupAgents, ...globalAgents]
-                : [...globalAgents];
-        } else {
-            // Personal scope: show personal first; only add group agents when explicitly allowed
-            orderedAgents = includeGroupAgents
-                ? [...personalAgents, ...groupAgents, ...globalAgents]
-                : [...personalAgents, ...globalAgents];
-        }
-        populateAgentSelect(agentSelect, orderedAgents, selectedAgent);
+        rebuildAgentOptions(sections, selectedAgent);
+        updateScopeClearAction(scopes, filteringContext);
         agentSelectorController?.refresh();
         agentSelect.onchange = async function () {
             const selectedOption = agentSelect.options[agentSelect.selectedIndex];
@@ -199,6 +475,7 @@ export async function populateAgentDropdown() {
                 return;
             }
             await setSelectedAgent(payload);
+            pendingScopeNarrowingAgent = payload;
             console.log('DEBUG: Agent selection saved successfully');
         };
     } catch (e) {

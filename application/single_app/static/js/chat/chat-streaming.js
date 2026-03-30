@@ -1,6 +1,6 @@
 // chat-streaming.js
 import { appendMessage, updateUserMessageId } from './chat-messages.js';
-import { markConversationRead } from './chat-conversations.js';
+import { applyConversationMetadataUpdate, markConversationRead } from './chat-conversations.js';
 import { hideLoadingIndicatorInChatbox, showLoadingIndicatorInChatbox } from './chat-loading-indicator.js';
 import { showToast } from './chat-toast.js';
 import { updateSidebarConversationTitle } from './chat-sidebar-conversations.js';
@@ -566,17 +566,20 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData) {
     }
     
     if (finalData.conversation_title) {
-        const titleElement = document.getElementById('current-conversation-title');
-        if (titleElement && titleElement.textContent === 'New Conversation') {
-            titleElement.textContent = finalData.conversation_title;
-        }
-        
+        applyConversationMetadataUpdate(finalData.conversation_id, {
+            title: finalData.conversation_title,
+            classification: finalData.classification || [],
+            context: finalData.context || [],
+            chat_type: finalData.chat_type || null,
+        });
+
         // Update sidebar conversation title in real-time
         updateSidebarConversationTitle(finalData.conversation_id, finalData.conversation_title);
     }
 
-    // Apply scope lock if document search was used
-    if (finalData.augmented && finalData.conversation_id) {
+    if (finalData.scope_locked === true && finalData.locked_contexts) {
+        applyScopeLock(finalData.locked_contexts, finalData.scope_locked);
+    } else if (finalData.augmented && finalData.conversation_id) {
         fetch(`/api/conversations/${finalData.conversation_id}/metadata`, { credentials: 'same-origin' })
             .then(r => r.json())
             .then(metadata => {

@@ -404,7 +404,9 @@ def register_route_backend_conversations(app):
             return jsonify({
                 'message': 'Conversation updated', 
                 'title': new_title,
-                'classification': conversation_item.get('classification', []) # Send classifications if any
+                'classification': conversation_item.get('classification', []),
+                'context': conversation_item.get('context', []),
+                'chat_type': conversation_item.get('chat_type')
             }), 200
         except Exception as e:
             print(e)

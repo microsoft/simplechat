@@ -716,7 +716,8 @@ document.addEventListener('click', function(e) {
     const btn = e.target.closest('#generate-summary-btn');
     const cid = btn.getAttribute('data-conversation-id');
     const modelSelect = document.getElementById('summary-model-select');
-    const model = modelSelect ? modelSelect.value : '';
+    const selectedOption = modelSelect ? modelSelect.options[modelSelect.selectedIndex] : null;
+    const model = selectedOption?.dataset?.deploymentName || (modelSelect ? modelSelect.value : '');
     handleGenerateSummary(cid, model);
     return;
   }
@@ -728,7 +729,8 @@ document.addEventListener('click', function(e) {
     const cid = btn.getAttribute('data-conversation-id');
     // Use the currently selected global model for regeneration
     const globalSelect = document.getElementById('model-select');
-    const model = globalSelect ? globalSelect.value : '';
+    const selectedOption = globalSelect ? globalSelect.options[globalSelect.selectedIndex] : null;
+    const model = selectedOption?.dataset?.deploymentName || (globalSelect ? globalSelect.value : '');
     handleGenerateSummary(cid, model);
     return;
   }

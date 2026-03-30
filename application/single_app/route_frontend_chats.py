@@ -6,13 +6,162 @@ from functions_authentication import *
 from functions_content import *
 from functions_settings import *
 from functions_documents import *
-from functions_group import find_group_by_id, get_user_groups
+from functions_group import find_group_by_id, get_group_model_endpoints, get_user_groups
+from functions_group_agents import get_group_agents
+from functions_global_agents import get_global_agents
+from functions_personal_agents import ensure_migration_complete, get_personal_agents
+from functions_prompts import list_all_prompts_for_scope
 from functions_public_workspaces import find_public_workspace_by_id, get_user_visible_public_workspace_ids_from_settings
 from functions_appinsights import log_event
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_debug import debug_print
 
 logger = logging.getLogger(__name__)
+
+
+def _serialize_chat_agent_option(agent, *, is_global=False, is_group=False, group_id=None, group_name=None):
+    return {
+        'id': agent.get('id'),
+        'name': agent.get('name', ''),
+        'display_name': agent.get('display_name') or agent.get('displayName') or agent.get('name', ''),
+        'is_global': is_global,
+        'is_group': is_group,
+        'group_id': group_id,
+        'group_name': group_name,
+    }
+
+
+def _serialize_chat_prompt_option(prompt, *, scope_type, scope_id=None, scope_name=None):
+    return {
+        'id': prompt.get('id'),
+        'name': prompt.get('name', ''),
+        'content': prompt.get('content', ''),
+        'scope_type': scope_type,
+        'scope_id': scope_id,
+        'scope_name': scope_name,
+    }
+
+
+def _build_chat_model_catalog(*, user_id, settings, user_settings_dict, user_groups_raw):
+    if not settings.get('enable_multi_model_endpoints', False):
+        return []
+
+    catalog = []
+
+    def append_models(endpoints, scope_type, scope_id=None, scope_name=None):
+        sanitized_endpoints = sanitize_model_endpoints_for_frontend(endpoints)
+        normalized_endpoints, _ = normalize_model_endpoints(sanitized_endpoints)
+
+        for endpoint in normalized_endpoints:
+            if not endpoint.get('enabled', True):
+                continue
+
+            endpoint_id = endpoint.get('id') or ''
+            provider = endpoint.get('provider') or 'aoai'
+            models = endpoint.get('models') or []
+
+            for model in models:
+                if not isinstance(model, dict) or not model.get('enabled', True):
+                    continue
+
+                model_id = model.get('id') or model.get('deploymentName') or model.get('deployment') or model.get('modelName') or model.get('name') or ''
+                deployment_name = model.get('deploymentName') or model.get('deployment') or ''
+                display_name = model.get('displayName') or model.get('modelName') or deployment_name or model.get('name') or model_id
+                selection_key = f"{scope_type}:{scope_id or ''}:{endpoint_id}:{model_id or deployment_name}"
+
+                catalog.append({
+                    'selection_key': selection_key,
+                    'model_id': model_id,
+                    'display_name': display_name,
+                    'deployment_name': deployment_name,
+                    'endpoint_id': endpoint_id,
+                    'provider': provider,
+                    'scope_type': scope_type,
+                    'scope_id': scope_id,
+                    'scope_name': scope_name,
+                })
+
+    append_models(settings.get('model_endpoints', []) or [], 'global', None, 'Global')
+
+    if settings.get('allow_user_custom_endpoints', False):
+        append_models(
+            user_settings_dict.get('personal_model_endpoints', []) or [],
+            'personal',
+            user_id,
+            'Personal'
+        )
+
+    if settings.get('enable_group_workspaces', False) and settings.get('allow_group_custom_endpoints', False):
+        for group_doc in user_groups_raw:
+            group_id = group_doc.get('id')
+            if not group_id:
+                continue
+            append_models(
+                get_group_model_endpoints(group_id),
+                'group',
+                group_id,
+                group_doc.get('name', 'Unnamed Group')
+            )
+
+    return catalog
+
+
+def _build_chat_prompt_catalog(*, user_id, settings, user_groups_raw, user_visible_public_workspaces):
+    catalog = []
+
+    if settings.get('enable_user_workspace', False):
+        for prompt in list_all_prompts_for_scope(user_id, 'user_prompt'):
+            catalog.append(
+                _serialize_chat_prompt_option(
+                    prompt,
+                    scope_type='personal',
+                    scope_id=user_id,
+                    scope_name='Personal',
+                )
+            )
+
+    if settings.get('enable_group_workspaces', False):
+        for group_doc in user_groups_raw:
+            group_id = group_doc.get('id')
+            if not group_id:
+                continue
+
+            group_name = group_doc.get('name', 'Unnamed Group')
+            for prompt in list_all_prompts_for_scope(
+                user_id,
+                'group_prompt',
+                group_id=group_id,
+            ):
+                catalog.append(
+                    _serialize_chat_prompt_option(
+                        prompt,
+                        scope_type='group',
+                        scope_id=group_id,
+                        scope_name=group_name,
+                    )
+                )
+
+    if settings.get('enable_public_workspaces', False):
+        for workspace in user_visible_public_workspaces:
+            workspace_id = workspace.get('id')
+            if not workspace_id:
+                continue
+
+            for prompt in list_all_prompts_for_scope(
+                user_id,
+                'public_prompt',
+                public_workspace_id=workspace_id,
+            ):
+                catalog.append(
+                    _serialize_chat_prompt_option(
+                        prompt,
+                        scope_type='public',
+                        scope_id=workspace_id,
+                        scope_name=workspace.get('name', 'Unknown Workspace'),
+                    )
+                )
+
+    return catalog
 
 def register_route_frontend_chats(app):
     @app.route('/chats', methods=['GET'])
@@ -71,6 +220,7 @@ def register_route_frontend_chats(app):
 
         # Get all groups the user belongs to (for multi-scope selector)
         user_groups_simple = []
+        user_groups_raw = []
         try:
             user_groups_raw = get_user_groups(user_id)
             user_groups_simple = [{'id': g['id'], 'name': g.get('name', 'Unnamed')} for g in user_groups_raw]
@@ -87,6 +237,58 @@ def register_route_frontend_chats(app):
                     user_visible_public_workspaces.append({'id': ws_id, 'name': ws_doc.get('name', 'Unknown')})
         except Exception as e:
             logger.warning(f"Failed to load visible public workspaces for chats page: {e}")
+
+        chat_agent_options = []
+        try:
+            if settings.get('allow_user_agents', False):
+                ensure_migration_complete(user_id)
+                for agent in get_personal_agents(user_id):
+                    chat_agent_options.append(_serialize_chat_agent_option(agent))
+
+            merge_global = settings.get('per_user_semantic_kernel', False) and settings.get('merge_global_semantic_kernel_with_workspace', False)
+            if merge_global:
+                for agent in get_global_agents():
+                    chat_agent_options.append(_serialize_chat_agent_option(agent, is_global=True))
+
+            if settings.get('enable_group_workspaces', False) and settings.get('allow_group_agents', False):
+                for group_doc in user_groups_raw:
+                    group_id = group_doc.get('id')
+                    if not group_id:
+                        continue
+                    group_name = group_doc.get('name', 'Unnamed Group')
+                    for agent in get_group_agents(group_id):
+                        chat_agent_options.append(
+                            _serialize_chat_agent_option(
+                                agent,
+                                is_group=True,
+                                group_id=group_id,
+                                group_name=group_name,
+                            )
+                        )
+        except Exception as e:
+            logger.warning(f"Failed to load chat agent options: {e}")
+
+        chat_model_options = []
+        try:
+            chat_model_options = _build_chat_model_catalog(
+                user_id=user_id,
+                settings=settings,
+                user_settings_dict=user_settings_dict,
+                user_groups_raw=user_groups_raw,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to load chat model options: {e}")
+
+        chat_prompt_options = []
+        try:
+            chat_prompt_options = _build_chat_prompt_catalog(
+                user_id=user_id,
+                settings=settings,
+                user_groups_raw=user_groups_raw,
+                user_visible_public_workspaces=user_visible_public_workspaces,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to load chat prompt options: {e}")
 
         return render_template(
             'chats.html',
@@ -106,6 +308,9 @@ def register_route_frontend_chats(app):
             user_display_name=user_display_name,
             user_groups=user_groups_simple,
             user_visible_public_workspaces=user_visible_public_workspaces,
+            chat_prompt_options=chat_prompt_options,
+            chat_agent_options=chat_agent_options,
+            chat_model_options=chat_model_options,
         )
     
     @app.route('/upload', methods=['POST'])
