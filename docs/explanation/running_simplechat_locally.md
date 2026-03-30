@@ -8,11 +8,61 @@ category: Explanation
 
 This guide explains the recommended local developer workflow for Simple Chat.
 
-Current documentation version: 0.239.136
+Current documentation version: 0.240.002
+
+## VS Code Python 3.12 Setup
+
+If you are developing in VS Code, use a local `.venv` created with Python 3.12.
+
+From the repo root on Windows:
+
+```powershell
+py -3.12 -m venv .venv
+```
+
+Activate it in PowerShell:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+If you prefer Command Prompt:
+
+```bat
+.venv\Scripts\activate.bat
+```
+
+Install dependencies after activation:
+
+```powershell
+pip install --upgrade pip
+pip install -r application/single_app/requirements.txt
+```
+
+In VS Code:
+
+- install the Microsoft Python extension if it is not already installed
+- open the Command Palette and run `Python: Select Interpreter`
+- choose the interpreter from `.venv`
+- confirm the selected interpreter is Python 3.12
+
+Recommended verification commands:
+
+```powershell
+python --version
+python -c "import sys; print(sys.executable)"
+```
+
+Expected results:
+
+- `python --version` should report Python 3.12.x
+- `sys.executable` should point to the repo-local `.venv`
+
+If VS Code does not detect the environment automatically, reload the window after creating `.venv`, then select the interpreter again.
 
 ## Recommended Local Startup
 
-For normal development, start the app directly with Python:
+After the `.venv` interpreter is selected in VS Code, start the app directly with Python for normal development:
 
 ```bash
 python app.py
@@ -28,7 +78,7 @@ This keeps Simple Chat on the Flask development server, enables local HTTPS beha
 
 ## Windows Developer Workflow
 
-Windows developers should use the direct Python startup path.
+Windows developers should use the repo-local `.venv` with the direct Python startup path.
 
 Recommended local settings:
 
@@ -43,6 +93,7 @@ Why this still works:
 - When `FLASK_DEBUG="1"`, `python app.py` stays on the Flask development server.
 - `SIMPLECHAT_USE_GUNICORN` is ignored while debug mode is enabled.
 - Background tasks continue to run in the single local process unless explicitly disabled.
+- VS Code terminals inherit the selected `.venv` interpreter when activated in the workspace terminal.
 
 ## Linux and macOS Developer Workflow
 
@@ -95,6 +146,7 @@ python simplechat_scheduler.py
 
 ## Practical Guidance
 
+- Create `.venv` with Python 3.12 and select it in VS Code before installing dependencies.
 - Use `python app.py` for normal development.
 - Keep `FLASK_DEBUG=1` on local developer machines.
 - Treat Gunicorn as a production-runtime validation tool, not the default local developer startup path.
