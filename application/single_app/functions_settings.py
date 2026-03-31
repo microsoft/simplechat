@@ -9,6 +9,10 @@ import inspect
 def is_tabular_processing_enabled(settings):
     """Tabular processing is available whenever enhanced citations is enabled."""
     return bool((settings or {}).get('enable_enhanced_citations', False))
+DEFAULT_VIDEO_INDEXER_ARM_API_VERSION = os.getenv(
+    'VIDEO_INDEXER_ARM_API_VERSION',
+    '2024-01-01' if AZURE_ENVIRONMENT == 'usgovernment' else '2025-04-01'
+)
 
 def get_settings(use_cosmos=False):
     import secrets
@@ -339,7 +343,7 @@ def get_settings(use_cosmos=False):
         'video_indexer_resource_group': '',
         'video_indexer_subscription_id': '',
         'video_indexer_account_name': '',
-        'video_indexer_arm_api_version': '2024-01-01',
+        'video_indexer_arm_api_version': DEFAULT_VIDEO_INDEXER_ARM_API_VERSION,
         'video_index_timeout': 600,
 
         # Audio file settings with Azure speech service

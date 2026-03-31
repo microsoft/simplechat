@@ -25,6 +25,24 @@ Enterprise networking for Simple Chat involves:
 - Understanding of Azure networking concepts
 - Planning for IP address ranges and network topology
 
+## Deployment Runner Connectivity
+
+For enterprise deployments, the important question is whether the machine running `azd up` can already reach the private endpoints for Cosmos DB, Azure Container Registry, and the other protected services.
+
+Leave `allowedIpAddresses` blank when:
+- The deployment runner is on a corporate network with routing to the private LAN or connected VNet.
+- The deployment runner is connected through VPN or ExpressRoute and can resolve the private DNS zones.
+- The deployment runs from a jump host, build agent, or management workstation already inside the private network boundary.
+
+Provide `allowedIpAddresses` when:
+- Private networking is enabled.
+- The machine running `azd up` must temporarily reach protected services over a public path during deployment.
+- Cosmos DB or Azure Container Registry still need a temporary allowlist entry for the deployment runner before public access is disabled at the end of the workflow.
+
+When a value is needed, provide the public egress IP address or CIDR that Azure sees for the deployment runner. In many enterprises this is a company NAT or proxy address, not the laptop's local `10.x.x.x`, `172.16.x.x` to `172.31.x.x`, or `192.168.x.x` address.
+
+If you are unsure which public egress IP is being used, run the lookup from the same machine and network path that will execute `azd up`, for example by searching `what is my IP` in Bing.
+
 ## Step 1: Plan Your Network Architecture
 
 ### Network Topology Planning

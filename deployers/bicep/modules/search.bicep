@@ -8,10 +8,6 @@ param tags object
 param enableDiagLogging bool
 param logAnalyticsId string
 
-param keyVault string
-param authenticationType string
-param configureApplicationPermissions bool
-
 param enablePrivateNetworking bool
 
 // Import diagnostic settings configurations
@@ -53,18 +49,5 @@ resource searchDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-pre
   }
 }
 
-//=========================================================
-// store search Service keys in key vault if using key authentication and configure app permissions = true
-//=========================================================
-module searchServiceSecret 'keyVault-Secrets.bicep' = if (authenticationType == 'key' && configureApplicationPermissions) {
-  name: 'storeSearchServiceSecret'
-  params: {
-    keyVaultName: keyVault
-    secretName: 'search-service-key'
-    secretValue: searchService.listAdminKeys().primaryKey
-  }
-}
-
 output searchServiceName string = searchService.name
 output searchServiceEndpoint string = searchService.properties.endpoint
-output searchServiceAuthencationType string = authenticationType

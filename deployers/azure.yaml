@@ -1,4 +1,4 @@
-name: SimpleChat
+name: simplechat
 metadata:
   template: custom
 infra:
@@ -16,19 +16,37 @@ services:
       context: ../../
       dockerfile: application/single_app/Dockerfile
 hooks:
-  postprovision:
-  # this is run after the infrastructure has been provisioned but before services are deployed.
-  # primary use is to configure application settings and permissions
+  preprovision:
+    # this is run before infrastructure provisioning begins
+    # primary use is to explain prerequisites and stop early when required networking inputs are missing
     posix:
       shell: sh
       run: |
         set -e
-        
+        echo "========================================"
+        echo "PRE-PROVISION: Validating prerequisites"
+        echo "========================================"
+        python3 ./bicep/validate_azd_prerequisites.py
+    windows:
+      shell: pwsh
+      run: |
+        Write-Host "========================================"
+        Write-Host "PRE-PROVISION: Validating prerequisites"
+        Write-Host "========================================"
+        python .\bicep\validate_azd_prerequisites.py
+
+  postprovision:
+    # this is run after the infrastructure has been provisioned but before services are deployed.
+    # primary use is to configure application settings and permissions
+    posix:
+      shell: sh
+      run: |
+        set -e
+
         echo "========================================"
         echo "POST-PROVISION: Starting configuration"
         echo "========================================"
-        
-        # Set up variables
+
         export var_acrName=${var_acrname}
         export var_configureApplication=${var_configureApplication}
         export var_cosmosDb_uri=${var_cosmosDb_uri}
@@ -39,20 +57,129 @@ hooks:
         export var_keyVaultName=${var_keyVaultName}
         export var_authenticationType=${var_authenticationType}
         export var_openAIEndpoint=${var_openAIEndpoint}
+        export var_openAISubscriptionId=${var_openAISubscriptionId}
         export var_openAIResourceGroup=${var_openAIResourceGroup}
-        export var_openAIGPTModel=${var_openAIGPTModel}
-        export var_openAITextEmbeddingModel=${var_openAITextEmbeddingModel}
+        export var_openAIGPTModels='${var_openAIGPTModels}'
+        export var_openAIEmbeddingModels='${var_openAIEmbeddingModels}'
         export var_blobStorageEndpoint=${var_blobStorageEndpoint}
         export var_contentSafetyEndpoint=${var_contentSafetyEndpoint}
         export var_searchServiceEndpoint=${var_searchServiceEndpoint}
         export var_documentIntelligenceServiceEndpoint=${var_documentIntelligenceServiceEndpoint}
         export var_redisCacheHostName=${var_redisCacheHostName}
+        export var_videoIndexerArmApiVersion=${var_videoIndexerArmApiVersion}
+        export var_videoIndexerEndpoint=${var_videoIndexerEndpoint}
         export var_videoIndexerName=${var_videoIndexerName}
         export var_deploymentLocation=${var_deploymentLocation}
         export var_videoIndexerAccountId=${var_videoIndexerAccountId}
         export var_speechServiceEndpoint=${var_speechServiceEndpoint}
 
-        # Execute post-configuration script if enabled
+        is_mfa_error() {
+            printf '%s' "$1" | grep -qiE 'AADSTS50076|multi-factor authentication|claims challenge'
+        }
+
+        print_manual_cosmos_firewall_message() {
+            runner_public_ip="$1"
+            echo "✗ ERROR: Azure CLI requires multi-factor authentication before it can update the Cosmos DB firewall." >&2
+            echo "  Manually add IP ${runner_public_ip} to Azure Portal -> Cosmos DB account '${var_cosmosDb_accountName}' -> Networking -> Firewall in resource group '${var_rgName}'." >&2
+            echo "  If you already added the IP manually, allow up to 30 minutes for the firewall change to propagate before rerunning 'azd provision' or 'azd up'." >&2
+        }
+
+        test_cosmos_runner_access() {
+            python3 -c "from azure.cosmos import CosmosClient; import os; client = CosmosClient(os.environ['var_cosmosDb_uri'], os.environ['var_cosmosDb_key']); next(client.list_databases(), None); print('ok')" >/dev/null 2>&1
+        }
+
+        runner_ip_matches_rules() {
+            current_rules="$1"
+            runner_public_ip="$2"
+            CURRENT_RULES="${current_rules}" RUNNER_PUBLIC_IP="${runner_public_ip}" python3 -c "import ipaddress, os; rules = [rule.strip() for rule in os.environ.get('CURRENT_RULES', '').split(',') if rule.strip()]; ip = ipaddress.ip_address(os.environ['RUNNER_PUBLIC_IP']); matched = any(ip in ipaddress.ip_network(rule, strict=False) if '/' in rule else ip == ipaddress.ip_address(rule) for rule in rules); raise SystemExit(0 if matched else 1)"
+        }
+
+        wait_for_cosmos_runner_access() {
+            runner_public_ip="$1"
+            max_attempts=20
+            attempt=1
+
+            while [ ${attempt} -le ${max_attempts} ]; do
+                if test_cosmos_runner_access; then
+                    echo "✓ CosmosDB data-plane access is now available for deployment runner IP ${runner_public_ip}"
+                    return 0
+                fi
+
+                echo "  Waiting for CosmosDB firewall propagation for ${runner_public_ip} (${attempt}/${max_attempts})..."
+                sleep 30
+                attempt=$((attempt + 1))
+            done
+
+            echo "✗ ERROR: CosmosDB firewall rule for ${runner_public_ip} is configured but data-plane access is still not available." >&2
+            echo "  Firewall changes can take up to 30 minutes to propagate. Wait and rerun 'azd provision' or 'azd up'." >&2
+            return 1
+        }
+
+        python_is_virtual_environment() {
+            python3 -c "import sys; raise SystemExit(0 if sys.prefix != getattr(sys, 'base_prefix', sys.prefix) else 1)"
+        }
+
+        install_postprovision_python_dependencies() {
+            install_output_file=$(mktemp)
+
+            if python_is_virtual_environment; then
+                python3 -m pip install -r ./bicep/requirements.txt > "${install_output_file}" 2>&1
+            else
+                python3 -m pip install --user -r ./bicep/requirements.txt > "${install_output_file}" 2>&1
+            fi
+
+            install_exit_code=$?
+            if [ ${install_exit_code} -ne 0 ]; then
+                cat "${install_output_file}" >&2
+                rm -f "${install_output_file}"
+                return ${install_exit_code}
+            fi
+
+            rm -f "${install_output_file}"
+            return 0
+        }
+
+        ensure_cosmos_runner_access() {
+            current_rules=$(az cosmosdb show \
+                --name ${var_cosmosDb_accountName} \
+                --resource-group ${var_rgName} \
+                --subscription ${AZURE_SUBSCRIPTION_ID} \
+                --query "properties.ipRules[].ipAddressOrRange" \
+                -o tsv 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+
+            runner_public_ip=$(python3 -c "import urllib.request; print(urllib.request.urlopen('https://api.ipify.org', timeout=10).read().decode().strip())")
+            if [ -z "${runner_public_ip}" ]; then
+                echo "✗ ERROR: Failed to resolve the deployment runner public IP for Cosmos firewall access" >&2
+                exit 1
+            fi
+
+            if runner_ip_matches_rules "${current_rules}" "${runner_public_ip}"; then
+                echo "✓ Deployment runner IP ${runner_public_ip} is already configured on the CosmosDB firewall"
+                wait_for_cosmos_runner_access "${runner_public_ip}" || exit 1
+                return
+            fi
+
+            updated_rules=$(python3 -c "existing = '${current_rules}'.strip(','); runner = '${runner_public_ip}'; rules = [rule.strip() for rule in existing.split(',') if rule.strip()]; rules.append(runner); deduped = []; [deduped.append(rule) for rule in rules if rule not in deduped]; print(','.join(deduped))")
+            update_output=$(az cosmosdb update \
+                --name ${var_cosmosDb_accountName} \
+                --resource-group ${var_rgName} \
+                --subscription ${AZURE_SUBSCRIPTION_ID} \
+                --ip-range-filter "${updated_rules}" 2>&1)
+            if [ $? -ne 0 ]; then
+                if is_mfa_error "${update_output}"; then
+                    print_manual_cosmos_firewall_message "${runner_public_ip}"
+                    echo "  Checking whether CosmosDB access is already available without an Azure CLI firewall update..." >&2
+                    wait_for_cosmos_runner_access "${runner_public_ip}" || exit 1
+                    return
+                fi
+                echo "✗ ERROR: Failed to allow deployment runner IP ${runner_public_ip} through the CosmosDB firewall" >&2
+                echo "${update_output}" >&2
+                exit 1
+            fi
+            echo "✓ Added deployment runner IP ${runner_public_ip} to the CosmosDB firewall"
+            wait_for_cosmos_runner_access "${runner_public_ip}" || exit 1
+        }
+
         if [ "${var_configureApplication}" = "true" ]; then
             echo ""
             echo "[1/4] Granting permissions to CosmosDB..."
@@ -62,17 +189,33 @@ hooks:
                 echo "✗ ERROR: Failed to grant CosmosDB permissions" >&2
                 exit 1
             fi
-            
+
             echo ""
             echo "[2/4] Installing Python dependencies..."
-
-            if python3 -m venv .venv && .venv/bin/pip install -r ./bicep/requirements.txt > /dev/null 2>&1; then
+            if install_postprovision_python_dependencies; then
                 echo "✓ Dependencies installed successfully"
             else
                 echo "✗ ERROR: Failed to install Python dependencies" >&2
                 exit 1
             fi
-            
+
+            export var_cosmosDb_key=$(az cosmosdb keys list \
+                --name ${var_cosmosDb_accountName} \
+                --resource-group ${var_rgName} \
+                --subscription ${AZURE_SUBSCRIPTION_ID} \
+                --query primaryMasterKey \
+                -o tsv)
+            if [ -z "${var_cosmosDb_key}" ]; then
+                echo "✗ ERROR: Failed to resolve Cosmos DB primary key for post-deployment configuration" >&2
+                exit 1
+            fi
+
+            if test_cosmos_runner_access; then
+                echo "✓ Deployment runner already has CosmosDB data-plane access"
+            else
+                ensure_cosmos_runner_access
+            fi
+
             echo ""
             echo "[3/4] Running post-deployment configuration..."
             if .venv/bin/python3 ./bicep/postconfig.py; then
@@ -81,7 +224,7 @@ hooks:
                 echo "✗ ERROR: Post-deployment configuration failed" >&2
                 exit 1
             fi
-            
+
             echo ""
             echo "[4/4] Restarting web service to apply settings..."
             if az webapp restart --name ${var_webService} --resource-group ${var_rgName}; then
@@ -90,7 +233,7 @@ hooks:
                 echo "✗ ERROR: Failed to restart web service" >&2
                 exit 1
             fi
-            
+
             echo ""
             echo "========================================"
             echo "POST-PROVISION: Completed successfully"
@@ -103,16 +246,280 @@ hooks:
             echo "POST-PROVISION: Completed (skipped)"
             echo "========================================"
         fi
+    windows:
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+
+        function Get-TargetSubscriptionId {
+            if (-not [string]::IsNullOrWhiteSpace($env:AZURE_SUBSCRIPTION_ID)) {
+                return $env:AZURE_SUBSCRIPTION_ID
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($env:var_subscriptionId)) {
+                return $env:var_subscriptionId
+            }
+
+            $resolvedSubscriptionId = az account show --query id -o tsv
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($resolvedSubscriptionId)) {
+                throw 'Failed to resolve the target subscription ID for postprovision.'
+            }
+
+            return $resolvedSubscriptionId
+        }
+
+        function Resolve-ResourceGroupName {
+            $subscriptionId = Get-TargetSubscriptionId
+
+            if (-not [string]::IsNullOrWhiteSpace($env:var_rgName)) {
+                $groupExists = az group exists --name $env:var_rgName --subscription $subscriptionId -o tsv 2>$null
+                if ($LASTEXITCODE -eq 0 -and $groupExists -eq 'true') {
+                    return $env:var_rgName
+                }
+            }
+
+            $cosmosAccountName = $env:var_cosmosDb_accountName
+            if ([string]::IsNullOrWhiteSpace($cosmosAccountName) -and -not [string]::IsNullOrWhiteSpace($env:var_cosmosDb_uri)) {
+                $cosmosAccountName = ([System.Uri]$env:var_cosmosDb_uri).Host.Split('.')[0]
+            }
+
+            $resolvedResourceGroup = $null
+            if (-not [string]::IsNullOrWhiteSpace($cosmosAccountName)) {
+                $resolvedResourceGroup = az cosmosdb list --subscription $subscriptionId --query "[?name=='$cosmosAccountName'].resourceGroup | [0]" -o tsv 2>$null
+            }
+
+            if ([string]::IsNullOrWhiteSpace($resolvedResourceGroup) -and -not [string]::IsNullOrWhiteSpace($env:var_webService)) {
+                $resolvedResourceGroup = az resource list --subscription $subscriptionId --name "$($env:var_webService)" --resource-type Microsoft.Web/sites --query "[0].resourceGroup" -o tsv 2>$null
+            }
+
+            if ([string]::IsNullOrWhiteSpace($resolvedResourceGroup)) {
+                throw 'Unable to resolve resource group from var_rgName, Cosmos DB, or Web App.'
+            }
+
+            $env:var_rgName = $resolvedResourceGroup
+            return $resolvedResourceGroup
+        }
+
+        function Ensure-CosmosRunnerAccess {
+            param(
+                [string]$AccountName,
+                [string]$ResourceGroupName,
+                [string]$SubscriptionId
+            )
+
+            $currentRules = az cosmosdb show --name $AccountName --resource-group $ResourceGroupName --subscription $SubscriptionId --query "properties.ipRules[].ipAddressOrRange" -o tsv 2>$null
+            $runnerPublicIp = (Invoke-RestMethod -Uri 'https://api.ipify.org' -TimeoutSec 10).Trim()
+            if ([string]::IsNullOrWhiteSpace($runnerPublicIp)) {
+                throw 'Failed to resolve the deployment runner public IP for Cosmos DB firewall access.'
+            }
+
+            $ruleList = @()
+            if (-not [string]::IsNullOrWhiteSpace($currentRules)) {
+                $ruleList = $currentRules -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+            }
+
+            if (Test-RunnerIpMatchesRules -Rules $ruleList -RunnerPublicIp $runnerPublicIp) {
+                Write-Host "✓ Deployment runner IP $runnerPublicIp is already configured on the CosmosDB firewall"
+                Wait-ForCosmosRunnerAccess -RunnerPublicIp $runnerPublicIp
+                return
+            }
+
+            $updatedRules = @($ruleList + $runnerPublicIp | Select-Object -Unique) -join ','
+            $updateOutput = az cosmosdb update --name $AccountName --resource-group $ResourceGroupName --subscription $SubscriptionId --ip-range-filter $updatedRules 2>&1 | Out-String
+            if ($LASTEXITCODE -ne 0) {
+                if ($updateOutput -match 'AADSTS50076|multi-factor authentication|claims challenge') {
+                    Write-Warning "Azure CLI requires multi-factor authentication before it can update the Cosmos DB firewall. Manually add IP $runnerPublicIp to Azure Portal -> Cosmos DB account '$AccountName' -> Networking -> Firewall in resource group '$ResourceGroupName'. Firewall changes can take up to 30 minutes to propagate, so wait before rerunning 'azd provision' or 'azd up'."
+                    Write-Host "  Checking whether CosmosDB access is already available without an Azure CLI firewall update..."
+                    Wait-ForCosmosRunnerAccess -RunnerPublicIp $runnerPublicIp
+                    return
+                }
+
+                throw "Failed to allow deployment runner IP $runnerPublicIp through the Cosmos DB firewall.`n$updateOutput"
+            }
+
+            Write-Host "✓ Added deployment runner IP $runnerPublicIp to the CosmosDB firewall"
+            Wait-ForCosmosRunnerAccess -RunnerPublicIp $runnerPublicIp
+        }
+
+        function Test-CosmosRunnerAccess {
+            $accessCheckOutput = python -c "from azure.cosmos import CosmosClient; import os; client = CosmosClient(os.environ['var_cosmosDb_uri'], os.environ['var_cosmosDb_key']); next(client.list_databases(), None); print('ok')" 2>&1 | Out-String
+            return $LASTEXITCODE -eq 0
+        }
+
+        function Test-RunnerIpMatchesRules {
+            param(
+                [string[]]$Rules,
+                [string]$RunnerPublicIp
+            )
+
+            $env:CURRENT_RULES = ($Rules | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join ','
+            $env:RUNNER_PUBLIC_IP = $RunnerPublicIp
+            python -c "import ipaddress, os; rules = [rule.strip() for rule in os.environ.get('CURRENT_RULES', '').split(',') if rule.strip()]; ip = ipaddress.ip_address(os.environ['RUNNER_PUBLIC_IP']); matched = any(ip in ipaddress.ip_network(rule, strict=False) if '/' in rule else ip == ipaddress.ip_address(rule) for rule in rules); raise SystemExit(0 if matched else 1)" 2>$null
+            return $LASTEXITCODE -eq 0
+        }
+
+        function Wait-ForCosmosRunnerAccess {
+            param(
+                [string]$RunnerPublicIp
+            )
+
+            for ($attempt = 1; $attempt -le 20; $attempt++) {
+                if (Test-CosmosRunnerAccess) {
+                    Write-Host "✓ CosmosDB data-plane access is now available for deployment runner IP $RunnerPublicIp"
+                    return
+                }
+
+                Write-Host "  Waiting for CosmosDB firewall propagation for $RunnerPublicIp ($attempt/20)..."
+                Start-Sleep -Seconds 30
+            }
+
+            throw "CosmosDB firewall rule for $RunnerPublicIp is configured but data-plane access is still not available. Firewall changes can take up to 30 minutes to propagate. Wait and rerun 'azd provision' or 'azd up'."
+        }
+
+        function Test-PythonVirtualEnvironment {
+            python -c "import sys; raise SystemExit(0 if sys.prefix != getattr(sys, 'base_prefix', sys.prefix) else 1)" 2>$null
+            return $LASTEXITCODE -eq 0
+        }
+
+        function Install-PostprovisionPythonDependencies {
+            $outputFile = [System.IO.Path]::GetTempFileName()
+
+            try {
+                if (Test-PythonVirtualEnvironment) {
+                    python -m pip install -r .\bicep\requirements.txt *> $outputFile
+                } else {
+                    python -m pip install --user -r .\bicep\requirements.txt *> $outputFile
+                }
+
+                if ($LASTEXITCODE -ne 0) {
+                    Get-Content -Path $outputFile -Raw | Write-Error
+                    return $false
+                }
+
+                return $true
+            } finally {
+                Remove-Item -Path $outputFile -ErrorAction SilentlyContinue
+            }
+        }
+
+        Write-Host "========================================"
+        Write-Host "POST-PROVISION: Starting configuration"
+        Write-Host "========================================"
+
+        if ($env:var_configureApplication -eq 'true') {
+            Write-Host ""
+            Write-Host "[1/4] Granting permissions to CosmosDB..."
+
+            $subscriptionId = Get-TargetSubscriptionId
+            $rgName = Resolve-ResourceGroupName
+            $cosmosUri = $env:var_cosmosDb_uri
+            $accountName = ([System.Uri]$cosmosUri).Host.Split('.')[0]
+            $objectId = az ad signed-in-user show --query id -o tsv
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($objectId)) {
+                throw 'Failed to resolve the signed-in user object ID for Cosmos DB role assignment.'
+            }
+
+            $scope = "/subscriptions/$subscriptionId/resourceGroups/$rgName/providers/Microsoft.DocumentDB/databaseAccounts/$accountName"
+            $roleId = az role definition list --name Contributor --subscription $subscriptionId --query "[0].id" -o tsv
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($roleId)) {
+                throw 'Failed to resolve the Contributor role definition ID.'
+            }
+
+            $controlPlaneOutput = az role assignment create --assignee-object-id $objectId --assignee-principal-type User --role $roleId --scope $scope 2>&1 | Out-String
+            if ($LASTEXITCODE -ne 0) {
+                if ($controlPlaneOutput -match 'already exists|RoleAssignmentExists|Conflict') {
+                    Write-Host "Control-plane role already exists."
+                } elseif ($controlPlaneOutput -match 'AADSTS50076|multi-factor authentication|claims challenge') {
+                    Write-Warning "Azure CLI requires multi-factor authentication before it can create the Cosmos DB control-plane role assignment."
+                    Write-Warning "Continuing with Cosmos DB key-based post-deployment configuration."
+                } else {
+                    throw "Failed to create the Cosmos DB control-plane role assignment.`n$controlPlaneOutput"
+                }
+            }
+
+            $dataPlaneRoleId = az cosmosdb sql role definition list --account-name $accountName --resource-group $rgName --subscription $subscriptionId --query "[?roleName=='Cosmos DB Built-in Data Contributor'].id | [0]" -o tsv
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($dataPlaneRoleId)) {
+                throw 'Failed to resolve the Cosmos DB built-in data contributor role definition ID.'
+            }
+
+            $dataPlaneOutput = az cosmosdb sql role assignment create --account-name $accountName --resource-group $rgName --subscription $subscriptionId --scope / --principal-id $objectId --role-definition-id $dataPlaneRoleId 2>&1 | Out-String
+            if ($LASTEXITCODE -ne 0) {
+                if ($dataPlaneOutput -match 'already exists|RoleAssignmentExists|Conflict') {
+                    Write-Host "Data-plane role already exists."
+                } elseif ($dataPlaneOutput -match 'AADSTS50076|multi-factor authentication|claims challenge') {
+                    Write-Warning "Azure CLI requires multi-factor authentication before it can create the Cosmos DB data-plane role assignment."
+                    Write-Warning "Continuing with Cosmos DB key-based post-deployment configuration."
+                } else {
+                    throw "Failed to create the Cosmos DB data-plane role assignment.`n$dataPlaneOutput"
+                }
+            }
+
+            Write-Host "✓ CosmosDB permissions granted successfully"
+
+            Write-Host ""
+            Write-Host "[2/4] Installing Python dependencies..."
+            if (-not (Install-PostprovisionPythonDependencies)) {
+                throw 'Failed to install Python dependencies.'
+            }
+            Write-Host "✓ Dependencies installed successfully"
+
+            $cosmosDbKeyOutput = az cosmosdb keys list --name $accountName --resource-group $rgName --subscription $subscriptionId --query primaryMasterKey -o tsv 2>&1 | Out-String
+            if ($LASTEXITCODE -ne 0) {
+                if ($cosmosDbKeyOutput -match 'AADSTS50076|multi-factor authentication|claims challenge') {
+                    throw "Azure CLI requires multi-factor authentication before it can read the Cosmos DB primary key. Run 'az login --scope https://management.azure.com//.default' and rerun 'azd provision' or 'azd up'."
+                }
+
+                throw "Failed to resolve the Cosmos DB primary key for post-deployment configuration.`n$cosmosDbKeyOutput"
+            }
+
+            $env:var_cosmosDb_key = $cosmosDbKeyOutput.Trim()
+            if ([string]::IsNullOrWhiteSpace($env:var_cosmosDb_key)) {
+                throw 'Failed to resolve the Cosmos DB primary key for post-deployment configuration.'
+            }
+
+            if (Test-CosmosRunnerAccess) {
+                Write-Host "✓ Deployment runner already has CosmosDB data-plane access"
+            } else {
+                Ensure-CosmosRunnerAccess -AccountName $accountName -ResourceGroupName $rgName -SubscriptionId $subscriptionId
+            }
+
+            Write-Host ""
+            Write-Host "[3/4] Running post-deployment configuration..."
+            python .\bicep\postconfig.py
+            if ($LASTEXITCODE -ne 0) {
+                throw 'Post-deployment configuration failed.'
+            }
+            Write-Host "✓ Post-deployment configuration completed"
+
+            Write-Host ""
+            Write-Host "[4/4] Restarting web service to apply settings..."
+            az webapp restart --name $env:var_webService --resource-group $rgName --subscription $subscriptionId | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                throw 'Failed to restart web service.'
+            }
+            Write-Host "✓ Web service restarted successfully"
+
+            Write-Host ""
+            Write-Host "========================================"
+            Write-Host "POST-PROVISION: Completed successfully"
+            Write-Host "========================================"
+        } else {
+            Write-Host ""
+            Write-Host "Skipping post-deployment configuration (var_configureApplication is not true)"
+            Write-Host ""
+            Write-Host "========================================"
+            Write-Host "POST-PROVISION: Completed (skipped)"
+            Write-Host "========================================"
+        }
 
   predeploy:
-  # this is run after infrastructure and postprovisioning but before service deployment
-  # primary use is to build and push container images
+    # this is run after infrastructure and postprovisioning but before service deployment
+    # primary use is to build and push container images
     posix:
       shell: sh
       run: |
         set -e
-        
-        # Error handling function
+
         cleanup_on_error() {
             local exit_code=$?
             echo ""
@@ -121,84 +528,220 @@ hooks:
             az webapp start --name ${var_webService} --resource-group ${var_rgName} 2>/dev/null || true
             exit ${exit_code}
         }
-        
+
         echo "========================================"
         echo "PRE-DEPLOY: Building and pushing image"
         echo "========================================"
-        
+
         cd ..
         timestamp="$(date +"%Y%m%d-%H%M%S")"
         echo ""
         echo "Deployment timestamp: ${timestamp}"
         echo "Image: ${var_containerRegistry}/${var_imageName}:${timestamp}"
-        
+
         echo ""
-        echo "[1/6] Stopping web service..."
+        echo "[1/4] Stopping web service..."
         if az webapp stop --name ${var_webService} --resource-group ${var_rgName}; then
             echo "✓ Web service stopped successfully"
         else
             echo "✗ ERROR: Failed to stop web service" >&2
             exit 1
         fi
-        
+
         echo ""
-        echo "[2/6] Building Docker image..."
+        echo "[2/4] Building image in ACR Tasks..."
         echo "Context: $(pwd)"
         echo "Dockerfile: application/single_app/Dockerfile"
-        if docker build -f application/single_app/Dockerfile \
-            -t ${var_containerRegistry}/${var_imageName}:${timestamp} . ; then
-            echo "✓ Docker image built successfully"
-        else
-            cleanup_on_error "Docker build"
+        if [ "${var_enablePrivateNetworking}" = "true" ]; then
+            echo "ℹ ACR public access remains enabled until POST-UP so Azure Container Registry Tasks can complete the build"
         fi
-        
+        if az acr build \
+            --registry ${var_acrName} \
+            --file application/single_app/Dockerfile \
+            --image ${var_imageName}:${timestamp} \
+            --image ${var_imageName}:latest \
+            .; then
+            echo "✓ ACR image build completed successfully"
+        else
+            cleanup_on_error "ACR build"
+        fi
+
         echo ""
-        echo "[3/6] Tagging image as latest..."
-        if docker tag ${var_containerRegistry}/${var_imageName}:${timestamp} \
-            ${var_containerRegistry}/${var_imageName}:latest ; then
-            echo "✓ Image tagged successfully"
-        else
-            cleanup_on_error "Docker tag"
-        fi
-        
-        echo ""
-        echo "[4/6] Logging in to ACR (${var_acrName})..."
-        if az acr login --name ${var_acrName}; then
-            echo "✓ ACR login successful"
-        else
-            cleanup_on_error "ACR login"
-        fi
-        
-        echo ""
-        echo "[5/6] Pushing images to ACR..."
-        echo "  → Pushing latest tag..."
-        if docker push ${var_containerRegistry}/${var_imageName}:latest; then
-            echo "  ✓ Latest tag pushed successfully"
-        else
-            cleanup_on_error "Docker push (latest)"
-        fi
-        
-        echo "  → Pushing timestamped tag..."
-        if docker push ${var_containerRegistry}/${var_imageName}:${timestamp}; then
-            echo "  ✓ Timestamped tag pushed successfully"
-        else
-            cleanup_on_error "Docker push (timestamp)"
-        fi
-        
-        echo ""
-        echo "[6/6] Restarting web service..."
+        echo "[3/4] Restarting web service..."
         if az webapp start --name ${var_webService} --resource-group ${var_rgName}; then
             echo "✓ Web service restarted successfully"
         else
             echo "✗ ERROR: Failed to restart web service" >&2
             exit 1
         fi
-        
+
+        echo ""
+        echo "[4/4] Image build and restart complete"
+        echo "  -> Published ${var_imageName}:${timestamp}"
+        echo "  -> Published ${var_imageName}:latest"
+
         echo ""
         echo "========================================"
         echo "PRE-DEPLOY: Completed successfully"
         echo "========================================"
-    
+    windows:
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+
+        function Get-TargetSubscriptionId {
+            if (-not [string]::IsNullOrWhiteSpace($env:AZURE_SUBSCRIPTION_ID)) {
+                return $env:AZURE_SUBSCRIPTION_ID
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($env:var_subscriptionId)) {
+                return $env:var_subscriptionId
+            }
+
+            $resolvedSubscriptionId = az account show --query id -o tsv
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($resolvedSubscriptionId)) {
+                throw 'Failed to resolve the target subscription ID for predeploy.'
+            }
+
+            return $resolvedSubscriptionId
+        }
+
+        function Resolve-ResourceGroupName {
+            $subscriptionId = Get-TargetSubscriptionId
+
+            if (-not [string]::IsNullOrWhiteSpace($env:var_rgName)) {
+                $groupExists = az group exists --name $env:var_rgName --subscription $subscriptionId -o tsv 2>$null
+                if ($LASTEXITCODE -eq 0 -and $groupExists -eq 'true') {
+                    return $env:var_rgName
+                }
+            }
+
+            $cosmosAccountName = $env:var_cosmosDb_accountName
+            if ([string]::IsNullOrWhiteSpace($cosmosAccountName) -and -not [string]::IsNullOrWhiteSpace($env:var_cosmosDb_uri)) {
+                $cosmosAccountName = ([System.Uri]$env:var_cosmosDb_uri).Host.Split('.')[0]
+            }
+
+            $resolvedResourceGroup = $null
+            if (-not [string]::IsNullOrWhiteSpace($cosmosAccountName)) {
+                $resolvedResourceGroup = az cosmosdb list --subscription $subscriptionId --query "[?name=='$cosmosAccountName'].resourceGroup | [0]" -o tsv 2>$null
+            }
+
+            if ([string]::IsNullOrWhiteSpace($resolvedResourceGroup) -and -not [string]::IsNullOrWhiteSpace($env:var_webService)) {
+                $resolvedResourceGroup = az resource list --subscription $subscriptionId --name "$($env:var_webService)" --resource-type Microsoft.Web/sites --query "[0].resourceGroup" -o tsv 2>$null
+            }
+
+            if ([string]::IsNullOrWhiteSpace($resolvedResourceGroup)) {
+                throw 'Unable to resolve resource group from var_rgName, Cosmos DB, or Web App.'
+            }
+
+            $env:var_rgName = $resolvedResourceGroup
+            return $resolvedResourceGroup
+        }
+
+        $subscriptionId = Get-TargetSubscriptionId
+        $rgName = Resolve-ResourceGroupName
+
+        function Cleanup-OnError {
+            param(
+                [string]$StepName
+            )
+
+            Write-Host ""
+            Write-Error "Deployment failed at step: $StepName"
+            Write-Host "Attempting to restart web service..."
+            az webapp start --name $env:var_webService --resource-group $rgName --subscription $subscriptionId 2>$null | Out-Null
+            exit 1
+        }
+
+        function Wait-ForAcrBuildRun {
+            param(
+                [string]$RunId
+            )
+
+            for ($attempt = 1; $attempt -le 120; $attempt++) {
+                $runStatus = az acr task show-run --registry $env:var_acrName --resource-group $rgName --subscription $subscriptionId --run-id $RunId --query status -o tsv 2>$null
+                if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($runStatus)) {
+                    throw "Failed to query ACR build run status for run ID $RunId."
+                }
+
+                switch ($runStatus) {
+                    'Succeeded' {
+                        Write-Host "✓ ACR build run $RunId completed successfully"
+                        return
+                    }
+                    'Failed' {
+                        throw "ACR build run $RunId failed. Run 'az acr task show-run --registry $($env:var_acrName) --resource-group $rgName --subscription $subscriptionId --run-id $RunId -o json' for details."
+                    }
+                    'Error' {
+                        throw "ACR build run $RunId errored. Run 'az acr task show-run --registry $($env:var_acrName) --resource-group $rgName --subscription $subscriptionId --run-id $RunId -o json' for details."
+                    }
+                    'Canceled' {
+                        throw "ACR build run $RunId was canceled."
+                    }
+                    'Timeout' {
+                        throw "ACR build run $RunId timed out."
+                    }
+                    default {
+                        Write-Host "  ACR build run $RunId status: $runStatus ($attempt/120)..."
+                        Start-Sleep -Seconds 10
+                    }
+                }
+            }
+
+            throw "ACR build run $RunId did not complete within the expected time window."
+        }
+
+        Write-Host "========================================"
+        Write-Host "PRE-DEPLOY: Building and pushing image"
+        Write-Host "========================================"
+
+        Set-Location ..
+        $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+        Write-Host ""
+        Write-Host "Deployment timestamp: $timestamp"
+        Write-Host "Image: $($env:var_containerRegistry)/$($env:var_imageName):$timestamp"
+
+        Write-Host ""
+        Write-Host "[1/4] Stopping web service..."
+        az webapp stop --name $env:var_webService --resource-group $rgName --subscription $subscriptionId | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Failed to stop web service.'
+        }
+        Write-Host "✓ Web service stopped successfully"
+
+        Write-Host ""
+        Write-Host "[2/4] Building image in ACR Tasks..."
+        Write-Host "Context: $(Get-Location)"
+        Write-Host "Dockerfile: application/single_app/Dockerfile"
+        if ($env:var_enablePrivateNetworking -eq 'true') {
+            Write-Host "ℹ ACR public access remains enabled until POST-UP so Azure Container Registry Tasks can complete the build"
+        }
+        $runId = az acr build --registry $env:var_acrName --resource-group $rgName --subscription $subscriptionId --file application/single_app/Dockerfile --image "$($env:var_imageName):$timestamp" --image "$($env:var_imageName):latest" --no-logs --query runId -o tsv .
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($runId)) {
+            Cleanup-OnError -StepName 'ACR build'
+        }
+        Write-Host "Queued ACR build run ID: $runId"
+        Wait-ForAcrBuildRun -RunId $runId
+        Write-Host "✓ ACR image build completed successfully"
+
+        Write-Host ""
+        Write-Host "[3/4] Restarting web service..."
+        az webapp start --name $env:var_webService --resource-group $rgName --subscription $subscriptionId | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Failed to restart web service.'
+        }
+        Write-Host "✓ Web service restarted successfully"
+
+        Write-Host ""
+        Write-Host "[4/4] Image build and restart complete"
+        Write-Host "  -> Published $($env:var_imageName):$timestamp"
+        Write-Host "  -> Published $($env:var_imageName):latest"
+
+        Write-Host ""
+        Write-Host "========================================"
+        Write-Host "PRE-DEPLOY: Completed successfully"
+        Write-Host "========================================"
+
   postup:
     # this is the final step to run after everything else is done
     # primary use is disable public network access if private endpoints are used
@@ -206,15 +749,15 @@ hooks:
       shell: sh
       run: |
         set -e
-        
+
         echo "========================================"
         echo "POST-UP: Final configuration"
         echo "========================================"
-        
+
         if [ "${var_enablePrivateNetworking}" = "true" ]; then
             echo ""
             echo "Configuring private networking..."
-            
+
             echo ""
             echo "[1/4] Disabling public network access for CosmosDB..."
             if az cosmosdb update --name ${var_cosmosDb_accountName} \
@@ -225,7 +768,7 @@ hooks:
                 echo "✗ ERROR: Failed to disable CosmosDB public access" >&2
                 exit 1
             fi
-            
+
             echo ""
             echo "[2/4] Disabling public network access for Key Vault..."
             if az keyvault update --name ${var_keyVaultName} \
@@ -259,7 +802,7 @@ hooks:
                 echo "✗ ERROR: Failed to disable Web Application public access" >&2
                 exit 1
             fi
-            
+
             echo ""
             echo "✓ Private networking configured successfully"
         else
@@ -271,3 +814,111 @@ hooks:
         echo "========================================"
         echo "✓ DEPLOYMENT COMPLETED SUCCESSFULLY"
         echo "========================================"
+    windows:
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+
+        function Get-TargetSubscriptionId {
+            if (-not [string]::IsNullOrWhiteSpace($env:AZURE_SUBSCRIPTION_ID)) {
+                return $env:AZURE_SUBSCRIPTION_ID
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($env:var_subscriptionId)) {
+                return $env:var_subscriptionId
+            }
+
+            $resolvedSubscriptionId = az account show --query id -o tsv
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($resolvedSubscriptionId)) {
+                throw 'Failed to resolve the target subscription ID for postup.'
+            }
+
+            return $resolvedSubscriptionId
+        }
+
+        function Resolve-ResourceGroupName {
+            $subscriptionId = Get-TargetSubscriptionId
+
+            if (-not [string]::IsNullOrWhiteSpace($env:var_rgName)) {
+                $groupExists = az group exists --name $env:var_rgName --subscription $subscriptionId -o tsv 2>$null
+                if ($LASTEXITCODE -eq 0 -and $groupExists -eq 'true') {
+                    return $env:var_rgName
+                }
+            }
+
+            $cosmosAccountName = $env:var_cosmosDb_accountName
+            if ([string]::IsNullOrWhiteSpace($cosmosAccountName) -and -not [string]::IsNullOrWhiteSpace($env:var_cosmosDb_uri)) {
+                $cosmosAccountName = ([System.Uri]$env:var_cosmosDb_uri).Host.Split('.')[0]
+            }
+
+            $resolvedResourceGroup = $null
+            if (-not [string]::IsNullOrWhiteSpace($cosmosAccountName)) {
+                $resolvedResourceGroup = az cosmosdb list --subscription $subscriptionId --query "[?name=='$cosmosAccountName'].resourceGroup | [0]" -o tsv 2>$null
+            }
+
+            if ([string]::IsNullOrWhiteSpace($resolvedResourceGroup) -and -not [string]::IsNullOrWhiteSpace($env:var_webService)) {
+                $resolvedResourceGroup = az resource list --subscription $subscriptionId --name "$($env:var_webService)" --resource-type Microsoft.Web/sites --query "[0].resourceGroup" -o tsv 2>$null
+            }
+
+            if ([string]::IsNullOrWhiteSpace($resolvedResourceGroup)) {
+                throw 'Unable to resolve resource group from var_rgName, Cosmos DB, or Web App.'
+            }
+
+            $env:var_rgName = $resolvedResourceGroup
+            return $resolvedResourceGroup
+        }
+
+        $subscriptionId = Get-TargetSubscriptionId
+        $rgName = Resolve-ResourceGroupName
+
+        Write-Host "========================================"
+        Write-Host "POST-UP: Final configuration"
+        Write-Host "========================================"
+
+        if ($env:var_enablePrivateNetworking -eq 'true') {
+            Write-Host ""
+            Write-Host "Configuring private networking..."
+
+            Write-Host ""
+            Write-Host "[1/4] Disabling public network access for CosmosDB..."
+            az cosmosdb update --name $env:var_cosmosDb_accountName --resource-group $rgName --subscription $subscriptionId --public-network-access Disabled > $null
+            if ($LASTEXITCODE -ne 0) {
+                throw 'Failed to disable CosmosDB public access.'
+            }
+            Write-Host "✓ CosmosDB public access disabled"
+
+            Write-Host ""
+            Write-Host "[2/4] Disabling public network access for Key Vault..."
+            az keyvault update --name $env:var_keyVaultName --resource-group $rgName --subscription $subscriptionId --public-network-access Disabled > $null
+            if ($LASTEXITCODE -ne 0) {
+                throw 'Failed to disable Key Vault public access.'
+            }
+            Write-Host "✓ Key Vault public access disabled"
+
+            Write-Host ""
+            Write-Host "[3/4] Disabling public network access for Azure Container Registry..."
+            az acr update --name $env:var_acrName --resource-group $rgName --subscription $subscriptionId --public-network-enabled false > $null
+            if ($LASTEXITCODE -ne 0) {
+                throw 'Failed to disable ACR public access.'
+            }
+            Write-Host "✓ ACR public access disabled"
+
+            Write-Host ""
+            Write-Host "[4/4] Disabling public network access for Web Application..."
+            az resource update --name $env:var_webService --resource-group $rgName --subscription $subscriptionId --resource-type Microsoft.Web/sites --set properties.publicNetworkAccess=Disabled | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                throw 'Failed to disable Web Application public access.'
+            }
+            Write-Host "✓ Web Application public access disabled"
+
+            Write-Host ""
+            Write-Host "✓ Private networking configured successfully"
+        } else {
+            Write-Host ""
+            Write-Host "Skipping private networking configuration (var_enablePrivateNetworking is not true)"
+        }
+
+        Write-Host ""
+        Write-Host "========================================"
+        Write-Host "✓ DEPLOYMENT COMPLETED SUCCESSFULLY"
+        Write-Host "========================================"
