@@ -443,6 +443,8 @@ def register_route_backend_settings(app):
     @admin_required
     def send_feedback_email():
         """Log an admin feedback email draft request before the client opens mailto."""
+        user_id = get_current_user_id() or 'unknown'
+        feedback_type = ''
         try:
             data = request.get_json(force=True)
 
@@ -462,7 +464,6 @@ def register_route_backend_settings(app):
 
             user = session.get('user', {})
             admin_email = user.get('preferred_username', user.get('email', reporter_email))
-            user_id = get_current_user_id() or 'unknown'
 
             feedback_label = 'Bug Report' if feedback_type == 'bug_report' else 'Feature Request'
             subject_line = f'[SimpleChat Admin Feedback] {feedback_label} - {organization}'
@@ -485,9 +486,19 @@ def register_route_backend_settings(app):
                 'feedbackLabel': feedback_label
             }), 200
 
-        except Exception as e:
-            current_app.logger.error(f"Error logging admin feedback email request: {str(e)}")
-            return jsonify({'error': f'Failed to prepare feedback email: {str(e)}'}), 500
+        except Exception:
+            log_event(
+                '[Admin Feedback] Failed to prepare feedback email',
+                extra={
+                    'user_id': user_id,
+                    'activity_type': 'admin_feedback_email_submission',
+                    'route': 'send_feedback_email',
+                    'feedback_type': feedback_type,
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True
+            )
+            return jsonify({'error': 'Failed to prepare feedback email'}), 500
 
     @app.route('/api/admin/settings/release_notifications_registration', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -495,6 +506,7 @@ def register_route_backend_settings(app):
     @admin_required
     def release_notifications_registration():
         """Persist release/community call registration and prepare a mailto draft."""
+        user_id = get_current_user_id() or 'unknown'
         try:
             data = request.get_json(force=True)
 
@@ -526,7 +538,6 @@ def register_route_backend_settings(app):
 
             user = session.get('user', {})
             admin_email = user.get('preferred_username', user.get('email', registrant_email))
-            user_id = get_current_user_id() or 'unknown'
             subject_line = f'[SimpleChat Registration] Release and Community Call Notifications - {organization}'
 
             log_admin_release_notifications_registration(
@@ -550,9 +561,19 @@ def register_route_backend_settings(app):
                 'updatedAt': now_iso,
             }), 200
 
-        except Exception as e:
-            current_app.logger.error(f"Error preparing release notifications registration: {str(e)}")
-            return jsonify({'error': f'Failed to prepare registration email: {str(e)}'}), 500
+        except Exception:
+            log_event(
+                '[Admin Release Notifications] Failed to prepare registration email',
+                extra={
+                    'user_id': user_id,
+                    'activity_type': 'admin_release_notifications_registration',
+                    'route': 'release_notifications_registration',
+                    'source': 'admin_settings',
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True
+            )
+            return jsonify({'error': 'Failed to prepare registration email'}), 500
 
 def _test_multimodal_vision_connection(payload):
     """Test multi-modal vision analysis with a sample image."""

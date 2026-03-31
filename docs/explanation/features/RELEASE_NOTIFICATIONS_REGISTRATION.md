@@ -3,6 +3,7 @@
 Documentation Version: 0.240.011
 Version Implemented: 0.240.011
 Fixed/Implemented in version: **0.240.011**
+Safe logging updated in version: **0.240.002**
 
 ## Overview
 
@@ -53,6 +54,12 @@ The registration state is stored in Admin Settings using these keys:
 ### Activity Logging
 
 Each registration submission intent is written to the activity log using activity_type admin_release_notifications_registration.
+The stored activity metadata is limited to registration state, timestamps, recipient email, and reduced contact metadata instead of full contact fields in telemetry.
+
+### Error Handling
+
+- Unexpected backend failures are logged through `log_event` with traceback capture.
+- The client receives a generic error response instead of raw exception text.
 
 ## Usage Instructions
 

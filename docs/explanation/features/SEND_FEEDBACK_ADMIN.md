@@ -16,6 +16,8 @@ Version Implemented: 0.240.005
 
 ## Updated in version: **0.240.010**
 
+## Safe logging updated in version: **0.240.002**
+
 ## Technical Specifications
 
 ### Admin Settings Placement
@@ -47,9 +49,13 @@ Version Implemented: 0.240.005
 - Each draft preparation logs an `admin_feedback_email_submission` activity event.
 - The activity entry stores:
   - submission type
-  - reporter metadata
+  - minimal contact metadata instead of full contact fields
   - recipient email
-  - details length and short preview
+  - details length without storing a free-form preview in telemetry
+
+### Error Handling
+- Unexpected backend failures are logged through `log_event` with traceback capture.
+- The client receives a generic error response instead of raw exception text.
 
 ## Usage Instructions
 - Open **Admin Settings**.

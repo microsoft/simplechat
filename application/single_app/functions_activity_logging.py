@@ -12,6 +12,23 @@ from functions_appinsights import log_event
 from functions_debug import debug_print
 from config import cosmos_activity_logs_container
 
+
+def _get_email_domain(email: str) -> str:
+    """Return only the email domain for low-sensitivity audit metadata."""
+    normalized_email = (email or '').strip()
+    if '@' not in normalized_email:
+        return ''
+    return normalized_email.split('@', 1)[1].lower()
+
+
+def _build_contact_metadata(name: str, email: str, organization: str) -> Dict[str, Any]:
+    """Reduce contact fields to the minimum metadata needed for audit and telemetry."""
+    return {
+        'name_provided': bool((name or '').strip()),
+        'email_domain': _get_email_domain(email),
+        'organization_length': len((organization or '').strip()),
+    }
+
 def log_chat_activity(
     user_id: str,
     conversation_id: str,
@@ -135,6 +152,12 @@ def log_admin_feedback_email_submission(
     from Admin Settings.
     """
 
+    feedback_metadata = {
+        'feedback_type': feedback_type,
+        'details_length': len(details or ''),
+        **_build_contact_metadata(reporter_name, reporter_email, organization),
+    }
+
     try:
         timestamp = datetime.utcnow().isoformat()
         activity_record = {
@@ -144,39 +167,40 @@ def log_admin_feedback_email_submission(
             'timestamp': timestamp,
             'activity_type': 'admin_feedback_email_submission',
             'submission_channel': 'mailto',
-            'admin_email': admin_email,
             'recipient_email': recipient_email,
-            'feedback_submission': {
-                'feedback_type': feedback_type,
-                'reporter_name': reporter_name,
-                'reporter_email': reporter_email,
-                'organization': organization,
-                'details_length': len(details or ''),
-                'details_preview': (details or '')[:250]
-            }
+            'feedback_submission': feedback_metadata,
         }
 
         cosmos_activity_logs_container.create_item(body=activity_record)
 
         log_event(
-            message=f"Admin feedback email prepared: {feedback_type} for user {user_id}",
-            extra=activity_record,
-            level=logging.INFO
-        )
-        debug_print(f"Logged admin feedback email submission: {feedback_type} for user {user_id}")
-
-    except Exception as e:
-        log_event(
-            message=f"Error logging admin feedback email submission: {str(e)}",
+            message='[Admin Feedback] Mailto draft prepared',
             extra={
                 'user_id': user_id,
-                'admin_email': admin_email,
-                'feedback_type': feedback_type,
-                'error': str(e)
+                'activity_type': 'admin_feedback_email_submission',
+                'submission_channel': 'mailto',
+                'recipient_email': recipient_email,
+                **feedback_metadata,
             },
-            level=logging.ERROR
+            level=logging.INFO
         )
-        debug_print(f"Error logging admin feedback email submission for user {user_id}: {str(e)}")
+        debug_print(f"[Admin Feedback] Logged feedback email submission for user {user_id}")
+
+    except Exception:
+        log_event(
+            message='[Admin Feedback] Failed to record feedback mailto draft',
+            extra={
+                'user_id': user_id,
+                'feedback_type': feedback_type,
+                'activity_type': 'admin_feedback_email_submission',
+                'recipient_email': recipient_email,
+                'details_length': len(details or ''),
+                **_build_contact_metadata(reporter_name, reporter_email, organization),
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
+        debug_print(f"[Admin Feedback] Failed to log feedback email submission for user {user_id}")
 
 
 def log_admin_release_notifications_registration(
@@ -197,6 +221,13 @@ def log_admin_release_notifications_registration(
     and community call notifications from Admin Settings.
     """
 
+    registration_metadata = {
+        'registered': True,
+        'registered_at': registered_at,
+        'updated_at': updated_at,
+        **_build_contact_metadata(registrant_name, registrant_email, organization),
+    }
+
     try:
         activity_record = {
             'id': str(uuid.uuid4()),
@@ -205,40 +236,41 @@ def log_admin_release_notifications_registration(
             'timestamp': datetime.utcnow().isoformat(),
             'activity_type': 'admin_release_notifications_registration',
             'registration_channel': 'mailto',
-            'admin_email': admin_email,
             'recipient_email': recipient_email,
             'source': source,
-            'release_notifications_registration': {
-                'registered': True,
-                'name': registrant_name,
-                'email': registrant_email,
-                'organization': organization,
-                'registered_at': registered_at,
-                'updated_at': updated_at
-            }
+            'release_notifications_registration': registration_metadata,
         }
 
         cosmos_activity_logs_container.create_item(body=activity_record)
 
         log_event(
-            message=f"Admin release notifications registration prepared for user {user_id}",
-            extra=activity_record,
-            level=logging.INFO
-        )
-        debug_print(f"Logged admin release notifications registration for user {user_id}")
-
-    except Exception as e:
-        log_event(
-            message=f"Error logging admin release notifications registration: {str(e)}",
+            message='[Admin Release Notifications] Mailto registration prepared',
             extra={
                 'user_id': user_id,
-                'admin_email': admin_email,
-                'registrant_email': registrant_email,
-                'error': str(e)
+                'activity_type': 'admin_release_notifications_registration',
+                'registration_channel': 'mailto',
+                'recipient_email': recipient_email,
+                'source': source,
+                **registration_metadata,
             },
-            level=logging.ERROR
+            level=logging.INFO
         )
-        debug_print(f"Error logging admin release notifications registration for user {user_id}: {str(e)}")
+        debug_print(f"[Admin Release Notifications] Logged registration for user {user_id}")
+
+    except Exception:
+        log_event(
+            message='[Admin Release Notifications] Failed to record registration mailto draft',
+            extra={
+                'user_id': user_id,
+                'activity_type': 'admin_release_notifications_registration',
+                'recipient_email': recipient_email,
+                'source': source,
+                **registration_metadata,
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
+        debug_print(f"[Admin Release Notifications] Failed to log registration for user {user_id}")
 
 
 def log_web_search_consent_acceptance(
