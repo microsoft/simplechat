@@ -1,12 +1,13 @@
 # test_core_service_key_deployment_path.py
 #!/usr/bin/env python3
 """
-Functional test for core service key deployment path.
-Version: 0.240.003
-Implemented in: 0.240.002
+Functional test for core service key deployment path and OpenAI endpoint-only fallback.
+Version: 0.240.005
+Implemented in: 0.240.005
 
 This test ensures that core service key authentication is populated directly from
-Azure resources during deployment instead of depending on Key Vault secret reads.
+Azure resources during deployment and that reused OpenAI-compatible endpoints fall
+back to manual key configuration when automatic retrieval is not available.
 """
 
 import sys
@@ -70,6 +71,32 @@ def test_postconfig_uses_direct_core_key_retrieval():
             return False
 
     print("✅ Postconfig retrieves core keys directly from Azure resources")
+    return True
+
+
+def test_postconfig_preserves_manual_openai_key_fallback():
+    """Verify postconfig skips unsupported OpenAI key auto-retrieval paths."""
+    print("🔍 Testing postconfig OpenAI endpoint-only fallback...")
+
+    content = read_text(POSTCONFIG_PATH)
+
+    required_snippets = [
+        "STANDARD_AZURE_OPENAI_HOST_SUFFIXES = (",
+        "def is_standard_azure_openai_endpoint(endpoint):",
+        "def can_auto_retrieve_openai_key(",
+        "Skipping Azure OpenAI key retrieval:",
+        "if can_auto_retrieve_openai_key(",
+        'openai_key = core_service_keys.get("azure_openai_key")',
+        'item.setdefault("azure_openai_gpt_key", "")',
+        'item.setdefault("azure_openai_embedding_key", "")',
+    ]
+
+    for snippet in required_snippets:
+        if snippet not in content:
+            print(f"❌ Missing expected endpoint-only fallback snippet: {snippet}")
+            return False
+
+    print("✅ Postconfig preserves manual OpenAI key configuration when auto-retrieval is unavailable")
     return True
 
 
@@ -140,7 +167,7 @@ def test_version_updated():
     print("🔍 Testing config version update...")
 
     content = read_text(CONFIG_PATH)
-    expected_version = 'VERSION = "0.240.003"'
+    expected_version = 'VERSION = "0.240.005"'
 
     if expected_version not in content:
         print(f"❌ Expected version not found in config.py: {expected_version}")
@@ -153,6 +180,7 @@ def test_version_updated():
 if __name__ == "__main__":
     tests = [
         test_postconfig_uses_direct_core_key_retrieval,
+        test_postconfig_preserves_manual_openai_key_fallback,
         test_app_service_uses_direct_core_key_values,
         test_core_modules_stop_storing_core_keys_in_key_vault,
         test_version_updated,

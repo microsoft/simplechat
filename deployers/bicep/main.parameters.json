@@ -57,7 +57,7 @@
       "value": "${EXISTING_PRIVATE_ENDPOINT_SUBNET_RESOURCE_ID}"
     },
     "privateDnsZoneConfigs": {
-      "value": {}
+      "value": "${PRIVATE_DNS_ZONE_CONFIGS}"
     },
     "existingOpenAIEndpoint": {
       "value": "${EXISTING_AZURE_OPENAI_ENDPOINT}"

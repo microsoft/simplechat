@@ -378,6 +378,7 @@ Private DNS is required for reliable name resolution when private endpoints are 
 - If your organization already manages private DNS centrally, provide `privateDnsZoneConfigs` with one or more `zoneResourceId` values to reuse those existing zones.
 - Set `createVNetLink` to `false` only when the DNS zone is already linked to the target VNet or when your networking team will manage the VNet link separately.
 - If you reuse an existing VNet but do not create or link the required private DNS zones, the application may deploy successfully but private name resolution to services such as Cosmos DB, Storage, Azure AI Search, Azure OpenAI, Key Vault, and App Service private endpoints will fail.
+- For `azd up` and `azd provision`, store the same JSON object in the `PRIVATE_DNS_ZONE_CONFIGS` AZD environment value so `deployers/bicep/main.parameters.json` can pass it through to the Bicep parameter.
 
 Example `privateDnsZoneConfigs` value:
 
@@ -395,6 +396,8 @@ Example `privateDnsZoneConfigs` value:
 ```
 
 Supported `privateDnsZoneConfigs` keys: `keyVault`, `cosmosDb`, `containerRegistry`, `aiSearch`, `blobStorage`, `cognitiveServices`, `openAi`, and `webSites`.
+
+If you use AZD, set `PRIVATE_DNS_ZONE_CONFIGS` to the JSON object above instead of editing the parameter file directly.
 
 During initial deployment, if post an error is raised "failed running post hooks: 'postprovision'" the deployment is being blocked from executing scripts against the CosmosDB service. Ensure the deployment workstation IP address is added to the `allowedIpAddresses` parameter or the `ALLOWED_IP_RANGES` AZD environment value. Similar messages may be seen from the Azure Container Registry service. If you add the firewall rule manually in Azure Portal, wait up to 30 minutes for propagation before rerunning `azd up`.
 

@@ -10,6 +10,12 @@ from urllib.parse import urlparse
 
 credential = AzureCliCredential()
 
+STANDARD_AZURE_OPENAI_HOST_SUFFIXES = (
+    ".openai.azure.com",
+    ".openai.azure.us",
+    ".openai.azure.cn",
+)
+
 
 def get_azure_cli_executable():
     """Resolve the Azure CLI executable path for subprocess usage."""
@@ -59,15 +65,67 @@ def run_azure_cli_command(command_args, description):
     return value
 
 
+def get_endpoint_hostname(endpoint):
+    """Extract a normalized hostname from a service endpoint."""
+    parsed_endpoint = urlparse(endpoint or "")
+    return (parsed_endpoint.netloc or parsed_endpoint.path).strip().lower()
+
+
 def extract_resource_name_from_endpoint(endpoint):
     """Extract the Azure resource name from a standard service endpoint."""
-    parsed_endpoint = urlparse(endpoint or "")
-    hostname = parsed_endpoint.netloc or parsed_endpoint.path
+    hostname = get_endpoint_hostname(endpoint)
 
     if not hostname:
         return ""
 
     return hostname.split(".")[0]
+
+
+def is_standard_azure_openai_endpoint(endpoint):
+    """Return True when the endpoint points to a standard Azure OpenAI resource."""
+    hostname = get_endpoint_hostname(endpoint)
+    if not hostname:
+        return False
+
+    return any(
+        hostname.endswith(suffix)
+        for suffix in STANDARD_AZURE_OPENAI_HOST_SUFFIXES
+    )
+
+
+def can_auto_retrieve_openai_key(endpoint, resource_name, resource_group, subscription_id):
+    """Return True when postconfig has enough metadata to safely fetch an OpenAI key."""
+    if not endpoint:
+        print(
+            "Skipping Azure OpenAI key retrieval: endpoint is empty; manual configuration is required."
+        )
+        return False
+
+    if not resource_name:
+        print(
+            "Skipping Azure OpenAI key retrieval: resource name could not be derived from the endpoint; manual configuration is required."
+        )
+        return False
+
+    if not resource_group:
+        print(
+            "Skipping Azure OpenAI key retrieval: resource group metadata is missing; manual configuration is required."
+        )
+        return False
+
+    if not subscription_id:
+        print(
+            "Skipping Azure OpenAI key retrieval: subscription metadata is missing; manual configuration is required."
+        )
+        return False
+
+    if not is_standard_azure_openai_endpoint(endpoint):
+        print(
+            "Skipping Azure OpenAI key retrieval: endpoint is not a standard Azure OpenAI resource endpoint; manual configuration is required."
+        )
+        return False
+
+    return True
 
 
 def get_cognitive_services_key(resource_name, resource_group, subscription_id, description):
@@ -176,14 +234,9 @@ def get_core_service_keys(
     redis_resource_name = extract_resource_name_from_endpoint(redis_cache_host_name)
     content_safety_resource_name = extract_resource_name_from_endpoint(content_safety_endpoint)
     speech_resource_name = extract_resource_name_from_endpoint(speech_service_endpoint)
+    resolved_openai_subscription_id = openai_subscription_id or subscription_id
 
     keys = {
-        "azure_openai_key": get_cognitive_services_key(
-            openai_resource_name,
-            openai_resource_group,
-            openai_subscription_id or subscription_id,
-            "Azure OpenAI key",
-        ),
         "azure_ai_search_key": get_search_service_key(
             search_resource_name,
             resource_group,
@@ -196,6 +249,19 @@ def get_core_service_keys(
             "Azure Document Intelligence key",
         ),
     }
+
+    if can_auto_retrieve_openai_key(
+        openai_endpoint,
+        openai_resource_name,
+        openai_resource_group,
+        resolved_openai_subscription_id,
+    ):
+        keys["azure_openai_key"] = get_cognitive_services_key(
+            openai_resource_name,
+            openai_resource_group,
+            resolved_openai_subscription_id,
+            "Azure OpenAI key",
+        )
 
     if redis_resource_name:
         keys["redis_key"] = get_redis_cache_key(
@@ -286,6 +352,7 @@ core_service_keys = get_core_service_keys(
     redis_cache_host_name=var_redisCacheHostName,
     speech_service_endpoint=var_speechServiceEndpoint,
 )
+openai_key = core_service_keys.get("azure_openai_key")
 
 # 4. Update the Configurations
 
@@ -298,7 +365,9 @@ item["azure_openai_gpt_authentication_type"] = var_authenticationType
 item["azure_openai_gpt_subscription_id"] = var_openAISubscriptionId or var_subscriptionId
 item["azure_openai_gpt_resource_group"] = var_openAIResourceGroup
 if var_authenticationType == "key":
-    item["azure_openai_gpt_key"] = core_service_keys["azure_openai_key"]
+    item.setdefault("azure_openai_gpt_key", "")
+    if openai_key:
+        item["azure_openai_gpt_key"] = openai_key
 item["gpt_model"] = {
     "selected": [
         {
@@ -320,7 +389,9 @@ item["azure_openai_embedding_authentication_type"] = var_authenticationType
 item["azure_openai_embedding_subscription_id"] = var_openAISubscriptionId or var_subscriptionId
 item["azure_openai_embedding_resource_group"] = var_openAIResourceGroup
 if var_authenticationType == "key":
-    item["azure_openai_embedding_key"] = core_service_keys["azure_openai_key"]
+    item.setdefault("azure_openai_embedding_key", "")
+    if openai_key:
+        item["azure_openai_embedding_key"] = openai_key
 item["embedding_model"] = {
     "selected": [
         {
