@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% set multi_endpoint_notice_data = multi_endpoint_notice|default({}) %}
 {% block title %}
     Chats - {{ app_settings.app_title }}
 {% endblock %}
@@ -289,19 +290,17 @@
                 <!-- Chat messages will be dynamically loaded here -->
             </div>
 
-            <!--
-            {% if multi_endpoint_notice.enabled %}
-            <div id="multi-endpoint-notice" class="alert alert-warning d-none mx-3 mb-0" data-message="{{ multi_endpoint_notice.message }}">
+            {% if multi_endpoint_notice_data.enabled %}
+            <div id="multi-endpoint-notice" class="alert alert-warning d-none mx-3 mb-0" data-message="{{ multi_endpoint_notice_data.message }}">
                 <div class="d-flex justify-content-between align-items-center">
                     <div class="me-3">
                         <i class="bi bi-exclamation-triangle me-2"></i>
-                        <span id="multi-endpoint-notice-text">{{ multi_endpoint_notice.message }}</span>
+                        <span id="multi-endpoint-notice-text">{{ multi_endpoint_notice_data.message }}</span>
                     </div>
                     <button type="button" class="btn btn-sm btn-outline-dark" id="dismiss-multi-endpoint-notice">Dismiss</button>
                 </div>
             </div>
             {% endif %}
-            -->
 
             <div class="p-3 border-top flex-shrink-0">
                 
@@ -1166,7 +1165,7 @@
         enable_thoughts: JSON.parse('{{ 'true' if settings.enable_thoughts else 'false' }}')
     };
 
-    window.multiEndpointNotice = JSON.parse('{{ multi_endpoint_notice|tojson()|safe }}');
+    window.multiEndpointNotice = JSON.parse('{{ multi_endpoint_notice_data|tojson()|safe }}');
 
     // Layout related globals (can stay here or move entirely into chat-layout.js if preferred)
     let splitInstance = null;

@@ -1548,7 +1548,9 @@
     window.workspaceModelEndpoints = JSON.parse('{{ personal_model_endpoints|default([])|tojson|safe }}' || '[]');
     window.globalModelEndpoints = JSON.parse('{{ global_model_endpoints|default([])|tojson|safe }}' || '[]');
   </script>
+  {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel and settings.allow_user_custom_endpoints and settings.enable_multi_model_endpoints %}
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace_model_endpoints.js') }}"></script>
+  {% endif %}
   <!-- <script src="https://cdn.jsdelivr.net/npm/simplemde/dist/simplemde.min.js"></script>
    LOCAL VERSION BELOW -->
    <script src="/static/js/simplemde/simplemde.min.js"></script>

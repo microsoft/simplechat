@@ -1454,7 +1454,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
     window.workspaceModelEndpoints = JSON.parse('{{ group_model_endpoints|default([])|tojson|safe }}' || '[]');
     window.globalModelEndpoints = JSON.parse('{{ global_model_endpoints|default([])|tojson|safe }}' || '[]');
 </script>
+{% if settings.enable_semantic_kernel and settings.allow_group_custom_endpoints and settings.enable_multi_model_endpoints %}
 <script type="module" src="{{ url_for('static', filename='js/workspace/workspace_model_endpoints.js') }}"></script>
+{% endif %}
 
 <!-- Pass backend flags to JS -->
 <script>
