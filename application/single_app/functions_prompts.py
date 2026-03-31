@@ -101,8 +101,6 @@ def _get_public_prompt_items(prompt_type, public_workspace_id):
 
 
 def _get_prompt_doc_with_container(user_id, prompt_id, prompt_type, group_id=None, public_workspace_id=None):
-    del user_id
-
     if public_workspace_id is not None:
         item = _read_prompt_from_container(
             cosmos_public_prompts_container,
