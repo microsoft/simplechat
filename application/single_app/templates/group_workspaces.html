@@ -292,37 +292,55 @@ app_settings.app_title }} {% endblock %} {% block head %}
         Group Prompts
       </button>
     </li>
-    {% if settings.enable_semantic_kernel and settings.allow_group_agents %}
-    <li class="nav-item" role="presentation">
-      <button
-        class="nav-link"
-        id="group-agents-tab-btn"
-        data-bs-toggle="tab"
-        data-bs-target="#group-agents-tab"
-        type="button"
-        role="tab"
-        aria-controls="group-agents-tab"
-        aria-selected="false"
-      >
-        Group Agents
-      </button>
-    </li>
+    {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
+      {% if settings.allow_group_agents %}
+        <li class="nav-item" role="presentation">
+          <button
+            class="nav-link"
+            id="group-agents-tab-btn"
+            data-bs-toggle="tab"
+            data-bs-target="#group-agents-tab"
+            type="button"
+            role="tab"
+            aria-controls="group-agents-tab"
+            aria-selected="false"
+          >
+            Group Agents
+          </button>
+        </li>
+    
+        {% if settings.enable_semantic_kernel and settings.allow_group_plugins %}
+          <li class="nav-item" role="presentation">
+            <button
+              class="nav-link"
+              id="group-plugins-tab-btn"
+              data-bs-toggle="tab"
+              data-bs-target="#group-plugins-tab"
+              type="button"
+              role="tab"
+              aria-controls="group-plugins-tab"
+              aria-selected="false"
+            >
+              Group Actions
+            </button>
+          </li>
+      {% endif %}
     {% endif %}
-    {% if settings.enable_semantic_kernel and settings.allow_group_plugins %}
-    <li class="nav-item" role="presentation">
-      <button
-        class="nav-link"
-        id="group-plugins-tab-btn"
-        data-bs-toggle="tab"
-        data-bs-target="#group-plugins-tab"
-        type="button"
-        role="tab"
-        aria-controls="group-plugins-tab"
-        aria-selected="false"
-      >
-        Group Actions
-      </button>
-    </li>
+    {% if settings.enable_semantic_kernel and settings.allow_group_custom_endpoints and settings.enable_multi_model_endpoints %}
+      <li class="nav-item" role="presentation">
+        <button
+          class="nav-link"
+          id="group-endpoints-tab-btn"
+          data-bs-toggle="tab"
+          data-bs-target="#group-endpoints-tab"
+          type="button"
+          role="tab"
+          aria-controls="group-endpoints-tab"
+          aria-selected="false"
+        >
+          Group Endpoints
+        </button>
+      </li>
     {% endif %}
   </ul>
 
@@ -742,7 +760,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
     </div>
     <!-- End GROUP PROMPTS TAB -->
 
-    {% if settings.enable_semantic_kernel and settings.allow_group_agents %}
     <!-- ============= GROUP AGENTS TAB ============= -->
     <div
       class="tab-pane fade"
@@ -864,11 +881,130 @@ app_settings.app_title }} {% endblock %} {% block head %}
     <!-- End GROUP ACTIONS TAB -->
     {% endif %}
 
+    {% if settings.enable_semantic_kernel and settings.allow_group_custom_endpoints and settings.enable_multi_model_endpoints %}
+    <!-- ============= GROUP ENDPOINTS TAB ============= -->
+    <div
+      class="tab-pane fade"
+      id="group-endpoints-tab"
+      role="tabpanel"
+      aria-labelledby="group-endpoints-tab-btn"
+    >
+      <!-- Group Model Endpoints -->
+      <div class="card p-3 my-3" id="group-multi-endpoint-configuration">
+        <h6 class="mb-2"><i class="bi bi-hdd-network me-2"></i>Group Model Endpoints</h6>
+        <p class="text-muted small mb-2">Manage model endpoints for this group. Global endpoints are managed by admins.</p>
+        <div class="form-check form-switch mb-3 d-flex align-items-center d-none">
+          <input type="checkbox" class="form-check-input me-2" id="enable_multi_model_endpoints" name="enable_multi_model_endpoints" {% if settings.enable_multi_model_endpoints %}checked{% endif %} disabled />
+          <label class="form-check-label" for="enable_multi_model_endpoints">Multi-endpoint management is controlled by your admin</label>
+        </div>
+        <div id="model-endpoints-wrapper" class="{% if not settings.enable_multi_model_endpoints %}d-none{% endif %}">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <h6 class="mb-0">Group Endpoints</h6>
+            <button type="button" class="btn btn-sm btn-outline-primary" id="add-model-endpoint-btn">
+              <i class="bi bi-plus-circle me-1"></i>Add Endpoint
+            </button>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm table-bordered">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Provider</th>
+                  <th>Selected Models</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="model-endpoints-tbody">
+                <!-- Populated by JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <input type="hidden" id="model_endpoints_json" />
+      </div>
+    </div>
+    <!-- End GROUP ENDPOINTS TAB -->
+    {% endif %}
+
+    {% if app_settings.enable_retention_policy_group %}
+    <!-- ============= GROUP SETTINGS TAB ============= -->
+    <div
+      class="tab-pane fade"
+      id="group-settings-tab"
+      role="tabpanel"
+      aria-labelledby="group-settings-tab-btn"
+    >
+      <div class="card p-4 my-3">
+        <h5 class="mb-3"><i class="bi bi-hourglass-split me-2"></i>Retention Policy Settings</h5>
+        <p class="text-muted">Configure how long to keep conversations and documents in this group workspace. Items older than the specified period will be automatically deleted.</p>
+        
+        <div class="alert alert-info">
+          <i class="bi bi-info-circle me-2"></i>
+          <strong>Default:</strong> You can use the organization default or set a custom retention period. Choose "No automatic deletion" to keep items indefinitely.
+        </div>
+        
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label for="group-conversation-retention-days" class="form-label">Conversation Retention</label>
+            <select class="form-select" id="group-conversation-retention-days" name="conversation_retention_days">
+              <option value="default">Using organization default</option>
+              <option value="none">No automatic deletion</option>
+              <option value="7">7 days (1 week)</option>
+              <option value="14">14 days (2 weeks)</option>
+              <option value="30">30 days (1 month)</option>
+              <option value="60">60 days (2 months)</option>
+              <option value="90">90 days (3 months)</option>
+              <option value="180">180 days (6 months)</option>
+              <option value="365">365 days (1 year)</option>
+              <option value="730">730 days (2 years)</option>
+              <option value="1095">1095 days (3 years)</option>
+              <option value="3650">3650 days (10 years)</option>
+            </select>
+            <small class="form-text text-muted">Conversations older than this will be automatically deleted.</small>
+          </div>
+          
+          <div class="col-md-6">
+            <label for="group-document-retention-days" class="form-label">Document Retention</label>
+            <select class="form-select" id="group-document-retention-days" name="document_retention_days">
+              <option value="default">Using organization default</option>
+              <option value="none">No automatic deletion</option>
+              <option value="7">7 days (1 week)</option>
+              <option value="14">14 days (2 weeks)</option>
+              <option value="30">30 days (1 month)</option>
+              <option value="60">60 days (2 months)</option>
+              <option value="90">90 days (3 months)</option>
+              <option value="180">180 days (6 months)</option>
+              <option value="365">365 days (1 year)</option>
+              <option value="730">730 days (2 years)</option>
+              <option value="1095">1095 days (3 years)</option>
+              <option value="3650">3650 days (10 years)</option>
+            </select>
+            <small class="form-text text-muted">Documents older than this will be automatically deleted.</small>
+          </div>
+        </div>
+        
+        <div class="mt-3">
+          <button type="button" class="btn btn-primary" onclick="saveGroupRetentionSettings()">
+            <i class="bi bi-save me-1"></i>Save Retention Settings
+          </button>
+          <span id="group-retention-save-status" class="ms-3"></span>
+        </div>
+        
+        <div class="alert alert-warning mt-3 mb-0">
+          <i class="bi bi-exclamation-triangle me-2"></i>
+          <strong>Important:</strong> Deleted conversations will be archived if archiving is enabled. All deletions are logged in activity history.
+        </div>
+      </div>
+    </div>
+    <!-- End GROUP SETTINGS TAB -->
+    {% endif %}
   </div>
   <!-- End Tab Content -->
 </div>
 <!-- End Container -->
 
+{% include '_multiendpoint_modal.html' %}
 <!-- Item View Modal (shared by agents & actions grid/list view buttons) -->
 <div class="modal fade" id="item-view-modal" tabindex="-1" aria-labelledby="item-view-modal-title" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-scrollable">
@@ -1300,7 +1436,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
   </div>
 </div>
 
-{% endblock %} {% block scripts %}
+{% endblock %} 
+
+{% block scripts %}
 <!-- SimpleMDE CSS/JS (Keep As Is) -->
 <!-- <script src="https://cdn.jsdelivr.net/npm/simplemde/dist/simplemde.min.js"></script>
  LOCAL VERSION BELOW -->
@@ -1309,6 +1447,14 @@ app_settings.app_title }} {% endblock %} {% block head %}
 <!-- Include group document sharing JS -->
 <script src="/static/js/workspace/group-documents-sharing.js"></script>
 <script src="/static/js/workspace_sidebar_nav.js"></script>
+
+<script>
+    window.enableMultiModelEndpoints = {{ 'true' if settings.enable_multi_model_endpoints else 'false' }};
+    window.modelEndpointScope = 'group';
+    window.workspaceModelEndpoints = JSON.parse('{{ group_model_endpoints|default([])|tojson|safe }}' || '[]');
+    window.globalModelEndpoints = JSON.parse('{{ global_model_endpoints|default([])|tojson|safe }}' || '[]');
+</script>
+<script type="module" src="{{ url_for('static', filename='js/workspace/workspace_model_endpoints.js') }}"></script>
 
 <!-- Pass backend flags to JS -->
 <script>
@@ -4933,4 +5079,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
 <script type="module" src="/static/js/workspace/group_plugins.js"></script>
 {% endif %}
 {% endblock %}
+
+
 

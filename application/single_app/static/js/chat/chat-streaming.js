@@ -1,13 +1,12 @@
 // chat-streaming.js
 import { appendMessage, updateUserMessageId } from './chat-messages.js';
-import { markConversationRead } from './chat-conversations.js';
+import { applyConversationMetadataUpdate, markConversationRead } from './chat-conversations.js';
 import { hideLoadingIndicatorInChatbox, showLoadingIndicatorInChatbox } from './chat-loading-indicator.js';
 import { showToast } from './chat-toast.js';
-import { updateSidebarConversationTitle } from './chat-sidebar-conversations.js';
 import { applyScopeLock } from './chat-documents.js';
-import { handleStreamingThought } from './chat-thoughts.js';
+import { beginStreamingThoughtSession, clearStreamingThoughtSession, handleStreamingThought, markStreamingThoughtContentStarted, stopThoughtPolling } from './chat-thoughts.js';
 
-let currentEventSource = null;
+let currentStreamController = null;
 
 function parseSseEventPayload(eventBlock) {
     const dataLines = eventBlock
@@ -23,54 +22,121 @@ function parseSseEventPayload(eventBlock) {
         .join('\n');
 }
 
-export function sendMessageWithStreaming(messageData, tempUserMessageId, currentConversationId, options = {}) {
+function createStreamingPlaceholder(statusLabel = 'Streaming...') {
+    const tempAiMessageId = `temp_ai_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+    appendMessage('AI', `<span class="text-muted"><i class="bi bi-three-dots-vertical"></i> ${statusLabel}</span>`, null, tempAiMessageId);
+    beginStreamingThoughtSession(tempAiMessageId);
+    return tempAiMessageId;
+}
+
+function clearCurrentStreamController(controller) {
+    if (currentStreamController === controller) {
+        currentStreamController = null;
+    }
+}
+
+function removeStreamingPlaceholder(messageId) {
+    const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
+    if (messageElement) {
+        messageElement.remove();
+    }
+}
+
+async function getStreamingStatus(conversationId) {
+    if (!conversationId) {
+        return null;
+    }
+
+    const statusResponse = await fetch(`/api/chat/stream/status/${conversationId}`, {
+        credentials: 'same-origin',
+    });
+    const statusData = await statusResponse.json().catch(() => ({}));
+
+    if (!statusResponse.ok) {
+        return null;
+    }
+
+    return statusData;
+}
+
+async function attemptStreamingRecovery(conversationId, failedMessageId, tempUserMessageId, options = {}) {
     const {
         onDone = null,
         onError = null,
         onFinally = null,
+        reconnectStatusLabel = 'Reconnecting...',
     } = options;
-    
-    // Close any existing connection
-    if (currentEventSource) {
-        currentEventSource.close();
-        currentEventSource = null;
+
+    if (!conversationId) {
+        return false;
     }
-    
-    // Create a unique message ID for the AI response
-    const tempAiMessageId = `temp_ai_${Date.now()}`;
+
+    try {
+        const statusData = await getStreamingStatus(conversationId);
+        if (!statusData?.pending) {
+            return false;
+        }
+
+        clearStreamingThoughtSession(failedMessageId);
+        removeStreamingPlaceholder(failedMessageId);
+
+        const reconnectMessageId = createStreamingPlaceholder(reconnectStatusLabel);
+        return consumeStreamingResponse(
+            signal => fetch(`/api/chat/stream/reattach/${conversationId}`, {
+                method: 'GET',
+                credentials: 'same-origin',
+                signal,
+            }),
+            reconnectMessageId,
+            tempUserMessageId,
+            {
+                onDone,
+                onError,
+                onFinally,
+                allowRecovery: false,
+                recoveryConversationId: conversationId,
+                reconnectStatusLabel,
+            },
+        );
+    } catch (error) {
+        console.warn('Failed to recover streaming conversation automatically:', error);
+        return false;
+    }
+}
+
+function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessageId, options = {}) {
+    const {
+        onDone = null,
+        onError = null,
+        onFinally = null,
+        allowRecovery = true,
+        recoveryConversationId = null,
+        reconnectStatusLabel = 'Reconnecting...',
+    } = options;
+
+    if (currentStreamController) {
+        currentStreamController.abort('replaced');
+    }
+
+    const abortController = new AbortController();
+    currentStreamController = abortController;
     let accumulatedContent = '';
     let hasStreamedContent = false;
     let streamError = false;
-    let streamErrorMessage = '';
     let streamCompleted = false;
-    
-    // Create placeholder message with streaming indicator
-    appendMessage('AI', '<span class="text-muted"><i class="bi bi-three-dots-vertical"></i> Streaming...</span>', null, tempAiMessageId);
-    
-    // Create timeout (5 minutes)
-    const streamTimeout = setTimeout(() => {
-        if (currentEventSource) {
-            currentEventSource.close();
-            currentEventSource = null;
-            streamError = true;
-            streamErrorMessage = 'Stream timeout (5 minutes exceeded)';
-            handleStreamError(tempAiMessageId, accumulatedContent, streamErrorMessage);
-        }
-    }, 5 * 60 * 1000); // 5 minutes
-    
-    // Use fetch to POST, then read the streaming response
-    fetch('/api/chat/stream', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        credentials: 'same-origin',
-        body: JSON.stringify(messageData)
-    }).then(response => {
+
+    requestFactory(abortController.signal).then(response => {
         if (!response.ok) {
+            if (response.status === 404) {
+                throw new Error('No active stream is available for this conversation.');
+            }
             return response.json().then(errData => {
                 throw new Error(errData.error || `HTTP error! status: ${response.status}`);
             });
+        }
+
+        if (!response.body) {
+            throw new Error('Streaming response body is unavailable.');
         }
         
         // Read the streaming response
@@ -80,10 +146,11 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
 
         function processStreamData(data) {
             if (data.error) {
-                clearTimeout(streamTimeout);
+                stopThoughtPolling();
                 streamError = true;
-                streamErrorMessage = data.error;
+                clearStreamingThoughtSession(tempAiMessageId);
                 handleStreamError(tempAiMessageId, data.partial_content || accumulatedContent, data.error);
+                clearCurrentStreamController(abortController);
                 if (typeof onError === 'function') {
                     onError(data.error, data);
                 }
@@ -95,7 +162,7 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
 
             if (data.type === 'thought') {
                 if (!hasStreamedContent && !streamCompleted) {
-                    handleStreamingThought(data);
+                    handleStreamingThought(data, tempAiMessageId);
                 }
                 return false;
             }
@@ -107,8 +174,9 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
             }
 
             if (data.done) {
-                clearTimeout(streamTimeout);
+                stopThoughtPolling();
                 streamCompleted = true;
+                clearStreamingThoughtSession(tempAiMessageId);
 
                 finalizeStreamingMessage(
                     tempAiMessageId,
@@ -124,7 +192,7 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
                     onFinally();
                 }
 
-                currentEventSource = null;
+                clearCurrentStreamController(abortController);
                 return true;
             }
 
@@ -173,14 +241,34 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
         }
         
         function readStream() {
-            reader.read().then(({ done, value }) => {
+            reader.read().then(async ({ done, value }) => {
                 if (done) {
-                    clearTimeout(streamTimeout);
+                    stopThoughtPolling();
 
                     sseBuffer += decoder.decode();
                     const processedFinalEvent = processSseBuffer(true);
 
                     if (!processedFinalEvent && !streamCompleted && !streamError) {
+                        clearCurrentStreamController(abortController);
+
+                        if (allowRecovery) {
+                            const recovered = await attemptStreamingRecovery(
+                                recoveryConversationId,
+                                tempAiMessageId,
+                                tempUserMessageId,
+                                {
+                                    onDone,
+                                    onError,
+                                    onFinally,
+                                    reconnectStatusLabel,
+                                },
+                            );
+                            if (recovered) {
+                                return;
+                            }
+                        }
+
+                        clearStreamingThoughtSession(tempAiMessageId);
                         handleStreamError(
                             tempAiMessageId,
                             accumulatedContent,
@@ -206,9 +294,38 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
                 }
                 
                 readStream(); // Continue reading
-            }).catch(err => {
-                clearTimeout(streamTimeout);
+            }).catch(async err => {
+                if (abortController.signal.aborted) {
+                    clearStreamingThoughtSession(tempAiMessageId);
+                    clearCurrentStreamController(abortController);
+                    if (typeof onFinally === 'function') {
+                        onFinally();
+                    }
+                    return;
+                }
+
+                stopThoughtPolling();
                 console.error('Stream reading error:', err);
+
+                clearCurrentStreamController(abortController);
+                if (allowRecovery) {
+                    const recovered = await attemptStreamingRecovery(
+                        recoveryConversationId,
+                        tempAiMessageId,
+                        tempUserMessageId,
+                        {
+                            onDone,
+                            onError,
+                            onFinally,
+                            reconnectStatusLabel,
+                        },
+                    );
+                    if (recovered) {
+                        return;
+                    }
+                }
+
+                clearStreamingThoughtSession(tempAiMessageId);
                 handleStreamError(tempAiMessageId, accumulatedContent, err.message);
                 if (typeof onError === 'function') {
                     onError(err.message, err);
@@ -221,16 +338,42 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
         
         readStream();
         
-    }).catch(error => {
-        clearTimeout(streamTimeout);
+    }).catch(async error => {
+        if (abortController.signal.aborted) {
+            clearStreamingThoughtSession(tempAiMessageId);
+            clearCurrentStreamController(abortController);
+            if (typeof onFinally === 'function') {
+                onFinally();
+            }
+            return;
+        }
+
+        stopThoughtPolling();
         console.error('Streaming request error:', error);
+
+        clearCurrentStreamController(abortController);
+        if (allowRecovery) {
+            const recovered = await attemptStreamingRecovery(
+                recoveryConversationId,
+                tempAiMessageId,
+                tempUserMessageId,
+                {
+                    onDone,
+                    onError,
+                    onFinally,
+                    reconnectStatusLabel,
+                },
+            );
+            if (recovered) {
+                return;
+            }
+        }
+
         showToast(`Error: ${error.message}`, 'error');
+        clearStreamingThoughtSession(tempAiMessageId);
         
         // Remove placeholder message
-        const msgElement = document.querySelector(`[data-message-id="${tempAiMessageId}"]`);
-        if (msgElement) {
-            msgElement.remove();
-        }
+        removeStreamingPlaceholder(tempAiMessageId);
 
         if (typeof onError === 'function') {
             onError(error.message, error);
@@ -240,15 +383,72 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
             onFinally();
         }
     });
-    
+
     return true; // Indicates streaming was initiated
+}
+
+export function sendMessageWithStreaming(messageData, tempUserMessageId, currentConversationId, options = {}) {
+    const tempAiMessageId = createStreamingPlaceholder('Streaming...');
+    const recoveryConversationId = currentConversationId || messageData?.conversation_id || window.currentConversationId || null;
+
+    return consumeStreamingResponse(
+        signal => fetch('/api/chat/stream', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify(messageData),
+            signal,
+        }),
+        tempAiMessageId,
+        tempUserMessageId,
+        {
+            ...options,
+            recoveryConversationId,
+        },
+    );
+}
+
+export async function reattachStreamingConversation(conversationId, options = {}) {
+    const { statusLabel = 'Reconnecting...' } = options;
+
+    if (!conversationId) {
+        return false;
+    }
+
+    try {
+        const statusData = await getStreamingStatus(conversationId);
+        if (!statusData?.pending) {
+            return false;
+        }
+
+        const tempAiMessageId = createStreamingPlaceholder(statusLabel);
+        return consumeStreamingResponse(
+            signal => fetch(`/api/chat/stream/reattach/${conversationId}`, {
+                method: 'GET',
+                credentials: 'same-origin',
+                signal,
+            }),
+            tempAiMessageId,
+            null,
+            {
+                allowRecovery: false,
+                recoveryConversationId: conversationId,
+                reconnectStatusLabel: statusLabel,
+            },
+        );
+    } catch (error) {
+        console.warn('Failed to reattach streaming conversation:', error);
+        return false;
+    }
 }
 
 function updateStreamingMessage(messageId, content) {
     const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
     if (!messageElement) return;
 
-    messageElement.dataset.streamingHasContent = 'true';
+    markStreamingThoughtContentStarted(messageId);
     
     const contentElement = messageElement.querySelector('.message-text');
     if (contentElement) {
@@ -364,18 +564,29 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData) {
         window.currentConversationId = finalData.conversation_id;
     }
     
-    if (finalData.conversation_title) {
-        const titleElement = document.getElementById('current-conversation-title');
-        if (titleElement && titleElement.textContent === 'New Conversation') {
-            titleElement.textContent = finalData.conversation_title;
-        }
-        
-        // Update sidebar conversation title in real-time
-        updateSidebarConversationTitle(finalData.conversation_id, finalData.conversation_title);
+    const metadataUpdates = {};
+    if (finalData.conversation_title !== undefined) {
+        metadataUpdates.title = finalData.conversation_title;
+    }
+    if (Array.isArray(finalData.classification)) {
+        metadataUpdates.classification = finalData.classification;
+    }
+    if (Array.isArray(finalData.context)) {
+        metadataUpdates.context = finalData.context;
+    }
+    if (finalData.chat_type !== undefined) {
+        metadataUpdates.chat_type = finalData.chat_type || null;
     }
 
-    // Apply scope lock if document search was used
-    if (finalData.augmented && finalData.conversation_id) {
+    if (finalData.conversation_id && Object.keys(metadataUpdates).length > 0) {
+        applyConversationMetadataUpdate(finalData.conversation_id, {
+            ...metadataUpdates,
+        });
+    }
+
+    if (finalData.scope_locked === true && finalData.locked_contexts) {
+        applyScopeLock(finalData.locked_contexts, finalData.scope_locked);
+    } else if (finalData.augmented && finalData.conversation_id) {
         fetch(`/api/conversations/${finalData.conversation_id}/metadata`, { credentials: 'same-origin' })
             .then(r => r.json())
             .then(metadata => {
@@ -398,9 +609,9 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData) {
 }
 
 export function cancelStreaming() {
-    if (currentEventSource) {
-        currentEventSource.close();
-        currentEventSource = null;
+    if (currentStreamController) {
+        currentStreamController.abort('cancelled');
+        currentStreamController = null;
         showToast('Streaming cancelled', 'info');
     }
 }

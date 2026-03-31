@@ -4,14 +4,18 @@ FactMemoryPlugin for Semantic Kernel: provides write/update/delete operations fo
 - Exposes methods for use as a Semantic Kernel plugin (does not need to derive from BasePlugin).
 - Read/inject logic is handled separately by orchestration utility.
 """
-from semantic_kernel_fact_memory_store import FactMemoryStore
 from typing import Optional, List
+
 from semantic_kernel.functions import kernel_function
+from semantic_kernel_fact_memory_store import FactMemoryStore
+
+from semantic_kernel_plugins.plugin_invocation_logger import auto_wrap_plugin_functions
 
 
 class FactMemoryPlugin:
     def __init__(self, store: Optional[FactMemoryStore] = None):
         self.store = store or FactMemoryStore()
+        auto_wrap_plugin_functions(self, self.__class__.__name__)
 
     @kernel_function(
         description="""

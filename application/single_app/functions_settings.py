@@ -37,13 +37,18 @@ def get_settings(use_cosmos=False):
             'is_global': True
         },
         'allow_user_agents': False,
+        'allow_user_custom_endpoints': False,
         'allow_user_custom_agent_endpoints': False,
         'allow_user_plugins': False,
         'allow_group_agents': False,
+        'allow_group_custom_endpoints': False,
         'allow_group_custom_agent_endpoints': False,
         'allow_ai_foundry_agents': False,
         'allow_group_ai_foundry_agents': False,
         'allow_personal_ai_foundry_agents': False,
+        'allow_new_foundry_agents': False,
+        'allow_group_new_foundry_agents': False,
+        'allow_personal_new_foundry_agents': False,
         'enable_agent_template_gallery': True,
         'agent_templates_allow_user_submission': True,
         'agent_templates_require_approval': True,
@@ -78,6 +83,22 @@ def get_settings(use_cosmos=False):
         'gpt_model': {
             "selected": [],
             "all": []
+        },
+        'enable_multi_model_endpoints': False,
+        'model_endpoints': [],
+        'default_model_selection': {
+            'endpoint_id': '',
+            'model_id': '',
+            'provider': ''
+        },
+        'multi_endpoint_migrated_at': None,
+        'multi_endpoint_migration_notice': {
+            'enabled': False,
+            'message': (
+                'Multi-endpoint has been enabled and your existing AI endpoint was migrated. '
+                'Agents using the default connection may need to be updated to select a new model endpoint.'
+            ),
+            'created_at': None
         },
         'azure_apim_gpt_endpoint': '',
         'azure_apim_gpt_subscription_key': '',
@@ -216,6 +237,25 @@ def get_settings(use_cosmos=False):
         'enable_ai_search_apim': False,
         'azure_apim_ai_search_endpoint': '',
         'azure_apim_ai_search_subscription_key': '',
+        'enable_chunk_size_override': False,
+        'chunk_size': {
+            'txt': {'value': 400, 'unit': 'words'},
+            'log': {'value': 1000, 'unit': 'words'},
+            'doc': {'value': 400, 'unit': 'words'},
+            'docm': {'value': 400, 'unit': 'words'},
+            'docx': {'value': WORD_CHUNK_SIZE, 'unit': 'words'},
+            'html': {'value': 1200, 'unit': 'words'},
+            'md': {'value': 1200, 'unit': 'words'},
+            'xml': {'value': 4000, 'unit': 'characters'},
+            'yaml': {'value': 4000, 'unit': 'characters'},
+            'yml': {'value': 4000, 'unit': 'characters'},
+            'json': {'value': 4000, 'unit': 'characters'},
+            'csv': {'value': 800, 'unit': 'characters'},
+            'excel': {'value': 800, 'unit': 'characters'},
+            'transcript': {'value': 400, 'unit': 'words'},
+            'pdf': {'value': 1, 'unit': 'pages'},
+            'pptx': {'value': 1, 'unit': 'slides'}
+        },
         
         # Search Result Caching
         'enable_search_result_caching': True,
@@ -375,9 +415,10 @@ def get_settings(use_cosmos=False):
 
         # Merge default_settings in, to fill in any missing or nested keys
         merged = deep_merge_dicts(default_settings, settings_item)
+        migration_updated = apply_custom_endpoint_setting_migration(merged)
 
         # If merging added anything new, upsert back to Cosmos so future reads remain up to date
-        if merged != settings_item:
+        if merged != settings_item or migration_updated:
             cosmos_settings_container.upsert_item(merged)
             print("App Settings had missing keys and was updated in Cosmos DB.")
             return merged
@@ -398,7 +439,12 @@ def update_settings(new_settings):
     try:
         # always fetch the latest settings doc, which includes your merges
         settings_item = get_settings()
+        existing_multi_endpoint_enabled = settings_item.get('enable_multi_model_endpoints', False)
         settings_item.update(new_settings)
+        settings_item['enable_multi_model_endpoints'] = coerce_multi_model_endpoint_enablement(
+            existing_multi_endpoint_enabled,
+            settings_item.get('enable_multi_model_endpoints', False),
+        )
         # Dependency enforcement: tabular processing requires enhanced citations
         if not settings_item.get('enable_enhanced_citations', False):
             settings_item['enable_tabular_processing_plugin'] = False
@@ -411,6 +457,97 @@ def update_settings(new_settings):
     except Exception as e:
         print(f"Error updating settings: {str(e)}")
         return False
+
+
+def coerce_multi_model_endpoint_enablement(existing_enabled, requested_enabled):
+    """Treat multi-endpoint enablement as one-way once it has been turned on."""
+    return bool(existing_enabled) or bool(requested_enabled)
+
+
+def get_chunk_size_defaults():
+    """Return the baseline chunk size configuration used when overrides are disabled."""
+    return {
+        'txt': {'value': 400, 'unit': 'words'},
+        'log': {'value': 1000, 'unit': 'words'},
+        'doc': {'value': 400, 'unit': 'words'},
+        'docm': {'value': 400, 'unit': 'words'},
+        'docx': {'value': WORD_CHUNK_SIZE, 'unit': 'words'},
+        'html': {'value': 1200, 'unit': 'words'},
+        'md': {'value': 1200, 'unit': 'words'},
+        'xml': {'value': 4000, 'unit': 'characters'},
+        'yaml': {'value': 4000, 'unit': 'characters'},
+        'yml': {'value': 4000, 'unit': 'characters'},
+        'json': {'value': 4000, 'unit': 'characters'},
+        'csv': {'value': 800, 'unit': 'characters'},
+        'excel': {'value': 800, 'unit': 'characters'},
+        'transcript': {'value': 400, 'unit': 'words'},
+        'pdf': {'value': 1, 'unit': 'pages'},
+        'pptx': {'value': 1, 'unit': 'slides'}
+    }
+
+
+def get_chunk_size_cap(settings=None):
+    """Return the maximum allowed chunk size (2x embedding context window, fallback 16,384)."""
+    fallback_cap = 16384
+    try:
+        settings = settings or get_settings()
+        embedding_model = settings.get('embedding_model', {}) if isinstance(settings, dict) else {}
+        selected_models = embedding_model.get('selected') or []
+
+        base_context = None
+        for model in selected_models:
+            if not isinstance(model, dict):
+                continue
+            for key in ['context_window', 'contextWindow', 'maxContextTokens', 'context_length', 'contextLength', 'maxTokens']:
+                value = model.get(key)
+                if value is not None:
+                    try:
+                        parsed_value = int(value)
+                        if parsed_value > 0:
+                            base_context = parsed_value
+                            break
+                    except Exception:
+                        continue
+            if base_context:
+                break
+
+        if base_context and base_context > 0:
+            return base_context * 2
+    except Exception:
+        pass
+
+    return fallback_cap
+
+
+def get_chunk_size_config(settings=None):
+    """
+    Compute the effective chunk size configuration, respecting defaults, caps, and the override toggle.
+    When overrides are disabled, defaults are returned regardless of stored values.
+    """
+    settings = settings or get_settings()
+    defaults = get_chunk_size_defaults()
+    use_custom = isinstance(settings, dict) and settings.get('enable_chunk_size_override', False)
+    stored = settings.get('chunk_size', {}) if isinstance(settings, dict) else {}
+    cap = get_chunk_size_cap(settings)
+
+    normalized = {}
+    for key, default_meta in defaults.items():
+        incoming_meta = stored.get(key, {}) if use_custom and isinstance(stored, dict) else {}
+        unit = incoming_meta.get('unit', default_meta['unit']) if isinstance(incoming_meta, dict) else default_meta['unit']
+        try:
+            raw_value = int(incoming_meta.get('value', default_meta['value'])) if isinstance(incoming_meta, dict) else int(default_meta['value'])
+        except Exception:
+            raw_value = default_meta['value']
+
+        value = max(1, raw_value)
+        value = min(value, cap)
+
+        normalized[key] = {
+            'value': value,
+            'unit': unit
+        }
+
+    return normalized
 
 def compare_versions(v1_str, v2_str):
     """
@@ -542,6 +679,179 @@ def deep_merge_dicts(default_dict, existing_dict):
             # For lists or other types, we skip overwriting.
     return existing_dict
 
+def apply_custom_endpoint_setting_migration(settings_item):
+    updated = False
+    if "allow_user_custom_endpoints" not in settings_item:
+        settings_item["allow_user_custom_endpoints"] = settings_item.get("allow_user_custom_agent_endpoints", False)
+        updated = True
+    if "allow_group_custom_endpoints" not in settings_item:
+        settings_item["allow_group_custom_endpoints"] = settings_item.get("allow_group_custom_agent_endpoints", False)
+        updated = True
+
+    if settings_item.get("allow_user_custom_agent_endpoints") != settings_item.get("allow_user_custom_endpoints"):
+        settings_item["allow_user_custom_agent_endpoints"] = settings_item.get("allow_user_custom_endpoints", False)
+        updated = True
+    if settings_item.get("allow_group_custom_agent_endpoints") != settings_item.get("allow_group_custom_endpoints"):
+        settings_item["allow_group_custom_agent_endpoints"] = settings_item.get("allow_group_custom_endpoints", False)
+        updated = True
+
+    return updated
+
+def normalize_model_endpoints(endpoints):
+    """Normalize model endpoints with stable IDs and enabled flags."""
+    if not isinstance(endpoints, list):
+        return [], False
+
+    normalized = []
+    changed = False
+
+    for endpoint in endpoints:
+        if not isinstance(endpoint, dict):
+            continue
+        endpoint_copy = json.loads(json.dumps(endpoint))
+        endpoint_copy.pop("has_api_key", None)
+        endpoint_copy.pop("has_client_secret", None)
+        connection = endpoint_copy.get("connection") or {}
+
+        if not endpoint_copy.get("id"):
+            fallback_id = endpoint_copy.get("name") or connection.get("endpoint")
+            if fallback_id:
+                endpoint_copy["id"] = fallback_id
+                changed = True
+
+        if endpoint_copy.get("enabled") is None:
+            endpoint_copy["enabled"] = True
+            changed = True
+
+        models = endpoint_copy.get("models") or []
+        normalized_models = []
+        for model in models:
+            if not isinstance(model, dict):
+                continue
+            model_copy = json.loads(json.dumps(model))
+            if not model_copy.get("id"):
+                model_id = (
+                    model_copy.get("deploymentName")
+                    or model_copy.get("deployment")
+                    or model_copy.get("modelName")
+                    or model_copy.get("name")
+                )
+                if model_id:
+                    model_copy["id"] = model_id
+                    changed = True
+            if model_copy.get("enabled") is None:
+                model_copy["enabled"] = True
+                changed = True
+            normalized_models.append(model_copy)
+
+        endpoint_copy["models"] = normalized_models
+        normalized.append(endpoint_copy)
+
+    return normalized, changed
+
+
+def is_frontend_visible_model_endpoint_provider(provider):
+    """Return whether the provider should be exposed in user-facing endpoint UIs."""
+    normalized_provider = (provider or "aoai").lower()
+    return normalized_provider in {"aoai", "aifoundry", "new_foundry"}
+
+
+def merge_model_endpoint_auth(existing_auth, incoming_auth):
+    """Merge endpoint auth settings while preserving stored secrets when inputs are blank."""
+    if not isinstance(existing_auth, dict):
+        existing_auth = {}
+    if not isinstance(incoming_auth, dict):
+        incoming_auth = {}
+
+    merged = dict(existing_auth)
+    for key, value in incoming_auth.items():
+        if value in (None, ""):
+            continue
+        merged[key] = value
+    return merged
+
+
+def merge_model_endpoint_payload(existing_endpoint, incoming_endpoint):
+    """Merge an incoming endpoint payload with an existing saved endpoint."""
+    if not isinstance(existing_endpoint, dict):
+        return incoming_endpoint if isinstance(incoming_endpoint, dict) else {}
+    if not isinstance(incoming_endpoint, dict):
+        return dict(existing_endpoint)
+
+    merged = dict(existing_endpoint)
+    for key, value in incoming_endpoint.items():
+        if key == "auth":
+            merged["auth"] = merge_model_endpoint_auth(existing_endpoint.get("auth"), value)
+            continue
+        if value in (None, ""):
+            continue
+        merged[key] = value
+    return merged
+
+
+def merge_model_endpoints_with_existing(incoming_endpoints, existing_endpoints):
+    """Merge endpoint lists by endpoint ID so edits preserve stored auth values."""
+    if not isinstance(incoming_endpoints, list):
+        return []
+
+    existing_by_id = {}
+    if isinstance(existing_endpoints, list):
+        existing_by_id = {
+            endpoint.get("id"): endpoint
+            for endpoint in existing_endpoints
+            if isinstance(endpoint, dict) and endpoint.get("id")
+        }
+
+    merged = []
+    incoming_endpoint_ids = set()
+    for endpoint in incoming_endpoints:
+        if not isinstance(endpoint, dict):
+            continue
+        endpoint_id = endpoint.get("id")
+        if endpoint_id:
+            incoming_endpoint_ids.add(endpoint_id)
+        existing_endpoint = existing_by_id.get(endpoint_id)
+        merged.append(merge_model_endpoint_payload(existing_endpoint or {}, endpoint))
+
+    if isinstance(existing_endpoints, list):
+        for endpoint in existing_endpoints:
+            if not isinstance(endpoint, dict):
+                continue
+            endpoint_id = endpoint.get("id")
+            if endpoint_id in incoming_endpoint_ids:
+                continue
+            if is_frontend_visible_model_endpoint_provider(endpoint.get("provider")):
+                continue
+            merged.append(json.loads(json.dumps(endpoint)))
+
+    return merged
+
+
+def sanitize_model_endpoints_for_frontend(endpoints):
+    """Return model endpoint configs with secrets stripped for frontend use."""
+    normalized, _ = normalize_model_endpoints(endpoints)
+    if not isinstance(normalized, list):
+        return []
+
+    sanitized = []
+    for endpoint in normalized:
+        if not isinstance(endpoint, dict):
+            continue
+        if not is_frontend_visible_model_endpoint_provider(endpoint.get("provider")):
+            continue
+        endpoint_copy = json.loads(json.dumps(endpoint))
+        auth = endpoint_copy.get("auth") or {}
+        has_api_key = bool(auth.get("api_key"))
+        has_client_secret = bool(auth.get("client_secret"))
+        auth.pop("api_key", None)
+        auth.pop("client_secret", None)
+        endpoint_copy["auth"] = auth
+        endpoint_copy["has_api_key"] = has_api_key
+        endpoint_copy["has_client_secret"] = has_client_secret
+        sanitized.append(endpoint_copy)
+
+    return sanitized
+
 def encrypt_key(key):
     cipher_suite = Fernet(app.config['SECRET_KEY'])
     encrypted_key = cipher_suite.encrypt(key.encode())
@@ -573,6 +883,9 @@ def get_user_settings(user_id):
                 "user_id": user_id,
                 "previous_type": previous_type,
             })
+        
+        if 'personal_model_endpoints' not in doc['settings']:
+            doc['settings']['personal_model_endpoints'] = []
         
         # Try to update email/display_name if missing and available in session
         user = session.get("user", {})
@@ -606,6 +919,7 @@ def get_user_settings(user_id):
         email = user.get("preferred_username") or user.get("email")
         display_name = user.get("name")
         doc = {"id": user_id, "settings": {}}
+        doc["settings"]["personal_model_endpoints"] = []
         if email:
             doc["email"] = email
         if display_name:
@@ -804,6 +1118,9 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
     for k, v in full_settings.items():
         if any(term in k.lower() for term in sensitive_terms):
             continue
+        if k in ('model_endpoints', 'personal_model_endpoints') and isinstance(v, list):
+            sanitized[k] = sanitize_model_endpoints_for_frontend(v)
+            continue
         if isinstance(v, dict):
             sanitized[k] = sanitize_settings_for_user(v)
         elif isinstance(v, list):
@@ -835,7 +1152,7 @@ def sanitize_settings_for_logging(full_settings: dict) -> dict:
         return full_settings
     
     sanitized = {}
-    sensitive_key_terms = ["key", "base64", "image", "storage_account_url"]
+    sensitive_key_terms = ["key", "base64", "image", "storage_account_url", "_secret"]
     
     for k, v in full_settings.items():
         # Skip keys with sensitive terms

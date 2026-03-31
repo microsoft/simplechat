@@ -24,6 +24,7 @@ from functions_public_workspaces import find_public_workspace_by_id, get_user_pu
 
 # Constants
 TTL_60_DAYS = 60 * 24 * 60 * 60  # 60 days in seconds (5184000)
+ASSIGNMENT_NOTIFICATIONS_PARTITION_KEY = 'assignment-notifications'
 
 # Notification type registry for extensibility
 NOTIFICATION_TYPES = {
@@ -54,8 +55,134 @@ NOTIFICATION_TYPES = {
     'system_announcement': {
         'icon': 'bi-megaphone',
         'color': 'info'
+    },
+    'approval_request_pending': {
+        'icon': 'bi-hourglass-split',
+        'color': 'warning'
+    },
+    'approval_request_pending_submitter': {
+        'icon': 'bi-hourglass',
+        'color': 'info'
+    },
+    'approval_request_approved': {
+        'icon': 'bi-check-circle',
+        'color': 'success'
+    },
+    'approval_request_denied': {
+        'icon': 'bi-x-circle',
+        'color': 'danger'
+    },
+    'agent_template_pending_admin': {
+        'icon': 'bi-layers',
+        'color': 'warning'
+    },
+    'agent_template_pending_submitter': {
+        'icon': 'bi-layers-half',
+        'color': 'info'
+    },
+    'agent_template_approved': {
+        'icon': 'bi-check2-square',
+        'color': 'success'
+    },
+    'agent_template_rejected': {
+        'icon': 'bi-x-octagon',
+        'color': 'danger'
+    },
+    'agent_template_deleted': {
+        'icon': 'bi-trash',
+        'color': 'secondary'
     }
 }
+
+
+def _get_notification_partition_key(notification):
+    """Resolve the Cosmos partition key for a notification document."""
+    if notification.get('scope') == 'assignment':
+        return ASSIGNMENT_NOTIFICATIONS_PARTITION_KEY
+
+    return (
+        notification.get('user_id')
+        or notification.get('group_id')
+        or notification.get('public_workspace_id')
+    )
+
+
+def _get_notification_display_message(notification):
+    """Normalize display text and backfill reviewer reasons from metadata when needed."""
+    message = str(notification.get('message') or '').strip()
+    metadata = notification.get('metadata') or {}
+    notification_type = notification.get('notification_type')
+
+    reason = None
+    if notification_type == 'approval_request_denied':
+        reason = str(metadata.get('comment') or '').strip()
+    elif notification_type == 'agent_template_rejected':
+        reason = str(metadata.get('rejection_reason') or '').strip()
+
+    if reason and reason not in message:
+        if message:
+            return f"{message} Reason provided: {reason}"
+        return f"Reason provided: {reason}"
+
+    return message
+
+
+def get_notifications_by_metadata(metadata_filters=None, notification_types=None):
+    """Fetch notifications matching metadata values and optional types."""
+    try:
+        query_parts = ["SELECT * FROM c WHERE 1=1"]
+        parameters = []
+
+        if notification_types:
+            type_clauses = []
+            for index, notification_type in enumerate(notification_types):
+                parameter_name = f"@notification_type_{index}"
+                type_clauses.append(f"c.notification_type = {parameter_name}")
+                parameters.append({"name": parameter_name, "value": notification_type})
+            query_parts.append(f"AND ({' OR '.join(type_clauses)})")
+
+        for key, value in (metadata_filters or {}).items():
+            if value is None:
+                continue
+            parameter_name = f"@metadata_{key}"
+            query_parts.append(f"AND c.metadata.{key} = {parameter_name}")
+            parameters.append({"name": parameter_name, "value": value})
+
+        return list(cosmos_notifications_container.query_items(
+            query=" ".join(query_parts),
+            parameters=parameters or None,
+            enable_cross_partition_query=True
+        ))
+    except Exception as e:
+        debug_print(f"Error fetching notifications by metadata: {e}")
+        return []
+
+
+def delete_notifications_by_metadata(metadata_filters=None, notification_types=None):
+    """Delete notifications matching metadata values and optional types."""
+    deleted_count = 0
+    notifications = get_notifications_by_metadata(
+        metadata_filters=metadata_filters,
+        notification_types=notification_types
+    )
+
+    for notification in notifications:
+        partition_key = _get_notification_partition_key(notification)
+        if not partition_key:
+            continue
+
+        try:
+            cosmos_notifications_container.delete_item(
+                item=notification['id'],
+                partition_key=partition_key
+            )
+            deleted_count += 1
+        except Exception as e:
+            debug_print(
+                f"Error deleting notification {notification.get('id')} by metadata: {e}"
+            )
+
+    return deleted_count
 
 
 def create_notification(
@@ -105,7 +232,7 @@ def create_notification(
             # Assignment-based notifications always use the special assignment partition
             # This allows role-based filtering across all users
             scope = 'assignment'
-            partition_key = 'assignment-notifications'
+            partition_key = ASSIGNMENT_NOTIFICATIONS_PARTITION_KEY
         else:
             # Legacy behavior - partition by specific workspace
             if group_id:
@@ -155,6 +282,17 @@ def create_notification(
     except Exception as e:
         debug_print(f"Error creating notification: {e}")
         return None
+
+
+def broadcast_system_notification(title, message, metadata=None):
+    """Create a system announcement visible to all users regardless of role."""
+    return create_notification(
+        notification_type='system_announcement',
+        title=title,
+        message=message,
+        metadata=metadata or {},
+        assignment={'all_users': True}
+    )
 
 
 def create_group_notification(group_id, notification_type, title, message, link_url='', link_context=None, metadata=None):
@@ -340,9 +478,13 @@ def get_user_notifications(user_id, page=1, per_page=20, include_read=True, incl
             
             # Check if user matches assignment criteria
             user_matches = False
+
+            # Broadcast to all users regardless of role/ownership
+            if assignment.get('all_users'):
+                user_matches = True
             
             # Check roles
-            if user_roles and assignment.get('roles'):
+            if not user_matches and user_roles and assignment.get('roles'):
                 for role in assignment.get('roles', []):
                     if role in user_roles:
                         user_matches = True
@@ -373,6 +515,7 @@ def get_user_notifications(user_id, page=1, per_page=20, include_read=True, incl
                 continue
             
             # Add UI metadata
+            notif['message'] = _get_notification_display_message(notif)
             notif['is_read'] = user_id in read_by
             notif['is_dismissed'] = user_id in dismissed_by
             notif['type_config'] = NOTIFICATION_TYPES.get(
@@ -469,7 +612,7 @@ def mark_notification_read(notification_id, user_id):
         notification = notifications[0]
         
         # Determine partition key
-        partition_key = notification.get('user_id') or notification.get('group_id') or notification.get('public_workspace_id')
+        partition_key = _get_notification_partition_key(notification)
         
         if not partition_key:
             debug_print(f"No partition key found for notification {notification_id}")
@@ -560,7 +703,7 @@ def dismiss_notification(notification_id, user_id):
         notification = notifications[0]
         
         # Determine partition key
-        partition_key = notification.get('user_id') or notification.get('group_id') or notification.get('public_workspace_id')
+        partition_key = _get_notification_partition_key(notification)
         
         if not partition_key:
             debug_print(f"No partition key found for notification {notification_id}")
@@ -640,7 +783,7 @@ def delete_notification(notification_id):
             return False
         
         notification = notifications[0]
-        partition_key = notification.get('user_id') or notification.get('group_id') or notification.get('public_workspace_id')
+        partition_key = _get_notification_partition_key(notification)
         
         if not partition_key:
             return False

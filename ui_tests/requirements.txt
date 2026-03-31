@@ -1,0 +1,4 @@
+pytest
+playwright
+azure-mgmt-playwright
+azure-identity

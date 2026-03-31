@@ -2,7 +2,7 @@
 
 import { userInput } from "./chat-messages.js";
 import { updateSendButtonVisibility } from "./chat-messages.js";
-import { docScopeSelect, getEffectiveScopes } from "./chat-documents.js";
+import { getEffectiveScopes } from "./chat-documents.js";
 import { createSearchableSingleSelect } from "./chat-searchable-select.js";
 
 const promptSelectionContainer = document.getElementById("prompt-selection-container");
@@ -17,10 +17,107 @@ const promptDropdownText = promptDropdownButton
 const promptDropdownItems = document.getElementById("prompt-dropdown-items");
 const promptSearchInput = document.getElementById("prompt-search-input");
 
-const promptPageSize = 100;
-
 let promptSelectorController = null;
 let loadAllPromptsPromise = null;
+let scopeChangeListenerInitialized = false;
+let userPrompts = [];
+let groupPrompts = [];
+let publicPrompts = [];
+
+function getPreloadedPromptOptions() {
+  return Array.isArray(window.chatPromptOptions) ? window.chatPromptOptions : [];
+}
+
+function getPromptLabel(prompt) {
+  return (prompt.name || "Untitled Prompt").trim() || "Untitled Prompt";
+}
+
+function comparePromptNames(leftPrompt, rightPrompt) {
+  return getPromptLabel(leftPrompt).localeCompare(getPromptLabel(rightPrompt), undefined, {
+    sensitivity: "base",
+  });
+}
+
+function getSortedSelectedGroups(groupIds) {
+  const selectedGroupIdSet = new Set((groupIds || []).map(String));
+  return (window.userGroups || [])
+    .filter(group => selectedGroupIdSet.has(String(group.id)))
+    .sort((leftGroup, rightGroup) => (leftGroup.name || "").localeCompare(rightGroup.name || "", undefined, {
+      sensitivity: "base",
+    }));
+}
+
+function getSortedSelectedPublicWorkspaces(workspaceIds) {
+  const selectedWorkspaceIdSet = new Set((workspaceIds || []).map(String));
+  return (window.userVisiblePublicWorkspaces || [])
+    .filter(workspace => selectedWorkspaceIdSet.has(String(workspace.id)))
+    .sort((leftWorkspace, rightWorkspace) => (leftWorkspace.name || "").localeCompare(rightWorkspace.name || "", undefined, {
+      sensitivity: "base",
+    }));
+}
+
+function appendPromptOption(container, prompt) {
+  const option = document.createElement("option");
+  const promptName = getPromptLabel(prompt);
+  const scopeLabel = prompt.scope_type === "group"
+    ? `[Group] ${prompt.scope_name || "Unknown Group"}`
+    : prompt.scope_type === "public"
+      ? `[Public] ${prompt.scope_name || "Unknown Workspace"}`
+      : "Personal";
+
+  option.value = prompt.id || "";
+  option.textContent = promptName;
+  option.dataset.promptContent = prompt.content || "";
+  option.dataset.scopeType = prompt.scope_type || "";
+  option.dataset.scopeId = prompt.scope_id || "";
+  option.dataset.scopeName = prompt.scope_name || "";
+  option.dataset.searchText = `${promptName} ${scopeLabel}`.trim();
+  container.appendChild(option);
+}
+
+function buildPromptSections(scopes) {
+  const sections = [];
+
+  if (scopes.personal) {
+    const personalSectionPrompts = userPrompts.slice().sort(comparePromptNames);
+    if (personalSectionPrompts.length > 0) {
+      sections.push({
+        label: "Personal",
+        prompts: personalSectionPrompts,
+      });
+    }
+  }
+
+  getSortedSelectedGroups(scopes.groupIds).forEach(group => {
+    const sectionPrompts = groupPrompts
+      .filter(prompt => String(prompt.scope_id || "") === String(group.id))
+      .slice()
+      .sort(comparePromptNames);
+
+    if (sectionPrompts.length > 0) {
+      sections.push({
+        label: `[Group] ${group.name || "Unnamed Group"}`,
+        prompts: sectionPrompts,
+      });
+    }
+  });
+
+  getSortedSelectedPublicWorkspaces(scopes.publicWorkspaceIds).forEach(workspace => {
+    const sectionPrompts = publicPrompts
+      .filter(prompt => String(prompt.scope_id || "") === String(workspace.id))
+      .slice()
+      .sort(comparePromptNames);
+
+    if (sectionPrompts.length > 0) {
+      sections.push({
+        label: `[Public] ${workspace.name || "Unnamed Workspace"}`,
+        prompts: sectionPrompts,
+      });
+    }
+  });
+
+  return sections;
+}
 
 function initializePromptSelector() {
     if (promptSelectorController || !promptSelect) {
@@ -38,86 +135,25 @@ function initializePromptSelector() {
         placeholderText: "Select a Prompt...",
         emptyMessage: "No prompts available",
         emptySearchMessage: "No matching prompts found",
+        getOptionSearchText: option => option.dataset.searchText || option.textContent.trim(),
     });
 
     return promptSelectorController;
 }
 
-async function fetchAllPromptPages(endpoint, emptyStatuses = []) {
-    const prompts = [];
-    let page = 1;
-    let totalCount = null;
-
-    while (true) {
-        const params = new URLSearchParams({
-            page: String(page),
-            page_size: String(promptPageSize)
-        });
-        const response = await fetch(`${endpoint}?${params.toString()}`);
-
-        if (!response.ok) {
-            if (emptyStatuses.includes(response.status)) {
-                return [];
-            }
-
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        const data = await response.json();
-        const pagePrompts = Array.isArray(data.prompts) ? data.prompts : [];
-        prompts.push(...pagePrompts);
-
-        if (totalCount === null) {
-            totalCount = Number(data.total_count) || pagePrompts.length;
-        }
-
-        if (!pagePrompts.length || prompts.length >= totalCount || pagePrompts.length < promptPageSize) {
-            break;
-        }
-
-        page += 1;
-    }
-
-    return prompts;
-}
-
 export function loadUserPrompts() {
-    return fetchAllPromptPages("/api/prompts")
-        .then(prompts => {
-            userPrompts = prompts;
-            return prompts;
-        })
-        .catch(err => {
-            console.error("Error loading user prompts:", err);
-            userPrompts = [];
-            return [];
-        });
+      userPrompts = getPreloadedPromptOptions().filter(prompt => prompt.scope_type === "personal");
+      return Promise.resolve(userPrompts);
 }
 
 export function loadGroupPrompts() {
-    return fetchAllPromptPages("/api/group_prompts", [400])
-        .then(prompts => {
-            groupPrompts = prompts;
-            return prompts;
-        })
-        .catch(err => {
-            console.error("Error loading group prompts:", err);
-            groupPrompts = [];
-            return [];
-        });
+      groupPrompts = getPreloadedPromptOptions().filter(prompt => prompt.scope_type === "group");
+      return Promise.resolve(groupPrompts);
 }
 
 export function loadPublicPrompts() {
-    return fetchAllPromptPages("/api/public_prompts", [400])
-        .then(prompts => {
-            publicPrompts = prompts;
-            return prompts;
-        })
-        .catch(err => {
-            console.error("Error loading public prompts:", err);
-            publicPrompts = [];
-            return [];
-        });
+      publicPrompts = getPreloadedPromptOptions().filter(prompt => prompt.scope_type === "public");
+      return Promise.resolve(publicPrompts);
 }
 
 export function populatePromptSelectScope() {
@@ -126,11 +162,6 @@ export function populatePromptSelectScope() {
     initializePromptSelector();
 
     const scopes = getEffectiveScopes();
-    console.log("Populating prompt dropdown with scopes:", scopes);
-    console.log("User prompts:", userPrompts.length);
-    console.log("Group prompts:", groupPrompts.length);
-    console.log("Public prompts:", publicPrompts.length);
-
     const previousValue = promptSelect.value;
     promptSelect.innerHTML = "";
 
@@ -139,27 +170,19 @@ export function populatePromptSelectScope() {
     defaultOpt.textContent = "Select a Prompt...";
     promptSelect.appendChild(defaultOpt);
 
-    let finalPrompts = [];
+      buildPromptSections(scopes).forEach(section => {
+        const optGroup = document.createElement("optgroup");
+        optGroup.label = section.label;
 
-    if (scopes.personal) {
-        finalPrompts = finalPrompts.concat(userPrompts.map(prompt => ({ ...prompt, scope: "Personal" })));
-    }
-    if (scopes.groupIds.length > 0) {
-        finalPrompts = finalPrompts.concat(groupPrompts.map(prompt => ({ ...prompt, scope: "Group" })));
-    }
-    if (scopes.publicWorkspaceIds.length > 0) {
-        finalPrompts = finalPrompts.concat(publicPrompts.map(prompt => ({ ...prompt, scope: "Public" })));
-    }
+        section.prompts.forEach(prompt => {
+          appendPromptOption(optGroup, prompt);
+        });
 
-    finalPrompts.forEach(promptObj => {
-        const opt = document.createElement("option");
-        opt.value = promptObj.id;
-        opt.textContent = `[${promptObj.scope}] ${promptObj.name}`;
-        opt.dataset.promptContent = promptObj.content;
-        promptSelect.appendChild(opt);
+        promptSelect.appendChild(optGroup);
     });
 
-    if (finalPrompts.some(prompt => prompt.id === previousValue)) {
+      const availableOptions = Array.from(promptSelect.options);
+      if (availableOptions.some(option => option.value === previousValue)) {
         promptSelect.value = previousValue;
     } else {
         promptSelect.value = "";
@@ -175,64 +198,68 @@ export function populatePromptSelect() {
 }
 
 export function loadAllPrompts() {
-  if (loadAllPromptsPromise) {
-    return loadAllPromptsPromise;
-  }
+    if (loadAllPromptsPromise) {
+        return loadAllPromptsPromise;
+    }
 
-  loadAllPromptsPromise = Promise.all([loadUserPrompts(), loadGroupPrompts(), loadPublicPrompts()])
-    .then(() => {
-      console.log("All prompts loaded, populating scope-based select...");
-      populatePromptSelectScope();
-    })
-    .catch(err => {
-      console.error("Error loading all prompts:", err);
-    })
-    .finally(() => {
-      loadAllPromptsPromise = null;
+    loadAllPromptsPromise = Promise.all([loadUserPrompts(), loadGroupPrompts(), loadPublicPrompts()])
+        .then(() => {
+            populatePromptSelectScope();
+        })
+        .catch(err => {
+            console.error("Error loading all prompts:", err);
+        })
+        .finally(() => {
+            loadAllPromptsPromise = null;
+        });
+
+    return loadAllPromptsPromise;
+}
+
+function initializeScopeChangeListener() {
+    if (scopeChangeListenerInitialized) {
+        return;
+    }
+
+    window.addEventListener("chat:scope-changed", () => {
+        if (!promptSelectionContainer || promptSelectionContainer.style.display !== "block") {
+            return;
+        }
+
+        populatePromptSelectScope();
     });
 
-  return loadAllPromptsPromise;
+    scopeChangeListenerInitialized = true;
 }
 
 export function initializePromptInteractions() {
-  console.log("Attempting to initialize prompt interactions...");
+    if (searchPromptsBtn && promptSelectionContainer && userInput) {
+        initializePromptSelector();
+        initializeScopeChangeListener();
 
-  if (searchPromptsBtn && promptSelectionContainer && userInput) {
-    initializePromptSelector();
-    console.log("Elements found, adding prompt button listener.");
+        searchPromptsBtn.addEventListener("click", function() {
+            const isActive = this.classList.toggle("active");
 
-    searchPromptsBtn.addEventListener("click", function() {
-      const isActive = this.classList.toggle("active");
-
-      if (isActive) {
-        promptSelectionContainer.style.display = "block";
-        loadAllPrompts();
-        userInput.classList.add("with-prompt-active");
-        userInput.focus();
-        updateSendButtonVisibility();
-      } else {
-        promptSelectionContainer.style.display = "none";
-        if (promptSelect) {
-          promptSelect.selectedIndex = 0;
-          promptSelect.dispatchEvent(new Event("change", { bubbles: true }));
-        }
-        userInput.classList.remove("with-prompt-active");
-        userInput.focus();
-        updateSendButtonVisibility();
-      }
-    });
-
-    if (docScopeSelect) {
-      docScopeSelect.addEventListener("change", function() {
-        if (promptSelectionContainer && promptSelectionContainer.style.display === "block") {
-          console.log("Scope changed, repopulating prompts...");
-          populatePromptSelectScope();
-        }
-      });
+            if (isActive) {
+                promptSelectionContainer.style.display = "block";
+                loadAllPrompts();
+                userInput.classList.add("with-prompt-active");
+                userInput.focus();
+                updateSendButtonVisibility();
+            } else {
+                promptSelectionContainer.style.display = "none";
+                if (promptSelect) {
+                    promptSelect.selectedIndex = 0;
+                    promptSelect.dispatchEvent(new Event("change", { bubbles: true }));
+                }
+                userInput.classList.remove("with-prompt-active");
+                userInput.focus();
+                updateSendButtonVisibility();
+            }
+        });
+    } else {
+        if (!searchPromptsBtn) console.error("Prompt Init Error: search-prompts-btn not found.");
+        if (!promptSelectionContainer) console.error("Prompt Init Error: prompt-selection-container not found.");
+        if (!userInput) console.error("Prompt Init Error: userInput (imported from chat-messages) is not available.");
     }
-  } else {
-    if (!searchPromptsBtn) console.error("Prompt Init Error: search-prompts-btn not found.");
-    if (!promptSelectionContainer) console.error("Prompt Init Error: prompt-selection-container not found.");
-    if (!userInput) console.error("Prompt Init Error: userInput (imported from chat-messages) is not available.");
-  }
 }

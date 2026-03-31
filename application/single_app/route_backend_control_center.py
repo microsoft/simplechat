@@ -14,6 +14,117 @@ from datetime import datetime, timedelta, timezone
 import json
 from functions_debug import debug_print
 
+
+def normalize_token_filter_value(value):
+    """Normalize optional token filter values from query params or request JSON."""
+    if value is None:
+        return None
+
+    normalized = str(value).strip()
+    if not normalized or normalized.lower() == 'all':
+        return None
+
+    return normalized
+
+
+def extract_token_filters(source):
+    """Extract supported token filters from a query string or JSON payload."""
+    if not source:
+        return {}
+
+    token_source = source
+    nested_filters = source.get('token_filters') if hasattr(source, 'get') else None
+    if isinstance(nested_filters, dict):
+        token_source = nested_filters
+
+    token_filters = {
+        'user_id': normalize_token_filter_value(token_source.get('user_id')),
+        'workspace_type': normalize_token_filter_value(token_source.get('workspace_type')),
+        'group_id': normalize_token_filter_value(token_source.get('group_id')),
+        'public_workspace_id': normalize_token_filter_value(token_source.get('public_workspace_id')),
+        'model': normalize_token_filter_value(token_source.get('model')),
+        'token_type': normalize_token_filter_value(token_source.get('token_type'))
+    }
+
+    if token_filters['workspace_type'] not in {None, 'personal', 'group', 'public'}:
+        token_filters['workspace_type'] = None
+
+    if token_filters['token_type'] not in {None, 'embedding', 'chat', 'web_search'}:
+        token_filters['token_type'] = None
+
+    if token_filters['group_id'] and not token_filters['workspace_type']:
+        token_filters['workspace_type'] = 'group'
+
+    if token_filters['public_workspace_id'] and not token_filters['workspace_type']:
+        token_filters['workspace_type'] = 'public'
+
+    return token_filters
+
+
+def append_token_usage_filters(query_conditions, parameters, token_filters):
+    """Append optional token usage filters to the Cosmos query state."""
+    if not token_filters:
+        return
+
+    user_id = token_filters.get('user_id')
+    if user_id:
+        query_conditions.append("c.user_id = @token_user_id")
+        parameters.append({"name": "@token_user_id", "value": user_id})
+
+    workspace_type = token_filters.get('workspace_type')
+    if workspace_type:
+        query_conditions.append("c.workspace_type = @token_workspace_type")
+        parameters.append({"name": "@token_workspace_type", "value": workspace_type})
+
+    group_id = token_filters.get('group_id')
+    if group_id:
+        query_conditions.append("c.workspace_context.group_id = @token_group_id")
+        parameters.append({"name": "@token_group_id", "value": group_id})
+
+    public_workspace_id = token_filters.get('public_workspace_id')
+    if public_workspace_id:
+        query_conditions.append("c.workspace_context.public_workspace_id = @token_public_workspace_id")
+        parameters.append({"name": "@token_public_workspace_id", "value": public_workspace_id})
+
+    model = token_filters.get('model')
+    if model:
+        query_conditions.append("c.usage.model = @token_model")
+        parameters.append({"name": "@token_model", "value": model})
+
+    token_type = token_filters.get('token_type')
+    if token_type:
+        query_conditions.append("c.token_type = @token_type")
+        parameters.append({"name": "@token_type", "value": token_type})
+
+
+def build_token_usage_query_context(start_date, end_date, token_filters=None):
+    """Build shared WHERE-clause state for token usage queries."""
+    parameters = [
+        {"name": "@start_date", "value": start_date.isoformat()},
+        {"name": "@end_date", "value": end_date.isoformat()}
+    ]
+    query_conditions = [
+        "c.activity_type = 'token_usage'",
+        "((c.timestamp >= @start_date AND c.timestamp <= @end_date) OR (c.created_at >= @start_date AND c.created_at <= @end_date))"
+    ]
+
+    append_token_usage_filters(query_conditions, parameters, token_filters or {})
+    return " AND ".join(query_conditions), parameters
+
+
+def get_distinct_token_filter_values(query):
+    """Run a DISTINCT VALUE token filter query and return sorted non-empty values."""
+    try:
+        values = list(cosmos_activity_logs_container.query_items(
+            query=query,
+            enable_cross_partition_query=True
+        ))
+        unique_values = sorted({str(value).strip() for value in values if value})
+        return [value for value in unique_values if value]
+    except Exception as ex:
+        debug_print(f"[Token Filters] Error loading distinct values: {ex}")
+        return []
+
 def enhance_user_with_activity(user, force_refresh=False):
     """
     Enhance user data with activity information and computed fields.
@@ -74,7 +185,7 @@ def enhance_user_with_activity(user, force_refresh=False):
                         enhanced['access_status'] = 'allow'  # Expired, should be auto-restored
                     else:
                         enhanced['access_status'] = f"deny_until_{datetime_to_allow}"
-                except:
+                except Exception as ex:
                     enhanced['access_status'] = 'deny'
             else:
                 enhanced['access_status'] = 'deny'
@@ -91,7 +202,7 @@ def enhance_user_with_activity(user, force_refresh=False):
                         enhanced['file_upload_status'] = 'allow'  # Expired, should be auto-restored
                     else:
                         enhanced['file_upload_status'] = f"deny_until_{datetime_to_allow}"
-                except:
+                except Exception as ex:
                     enhanced['file_upload_status'] = 'deny'
             else:
                 enhanced['file_upload_status'] = 'deny'
@@ -158,7 +269,7 @@ def enhance_user_with_activity(user, force_refresh=False):
                         try:
                             date_obj = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
                             last_day_conversation = date_obj.strftime('%m/%d/%Y')
-                        except:
+                        except Exception as ex:
                             last_day_conversation = 'Invalid date'
             
             enhanced['activity']['chat_metrics']['last_day_conversation'] = last_day_conversation or 'Never'
@@ -1053,7 +1164,7 @@ def enhance_group_with_activity(group, force_refresh=False):
         debug_print(f"Error enhancing group data: {e}")
         return group  # Return original group data if enhancement fails
 
-def get_activity_trends_data(start_date, end_date):
+def get_activity_trends_data(start_date, end_date, token_filters=None):
     """
     Get aggregated activity data for the specified date range from existing containers.
     Returns daily activity counts by type using real application data.
@@ -1332,17 +1443,20 @@ def get_activity_trends_data(start_date, end_date):
         try:
             debug_print("🔍 [ACTIVITY TRENDS DEBUG] Querying token usage...")
             
-            token_usage_query = """
+            token_where_clause, token_parameters = build_token_usage_query_context(
+                start_date,
+                end_date,
+                token_filters=token_filters
+            )
+            token_usage_query = f"""
                 SELECT c.timestamp, c.created_at, c.token_type, c.usage.total_tokens as token_count
                 FROM c
-                WHERE c.activity_type = 'token_usage'
-                AND ((c.timestamp >= @start_date AND c.timestamp <= @end_date)
-                   OR (c.created_at >= @start_date AND c.created_at <= @end_date))
+                WHERE {token_where_clause}
             """
             
             token_activities = list(cosmos_activity_logs_container.query_items(
                 query=token_usage_query,
-                parameters=parameters,
+                parameters=token_parameters,
                 enable_cross_partition_query=True
             ))
             
@@ -1451,7 +1565,7 @@ def get_activity_trends_data(start_date, end_date):
             'tokens': {}
         }
 
-def get_raw_activity_trends_data(start_date, end_date, charts):
+def get_raw_activity_trends_data(start_date, end_date, charts, token_filters=None):
     """
     Get raw detailed activity data for export instead of aggregated counts.
     Returns individual records with user information for each activity type.
@@ -1979,21 +2093,27 @@ def get_raw_activity_trends_data(start_date, end_date, charts):
         if 'tokens' in charts:
             debug_print("🔍 [RAW ACTIVITY DEBUG] Getting token usage records from activity logs...")
             try:
-                tokens_query = """
+                token_where_clause, token_parameters = build_token_usage_query_context(
+                    start_date,
+                    end_date,
+                    token_filters=token_filters
+                )
+                tokens_query = f"""
                     SELECT c.timestamp, c.created_at, c.user_id, c.token_type,
+                           c.workspace_type,
+                           c.workspace_context.group_id as group_id,
+                           c.workspace_context.public_workspace_id as public_workspace_id,
                            c.usage.model as model_name,
                            c.usage.prompt_tokens as prompt_tokens, 
                            c.usage.completion_tokens as completion_tokens, 
                            c.usage.total_tokens as total_tokens
                     FROM c 
-                    WHERE c.activity_type = 'token_usage'
-                    AND ((c.timestamp >= @start_date AND c.timestamp <= @end_date)
-                       OR (c.created_at >= @start_date AND c.created_at <= @end_date))
+                    WHERE {token_where_clause}
                 """
                 
                 token_activities = list(cosmos_activity_logs_container.query_items(
                     query=tokens_query,
-                    parameters=parameters,
+                    parameters=token_parameters,
                     enable_cross_partition_query=True
                 ))
                 
@@ -2020,6 +2140,9 @@ def get_raw_activity_trends_data(start_date, end_date, charts):
                                 'email': user_info['email'],
                                 'user_id': user_id,
                                 'token_type': token_type,
+                                'workspace_type': token_log.get('workspace_type', ''),
+                                'group_id': token_log.get('group_id', ''),
+                                'public_workspace_id': token_log.get('public_workspace_id', ''),
                                 'model_name': token_log.get('model_name', 'Unknown'),
                                 'prompt_tokens': prompt_tokens,
                                 'completion_tokens': completion_tokens,
@@ -2563,7 +2686,7 @@ def register_route_backend_control_center(app):
             # Get the group
             try:
                 group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Group not found'}), 404
             
             # Get admin user info
@@ -2646,7 +2769,7 @@ def register_route_backend_control_center(app):
             # Get the group
             try:
                 group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Group not found'}), 404
             
             # Enhance with activity data
@@ -2685,7 +2808,7 @@ def register_route_backend_control_center(app):
             # Validate group exists
             try:
                 group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Group not found'}), 404
             
             # Create approval request
@@ -2750,7 +2873,7 @@ def register_route_backend_control_center(app):
             # Validate group exists
             try:
                 group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Group not found'}), 404
             
             # Create approval request
@@ -2798,7 +2921,7 @@ def register_route_backend_control_center(app):
             # Get the group
             try:
                 group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Group not found'}), 404
             
             # Get member list with user details
@@ -2851,7 +2974,7 @@ def register_route_backend_control_center(app):
             # Validate group exists
             try:
                 group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Group not found'}), 404
             
             # Create approval request
@@ -2920,7 +3043,7 @@ def register_route_backend_control_center(app):
             # Get the group
             try:
                 group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Group not found'}), 404
             
             # Find the new owner in members list
@@ -3001,7 +3124,7 @@ def register_route_backend_control_center(app):
             # Get the group
             try:
                 group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Group not found'}), 404
             
             # Check if user already exists (skip duplicate)
@@ -3436,7 +3559,7 @@ def register_route_backend_control_center(app):
             # Get the workspace
             try:
                 workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Public workspace not found'}), 404
             
             # Get admin user info
@@ -3747,7 +3870,7 @@ def register_route_backend_control_center(app):
                             'displayName': user.get('display_name', user.get('email', '')),
                             'role': 'admin'
                         })
-                    except:
+                    except Exception as ex:
                         pass
             
             # Add document managers - documentManagers is an array of objects with userId, email, displayName
@@ -3774,7 +3897,7 @@ def register_route_backend_control_center(app):
                             'displayName': user.get('display_name', user.get('email', '')),
                             'role': 'documentManager'
                         })
-                    except:
+                    except Exception as ex:
                         pass
             
             return jsonify({
@@ -3817,7 +3940,7 @@ def register_route_backend_control_center(app):
             # Get the workspace
             try:
                 workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Public workspace not found'}), 404
             
             # Check if user already exists
@@ -3930,7 +4053,7 @@ def register_route_backend_control_center(app):
             # Get the workspace
             try:
                 workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Public workspace not found'}), 404
             
             # Check if user already exists
@@ -4228,7 +4351,7 @@ def register_route_backend_control_center(app):
             # Validate workspace exists
             try:
                 workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Workspace not found'}), 404
             
             # Get old owner info
@@ -4310,7 +4433,7 @@ def register_route_backend_control_center(app):
             # Get the workspace
             try:
                 workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Workspace not found'}), 404
             
             # Get new owner user details
@@ -4321,7 +4444,7 @@ def register_route_backend_control_center(app):
                 )
                 new_owner_email = new_owner_user.get('email', 'unknown')
                 new_owner_name = new_owner_user.get('display_name', new_owner_email)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'New owner user not found'}), 404
             
             # Check if new owner is a member of the workspace
@@ -4429,7 +4552,7 @@ def register_route_backend_control_center(app):
             # Validate workspace exists
             try:
                 workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Public workspace not found'}), 404
             
             # Create approval request
@@ -4497,7 +4620,7 @@ def register_route_backend_control_center(app):
                     item=workspace_id,
                     partition_key=workspace_id
                 )
-            except:
+            except Exception as ex:
                 return jsonify({'error': 'Public workspace not found'}), 404
             
             # Create approval request
@@ -4566,14 +4689,17 @@ def register_route_backend_control_center(app):
                 start_date = (end_date - timedelta(days=days)).replace(hour=0, minute=0, second=0, microsecond=0)
                 debug_print(f"🔍 [Activity Trends API] Request for {days} days: {start_date} to {end_date}")
             
+            token_filters = extract_token_filters(request.args)
+
             # Get activity data
-            activity_data = get_activity_trends_data(start_date, end_date)
+            activity_data = get_activity_trends_data(start_date, end_date, token_filters=token_filters)
             
             debug_print(f"🔍 [Activity Trends API] Returning data: {activity_data}")
             
             return jsonify({
                 'success': True,
                 'activity_data': activity_data,
+                'token_filters': token_filters,
                 'period': f"{days} days",
                 'start_date': start_date.isoformat(),
                 'end_date': end_date.isoformat()
@@ -4583,6 +4709,103 @@ def register_route_backend_control_center(app):
             debug_print(f"Error getting activity trends: {e}")
             print(f"❌ [Activity Trends API] Error: {e}")
             return jsonify({'error': 'Failed to retrieve activity trends'}), 500
+
+
+    @app.route('/api/admin/control-center/token-filters', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('dashboard')
+    def api_get_token_filter_options():
+        """Return distinct token filter options for the control center dashboard."""
+        try:
+            user_ids = get_distinct_token_filter_values(
+                "SELECT DISTINCT VALUE c.user_id FROM c WHERE c.activity_type = 'token_usage' AND IS_DEFINED(c.user_id)"
+            )
+            models = get_distinct_token_filter_values(
+                "SELECT DISTINCT VALUE c.usage.model FROM c WHERE c.activity_type = 'token_usage' AND IS_DEFINED(c.usage.model)"
+            )
+            group_ids = get_distinct_token_filter_values(
+                "SELECT DISTINCT VALUE c.workspace_context.group_id FROM c WHERE c.activity_type = 'token_usage' AND IS_DEFINED(c.workspace_context.group_id)"
+            )
+            public_workspace_ids = get_distinct_token_filter_values(
+                "SELECT DISTINCT VALUE c.workspace_context.public_workspace_id FROM c WHERE c.activity_type = 'token_usage' AND IS_DEFINED(c.workspace_context.public_workspace_id)"
+            )
+
+            user_options = []
+            for user_id in user_ids:
+                try:
+                    user_doc = cosmos_user_settings_container.read_item(item=user_id, partition_key=user_id)
+                    display_name = user_doc.get('display_name', '')
+                    email = user_doc.get('email', '')
+                    label = display_name or email or user_id
+                    user_options.append({
+                        'id': user_id,
+                        'display_name': display_name,
+                        'email': email,
+                        'label': label
+                    })
+                except Exception:
+                    user_options.append({
+                        'id': user_id,
+                        'display_name': '',
+                        'email': '',
+                        'label': user_id
+                    })
+
+            group_options = []
+            for group_id in group_ids:
+                try:
+                    group_doc = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
+                    group_options.append({
+                        'id': group_id,
+                        'name': group_doc.get('name', group_id)
+                    })
+                except Exception:
+                    group_options.append({
+                        'id': group_id,
+                        'name': group_id
+                    })
+
+            public_workspace_options = []
+            for workspace_id in public_workspace_ids:
+                try:
+                    workspace_doc = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
+                    public_workspace_options.append({
+                        'id': workspace_id,
+                        'name': workspace_doc.get('name', workspace_id)
+                    })
+                except Exception:
+                    public_workspace_options.append({
+                        'id': workspace_id,
+                        'name': workspace_id
+                    })
+
+            user_options.sort(key=lambda item: item.get('label', '').lower())
+            group_options.sort(key=lambda item: item.get('name', '').lower())
+            public_workspace_options.sort(key=lambda item: item.get('name', '').lower())
+
+            return jsonify({
+                'success': True,
+                'filters': {
+                    'users': user_options,
+                    'groups': group_options,
+                    'public_workspaces': public_workspace_options,
+                    'models': [{'value': model, 'label': model} for model in models],
+                    'workspace_types': [
+                        {'value': 'personal', 'label': 'Personal'},
+                        {'value': 'group', 'label': 'Group'},
+                        {'value': 'public', 'label': 'Public'}
+                    ],
+                    'token_types': [
+                        {'value': 'embedding', 'label': 'Embedding'},
+                        {'value': 'chat', 'label': 'Chat'},
+                        {'value': 'web_search', 'label': 'Web Search'}
+                    ]
+                }
+            })
+        except Exception as ex:
+            debug_print(f"[Token Filters] Error loading token filter options: {ex}")
+            return jsonify({'error': 'Failed to retrieve token filter options'}), 500
 
 
 
@@ -4597,12 +4820,13 @@ def register_route_backend_control_center(app):
         """
         try:
             debug_print("🔍 [ACTIVITY TRENDS DEBUG] Starting CSV export process")
-            data = request.get_json()
+            data = request.get_json() or {}
             debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Request data: {data}")            # Parse request parameters
             charts = data.get('charts', ['logins', 'chats', 'documents'])  # Default to all charts
             time_window = data.get('time_window', '30')  # Default to 30 days
             start_date = data.get('start_date')  # For custom range
             end_date = data.get('end_date')  # For custom range
+            token_filters = extract_token_filters(data)
             debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Parsed params - charts: {charts}, time_window: {time_window}, start_date: {start_date}, end_date: {end_date}")            # Determine date range
             debug_print("🔍 [ACTIVITY TRENDS DEBUG] Determining date range")
             if time_window == 'custom' and start_date and end_date:
@@ -4627,7 +4851,8 @@ def register_route_backend_control_center(app):
             raw_data = get_raw_activity_trends_data(
                 start_date_obj,
                 end_date_obj,
-                charts
+                charts,
+                token_filters=token_filters
             )
             debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Raw data retrieved: {len(raw_data) if raw_data else 0} chart types")
             
@@ -4722,8 +4947,9 @@ def register_route_backend_control_center(app):
                     elif chart_type == 'tokens':
                         debug_print(f"🔍 [CSV DEBUG] Writing token usage headers for {chart_type}")
                         writer.writerow([
-                            'Display Name', 'Email', 'User ID', 'Token Type', 'Model Name', 
-                            'Prompt Tokens', 'Completion Tokens', 'Total Tokens', 'Timestamp'
+                            'Display Name', 'Email', 'User ID', 'Workspace Type', 'Group ID',
+                            'Public Workspace ID', 'Token Type', 'Model Name', 'Prompt Tokens',
+                            'Completion Tokens', 'Total Tokens', 'Timestamp'
                         ])
                         record_count = 0
                         for record in raw_data[chart_type]:
@@ -4735,6 +4961,9 @@ def register_route_backend_control_center(app):
                                 record.get('display_name', ''),
                                 record.get('email', ''),
                                 record.get('user_id', ''),
+                                record.get('workspace_type', ''),
+                                record.get('group_id', ''),
+                                record.get('public_workspace_id', ''),
                                 record.get('token_type', ''),
                                 record.get('model_name', ''),
                                 record.get('prompt_tokens', ''),
@@ -4784,13 +5013,14 @@ def register_route_backend_control_center(app):
         Create a new chat conversation with activity trends data as CSV message.
         """
         try:
-            data = request.get_json()
+            data = request.get_json() or {}
             
             # Parse request parameters
             charts = data.get('charts', ['logins', 'chats', 'documents'])  # Default to all charts
             time_window = data.get('time_window', '30')  # Default to 30 days
             start_date = data.get('start_date')  # For custom range
             end_date = data.get('end_date')  # For custom range
+            token_filters = extract_token_filters(data)
             
             # Determine date range
             if time_window == 'custom' and start_date and end_date:
@@ -4808,8 +5038,9 @@ def register_route_backend_control_center(app):
             
             # Get activity data using existing function
             activity_data = get_activity_trends_data(
-                start_date_obj.strftime('%Y-%m-%d'),
-                end_date_obj.strftime('%Y-%m-%d')
+                start_date_obj,
+                end_date_obj,
+                token_filters=token_filters
             )
             
             # Prepare CSV data
@@ -4948,7 +5179,7 @@ def register_route_backend_control_center(app):
             from flask import request
             try:
                 request_data = request.get_json(force=True) or {}
-            except:
+            except Exception as ex:
                 # Handle case where no JSON body is sent
                 request_data = {}
                 
@@ -5572,6 +5803,8 @@ def register_route_backend_control_center(app):
                 filtered_logs = []
                 for log in logs:
                     # Search in various fields
+                    usage = log.get('usage', {})
+                    workspace_context = log.get('workspace_context', {})
                     searchable_text = ' '.join([
                         str(log.get('activity_type', '')),
                         str(log.get('user_id', '')),
@@ -5579,7 +5812,10 @@ def register_route_backend_control_center(app):
                         str(log.get('conversation', {}).get('title', '')),
                         str(log.get('document', {}).get('file_name', '')),
                         str(log.get('token_type', '')),
-                        str(log.get('workspace_type', ''))
+                        str(log.get('workspace_type', '')),
+                        str(usage.get('model', '')),
+                        str(workspace_context.get('group_id', '')),
+                        str(workspace_context.get('public_workspace_id', ''))
                     ]).lower()
                     
                     if search_term in searchable_text:
@@ -5606,7 +5842,7 @@ def register_route_backend_control_center(app):
                             'email': user_doc.get('email', ''),
                             'display_name': user_doc.get('display_name', '')
                         }
-                    except:
+                    except Exception as ex:
                         user_map[user_id] = {
                             'email': '',
                             'display_name': ''
@@ -6225,7 +6461,7 @@ def register_route_backend_control_center(app):
                     )
                     old_owner_email = old_owner_user.get('email', 'unknown')
                     old_owner_name = old_owner_user.get('display_name', old_owner_email)
-                except:
+                except Exception as ex:
                     old_owner_email = 'unknown'
                     old_owner_name = 'unknown'
             
@@ -6256,7 +6492,7 @@ def register_route_backend_control_center(app):
                                 'email': admin_user.get('email', 'unknown'),
                                 'displayName': admin_user.get('display_name', 'unknown')
                             })
-                        except:
+                        except Exception as ex:
                             pass
             workspace['admins'] = new_admins
             
@@ -6279,7 +6515,7 @@ def register_route_backend_control_center(app):
                                 'email': dm_user.get('email', 'unknown'),
                                 'displayName': dm_user.get('display_name', 'unknown')
                             })
-                        except:
+                        except Exception as ex:
                             pass
             workspace['documentManagers'] = new_dms
             
@@ -6450,7 +6686,7 @@ def register_route_backend_control_center(app):
                     )
                     old_owner_email = old_owner_user.get('email', 'unknown')
                     old_owner_name = old_owner_user.get('display_name', old_owner_email)
-                except:
+                except Exception as ex:
                     old_owner_email = 'unknown'
                     old_owner_name = 'unknown'
             
@@ -6481,7 +6717,7 @@ def register_route_backend_control_center(app):
                                 'email': admin_user.get('email', 'unknown'),
                                 'displayName': admin_user.get('display_name', 'unknown')
                             })
-                        except:
+                        except Exception as ex:
                             pass
             workspace['admins'] = new_admins
             
@@ -6504,7 +6740,7 @@ def register_route_backend_control_center(app):
                                 'email': dm_user.get('email', 'unknown'),
                                 'displayName': dm_user.get('display_name', 'unknown')
                             })
-                        except:
+                        except Exception as ex:
                             pass
             workspace['documentManagers'] = new_dms
             

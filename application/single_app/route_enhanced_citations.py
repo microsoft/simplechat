@@ -468,7 +468,7 @@ def get_document(user_id, doc_id):
             doc_response, status_code = backend_get_document(user_id, doc_id)
             if status_code == 200:
                 return doc_response, status_code
-        except:
+        except Exception as ex:
             pass
     
     # Try group workspaces if enabled
@@ -484,9 +484,9 @@ def get_document(user_id, doc_id):
                         doc_response, status_code = backend_get_document(user_id, doc_id, group_id=group_id)
                         if status_code == 200:
                             return doc_response, status_code
-                    except:
+                    except Exception as ex:
                         continue
-        except:
+        except Exception as ex:
             pass
     
     # Try public workspaces if enabled
@@ -500,9 +500,9 @@ def get_document(user_id, doc_id):
                     doc_response, status_code = backend_get_document(user_id, doc_id, public_workspace_id=workspace_id)
                     if status_code == 200:
                         return doc_response, status_code
-                except:
+                except Exception as ex:
                     continue
-        except:
+        except Exception as ex:
             pass
     
     # If document not found in any workspace

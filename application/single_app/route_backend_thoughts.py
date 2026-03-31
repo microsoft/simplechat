@@ -31,6 +31,7 @@ def register_route_backend_thoughts(app):
             for t in thoughts:
                 sanitized.append({
                     'id': t.get('id'),
+                    'message_id': t.get('message_id'),
                     'step_index': t.get('step_index'),
                     'step_type': t.get('step_type'),
                     'content': t.get('content'),
@@ -62,11 +63,13 @@ def register_route_backend_thoughts(app):
             return jsonify({'thoughts': [], 'enabled': False}), 200
 
         try:
-            thoughts = get_pending_thoughts(conversation_id, user_id)
+            message_id = request.args.get('message_id')
+            thoughts = get_pending_thoughts(conversation_id, user_id, message_id=message_id)
             sanitized = []
             for t in thoughts:
                 sanitized.append({
                     'id': t.get('id'),
+                    'message_id': t.get('message_id'),
                     'step_index': t.get('step_index'),
                     'step_type': t.get('step_type'),
                     'content': t.get('content'),
