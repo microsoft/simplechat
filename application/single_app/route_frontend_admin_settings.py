@@ -3,11 +3,13 @@
 from config import *
 from functions_documents import *
 from functions_authentication import *
+from functions_keyvault import keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_save_helper, redact_model_endpoint_secret_values
 from functions_settings import *
-from functions_activity_logging import log_web_search_consent_acceptance
+from functions_activity_logging import log_web_search_consent_acceptance, log_general_admin_action
+from functions_notifications import broadcast_system_notification
 from functions_logging import *
 from swagger_wrapper import swagger_route, get_auth_security
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 ALLOWED_PIL_IMAGE_UPLOAD_FORMATS = ('PNG', 'JPEG')
 
@@ -34,7 +36,8 @@ def register_route_frontend_admin_settings(app):
     @admin_required
     def admin_settings():
         settings = get_settings()
-
+        admin_user = session.get('user', {})
+        admin_email = admin_user.get('preferred_username', admin_user.get('email', 'unknown'))
         # --- Refined Default Checks (Good Practice) ---
         # Ensure models have default structure if missing/empty in DB
         if 'gpt_model' not in settings or not isinstance(settings.get('gpt_model'), dict) or 'selected' not in settings.get('gpt_model', {}):
@@ -43,6 +46,33 @@ def register_route_frontend_admin_settings(app):
             settings['embedding_model'] = {'selected': [], 'all': []}
         if 'image_gen_model' not in settings or not isinstance(settings.get('image_gen_model'), dict) or 'selected' not in settings.get('image_gen_model', {}):
             settings['image_gen_model'] = {'selected': [], 'all': []}
+        if 'enable_multi_model_endpoints' not in settings:
+            settings['enable_multi_model_endpoints'] = False
+        if 'model_endpoints' not in settings or not isinstance(settings.get('model_endpoints'), list):
+            settings['model_endpoints'] = []
+        if 'default_model_selection' not in settings or not isinstance(settings.get('default_model_selection'), dict):
+            settings['default_model_selection'] = {
+                'endpoint_id': '',
+                'model_id': '',
+                'provider': ''
+            }
+        if 'multi_endpoint_migrated_at' not in settings:
+            settings['multi_endpoint_migrated_at'] = None
+        if 'multi_endpoint_migration_notice' not in settings or not isinstance(settings.get('multi_endpoint_migration_notice'), dict):
+            settings['multi_endpoint_migration_notice'] = {
+                'enabled': False,
+                'message': (
+                    'Multi-endpoint has been enabled and your existing AI endpoint was migrated. '
+                    'Agents using the default connection may need to be updated to select a new model endpoint.'
+                ),
+                'created_at': None
+            }
+
+        normalized_endpoints, endpoints_changed = normalize_model_endpoints(settings.get('model_endpoints', []))
+        if endpoints_changed:
+            update_settings({'model_endpoints': normalized_endpoints})
+        settings['model_endpoints'] = normalized_endpoints
+        frontend_model_endpoints = sanitize_model_endpoints_for_frontend(normalized_endpoints)
 
         # (get_settings should handle this, but explicit check is safe)
         if 'require_member_of_create_group' not in settings:
@@ -171,14 +201,14 @@ def register_route_frontend_admin_settings(app):
                 
         if 'allow_user_agents' not in settings:
             settings['allow_user_agents'] = False
-        if 'allow_user_custom_agent_endpoints' not in settings:
-            settings['allow_user_custom_agent_endpoints'] = False
+        if 'allow_user_custom_endpoints' not in settings:
+            settings['allow_user_custom_endpoints'] = settings.get('allow_user_custom_agent_endpoints', False)
         if 'allow_user_plugins' not in settings:
             settings['allow_user_plugins'] = False
         if 'allow_group_agents' not in settings:
             settings['allow_group_agents'] = False
-        if 'allow_group_custom_agent_endpoints' not in settings:
-            settings['allow_group_custom_agent_endpoints'] = False
+        if 'allow_group_custom_endpoints' not in settings:
+            settings['allow_group_custom_endpoints'] = settings.get('allow_group_custom_agent_endpoints', False)
         if 'allow_group_plugins' not in settings:
             settings['allow_group_plugins'] = False
         if 'enable_agent_template_gallery' not in settings:
@@ -296,15 +326,21 @@ def register_route_frontend_admin_settings(app):
             # Get user settings for profile and navigation
             user_id = get_current_user_id()
             user_settings = get_user_settings(user_id)
+            settings_for_template = dict(settings)
+            settings_for_template['model_endpoints'] = frontend_model_endpoints
 
             return render_template(
                 'admin_settings.html',
-                app_settings=settings,  # Admin needs unsanitized settings to view/edit all configuration
-                settings=settings,
+                app_settings=settings_for_template,
+                settings=settings_for_template,
                 user_settings=user_settings,
                 update_available=update_available,
                 latest_version=latest_version,
-                download_url=download_url
+                download_url=download_url,
+                chunk_size_defaults=get_chunk_size_defaults(),
+                chunk_size_settings=settings.get('chunk_size', {}),
+                chunk_size_cap=get_chunk_size_cap(settings),
+                chunk_size_effective=get_chunk_size_config(settings)
                 # You don't need to pass deployments separately if they are added to settings['..._model']['all']
                 # gpt_deployments=gpt_deployments,
                 # embedding_deployments=embedding_deployments,
@@ -354,8 +390,6 @@ def register_route_frontend_admin_settings(app):
                 flash('Web search requires consent before it can be enabled.', 'warning')
 
             if enable_web_search and web_search_consent_accepted and not settings.get('web_search_consent_accepted'):
-                admin_user = session.get('user', {})
-                admin_email = admin_user.get('preferred_username', admin_user.get('email', 'unknown'))
                 log_web_search_consent_acceptance(
                     user_id=user_id,
                     admin_email=admin_email,
@@ -468,6 +502,209 @@ def register_route_frontend_admin_settings(app):
                 flash('Error parsing Image Gen model data. Changes may not be saved.', 'warning')
                 log_event(f"Error parsing Image Gen model data: {e}", level=logging.ERROR)
                 image_gen_model_obj = settings.get('image_gen_model', {'selected': [], 'all': []}) # Fallback
+
+            requested_enable_multi_model_endpoints = form_data.get('enable_multi_model_endpoints') == 'on'
+            model_endpoints_json = form_data.get('model_endpoints_json', '[]')
+            existing_model_endpoints = settings.get('model_endpoints', []) or []
+            parsed_model_endpoints = []
+            try:
+                parsed_model_endpoints_raw = json.loads(model_endpoints_json) if model_endpoints_json else []
+                if isinstance(parsed_model_endpoints_raw, list):
+                    parsed_model_endpoints = parsed_model_endpoints_raw
+                else:
+                    raise ValueError("Invalid format: model_endpoints must be a list.")
+            except (json.JSONDecodeError, ValueError) as e:
+                print(f"Error processing model_endpoints_json: {e}")
+                flash(f"Error processing model endpoints: {e}. Changes for endpoints not saved.", 'danger')
+                parsed_model_endpoints = settings.get('model_endpoints', [])
+
+            existing_multi_endpoints_enabled = settings.get('enable_multi_model_endpoints', False)
+            enable_multi_model_endpoints = coerce_multi_model_endpoint_enablement(
+                existing_multi_endpoints_enabled,
+                requested_enable_multi_model_endpoints,
+            )
+            should_migrate_endpoints = enable_multi_model_endpoints and not existing_multi_endpoints_enabled
+            migration_notice = settings.get('multi_endpoint_migration_notice', {
+                'enabled': False,
+                'message': (
+                    'Multi-endpoint has been enabled and your existing AI endpoint was migrated. '
+                    'Agents using the default connection may need to be updated to select a new model endpoint.'
+                ),
+                'created_at': None
+            })
+            migrated_at = settings.get('multi_endpoint_migrated_at')
+
+            if should_migrate_endpoints and not parsed_model_endpoints:
+                default_endpoint_id = str(uuid.uuid4())
+                migrated_models = []
+                for model in gpt_model_obj.get('selected', []):
+                    deployment_name = model.get('deploymentName') or model.get('deployment') or ''
+                    model_name = model.get('modelName') or model.get('name') or ''
+                    if not deployment_name:
+                        continue
+                    migrated_models.append({
+                        'id': str(uuid.uuid4()),
+                        'deploymentName': deployment_name,
+                        'modelName': model_name,
+                        'displayName': deployment_name,
+                        'description': '',
+                        'enabled': True
+                    })
+
+                legacy_auth_type = settings.get('azure_openai_gpt_authentication_type', 'key')
+                migrated_auth_type = 'api_key' if legacy_auth_type == 'key' else legacy_auth_type
+
+                parsed_model_endpoints = [{
+                    'id': default_endpoint_id,
+                    'name': 'Migrated Azure OpenAI Endpoint',
+                    'provider': 'aoai',
+                    'enabled': True,
+                    'auth': {
+                        'type': migrated_auth_type,
+                        'managed_identity_type': 'system_assigned',
+                        'managed_identity_client_id': '',
+                        'tenant_id': '',
+                        'client_id': '',
+                        'client_secret': '',
+                        'api_key': settings.get('azure_openai_gpt_key', '')
+                    },
+                    'connection': {
+                        'endpoint': settings.get('azure_openai_gpt_endpoint', ''),
+                        'api_version': settings.get('azure_openai_gpt_api_version', '')
+                    },
+                    'management': {
+                        'subscription_id': settings.get('azure_openai_gpt_subscription_id', ''),
+                        'resource_group': settings.get('azure_openai_gpt_resource_group', ''),
+                        'location': ''
+                    },
+                    'models': migrated_models
+                }]
+                debug_print(f"Migrated {len(migrated_models)} models to new multi-endpoint configuration.")
+                debug_print(
+                    f"Migrated Model Endpoints: {json.dumps([redact_model_endpoint_secret_values(endpoint) for endpoint in parsed_model_endpoints], indent=2)}"
+                )
+                log_event(f"Migrated {len(migrated_models)} models to new multi-endpoint configuration.", level=logging.INFO)
+                log_event(
+                    f"Migrated Model Endpoints: {json.dumps([redact_model_endpoint_secret_values(endpoint) for endpoint in parsed_model_endpoints], indent=2)}",
+                    level=logging.INFO,
+                )
+                log_general_admin_action(
+                    admin_user_id=admin_user,
+                    admin_email=admin_email,
+                    action='Enabled and migrated multi-model endpoints',
+                    description=f'Migrated {len(migrated_models)} models to multi-endpoint configuration.'
+                )
+
+
+                migrated_at = datetime.now(timezone.utc).isoformat()
+                migration_notice['enabled'] = True
+                migration_notice['created_at'] = migrated_at
+
+            parsed_model_endpoints = merge_model_endpoints_with_existing(parsed_model_endpoints, existing_model_endpoints)
+            parsed_model_endpoints, _ = normalize_model_endpoints(parsed_model_endpoints)
+
+            existing_endpoints_by_id = {
+                endpoint.get('id'): endpoint
+                for endpoint in existing_model_endpoints
+                if isinstance(endpoint, dict) and endpoint.get('id')
+            }
+            parsed_model_endpoints = [
+                keyvault_model_endpoint_save_helper(
+                    endpoint,
+                    endpoint.get('id'),
+                    scope='global',
+                    existing_endpoint=existing_endpoints_by_id.get(endpoint.get('id')),
+                )
+                for endpoint in parsed_model_endpoints
+            ]
+
+            for endpoint in parsed_model_endpoints:
+                if not isinstance(endpoint, dict):
+                    continue
+                endpoint_id = endpoint.get('id')
+                if not endpoint_id:
+                    continue
+                keyvault_model_endpoint_cleanup_helper(
+                    existing_endpoints_by_id.get(endpoint_id),
+                    endpoint,
+                    endpoint_id,
+                    scope='global',
+                )
+
+            saved_endpoint_ids = {
+                endpoint.get('id')
+                for endpoint in parsed_model_endpoints
+                if isinstance(endpoint, dict) and endpoint.get('id')
+            }
+            for endpoint in existing_model_endpoints:
+                if not isinstance(endpoint, dict):
+                    continue
+                endpoint_id = endpoint.get('id')
+                if endpoint_id and endpoint_id not in saved_endpoint_ids:
+                    keyvault_model_endpoint_delete_helper(endpoint, endpoint_id, scope='global')
+
+            default_model_selection_json = form_data.get('default_model_selection_json', '{}')
+            parsed_default_model_selection = {}
+            try:
+                parsed_default_model_selection_raw = (
+                    json.loads(default_model_selection_json) if default_model_selection_json else {}
+                )
+                if isinstance(parsed_default_model_selection_raw, dict):
+                    parsed_default_model_selection = parsed_default_model_selection_raw
+                else:
+                    raise ValueError("Invalid format: default_model_selection must be an object.")
+            except (json.JSONDecodeError, ValueError) as e:
+                print(f"Error processing default_model_selection_json: {e}")
+                flash(f"Error processing default model selection: {e}. Changes not saved.", 'danger')
+                parsed_default_model_selection = settings.get('default_model_selection', {})
+
+            normalized_default_model_selection = {
+                'endpoint_id': str(parsed_default_model_selection.get('endpoint_id') or '').strip(),
+                'model_id': str(parsed_default_model_selection.get('model_id') or '').strip(),
+                'provider': str(parsed_default_model_selection.get('provider') or '').strip().lower()
+            }
+
+            if not enable_multi_model_endpoints:
+                normalized_default_model_selection = {
+                    'endpoint_id': '',
+                    'model_id': '',
+                    'provider': ''
+                }
+            elif normalized_default_model_selection['endpoint_id'] and normalized_default_model_selection['model_id']:
+                endpoint_cfg = next(
+                    (e for e in parsed_model_endpoints if e.get('id') == normalized_default_model_selection['endpoint_id']),
+                    None
+                )
+                if not endpoint_cfg or not endpoint_cfg.get('enabled', True):
+                    flash('Default model endpoint is not available. Please select a valid endpoint.', 'warning')
+                    normalized_default_model_selection = {
+                        'endpoint_id': '',
+                        'model_id': '',
+                        'provider': ''
+                    }
+                else:
+                    models = endpoint_cfg.get('models', []) or []
+                    model_cfg = next(
+                        (m for m in models if m.get('id') == normalized_default_model_selection['model_id']),
+                        None
+                    )
+                    if not model_cfg or not model_cfg.get('enabled', True):
+                        flash('Default model is not available. Please select a valid model.', 'warning')
+                        normalized_default_model_selection = {
+                            'endpoint_id': '',
+                            'model_id': '',
+                            'provider': ''
+                        }
+                    else:
+                        endpoint_provider = (endpoint_cfg.get('provider') or '').strip().lower()
+                        if endpoint_provider:
+                            normalized_default_model_selection['provider'] = endpoint_provider
+            else:
+                normalized_default_model_selection = {
+                    'endpoint_id': '',
+                    'model_id': '',
+                    'provider': ''
+                }
 
             # --- Extract banner fields from form_data ---
             classification_banner_enabled = form_data.get('classification_banner_enabled') == 'on'
@@ -676,6 +913,45 @@ def register_route_frontend_admin_settings(app):
                 flash('Invalid Front Door URL format. Please provide a valid HTTP/HTTPS URL.', 'danger')
                 front_door_url = ''
 
+            # --- Chunk Size Overrides ---
+            chunk_size_defaults = get_chunk_size_defaults()
+            existing_chunk_sizes = settings.get('chunk_size', {}) if isinstance(settings, dict) else {}
+            chunk_size_cap = get_chunk_size_cap(settings)
+            enable_chunk_size_override = form_data.get('enable_chunk_size_override') == 'on'
+            normalized_chunk_sizes = {}
+            chunk_size_warning_keys = []
+
+            for key, meta in chunk_size_defaults.items():
+                field_name = f"chunk_size_{key}"
+                incoming_raw = form_data.get(field_name, '')
+                stored_meta = existing_chunk_sizes.get(key, {}) if isinstance(existing_chunk_sizes, dict) else {}
+
+                try:
+                    parsed_value = int(incoming_raw) if incoming_raw not in [None, ''] else int(stored_meta.get('value', meta.get('value', 1)))
+                except Exception:
+                    parsed_value = meta.get('value', 1)
+
+                sanitized_value = max(1, parsed_value)
+                if sanitized_value > chunk_size_cap:
+                    chunk_size_warning_keys.append(key.upper())
+                sanitized_value = min(sanitized_value, chunk_size_cap)
+
+                normalized_chunk_sizes[key] = {
+                    'value': sanitized_value,
+                    'unit': stored_meta.get('unit', meta.get('unit', 'words'))
+                }
+
+            chunk_size_changed = (
+                enable_chunk_size_override != settings.get('enable_chunk_size_override', False)
+                or normalized_chunk_sizes != existing_chunk_sizes
+            )
+
+            if chunk_size_warning_keys:
+                flash(
+                    f"Chunk sizes capped at {chunk_size_cap} for: {', '.join(chunk_size_warning_keys)}.",
+                    'warning'
+                )
+
             # --- Construct new_settings Dictionary ---
             new_settings = {
                 # Logging
@@ -722,6 +998,11 @@ def register_route_frontend_admin_settings(app):
                 'azure_openai_gpt_resource_group': form_data.get('azure_openai_gpt_resource_group', '').strip(),
                 'azure_openai_gpt_key': form_data.get('azure_openai_gpt_key', '').strip(), # Consider encryption/decryption here if needed
                 'gpt_model': gpt_model_obj,
+                'enable_multi_model_endpoints': enable_multi_model_endpoints,
+                'model_endpoints': parsed_model_endpoints,
+                'default_model_selection': normalized_default_model_selection,
+                'multi_endpoint_migrated_at': migrated_at,
+                'multi_endpoint_migration_notice': migration_notice,
                 'azure_apim_gpt_endpoint': form_data.get('azure_apim_gpt_endpoint', '').strip(),
                 'azure_apim_gpt_subscription_key': form_data.get('azure_apim_gpt_subscription_key', '').strip(),
                 'azure_apim_gpt_deployment': form_data.get('azure_apim_gpt_deployment', '').strip(),
@@ -883,6 +1164,8 @@ def register_route_frontend_admin_settings(app):
                 'enable_ai_search_apim': form_data.get('enable_ai_search_apim') == 'on',
                 'azure_apim_ai_search_endpoint': form_data.get('azure_apim_ai_search_endpoint', '').strip(),
                 'azure_apim_ai_search_subscription_key': form_data.get('azure_apim_ai_search_subscription_key', '').strip(),
+                'enable_chunk_size_override': enable_chunk_size_override,
+                'chunk_size': normalized_chunk_sizes,
 
                 # Extract (Doc Intelligence Direct & APIM)
                 'azure_document_intelligence_endpoint': form_data.get('azure_document_intelligence_endpoint', '').strip(),
@@ -1213,6 +1496,34 @@ def register_route_frontend_admin_settings(app):
                     initialize_clients(updated_settings_for_file) # Important - reinitialize clients with new settings
                 else:
                     print("ERROR: Could not fetch settings after update to ensure logo/favicon files.")
+
+                if chunk_size_changed:
+                    try:
+                        log_general_admin_action(
+                            admin_user_id=user_id,
+                            admin_email=admin_email,
+                            action='chunk_size_settings_updated',
+                            description='Updated chunk size overrides for document processing.',
+                            additional_context={
+                                'override_enabled': enable_chunk_size_override,
+                                'chunk_size_cap': chunk_size_cap,
+                                'chunk_sizes': normalized_chunk_sizes
+                            }
+                        )
+                    except Exception as e:
+                        print(f"Warning logging chunk size admin action: {e}")
+
+                    try:
+                        broadcast_system_notification(
+                            title="Document chunk sizes updated",
+                            message="Admins updated chunk size defaults. New uploads will use the latest limits.",
+                            metadata={
+                                'override_enabled': enable_chunk_size_override,
+                                'chunk_size_cap': chunk_size_cap
+                            }
+                        )
+                    except Exception as e:
+                        print(f"Warning sending chunk size notification: {e}")
 
             else:
                 flash("Failed to update admin settings.", "danger")

@@ -148,7 +148,9 @@ function getCurrentModelName() {
     if (!modelSelect || !modelSelect.value) {
         return null;
     }
-    return modelSelect.value;
+
+    const selectedOption = modelSelect.options[modelSelect.selectedIndex];
+    return selectedOption?.dataset?.modelId || selectedOption?.dataset?.deploymentName || modelSelect.value;
 }
 
 /**

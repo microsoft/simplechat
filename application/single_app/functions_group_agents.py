@@ -116,6 +116,9 @@ def save_group_agent(group_id: str, agent_data: Dict[str, Any], user_id: Optiona
     payload.setdefault("azure_agent_apim_gpt_subscription_key", "")
     payload.setdefault("azure_agent_apim_gpt_deployment", "")
     payload.setdefault("azure_agent_apim_gpt_api_version", "")
+    payload.setdefault("model_endpoint_id", "")
+    payload.setdefault("model_id", "")
+    payload.setdefault("model_provider", "")
     
     # Remove empty reasoning_effort to avoid schema validation errors
     if payload.get("reasoning_effort") == "":
@@ -224,6 +227,9 @@ def _clean_agent(agent: Dict[str, Any]) -> Dict[str, Any]:
     cleaned.setdefault("is_global", False)
     cleaned.setdefault("is_group", True)
     cleaned.setdefault("agent_type", "local")
+    cleaned.setdefault("model_endpoint_id", "")
+    cleaned.setdefault("model_id", "")
+    cleaned.setdefault("model_provider", "")
     # Remove empty reasoning_effort to prevent validation errors
     if cleaned.get("reasoning_effort") == "":
         cleaned.pop("reasoning_effort", None)

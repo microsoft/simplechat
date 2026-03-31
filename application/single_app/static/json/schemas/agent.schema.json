@@ -57,6 +57,18 @@
         "azure_agent_apim_gpt_api_version": {
           "type": "string"
         },
+        "model_endpoint_id": {
+          "type": "string",
+          "description": "Selected model endpoint ID when using multi-endpoint routing."
+        },
+        "model_id": {
+          "type": "string",
+          "description": "Selected model ID from the multi-endpoint catalog."
+        },
+        "model_provider": {
+          "type": "string",
+          "description": "Model provider for the selected multi-endpoint model (aoai, aifoundry, or new_foundry)."
+        },
         "enable_agent_gpt_apim": {
           "type": "boolean"
         },
@@ -81,7 +93,7 @@
         },
         "agent_type": {
           "type": "string",
-          "enum": ["local", "aifoundry"],
+          "enum": ["local", "aifoundry", "new_foundry"],
           "description": "Type of agent to instantiate."
         },
         "instructions": {
@@ -140,6 +152,29 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "agent_type": { "const": "new_foundry" }
+            }
+          },
+          "then": {
+            "required": [
+              "azure_openai_gpt_api_version",
+              "other_settings"
+            ],
+            "properties": {
+              "actions_to_load": {
+                "type": "array",
+                "maxItems": 0,
+                "description": "New Foundry agents manage tools within Azure and must not specify local plugins."
+              },
+              "other_settings": {
+                "$ref": "#/definitions/NewFoundrySettingsWrapper"
+              }
+            }
+          }
         }
       ]
     },
@@ -149,6 +184,9 @@
       "properties": {
         "azure_ai_foundry": {
           "$ref": "#/definitions/AzureAIFoundrySettings"
+        },
+        "new_foundry": {
+          "$ref": "#/definitions/NewFoundrySettings"
         }
       }
     },
@@ -175,6 +213,54 @@
         }
       },
       "required": ["agent_id"]
+    },
+    "NewFoundrySettingsWrapper": {
+      "type": "object",
+      "required": ["new_foundry"],
+      "properties": {
+        "new_foundry": {
+          "$ref": "#/definitions/NewFoundrySettings"
+        }
+      }
+    },
+    "NewFoundrySettings": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "application_id": {
+          "type": "string",
+          "description": "Application identifier for the new Foundry experience. Usually application_name:version."
+        },
+        "application_name": {
+          "type": "string",
+          "description": "Application name from the new Foundry portal."
+        },
+        "application_version": {
+          "type": "string",
+          "description": "Application version from the new Foundry portal."
+        },
+        "endpoint": {
+          "type": "string",
+          "description": "Project endpoint root for the new Foundry application."
+        },
+        "project_name": {
+          "type": "string",
+          "description": "Foundry project name when endpoint does not already include /api/projects/."
+        },
+        "responses_api_version": {
+          "type": "string",
+          "description": "API version used for the protocols/openai/responses call."
+        },
+        "activity_api_version": {
+          "type": "string",
+          "description": "Optional API version for the activity protocol endpoint."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Optional helper text for administrators managing new Foundry applications."
+        }
+      },
+      "required": ["application_id", "responses_api_version"]
     }
   }
 }

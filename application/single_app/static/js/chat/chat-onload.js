@@ -5,7 +5,7 @@ import { loadConversations, selectConversation, ensureConversationPresent, creat
 import { loadAllDocs, populateDocumentSelectScope, handleDocumentSelectChange, loadTagsForScope, filterDocumentsBySelectedTags, setScopeFromUrlParam } from "./chat-documents.js";
 import { getUrlParameter } from "./chat-utils.js"; // Assuming getUrlParameter is in chat-utils.js now
 import { loadUserPrompts, loadGroupPrompts, initializePromptInteractions } from "./chat-prompts.js";
-import { initializeModelSelector } from "./chat-model-selector.js";
+import { initializeModelSelector, populateModelDropdown } from "./chat-model-selector.js";
 import { loadUserSettings } from "./chat-layout.js";
 import { showToast } from "./chat-toast.js";
 import { initConversationInfoButton } from "./chat-conversation-info-button.js";
@@ -82,16 +82,29 @@ window.addEventListener('DOMContentLoaded', async () => {
   try {
       const userSettings = await userSettingsPromise;
       
-      // Set the preferred model if available
-      if (userSettings && userSettings.preferredModelDeployment) {
-          const modelSelect = document.getElementById("model-select");
-          if (modelSelect) {
-              console.log(`Setting preferred model: ${userSettings.preferredModelDeployment}`);
-              modelSelect.value = userSettings.preferredModelDeployment;
-          }
-      }
+                const preferredModelId = userSettings?.preferredModelId;
+                const preferredModelDeployment = userSettings?.preferredModelDeployment;
 
-      initializeModelSelector();
+        // Multi-endpoint migration notice
+        const notice = window.multiEndpointNotice || {};
+        const noticeEl = document.getElementById("multi-endpoint-notice");
+        const dismissBtn = document.getElementById("dismiss-multi-endpoint-notice");
+        if (notice?.enabled && noticeEl && !userSettings?.dismissedMultiEndpointNotice) {
+          noticeEl.classList.remove("d-none");
+          if (dismissBtn) {
+            dismissBtn.addEventListener("click", async () => {
+              noticeEl.classList.add("d-none");
+              await saveUserSetting({ dismissedMultiEndpointNotice: true });
+            });
+          }
+        }
+
+            initializeModelSelector();
+            await populateModelDropdown({
+                preferredModelId,
+                preferredModelDeployment,
+                preserveCurrentSelection: false,
+            });
       initializeReasoningToggle(userSettings);
 
       const [docsResult, userPromptsResult, groupPromptsResult] = await Promise.all([

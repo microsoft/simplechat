@@ -345,9 +345,9 @@ function _renderSummaryStep(container) {
 
     if (summaryModelSelect && hasModelOptions) {
         summaryModelSelect.value = defaultSummaryModel || summaryModelSelect.value;
-        summaryModelDeployment = summaryModelSelect.value;
+        summaryModelDeployment = summaryModelSelect.options[summaryModelSelect.selectedIndex]?.dataset?.deploymentName || summaryModelSelect.value;
         summaryModelSelect.addEventListener('change', () => {
-            summaryModelDeployment = summaryModelSelect.value;
+            summaryModelDeployment = summaryModelSelect.options[summaryModelSelect.selectedIndex]?.dataset?.deploymentName || summaryModelSelect.value;
         });
     }
 
@@ -359,7 +359,7 @@ function _renderSummaryStep(container) {
             }
             if (includeSummaryIntro && summaryModelSelect && !summaryModelSelect.value) {
                 summaryModelSelect.value = _getDefaultSummaryModel();
-                summaryModelDeployment = summaryModelSelect.value;
+                summaryModelDeployment = summaryModelSelect.options[summaryModelSelect.selectedIndex]?.dataset?.deploymentName || summaryModelSelect.value;
             }
         });
     }

@@ -84,12 +84,12 @@ function renderAgentsTable(agentsList) {
     const truncatedDesc = truncateDescription(description, 90);
     const isGlobal = agent.is_global;
 
-    // Action buttons — Chat + View always, Edit/Delete for non-global
-    let actionButtons = `<button class="btn btn-sm btn-primary chat-agent-btn me-1" data-name="${escapeHtml(agent.name)}" title="Chat with this agent">
-        <i class="bi bi-chat-dots me-1"></i>Chat
-      </button>
-      <button class="btn btn-sm btn-outline-info view-agent-btn me-1" data-name="${escapeHtml(agent.name)}" title="View details">
+    // Match group workspace ordering in table view: View, Chat, Edit, Delete.
+    let actionButtons = `<button class="btn btn-sm btn-outline-info view-agent-btn me-1" data-name="${escapeHtml(agent.name)}" title="View details">
         <i class="bi bi-eye"></i>
+      </button>
+      <button class="btn btn-sm btn-primary chat-agent-btn me-1" data-name="${escapeHtml(agent.name)}" title="Chat with this agent">
+        <i class="bi bi-chat-dots me-1"></i>Chat
       </button>`;
 
     if (!isGlobal) {
@@ -331,7 +331,7 @@ async function deleteAgent(name) {
 // --- Execution: Event Wiring & Initial Load ---
 
 function initializeWorkspaceAgentUI() {
-  window.agentModalStepper = new AgentModalStepper(false);
+  window.agentModalStepper = new AgentModalStepper(false, { settingsEndpoint: '/api/user/agent/settings' });
   attachAgentTableEvents();
 
   // Set up view toggle

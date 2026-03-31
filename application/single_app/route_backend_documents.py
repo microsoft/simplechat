@@ -276,7 +276,7 @@ def register_route_backend_documents(app):
                         file.seek(0, 2)  # Seek to end
                         file_size = file.tell()
                         file.seek(0)  # Reset to beginning
-                    except:
+                    except Exception as ex:
                         file_size = 0
                         
                     log_document_upload(

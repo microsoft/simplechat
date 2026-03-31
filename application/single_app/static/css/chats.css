@@ -52,8 +52,8 @@
 
 .chat-toolbar {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-wrap: nowrap;
+  align-items: flex-end;
   gap: 0.75rem;
 }
 
@@ -68,32 +68,32 @@
 }
 
 .chat-toolbar-actions {
-  flex: 1 1 320px;
+  flex: 1 1 auto;
   flex-wrap: wrap;
 }
 
 .chat-toolbar-controls {
-  flex: 1 1 540px;
-  flex-wrap: wrap;
+  flex: 0 1 auto;
+  flex-wrap: nowrap;
   justify-content: flex-end;
-  align-items: center;
+  align-items: flex-end;
   margin-left: auto;
 }
 
 .chat-toolbar-toggles {
   flex: 0 0 auto;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-end;
 }
 
 .chat-toolbar-selectors {
-  flex: 1 1 460px;
-  flex-wrap: wrap;
+  flex: 0 1 auto;
+  flex-wrap: nowrap;
   justify-content: flex-end;
 }
 
 .chat-toolbar-selector {
-  flex: 1 1 200px;
+  flex: 0 1 200px;
   min-width: 180px;
   max-width: 280px;
 }
@@ -183,26 +183,54 @@
 }
 
 @media (max-width: 1200px) {
-  .chat-toolbar-controls,
-  .chat-toolbar-selectors {
+  .chat-toolbar {
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .chat-toolbar-actions {
+    flex: 1 1 100%;
+  }
+
+  .chat-toolbar-controls {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
     justify-content: flex-start;
     margin-left: 0;
+  }
+
+  .chat-toolbar-selectors {
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .chat-toolbar-toggles {
+    justify-content: flex-start;
   }
 }
 
 @media (max-width: 768px) {
+  .chat-toolbar {
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
   .chat-toolbar-controls {
     flex-basis: 100%;
+    flex-wrap: wrap;
     justify-content: flex-start;
     margin-left: 0;
   }
 
   .chat-toolbar-selectors {
     flex-basis: 100%;
+    flex-wrap: wrap;
   }
 
   .chat-toolbar-toggles {
     width: 100%;
+    flex-wrap: wrap;
   }
 
   .chat-toolbar-selector {

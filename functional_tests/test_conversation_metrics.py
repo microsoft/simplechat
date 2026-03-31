@@ -61,7 +61,7 @@ def test_conversation_metrics_structure():
     try:
         date_obj = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
         last_day_conversation = date_obj.strftime('%m/%d/%Y')
-    except:
+    except Exception as ex:
         last_day_conversation = 'Invalid date'
     
     print(f"   - Most Recent Conversation: {last_day_conversation}")
@@ -126,7 +126,7 @@ def test_date_formatting():
             try:
                 date_obj = datetime.fromisoformat(test_date.replace('Z', '+00:00'))
                 result = date_obj.strftime('%m/%d/%Y')
-            except:
+            except Exception as ex:
                 result = 'Invalid date'
         
         print(f"   Result: {result}")

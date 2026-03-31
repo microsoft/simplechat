@@ -17,6 +17,103 @@ let sidebarShowHiddenConversations = false; // Track if hidden conversations sho
 let isLoadingSidebarConversations = false; // Prevent concurrent sidebar loads
 let pendingSidebarReload = false; // Track if a reload is pending
 
+function getShortGroupLabel(name) {
+  const normalizedName = (name || '').trim();
+  if (!normalizedName) {
+    return 'group';
+  }
+  return normalizedName.slice(0, 8);
+}
+
+function normalizeSidebarChatType(chatType, context = []) {
+  if (chatType === 'personal') {
+    return 'personal_single_user';
+  }
+
+  if (chatType) {
+    return chatType;
+  }
+
+  const primaryContext = Array.isArray(context)
+    ? context.find(item => item?.type === 'primary')
+    : null;
+
+  if (primaryContext?.scope === 'group') {
+    return 'group-single-user';
+  }
+
+  if (primaryContext?.scope === 'public') {
+    return 'public';
+  }
+
+  return 'personal_single_user';
+}
+
+function applySidebarConversationContextAttributes(sidebarItem, chatType, context = []) {
+  if (!sidebarItem) {
+    return;
+  }
+
+  const normalizedChatType = normalizeSidebarChatType(chatType, context);
+  sidebarItem.setAttribute('data-chat-type', normalizedChatType);
+  sidebarItem.removeAttribute('data-group-name');
+  sidebarItem.removeAttribute('data-group-id');
+  sidebarItem.removeAttribute('data-public-workspace-id');
+
+  if (normalizedChatType.startsWith('group')) {
+    const primaryGroupContext = Array.isArray(context)
+      ? context.find(ctx => ctx?.type === 'primary' && ctx?.scope === 'group')
+      : null;
+
+    if (primaryGroupContext) {
+      sidebarItem.setAttribute('data-group-name', primaryGroupContext.name || 'Group');
+      if (primaryGroupContext.id) {
+        sidebarItem.setAttribute('data-group-id', primaryGroupContext.id);
+      }
+    }
+    return;
+  }
+
+  if (normalizedChatType.startsWith('public')) {
+    const primaryPublicContext = Array.isArray(context)
+      ? context.find(ctx => ctx?.type === 'primary' && ctx?.scope === 'public')
+      : null;
+
+    if (primaryPublicContext) {
+      sidebarItem.setAttribute('data-group-name', primaryPublicContext.name || 'Workspace');
+      if (primaryPublicContext.id) {
+        sidebarItem.setAttribute('data-public-workspace-id', primaryPublicContext.id);
+      }
+    }
+  }
+}
+
+function renderSidebarConversationScopeBadge(sidebarItem, chatType, context = []) {
+  const titleWrapper = sidebarItem?.querySelector('.sidebar-conversation-header');
+  if (!titleWrapper) {
+    return;
+  }
+
+  titleWrapper.querySelectorAll('.sidebar-conversation-group-badge').forEach(badge => badge.remove());
+
+  const normalizedChatType = normalizeSidebarChatType(chatType, context);
+  if (!normalizedChatType.startsWith('group')) {
+    return;
+  }
+
+  const primaryGroupContext = Array.isArray(context)
+    ? context.find(ctx => ctx?.type === 'primary' && ctx?.scope === 'group')
+    : null;
+
+  const badge = document.createElement('span');
+  badge.classList.add('badge', 'bg-info', 'sidebar-conversation-group-badge');
+  badge.textContent = getShortGroupLabel(primaryGroupContext?.name);
+  badge.title = primaryGroupContext?.name
+    ? `Group conversation: ${primaryGroupContext.name}`
+    : 'Group conversation';
+  titleWrapper.appendChild(badge);
+}
+
 function createUnreadDotElement() {
   const unreadDot = document.createElement('span');
   unreadDot.classList.add('conversation-unread-dot', 'sidebar-conversation-unread-dot');
@@ -216,19 +313,7 @@ function createSidebarConversationItem(convo) {
   convoItem.classList.add("sidebar-conversation-item");
   convoItem.setAttribute("data-conversation-id", convo.id);
   convoItem.dataset.hasUnreadAssistantResponse = convo.has_unread_assistant_response ? 'true' : 'false';
-  if (convo.chat_type) {
-    convoItem.setAttribute("data-chat-type", convo.chat_type);
-  }
-  let groupName = null;
-  if (Array.isArray(convo.context)) {
-    const primaryGroupContext = convo.context.find(ctx => ctx.type === "primary" && ctx.scope === "group");
-    if (primaryGroupContext) {
-      groupName = primaryGroupContext.name || null;
-    }
-  }
-  if (groupName) {
-    convoItem.setAttribute("data-group-name", groupName);
-  }
+  applySidebarConversationContextAttributes(convoItem, convo.chat_type || '', convo.context || []);
   
   const isPinned = convo.is_pinned || false;
   const isHidden = convo.is_hidden || false;
@@ -283,15 +368,6 @@ function createSidebarConversationItem(convo) {
       titleWrapper.insertBefore(createUnreadDotElement(), originalTitleElement);
     }
 
-    const isGroupConversation = (convo.chat_type && convo.chat_type.startsWith('group')) || groupName;
-    if (isGroupConversation) {
-      const badge = document.createElement('span');
-      badge.classList.add('badge', 'bg-info', 'sidebar-conversation-group-badge');
-      badge.textContent = 'group';
-      badge.title = groupName ? `Group conversation: ${groupName}` : 'Group conversation';
-      titleWrapper.appendChild(badge);
-    }
-    
     // Verify dropdown is still a valid child right before insertion
     try {
       if (headerRow.contains(dropdownElement) && dropdownElement.parentNode === headerRow) {
@@ -311,6 +387,8 @@ function createSidebarConversationItem(convo) {
         console.error('Critical error: Could not append titleWrapper:', appendErr, { convo: convo.id });
       }
     }
+
+    renderSidebarConversationScopeBadge(convoItem, convo.chat_type || '', convo.context || []);
   }
   
   // Add double-click editing to title
@@ -730,6 +808,22 @@ export function updateSidebarConversationTitle(conversationId, newTitle) {
   }
 }
 
+export function applySidebarConversationMetadataUpdate(conversationId, updates = {}) {
+  const sidebarItem = document.querySelector(`.sidebar-conversation-item[data-conversation-id="${conversationId}"]`);
+  if (!sidebarItem) {
+    return;
+  }
+
+  if (updates.title) {
+    updateSidebarConversationTitle(conversationId, updates.title);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(updates, 'chat_type') || Array.isArray(updates.context)) {
+    applySidebarConversationContextAttributes(sidebarItem, updates.chat_type || '', updates.context || []);
+    renderSidebarConversationScopeBadge(sidebarItem, updates.chat_type || '', updates.context || []);
+  }
+}
+
 // Enable inline editing for a conversation title in the sidebar
 export function enableSidebarTitleEdit(conversationId) {
   const sidebarItem = document.querySelector(`.sidebar-conversation-item[data-conversation-id="${conversationId}"]`);
@@ -969,6 +1063,7 @@ window.chatSidebarConversations = {
   setSidebarSelectionMode,
   updateSidebarDeleteButton,
   updateSidebarConversationTitle,
+  applySidebarConversationMetadataUpdate,
   enableSidebarTitleEdit,
   loadSidebarConversations,
   setActiveConversation,
