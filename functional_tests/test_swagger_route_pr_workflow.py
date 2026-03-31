@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Functional test for swagger route PR workflow.
-Version: 0.240.005
-Implemented in: 0.240.005
+Functional test for swagger route PR workflow and parser failure annotations.
+Version: 0.240.003
+Implemented in: 0.240.003
 
 This test ensures that the pull request workflow and checker script validate
-edited Flask route files for @swagger_route(security=get_auth_security()).
+edited Flask route files for @swagger_route(security=get_auth_security())
+and report read or parse failures as GitHub Actions annotations.
 """
 
 import os
@@ -33,8 +34,12 @@ def run_checker_against_temp_file(file_contents):
     """Run the checker script against a temporary Python file."""
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_file = os.path.join(temp_dir, 'temp_route_file.py')
-        with open(temp_file, 'w', encoding='utf-8') as handle:
-            handle.write(file_contents)
+        if isinstance(file_contents, bytes):
+            with open(temp_file, 'wb') as handle:
+                handle.write(file_contents)
+        else:
+            with open(temp_file, 'w', encoding='utf-8') as handle:
+                handle.write(file_contents)
 
         command = [
             sys.executable,
@@ -134,11 +139,79 @@ def test_checker_rejects_missing_swagger_route():
     return True
 
 
+def test_checker_reports_syntax_errors_as_annotations():
+    """Verify the checker reports syntax errors as GitHub Actions annotations."""
+    print('🔍 Testing swagger route checker syntax-error annotation...')
+
+    invalid_python_file = textwrap.dedent(
+        """
+        from flask import Flask
+        from swagger_wrapper import swagger_route, get_auth_security
+
+        app = Flask(__name__)
+
+        @app.route('/api/example', methods=['GET'])
+        @swagger_route(security=get_auth_security())
+        def broken_route()
+            return {'ok': True}
+        """
+    ).strip() + '\n'
+
+    result = run_checker_against_temp_file(invalid_python_file)
+    if result.returncode == 0:
+        print('❌ Checker accepted a route file with invalid Python syntax')
+        return False
+
+    if 'Unable to parse file for swagger route validation' not in result.stdout:
+        print('❌ Checker failed, but did not report a parse annotation')
+        print(result.stdout)
+        print(result.stderr)
+        return False
+
+    if '::error file=' not in result.stdout or ',line=8::' not in result.stdout:
+        print('❌ Checker did not emit a GitHub Actions syntax annotation with a line number')
+        print(result.stdout)
+        print(result.stderr)
+        return False
+
+    print('✅ Checker reports syntax errors as GitHub Actions annotations')
+    return True
+
+
+def test_checker_reports_utf8_read_errors_as_annotations():
+    """Verify the checker reports UTF-8 read failures as GitHub Actions annotations."""
+    print('🔍 Testing swagger route checker UTF-8 read annotation...')
+
+    invalid_utf8_file = b'\xff\xfe\x00route-file'
+
+    result = run_checker_against_temp_file(invalid_utf8_file)
+    if result.returncode == 0:
+        print('❌ Checker accepted a route file that cannot be decoded as UTF-8')
+        return False
+
+    if 'Unable to read file for swagger route validation' not in result.stdout:
+        print('❌ Checker failed, but did not report a read annotation')
+        print(result.stdout)
+        print(result.stderr)
+        return False
+
+    if '::error file=' not in result.stdout or ',line=1::' not in result.stdout:
+        print('❌ Checker did not emit a GitHub Actions read annotation with a fallback line number')
+        print(result.stdout)
+        print(result.stderr)
+        return False
+
+    print('✅ Checker reports UTF-8 read failures as GitHub Actions annotations')
+    return True
+
+
 if __name__ == '__main__':
     tests = [
         test_workflow_exists_and_targets_pull_requests,
         test_checker_accepts_properly_decorated_route,
         test_checker_rejects_missing_swagger_route,
+        test_checker_reports_syntax_errors_as_annotations,
+        test_checker_reports_utf8_read_errors_as_annotations,
     ]
     results = []
 

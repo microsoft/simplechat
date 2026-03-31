@@ -13,6 +13,19 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def get_relative_path(file_path: Path) -> str:
+    """Return a repository-relative path when possible for annotations."""
+    try:
+        return file_path.relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return file_path.as_posix()
+
+
+def format_error_annotation(file_path: Path, message: str, *, line: int = 1) -> str:
+    """Return a GitHub Actions error annotation for one file issue."""
+    return f"::error file={get_relative_path(file_path)},line={line}::{message}"
+
+
 def get_name(node: ast.AST | None) -> str | None:
     """Return a dotted name for supported AST node types."""
     if isinstance(node, ast.Name):
@@ -48,18 +61,9 @@ def is_exact_swagger_decorator(node: ast.AST) -> bool:
     return get_name(keyword.value.func) == 'get_auth_security'
 
 
-def iter_route_issues(file_path: Path) -> list[str]:
-    """Inspect one file and return any swagger integration violations."""
-    try:
-        relative_path = file_path.relative_to(REPO_ROOT).as_posix()
-    except ValueError:
-        relative_path = file_path.as_posix()
-    source = file_path.read_text(encoding='utf-8')
-
-    if '.route(' not in source:
-        return []
-
-    tree = ast.parse(source, filename=str(file_path))
+def iter_route_issues(file_path: Path, tree: ast.AST) -> list[str]:
+    """Inspect one parsed file and return any swagger integration violations."""
+    relative_path = get_relative_path(file_path)
     issues: list[str] = []
 
     for node in ast.walk(tree):
@@ -86,6 +90,35 @@ def iter_route_issues(file_path: Path) -> list[str]:
             )
 
     return issues
+
+
+def inspect_route_file(file_path: Path) -> tuple[bool, list[str]]:
+    """Load and inspect one file, returning whether it defines routes and any issues found."""
+    try:
+        source = file_path.read_text(encoding='utf-8')
+    except (OSError, UnicodeDecodeError) as exc:
+        return False, [
+            format_error_annotation(
+                file_path,
+                f"Unable to read file for swagger route validation: {exc}",
+            )
+        ]
+
+    if '.route(' not in source:
+        return False, []
+
+    try:
+        tree = ast.parse(source, filename=str(file_path))
+    except SyntaxError as exc:
+        return True, [
+            format_error_annotation(
+                file_path,
+                f"Unable to parse file for swagger route validation: {exc.msg}",
+                line=exc.lineno or 1,
+            )
+        ]
+
+    return True, iter_route_issues(file_path, tree)
 
 
 def normalize_paths(paths: list[str]) -> list[Path]:
@@ -116,20 +149,20 @@ def main() -> int:
     checked_files = 0
 
     for file_path in files:
-        issues = iter_route_issues(file_path)
-        if '.route(' in file_path.read_text(encoding='utf-8'):
+        has_routes, issues = inspect_route_file(file_path)
+        if has_routes:
             checked_files += 1
         all_issues.extend(issues)
-
-    if checked_files == 0:
-        print('Changed Python files do not define Flask routes. Swagger route check skipped.')
-        return 0
 
     if all_issues:
         print('Swagger route validation failed:')
         for issue in all_issues:
             print(issue)
         return 1
+
+    if checked_files == 0:
+        print('Changed Python files do not define Flask routes. Swagger route check skipped.')
+        return 0
 
     print(f'Swagger route validation passed for {checked_files} changed route file(s).')
     return 0

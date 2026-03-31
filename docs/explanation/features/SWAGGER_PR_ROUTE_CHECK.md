@@ -1,6 +1,7 @@
 # Swagger PR Route Check
 
 Version implemented: **0.240.005**
+Updated in version: **0.240.003**
 
 ## Overview
 
@@ -20,6 +21,7 @@ Architecture overview:
 - It scopes execution to changes in `application/single_app/**/*.py`, the checker script, and the workflow file itself.
 - The workflow uses `tj-actions/changed-files` to gather only edited Python files.
 - The checker script parses each changed file with Python AST and inspects route decorators on Flask route functions.
+- Files that cannot be read as UTF-8 or parsed as valid Python now fail with GitHub Actions `::error` annotations so pull request failures point at the file and line that blocked validation.
 
 Configuration options:
 
@@ -44,6 +46,7 @@ User workflow:
 - Open or update a pull request.
 - The workflow checks only the changed Python files in the PR.
 - If any changed route omits the required swagger decorator, the job fails with a file and line annotation.
+- If a changed Python file cannot be decoded or parsed, the job fails with a file and line annotation instead of a raw traceback.
 
 Integration points:
 
@@ -54,7 +57,7 @@ Integration points:
 
 Test coverage:
 
-- `functional_tests/test_swagger_route_pr_workflow.py` validates the workflow file exists and the checker script accepts valid routes while rejecting missing swagger decorators.
+- `functional_tests/test_swagger_route_pr_workflow.py` validates the workflow file exists and the checker script accepts valid routes, rejects missing swagger decorators, and emits annotations for syntax or UTF-8 read failures.
 
 Performance considerations:
 
