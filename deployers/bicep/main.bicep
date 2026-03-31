@@ -41,7 +41,7 @@ param azdEnvironmentName string
 
 @description('''The name of the container image to deploy to the web app.
 - should be in the format <repository>:<tag>''')
-param imageName string
+param imageName string = 'simplechat:latest'
 
 @description('''Azure AD Application Client ID for enterprise authentication.
 - Should be the client ID of the registered Azure AD application''')
@@ -85,6 +85,67 @@ param enableDiagLogging bool
 - Default is false''')
 param enablePrivateNetworking bool
 
+@description('''Optional existing virtual network resource ID to reuse when private networking is enabled.
+- May reference a virtual network in the same or another resource group or subscription
+- Leave blank to create a new virtual network''')
+param existingVirtualNetworkId string = ''
+
+@description('''Optional existing subnet resource ID to use for App Service VNet integration.
+- May reference a subnet in the same or another resource group or subscription
+- Required when reusing an existing virtual network because subnets are not created in external virtual networks''')
+param existingAppServiceSubnetId string = ''
+
+@description('''Optional existing subnet resource ID to use for private endpoints.
+- May reference a subnet in the same or another resource group or subscription
+- Required when reusing an existing virtual network because subnets are not created in external virtual networks''')
+param existingPrivateEndpointSubnetId string = ''
+
+@description('''Optional per-zone private DNS configuration for private networking.
+- Leave empty to create all private DNS zones locally and create VNet links automatically
+- For each supported key, provide:
+  - zoneResourceId: Optional existing private DNS zone resource ID to reuse
+  - createVNetLink: Optional bool, defaults to true. Set to false if the customer manages the VNet link separately
+- Supported keys: keyVault, cosmosDb, containerRegistry, aiSearch, blobStorage, cognitiveServices, openAi, webSites''')
+param privateDnsZoneConfigs object = {}
+
+@description('''Optional existing Azure OpenAI or Azure AI Foundry OpenAI-compatible endpoint.
+- Leave blank to deploy a new Azure OpenAI resource
+- Public Azure AI Foundry project endpoints are supported for application configuration, but do not support private endpoint automation''')
+param existingOpenAIEndpoint string = ''
+
+@description('''Optional Video Indexer ARM API version override for custom cloud deployments.
+- Leave blank to use the cloud default
+- Public defaults to 2025-04-01
+- Azure Government defaults to 2024-01-01''')
+param customVideoIndexerArmApiVersion string = ''
+
+@description('''Optional Video Indexer endpoint override for custom cloud deployments.
+- Leave blank to use the public endpoint default''')
+param customVideoIndexerEndpoint string = ''
+
+@description('''Optional existing Azure OpenAI resource name.
+- Provide this when reusing a standard Azure OpenAI resource and you want managed identity permissions or private endpoint integration configured automatically''')
+param existingOpenAIResourceName string = ''
+
+@description('''Optional resource group for an existing Azure OpenAI resource.
+- Used when reusing a standard Azure OpenAI resource across resource groups or subscriptions''')
+param existingOpenAIResourceGroup string = ''
+
+@description('''Optional subscription ID for an existing Azure OpenAI resource.
+- Used when reusing a standard Azure OpenAI resource across subscriptions''')
+param existingOpenAISubscriptionId string = ''
+
+@description('''Azure OpenAI deployment type used for the default GPT and embedding model deployments.
+- Azure Commercial options: Standard, DatazoneStandard, GlobalStandard
+- Azure Government default model deployments use Standard regardless of this selection
+- Ignored when you provide custom gptModels or embeddingModels arrays''')
+@allowed([
+  'Standard'
+  'DatazoneStandard'
+  'GlobalStandard'
+])
+param openAIDeploymentType string
+
 // --- Custom Azure Environment Parameters (for 'custom' azureEnvironment) ---
 @description('Custom blob storage URL suffix, e.g. blob.core.usgovcloudapi.net')
 param customBlobStorageSuffix string = 'blob.${az.environment().suffixes.storage}'
@@ -100,36 +161,10 @@ param customCognitiveServicesScope string = 'https://cognitiveservices.azure.com
 param customSearchResourceUrl string = 'https://search.azure.com'
 
 @description('''Array of GPT model names to deploy to the OpenAI resource.''')
-param gptModels array = [
-  {
-    modelName: 'gpt-4.1'
-    modelVersion: '2025-04-14'
-    skuName: 'GlobalStandard'
-    skuCapacity: 150
-  }
-  {
-    modelName: 'gpt-4o'
-    modelVersion: '2024-11-20'
-    skuName: 'GlobalStandard'
-    skuCapacity: 100
-  }
-]
+param gptModels array = []
 
 @description('''Array of embedding model names to deploy to the OpenAI resource.''')
-param embeddingModels array = [
-  {
-    modelName: 'text-embedding-3-small'
-    modelVersion: '1'
-    skuName: 'GlobalStandard'
-    skuCapacity: 150
-  }
-  {
-    modelName: 'text-embedding-3-large'
-    modelVersion: '1'
-    skuName: 'GlobalStandard'
-    skuCapacity: 150
-  }
-]
+param embeddingModels array = []
 
 //----------------
 // allowed IP addresses for resources
@@ -139,7 +174,7 @@ Leave blank if not using private networking.
 - Format for range: 'x.x.x.x/y'
 - Example:  1.2.3.4, 2.3.4.5/32
 ''')
-param allowedIpAddresses string
+param allowedIpAddresses string = ''
 var allowedIpAddressesSplit = empty(allowedIpAddresses) ? [] : split(allowedIpAddresses!, ',')
 var allowedIpAddressesArray = [for ip in allowedIpAddressesSplit: trim(ip)]
 //----------------
@@ -168,11 +203,55 @@ param deployVideoIndexerService bool
 var rgName = '${appName}-${environment}-rg'
 var requiredTags = { application: appName, environment: environment, 'azd-env-name': azdEnvironmentName }
 var tags = union(requiredTags, specialTags)
-var acrCloudSuffix = cloudEnvironment == 'AzureCloud' ? '.azurecr.io' : '.azurecr.us'
+var isPublicCloud = scCloudEnvironment == 'public'
+var isUsGovernmentCloud = scCloudEnvironment == 'usgovernment'
+var acrCloudSuffix = isPublicCloud ? '.azurecr.io' : '.azurecr.us'
 var acrName = toLower('${appName}${environment}acr')
 var containerRegistry = '${acrName}${acrCloudSuffix}'
 var containerImageName = '${containerRegistry}/${imageName}'
 var vNetName = '${appName}-${environment}-vnet'
+var normalizedLocation = toLower(replace(location, ' ', ''))
+var resolvedOpenAIDeploymentType = isUsGovernmentCloud ? 'Standard' : openAIDeploymentType
+var defaultGptModels = [
+  {
+    modelName: 'gpt-4o'
+    modelVersion: isUsGovernmentCloud ? '2024-05-13' : '2024-11-20'
+    skuName: resolvedOpenAIDeploymentType
+    skuCapacity: 100
+  }
+]
+var defaultEmbeddingModels = isUsGovernmentCloud
+  ? [
+      {
+        modelName: normalizedLocation == 'usgovvirginia' ? 'text-embedding-ada-002' : 'text-embedding-3-small'
+        modelVersion: normalizedLocation == 'usgovvirginia' ? '2' : '1'
+        skuName: resolvedOpenAIDeploymentType
+        skuCapacity: 100
+      }
+    ]
+  : [
+      {
+        modelName: 'text-embedding-3-small'
+        modelVersion: '1'
+        skuName: resolvedOpenAIDeploymentType
+        skuCapacity: 100
+      }
+    ]
+var resolvedGptModels = empty(gptModels) ? defaultGptModels : gptModels
+var resolvedEmbeddingModels = empty(embeddingModels) ? defaultEmbeddingModels : embeddingModels
+var resolvedVideoIndexerArmApiVersion = scCloudEnvironment == 'usgovernment'
+  ? '2024-01-01'
+  : (scCloudEnvironment == 'custom' && !empty(customVideoIndexerArmApiVersion) ? customVideoIndexerArmApiVersion : '2025-04-01')
+var resolvedVideoIndexerEndpoint = scCloudEnvironment == 'usgovernment'
+  ? 'https://api.videoindexer.ai.azure.us'
+  : (scCloudEnvironment == 'custom' && !empty(customVideoIndexerEndpoint) ? customVideoIndexerEndpoint : 'https://api.videoindexer.ai')
+var videoIndexerSupportsOpenAiIntegration = resolvedVideoIndexerArmApiVersion == '2025-04-01'
+var videoIndexerSupportsPrivateEndpoints = resolvedVideoIndexerArmApiVersion == '2025-04-01'
+var hasExistingAppServiceSubnetId = !empty(existingAppServiceSubnetId)
+var hasExistingPrivateEndpointSubnetId = !empty(existingPrivateEndpointSubnetId)
+var inferredVirtualNetworkId = hasExistingAppServiceSubnetId ? split(existingAppServiceSubnetId, '/subnets/')[0] : (hasExistingPrivateEndpointSubnetId ? split(existingPrivateEndpointSubnetId, '/subnets/')[0] : '')
+var resolvedExistingVirtualNetworkId = !empty(existingVirtualNetworkId) ? existingVirtualNetworkId : inferredVirtualNetworkId
+var useExistingVirtualNetwork = enablePrivateNetworking && (!empty(resolvedExistingVirtualNetworkId) || hasExistingAppServiceSubnetId || hasExistingPrivateEndpointSubnetId)
 var allowedIpsForCosmos = union(['0.0.0.0'], allowedIpAddressesArray)
 var cosmosDbIpRules = [for ip in allowedIpsForCosmos: {
   ipAddressOrRange: ip
@@ -181,6 +260,12 @@ var acrIpRules = [for ip in allowedIpAddressesArray: {
   action: 'Allow'
   value: ip
 }]
+#disable-next-line BCP318 // value can't be null when a new virtual network is created
+var resolvedVirtualNetworkId = enablePrivateNetworking ? (useExistingVirtualNetwork ? resolvedExistingVirtualNetworkId : virtualNetwork.outputs.vNetId) : ''
+#disable-next-line BCP318 // value can't be null when a new virtual network is created
+var resolvedAppServiceSubnetId = enablePrivateNetworking ? (useExistingVirtualNetwork ? existingAppServiceSubnetId : virtualNetwork.outputs.appServiceSubnetId) : ''
+#disable-next-line BCP318 // value can't be null when a new virtual network is created
+var resolvedPrivateEndpointSubnetId = enablePrivateNetworking ? (useExistingVirtualNetwork ? existingPrivateEndpointSubnetId : virtualNetwork.outputs.privateNetworkSubnetId) : ''
 
 //=========================================================
 // Resource group deployment
@@ -194,7 +279,7 @@ resource rg 'Microsoft.Resources/resourceGroups@2022-09-01' = {
 //=========================================================
 // Create Virtual Network if private networking is enabled
 //=========================================================
-module virtualNetwork 'modules/virtualNetwork.bicep' = if (enablePrivateNetworking) {
+module virtualNetwork 'modules/virtualNetwork.bicep' = if (enablePrivateNetworking && !useExistingVirtualNetwork) {
   scope: rg
   name: 'virtualNetwork'
   params: {
@@ -291,9 +376,6 @@ module cosmosDB 'modules/cosmosDb.bicep' = {
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
 
-    keyVault: keyVault.outputs.keyVaultName
-    authenticationType: authenticationType
-    configureApplicationPermissions: configureApplicationPermissions
     enablePrivateNetworking: enablePrivateNetworking
     allowedIpAddresses: cosmosDbIpRules
   }
@@ -312,9 +394,6 @@ module acr 'modules/azureContainerRegistry.bicep' = {
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
 
-    keyVault: keyVault.outputs.keyVaultName
-    authenticationType: authenticationType
-    configureApplicationPermissions: configureApplicationPermissions
     enablePrivateNetworking: enablePrivateNetworking
     allowedIpAddresses: acrIpRules
   }
@@ -334,10 +413,6 @@ module searchService 'modules/search.bicep' = {
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
 
-    keyVault: keyVault.outputs.keyVaultName
-    authenticationType: authenticationType
-    configureApplicationPermissions: configureApplicationPermissions
-
     enablePrivateNetworking: enablePrivateNetworking
   }
 }
@@ -355,10 +430,6 @@ module docIntel 'modules/documentIntelligence.bicep' = {
     tags: tags
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
-
-    keyVault: keyVault.outputs.keyVaultName
-    authenticationType: authenticationType
-    configureApplicationPermissions: configureApplicationPermissions
 
     enablePrivateNetworking: enablePrivateNetworking
   }
@@ -400,12 +471,12 @@ module openAI 'modules/openAI.bicep' = {
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
 
-    keyVault: keyVault.outputs.keyVaultName
-    authenticationType: authenticationType
-    configureApplicationPermissions: configureApplicationPermissions
-
-    gptModels: gptModels
-    embeddingModels: embeddingModels
+    existingOpenAIEndpoint: existingOpenAIEndpoint
+    existingOpenAIResourceName: existingOpenAIResourceName
+    existingOpenAIResourceGroup: existingOpenAIResourceGroup
+    existingOpenAISubscriptionId: existingOpenAISubscriptionId
+    gptModels: resolvedGptModels
+    embeddingModels: resolvedEmbeddingModels
 
     enablePrivateNetworking: enablePrivateNetworking
   }
@@ -447,6 +518,7 @@ module appService 'modules/appService.bicep' = {
     cosmosDbName: cosmosDB.outputs.cosmosDbName
     searchServiceName: searchService.outputs.searchServiceName
     openAiServiceName: openAI.outputs.openAIName
+    openAiEndpoint: openAI.outputs.openAIEndpoint
     openAiResourceGroupName: openAI.outputs.openAIResourceGroup
     documentIntelligenceServiceName: docIntel.outputs.documentIntelligenceServiceName
     appInsightsName: applicationInsights.outputs.appInsightsName
@@ -456,8 +528,7 @@ module appService 'modules/appService.bicep' = {
     keyVaultUri: keyVault.outputs.keyVaultUri
 
     enablePrivateNetworking: enablePrivateNetworking
-    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
-    appServiceSubnetId: enablePrivateNetworking? virtualNetwork.outputs.appServiceSubnetId : ''
+    appServiceSubnetId: resolvedAppServiceSubnetId
 
     // --- Custom Azure Environment Parameters (for 'custom' azureEnvironment) ---
     customBlobStorageSuffix: customBlobStorageSuffix
@@ -466,6 +537,7 @@ module appService 'modules/appService.bicep' = {
     customResourceManagerUrl: customResourceManagerUrl
     customCognitiveServicesScope: customCognitiveServicesScope
     customSearchResourceUrl: customSearchResourceUrl
+    customVideoIndexerEndpoint: resolvedVideoIndexerEndpoint
   }
 }
 
@@ -487,10 +559,6 @@ module contentSafety 'modules/contentSafety.bicep' = if (deployContentSafety) {
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
 
-    keyVault: keyVault.outputs.keyVaultName
-    authenticationType: authenticationType
-    configureApplicationPermissions: configureApplicationPermissions
-
     enablePrivateNetworking: enablePrivateNetworking
   }
 }
@@ -509,10 +577,6 @@ module redisCache 'modules/redisCache.bicep' = if (deployRedisCache) {
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
 
-    keyVault: keyVault.outputs.keyVaultName
-    authenticationType: authenticationType
-    configureApplicationPermissions: configureApplicationPermissions
-
     //enablePrivateNetworking: enablePrivateNetworking
   }
 }
@@ -530,10 +594,6 @@ module speechService 'modules/speechService.bicep' = if (deploySpeechService) {
     tags: tags
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
-
-    keyVault: keyVault.outputs.keyVaultName
-    authenticationType: authenticationType
-    configureApplicationPermissions: configureApplicationPermissions
 
     enablePrivateNetworking: enablePrivateNetworking
   }
@@ -555,6 +615,7 @@ module videoIndexerService 'modules/videoIndexer.bicep' = if (deployVideoIndexer
 
     storageAccount: storageAccount.outputs.name
     openAiServiceName: openAI.outputs.openAIName
+    videoIndexerArmApiVersion: resolvedVideoIndexerArmApiVersion
 
     enablePrivateNetworking: enablePrivateNetworking
   }
@@ -575,6 +636,8 @@ module setPermissions 'modules/setPermissions.bicep' = if (configureApplicationP
     cosmosDBName: cosmosDB.outputs.cosmosDbName
     acrName: acr.outputs.acrName
     openAIName: openAI.outputs.openAIName
+    openAIResourceGroupName: openAI.outputs.openAIResourceGroup
+    openAISubscriptionId: openAI.outputs.openAISubscriptionId
     docIntelName: docIntel.outputs.documentIntelligenceServiceName
     storageAccountName: storageAccount.outputs.name
     searchServiceName: searchService.outputs.searchServiceName
@@ -587,6 +650,7 @@ module setPermissions 'modules/setPermissions.bicep' = if (configureApplicationP
     contentSafetyName: deployContentSafety ? contentSafety.outputs.contentSafetyName : ''
     #disable-next-line BCP318 // expect one value to be null
     videoIndexerName: deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerServiceName : ''
+    videoIndexerSupportsOpenAiIntegration: videoIndexerSupportsOpenAiIntegration
   }
 }
 
@@ -598,10 +662,9 @@ module privateNetworking 'modules/privateNetworking.bicep' = if (enablePrivateNe
   scope: rg
   params: {
 
-    #disable-next-line BCP318 // value can't be null based on enablePrivateNetworking condition
-    virtualNetworkId: virtualNetwork.outputs.vNetId
-    #disable-next-line BCP318 // value can't be null based on enablePrivateNetworking condition
-    privateEndpointSubnetId: virtualNetwork.outputs.privateNetworkSubnetId
+    virtualNetworkId: resolvedVirtualNetworkId
+    privateEndpointSubnetId: resolvedPrivateEndpointSubnetId
+    privateDnsZoneConfigs: privateDnsZoneConfigs
 
     location: location
     appName: appName
@@ -615,6 +678,8 @@ module privateNetworking 'modules/privateNetworking.bicep' = if (enablePrivateNe
     docIntelName: docIntel.outputs.documentIntelligenceServiceName
     storageAccountName: storageAccount.outputs.name
     openAIName: openAI.outputs.openAIName
+    openAIResourceGroupName: openAI.outputs.openAIResourceGroup
+    openAISubscriptionId: openAI.outputs.openAISubscriptionId
     webAppName: appService.outputs.name
     
     #disable-next-line BCP318 // expect one value to be null
@@ -623,6 +688,7 @@ module privateNetworking 'modules/privateNetworking.bicep' = if (enablePrivateNe
     speechServiceName: deploySpeechService ? speechService.outputs.speechServiceName : ''
     #disable-next-line BCP318 // expect one value to be null
     videoIndexerName: deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerServiceName : ''
+    videoIndexerSupportsPrivateEndpoints: videoIndexerSupportsPrivateEndpoints
   }
 }
 
@@ -646,9 +712,10 @@ output var_documentIntelligenceServiceEndpoint string = docIntel.outputs.documen
 output var_keyVaultName string = keyVault.outputs.keyVaultName
 output var_keyVaultUri string = keyVault.outputs.keyVaultUri
 output var_openAIEndpoint string = openAI.outputs.openAIEndpoint
-output var_openAIGPTModels array = gptModels
+output var_openAIGPTModels array = resolvedGptModels
 output var_openAIResourceGroup string = openAI.outputs.openAIResourceGroup //may be able to remove
-output var_openAIEmbeddingModels array = embeddingModels
+output var_openAIEmbeddingModels array = resolvedEmbeddingModels
+output var_openAISubscriptionId string = openAI.outputs.openAISubscriptionId
 #disable-next-line BCP318 // expect one value to be null
 output var_redisCacheHostName string = deployRedisCache ? redisCache.outputs.redisCacheHostName : ''
 output var_rgName string = rgName
@@ -656,8 +723,10 @@ output var_searchServiceEndpoint string = searchService.outputs.searchServiceEnd
 #disable-next-line BCP318 // expect one value to be null
 output var_speechServiceEndpoint string = deploySpeechService ? speechService.outputs.speechServiceEndpoint : ''
 output var_subscriptionId string = subscription().subscriptionId
+output var_videoIndexerArmApiVersion string = resolvedVideoIndexerArmApiVersion
 #disable-next-line BCP318 // expect one value to be null
 output var_videoIndexerAccountId string = deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerAccountId : ''
+output var_videoIndexerEndpoint string = resolvedVideoIndexerEndpoint
 #disable-next-line BCP318 // expect one value to be null
 output var_videoIndexerName string = deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerServiceName : ''
 

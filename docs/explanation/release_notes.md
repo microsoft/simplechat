@@ -3,6 +3,15 @@
 # Feature Release
 
 This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.240.001, and the per-version entries continue immediately after it.
+### **(v0.240.004)**
+
+#### New Features
+
+*   **Cross-Cloud Deployment Improvements**
+    *   Updated the Azure CLI, AZD, Bicep, and Terraform deployment paths to better align with the current SimpleChat runtime configuration and reduce post-deployment manual fixes.
+    *   Added optional Azure Video Indexer deployment support with cloud-aware defaults, including the correct endpoint and ARM API version handling for Azure Commercial, Azure Government, and registered custom clouds.
+    *   (Ref: `deployers/azure.yaml`, `deployers/azurecli/deploy-simplechat.ps1`, `deployers/bicep/main.bicep`, `deployers/bicep/modules/videoIndexer.bicep`, `deployers/terraform/main.tf`, `application/single_app/functions_settings.py`)
+### **(v0.239.187)**
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
