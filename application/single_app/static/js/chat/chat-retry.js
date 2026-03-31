@@ -15,21 +15,40 @@ async function populateRetryAgentDropdown() {
     try {
         // Import agent functions dynamically
         const agentsModule = await import('../agents_common.js');
-        const { fetchUserAgents, fetchGroupAgentsForActiveGroup, fetchSelectedAgent, populateAgentSelect } = agentsModule;
+        const { fetchUserAgents, fetchGroupAgentsForActiveGroup, fetchSelectedAgent, populateAgentSelect, getUserSetting } = agentsModule;
         
         // Fetch available agents
+        const activeItem = document.querySelector('.conversation-item.active');
+        const chatType = activeItem?.getAttribute('data-chat-type') || '';
+        const chatState = activeItem?.getAttribute('data-chat-state') || '';
+        const conversationScope = (chatState === 'new' || chatType === 'new')
+            ? null
+            : (chatType ? (chatType.startsWith('group') ? 'group' : 'personal') : 'personal');
+        const itemGroupId = activeItem?.getAttribute('data-group-id') || null;
+        const userActiveGroupId = await getUserSetting('activeGroupOid');
+        const rawGroupId = conversationScope === 'group'
+            ? (itemGroupId || window.groupWorkspaceContext?.activeGroupId || userActiveGroupId || window.activeGroupId || null)
+            : (chatState === 'new' ? (itemGroupId || userActiveGroupId || window.activeGroupId || null) : null);
+        const activeGroupId = rawGroupId && !['none', 'null', 'undefined'].includes(String(rawGroupId).toLowerCase())
+            ? rawGroupId
+            : null;
         const [userAgents, selectedAgent] = await Promise.all([
             fetchUserAgents(),
             fetchSelectedAgent()
         ]);
-        const groupAgents = await fetchGroupAgentsForActiveGroup();
+        const groupAgents = activeGroupId ? await fetchGroupAgentsForActiveGroup(activeGroupId) : [];
         
         // Combine and order agents
-        const combinedAgents = [...userAgents, ...groupAgents];
-        const personalAgents = combinedAgents.filter(agent => !agent.is_global && !agent.is_group);
-        const activeGroupAgents = combinedAgents.filter(agent => agent.is_group);
-        const globalAgents = combinedAgents.filter(agent => agent.is_global);
-        const orderedAgents = [...personalAgents, ...activeGroupAgents, ...globalAgents];
+        const personalAgents = userAgents.filter(agent => !agent.is_global && !agent.is_group);
+        const globalAgents = userAgents.filter(agent => agent.is_global);
+        let orderedAgents = [];
+        if (!conversationScope) {
+            orderedAgents = [...personalAgents, ...groupAgents, ...globalAgents];
+        } else if (conversationScope === 'group') {
+            orderedAgents = [...groupAgents, ...globalAgents];
+        } else {
+            orderedAgents = [...personalAgents, ...globalAgents];
+        }
         
         // Populate retry agent select using shared function
         populateAgentSelect(retryAgentSelect, orderedAgents, selectedAgent);
@@ -120,7 +139,8 @@ export async function handleRetryButtonClick(messageDiv, messageId, messageType)
         let showReasoning = false;
         
         if (retryModeModel && retryModeModel.checked) {
-            const selectedModel = retryModelSelect ? retryModelSelect.value : null;
+            const selectedOption = retryModelSelect ? retryModelSelect.options[retryModelSelect.selectedIndex] : null;
+            const selectedModel = selectedOption?.dataset?.modelId || selectedOption?.dataset?.deploymentName || (retryModelSelect ? retryModelSelect.value : null);
             showReasoning = selectedModel && selectedModel.includes('o1');
         } else if (retryModeAgent && retryModeAgent.checked) {
             // Check if agent uses o1 model (you could enhance this by checking agent config)
@@ -219,7 +239,8 @@ window.executeMessageRetry = function() {
     } else {
         // Model mode - get model and reasoning effort
         const retryModelSelect = document.getElementById('retry-model-select');
-        const selectedModel = retryModelSelect ? retryModelSelect.value : null;
+        const selectedOption = retryModelSelect ? retryModelSelect.options[retryModelSelect.selectedIndex] : null;
+        const selectedModel = selectedOption?.dataset?.deploymentName || (retryModelSelect ? retryModelSelect.value : null);
         requestBody.model = selectedModel;
         
         let reasoningEffort = null;

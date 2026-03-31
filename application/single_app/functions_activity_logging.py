@@ -7,7 +7,7 @@ for analytics and monitoring purposes.
 import logging
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Any
 from functions_appinsights import log_event
 from functions_debug import debug_print
 from config import cosmos_activity_logs_container
@@ -1395,8 +1395,70 @@ def log_retention_policy_force_push(
         debug_print(f"⚠️  Warning: Failed to log retention policy force push: {str(e)}")
 
 
-# === AGENT & ACTION ACTIVITY LOGGING ===
+def log_general_admin_action(
+    admin_user_id: str,
+    admin_email: str,
+    action: str,
+    description: Optional[str] = None,
+    additional_context: Optional[dict] = None
+) -> None:
+    """
+    Log a general admin action to the activity_logs container.
 
+    Args:
+        admin_user_id (str): User ID of the admin performing the action
+        admin_email (str): Email of the admin performing the action
+        action (str): Action name or identifier
+        description (str, optional): Human-readable description for display
+        additional_context (dict, optional): Additional context to store
+    """
+
+    try:
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': admin_user_id,
+            'activity_type': 'admin_action',
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'admin': {
+                'user_id': admin_user_id,
+                'email': admin_email
+            },
+            'action': action,
+            'description': description or action,
+            'workspace_type': 'admin',
+            'workspace_context': {
+                'action': action
+            }
+        }
+
+        if additional_context:
+            activity_record['additional_context'] = additional_context
+
+        cosmos_activity_logs_container.create_item(body=activity_record)
+
+        log_event(
+            message=f"Admin action logged: {action} by {admin_email}",
+            extra=activity_record,
+            level=logging.INFO
+        )
+        debug_print(f"✅ Admin action logged: {action} by {admin_email}")
+
+    except Exception as e:
+        log_event(
+            message=f"Error logging admin action: {str(e)}",
+            extra={
+                'admin_user_id': admin_user_id,
+                'admin_email': admin_email,
+                'action': action,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+        debug_print(f"⚠️  Warning: Failed to log admin action: {str(e)}")
+
+
+# === AGENT & ACTION ACTIVITY LOGGING ===
 def log_agent_creation(
     user_id: str,
     agent_id: str,
@@ -1722,3 +1784,177 @@ def log_action_deletion(
             level=logging.ERROR
         )
         debug_print(f"⚠️  Warning: Failed to log action deletion: {str(e)}")
+
+
+def _log_agent_template_activity(
+    user_id: str,
+    template_id: str,
+    template_name: str,
+    operation: str,
+    scope: str = 'personal',
+    actor: Optional[Dict[str, Any]] = None,
+    template_display_name: Optional[str] = None,
+    template_status: Optional[str] = None,
+    submitter: Optional[Dict[str, Any]] = None,
+    review_reason: Optional[str] = None,
+    review_notes: Optional[str] = None
+) -> None:
+    """Persist an agent template lifecycle activity entry."""
+    try:
+        activity_type_map = {
+            'submit': 'agent_template_submission',
+            'approve': 'agent_template_approval',
+            'reject': 'agent_template_rejection',
+            'delete': 'agent_template_deletion',
+        }
+        activity_type = activity_type_map.get(operation, f'agent_template_{operation}')
+        timestamp = datetime.utcnow().isoformat()
+
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': user_id,
+            'activity_type': activity_type,
+            'timestamp': timestamp,
+            'created_at': timestamp,
+            'entity_type': 'agent_template',
+            'operation': operation,
+            'entity': {
+                'id': template_id,
+                'name': template_name,
+                'display_name': template_display_name or template_name,
+                'status': template_status,
+            },
+            'workspace_type': scope,
+            'workspace_context': {},
+        }
+
+        if actor:
+            activity_record['actor'] = {
+                'user_id': actor.get('userId') or actor.get('user_id') or user_id,
+                'email': actor.get('email'),
+                'display_name': actor.get('displayName') or actor.get('display_name'),
+            }
+
+        if submitter:
+            activity_record['submitter'] = {
+                'user_id': submitter.get('userId') or submitter.get('user_id'),
+                'email': submitter.get('email'),
+                'display_name': submitter.get('displayName') or submitter.get('display_name'),
+            }
+
+        if review_reason:
+            activity_record['review_reason'] = review_reason
+        if review_notes:
+            activity_record['review_notes'] = review_notes
+
+        cosmos_activity_logs_container.create_item(body=activity_record)
+        log_event(
+            message=f"Agent template {operation}: {template_name} ({scope}) by user {user_id}",
+            extra=activity_record,
+            level=logging.INFO
+        )
+        debug_print(f"✅ Agent template {operation} logged: {template_name} ({scope})")
+    except Exception as e:
+        log_event(
+            message=f"Error logging agent template {operation}: {str(e)}",
+            extra={'user_id': user_id, 'template_id': template_id, 'scope': scope, 'error': str(e)},
+            level=logging.ERROR
+        )
+        debug_print(f"⚠️  Warning: Failed to log agent template {operation}: {str(e)}")
+
+
+def log_agent_template_submission(
+    user_id: str,
+    template_id: str,
+    template_name: str,
+    template_display_name: Optional[str] = None,
+    scope: str = 'personal',
+    template_status: Optional[str] = None,
+    submitter: Optional[Dict[str, Any]] = None
+) -> None:
+    _log_agent_template_activity(
+        user_id=user_id,
+        template_id=template_id,
+        template_name=template_name,
+        template_display_name=template_display_name,
+        template_status=template_status,
+        scope=scope,
+        operation='submit',
+        actor=submitter,
+        submitter=submitter,
+    )
+
+
+def log_agent_template_approval(
+    user_id: str,
+    template_id: str,
+    template_name: str,
+    template_display_name: Optional[str] = None,
+    scope: str = 'personal',
+    template_status: Optional[str] = None,
+    approver: Optional[Dict[str, Any]] = None,
+    submitter: Optional[Dict[str, Any]] = None,
+    review_notes: Optional[str] = None
+) -> None:
+    _log_agent_template_activity(
+        user_id=user_id,
+        template_id=template_id,
+        template_name=template_name,
+        template_display_name=template_display_name,
+        template_status=template_status,
+        scope=scope,
+        operation='approve',
+        actor=approver,
+        submitter=submitter,
+        review_notes=review_notes,
+    )
+
+
+def log_agent_template_rejection(
+    user_id: str,
+    template_id: str,
+    template_name: str,
+    template_display_name: Optional[str] = None,
+    scope: str = 'personal',
+    template_status: Optional[str] = None,
+    approver: Optional[Dict[str, Any]] = None,
+    submitter: Optional[Dict[str, Any]] = None,
+    review_reason: Optional[str] = None,
+    review_notes: Optional[str] = None
+) -> None:
+    _log_agent_template_activity(
+        user_id=user_id,
+        template_id=template_id,
+        template_name=template_name,
+        template_display_name=template_display_name,
+        template_status=template_status,
+        scope=scope,
+        operation='reject',
+        actor=approver,
+        submitter=submitter,
+        review_reason=review_reason,
+        review_notes=review_notes,
+    )
+
+
+def log_agent_template_deletion(
+    user_id: str,
+    template_id: str,
+    template_name: str,
+    template_display_name: Optional[str] = None,
+    scope: str = 'personal',
+    template_status: Optional[str] = None,
+    actor: Optional[Dict[str, Any]] = None,
+    submitter: Optional[Dict[str, Any]] = None
+) -> None:
+    _log_agent_template_activity(
+        user_id=user_id,
+        template_id=template_id,
+        template_name=template_name,
+        template_display_name=template_display_name,
+        template_status=template_status,
+        scope=scope,
+        operation='delete',
+        actor=actor,
+        submitter=submitter,
+    )

@@ -221,7 +221,11 @@ function buildAgentViewHtml(agent) {
     const name = escapeHtml(agent.name || "");
     const description = escapeHtml(agent.description || "No description available.");
     const model = escapeHtml(agent.azure_openai_gpt_deployment || agent.model || "Default");
-    const agentType = agent.agent_type === "aifoundry" ? "Azure AI Foundry" : "Local (Semantic Kernel)";
+    const agentType = agent.agent_type === "new_foundry"
+        ? "New Foundry"
+        : agent.agent_type === "aifoundry"
+            ? "Foundry (classic)"
+            : "Local (Semantic Kernel)";
     const rawInstructions = agent.instructions || "No instructions defined.";
     // Render instructions as Markdown (marked + DOMPurify are loaded globally in base.html)
     const renderedInstructions = (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined')

@@ -129,7 +129,7 @@ def test_backend_agents_swagger_integration():
                         security_count += 1
                         print(f"  ✅ Security configured for authentication")
                         break
-                except:
+                except Exception as ex:
                     pass
         
         if security_count > 0:

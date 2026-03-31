@@ -7,15 +7,23 @@ from semantic_kernel.connectors.ai.prompt_execution_settings import PromptExecut
 from semantic_kernel.connectors.ai.chat_completion_client_base import ChatCompletionClientBase
 from semantic_kernel_fact_memory_store import FactMemoryStore
 from semantic_kernel_loader import initialize_semantic_kernel
+from semantic_kernel_plugins.plugin_invocation_thoughts import (
+    format_plugin_invocation_thought,
+    register_plugin_invocation_thought_callback,
+)
 from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
-from foundry_agent_runtime import FoundryAgentInvocationError, execute_foundry_agent
+from foundry_agent_runtime import FoundryAgentInvocationError, execute_foundry_agent, resolve_authority
 import builtins
 import asyncio, types
 import ast
+import inspect
 import json
 import os
+import app_settings_cache
 import queue
 import re
+import traceback
+from urllib.parse import urlparse
 import threading
 from typing import Any, Dict, List, Mapping, Optional
 from config import *
@@ -24,7 +32,7 @@ from functions_authentication import *
 from functions_search import *
 from functions_settings import *
 from functions_agents import get_agent_id_by_name
-from functions_group import find_group_by_id, get_user_role_in_group
+from functions_group import find_group_by_id, get_group_model_endpoints, get_user_role_in_group
 from functions_chat import *
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_conversation_unread import mark_conversation_unread
@@ -33,6 +41,8 @@ from functions_notifications import create_chat_response_notification
 from functions_activity_logging import log_chat_activity, log_conversation_creation, log_token_usage
 from flask import current_app
 from swagger_wrapper import swagger_route, get_auth_security
+from azure.identity import ClientSecretCredential, DefaultAzureCredential, get_bearer_token_provider
+from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
 from functions_thoughts import ThoughtTracker
 
 
@@ -240,7 +250,6 @@ def get_kernel_agents():
     log_event(f"[SKChat] get_kernel_agents - g.kernel_agents: {type(g_agents)} ({len(g_agents) if g_agents else 0} agents), builtins.kernel_agents: {type(builtins_agents)} ({len(builtins_agents) if builtins_agents else 0} agents)", level=logging.INFO)
     return g_agents or builtins_agents
 
-
 def is_personal_chat_conversation(conversation_item):
     """Return True when a conversation belongs to personal chat scope."""
     chat_type = str((conversation_item or {}).get('chat_type') or '').strip().lower()
@@ -289,7 +298,18 @@ class BackgroundStreamBridge:
     def iter_events(self):
         """Yield queued SSE events until the worker finishes."""
         while True:
-            next_item = self._queue.get()
+            try:
+                next_item = self._queue.get(timeout=15)
+            except queue.Empty:
+                with self._state_lock:
+                    consumer_attached = self._consumer_attached
+
+                if not consumer_attached:
+                    break
+
+                yield ': keep-alive\n\n'
+                continue
+
             if next_item is self._sentinel:
                 break
             yield next_item
@@ -308,6 +328,209 @@ class BackgroundStreamBridge:
                 self._queue.get_nowait()
             except queue.Empty:
                 break
+
+
+def _extract_sse_event_payload(event_text):
+    """Parse JSON data lines from a raw SSE event string."""
+    if not isinstance(event_text, str):
+        return None
+
+    data_lines = [
+        line[5:].lstrip()
+        for line in event_text.splitlines()
+        if line.startswith('data:')
+    ]
+    if not data_lines:
+        return None
+
+    try:
+        return json.loads('\n'.join(data_lines))
+    except (TypeError, ValueError):
+        return None
+
+
+class ActiveConversationStreamSession:
+    """Keep an in-flight stream replayable for reconnecting consumers."""
+
+    HEARTBEAT_EVENT = ': keep-alive\n\n'
+
+    def __init__(self, user_id, conversation_id, heartbeat_interval_seconds=15, session_ttl_seconds=600):
+        self.user_id = user_id
+        self.conversation_id = conversation_id
+        self.heartbeat_interval_seconds = heartbeat_interval_seconds
+        self.session_ttl_seconds = session_ttl_seconds
+        self.cache_key = f'{user_id}:{conversation_id}'
+        self._condition = threading.Condition()
+        self._accepting_events = True
+
+    def _build_metadata(self, active):
+        return {
+            'user_id': self.user_id,
+            'conversation_id': self.conversation_id,
+            'active': bool(active),
+            'heartbeat_interval_seconds': self.heartbeat_interval_seconds,
+            'updated_at': datetime.utcnow().isoformat(),
+        }
+
+    def initialize(self):
+        """Initialize the stream session cache state for a new live response."""
+        app_settings_cache.initialize_stream_session_cache(
+            self.cache_key,
+            self._build_metadata(active=True),
+            ttl_seconds=self.session_ttl_seconds,
+        )
+
+    def publish(self, event_text):
+        """Append an SSE event to the replay history and notify listeners."""
+        if event_text is None:
+            return False
+
+        with self._condition:
+            if not self._accepting_events:
+                return False
+
+        payload = _extract_sse_event_payload(event_text)
+        is_terminal_event = isinstance(payload, dict) and (payload.get('done') or payload.get('error'))
+
+        app_settings_cache.append_stream_session_event(
+            self.cache_key,
+            event_text,
+            ttl_seconds=self.session_ttl_seconds,
+        )
+        app_settings_cache.set_stream_session_meta(
+            self.cache_key,
+            self._build_metadata(active=not is_terminal_event),
+            ttl_seconds=self.session_ttl_seconds,
+        )
+
+        with self._condition:
+            self._condition.notify_all()
+            return True
+
+    def close(self):
+        """Mark the session as closed once the worker has no more events."""
+        with self._condition:
+            self._accepting_events = False
+            self._condition.notify_all()
+
+        app_settings_cache.set_stream_session_meta(
+            self.cache_key,
+            self._build_metadata(active=False),
+            ttl_seconds=self.session_ttl_seconds,
+        )
+
+    def is_active(self):
+        metadata = app_settings_cache.get_stream_session_meta(self.cache_key) or {}
+        return bool(metadata.get('active'))
+
+    def is_expired(self, ttl_seconds):
+        metadata = app_settings_cache.get_stream_session_meta(self.cache_key)
+        return metadata is None
+
+    def iter_events(self, start_index=0):
+        """Yield replayed and live SSE events, with heartbeat comments while idle."""
+        next_index = max(int(start_index or 0), 0)
+        last_heartbeat_at = time.time()
+
+        while True:
+            pending_events = app_settings_cache.get_stream_session_events(
+                self.cache_key,
+                start_index=next_index,
+            ) or []
+            if pending_events:
+                for event_to_yield in pending_events:
+                    next_index += 1
+                    last_heartbeat_at = time.time()
+                    yield event_to_yield
+                continue
+
+            metadata = app_settings_cache.get_stream_session_meta(self.cache_key)
+            if not metadata:
+                return
+
+            heartbeat_interval_seconds = int(
+                metadata.get('heartbeat_interval_seconds') or self.heartbeat_interval_seconds
+            )
+            if not metadata.get('active'):
+                return
+
+            remaining_heartbeat_seconds = max(
+                heartbeat_interval_seconds - (time.time() - last_heartbeat_at),
+                0.25,
+            )
+            with self._condition:
+                self._condition.wait(timeout=min(1.0, remaining_heartbeat_seconds))
+
+            if (time.time() - last_heartbeat_at) >= heartbeat_interval_seconds:
+                last_heartbeat_at = time.time()
+                yield self.HEARTBEAT_EVENT
+
+
+class ActiveConversationStreamRegistry:
+    """Track live chat streams per user and conversation for reconnect support."""
+
+    def __init__(self, completed_session_ttl_seconds=600, heartbeat_interval_seconds=15):
+        self.completed_session_ttl_seconds = completed_session_ttl_seconds
+        self.heartbeat_interval_seconds = heartbeat_interval_seconds
+        self._sessions = {}
+        self._lock = threading.Lock()
+
+    def _cleanup_locked(self):
+        expired_keys = [
+            key for key, session in self._sessions.items()
+            if session.is_expired(self.completed_session_ttl_seconds)
+        ]
+        for key in expired_keys:
+            self._sessions.pop(key, None)
+
+    def start_session(self, user_id, conversation_id):
+        if not user_id or not conversation_id:
+            return None
+
+        with self._lock:
+            self._cleanup_locked()
+            key = (user_id, conversation_id)
+            existing_session = self._sessions.get(key)
+            if existing_session and existing_session.is_active():
+                existing_session.close()
+
+            session = ActiveConversationStreamSession(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                heartbeat_interval_seconds=self.heartbeat_interval_seconds,
+                session_ttl_seconds=self.completed_session_ttl_seconds,
+            )
+            self._sessions[key] = session
+            session.initialize()
+            return session
+
+    def get_session(self, user_id, conversation_id, active_only=False):
+        if not user_id or not conversation_id:
+            return None
+
+        with self._lock:
+            self._cleanup_locked()
+            key = (user_id, conversation_id)
+            session = self._sessions.get(key)
+            if not session:
+                metadata = app_settings_cache.get_stream_session_meta(f'{user_id}:{conversation_id}')
+                if not metadata:
+                    return None
+                session = ActiveConversationStreamSession(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    heartbeat_interval_seconds=int(
+                        metadata.get('heartbeat_interval_seconds') or self.heartbeat_interval_seconds
+                    ),
+                    session_ttl_seconds=self.completed_session_ttl_seconds,
+                )
+                self._sessions[key] = session
+            if active_only and not session.is_active():
+                return None
+            return session
+
+
+CHAT_STREAM_REGISTRY = ActiveConversationStreamRegistry()
 
 
 def get_new_plugin_invocations(invocations, baseline_count):
@@ -2060,22 +2283,373 @@ def determine_tabular_source_hint(document_scope, active_group_id=None, active_p
     return 'workspace'
 
 
+def resolve_foundry_scope_for_auth(auth_settings, endpoint=None):
+    """Resolve the correct scope for Foundry-backed inference authentication."""
+    auth_settings = auth_settings or {}
+    custom_scope = str(auth_settings.get('foundry_scope') or '').strip()
+    if custom_scope:
+        return custom_scope
+
+    management_cloud = str(auth_settings.get('management_cloud') or 'public').lower()
+    if management_cloud in ('government', 'usgovernment', 'usgov'):
+        return 'https://ai.azure.us/.default'
+    if management_cloud == 'china':
+        return 'https://ai.azure.cn/.default'
+    if management_cloud == 'germany':
+        return 'https://ai.azure.de/.default'
+
+    endpoint_value = str(endpoint or '').lower()
+    if 'azure.us' in endpoint_value:
+        return 'https://ai.azure.us/.default'
+    if 'azure.cn' in endpoint_value:
+        return 'https://ai.azure.cn/.default'
+    if 'azure.de' in endpoint_value:
+        return 'https://ai.azure.de/.default'
+
+    return 'https://ai.azure.com/.default'
+
+
+def build_streaming_multi_endpoint_client(auth_settings, provider, endpoint, api_version):
+    """Create an inference client for a resolved streaming model endpoint."""
+    auth_settings = auth_settings or {}
+    auth_type = str(auth_settings.get('type') or 'managed_identity').lower()
+    normalized_provider = str(provider or 'aoai').lower()
+
+    if auth_type in ('api_key', 'key'):
+        api_key = auth_settings.get('api_key')
+        if not api_key:
+            raise ValueError('Selected model endpoint is missing an API key.')
+        return AzureOpenAI(
+            api_version=api_version,
+            azure_endpoint=endpoint,
+            api_key=api_key,
+        )
+
+    if auth_type == 'service_principal':
+        credential = ClientSecretCredential(
+            tenant_id=auth_settings.get('tenant_id'),
+            client_id=auth_settings.get('client_id'),
+            client_secret=auth_settings.get('client_secret'),
+            authority=resolve_authority(auth_settings),
+        )
+    else:
+        managed_identity_client_id = auth_settings.get('managed_identity_client_id') or None
+        credential = DefaultAzureCredential(managed_identity_client_id=managed_identity_client_id)
+
+    scope = cognitive_services_scope
+    if normalized_provider in ('aifoundry', 'new_foundry'):
+        scope = resolve_foundry_scope_for_auth(auth_settings, endpoint=endpoint)
+        if auth_type == 'service_principal':
+            debug_print(
+                f"[Streaming][Model Resolution] Multi-endpoint SP scope={scope} provider={normalized_provider}"
+            )
+        else:
+            debug_print(
+                f"[Streaming][Model Resolution] Multi-endpoint MI scope={scope} provider={normalized_provider}"
+            )
+
+    token_provider = get_bearer_token_provider(credential, scope)
+    return AzureOpenAI(
+        api_version=api_version,
+        azure_endpoint=endpoint,
+        azure_ad_token_provider=token_provider,
+    )
+
+
+def get_streaming_model_endpoint_candidates(settings, user_id, active_group_ids=None):
+    """Collect normalized endpoint candidates available to the streaming request."""
+    endpoints = []
+    active_group_ids = active_group_ids or []
+
+    user_settings_doc = get_user_settings(user_id) if user_id else {}
+    user_settings = user_settings_doc.get('settings', {}) if isinstance(user_settings_doc, dict) else {}
+
+    if settings.get('allow_user_custom_endpoints', False):
+        personal_endpoints, _ = normalize_model_endpoints(user_settings.get('personal_model_endpoints', []) or [])
+        endpoints.extend([
+            {**endpoint, '_endpoint_scope': 'user'}
+            for endpoint in personal_endpoints
+            if isinstance(endpoint, dict)
+        ])
+
+    if settings.get('allow_group_custom_endpoints', False):
+        seen_group_ids = set()
+        for group_id in active_group_ids:
+            group_key = str(group_id or '').strip()
+            if not group_key or group_key in seen_group_ids:
+                continue
+            seen_group_ids.add(group_key)
+
+            try:
+                group_endpoints, _ = normalize_model_endpoints(get_group_model_endpoints(group_key) or [])
+            except Exception as group_error:
+                debug_print(
+                    f"[Streaming][Model Resolution] Failed to load group endpoints for group_id={group_key}: {group_error}"
+                )
+                continue
+
+            endpoints.extend([
+                {**endpoint, '_endpoint_scope': 'group'}
+                for endpoint in group_endpoints
+                if isinstance(endpoint, dict)
+            ])
+
+    global_endpoints, _ = normalize_model_endpoints(settings.get('model_endpoints', []) or [])
+    endpoints.extend([
+        {**endpoint, '_endpoint_scope': 'global'}
+        for endpoint in global_endpoints
+        if isinstance(endpoint, dict)
+    ])
+
+    return endpoints
+
+
+def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_group_ids=None, allow_default_selection=False):
+    """Resolve a streaming GPT config from explicit or default multi-endpoint selections."""
+    if not settings.get('enable_multi_model_endpoints', False):
+        return None
+
+    requested_endpoint_id = str(data.get('model_endpoint_id') or '').strip()
+    requested_model_id = str(data.get('model_id') or '').strip()
+    requested_provider = str(data.get('model_provider') or '').strip().lower()
+    requested_deployment = str(data.get('model_deployment') or '').strip()
+
+    selection_source = None
+    if requested_model_id and not requested_endpoint_id:
+        raise ValueError('Selected model endpoint is missing for the streaming request.')
+
+    if requested_endpoint_id:
+        if not (requested_model_id or requested_deployment):
+            raise ValueError('Selected model information is incomplete for the streaming request.')
+        selection_source = 'request'
+    elif allow_default_selection:
+        default_selection = settings.get('default_model_selection', {}) or {}
+        default_endpoint_id = str(default_selection.get('endpoint_id') or '').strip()
+        default_model_id = str(default_selection.get('model_id') or '').strip()
+        default_provider = str(default_selection.get('provider') or '').strip().lower()
+        if default_endpoint_id and default_model_id:
+            requested_endpoint_id = default_endpoint_id
+            requested_model_id = default_model_id
+            requested_provider = requested_provider or default_provider
+            selection_source = 'default'
+        else:
+            return None
+    else:
+        return None
+
+    endpoint_candidates = get_streaming_model_endpoint_candidates(
+        settings,
+        user_id,
+        active_group_ids=active_group_ids,
+    )
+    endpoint_cfg = next((endpoint for endpoint in endpoint_candidates if endpoint.get('id') == requested_endpoint_id), None)
+
+    if not endpoint_cfg:
+        if selection_source == 'request':
+            raise LookupError('Selected model endpoint could not be found.')
+        debug_print(
+            f"[Streaming][Model Resolution] Default model endpoint_id={requested_endpoint_id} was not found. Falling back to legacy streaming config."
+        )
+        return None
+
+    if not endpoint_cfg.get('enabled', True):
+        if selection_source == 'request':
+            raise ValueError('Selected model endpoint is disabled.')
+        debug_print(
+            f"[Streaming][Model Resolution] Default model endpoint_id={requested_endpoint_id} is disabled. Falling back to legacy streaming config."
+        )
+        return None
+
+    endpoint_scope = endpoint_cfg.get('_endpoint_scope', 'global')
+    resolved_endpoint_cfg = dict(endpoint_cfg)
+    resolved_endpoint_cfg.pop('_endpoint_scope', None)
+    resolved_endpoint_cfg = keyvault_model_endpoint_get_helper(
+        resolved_endpoint_cfg,
+        resolved_endpoint_cfg.get('id') or requested_endpoint_id,
+        scope=endpoint_scope,
+        return_type=SecretReturnType.VALUE,
+    )
+
+    models = resolved_endpoint_cfg.get('models', []) or []
+    model_cfg = None
+    if requested_model_id:
+        model_cfg = next((model for model in models if model.get('id') == requested_model_id), None)
+    if model_cfg is None and requested_deployment:
+        model_cfg = next(
+            (
+                model for model in models
+                if str(model.get('deploymentName') or model.get('deployment') or '').strip() == requested_deployment
+            ),
+            None,
+        )
+
+    if not model_cfg:
+        if selection_source == 'request':
+            raise LookupError('Selected model could not be found on the configured endpoint.')
+        debug_print(
+            f"[Streaming][Model Resolution] Default model_id={requested_model_id} was not found on endpoint_id={requested_endpoint_id}. Falling back to legacy streaming config."
+        )
+        return None
+
+    if not model_cfg.get('enabled', True):
+        if selection_source == 'request':
+            raise ValueError('Selected model is disabled.')
+        debug_print(
+            f"[Streaming][Model Resolution] Default model_id={requested_model_id} is disabled. Falling back to legacy streaming config."
+        )
+        return None
+
+    provider = str(resolved_endpoint_cfg.get('provider') or requested_provider or 'aoai').lower()
+    if provider not in ('aoai', 'aifoundry', 'new_foundry'):
+        if selection_source == 'request':
+            raise ValueError('Selected model provider is not supported for streaming.')
+        debug_print(
+            f"[Streaming][Model Resolution] Default provider '{provider}' is not supported for streaming. Falling back to legacy streaming config."
+        )
+        return None
+
+    connection = resolved_endpoint_cfg.get('connection', {}) or {}
+    auth_settings = resolved_endpoint_cfg.get('auth', {}) or {}
+    deployment = str(model_cfg.get('deploymentName') or model_cfg.get('deployment') or '').strip()
+    endpoint = str(connection.get('endpoint') or '').strip()
+    api_version = str(connection.get('openai_api_version') or connection.get('api_version') or '').strip()
+
+    if requested_provider and requested_provider != provider:
+        debug_print(
+            f"[Streaming][Model Resolution] Request provider '{requested_provider}' did not match saved provider '{provider}' for endpoint_id={requested_endpoint_id}."
+        )
+
+    if not endpoint or not api_version or not deployment:
+        if selection_source == 'request':
+            raise ValueError('Selected model endpoint is missing endpoint, API version, or deployment configuration.')
+        debug_print(
+            f"[Streaming][Model Resolution] Default selection for endpoint_id={requested_endpoint_id} is incomplete. Falling back to legacy streaming config."
+        )
+        return None
+
+    gpt_client = build_streaming_multi_endpoint_client(auth_settings, provider, endpoint, api_version)
+    debug_print(
+        f"[Streaming][Model Resolution] Resolved {selection_source} multi-endpoint model | "
+        f"provider={provider} | endpoint_id={requested_endpoint_id} | model_id={model_cfg.get('id')} | "
+        f"deployment={deployment} | api_version={api_version}"
+    )
+    return gpt_client, deployment, provider, endpoint, auth_settings, api_version
+
+
+def classify_agent_stream_retry_mode(stream_error):
+    """Return retry details for agent streaming failures that can recover without tools."""
+    normalized_error = str(stream_error or '').lower()
+
+    if (
+        'auto tool choice requires' in normalized_error
+        or 'tool-call-parser' in normalized_error
+        or 'does not support tool calling' in normalized_error
+        or ('tool choice' in normalized_error and 'parser' in normalized_error)
+    ):
+        return {
+            'mode': 'disable_tools',
+            'reason': 'tool_choice_unsupported',
+        }
+
+    if (
+        '431' in normalized_error
+        or 'header fields too large' in normalized_error
+        or ('request header' in normalized_error and 'too large' in normalized_error)
+        or ('header' in normalized_error and 'too large' in normalized_error)
+    ):
+        return {
+            'mode': 'disable_tools',
+            'reason': 'request_headers_too_large',
+        }
+
+    return None
+
+
+def apply_agent_stream_retry_mode(agent, retry_mode):
+    """Temporarily adjust agent tool settings for a retry attempt."""
+    retry_state = {
+        'function_choice_behavior': None,
+        'execution_settings': [],
+        'service_prompt_settings': None,
+    }
+
+    if agent is None or retry_mode != 'disable_tools':
+        return retry_state
+
+    retry_state['function_choice_behavior'] = getattr(agent, 'function_choice_behavior', None)
+    agent.function_choice_behavior = None
+
+    agent_arguments = getattr(agent, 'arguments', None)
+    execution_settings = getattr(agent_arguments, 'execution_settings', None)
+    if isinstance(execution_settings, dict):
+        for settings in execution_settings.values():
+            if hasattr(settings, 'function_choice_behavior'):
+                retry_state['execution_settings'].append(
+                    (settings, getattr(settings, 'function_choice_behavior', None))
+                )
+                settings.function_choice_behavior = None
+
+    prompt_execution_settings = getattr(getattr(agent, 'service', None), 'prompt_execution_settings', None)
+    if prompt_execution_settings is not None and hasattr(prompt_execution_settings, 'function_choice_behavior'):
+        retry_state['service_prompt_settings'] = (
+            prompt_execution_settings,
+            getattr(prompt_execution_settings, 'function_choice_behavior', None),
+        )
+        prompt_execution_settings.function_choice_behavior = None
+
+    return retry_state
+
+
+def restore_agent_stream_retry_state(agent, retry_state):
+    """Restore any temporary agent retry settings after the stream attempt finishes."""
+    if agent is None or not retry_state:
+        return
+
+    agent.function_choice_behavior = retry_state.get('function_choice_behavior')
+
+    for settings, original_behavior in retry_state.get('execution_settings', []):
+        settings.function_choice_behavior = original_behavior
+
+    service_prompt_settings = retry_state.get('service_prompt_settings')
+    if service_prompt_settings:
+        settings, original_behavior = service_prompt_settings
+        settings.function_choice_behavior = original_behavior
+
+
 def register_route_backend_chats(app):
-    def build_background_stream_response(event_generator_factory):
+    def build_background_stream_response(event_generator_factory, stream_session=None):
         """Run SSE generation in background execution so it survives disconnects."""
         stream_bridge = BackgroundStreamBridge()
+
+        def publish_background_event(event_text):
+            if event_text is None:
+                return False
+
+            if stream_session:
+                stream_session.publish(event_text)
+
+            return stream_bridge.push(event_text)
 
         @copy_current_request_context
         def stream_worker():
             try:
-                for event in event_generator_factory():
-                    stream_bridge.push(event)
+                generator_signature = inspect.signature(event_generator_factory)
+                if 'publish_background_event' in generator_signature.parameters:
+                    event_iterator = event_generator_factory(
+                        publish_background_event=publish_background_event
+                    )
+                else:
+                    event_iterator = event_generator_factory()
+
+                for event in event_iterator:
+                    publish_background_event(event)
             except Exception as e:
                 debug_print(f"[STREAM BACKGROUND] Worker error: {e}")
-                stream_bridge.push(
-                    f"data: {json.dumps({'error': f'Internal server error: {str(e)}'})}\n\n"
-                )
+                error_event = f"data: {json.dumps({'error': f'Internal server error: {str(e)}'})}\n\n"
+                publish_background_event(error_event)
             finally:
+                if stream_session:
+                    stream_session.close()
                 stream_bridge.finish()
 
         executor = current_app.extensions.get('executor')
@@ -2125,9 +2699,14 @@ def register_route_backend_chats(app):
                     'error': 'User not authenticated'
                 }), 401
 
+            # Extract agent_info early to guide GPT initialization decisions
+            request_agent_info = data.get('agent_info')
+
             # Extract from request
             user_message = data.get('message', '')
-            conversation_id = data.get('conversation_id')
+            conversation_id = getattr(g, 'conversation_id', None) or data.get('conversation_id')
+            if conversation_id is not None:
+                conversation_id = str(conversation_id).strip() or None
             hybrid_search_enabled = data.get('hybrid_search')
             web_search_enabled = data.get('web_search_enabled')
             selected_document_id = data.get('selected_document_id')
@@ -2150,7 +2729,7 @@ def register_route_backend_chats(app):
                 except Exception as exc:
                     log_event(
                         f"[result_requires_message_reload] Failed to parse JSON: {str(exc)} | candidate: {trimmed[:200]}",
-                        level=logging.DEBUG
+                        level=logging.WARNING
                     )
                     return None
 
@@ -2198,6 +2777,7 @@ def register_route_backend_chats(app):
                 if isinstance(result, dict):
                     return dict_requires_reload(result)
                 return False
+
             active_group_id = data.get('active_group_id')
             active_group_ids = data.get('active_group_ids', [])
             # Backwards compat: if new list not provided, wrap single ID
@@ -2213,6 +2793,9 @@ def register_route_backend_chats(app):
             # Keep single ID for backwards compat in metadata/context
             active_group_id = active_group_ids[0] if active_group_ids else data.get('active_group_id')
             active_public_workspace_id = data.get('active_public_workspace_id')  # Extract active public workspace ID
+            active_public_workspace_ids = data.get('active_public_workspace_ids', [])
+            if not active_public_workspace_ids and active_public_workspace_id:
+                active_public_workspace_ids = [active_public_workspace_id]
             frontend_gpt_model = data.get('model_deployment')
             top_n_results = data.get('top_n')  # Extract top_n parameter from request
             classifications_to_send = data.get('classifications')  # Extract classifications parameter from request
@@ -2274,11 +2857,38 @@ def register_route_backend_chats(app):
             # GPT & Image generation APIM or direct
             gpt_model = ""
             gpt_client = None
+            gpt_provider = None
+            gpt_endpoint = None
+            gpt_auth = None
+            gpt_api_version = None
             enable_gpt_apim = settings.get('enable_gpt_apim', False)
             enable_image_gen_apim = settings.get('enable_image_gen_apim', False)
-
+            should_use_default_model = (
+                bool(request_agent_info)
+                and settings.get('enable_multi_model_endpoints', False)
+                and not data.get('model_id')
+                and not data.get('model_endpoint_id')
+            )
             try:
-                if enable_gpt_apim:
+                multi_endpoint_config = None
+                if should_use_default_model:
+                    try:
+                        multi_endpoint_config = resolve_default_model_gpt_config(settings)
+                        if multi_endpoint_config:
+                            debug_print("[GPTClient] Using default multi-endpoint model for agent request.")
+                    except Exception as default_exc:
+                        log_event(
+                            f"[GPTClient] Default model selection unavailable: {default_exc}",
+                            level=logging.WARNING,
+                            exceptionTraceback=True
+                        )
+                if multi_endpoint_config is None and request_agent_info:
+                    debug_print("[GPTClient] Skipping multi-endpoint resolution because agent_info is provided.")
+                elif multi_endpoint_config is None:
+                    multi_endpoint_config = resolve_multi_endpoint_gpt_config(settings, data, enable_gpt_apim)
+                if multi_endpoint_config:
+                    gpt_client, gpt_model, gpt_provider, gpt_endpoint, gpt_auth, gpt_api_version = multi_endpoint_config
+                elif enable_gpt_apim:
                     # read raw comma-delimited deployments
                     raw = settings.get('azure_apim_gpt_deployment', '')
                     if not raw:
@@ -2303,10 +2913,16 @@ def register_route_backend_chats(app):
 
                     # otherwise you must pass model_deployment in the request
                     else:
-                        raise ValueError(
-                            "Multiple APIM GPT deployments configured; please include "
-                            "'model_deployment' in your request."
-                        )
+                        if request_agent_info:
+                            gpt_model = apim_models[0]
+                            debug_print(
+                                "[GPTClient] Agent request without model_deployment; defaulting to first APIM deployment."
+                            )
+                        else:
+                            raise ValueError(
+                                "Multiple APIM GPT deployments configured; please include "
+                                "'model_deployment' in your request."
+                            )
 
                     # initialize the APIM client
                     gpt_client = AzureOpenAI(
@@ -2371,7 +2987,8 @@ def register_route_backend_chats(app):
                     'title': 'New Conversation',
                     'context': [],
                     'tags': [],
-                    'strict': False
+                    'strict': False,
+                    'chat_type': 'new'
                 }
                 cosmos_conversations_container.upsert_item(conversation_item)
                 
@@ -2399,7 +3016,8 @@ def register_route_backend_chats(app):
                         'title': 'New Conversation', # Or maybe fetch title differently?
                         'context': [],
                         'tags': [],
-                        'strict': False
+                        'strict': False,
+                        'chat_type': 'new'
                     }
                     # Optionally log that a conversation was expected but not found
                     debug_print(f"Warning: Conversation ID {conversation_id} not found, creating new.")
@@ -2423,12 +3041,12 @@ def register_route_backend_chats(app):
             # Determine the actual chat context based on existing conversation or document usage
             # For existing conversations, use the chat_type from conversation metadata
             # For new conversations, it will be determined during metadata collection
-            actual_chat_type = 'personal'  # Default
+            actual_chat_type = 'personal_single_user'  # Default
             
             if conversation_item.get('chat_type'):
                 # Use existing chat_type from conversation metadata
                 actual_chat_type = conversation_item['chat_type']
-                debug_print(f"Using existing chat_type from conversation: {actual_chat_type}")
+                debug_print(f"[ChatType] Using existing chat_type from conversation: {actual_chat_type}")
             elif conversation_item.get('context'):
                 # Fallback: determine from existing context
                 primary_context = next((ctx for ctx in conversation_item['context'] if ctx.get('type') == 'primary'), None)
@@ -2438,20 +3056,30 @@ def register_route_backend_chats(app):
                     elif primary_context.get('scope') == 'public':
                         actual_chat_type = 'public'
                     elif primary_context.get('scope') == 'personal':
-                        actual_chat_type = 'personal'
-                    debug_print(f"Determined chat_type from existing primary context: {actual_chat_type}")
+                        actual_chat_type = 'personal_single_user'
+                    debug_print(f"[ChatType] Determined chat_type from existing primary context: {actual_chat_type}")
                 else:
-                    # No primary context exists - model-only conversation
-                    actual_chat_type = None  # This will result in no badges
-                    debug_print(f"No primary context found - model-only conversation")
+                    # No primary context exists - default to personal_single_user
+                    actual_chat_type = 'personal_single_user'
+                    debug_print(f"[ChatType] No primary context found - defaulted to personal_single_user")
             else:
                 # New conversation - will be determined by document usage during metadata collection
                 # For now, use the legacy logic as fallback
                 if document_scope == 'group' or (active_group_id and chat_type == 'group'):
-                    actual_chat_type = 'group'
+                    actual_chat_type = 'group-single-user'
                 elif document_scope == 'public':
                     actual_chat_type = 'public'
-                debug_print(f"New conversation - using legacy logic: {actual_chat_type}")
+                else:
+                    actual_chat_type = 'personal_single_user'
+                debug_print(f"[ChatType] New conversation - using legacy logic: {actual_chat_type}")
+
+            # Capture conversation-level group context for downstream agent/model resolution
+            conversation_primary_context = next((ctx for ctx in conversation_item.get('context', []) if ctx.get('type') == 'primary'), None)
+            conversation_group_id = None
+            if conversation_primary_context and conversation_primary_context.get('scope') == 'group':
+                conversation_group_id = conversation_primary_context.get('id')
+            if conversation_group_id:
+                g.conversation_group_id = conversation_group_id
         # region 2 - Append User Message
             # ---------------------------------------------------------------------
             # 2) Append the user message to conversation immediately (or use existing for retry)
@@ -2605,7 +3233,7 @@ def register_route_backend_chats(app):
                                     item=user_id, partition_key=user_id
                                 )
                                 selected_agent_info = user_settings_doc.get('settings', {}).get('selected_agent')
-                            except:
+                            except Exception as ex:
                                 pass
                         
                         if not selected_agent_info:
@@ -3231,7 +3859,7 @@ def register_route_backend_chats(app):
                 elif document_scope == 'public':
                     message_chat_type = 'public'  
                 else:
-                    message_chat_type = 'personal'
+                        message_chat_type = 'personal_single_user'
             else:
                 # No documents used for this message - only model knowledge
                 message_chat_type = 'Model'
@@ -4175,7 +4803,6 @@ def register_route_backend_chats(app):
             enable_semantic_kernel = settings.get('enable_semantic_kernel', False)
             
             # Check if agent_info is provided in request (e.g., from retry with agent selection)
-            request_agent_info = data.get('agent_info')
             force_enable_agents = bool(request_agent_info)  # Force enable agents if agent_info provided
             
             user_enable_agents = user_settings.get('enable_agents', True)  # Default to True for backward compatibility
@@ -4183,7 +4810,12 @@ def register_route_backend_chats(app):
             if force_enable_agents:
                 user_enable_agents = True
                 g.force_enable_agents = True  # Store in Flask g for SK loader to check
-                g.request_agent_name = request_agent_info.get('name') if isinstance(request_agent_info, dict) else request_agent_info
+                if isinstance(request_agent_info, dict):
+                    g.request_agent_info = request_agent_info
+                    g.request_agent_name = request_agent_info.get('name')
+                else:
+                    g.request_agent_info = {'name': request_agent_info}
+                    g.request_agent_name = request_agent_info
                 log_event(f"[SKChat] agent_info provided in request - forcing agent enablement for this request", level=logging.INFO)
             
             enable_key_vault_secret_storage = settings.get('enable_key_vault_secret_storage', False)
@@ -4229,8 +4861,12 @@ def register_route_backend_chats(app):
                     log_event(f"[SKChat] Using agent from request agent_info: {agent_name_to_select}")
                 # Priority 2: Use user settings
                 elif per_user_semantic_kernel:
-                    agent_name_to_select = user_settings.get('selected_agent')
-                    log_event(f"[SKChat] Per-user mode: selected_agent from user_settings: {agent_name_to_select}")
+                    selected_agent_info = user_settings.get('selected_agent')
+                    if isinstance(selected_agent_info, dict):
+                        agent_name_to_select = selected_agent_info.get('name')
+                    else:
+                        agent_name_to_select = selected_agent_info
+                    log_event(f"[SKChat] Per-user mode: selected_agent from user_settings: {selected_agent_info}")
                 # Priority 3: Use global settings
                 else:
                     global_selected_agent_info = settings.get('global_selected_agent')
@@ -4342,19 +4978,14 @@ def register_route_backend_chats(app):
                     thought_tracker.add_thought('generation', f"Sending to '{agent_deployment_name}'")
 
                     # Register callback to write plugin thoughts to Cosmos in real-time
-                    callback_key = f"{user_id}:{conversation_id}"
                     plugin_logger = get_plugin_logger()
-
-                    def on_plugin_invocation(inv):
-                        duration_str = f" ({int(inv.duration_ms)}ms)" if inv.duration_ms else ""
-                        tool_name = f"{inv.plugin_name}.{inv.function_name}"
-                        thought_tracker.add_thought(
-                            'agent_tool_call',
-                            f"Agent called {tool_name}{duration_str}",
-                            detail=f"success={inv.success}"
-                        )
-
-                    plugin_logger.register_callback(callback_key, on_plugin_invocation)
+                    callback_key = register_plugin_invocation_thought_callback(
+                        plugin_logger,
+                        thought_tracker,
+                        user_id,
+                        conversation_id,
+                        actor_label='Agent'
+                    )
 
                     agent_invoke_start_time = time.time()
 
@@ -4471,7 +5102,7 @@ def register_route_backend_chats(app):
                     if isinstance(selected_agent_type, str):
                         selected_agent_type = selected_agent_type.lower()
 
-                    if selected_agent_type == 'aifoundry':
+                    if selected_agent_type in ('aifoundry', 'new_foundry'):
                         def invoke_foundry_agent():
                             foundry_metadata = {
                                 'conversation_id': conversation_id,
@@ -4492,7 +5123,8 @@ def register_route_backend_chats(app):
                         def foundry_agent_success(result):
                             msg = str(result)
                             notice = None
-                            agent_used = getattr(selected_agent, 'name', 'Azure AI Foundry Agent')
+                            foundry_label = 'New Foundry Application' if selected_agent_type == 'new_foundry' else 'Azure AI Foundry Agent'
+                            agent_used = getattr(selected_agent, 'name', foundry_label)
                             actual_model_deployment = (
                                 getattr(selected_agent, 'last_run_model', None)
                                 or getattr(selected_agent, 'deployment_name', None)
@@ -4521,8 +5153,8 @@ def register_route_backend_chats(app):
                                         serializable = {'value': str(citation)}
                                     agent_citations_list.append({
                                         'tool_name': agent_used,
-                                        'function_name': 'azure_ai_foundry_citation',
-                                        'plugin_name': 'azure_ai_foundry',
+                                        'function_name': 'foundry_citation',
+                                        'plugin_name': 'new_foundry' if selected_agent_type == 'new_foundry' else 'azure_ai_foundry',
                                         'function_arguments': serializable,
                                         'function_result': serializable,
                                         'timestamp': datetime.utcnow().isoformat(),
@@ -4552,11 +5184,12 @@ def register_route_backend_chats(app):
                         def foundry_agent_error(e):
                             plugin_logger.deregister_callbacks(callback_key)
                             log_event(
-                                f"Error during Azure AI Foundry agent invocation: {str(e)}",
+                                f"Error during {selected_agent_type} agent invocation: {str(e)}",
                                 extra={
                                     'conversation_id': conversation_id,
                                     'user_id': user_id,
-                                    'agent_id': getattr(selected_agent, 'id', None)
+                                    'agent_id': getattr(selected_agent, 'id', None),
+                                    'agent_type': selected_agent_type,
                                 },
                                 level=logging.ERROR,
                                 exceptionTraceback=True
@@ -4578,39 +5211,52 @@ def register_route_backend_chats(app):
 
                 if kernel:
                     def invoke_kernel():
+                        plugin_logger = get_plugin_logger()
+                        callback_key = register_plugin_invocation_thought_callback(
+                            plugin_logger,
+                            thought_tracker,
+                            user_id,
+                            conversation_id,
+                            actor_label='Kernel'
+                        )
                         chat_history = "\n".join([
                             f"{msg['role']}: {msg['content']}" for msg in conversation_history_for_api
                         ])
-                        chat_func = None
-                        if hasattr(kernel, 'plugins'):
-                            for plugin in kernel.plugins.values():
-                                if hasattr(plugin, 'functions') and 'chat' in plugin.functions:
-                                    chat_func = plugin.functions['chat']
-                                    break
-                        if chat_func:
-                            return asyncio.run(run_sk_call(kernel.invoke, chat_func, input=chat_history))
-                        else:
-                            log_event(
-                                "No dedicated chat action/plugin found. Trying kernel-native chatcompletion via service lookup.",
-                                extra=extra, 
-                                level=logging.WARNING
-                            )
-                            chat_service = kernel.get_service(type=ChatCompletionClientBase)
-                            if chat_service is not None:
-                                chat_hist = ChatHistory()
-                                for msg in conversation_history_for_api:
-                                    chat_hist.add_message({"role": msg["role"], "content": msg["content"]})
-                                settings_obj = PromptExecutionSettings()
-                                async def run_chatcompletion():
-                                    return await chat_service.get_chat_message_contents(chat_hist, settings_obj)
-                                chat_result = asyncio.run(run_chatcompletion())
-                                if chat_result and hasattr(chat_result[0], 'content'):
-                                    return chat_result[0].content
-                                else:
-                                    return str(chat_result)
+                        try:
+                            chat_func = None
+                            if hasattr(kernel, 'plugins'):
+                                for plugin in kernel.plugins.values():
+                                    if hasattr(plugin, 'functions') and 'chat' in plugin.functions:
+                                        chat_func = plugin.functions['chat']
+                                        break
+                            if chat_func:
+                                return asyncio.run(run_sk_call(kernel.invoke, chat_func, input=chat_history))
                             else:
-                                log_event("No chat completion service found in kernel. Falling back to GPT.", extra=extra, level=logging.WARNING)
-                                raise Exception("No chat completion service found in kernel.")
+                                log_event(
+                                    "No dedicated chat action/plugin found. Trying kernel-native chatcompletion via service lookup.",
+                                    extra=extra, 
+                                    level=logging.WARNING
+                                )
+                                chat_service = kernel.get_service(type=ChatCompletionClientBase)
+                                if chat_service is not None:
+                                    chat_hist = ChatHistory()
+                                    for msg in conversation_history_for_api:
+                                        chat_hist.add_message({"role": msg["role"], "content": msg["content"]})
+                                    settings_obj = PromptExecutionSettings()
+
+                                    async def run_chatcompletion():
+                                        return await chat_service.get_chat_message_contents(chat_hist, settings_obj)
+
+                                    chat_result = asyncio.run(run_chatcompletion())
+                                    if chat_result and hasattr(chat_result[0], 'content'):
+                                        return chat_result[0].content
+                                    else:
+                                        return str(chat_result)
+                                else:
+                                    log_event("No chat completion service found in kernel. Falling back to GPT.", extra=extra, level=logging.WARNING)
+                                    raise Exception("No chat completion service found in kernel.")
+                        finally:
+                            plugin_logger.deregister_callbacks(callback_key)
                     def kernel_success(result):
                         msg = '[SK fallback] Running in kernel only mode. Ask your administrator to configure Semantic Kernel for richer responses.'
                         return (str(result), "kernel", "kernel", msg)
@@ -4652,7 +5298,6 @@ def register_route_backend_chats(app):
                 try:
                     response = gpt_client.chat.completions.create(**api_params)
                 except Exception as e:
-                    # Check if error is related to reasoning_effort parameter
                     error_str = str(e).lower()
                     if reasoning_effort and reasoning_effort != 'none' and (
                         'reasoning_effort' in error_str or 
@@ -4660,9 +5305,27 @@ def register_route_backend_chats(app):
                         'invalid_request_error' in error_str
                     ):
                         debug_print(f"Reasoning effort not supported by {gpt_model}, retrying without reasoning_effort...")
-                        # Retry without reasoning_effort
                         api_params.pop('reasoning_effort', None)
                         response = gpt_client.chat.completions.create(**api_params)
+                    elif gpt_provider in ('aifoundry', 'new_foundry') and 'api version not supported' in error_str:
+                        debug_print("Foundry API version not supported. Retrying with fallback versions...")
+                        api_params.pop('reasoning_effort', None)
+                        fallback_versions = get_foundry_api_version_candidates(gpt_api_version, settings)
+                        response = None
+                        last_error = None
+                        for candidate in fallback_versions:
+                            if candidate == gpt_api_version:
+                                continue
+                            try:
+                                debug_print(f"[SKChat] Foundry retry api_version={candidate}")
+                                retry_client = build_multi_endpoint_client(gpt_auth or {}, gpt_provider, gpt_endpoint, candidate)
+                                response = retry_client.chat.completions.create(**api_params)
+                                break
+                            except Exception as retry_exc:
+                                last_error = retry_exc
+                                debug_print(f"[SKChat] Foundry retry failed for api_version={candidate}: {retry_exc}")
+                        if response is None and last_error is not None:
+                            raise last_error
                     else:
                         raise
                 
@@ -4907,6 +5570,7 @@ def register_route_backend_chats(app):
                     conversation_id=conversation_id,
                     user_id=user_id,
                     active_group_id=active_group_id,
+                    active_group_ids=active_group_ids,
                     document_scope=document_scope,
                     selected_document_id=selected_document_id,
                     model_deployment=actual_model_used,
@@ -4916,7 +5580,9 @@ def register_route_backend_chats(app):
                     selected_agent=selected_agent_name,
                     selected_agent_details=user_metadata.get('agent_selection'),
                     search_results=search_results if 'search_results' in locals() else None,
-                    conversation_item=conversation_item
+                    conversation_item=conversation_item,
+                    active_public_workspace_id=active_public_workspace_id,
+                    active_public_workspace_ids=active_public_workspace_ids
                 )
             except Exception as e:
                 debug_print(f"Error collecting conversation metadata: {e}")
@@ -4937,6 +5603,10 @@ def register_route_backend_chats(app):
                 'conversation_id': conversation_id,
                 'conversation_title': conversation_item['title'], # Send updated title
                 'classification': conversation_item.get('classification', []), # Send classifications if any
+                'context': conversation_item.get('context', []),
+                'chat_type': conversation_item.get('chat_type'),
+                'scope_locked': conversation_item.get('scope_locked'),
+                'locked_contexts': conversation_item.get('locked_contexts', []),
                 'model_deployment_name': actual_model_used,
                 'agent_display_name': agent_display_name,
                 'agent_name': agent_name,
@@ -4983,6 +5653,7 @@ def register_route_backend_chats(app):
         """
         from flask import Response, stream_with_context
         import json
+        from queue import Queue, Empty
         
         # IMPORTANT: Parse JSON and get user_id BEFORE entering the generator
         # because request context may not be available inside the generator
@@ -4997,12 +5668,18 @@ def register_route_backend_chats(app):
         compatibility_mode = bool(data.get('image_generation')) or bool(
             data.get('retry_user_message_id') or data.get('edited_user_message_id')
         )
+        requested_conversation_id = str(data.get('conversation_id') or '').strip() or None
+        finalized_conversation_id = requested_conversation_id or str(uuid.uuid4())
+        is_new_stream_conversation = requested_conversation_id is None
+        data['conversation_id'] = finalized_conversation_id
+        stream_session = CHAT_STREAM_REGISTRY.start_session(user_id, finalized_conversation_id)
 
         request_message = (data.get('message') or '').strip()
         request_preview = request_message[:120] + '...' if len(request_message) > 120 else request_message
         debug_print(
             "[Streaming] Incoming /api/chat/stream request | "
-            f"conversation_id={data.get('conversation_id')} | "
+            f"requested_conversation_id={requested_conversation_id} | "
+            f"conversation_id={finalized_conversation_id} | "
             f"compatibility_mode={compatibility_mode} | "
             f"hybrid_search={data.get('hybrid_search')} | "
             f"web_search={data.get('web_search_enabled')} | "
@@ -5044,6 +5721,8 @@ def register_route_backend_chats(app):
         def generate_compatibility_response():
             """Bridge legacy JSON chat handling into a terminal SSE event for parity cases."""
             try:
+                g.conversation_id = finalized_conversation_id
+
                 if data.get('image_generation'):
                     prompt_text = (data.get('message') or '').strip()
                     prompt_preview = prompt_text[:120] + '...' if len(prompt_text) > 120 else prompt_text
@@ -5095,9 +5774,9 @@ def register_route_backend_chats(app):
 
         if compatibility_mode:
             debug_print("[Streaming] Routing request through compatibility bridge")
-            return build_background_stream_response(generate_compatibility_response)
+            return build_background_stream_response(generate_compatibility_response, stream_session=stream_session)
         
-        def generate():
+        def generate(publish_background_event=None):
             try:
                 # Import debug_print for use in generator
                 from functions_debug import debug_print
@@ -5108,7 +5787,7 @@ def register_route_backend_chats(app):
                 
                 # Extract request parameters (same as non-streaming endpoint)
                 user_message = data.get('message', '')
-                conversation_id = data.get('conversation_id')
+                conversation_id = finalized_conversation_id
                 hybrid_search_enabled = data.get('hybrid_search')
                 web_search_enabled = data.get('web_search_enabled')
                 selected_document_id = data.get('selected_document_id')
@@ -5134,10 +5813,17 @@ def register_route_backend_chats(app):
                 # Keep single ID for backwards compat in metadata/context
                 active_group_id = active_group_ids[0] if active_group_ids else data.get('active_group_id')
                 active_public_workspace_id = data.get('active_public_workspace_id')  # Extract active public workspace ID
+                active_public_workspace_ids = data.get('active_public_workspace_ids', [])
+                if not active_public_workspace_ids and active_public_workspace_id:
+                    active_public_workspace_ids = [active_public_workspace_id]
                 frontend_gpt_model = data.get('model_deployment')
+                frontend_model_id = data.get('model_id')
+                frontend_model_endpoint_id = data.get('model_endpoint_id')
+                frontend_model_provider = data.get('model_provider')
                 classifications_to_send = data.get('classifications')
                 chat_type = data.get('chat_type', 'user')
                 reasoning_effort = data.get('reasoning_effort')  # Extract reasoning effort for reasoning models
+                request_agent_info = data.get('agent_info')
 
                 debug_print(
                     "[Streaming] Parsed request payload | "
@@ -5154,6 +5840,9 @@ def register_route_backend_chats(app):
                     f"active_group_ids={len(active_group_ids)} | "
                     f"active_public_workspace_id={active_public_workspace_id} | "
                     f"frontend_model={frontend_gpt_model} | "
+                    f"frontend_model_id={frontend_model_id} | "
+                    f"frontend_model_endpoint_id={frontend_model_endpoint_id} | "
+                    f"frontend_model_provider={frontend_model_provider} | "
                     f"reasoning_effort={reasoning_effort}"
                 )
                 
@@ -5253,10 +5942,34 @@ def register_route_backend_chats(app):
                 # Initialize GPT client (simplified version)
                 gpt_model = ""
                 gpt_client = None
+                gpt_provider = None
+                gpt_endpoint = None
+                gpt_auth = None
+                gpt_api_version = None
                 enable_gpt_apim = settings.get('enable_gpt_apim', False)
+                should_use_default_model = (
+                    bool(request_agent_info)
+                    and settings.get('enable_multi_model_endpoints', False)
+                    and not data.get('model_id')
+                    and not data.get('model_endpoint_id')
+                )
                 
                 try:
-                    if enable_gpt_apim:
+                    streaming_multi_endpoint_config = None
+                    if settings.get('enable_multi_model_endpoints', False):
+                        streaming_multi_endpoint_config = resolve_streaming_multi_endpoint_gpt_config(
+                            settings,
+                            data,
+                            user_id,
+                            active_group_ids=active_group_ids,
+                            allow_default_selection=should_use_default_model,
+                        )
+                        if streaming_multi_endpoint_config and should_use_default_model and not frontend_model_endpoint_id:
+                            debug_print("[GPTClient] Using default multi-endpoint model for agent streaming request.")
+
+                    if streaming_multi_endpoint_config:
+                        gpt_client, gpt_model, gpt_provider, gpt_endpoint, gpt_auth, gpt_api_version = streaming_multi_endpoint_config
+                    elif enable_gpt_apim:
                         raw = settings.get('azure_apim_gpt_deployment', '')
                         if not raw:
                             yield f"data: {json.dumps({'error': 'APIM deployment not configured'})}\n\n"
@@ -5271,10 +5984,14 @@ def register_route_backend_chats(app):
                             gpt_model = frontend_gpt_model
                         else:
                             gpt_model = apim_models[0]
+
+                        gpt_provider = 'aoai'
+                        gpt_endpoint = settings.get('azure_apim_gpt_endpoint')
+                        gpt_api_version = settings.get('azure_apim_gpt_api_version')
                         
                         gpt_client = AzureOpenAI(
-                            api_version=settings.get('azure_apim_gpt_api_version'),
-                            azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
+                            api_version=gpt_api_version,
+                            azure_endpoint=gpt_endpoint,
                             api_key=settings.get('azure_apim_gpt_subscription_key')
                         )
                     else:
@@ -5290,6 +6007,10 @@ def register_route_backend_chats(app):
                         
                         if frontend_gpt_model:
                             gpt_model = frontend_gpt_model
+
+                        gpt_provider = 'aoai'
+                        gpt_endpoint = endpoint
+                        gpt_api_version = api_version
                         
                         if auth_type == 'managed_identity':
                             credential = DefaultAzureCredential()
@@ -5314,7 +6035,10 @@ def register_route_backend_chats(app):
                         return
 
                     debug_print(
-                        f"[Streaming] Initialized model client | model={gpt_model} | enable_gpt_apim={enable_gpt_apim}"
+                        "[Streaming] Initialized model client | "
+                        f"model={gpt_model} | provider={gpt_provider or 'legacy'} | "
+                        f"endpoint_id={frontend_model_endpoint_id or ''} | api_version={gpt_api_version or ''} | "
+                        f"enable_gpt_apim={enable_gpt_apim}"
                     )
                         
                 except Exception as e:
@@ -5322,8 +6046,7 @@ def register_route_backend_chats(app):
                     return
                 
                 # Load or create conversation (simplified)
-                if not conversation_id:
-                    conversation_id = str(uuid.uuid4())
+                if is_new_stream_conversation:
                     conversation_item = {
                         'id': conversation_id,
                         'user_id': user_id,
@@ -5331,7 +6054,8 @@ def register_route_backend_chats(app):
                         'title': 'New Conversation',
                         'context': [],
                         'tags': [],
-                        'strict': False
+                        'strict': False,
+                        'chat_type': 'new'
                     }
                     cosmos_conversations_container.upsert_item(conversation_item)
                     debug_print(f"[Streaming] Created new conversation {conversation_id}")
@@ -5349,15 +6073,26 @@ def register_route_backend_chats(app):
                             'title': 'New Conversation',
                             'context': [],
                             'tags': [],
-                            'strict': False
+                            'strict': False,
+                            'chat_type': 'new'
                         }
                         cosmos_conversations_container.upsert_item(conversation_item)
                         debug_print(f"[Streaming] Conversation {conversation_id} not found; created replacement")
                 
                 # Determine chat type
-                actual_chat_type = 'personal'
+                actual_chat_type = 'personal_single_user'
                 if conversation_item.get('chat_type'):
                     actual_chat_type = conversation_item['chat_type']
+                    if actual_chat_type == 'personal':
+                        actual_chat_type = 'personal_single_user'
+
+                # Capture conversation-level group context for downstream agent/model resolution
+                conversation_primary_context = next((ctx for ctx in conversation_item.get('context', []) if ctx.get('type') == 'primary'), None)
+                conversation_group_id = None
+                if conversation_primary_context and conversation_primary_context.get('scope') == 'group':
+                    conversation_group_id = conversation_primary_context.get('id')
+                if conversation_group_id:
+                    g.conversation_group_id = conversation_group_id
                 
                 # Save user message
                 user_message_id = f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
@@ -5541,10 +6276,30 @@ def register_route_backend_chats(app):
                     user_id=user_id
                 )
 
+                def serialize_thought_event(step_type, content, step_index, message_id=None):
+                    return f"data: {json.dumps({'type': 'thought', 'message_id': message_id or assistant_message_id, 'step_index': step_index, 'step_type': step_type, 'content': content})}\n\n"
+
                 def emit_thought(step_type, content, detail=None):
                     """Add a thought to Cosmos and return an SSE event string."""
                     thought_tracker.add_thought(step_type, content, detail)
-                    return f"data: {json.dumps({'type': 'thought', 'step_index': thought_tracker.current_index - 1, 'step_type': step_type, 'content': content})}\n\n"
+                    return serialize_thought_event(step_type, content, thought_tracker.current_index - 1)
+
+                def publish_live_plugin_thought(thought_payload):
+                    if not callable(publish_background_event):
+                        return
+
+                    step_index = thought_payload.get('step_index')
+                    if step_index is None:
+                        return
+
+                    publish_background_event(
+                        serialize_thought_event(
+                            thought_payload.get('step_type', 'agent_tool_call'),
+                            thought_payload.get('content', ''),
+                            step_index,
+                            message_id=thought_payload.get('message_id') or assistant_message_id,
+                        )
+                    )
 
                 # Content Safety check (matching non-streaming path)
                 blocked = False
@@ -5982,7 +6737,7 @@ def register_route_backend_chats(app):
                     elif document_scope == 'public':
                         message_chat_type = 'public'
                     else:
-                        message_chat_type = 'personal'
+                        message_chat_type = 'personal_single_user'
                 else:
                     message_chat_type = 'Model'
                 
@@ -6169,6 +6924,7 @@ def register_route_backend_chats(app):
                 
                 # Check if agents are enabled and should be used
                 selected_agent = None
+                selected_agent_metadata = None
                 agent_name_used = None
                 agent_display_name_used = None
                 use_agent_streaming = False
@@ -6185,6 +6941,15 @@ def register_route_backend_chats(app):
                             selected_agent_info = user_settings.get('selected_agent')
                             if isinstance(selected_agent_info, dict):
                                 agent_name_to_select = selected_agent_info.get('name')
+                                selected_agent_metadata = {
+                                    'selected_agent': selected_agent_info.get('name'),
+                                    'agent_display_name': selected_agent_info.get('display_name'),
+                                    'is_global': selected_agent_info.get('is_global', False),
+                                    'is_group': selected_agent_info.get('is_group', False),
+                                    'group_id': selected_agent_info.get('group_id'),
+                                    'group_name': selected_agent_info.get('group_name'),
+                                    'agent_id': selected_agent_info.get('id')
+                                }
                             elif isinstance(selected_agent_info, str):
                                 agent_name_to_select = selected_agent_info
                             debug_print(f"[Streaming] Per-user agent name to select: {agent_name_to_select}")
@@ -6192,6 +6957,15 @@ def register_route_backend_chats(app):
                             global_selected_agent_info = settings.get('global_selected_agent')
                             if global_selected_agent_info:
                                 agent_name_to_select = global_selected_agent_info.get('name')
+                                selected_agent_metadata = {
+                                    'selected_agent': global_selected_agent_info.get('name'),
+                                    'agent_display_name': global_selected_agent_info.get('display_name'),
+                                    'is_global': global_selected_agent_info.get('is_global', False),
+                                    'is_group': global_selected_agent_info.get('is_group', False),
+                                    'group_id': global_selected_agent_info.get('group_id'),
+                                    'group_name': global_selected_agent_info.get('group_name'),
+                                    'agent_id': global_selected_agent_info.get('id')
+                                }
                             debug_print(f"[Streaming] Global agent name to select: {agent_name_to_select}")
                         
                         # Find the agent
@@ -6222,6 +6996,16 @@ def register_route_backend_chats(app):
                             use_agent_streaming = True
                             agent_name_used = getattr(selected_agent, 'name', 'agent')
                             agent_display_name_used = getattr(selected_agent, 'display_name', agent_name_used)
+                            if not selected_agent_metadata:
+                                selected_agent_metadata = {
+                                    'selected_agent': agent_name_used,
+                                    'agent_display_name': agent_display_name_used,
+                                    'is_global': getattr(selected_agent, 'is_global', False),
+                                    'is_group': getattr(selected_agent, 'is_group', False),
+                                    'group_id': getattr(selected_agent, 'group_id', None),
+                                    'group_name': getattr(selected_agent, 'group_name', None),
+                                    'agent_id': getattr(selected_agent, 'id', None)
+                                }
                             actual_model_used = getattr(selected_agent, 'deployment_name', None) or gpt_model
                             debug_print(f"--- Streaming from Agent: {agent_name_used} (model: {actual_model_used}) ---")
                         else:
@@ -6242,6 +7026,11 @@ def register_route_backend_chats(app):
                     f"selected_agent={getattr(selected_agent, 'name', None) if selected_agent else None} | "
                     f"model={gpt_model}"
                 )
+                stream_selected_agent_type = (
+                    str(getattr(selected_agent, 'agent_type', 'local') or 'local').lower()
+                    if selected_agent
+                    else 'local'
+                )
                 
                 try:
                     if use_agent_streaming and selected_agent:
@@ -6251,28 +7040,19 @@ def register_route_backend_chats(app):
                         debug_print(f"--- Streaming from Agent: {agent_name_used} ---")
 
                         # Register callback to persist plugin thoughts to Cosmos in real-time
-                        callback_key = f"{user_id}:{conversation_id}"
                         plugin_logger_cb = get_plugin_logger()
+                        callback_key = register_plugin_invocation_thought_callback(
+                            plugin_logger_cb,
+                            thought_tracker,
+                            user_id,
+                            conversation_id,
+                            actor_label='Agent',
+                            live_thought_callback=publish_live_plugin_thought,
+                        )
                         debug_print(
                             f"[Streaming][Plugin Callback] Registering callback for key={callback_key}"
                         )
 
-                        def on_plugin_invocation_streaming(inv):
-                            duration_str = f" ({int(inv.duration_ms)}ms)" if inv.duration_ms else ""
-                            tool_name = f"{inv.plugin_name}.{inv.function_name}"
-                            debug_print(
-                                f"[Streaming][Plugin Callback] Received invocation {tool_name}{duration_str} | success={inv.success}"
-                            )
-                            thought_tracker.add_thought(
-                                'agent_tool_call',
-                                f"Agent called {tool_name}{duration_str}"
-                            )
-
-                        plugin_logger_cb.register_callback(callback_key, on_plugin_invocation_streaming)
-
-                        # Import required classes
-                        from semantic_kernel.contents.chat_message_content import ChatMessageContent
-                        
                         # Convert conversation history to ChatMessageContent (same as non-streaming)
                         agent_message_history = [
                             ChatMessageContent(
@@ -6282,34 +7062,7 @@ def register_route_backend_chats(app):
                             )
                             for msg in conversation_history_for_api
                         ]
-                        
-                        agent_stream_start_time = time.time()
-
-                        # Stream agent responses - collect chunks first then yield
-                        async def stream_agent_async():
-                            """Collect all streaming chunks from agent"""
-                            chunks = []
-                            usage_data = None
-                            
-                            # invoke_stream doesn't need a thread parameter - it works like invoke but streams
-                            async for response in selected_agent.invoke_stream(messages=agent_message_history):
-                                # Extract content from StreamingChatMessageContent
-                                if hasattr(response, 'content') and response.content:
-                                    chunks.append(str(response.content))
-                                elif isinstance(response, str):
-                                    chunks.append(response)
-                                else:
-                                    # Fallback: convert to string
-                                    chunks.append(str(response))
-                                
-                                # Check for usage metadata in the last response
-                                # Don't break early - keep collecting all chunks
-                                if hasattr(response, 'metadata') and isinstance(response.metadata, dict):
-                                    usage = response.metadata.get('usage')
-                                    if usage:
-                                        usage_data = usage  # Keep updating, last one wins
-                            
-                            return chunks, usage_data
+                        stream_usage = None
                         
                         # Execute async streaming
                         try:
@@ -6323,19 +7076,94 @@ def register_route_backend_chats(app):
                             loop = asyncio.new_event_loop()
                             asyncio.set_event_loop(loop)
                         
+                        agent_retry_plan = None
+                        retry_state = None
+
                         try:
-                            # Run streaming and collect chunks and usage
-                            chunks, stream_usage = loop.run_until_complete(stream_agent_async())
+                            for attempt_number in range(2):
+                                try:
+                                    if agent_retry_plan:
+                                        debug_print(
+                                            f"[Streaming][Agent Retry] Retrying agent stream | "
+                                            f"agent={getattr(selected_agent, 'name', None)} | "
+                                            f"model={getattr(selected_agent, 'deployment_name', actual_model_used)} | "
+                                            f"mode={agent_retry_plan['mode']} | "
+                                            f"reason={agent_retry_plan['reason']}"
+                                        )
+
+                                    agent_stream = selected_agent.invoke_stream(messages=agent_message_history)
+                                    while True:
+                                        try:
+                                            response = loop.run_until_complete(agent_stream.__anext__())
+                                        except StopAsyncIteration:
+                                            break
+
+                                        response_metadata = getattr(response, 'metadata', None)
+                                        if isinstance(response_metadata, dict):
+                                            usage = response_metadata.get('usage')
+                                            if usage:
+                                                stream_usage = usage
+                                            response_model = response_metadata.get('model')
+                                            if isinstance(response_model, str) and response_model.strip():
+                                                actual_model_used = response_model.strip()
+
+                                        chunk_content = None
+                                        if hasattr(response, 'content') and response.content:
+                                            chunk_content = str(response.content)
+                                        elif isinstance(response, str) and response:
+                                            chunk_content = response
+
+                                        if chunk_content:
+                                            accumulated_content += chunk_content
+                                            yield f"data: {json.dumps({'content': chunk_content})}\\n\\n"
+
+                                    if agent_retry_plan:
+                                        debug_print(
+                                            f"[Streaming][Agent Retry] Agent retry succeeded | "
+                                            f"agent={getattr(selected_agent, 'name', None)} | "
+                                            f"model={actual_model_used} | "
+                                            f"reason={agent_retry_plan['reason']}"
+                                        )
+                                    break
+                                except Exception as stream_error:
+                                    if agent_retry_plan is None:
+                                        candidate_retry_plan = classify_agent_stream_retry_mode(stream_error)
+                                        if candidate_retry_plan and not accumulated_content and attempt_number == 0:
+                                            agent_retry_plan = candidate_retry_plan
+                                            retry_state = apply_agent_stream_retry_mode(
+                                                selected_agent,
+                                                agent_retry_plan['mode'],
+                                            )
+                                            debug_print(
+                                                f"[Streaming][Agent Retry] Retrying agent stream without tool calling | "
+                                                f"agent={getattr(selected_agent, 'name', None)} | "
+                                                f"model={getattr(selected_agent, 'deployment_name', actual_model_used)} | "
+                                                f"reason={agent_retry_plan['reason']} | "
+                                                f"error={stream_error}"
+                                            )
+                                            continue
+                                    raise
                         except Exception as stream_error:
+                            import traceback
                             plugin_logger_cb.deregister_callbacks(callback_key)
                             debug_print(
                                 f"[Streaming][Plugin Callback] Deregistered callback after streaming error for key={callback_key}"
                             )
+                            debug_print(
+                                f"[Streaming][Agent Retry] Terminal agent streaming error | "
+                                f"retried={agent_retry_plan is not None} | error={stream_error}"
+                            )
                             debug_print(f"❌ Agent streaming error: {stream_error}")
-                            import traceback
                             traceback.print_exc()
                             yield f"data: {json.dumps({'error': f'Agent streaming failed: {str(stream_error)}'})}\n\n"
                             return
+                        finally:
+                            restore_agent_stream_retry_state(selected_agent, retry_state)
+
+                        actual_model_used = (
+                            getattr(selected_agent, 'last_run_model', None)
+                            or actual_model_used
+                        )
 
                         # Emit responded thought with total duration from user message
                         agent_stream_total_duration_s = round(time.time() - request_start_time, 1)
@@ -6347,26 +7175,18 @@ def register_route_backend_chats(app):
                             f"[Streaming][Plugin Callback] Deregistered callback after successful stream for key={callback_key}"
                         )
 
-                        # Emit SSE-only events for streaming UI (Cosmos writes already done by callback)
                         agent_plugin_invocations = plugin_logger_cb.get_invocations_for_conversation(user_id, conversation_id)
-                        for inv in agent_plugin_invocations:
-                            duration_str = f" ({int(inv.duration_ms)}ms)" if inv.duration_ms else ""
-                            tool_name = f"{inv.plugin_name}.{inv.function_name}"
-                            content = f"Agent called {tool_name}{duration_str}"
-                            yield f"data: {json.dumps({'type': 'thought', 'step_index': thought_tracker.current_index, 'step_type': 'agent_tool_call', 'content': content})}\n\n"
-                            thought_tracker.current_index += 1
-
-                        # Yield chunks to frontend
-                        for chunk_content in chunks:
-                            accumulated_content += chunk_content
-                            yield f"data: {json.dumps({'content': chunk_content})}\n\n"
 
                         # Try to capture token usage from stream metadata
                         if stream_usage:
-                            # stream_usage is a CompletionUsage object, not a dict
-                            prompt_tokens = getattr(stream_usage, 'prompt_tokens', 0)
-                            completion_tokens = getattr(stream_usage, 'completion_tokens', 0)
-                            total_tokens = getattr(stream_usage, 'total_tokens', None)
+                            if isinstance(stream_usage, dict):
+                                prompt_tokens = int(stream_usage.get('prompt_tokens') or 0)
+                                completion_tokens = int(stream_usage.get('completion_tokens') or 0)
+                                total_tokens = stream_usage.get('total_tokens')
+                            else:
+                                prompt_tokens = getattr(stream_usage, 'prompt_tokens', 0)
+                                completion_tokens = getattr(stream_usage, 'completion_tokens', 0)
+                                total_tokens = getattr(stream_usage, 'total_tokens', None)
 
                             # Calculate total if not provided
                             if total_tokens is None or total_tokens == 0:
@@ -6454,6 +7274,26 @@ def register_route_backend_chats(app):
                                 'user_id': inv.user_id
                             }
                             agent_citations_list.append(citation)
+
+                        foundry_citations = getattr(selected_agent, 'last_run_citations', []) or []
+                        if stream_selected_agent_type in ('aifoundry', 'new_foundry') and foundry_citations:
+                            foundry_plugin_name = 'new_foundry' if stream_selected_agent_type == 'new_foundry' else 'azure_ai_foundry'
+                            foundry_label = agent_name_used or ('New Foundry Application' if stream_selected_agent_type == 'new_foundry' else 'Azure AI Foundry Agent')
+                            for citation in foundry_citations:
+                                yield emit_thought('agent_tool_call', 'Agent retrieved citation from Azure AI Foundry')
+                                try:
+                                    serializable = json.loads(json.dumps(citation, default=str))
+                                except (TypeError, ValueError):
+                                    serializable = {'value': str(citation)}
+                                agent_citations_list.append({
+                                    'tool_name': foundry_label,
+                                    'function_name': 'foundry_citation',
+                                    'plugin_name': foundry_plugin_name,
+                                    'function_arguments': serializable,
+                                    'function_result': serializable,
+                                    'timestamp': datetime.utcnow().isoformat(),
+                                    'success': True
+                                })
                         
                         debug_print(f"[Agent Streaming] Captured {len(agent_citations_list)} citations")
                         final_model_used = actual_model_used
@@ -6602,16 +7442,19 @@ def register_route_backend_chats(app):
                             conversation_id=conversation_id,
                             user_id=user_id,
                             active_group_id=active_group_id,
+                            active_group_ids=active_group_ids,
                             document_scope=document_scope,
                             selected_document_id=selected_document_id,
                             model_deployment=gpt_model,
                             hybrid_search_enabled=hybrid_search_enabled,
                             image_gen_enabled=False,
                             selected_documents=combined_documents if combined_documents else None,
-                            selected_agent=None,
-                            selected_agent_details=None,
+                            selected_agent=agent_name_used if use_agent_streaming else None,
+                            selected_agent_details=selected_agent_metadata if use_agent_streaming else None,
                             search_results=search_results if search_results else None,
-                            conversation_item=conversation_item
+                            conversation_item=conversation_item,
+                            active_public_workspace_id=active_public_workspace_id,
+                            active_public_workspace_ids=active_public_workspace_ids
                         )
                     except Exception as e:
                         debug_print(f"Error collecting conversation metadata: {e}")
@@ -6647,6 +7490,10 @@ def register_route_backend_chats(app):
                         'conversation_id': conversation_id,
                         'conversation_title': conversation_item['title'],
                         'classification': conversation_item.get('classification', []),
+                        'context': conversation_item.get('context', []),
+                        'chat_type': conversation_item.get('chat_type'),
+                        'scope_locked': conversation_item.get('scope_locked'),
+                        'locked_contexts': conversation_item.get('locked_contexts', []),
                         'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
                         'message_id': assistant_message_id,
                         'user_message_id': user_message_id,
@@ -6705,7 +7552,7 @@ def register_route_backend_chats(app):
                         }
                         try:
                             cosmos_messages_container.upsert_item(assistant_doc)
-                        except:
+                        except Exception as ex:
                             pass
                     
                     yield f"data: {json.dumps({'error': error_msg, 'partial_content': accumulated_content})}\n\n"
@@ -6717,7 +7564,48 @@ def register_route_backend_chats(app):
                 debug_print(f"[STREAM API ERROR] Full traceback:\n{error_traceback}")
                 yield f"data: {json.dumps({'error': f'Internal server error: {str(e)}'})}\n\n"
         
-        return build_background_stream_response(generate)
+        return build_background_stream_response(generate, stream_session=stream_session)
+
+    @app.route('/api/chat/stream/status/<conversation_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def chat_stream_status_api(conversation_id):
+        """Report whether a conversation has a live stream that can be reattached."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        stream_session = CHAT_STREAM_REGISTRY.get_session(user_id, conversation_id, active_only=True)
+        return jsonify({
+            'conversation_id': conversation_id,
+            'pending': bool(stream_session),
+            'reattachable': bool(stream_session),
+        })
+
+    @app.route('/api/chat/stream/reattach/<conversation_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def chat_stream_reattach_api(conversation_id):
+        """Replay and continue an in-flight stream for a previously opened conversation."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        stream_session = CHAT_STREAM_REGISTRY.get_session(user_id, conversation_id, active_only=True)
+        if not stream_session:
+            return jsonify({'error': 'No active stream is available for this conversation'}), 404
+
+        return Response(
+            stream_with_context(stream_session.iter_events()),
+            mimetype='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'X-Accel-Buffering': 'no',
+                'Connection': 'keep-alive'
+            }
+        )
 
     @app.route('/api/message/<message_id>/mask', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -6777,7 +7665,7 @@ def register_route_backend_chats(app):
                         )
                         if conversation.get('user_id') != user_id:
                             return jsonify({'error': 'You can only mask messages from your own conversations'}), 403
-                    except:
+                    except Exception as ex:
                         return jsonify({'error': 'Conversation not found'}), 404
                 elif message_user_id != user_id:
                     return jsonify({'error': 'You can only mask your own messages'}), 403

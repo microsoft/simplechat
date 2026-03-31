@@ -21,6 +21,132 @@ def get_pagination_params(args):
 
     return page, page_size
 
+
+def _query_prompt_items(cosmos_container, query, parameters):
+    return list(
+        cosmos_container.query_items(
+            query=query,
+            parameters=parameters,
+            enable_cross_partition_query=True
+        )
+    )
+
+
+def _filter_prompt_items(items, search_term):
+    if not search_term:
+        return items
+
+    normalized_search = search_term[:100].lower()
+    return [
+        item for item in items
+        if normalized_search in (item.get('name') or '').lower()
+    ]
+
+
+def _sort_prompt_items(items):
+    return sorted(
+        items,
+        key=lambda item: (
+            item.get('updated_at') or '',
+            item.get('name') or '',
+            item.get('id') or '',
+        ),
+        reverse=True,
+    )
+
+
+def _read_prompt_from_container(cosmos_container, *, prompt_id, prompt_type, id_field, id_value):
+    try:
+        item = cosmos_container.read_item(item=prompt_id, partition_key=prompt_id)
+        if item.get('type') == prompt_type and item.get(id_field) == id_value:
+            return item
+    except CosmosResourceNotFoundError:
+        pass
+
+    query = f"SELECT * FROM c WHERE c.id=@pid AND c.{id_field}=@id AND c.type=@type"
+    parameters = [
+        {"name": "@pid", "value": prompt_id},
+        {"name": "@id", "value": id_value},
+        {"name": "@type", "value": prompt_type},
+    ]
+
+    items = _query_prompt_items(cosmos_container, query, parameters)
+    return items[0] if items else None
+
+
+def _get_public_prompt_items(prompt_type, public_workspace_id):
+    parameters = [
+        {"name": "@id_value", "value": public_workspace_id},
+        {"name": "@prompt_type", "value": prompt_type},
+    ]
+
+    primary_items = _query_prompt_items(
+        cosmos_public_prompts_container,
+        "SELECT * FROM c WHERE c.public_id = @id_value AND c.type = @prompt_type",
+        parameters,
+    )
+    legacy_items = _query_prompt_items(
+        cosmos_group_prompts_container,
+        "SELECT * FROM c WHERE c.group_id = @id_value AND c.type = @prompt_type",
+        parameters,
+    )
+
+    combined_items = {}
+    for item in primary_items + legacy_items:
+        prompt_id = item.get('id')
+        if prompt_id and prompt_id not in combined_items:
+            combined_items[prompt_id] = item
+
+    return _sort_prompt_items(list(combined_items.values()))
+
+
+def _get_prompt_doc_with_container(user_id, prompt_id, prompt_type, group_id=None, public_workspace_id=None):
+    if public_workspace_id is not None:
+        item = _read_prompt_from_container(
+            cosmos_public_prompts_container,
+            prompt_id=prompt_id,
+            prompt_type=prompt_type,
+            id_field='public_id',
+            id_value=public_workspace_id,
+        )
+        if item:
+            return item, cosmos_public_prompts_container
+
+        legacy_item = _read_prompt_from_container(
+            cosmos_group_prompts_container,
+            prompt_id=prompt_id,
+            prompt_type=prompt_type,
+            id_field='group_id',
+            id_value=public_workspace_id,
+        )
+        if legacy_item:
+            return legacy_item, cosmos_group_prompts_container
+
+        return None, None
+
+    if group_id is not None:
+        item = _read_prompt_from_container(
+            cosmos_group_prompts_container,
+            prompt_id=prompt_id,
+            prompt_type=prompt_type,
+            id_field='group_id',
+            id_value=group_id,
+        )
+        return item, cosmos_group_prompts_container if item else None
+
+    item = _read_prompt_from_container(
+        cosmos_user_prompts_container,
+        prompt_id=prompt_id,
+        prompt_type=prompt_type,
+        id_field='user_id',
+        id_value=user_id,
+    )
+    return item, cosmos_user_prompts_container if item else None
+
+
+def count_public_prompts_for_workspace(public_workspace_id):
+    return len(_get_public_prompt_items('public_prompt', public_workspace_id))
+
 def list_prompts(user_id, prompt_type, args, group_id=None, public_workspace_id=None):
     """
     List prompts for a user or a group with pagination and optional search.
@@ -51,6 +177,14 @@ def list_prompts(user_id, prompt_type, args, group_id=None, public_workspace_id=
     page, page_size = get_pagination_params(args)
     search_term = args.get('search')
 
+    if is_public_workspace:
+        all_items = _get_public_prompt_items(prompt_type, public_workspace_id)
+        filtered_items = _filter_prompt_items(all_items, search_term)
+        total_count = len(filtered_items)
+        offset = (page - 1) * page_size
+        items = filtered_items[offset:offset + page_size]
+        return items, total_count, page, page_size
+
     base_filter = f"c.{id_field} = @id_value AND c.type = @prompt_type"
     parameters = [
         {"name": "@id_value", "value": id_value},
@@ -72,25 +206,46 @@ def list_prompts(user_id, prompt_type, args, group_id=None, public_workspace_id=
     select_query += f" OFFSET {offset} LIMIT {page_size}"
 
     # Execute count
-    total_count = list(
-        cosmos_container.query_items(
-            query=count_query,
-            parameters=parameters,
-            enable_cross_partition_query=True
-        )
-    )
+    total_count = _query_prompt_items(cosmos_container, count_query, parameters)
     total_count = total_count[0] if total_count else 0
 
     # Execute select
-    items = list(
-        cosmos_container.query_items(
-            query=select_query,
-            parameters=parameters,
-            enable_cross_partition_query=True
-        )
-    )
+    items = _query_prompt_items(cosmos_container, select_query, parameters)
 
     return items, total_count, page, page_size
+
+
+def list_all_prompts_for_scope(user_id, prompt_type, group_id=None, public_workspace_id=None):
+    """
+    List all prompts for a user, group, or public workspace without pagination.
+    Returns a full list of prompt documents for chat bootstrap scenarios.
+    """
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    if is_public_workspace:
+        cosmos_container = cosmos_public_prompts_container
+        id_field = 'public_id'
+        id_value = public_workspace_id
+    elif is_group:
+        cosmos_container = cosmos_group_prompts_container
+        id_field = 'group_id'
+        id_value = group_id
+    else:
+        cosmos_container = cosmos_user_prompts_container
+        id_field = 'user_id'
+        id_value = user_id
+
+    if is_public_workspace:
+        return _get_public_prompt_items(prompt_type, public_workspace_id)
+
+    query = f"SELECT * FROM c WHERE c.{id_field} = @id_value AND c.type = @prompt_type"
+    parameters = [
+        {"name": "@id_value", "value": id_value},
+        {"name": "@prompt_type", "value": prompt_type}
+    ]
+
+    return _query_prompt_items(cosmos_container, query, parameters)
 
 def create_prompt_doc(name, content, prompt_type, user_id, group_id=None, public_workspace_id=None):
     """
@@ -140,66 +295,27 @@ def get_prompt_doc(user_id, prompt_id, prompt_type, group_id=None, public_worksp
     Retrieve a prompt by ID for a user or group.
     Returns the item dict or None.
     """
-    is_public_workspace = prompt_type == 'public_prompt'
-    is_group = group_id is not None and not is_public_workspace
-
-    # Determine container
-    if is_public_workspace:
-        cosmos_container = cosmos_public_prompts_container
-    elif is_group:
-        cosmos_container = cosmos_group_prompts_container
-    else:
-        cosmos_container = cosmos_user_prompts_container
-
-    # Try direct read
-    try:
-        item = cosmos_container.read_item(item=prompt_id, partition_key=prompt_id)
-        if item.get("type") == prompt_type:
-            # Check ownership based on prompt type
-            if is_public_workspace and item.get("public_id") == public_workspace_id:
-                return item
-            elif is_group and item.get("group_id") == group_id:
-                return item
-            elif not is_public_workspace and not is_group and item.get("user_id") == user_id:
-                return item
-    except CosmosResourceNotFoundError:
-        pass
-
-    # Fallback to query
-    if is_public_workspace:
-        id_field = 'public_id'
-        id_value = public_workspace_id
-    elif is_group:
-        id_field = 'group_id'
-        id_value = group_id
-    else:
-        id_field = 'user_id'
-        id_value = user_id
-        
-    query = (
-        "SELECT * FROM c WHERE c.id=@pid AND c.{0}=@id AND c.type=@type"
-    ).format(id_field)
-    parameters = [
-        {"name": "@pid",   "value": prompt_id},
-        {"name": "@id",    "value": id_value},
-        {"name": "@type",  "value": prompt_type}
-    ]
-
-    items = list(
-        cosmos_container.query_items(
-            query=query,
-            parameters=parameters,
-            enable_cross_partition_query=True
-        )
+    item, _ = _get_prompt_doc_with_container(
+        user_id,
+        prompt_id,
+        prompt_type,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
     )
-    return items[0] if items else None
+    return item
 
 def update_prompt_doc(user_id, prompt_id, prompt_type, updates, group_id=None, public_workspace_id=None):
     """
     Update an existing prompt for a user or a group.
     Returns minimal updated doc or None if not found.
     """
-    item = get_prompt_doc(user_id, prompt_id, prompt_type, group_id, public_workspace_id)
+    item, cosmos_container = _get_prompt_doc_with_container(
+        user_id,
+        prompt_id,
+        prompt_type,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
     if not item:
         return None
 
@@ -208,17 +324,6 @@ def update_prompt_doc(user_id, prompt_id, prompt_type, updates, group_id=None, p
         item[k] = v
     item["updated_at"] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
-    is_group = group_id is not None
-    is_public_workspace = public_workspace_id is not None
-
-    # Determine container
-    if is_public_workspace:
-        cosmos_container = cosmos_public_prompts_container
-    elif is_group:
-        cosmos_container = cosmos_group_prompts_container
-    else:
-        cosmos_container = cosmos_user_prompts_container
-        
     updated = cosmos_container.replace_item(item=prompt_id, body=item)
 
     return {
@@ -232,15 +337,16 @@ def delete_prompt_doc(user_id, prompt_id, group_id=None, public_workspace_id=Non
     Delete a prompt for a user or a group.
     Returns True if deleted, False if not found.
     """
-    is_group = group_id is not None
-    is_public_workspace = public_workspace_id is not None
-
-    if is_public_workspace:
-        cosmos_container = cosmos_public_prompts_container
-    elif is_group:
-        cosmos_container = cosmos_group_prompts_container
-    else:
-        cosmos_container = cosmos_user_prompts_container
+    prompt_type = 'public_prompt' if public_workspace_id is not None else 'group_prompt' if group_id is not None else 'user_prompt'
+    item, cosmos_container = _get_prompt_doc_with_container(
+        user_id,
+        prompt_id,
+        prompt_type,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    if not item:
+        return False
 
     cosmos_container.delete_item(item=prompt_id, partition_key=prompt_id)
     return True

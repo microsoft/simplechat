@@ -251,6 +251,7 @@ export function setScopeFromUrlParam(scopeString, options = {}) {
   }
 
   buildScopeDropdown();
+  dispatchScopeChanged('workspace');
 }
 
 /* ---------------------------------------------------------------------------
@@ -561,15 +562,155 @@ function syncScopeButtonText() {
   }
 }
 
+function dispatchScopeChanged(source = 'workspace') {
+  window.dispatchEvent(new CustomEvent('chat:scope-changed', {
+    detail: {
+      source,
+      scopes: getEffectiveScopes(),
+    },
+  }));
+}
+
+function runScopeRefreshPipeline(source = 'workspace') {
+  return loadAllDocs()
+    .then(() => loadTagsForScope())
+    .then(() => {
+      dispatchScopeChanged(source);
+    });
+}
+
+export function setEffectiveScopes(nextScopes = {}, options = {}) {
+  if (scopeLocked === true && !options.force) {
+    return Promise.resolve(false);
+  }
+
+  const groups = window.userGroups || [];
+  const publicWorkspaces = window.userVisiblePublicWorkspaces || [];
+  const validGroupIds = new Set(groups.map(group => group.id));
+  const validPublicWorkspaceIds = new Set(publicWorkspaces.map(workspace => workspace.id));
+
+  const normalizedPersonal = !!nextScopes.personal;
+  const normalizedGroupIds = Array.from(new Set((nextScopes.groupIds || []).filter(groupId => validGroupIds.has(groupId))));
+  const normalizedPublicWorkspaceIds = Array.from(new Set((nextScopes.publicWorkspaceIds || []).filter(workspaceId => validPublicWorkspaceIds.has(workspaceId))));
+
+  const selectionChanged = normalizedPersonal !== selectedPersonal
+    || normalizedGroupIds.length !== selectedGroupIds.length
+    || normalizedPublicWorkspaceIds.length !== selectedPublicWorkspaceIds.length
+    || normalizedGroupIds.some((groupId, index) => groupId !== selectedGroupIds[index])
+    || normalizedPublicWorkspaceIds.some((workspaceId, index) => workspaceId !== selectedPublicWorkspaceIds[index]);
+
+  selectedPersonal = normalizedPersonal;
+  selectedGroupIds = normalizedGroupIds;
+  selectedPublicWorkspaceIds = normalizedPublicWorkspaceIds;
+
+  if (scopeLocked === true) {
+    rebuildScopeDropdownWithLock();
+  } else {
+    buildScopeDropdown();
+  }
+
+  syncScopeButtonText();
+
+  if (options.reload === false) {
+    dispatchScopeChanged(options.source || 'programmatic');
+    return Promise.resolve(selectionChanged);
+  }
+
+  return runScopeRefreshPipeline(options.source || 'programmatic')
+    .then(() => selectionChanged);
+}
+
 /* ---------------------------------------------------------------------------
    Handle scope change — reload docs and tags
 --------------------------------------------------------------------------- */
 function onScopeChanged() {
   syncScopeStateFromCheckboxes();
   syncScopeButtonText();
-  // Reload docs and tags for the new scope
-  loadAllDocs().then(() => {
-    loadTagsForScope();
+  runScopeRefreshPipeline('workspace');
+}
+
+function compareDisplayNames(leftValue, rightValue) {
+  return String(leftValue || '').localeCompare(String(rightValue || ''), undefined, {
+    sensitivity: 'base',
+  });
+}
+
+function getDocumentDisplayName(documentItem) {
+  return (documentItem.title || documentItem.file_name || 'Untitled Document').trim() || 'Untitled Document';
+}
+
+function createDropdownHeader(label) {
+  const header = document.createElement('div');
+  header.classList.add('dropdown-header', 'small', 'text-muted', 'px-2', 'pt-2', 'pb-1');
+  header.textContent = label;
+  return header;
+}
+
+function createDropdownDivider() {
+  const divider = document.createElement('div');
+  divider.classList.add('dropdown-divider');
+  return divider;
+}
+
+function buildDocumentDescriptor(documentItem, sectionLabel) {
+  return {
+    id: documentItem.id,
+    label: getDocumentDisplayName(documentItem),
+    searchLabel: `${getDocumentDisplayName(documentItem)} ${sectionLabel}`.trim(),
+    tags: documentItem.tags || [],
+    classification: documentItem.document_classification || '',
+  };
+}
+
+function appendDocumentSection(sectionLabel, documents, sectionIndex) {
+  if (!docDropdownItems || !documents.length) {
+    return;
+  }
+
+  if (sectionIndex > 0) {
+    docDropdownItems.appendChild(createDropdownDivider());
+  }
+
+  docDropdownItems.appendChild(createDropdownHeader(sectionLabel));
+
+  documents.forEach(documentItem => {
+    const doc = buildDocumentDescriptor(documentItem, sectionLabel);
+
+    const opt = document.createElement('option');
+    opt.value = doc.id;
+    opt.textContent = doc.label;
+    opt.dataset.tags = JSON.stringify(doc.tags || []);
+    opt.dataset.classification = doc.classification || '';
+    docSelectEl.appendChild(opt);
+
+    const dropdownItem = document.createElement('button');
+    dropdownItem.type = 'button';
+    dropdownItem.classList.add('dropdown-item', 'd-flex', 'align-items-center');
+    dropdownItem.setAttribute('data-document-id', doc.id);
+    dropdownItem.setAttribute('data-search-role', 'item');
+    dropdownItem.setAttribute('title', doc.label);
+    dropdownItem.dataset.searchLabel = doc.searchLabel;
+    dropdownItem.dataset.tags = JSON.stringify(doc.tags || []);
+    dropdownItem.dataset.classification = doc.classification || '';
+    dropdownItem.style.display = 'flex';
+    dropdownItem.style.width = '100%';
+    dropdownItem.style.textAlign = 'left';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.classList.add('form-check-input', 'me-2', 'doc-checkbox');
+    checkbox.style.pointerEvents = 'none';
+    checkbox.style.minWidth = '16px';
+
+    const label = document.createElement('span');
+    label.textContent = doc.label;
+    label.style.overflow = 'hidden';
+    label.style.textOverflow = 'ellipsis';
+    label.style.whiteSpace = 'nowrap';
+
+    dropdownItem.appendChild(checkbox);
+    dropdownItem.appendChild(label);
+    docDropdownItems.appendChild(dropdownItem);
   });
 }
 
@@ -611,91 +752,62 @@ export function populateDocumentSelectScope() {
     docDropdownItems.appendChild(allItem);
   }
 
-  let finalDocs = [];
+  const sections = [];
 
-  // Add personal docs if personal scope is selected
   if (scopes.personal) {
-    const pDocs = personalDocs.map((d) => ({
-      id: d.id,
-      label: `[Personal] ${d.title || d.file_name}`,
-      tags: d.tags || [],
-      classification: d.document_classification || '',
-    }));
-    finalDocs = finalDocs.concat(pDocs);
-  }
+    const personalSectionDocs = personalDocs.slice().sort((leftDoc, rightDoc) => {
+      return compareDisplayNames(getDocumentDisplayName(leftDoc), getDocumentDisplayName(rightDoc));
+    });
 
-  // Add group docs — label each with its group name
-  if (scopes.groupIds.length > 0) {
-    const gDocs = groupDocs.map((d) => ({
-      id: d.id,
-      label: `[Group: ${groupIdToName[d.group_id] || "Unknown"}] ${d.title || d.file_name}`,
-      tags: d.tags || [],
-      classification: d.document_classification || '',
-    }));
-    finalDocs = finalDocs.concat(gDocs);
-  }
-
-  // Add public docs — label each with its workspace name
-  if (scopes.publicWorkspaceIds.length > 0) {
-    // Filter publicDocs to only those in selected workspaces
-    const selectedWsSet = new Set(scopes.publicWorkspaceIds);
-    const pubDocs = publicDocs
-      .filter(d => selectedWsSet.has(d.public_workspace_id))
-      .map((d) => ({
-        id: d.id,
-        label: `[Public: ${publicWorkspaceIdToName[d.public_workspace_id] || "Unknown"}] ${d.title || d.file_name}`,
-        tags: d.tags || [],
-        classification: d.document_classification || '',
-      }));
-    finalDocs = finalDocs.concat(pubDocs);
-  }
-
-  // Add document options to the hidden select and populate the custom dropdown
-  finalDocs.forEach((doc) => {
-    // Add to hidden select
-    const opt = document.createElement("option");
-    opt.value = doc.id;
-    opt.textContent = doc.label;
-    opt.dataset.tags = JSON.stringify(doc.tags || []);
-    opt.dataset.classification = doc.classification || '';
-    docSelectEl.appendChild(opt);
-
-    // Add to custom dropdown
-    if (docDropdownItems) {
-      const dropdownItem = document.createElement("button");
-      dropdownItem.type = "button";
-      dropdownItem.classList.add("dropdown-item", "d-flex", "align-items-center");
-      dropdownItem.setAttribute("data-document-id", doc.id);
-      dropdownItem.setAttribute("data-search-role", "item");
-      dropdownItem.setAttribute("title", doc.label);
-      dropdownItem.dataset.searchLabel = doc.label;
-      dropdownItem.dataset.tags = JSON.stringify(doc.tags || []);
-      dropdownItem.dataset.classification = doc.classification || '';
-      dropdownItem.style.display = "flex";
-      dropdownItem.style.width = "100%";
-      dropdownItem.style.textAlign = "left";
-
-      const checkbox = document.createElement("input");
-      checkbox.type = "checkbox";
-      checkbox.classList.add("form-check-input", "me-2", "doc-checkbox");
-      checkbox.style.pointerEvents = "none"; // Click handled by button
-      checkbox.style.minWidth = "16px";
-
-      const label = document.createElement("span");
-      label.textContent = doc.label;
-      label.style.overflow = "hidden";
-      label.style.textOverflow = "ellipsis";
-      label.style.whiteSpace = "nowrap";
-
-      dropdownItem.appendChild(checkbox);
-      dropdownItem.appendChild(label);
-      docDropdownItems.appendChild(dropdownItem);
+    if (personalSectionDocs.length > 0) {
+      sections.push({
+        label: 'Personal',
+        documents: personalSectionDocs,
+      });
     }
+  }
+
+  const sortedGroups = (window.userGroups || [])
+    .filter(group => scopes.groupIds.includes(group.id))
+    .sort((leftGroup, rightGroup) => compareDisplayNames(leftGroup.name, rightGroup.name));
+  sortedGroups.forEach(group => {
+    const sectionDocs = groupDocs
+      .filter(documentItem => String(documentItem.group_id || '') === String(group.id))
+      .slice()
+      .sort((leftDoc, rightDoc) => compareDisplayNames(getDocumentDisplayName(leftDoc), getDocumentDisplayName(rightDoc)));
+
+    if (sectionDocs.length > 0) {
+      sections.push({
+        label: `[Group] ${group.name || 'Unnamed Group'}`,
+        documents: sectionDocs,
+      });
+    }
+  });
+
+  const sortedPublicWorkspaces = (window.userVisiblePublicWorkspaces || [])
+    .filter(workspace => scopes.publicWorkspaceIds.includes(workspace.id))
+    .sort((leftWorkspace, rightWorkspace) => compareDisplayNames(leftWorkspace.name, rightWorkspace.name));
+  sortedPublicWorkspaces.forEach(workspace => {
+    const sectionDocs = publicDocs
+      .filter(documentItem => String(documentItem.public_workspace_id || '') === String(workspace.id))
+      .slice()
+      .sort((leftDoc, rightDoc) => compareDisplayNames(getDocumentDisplayName(leftDoc), getDocumentDisplayName(rightDoc)));
+
+    if (sectionDocs.length > 0) {
+      sections.push({
+        label: `[Public] ${workspace.name || 'Unnamed Workspace'}`,
+        documents: sectionDocs,
+      });
+    }
+  });
+
+  sections.forEach((section, sectionIndex) => {
+    appendDocumentSection(section.label, section.documents, sectionIndex);
   });
 
   // Show/hide search based on number of documents
   if (docSearchInput && docDropdownItems) {
-    const documentsCount = finalDocs.length;
+    const documentsCount = sections.reduce((count, section) => count + section.documents.length, 0);
     const searchContainer = docSearchInput.closest('.document-search-container');
 
     if (searchContainer) {

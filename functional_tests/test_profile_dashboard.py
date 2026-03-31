@@ -40,7 +40,7 @@ def test_profile_endpoints():
                     item=test_user_id, 
                     partition_key=test_user_id
                 )
-            except:
+            except Exception as ex:
                 # Create test user settings
                 user_doc = {
                     'id': test_user_id,
@@ -316,7 +316,7 @@ def test_profile_endpoints():
                         item=activity['id'],
                         partition_key=activity['user_id']
                     )
-                except:
+                except Exception as ex:
                     pass
             
             # Optionally delete test user (uncomment if needed)
@@ -325,7 +325,7 @@ def test_profile_endpoints():
             #         item=test_user_id,
             #         partition_key=test_user_id
             #     )
-            # except:
+            # except Exception as ex:
             #     pass
             
             print("   ✅ Test data cleaned up successfully")
