@@ -1160,7 +1160,7 @@ def _extract_file_tag(view_func) -> str:
             # Fallback for other module names
             tag_name = ' '.join(word.capitalize() for word in module_name.split('_'))
             return f"📄 {tag_name}"
-    except:
+    except Exception as ex:
         return "📄 Unknown Module"
 
 def _extract_tags_from_route_path(route_path: str) -> List[str]:

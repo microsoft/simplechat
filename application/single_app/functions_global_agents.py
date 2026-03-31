@@ -111,6 +111,9 @@ def get_global_agents():
             agent.setdefault('is_global', True)
             agent.setdefault('is_group', False)
             agent.setdefault('agent_type', 'local')
+            agent.setdefault('model_endpoint_id', '')
+            agent.setdefault('model_id', '')
+            agent.setdefault('model_provider', '')
             # Remove empty reasoning_effort to prevent validation errors
             if agent.get('reasoning_effort') == '':
                 agent.pop('reasoning_effort', None)
@@ -147,6 +150,9 @@ def get_global_agent(agent_id):
         agent.setdefault('is_global', True)
         agent.setdefault('is_group', False)
         agent.setdefault('agent_type', 'local')
+        agent.setdefault('model_endpoint_id', '')
+        agent.setdefault('model_id', '')
+        agent.setdefault('model_provider', '')
         # Remove empty reasoning_effort to prevent validation errors
         if agent.get('reasoning_effort') == '':
             agent.pop('reasoning_effort', None)
@@ -203,6 +209,9 @@ def save_global_agent(agent_data, user_id=None):
         cleaned_agent['modified_by'] = user_id
         cleaned_agent['modified_at'] = now
         cleaned_agent['updated_at'] = now
+        cleaned_agent.setdefault('model_endpoint_id', '')
+        cleaned_agent.setdefault('model_id', '')
+        cleaned_agent.setdefault('model_provider', '')
         log_event(
             "Saving global agent.",
             extra={"agent_name": cleaned_agent.get('name', 'Unknown')},
@@ -210,13 +219,13 @@ def save_global_agent(agent_data, user_id=None):
         print(f"Saving global agent: {cleaned_agent.get('name', 'Unknown')}")
         
         # Use the new helper to store sensitive agent keys in Key Vault
-        agent_data = keyvault_agent_save_helper(agent_data, agent_data['id'], scope="global")
-        if agent_data.get('max_completion_tokens') is None:
-            agent_data['max_completion_tokens'] = -1  # Default value
+        cleaned_agent = keyvault_agent_save_helper(cleaned_agent, cleaned_agent['id'], scope="global")
+        if cleaned_agent.get('max_completion_tokens') is None:
+            cleaned_agent['max_completion_tokens'] = -1  # Default value
         
         # Remove empty reasoning_effort to avoid schema validation errors
-        if agent_data.get('reasoning_effort') == '':
-            agent_data.pop('reasoning_effort', None)
+        if cleaned_agent.get('reasoning_effort') == '':
+            cleaned_agent.pop('reasoning_effort', None)
 
         result = cosmos_global_agents_container.upsert_item(body=cleaned_agent)
         log_event(

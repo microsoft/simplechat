@@ -129,7 +129,7 @@ class PluginHealthChecker:
                         getattr(attr, '__module__', '').startswith('semantic_kernel')
                     ):
                         kernel_functions.append(attr_name)
-                except:
+                except Exception as ex:
                     continue
             
             health_report['info']['kernel_functions'] = kernel_functions

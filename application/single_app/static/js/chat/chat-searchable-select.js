@@ -77,6 +77,19 @@ function updateDropdownStructure(itemsContainerEl) {
     });
 }
 
+function createDropdownHeader(label) {
+    const header = document.createElement('div');
+    header.classList.add('dropdown-header', 'small', 'text-muted', 'px-2', 'pt-2', 'pb-1');
+    header.textContent = label;
+    return header;
+}
+
+function createDropdownDivider() {
+    const divider = document.createElement('div');
+    divider.classList.add('dropdown-divider');
+    return divider;
+}
+
 export function initializeFilterableDropdownSearch({
     dropdownEl,
     buttonEl,
@@ -198,6 +211,11 @@ export function createSearchableSingleSelect({
     const readOptionLabel = getOptionLabel || (option => option.textContent.trim());
     const readOptionSearchText = getOptionSearchText || (option => option.textContent.trim());
 
+    const getTopLevelEntries = () => Array.from(selectEl.children).filter(child => {
+        const tagName = child.tagName;
+        return tagName === 'OPTION' || tagName === 'OPTGROUP';
+    });
+
     const getSelectedOption = () => {
         if (selectEl.selectedIndex < 0) {
             return null;
@@ -215,6 +233,7 @@ export function createSearchableSingleSelect({
     const renderOptions = () => {
         const searchTerm = searchInputEl.value.toLowerCase().trim();
         const options = Array.from(selectEl.options);
+        const optionIndexMap = new Map(options.map((option, index) => [option, index]));
         const selectedIndex = selectEl.selectedIndex;
         const hasEnabledOption = options.some(option => !option.disabled);
 
@@ -230,23 +249,25 @@ export function createSearchableSingleSelect({
 
         let matchedCount = 0;
 
-        options.forEach((option, index) => {
+        const appendOptionItem = option => {
+            const index = optionIndexMap.get(option);
             const optionLabel = readOptionLabel(option);
             const optionSearchText = String(readOptionSearchText(option) || optionLabel).toLowerCase();
             const matches = !searchTerm || optionSearchText.includes(searchTerm);
-
-            if (!matches) {
-                return;
-            }
-
-            matchedCount += 1;
 
             const item = document.createElement('button');
             item.type = 'button';
             item.classList.add('dropdown-item', 'chat-searchable-select-item');
             item.dataset.optionIndex = String(index);
             item.dataset.optionValue = option.value;
+            item.dataset.searchLabel = optionSearchText;
             item.title = optionLabel;
+
+            if (!matches) {
+                item.classList.add('d-none');
+            } else {
+                matchedCount += 1;
+            }
 
             if (index === selectedIndex) {
                 item.classList.add('active');
@@ -263,11 +284,38 @@ export function createSearchableSingleSelect({
             item.appendChild(textEl);
 
             itemsContainerEl.appendChild(item);
+        };
+
+        let renderedGroupCount = 0;
+        getTopLevelEntries().forEach(entry => {
+            if (entry.tagName === 'OPTGROUP') {
+                const groupOptions = Array.from(entry.children).filter(child => child.tagName === 'OPTION');
+                if (!groupOptions.length) {
+                    return;
+                }
+
+                if (itemsContainerEl.children.length > 0) {
+                    itemsContainerEl.appendChild(createDropdownDivider());
+                }
+
+                itemsContainerEl.appendChild(createDropdownHeader(entry.label || ''));
+                groupOptions.forEach(option => {
+                    appendOptionItem(option);
+                });
+                renderedGroupCount += 1;
+                return;
+            }
+
+            appendOptionItem(entry);
         });
 
         buttonEl.disabled = !hasEnabledOption;
         searchInputEl.disabled = !hasEnabledOption;
         syncButtonText();
+
+        if (renderedGroupCount > 0) {
+            updateDropdownStructure(itemsContainerEl);
+        }
 
         if (matchedCount === 0) {
             itemsContainerEl.appendChild(createNoMatchesElement(searchTerm ? emptySearchMessage : emptyMessage));

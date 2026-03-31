@@ -2,7 +2,7 @@
 # test_chat_stream_compatibility_sse_syntax.py
 """
 Functional test for chat stream compatibility SSE syntax.
-Version: 0.239.143
+Version: 0.239.185
 Implemented in: 0.239.134
 
 This test ensures that the streaming chat route compiles successfully and that
@@ -26,7 +26,7 @@ def assert_contains(file_path: Path, expected: str) -> None:
         raise AssertionError(f"Expected to find {expected!r} in {file_path}")
 
 
-def test_chat_stream_compatibility_sse_syntax() -> bool:
+def test_chat_stream_compatibility_sse_syntax() -> None:
     print("Testing chat stream compatibility SSE syntax...")
 
     source = ROUTE_FILE.read_text(encoding="utf-8")
@@ -36,16 +36,16 @@ def test_chat_stream_compatibility_sse_syntax() -> bool:
     assert_contains(ROUTE_FILE, "image_request_event = {")
     assert_contains(ROUTE_FILE, "image_ready_event = {")
     assert_contains(ROUTE_FILE, 'yield f"data: {json.dumps(image_prompt_event)}\\n\\n"')
-    assert_contains(CONFIG_FILE, 'VERSION = "0.239.143"')
+    assert_contains(CONFIG_FILE, 'VERSION = "0.239.185"')
     assert_contains(FIX_DOC_FILE, "Fixed/Implemented in version: **0.239.134**")
 
     print("Chat stream compatibility SSE syntax checks passed!")
-    return True
 
 
 if __name__ == "__main__":
     try:
-        success = test_chat_stream_compatibility_sse_syntax()
+        test_chat_stream_compatibility_sse_syntax()
+        success = True
     except Exception as exc:
         print(f"Test failed: {exc}")
         import traceback

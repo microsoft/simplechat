@@ -539,23 +539,21 @@ function formatClassifications(classifications) {
 
 function formatChatType(chatType, context = []) {
   // Use the actual chat_type value from the metadata
-  if (chatType === 'personal') {
-    return '<span class="badge bg-primary">personal</span>';
+  if (chatType === 'personal' || chatType === 'personal_single_user') {
+    return '<span class="text-muted">personal</span>';
+  } else if (chatType === 'new') {
+    return '<span class="badge bg-secondary">new</span>';
   } else if (chatType === 'group' || chatType.startsWith('group')) {
     // For group chats, try to find the group name from context
     const primaryContext = context.find(c => c.type === 'primary' && c.scope === 'group');
     const groupName = primaryContext ? primaryContext.name || 'Group' : 'Group';
-    
-    // Determine if single-user or multi-user based on chat_type
-    const userType = chatType.includes('multi-user') ? 'multi-user' : 'single-user';
-    
-    return `
-      <span class="badge bg-info me-1">group - ${groupName}</span>
-      <span class="badge bg-secondary">${userType}</span>
-    `;
+
+    return `<span class="badge bg-info" title="${escapeHtml(groupName)}">${escapeHtml(groupName)}</span>`;
+  } else if (chatType && chatType.startsWith('public')) {
+    return '<span class="badge bg-success">public</span>';
   } else {
     // Fallback for unknown types
-    return `<span class="badge bg-secondary">${chatType}</span>`;
+    return `<span class="text-muted">${escapeHtml(chatType)}</span>`;
   }
 }
 
@@ -718,7 +716,8 @@ document.addEventListener('click', function(e) {
     const btn = e.target.closest('#generate-summary-btn');
     const cid = btn.getAttribute('data-conversation-id');
     const modelSelect = document.getElementById('summary-model-select');
-    const model = modelSelect ? modelSelect.value : '';
+    const selectedOption = modelSelect ? modelSelect.options[modelSelect.selectedIndex] : null;
+    const model = selectedOption?.dataset?.deploymentName || (modelSelect ? modelSelect.value : '');
     handleGenerateSummary(cid, model);
     return;
   }
@@ -730,7 +729,8 @@ document.addEventListener('click', function(e) {
     const cid = btn.getAttribute('data-conversation-id');
     // Use the currently selected global model for regeneration
     const globalSelect = document.getElementById('model-select');
-    const model = globalSelect ? globalSelect.value : '';
+    const selectedOption = globalSelect ? globalSelect.options[globalSelect.selectedIndex] : null;
+    const model = selectedOption?.dataset?.deploymentName || (globalSelect ? globalSelect.value : '');
     handleGenerateSummary(cid, model);
     return;
   }

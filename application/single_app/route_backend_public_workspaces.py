@@ -2,6 +2,7 @@
 
 from config import *
 from functions_authentication import *
+from functions_prompts import count_public_prompts_for_workspace
 from functions_public_workspaces import *
 from functions_notifications import create_notification
 from swagger_wrapper import swagger_route, get_auth_security
@@ -637,7 +638,7 @@ def register_route_backend_public_workspaces(app):
                     details = get_user_details_from_graph(member_id)
                     member_name = details.get("displayName", "")
                     member_email = details.get("email", "")
-                except:
+                except Exception as ex:
                     pass
 
         # clear any existing
@@ -805,14 +806,7 @@ def register_route_backend_public_workspaces(app):
         if not ws:
             return jsonify({"error": "Not found"}), 404
 
-        query = "SELECT VALUE COUNT(1) FROM p WHERE p.public_workspace_id = @wsId"
-        params = [{"name": "@wsId", "value": ws_id}]
-        count_iter = cosmos_public_prompts_container.query_items(
-            query=query,
-            parameters=params,
-            enable_cross_partition_query=True
-        )
-        prompt_count = next(count_iter, 0)
+        prompt_count = count_public_prompts_for_workspace(ws_id)
         return jsonify({"promptCount": prompt_count}), 200
 
     @app.route("/api/public_workspaces/<ws_id>/stats", methods=["GET"])
