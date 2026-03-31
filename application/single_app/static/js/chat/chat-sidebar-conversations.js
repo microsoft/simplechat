@@ -6,6 +6,12 @@ import { showToast } from "./chat-toast.js";
 const sidebarConversationsList = document.getElementById("sidebar-conversations-list");
 const sidebarNewChatBtn = document.getElementById("sidebar-new-chat-btn");
 
+function dispatchSidebarConversationsLoaded(details = {}) {
+  document.dispatchEvent(new CustomEvent('chat:sidebar-conversations-loaded', {
+    detail: details
+  }));
+}
+
 let currentActiveConversationId = null;
 let sidebarShowHiddenConversations = false; // Track if hidden conversations should be shown in sidebar
 let isLoadingSidebarConversations = false; // Prevent concurrent sidebar loads
@@ -115,6 +121,51 @@ function createUnreadDotElement() {
   return unreadDot;
 }
 
+function getSidebarConversationDropdownInstance(dropdownBtn) {
+  if (!dropdownBtn || !window.bootstrap || !bootstrap.Dropdown) {
+    return null;
+  }
+
+  return bootstrap.Dropdown.getOrCreateInstance(dropdownBtn, {
+    popperConfig(defaultConfig) {
+      const existingModifiers = Array.isArray(defaultConfig?.modifiers) ? defaultConfig.modifiers : [];
+      const hasFlipModifier = existingModifiers.some(modifier => modifier?.name === 'flip');
+
+      return {
+        ...defaultConfig,
+        strategy: 'fixed',
+        modifiers: hasFlipModifier
+          ? existingModifiers
+          : [
+              ...existingModifiers,
+              {
+                name: 'flip',
+                options: {
+                  fallbackPlacements: ['top-end', 'bottom-end']
+                }
+              }
+            ]
+      };
+    }
+  });
+}
+
+function closeSidebarConversationDropdown(dropdownBtn, dropdownInstance) {
+  if (dropdownInstance) {
+    dropdownInstance.hide();
+    return;
+  }
+
+  if (!dropdownBtn || !window.bootstrap || !bootstrap.Dropdown) {
+    return;
+  }
+
+  const fallbackDropdownInstance = bootstrap.Dropdown.getInstance(dropdownBtn);
+  if (fallbackDropdownInstance) {
+    fallbackDropdownInstance.hide();
+  }
+}
+
 export function setConversationUnreadState(conversationId, hasUnread) {
   const sidebarItem = document.querySelector(`.sidebar-conversation-item[data-conversation-id="${conversationId}"]`);
   if (!sidebarItem) {
@@ -160,6 +211,7 @@ export function loadSidebarConversations() {
       sidebarConversationsList.innerHTML = "";
       if (!data.conversations || data.conversations.length === 0) {
         sidebarConversationsList.innerHTML = '<div class="text-center p-2 text-muted small">No conversations yet.</div>';
+        dispatchSidebarConversationsLoaded({ loaded: true, count: 0, hasVisibleConversations: false, isError: false });
         
         // Reset loading flag even when no conversations
         isLoadingSidebarConversations = false;
@@ -211,6 +263,13 @@ export function loadSidebarConversations() {
       visibleConversations.forEach(convo => {
         sidebarConversationsList.appendChild(createSidebarConversationItem(convo));
       });
+
+      dispatchSidebarConversationsLoaded({
+        loaded: true,
+        count: data.conversations.length,
+        hasVisibleConversations: visibleConversations.length > 0,
+        isError: false
+      });
       
       // Restore selection mode hints if selection mode is active
       if (window.chatConversations && window.chatConversations.isSelectionModeActive && window.chatConversations.isSelectionModeActive()) {
@@ -237,6 +296,7 @@ export function loadSidebarConversations() {
     .catch(error => {
       console.error("Error loading sidebar conversations:", error);
       sidebarConversationsList.innerHTML = `<div class="text-center p-2 text-danger small">Error loading conversations: ${error.error || 'Unknown error'}</div>`;
+      dispatchSidebarConversationsLoaded({ loaded: true, count: 0, hasVisibleConversations: false, isError: true });
       isLoadingSidebarConversations = false; // Reset flag on error too
       
       // If a reload was requested while we were loading, reload now even after error
@@ -264,7 +324,7 @@ function createSidebarConversationItem(convo) {
     <div class="d-flex justify-content-between align-items-center">
       <div class="sidebar-conversation-title flex-grow-1" title="${convo.title} (Double-click to edit)">${pinIcon}${hiddenIcon}${convo.title}</div>
       <div class="dropdown conversation-dropdown" style="opacity: 0; transition: opacity 0.2s;">
-        <button class="btn btn-light btn-sm" type="button" data-bs-toggle="dropdown" data-bs-display="static" aria-expanded="false" title="Conversation options">
+        <button class="btn btn-light btn-sm" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Conversation options">
           <i class="bi bi-three-dots-vertical"></i>
         </button>
         <ul class="dropdown-menu dropdown-menu-end">
@@ -403,19 +463,15 @@ function createSidebarConversationItem(convo) {
   const exportBtn = convoItem.querySelector('.export-btn');
   const editBtn = convoItem.querySelector('.edit-btn');
   const deleteBtn = convoItem.querySelector('.delete-btn');
+  const dropdownBtn = convoItem.querySelector('[data-bs-toggle="dropdown"]');
+  const dropdownInstance = getSidebarConversationDropdownInstance(dropdownBtn);
   
   if (detailsBtn) {
     detailsBtn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
       // Close dropdown after action
-      const dropdownBtn = convoItem.querySelector('[data-bs-toggle="dropdown"]');
-      if (dropdownBtn) {
-        const dropdownInstance = bootstrap.Dropdown.getInstance(dropdownBtn);
-        if (dropdownInstance) {
-          dropdownInstance.hide();
-        }
-      }
+      closeSidebarConversationDropdown(dropdownBtn, dropdownInstance);
       // Show conversation details
       if (window.showConversationDetails) {
         window.showConversationDetails(convo.id);
@@ -428,13 +484,7 @@ function createSidebarConversationItem(convo) {
       e.preventDefault();
       e.stopPropagation();
       // Close dropdown after action
-      const dropdownBtn = convoItem.querySelector('[data-bs-toggle="dropdown"]');
-      if (dropdownBtn) {
-        const dropdownInstance = bootstrap.Dropdown.getInstance(dropdownBtn);
-        if (dropdownInstance) {
-          dropdownInstance.hide();
-        }
-      }
+      closeSidebarConversationDropdown(dropdownBtn, dropdownInstance);
       // Toggle pin status
       try {
         const response = await fetch(`/api/conversations/${convo.id}/pin`, {
@@ -465,13 +515,7 @@ function createSidebarConversationItem(convo) {
       e.preventDefault();
       e.stopPropagation();
       // Close dropdown after action
-      const dropdownBtn = convoItem.querySelector('[data-bs-toggle="dropdown"]');
-      if (dropdownBtn) {
-        const dropdownInstance = bootstrap.Dropdown.getInstance(dropdownBtn);
-        if (dropdownInstance) {
-          dropdownInstance.hide();
-        }
-      }
+      closeSidebarConversationDropdown(dropdownBtn, dropdownInstance);
       // Toggle hide status
       try {
         const response = await fetch(`/api/conversations/${convo.id}/hide`, {
@@ -502,13 +546,7 @@ function createSidebarConversationItem(convo) {
       e.preventDefault();
       e.stopPropagation();
       // Close dropdown after action
-      const dropdownBtn = convoItem.querySelector('[data-bs-toggle="dropdown"]');
-      if (dropdownBtn) {
-        const dropdownInstance = bootstrap.Dropdown.getInstance(dropdownBtn);
-        if (dropdownInstance) {
-          dropdownInstance.hide();
-        }
-      }
+      closeSidebarConversationDropdown(dropdownBtn, dropdownInstance);
       // Toggle selection mode
       if (window.chatConversations && window.chatConversations.toggleConversationSelection) {
         window.chatConversations.toggleConversationSelection(convo.id);
@@ -521,13 +559,7 @@ function createSidebarConversationItem(convo) {
       e.preventDefault();
       e.stopPropagation();
       // Close dropdown after action
-      const dropdownBtn = convoItem.querySelector('[data-bs-toggle="dropdown"]');
-      if (dropdownBtn) {
-        const dropdownInstance = bootstrap.Dropdown.getInstance(dropdownBtn);
-        if (dropdownInstance) {
-          dropdownInstance.hide();
-        }
-      }
+      closeSidebarConversationDropdown(dropdownBtn, dropdownInstance);
       // Open export wizard for this single conversation
       if (window.chatExport && window.chatExport.openExportWizard) {
         window.chatExport.openExportWizard([convo.id], true);
@@ -540,13 +572,7 @@ function createSidebarConversationItem(convo) {
       e.preventDefault();
       e.stopPropagation();
       // Close dropdown after action
-      const dropdownBtn = convoItem.querySelector('[data-bs-toggle="dropdown"]');
-      if (dropdownBtn) {
-        const dropdownInstance = bootstrap.Dropdown.getInstance(dropdownBtn);
-        if (dropdownInstance) {
-          dropdownInstance.hide();
-        }
-      }
+      closeSidebarConversationDropdown(dropdownBtn, dropdownInstance);
       // Enable inline editing for this conversation
       enableSidebarTitleEdit(convo.id);
     });
@@ -557,13 +583,7 @@ function createSidebarConversationItem(convo) {
       e.preventDefault();
       e.stopPropagation();
       // Close dropdown after action
-      const dropdownBtn = convoItem.querySelector('[data-bs-toggle="dropdown"]');
-      if (dropdownBtn) {
-        const dropdownInstance = bootstrap.Dropdown.getInstance(dropdownBtn);
-        if (dropdownInstance) {
-          dropdownInstance.hide();
-        }
-      }
+      closeSidebarConversationDropdown(dropdownBtn, dropdownInstance);
       // Delete conversation
       if (window.chatConversations && window.chatConversations.deleteConversation) {
         window.chatConversations.deleteConversation(convo.id);
@@ -572,7 +592,6 @@ function createSidebarConversationItem(convo) {
   }
   
   // Handle dropdown show/hide events for opacity
-  const dropdownBtn = convoItem.querySelector('[data-bs-toggle="dropdown"]');
   if (dropdownBtn) {
     dropdownBtn.addEventListener('shown.bs.dropdown', () => {
       const dropdown = convoItem.querySelector('.conversation-dropdown');

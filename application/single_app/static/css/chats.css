@@ -458,6 +458,170 @@
   background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAeCAYAAADkftS9AAAAIklEQVQoU2M4c+bMfxAGAgYYmwGrIIiDjrELjpo5aiZeAPTBAPAXJmw1AAAAAElFTkSuQmCC');
   cursor: col-resize;
 }
+
+  /* Tutorial button positioning */
+  #chat-tutorial-launch {
+    z-index: 1099;
+    pointer-events: none; /* allow toast clicks; inner button restores events */
+    top: 80px;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-8px);
+    transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s ease;
+  }
+
+  #chat-tutorial-launch.is-ready {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+  }
+
+  #chat-tutorial-btn {
+    pointer-events: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    border-radius: 999px;
+    padding: 0.5rem 0.75rem;
+    transition: gap 0.2s ease, padding 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  #chat-tutorial-btn:hover,
+  #chat-tutorial-btn:focus-visible {
+    gap: 0.5rem;
+    padding-right: 1rem;
+    box-shadow: 0 0.35rem 0.9rem rgba(13, 110, 253, 0.28) !important;
+  }
+
+  #chat-tutorial-btn .tutorial-btn-label {
+    max-width: 0;
+    opacity: 0;
+    overflow: hidden;
+    transition: max-width 0.2s ease, opacity 0.2s ease;
+    font-weight: 600;
+  }
+
+  #chat-tutorial-btn:hover .tutorial-btn-label,
+  #chat-tutorial-btn:focus-visible .tutorial-btn-label {
+    max-width: 120px;
+    opacity: 1;
+  }
+
+  .chat-tutorial-tooltip {
+    --bs-tooltip-zindex: 1115;
+  }
+
+  .conversation-dropdown.tutorial-force-visible {
+    opacity: 1 !important;
+  }
+
+  .tutorial-force-popup {
+    z-index: 1104 !important;
+  }
+
+  .tutorial-force-backdrop {
+    z-index: 1103 !important;
+  }
+
+  .tutorial-conversation-popup {
+    min-width: 220px;
+    pointer-events: none;
+  }
+
+  .tutorial-message-popup {
+    min-width: 240px;
+    pointer-events: none;
+  }
+
+  .tutorial-message-examples {
+    margin: 1rem 0 1.5rem;
+    padding: 1rem;
+    border: 1px dashed var(--bs-border-color);
+    border-radius: 1rem;
+    background: color-mix(in srgb, var(--bs-body-bg) 92%, var(--bs-primary) 8%);
+  }
+
+  .tutorial-message-examples .tutorial-example-caption {
+    letter-spacing: 0.01em;
+  }
+
+  .tutorial-message-examples .message:last-child {
+    margin-bottom: 0;
+  }
+
+  .tutorial-advanced-search-popup {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 18px 40px 36px;
+    box-sizing: border-box;
+    overflow: visible;
+    pointer-events: none;
+    z-index: 1104;
+  }
+
+  .tutorial-advanced-search-popup .modal-dialog {
+    width: min(1280px, calc(100vw - 80px));
+    max-width: 100%;
+    margin: 0 auto;
+  }
+
+  .tutorial-advanced-search-popup .modal-content {
+    background-color: var(--bs-body-bg);
+    opacity: 1;
+    box-shadow: var(--bs-box-shadow-lg);
+    overflow: hidden;
+  }
+
+  .tutorial-advanced-search-popup .modal-dialog-scrollable .modal-content {
+    max-height: calc(100vh - 36px);
+  }
+
+  .tutorial-advanced-search-popup .modal-dialog-scrollable .modal-body {
+    overflow-x: hidden;
+  }
+
+  .tutorial-popup-target-highlight {
+    position: relative;
+    z-index: 1103;
+    border-radius: 10px;
+    box-shadow: 0 0 0 3px var(--bs-primary);
+  }
+
+  /* Tutorial overlay styles */
+  .chat-tutorial-layer {
+    position: fixed;
+    z-index: 1100;
+    pointer-events: auto;
+    overflow: visible;
+  }
+
+  .chat-tutorial-highlight {
+    position: absolute;
+    border-radius: 12px;
+    box-shadow: 0 0 0 3px var(--bs-primary), 0 0 0 9999px rgba(0, 0, 0, 0.55);
+    transition: all 0.2s ease;
+    pointer-events: none;
+  }
+
+  .chat-tutorial-card {
+    position: absolute;
+    max-width: 360px;
+    z-index: 1101;
+    pointer-events: auto;
+  }
+
+  .chat-tutorial-card .tutorial-actions .btn {
+    min-width: 80px;
+  }
+
+  .chat-tutorial-card .badge-step {
+    font-size: 0.75rem;
+  }
 /* Style when docked - CLEAN SIMPLE IMPLEMENTATION */
 body.layout-docked #left-pane {
   position: fixed !important;

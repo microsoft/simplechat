@@ -130,6 +130,18 @@ def register_route_frontend_admin_settings(app):
         # --- Add default for swagger documentation ---
         if 'enable_swagger' not in settings:
             settings['enable_swagger'] = True  # Default enabled for development/testing
+        if 'release_notifications_registered' not in settings:
+            settings['release_notifications_registered'] = False
+        if 'release_notifications_name' not in settings:
+            settings['release_notifications_name'] = ''
+        if 'release_notifications_email' not in settings:
+            settings['release_notifications_email'] = ''
+        if 'release_notifications_org' not in settings:
+            settings['release_notifications_org'] = ''
+        if 'release_notifications_registered_at' not in settings:
+            settings['release_notifications_registered_at'] = ''
+        if 'release_notifications_updated_at' not in settings:
+            settings['release_notifications_updated_at'] = ''
         if 'enable_time_plugin' not in settings:
             settings['enable_time_plugin'] = False
         if 'enable_http_plugin' not in settings:
@@ -142,8 +154,7 @@ def register_route_frontend_admin_settings(app):
             settings['enable_text_plugin'] = False
         if 'enable_fact_memory_plugin' not in settings:
             settings['enable_fact_memory_plugin'] = False
-        if 'enable_tabular_processing_plugin' not in settings:
-            settings['enable_tabular_processing_plugin'] = False
+        settings['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(settings)
         if 'enable_default_embedding_model_plugin' not in settings:
             settings['enable_default_embedding_model_plugin'] = False
         if 'enable_multi_agent_orchestration' not in settings:
@@ -964,6 +975,12 @@ def register_route_frontend_admin_settings(app):
                 'landing_page_alignment': form_data.get('landing_page_alignment', 'left'),
                 'enable_dark_mode_default': form_data.get('enable_dark_mode_default') == 'on',
                 'enable_left_nav_default': form_data.get('enable_left_nav_default') == 'on',
+                'release_notifications_registered': form_data.get('release_notifications_registered', 'false').lower() == 'true',
+                'release_notifications_name': form_data.get('release_notifications_name', settings.get('release_notifications_name', '')).strip(),
+                'release_notifications_email': form_data.get('release_notifications_email', settings.get('release_notifications_email', '')).strip(),
+                'release_notifications_org': form_data.get('release_notifications_org', settings.get('release_notifications_org', '')).strip(),
+                'release_notifications_registered_at': form_data.get('release_notifications_registered_at', settings.get('release_notifications_registered_at', '')).strip(),
+                'release_notifications_updated_at': form_data.get('release_notifications_updated_at', settings.get('release_notifications_updated_at', '')).strip(),
                 'enable_external_healthcheck': form_data.get('enable_external_healthcheck') == 'on',
                 'enable_swagger': form_data.get('enable_swagger') == 'on',
                 'enable_semantic_kernel': form_data.get('enable_semantic_kernel') == 'on',

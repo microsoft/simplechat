@@ -1,6 +1,7 @@
 <!-- Dynamic Action Modal -->
-<div class="modal fade" id="plugin-modal" tabindex="-1" aria-labelledby="plugin-modal-title" aria-hidden="true">
+<div class="modal fade" id="plugin-modal" tabindex="-1" aria-labelledby="plugin-modal-title" aria-hidden="true" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" autocomplete="off">
   <div class="modal-dialog modal-lg">
+    <form id="plugin-modal-form" action="" method="post" autocomplete="off" novalidate data-bwignore="true" data-1p-ignore="true" data-lpignore="true">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title" id="plugin-modal-title">Add Action</h5>
@@ -129,13 +130,13 @@
                 </div>
                 <div class="input-group mb-2" id="auth-api-key-value-group" style="display:none;">
                   <span class="input-group-text">API Key</span>
-                  <input type="password" class="form-control" id="plugin-auth-api-key-value" placeholder="your-api-key" />
+                  <input type="password" class="form-control" id="plugin-auth-api-key-value" placeholder="your-api-key" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
                 </div>
                 
                 <!-- Bearer Token fields -->
                 <div class="input-group mb-2" id="auth-bearer-group" style="display:none;">
                   <span class="input-group-text">Token</span>
-                  <input type="password" class="form-control" id="plugin-auth-bearer-token" placeholder="your-bearer-token" />
+                  <input type="password" class="form-control" id="plugin-auth-bearer-token" placeholder="your-bearer-token" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
                 </div>
                 
                 <!-- Basic Auth fields -->
@@ -145,13 +146,13 @@
                 </div>
                 <div class="input-group mb-2" id="auth-basic-password-group" style="display:none;">
                   <span class="input-group-text">Password</span>
-                  <input type="password" class="form-control" id="plugin-auth-basic-password" placeholder="password" />
+                  <input type="password" class="form-control" id="plugin-auth-basic-password" placeholder="password" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
                 </div>
                 
                 <!-- OAuth2 fields -->
                 <div class="input-group mb-2" id="auth-oauth2-group" style="display:none;">
                   <span class="input-group-text">Access Token</span>
-                  <input type="password" class="form-control" id="plugin-auth-oauth2-token" placeholder="your-oauth2-access-token" />
+                  <input type="password" class="form-control" id="plugin-auth-oauth2-token" placeholder="your-oauth2-access-token" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
                 </div>
               </div>
             </div>
@@ -347,7 +348,7 @@
                 </div>
                 <div class="col-md-6">
                   <label for="sql-password" class="form-label">Password <span class="text-danger">*</span></label>
-                  <input type="password" class="form-control" id="sql-password" placeholder="password" />
+                  <input type="password" class="form-control" id="sql-password" placeholder="password" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
                 </div>
               </div>
               
@@ -360,7 +361,7 @@
                   </div>
                   <div class="col-md-4">
                     <label for="sql-client-secret" class="form-label">Client Secret <span class="text-danger">*</span></label>
-                    <input type="password" class="form-control" id="sql-client-secret" placeholder="client-secret" />
+                    <input type="password" class="form-control" id="sql-client-secret" placeholder="client-secret" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
                   </div>
                   <div class="col-md-4">
                     <label for="sql-tenant-id" class="form-label">Tenant ID <span class="text-danger">*</span></label>
@@ -681,6 +682,7 @@
         <button type="button" class="btn btn-success d-none" id="save-plugin-btn">Save Action</button>
       </div>
     </div>
+    </form>
   </div>
 </div>
 

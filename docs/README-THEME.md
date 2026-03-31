@@ -90,7 +90,7 @@ Organize content using sections in front matter:
 ---
 layout: page
 title: "Your Page Title"
-section: "tutorials"  # Creates automatic sidebar grouping
+section: "Tutorials"  # Creates automatic sidebar grouping
 ---
 ```
 

@@ -18,6 +18,7 @@ export class AgentModalStepper {
     this.updateStepIndicatorTimeout = null; // For debouncing step indicator updates
     this.templateSubmitButton = document.getElementById('agent-modal-submit-template-btn');
     this.foundryPlaceholderInstructions = 'Placeholder instructions: Azure AI Foundry agent manages its own prompt.';
+    this.instructionsEditor = null;
     this.foundryEndpoints = [];
     this.foundryAgents = [];
     
@@ -59,6 +60,14 @@ export class AgentModalStepper {
       });
     }
 
+    const agentModal = document.getElementById('agentModal');
+    if (agentModal) {
+      agentModal.addEventListener('shown.bs.modal', () => {
+        this.initializeInstructionsEditor();
+        this.refreshInstructionsEditor(this.currentStep === 3 && !this.isAnyFoundryType());
+      });
+    }
+
     const foundryEndpointSelect = document.getElementById('agent-foundry-endpoint-select');
     const foundryFetchBtn = document.getElementById('agent-foundry-fetch-btn');
     const foundryAgentSelect = document.getElementById('agent-foundry-agent-select');
@@ -77,6 +86,60 @@ export class AgentModalStepper {
     
     // Set up model change listener for reasoning effort
     this.setupModelChangeListener();
+  }
+
+  initializeInstructionsEditor() {
+    if (this.instructionsEditor || typeof window.SimpleMDE === 'undefined') {
+      return;
+    }
+
+    const instructionsInput = document.getElementById('agent-instructions');
+    if (!instructionsInput) {
+      return;
+    }
+
+    try {
+      this.instructionsEditor = new window.SimpleMDE({
+        element: instructionsInput,
+        spellChecker: false,
+        autoDownloadFontAwesome: false
+      });
+    } catch (error) {
+      console.error('Failed to initialize SimpleMDE for agent instructions:', error);
+      this.instructionsEditor = null;
+    }
+  }
+
+  getInstructionsValue() {
+    if (this.instructionsEditor) {
+      return this.instructionsEditor.value();
+    }
+
+    return document.getElementById('agent-instructions')?.value || '';
+  }
+
+  setInstructionsValue(value = '') {
+    const instructionsInput = document.getElementById('agent-instructions');
+    if (instructionsInput) {
+      instructionsInput.value = value;
+    }
+
+    if (this.instructionsEditor) {
+      this.instructionsEditor.value(value);
+    }
+  }
+
+  refreshInstructionsEditor(shouldFocus = false) {
+    if (!this.instructionsEditor?.codemirror) {
+      return;
+    }
+
+    setTimeout(() => {
+      this.instructionsEditor.codemirror.refresh();
+      if (shouldFocus) {
+        this.instructionsEditor.codemirror.focus();
+      }
+    }, 0);
   }
 
   isClassicFoundryType(agentType = this.currentAgentType) {
@@ -229,7 +292,7 @@ export class AgentModalStepper {
     if (instructionsFoundryNote) instructionsFoundryNote.classList.toggle('d-none', !isFoundry);
     if (instructionsInput) {
       if (isFoundry) {
-        instructionsInput.value = this.foundryPlaceholderInstructions;
+        this.setInstructionsValue(this.foundryPlaceholderInstructions);
       }
     }
 
@@ -424,6 +487,7 @@ export class AgentModalStepper {
     
     // Ensure generated name is populated for both new and existing agents
     this.updateGeneratedName();
+    this.initializeInstructionsEditor();
     this.syncAgentTypeSelector();
     this.applyAgentTypeVisibility();
     this.updateAgentTypeLock();
@@ -512,7 +576,7 @@ export class AgentModalStepper {
     if (displayName) displayName.value = '';
     if (generatedName) generatedName.value = '';
     if (description) description.value = '';
-    if (instructions) instructions.value = '';
+    if (instructions) this.setInstructionsValue('');
     if (modelSelect) modelSelect.selectedIndex = 0;
     if (customConnection) customConnection.checked = false;
     if (modelEndpointId) modelEndpointId.value = '';
@@ -793,6 +857,7 @@ export class AgentModalStepper {
     if (agentsCommon && typeof agentsCommon.setAgentModalFields === 'function') {
       agentsCommon.setAgentModalFields(agent);
     }
+    this.setInstructionsValue(agent.instructions || '');
 
     // any agent advanced settings
     if (this.currentAgent 
@@ -936,6 +1001,11 @@ export class AgentModalStepper {
     const currentStep = document.getElementById(`agent-step-${stepNumber}`);
     if (currentStep) {
       currentStep.classList.remove('d-none');
+    }
+
+    if (stepNumber === 3) {
+      this.initializeInstructionsEditor();
+      this.refreshInstructionsEditor(!this.isAnyFoundryType());
     }
 
     if (stepNumber === 2) {
@@ -1147,17 +1217,17 @@ export class AgentModalStepper {
         break;
         
       case 3: // Instructions
-        const instructions = document.getElementById('agent-instructions');
+        const instructionsValue = this.getInstructionsValue();
           if (!this.isAnyFoundryType()) {
-            if (!instructions || !instructions.value.trim()) {
+            if (!instructionsValue.trim()) {
               this.showError('Please provide instructions for the agent.');
-              if (instructions) instructions.focus();
+              this.refreshInstructionsEditor(true);
               return false;
             }
           } else {
             // Ensure placeholder present
-            if (instructions && !instructions.value.trim()) {
-              instructions.value = this.foundryPlaceholderInstructions;
+            if (!instructionsValue.trim()) {
+              this.setInstructionsValue(this.foundryPlaceholderInstructions);
             }
           }
         break;
@@ -1308,7 +1378,7 @@ export class AgentModalStepper {
     const modelName = this.getFormModelName();
     
     // Instructions
-    const instructions = document.getElementById('agent-instructions')?.value || '-';
+    const instructions = this.getInstructionsValue() || '-';
     
     // Selected Actions
     const selectedActions = this.getSelectedActions();
@@ -1722,7 +1792,7 @@ export class AgentModalStepper {
       const currentDisplayName = document.getElementById('agent-display-name')?.value || '';
       const currentName = document.getElementById('agent-name')?.value || '';
       const currentDescription = document.getElementById('agent-description')?.value || '';
-      const currentInstructions = document.getElementById('agent-instructions')?.value || '';
+      const currentInstructions = this.getInstructionsValue() || '';
       
       // Custom connection
       const currentCustomConnection = document.getElementById('agent-custom-connection')?.checked || false;
@@ -1972,8 +2042,9 @@ export class AgentModalStepper {
       display_name: document.getElementById('agent-display-name')?.value || '',
       name: document.getElementById('agent-name')?.value || '',
       description: document.getElementById('agent-description')?.value || '',
-      instructions: document.getElementById('agent-instructions')?.value || '',
+      instructions: this.getInstructionsValue() || '',
       model: modelSelect?.value || '',
+      instructions: this.getInstructionsValue() || '',
       custom_connection: document.getElementById('agent-custom-connection')?.checked || false,
       other_settings: document.getElementById('agent-additional-settings')?.value || '{}',
       max_completion_tokens: parseInt(document.getElementById('agent-max-completion-tokens')?.value.trim()) || null,
@@ -1989,7 +2060,7 @@ export class AgentModalStepper {
       formData.azure_openai_gpt_endpoint = document.getElementById('agent-foundry-endpoint')?.value?.trim() || '';
       formData.azure_openai_gpt_deployment = document.getElementById('agent-foundry-deployment')?.value?.trim() || '';
       formData.azure_openai_gpt_api_version = document.getElementById('agent-foundry-api-version')?.value?.trim() || '';
-      formData.instructions = document.getElementById('agent-instructions')?.value?.trim() || this.foundryPlaceholderInstructions;
+      formData.instructions = this.getInstructionsValue().trim() || this.foundryPlaceholderInstructions;
 
       // other_settings for foundry
       let otherSettingsObj = {};
@@ -2021,7 +2092,7 @@ export class AgentModalStepper {
       formData.azure_openai_gpt_endpoint = document.getElementById('agent-foundry-endpoint')?.value?.trim() || '';
       formData.azure_openai_gpt_deployment = document.getElementById('agent-foundry-deployment')?.value?.trim() || '';
       formData.azure_openai_gpt_api_version = document.getElementById('agent-new-foundry-responses-api-version')?.value?.trim() || '';
-      formData.instructions = document.getElementById('agent-instructions')?.value?.trim() || this.foundryPlaceholderInstructions;
+      formData.instructions = this.getInstructionsValue().trim() || this.foundryPlaceholderInstructions;
 
       let otherSettingsObj = {};
       try {
@@ -2220,7 +2291,7 @@ export class AgentModalStepper {
   validateTemplateRequirements() {
     const displayName = document.getElementById('agent-display-name');
     const description = document.getElementById('agent-description');
-    const instructions = document.getElementById('agent-instructions');
+    const instructions = this.getInstructionsValue();
 
     if (!displayName || !displayName.value.trim()) {
       this.showError('Please add a display name before submitting a template.');
@@ -2234,9 +2305,9 @@ export class AgentModalStepper {
       return false;
     }
 
-    if (!instructions || !instructions.value.trim()) {
+    if (!instructions.trim()) {
       this.showError('Instructions are required before submitting a template.');
-      instructions?.focus();
+      this.refreshInstructionsEditor(true);
       return false;
     }
 
@@ -2247,7 +2318,7 @@ export class AgentModalStepper {
   buildTemplatePayload() {
     const displayName = document.getElementById('agent-display-name')?.value?.trim() || '';
     const description = document.getElementById('agent-description')?.value?.trim() || '';
-    const instructions = document.getElementById('agent-instructions')?.value || '';
+    const instructions = this.getInstructionsValue() || '';
     const additionalSettings = document.getElementById('agent-additional-settings')?.value || '';
 
     return {

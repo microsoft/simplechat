@@ -2,7 +2,7 @@
 layout: page
 title: "Features"
 description: "Comprehensive overview of Simple Chat's features and capabilities"
-section: "overview"
+section: "Overview"
 ---
 
 # Simple Chat - Features

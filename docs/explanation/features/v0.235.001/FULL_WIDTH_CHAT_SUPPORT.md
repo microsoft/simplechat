@@ -74,6 +74,7 @@ body.sidebar-collapsed #right-pane {
 ### Navigation Mode Support
 
 #### Top Navigation Layout
+{% raw %}
 ```css
 {% if nav_layout != 'sidebar' and not (not nav_layout and app_settings.enable_left_nav_default) %}
 /* Top navigation layout - hide left pane and expand right pane */
@@ -90,8 +91,10 @@ body.sidebar-collapsed #right-pane {
 }
 {% endif %}
 ```
+{% endraw %}
 
 #### Sidebar Navigation Layout
+{% raw %}
 ```css
 {% else %}
 /* Sidebar navigation layout - similar behavior with full width support */
@@ -108,6 +111,7 @@ body.sidebar-collapsed #right-pane {
 }
 {% endif %}
 ```
+{% endraw %}
 
 ### File Structure
 ```

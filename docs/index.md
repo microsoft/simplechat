@@ -60,15 +60,3 @@ The application utilizes **Azure Cosmos DB** for storing conversations, metadata
 ## Architecture-diagram
 
 ![Architecture](./images/architecture.png)
-
-## Demos
-
-<a href="#simple-chat" style="text-decoration: none;">Return to top</a>
-
-### Upload document and review metadata
-
-![Upload Document Demo](./images/UploadDocumentDemo.gif)
-
-### Classify document and chat with document
-
-![Chat with Searching your Documents Demo](./images/ChatwithSearchingYourDocsDemo.gif)

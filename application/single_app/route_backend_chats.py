@@ -4192,7 +4192,7 @@ def register_route_backend_chats(app):
                     }), status_code
 
             workspace_tabular_files = set()
-            if hybrid_search_enabled and settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
+            if hybrid_search_enabled and is_tabular_processing_enabled(settings):
                 workspace_tabular_files = collect_workspace_tabular_filenames(
                     combined_documents=combined_documents,
                     selected_document_ids=selected_document_ids,
@@ -4200,7 +4200,7 @@ def register_route_backend_chats(app):
                     document_scope=document_scope,
                 )
 
-            if hybrid_search_enabled and workspace_tabular_files and settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
+            if hybrid_search_enabled and workspace_tabular_files and is_tabular_processing_enabled(settings):
                 tabular_source_hint = determine_tabular_source_hint(
                     document_scope,
                     active_group_id=active_group_id,
@@ -4563,7 +4563,7 @@ def register_route_backend_chats(app):
                     # Ignored roles: 'safety', 'blocked', 'system' (if they are only for augmentation/summary)
 
                 # --- Mini SK analysis for tabular files uploaded directly to chat ---
-                if chat_tabular_files and settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
+                if chat_tabular_files and is_tabular_processing_enabled(settings):
                     chat_tabular_filenames_str = ", ".join(chat_tabular_files)
                     chat_tabular_execution_mode = get_tabular_execution_mode(user_message)
                     log_event(
@@ -6620,7 +6620,7 @@ def register_route_backend_chats(app):
                         hybrid_citations_list.sort(key=lambda x: x.get('page_number', 0), reverse=True)
                 
                 workspace_tabular_files = set()
-                if hybrid_search_enabled and settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
+                if hybrid_search_enabled and is_tabular_processing_enabled(settings):
                     workspace_tabular_files = collect_workspace_tabular_filenames(
                         combined_documents=combined_documents,
                         selected_document_ids=selected_document_ids,
@@ -6628,7 +6628,7 @@ def register_route_backend_chats(app):
                         document_scope=document_scope,
                     )
 
-                if hybrid_search_enabled and workspace_tabular_files and settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
+                if hybrid_search_enabled and workspace_tabular_files and is_tabular_processing_enabled(settings):
                     tabular_source_hint = determine_tabular_source_hint(
                         document_scope,
                         active_group_id=active_group_id,
@@ -6835,7 +6835,7 @@ def register_route_backend_chats(app):
                                     })
 
                     # --- Mini SK analysis for tabular files uploaded directly to chat ---
-                    if chat_tabular_files and settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
+                    if chat_tabular_files and is_tabular_processing_enabled(settings):
                         chat_tabular_filenames_str = ", ".join(chat_tabular_files)
                         chat_tabular_execution_mode = get_tabular_execution_mode(user_message)
                         log_event(

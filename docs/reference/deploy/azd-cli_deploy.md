@@ -262,6 +262,7 @@ azd up
 ### CI/CD Integration
 
 **GitHub Actions workflow:**
+{% raw %}
 ```yaml
 - name: Azure Dev CLI Deploy
   uses: Azure/azure-dev-cli@v1
@@ -273,6 +274,7 @@ azd up
                    --tenant-id "${{ secrets.AZURE_TENANT_ID }}"
     azd deploy
 ```
+{% endraw %}
 
 ## Management Commands
 

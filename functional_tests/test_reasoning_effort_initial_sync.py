@@ -2,7 +2,7 @@
 # test_reasoning_effort_initial_sync.py
 """
 Functional test for reasoning effort initial state sync.
-Version: 0.239.125
+Version: 0.239.192
 Implemented in: 0.239.125
 
 This test ensures that the chat page applies the preferred model before
@@ -116,7 +116,7 @@ def test_config_version_bumped_for_reasoning_sync_fix():
 
     try:
         content = read_file(CONFIG_FILE)
-        assert 'VERSION = "0.239.125"' in content, 'Expected config.py version 0.239.125'
+        assert 'VERSION = "0.239.192"' in content, 'Expected config.py version 0.239.192'
 
         print('✅ Config version bump passed')
         return True

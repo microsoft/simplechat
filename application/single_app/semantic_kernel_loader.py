@@ -23,7 +23,7 @@ from semantic_kernel.functions.kernel_plugin import KernelPlugin
 from semantic_kernel_plugins.embedding_model_plugin import EmbeddingModelPlugin
 from semantic_kernel_plugins.fact_memory_plugin import FactMemoryPlugin
 from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
-from functions_settings import get_settings, get_user_settings
+from functions_settings import get_settings, get_user_settings, is_tabular_processing_enabled
 from foundry_agent_runtime import (
     AzureAIFoundryChatCompletionAgent,
     AzureAIFoundryNewChatCompletionAgent,
@@ -784,7 +784,7 @@ def load_core_plugins_only(kernel: Kernel, settings):
         load_text_plugin(kernel)
         log_event("[SK Loader] Loaded Text plugin.", level=logging.INFO)
 
-    if settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
+    if is_tabular_processing_enabled(settings):
         load_tabular_processing_plugin(kernel)
         log_event("[SK Loader] Loaded Tabular Processing plugin.", level=logging.INFO)
 
@@ -1645,7 +1645,7 @@ def load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="glob
             log_event(f"[SK Loader] Failed to load Fact Memory Plugin: {e}", level=logging.WARNING)
 
     # Register Tabular Processing Plugin if enabled (requires enhanced citations)
-    if settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
+    if is_tabular_processing_enabled(settings):
         try:
             load_tabular_processing_plugin(kernel)
             log_event("[SK Loader] Loaded Tabular Processing plugin.", level=logging.INFO)
@@ -2063,7 +2063,7 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
         print(f"[SK Loader] Loaded Default Embedding Model plugin.")
         log_event("[SK Loader] Loaded Default Embedding Model plugin.", level=logging.INFO)
 
-    if settings.get('enable_tabular_processing_plugin', False) and settings.get('enable_enhanced_citations', False):
+    if is_tabular_processing_enabled(settings):
         load_tabular_processing_plugin(kernel)
         log_event("[SK Loader] Loaded Tabular Processing plugin.", level=logging.INFO)
 

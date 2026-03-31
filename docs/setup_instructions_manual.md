@@ -354,6 +354,23 @@ Core configuration values are managed via environment variables, typically set i
         *   **Optional features**: Content safety, user feedback, conversation archiving, and other optional features
     *   Required settings are clearly marked, ensuring that you configure all necessary components for your deployment scenario.
 
+### Local VS Code Developer Environment
+
+If you want to run Simple Chat locally in VS Code before deploying to Azure App Service, use a repo-local `.venv` created with Python 3.12.
+
+From the repo root on Windows:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install --upgrade pip
+pip install -r application/single_app/requirements.txt
+```
+
+Then in VS Code run `Python: Select Interpreter` and choose the Python 3.12 interpreter inside `.venv`.
+
+For the full local development workflow, including `FLASK_DEBUG` guidance and when to use Docker or WSL2 for Gunicorn validation, see [Running Simple Chat Locally](./explanation/running_simplechat_locally.md).
+
 ### Alternate Method: Update App Settings via JSON (Advanced)
 
 You can directly edit Application Settings in the Azure portal using the "Advanced edit" feature, pasting a JSON array. This is useful for bulk updates but requires care not to overwrite essential settings added by Azure.

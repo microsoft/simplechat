@@ -138,6 +138,47 @@
       margin-bottom: 10px;
     }
 
+    /* SimpleMDE uses Font Awesome class names, but the app does not ship that font. */
+    .editor-toolbar a.fa-bold:before,
+    .editor-toolbar a.fa-italic:before,
+    .editor-toolbar a.fa-strikethrough:before,
+    .editor-toolbar a.fa-header:before,
+    .editor-toolbar a.fa-code:before,
+    .editor-toolbar a.fa-quote-left:before,
+    .editor-toolbar a.fa-list-ul:before,
+    .editor-toolbar a.fa-list-ol:before,
+    .editor-toolbar a.fa-eraser:before,
+    .editor-toolbar a.fa-link:before,
+    .editor-toolbar a.fa-picture-o:before,
+    .editor-toolbar a.fa-table:before,
+    .editor-toolbar a.fa-minus:before,
+    .editor-toolbar a.fa-eye:before,
+    .editor-toolbar a.fa-columns:before,
+    .editor-toolbar a.fa-arrows-alt:before,
+    .editor-toolbar a.fa-question-circle:before {
+      font-family: var(--bs-font-sans-serif, Arial, sans-serif);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .editor-toolbar a.fa-bold:before { content: "B"; }
+    .editor-toolbar a.fa-italic:before { content: "I"; font-style: italic; }
+    .editor-toolbar a.fa-strikethrough:before { content: "S"; text-decoration: line-through; }
+    .editor-toolbar a.fa-header:before { content: "#"; }
+    .editor-toolbar a.fa-code:before { content: "</>"; font-size: 11px; }
+    .editor-toolbar a.fa-quote-left:before { content: "\201C"; }
+    .editor-toolbar a.fa-list-ul:before { content: "\2022"; }
+    .editor-toolbar a.fa-list-ol:before { content: "1."; }
+    .editor-toolbar a.fa-eraser:before { content: "\232B"; }
+    .editor-toolbar a.fa-link:before { content: "\2197"; }
+    .editor-toolbar a.fa-picture-o:before { content: "\25A3"; }
+    .editor-toolbar a.fa-table:before { content: "\25A6"; }
+    .editor-toolbar a.fa-minus:before { content: "\2014"; }
+    .editor-toolbar a.fa-eye:before { content: "P"; }
+    .editor-toolbar a.fa-columns:before { content: "\2194"; }
+    .editor-toolbar a.fa-arrows-alt:before { content: "\2922"; }
+    .editor-toolbar a.fa-question-circle:before { content: "?"; }
+
     .chat-container {
       max-height: calc(100vh - 56px);
       display: flex;

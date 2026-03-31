@@ -5,6 +5,10 @@ from functions_appinsights import log_event
 import app_settings_cache
 import inspect
 
+
+def is_tabular_processing_enabled(settings):
+    """Tabular processing is available whenever enhanced citations is enabled."""
+    return bool((settings or {}).get('enable_enhanced_citations', False))
 DEFAULT_VIDEO_INDEXER_ARM_API_VERSION = os.getenv(
     'VIDEO_INDEXER_ARM_API_VERSION',
     '2024-01-01' if AZURE_ENVIRONMENT == 'usgovernment' else '2025-04-01'
@@ -76,6 +80,12 @@ def get_settings(use_cosmos=False):
         'favicon_version': 1,
         'enable_dark_mode_default': False,
         'enable_left_nav_default': True,
+        'release_notifications_registered': False,
+        'release_notifications_name': '',
+        'release_notifications_email': '',
+        'release_notifications_org': '',
+        'release_notifications_registered_at': '',
+        'release_notifications_updated_at': '',
 
         # GPT Settings
         'enable_gpt_apim': False,
@@ -422,6 +432,8 @@ def get_settings(use_cosmos=False):
         merged = deep_merge_dicts(default_settings, settings_item)
         migration_updated = apply_custom_endpoint_setting_migration(merged)
 
+        merged['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(merged)
+
         # If merging added anything new, upsert back to Cosmos so future reads remain up to date
         if merged != settings_item or migration_updated:
             cosmos_settings_container.upsert_item(merged)
@@ -450,9 +462,7 @@ def update_settings(new_settings):
             existing_multi_endpoint_enabled,
             settings_item.get('enable_multi_model_endpoints', False),
         )
-        # Dependency enforcement: tabular processing requires enhanced citations
-        if not settings_item.get('enable_enhanced_citations', False):
-            settings_item['enable_tabular_processing_plugin'] = False
+        settings_item['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(settings_item)
         cosmos_settings_container.upsert_item(settings_item)
         cache_updater = getattr(app_settings_cache, "update_settings_cache", None)
         if callable(cache_updater):
@@ -888,7 +898,7 @@ def get_user_settings(user_id):
                 "user_id": user_id,
                 "previous_type": previous_type,
             })
-        
+
         if 'personal_model_endpoints' not in doc['settings']:
             doc['settings']['personal_model_endpoints'] = []
         

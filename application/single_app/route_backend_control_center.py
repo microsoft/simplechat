@@ -6076,6 +6076,7 @@ def register_route_backend_control_center(app):
     
     # New standalone approvals API endpoints (accessible to all users with permissions)
     @app.route('/api/approvals', methods=['GET'])
+    @swagger_route(security=get_auth_security())
     @login_required
     def api_get_approvals():
         """
