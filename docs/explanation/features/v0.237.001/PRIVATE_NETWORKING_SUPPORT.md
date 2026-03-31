@@ -101,6 +101,14 @@ az deployment sub create \
 | `APP_SUBNET_PREFIX` | App Service subnet prefix | `10.0.1.0/24` |
 | `PRIVATE_ENDPOINT_SUBNET_PREFIX` | Private endpoints subnet prefix | `10.0.2.0/24` |
 
+### Deployment Runner Access
+
+When private networking is enabled, `allowedIpAddresses` is optional and is only intended for the machine running `azd up` when that machine must temporarily reach Cosmos DB or Azure Container Registry over a public path during deployment.
+
+In enterprise environments, leave `allowedIpAddresses` blank when the deployment runner is already on a connected corporate network, VPN, jump host, or build agent with private connectivity and private DNS resolution to the deployed services.
+
+If a value is required, provide the public egress IP address or CIDR that Azure sees for the deployment runner. This is often a company NAT or proxy address rather than the laptop's local private address.
+
 ## Deployment Hooks
 
 ### Post-Provision Hook
@@ -161,6 +169,7 @@ After deployment, validate:
 1. **DNS Propagation Delay**: Allow 5-10 minutes for DNS changes to propagate
 2. **VNet Peering**: Additional configuration needed if peering with existing VNets
 3. **On-Premises Connectivity**: Requires ExpressRoute or VPN Gateway for hybrid scenarios
+4. **Deployment Runner Reachability**: If post-provision steps cannot reach Cosmos DB or Azure Container Registry, either ensure the deployment runner has private connectivity and private DNS resolution or temporarily provide the runner's public egress IP through `allowedIpAddresses`
 
 ## Files Modified
 

@@ -8,10 +8,6 @@ param tags object
 param enableDiagLogging bool
 param logAnalyticsId string
 
-param keyVault string
-param authenticationType string
-param configureApplicationPermissions bool
-
 param enablePrivateNetworking bool
 
 // Import diagnostic settings configurations
@@ -50,18 +46,5 @@ resource speechServiceDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05
   }
 }
 
-//=========================================================
-// store speech Service keys in key vault if using key authentication and configure app permissions = true
-//=========================================================
-module speechServiceSecret 'keyVault-Secrets.bicep' = if ((authenticationType == 'key') && (configureApplicationPermissions)) {
-  name: 'storeSpeechServiceSecret'
-  params: {
-    keyVaultName: keyVault
-    secretName: 'speech-service-key'
-    secretValue: speechService.listKeys().key1
-  }
-}
-
 output speechServiceName string = speechService.name
 output speechServiceEndpoint string = speechService.properties.endpoint
-output speechServiceAuthenticationType string = authenticationType
