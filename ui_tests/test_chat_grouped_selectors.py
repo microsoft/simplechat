@@ -1,12 +1,13 @@
 # test_chat_grouped_selectors.py
 """
 UI test for grouped chat selectors.
-Version: 0.239.195
-Implemented in: 0.239.195
+Version: 0.239.197
+Implemented in: 0.239.197
 
 This test ensures that prompt and document selectors render grouped headers,
 keep matching headers visible during search, and that agent/model selectors
-disable out-of-scope options after a scoped selection narrows the workspace.
+disable out-of-scope options during new conversations before hiding them once
+the conversation scope is locked.
 """
 
 import json
@@ -241,6 +242,53 @@ def test_chat_grouped_selectors(playwright):
         expect(page.locator("[data-model-scope-action-container='true']")).to_be_visible()
         beta_model_disabled = page.locator("#model-dropdown-items .chat-searchable-select-item", has_text="Beta Model").evaluate("element => element.disabled")
         assert beta_model_disabled is True
+        page.keyboard.press("Escape")
+
+        page.evaluate(
+            """
+            async () => {
+                document.querySelectorAll('.conversation-item.active').forEach(item => item.classList.remove('active'));
+
+                const activeConversation = document.createElement('button');
+                activeConversation.type = 'button';
+                activeConversation.className = 'conversation-item active';
+                activeConversation.setAttribute('data-chat-type', 'group');
+                activeConversation.setAttribute('data-chat-state', 'existing');
+                activeConversation.setAttribute('data-group-id', 'group-a');
+                document.body.appendChild(activeConversation);
+
+                const agentsModule = await import('/static/js/chat/chat-agents.js');
+                const modelModule = await import('/static/js/chat/chat-model-selector.js');
+
+                await agentsModule.populateAgentDropdown();
+                await modelModule.populateModelDropdown({ preserveCurrentSelection: true });
+            }
+            """
+        )
+
+        page.wait_for_function(
+            """
+            () => {
+                const hasBetaAgent = Array.from(document.querySelectorAll('#agent-select option')).some(option => option.textContent.trim() === 'Beta Agent');
+                const hasBetaModel = Array.from(document.querySelectorAll('#model-select option')).some(option => option.textContent.trim() === 'Beta Model');
+                const agentClearAction = document.querySelector('[data-agent-scope-action-container="true"]');
+                const modelClearAction = document.querySelector('[data-model-scope-action-container="true"]');
+                return !hasBetaAgent
+                    && !hasBetaModel
+                    && (!agentClearAction || agentClearAction.classList.contains('d-none'))
+                    && (!modelClearAction || modelClearAction.classList.contains('d-none'));
+            }
+            """
+        )
+
+        page.locator("#agent-dropdown-button").click()
+        expect(page.locator("[data-agent-scope-action-container='true']")).to_be_hidden()
+        assert page.locator("#agent-dropdown-items .chat-searchable-select-item", has_text="Beta Agent").count() == 0
+        page.keyboard.press("Escape")
+
+        page.locator("#model-dropdown-button").click()
+        expect(page.locator("[data-model-scope-action-container='true']")).to_be_hidden()
+        assert page.locator("#model-dropdown-items .chat-searchable-select-item", has_text="Beta Model").count() == 0
     finally:
         context.close()
         browser.close()

@@ -1,12 +1,12 @@
 # test_chat_scope_selector_sync.py
 """
 UI test for chat scope selector synchronization.
-Version: 0.239.194
-Implemented in: 0.239.194
+Version: 0.239.198
+Implemented in: 0.239.198
 
 This test ensures that browser-side scope changes immediately filter chat
 agent and model selectors and that conversation metadata updates render the
-workspace badge without requiring a page reload.
+workspace badge in both the header and sidebar without requiring a page reload.
 """
 
 import json
@@ -56,8 +56,25 @@ def test_chat_scope_selector_sync(playwright):
             return
         route.continue_()
 
+    conversations_payload = {
+        "conversations": [
+            {
+                "id": "test-convo",
+                "title": "New Conversation",
+                "last_updated": "2026-03-30T12:00:00Z",
+                "classification": [],
+                "context": [],
+                "chat_type": "new",
+                "is_pinned": False,
+                "is_hidden": False,
+                "has_unread_assistant_response": False,
+            }
+        ]
+    }
+
     page.route("**/api/user/settings", handle_user_settings)
     page.route("**/api/get_messages?*", handle_test_messages)
+    page.route("**/api/get_conversations", lambda route: _fulfill_json(route, conversations_payload))
     page.route(
         "**/api/conversations/test-convo/metadata",
         lambda route: _fulfill_json(
@@ -217,6 +234,28 @@ def test_chat_scope_selector_sync(playwright):
 
         expect(page.locator("#current-conversation-title")).to_have_text("Scoped Chat")
         expect(page.locator("#current-conversation-classifications")).to_contain_text("Alpha")
+
+        page.wait_for_function(
+            """
+            () => {
+                const sidebarBadge = document.querySelector('.sidebar-conversation-item[data-conversation-id="test-convo"] .sidebar-conversation-group-badge');
+                const agentOptions = Array.from(document.querySelectorAll('#agent-select option')).map(option => option.textContent.trim());
+                const modelOptions = Array.from(document.querySelectorAll('#model-select option')).map(option => option.textContent.trim());
+
+                return sidebarBadge?.textContent.trim() === 'Alpha'
+                    && agentOptions.includes('Alpha Agent')
+                    && agentOptions.includes('Global Concierge')
+                    && !agentOptions.includes('Personal Analyst')
+                    && !agentOptions.includes('Beta Agent')
+                    && modelOptions.includes('Alpha Model')
+                    && modelOptions.includes('Global Model')
+                    && !modelOptions.includes('Personal Model')
+                    && !modelOptions.includes('Beta Model');
+            }
+            """
+        )
+
+        expect(page.locator('.sidebar-conversation-item[data-conversation-id="test-convo"] .sidebar-conversation-group-badge')).to_have_text('Alpha')
     finally:
         context.close()
         browser.close()

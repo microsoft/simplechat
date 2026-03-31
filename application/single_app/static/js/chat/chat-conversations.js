@@ -5,6 +5,7 @@ import { loadMessages } from "./chat-messages.js";
 import { isColorLight, toBoolean } from "./chat-utils.js";
 import {
   loadSidebarConversations,
+  applySidebarConversationMetadataUpdate,
   setActiveConversation as setSidebarActiveConversation,
   setConversationUnreadState as setSidebarConversationUnreadState,
 } from "./chat-sidebar-conversations.js";
@@ -239,7 +240,9 @@ export function applyConversationMetadataUpdate(conversationId, updates = {}) {
     convoItem.dataset.classifications = JSON.stringify(updates.classification);
   }
 
-  if (updates.chat_type || Array.isArray(updates.context)) {
+  const hasContextUpdate = Object.prototype.hasOwnProperty.call(updates, 'chat_type') || Array.isArray(updates.context);
+
+  if (hasContextUpdate) {
     applyConversationContextAttributes(convoItem, updates.chat_type || convoItem.getAttribute('data-chat-type') || '', updates.context || []);
     convoItem.removeAttribute('data-chat-state');
   }
@@ -251,7 +254,13 @@ export function applyConversationMetadataUpdate(conversationId, updates = {}) {
     chat_type: updates.chat_type,
   });
 
-  if (currentConversationId === conversationId) {
+  applySidebarConversationMetadataUpdate(conversationId, updates);
+
+  const isActiveConversation = currentConversationId === conversationId
+    || window.currentConversationId === conversationId
+    || convoItem.classList.contains('active');
+
+  if (isActiveConversation) {
     if (updates.title && currentConversationTitleEl) {
       const existingIcons = Array.from(currentConversationTitleEl.querySelectorAll('i')).map(icon => icon.cloneNode(true));
       currentConversationTitleEl.innerHTML = '';
@@ -260,6 +269,10 @@ export function applyConversationMetadataUpdate(conversationId, updates = {}) {
     }
 
     renderConversationHeaderBadges(convoItem);
+
+    if (hasContextUpdate) {
+      void refreshAgentsAndModelsForActiveConversation();
+    }
   }
 }
 
@@ -1067,11 +1080,6 @@ export function enterEditMode(convoItem, convo, dropdownBtn, rightDiv) {
       applyConversationMetadataUpdate(convo.id, updatedConvoData);
 
       exitEditMode(convoItem, convo, dropdownBtn, rightDiv, dateSpan, saveBtn, cancelBtn);
-
-      // *** Update sidebar conversation title if sidebar is available ***
-      if (window.chatSidebarConversations && window.chatSidebarConversations.updateSidebarConversationTitle) {
-        window.chatSidebarConversations.updateSidebarConversationTitle(convo.id, convo.title);
-      }
 
       // *** If this is the currently selected convo, refresh the header ***
       if (currentConversationId === convo.id) {

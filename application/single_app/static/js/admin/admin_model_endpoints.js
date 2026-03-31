@@ -826,16 +826,16 @@ function escapeHtml(value) {
 }
 
 function init() {
-    if (!enableMultiEndpointToggle) {
-        return;
-    }
+    const isMultiEndpointEnabled = enableMultiEndpointToggle ? enableMultiEndpointToggle.checked : true;
 
     renderEndpoints();
     updateAuthVisibility();
-    setElementVisibility(endpointsWrapper, enableMultiEndpointToggle.checked);
-    setElementVisibility(defaultModelWrapper, enableMultiEndpointToggle.checked);
+    setElementVisibility(endpointsWrapper, isMultiEndpointEnabled);
+    setElementVisibility(defaultModelWrapper, isMultiEndpointEnabled);
 
-    enableMultiEndpointToggle.addEventListener("change", handleToggleChange);
+    if (enableMultiEndpointToggle) {
+        enableMultiEndpointToggle.addEventListener("change", handleToggleChange);
+    }
 
     if (endpointAuthTypeSelect) {
         endpointAuthTypeSelect.addEventListener("change", updateAuthVisibility);

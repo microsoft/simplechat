@@ -1,12 +1,12 @@
 # test_agent_gpt_init_skips_multiendpoint.py
 #!/usr/bin/env python3
 """
-Functional test for agent GPT init gating.
-Version: 0.236.052
-Implemented in: 0.236.052
+Functional test for agent streaming default model resolution.
+Version: 0.239.200
+Implemented in: 0.239.200
 
-This test ensures agent requests skip multi-endpoint GPT resolution and
-default APIM deployment selection when model_deployment is not provided.
+This test ensures agent streaming requests can use the default multi-endpoint
+model selection when explicit model fields are not provided.
 """
 
 import os
@@ -23,14 +23,17 @@ def test_agent_gpt_init_gating():
 
     chat_content = read_file_text(chat_path)
 
-    assert "Skipping multi-endpoint resolution because agent_info is provided" in chat_content, (
-        "Expected agent requests to skip multi-endpoint GPT resolution."
+    assert "resolve_streaming_multi_endpoint_gpt_config" in chat_content, (
+        "Expected streaming requests to use the multi-endpoint resolver."
     )
-    assert "Agent request without model_deployment; defaulting to first APIM deployment" in chat_content, (
-        "Expected APIM defaulting behavior for agent requests without model_deployment."
+    assert "Using default multi-endpoint model for agent streaming request." in chat_content, (
+        "Expected agent streaming requests without model info to use the saved default selection."
+    )
+    assert "allow_default_selection=should_use_default_model" in chat_content, (
+        "Expected the streaming route to wire default model selection through the multi-endpoint resolver."
     )
 
-    print("✅ Agent GPT init gating verified.")
+    print("✅ Agent streaming default model resolution verified.")
 
 
 def run_tests():

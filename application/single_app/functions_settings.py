@@ -439,7 +439,12 @@ def update_settings(new_settings):
     try:
         # always fetch the latest settings doc, which includes your merges
         settings_item = get_settings()
+        existing_multi_endpoint_enabled = settings_item.get('enable_multi_model_endpoints', False)
         settings_item.update(new_settings)
+        settings_item['enable_multi_model_endpoints'] = coerce_multi_model_endpoint_enablement(
+            existing_multi_endpoint_enabled,
+            settings_item.get('enable_multi_model_endpoints', False),
+        )
         # Dependency enforcement: tabular processing requires enhanced citations
         if not settings_item.get('enable_enhanced_citations', False):
             settings_item['enable_tabular_processing_plugin'] = False
@@ -452,6 +457,11 @@ def update_settings(new_settings):
     except Exception as e:
         print(f"Error updating settings: {str(e)}")
         return False
+
+
+def coerce_multi_model_endpoint_enablement(existing_enabled, requested_enabled):
+    """Treat multi-endpoint enablement as one-way once it has been turned on."""
+    return bool(existing_enabled) or bool(requested_enabled)
 
 
 def get_chunk_size_defaults():

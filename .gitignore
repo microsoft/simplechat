@@ -48,3 +48,5 @@ nul
 /.github/plans
 *.xlsx
 /artifacts/tests
+scripts/agent.json
+scripts/me.json

@@ -2,11 +2,11 @@
 #!/usr/bin/env python3
 """
 Functional test for default model selection fallback.
-Version: 0.236.053
-Implemented in: 0.236.053
+Version: 0.239.200
+Implemented in: 0.239.200
 
 This test ensures default model selection is surfaced in admin settings
-and used for fallback GPT initialization when agent requests omit model info.
+and used for fallback streaming GPT initialization when agent requests omit model info.
 """
 
 import os
@@ -42,8 +42,11 @@ def test_default_model_selection_wiring():
     assert "default_model_selection" in admin_route, (
         "Expected default model selection to be handled in admin settings save." 
     )
-    assert "resolve_default_model_gpt_config" in chat_route, (
-        "Expected default model fallback logic in chat route."
+    assert "resolve_streaming_multi_endpoint_gpt_config" in chat_route, (
+        "Expected streaming default model fallback logic in chat route."
+    )
+    assert "settings.get('default_model_selection'" in chat_route, (
+        "Expected streaming model resolution to read the saved default model selection."
     )
 
     print("✅ Default model selection wiring verified.")

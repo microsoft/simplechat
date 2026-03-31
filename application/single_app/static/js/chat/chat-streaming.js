@@ -3,7 +3,6 @@ import { appendMessage, updateUserMessageId } from './chat-messages.js';
 import { applyConversationMetadataUpdate, markConversationRead } from './chat-conversations.js';
 import { hideLoadingIndicatorInChatbox, showLoadingIndicatorInChatbox } from './chat-loading-indicator.js';
 import { showToast } from './chat-toast.js';
-import { updateSidebarConversationTitle } from './chat-sidebar-conversations.js';
 import { applyScopeLock } from './chat-documents.js';
 import { beginStreamingThoughtSession, clearStreamingThoughtSession, handleStreamingThought, markStreamingThoughtContentStarted, stopThoughtPolling } from './chat-thoughts.js';
 
@@ -565,16 +564,24 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData) {
         window.currentConversationId = finalData.conversation_id;
     }
     
-    if (finalData.conversation_title) {
-        applyConversationMetadataUpdate(finalData.conversation_id, {
-            title: finalData.conversation_title,
-            classification: finalData.classification || [],
-            context: finalData.context || [],
-            chat_type: finalData.chat_type || null,
-        });
+    const metadataUpdates = {};
+    if (finalData.conversation_title !== undefined) {
+        metadataUpdates.title = finalData.conversation_title;
+    }
+    if (Array.isArray(finalData.classification)) {
+        metadataUpdates.classification = finalData.classification;
+    }
+    if (Array.isArray(finalData.context)) {
+        metadataUpdates.context = finalData.context;
+    }
+    if (finalData.chat_type !== undefined) {
+        metadataUpdates.chat_type = finalData.chat_type || null;
+    }
 
-        // Update sidebar conversation title in real-time
-        updateSidebarConversationTitle(finalData.conversation_id, finalData.conversation_title);
+    if (finalData.conversation_id && Object.keys(metadataUpdates).length > 0) {
+        applyConversationMetadataUpdate(finalData.conversation_id, {
+            ...metadataUpdates,
+        });
     }
 
     if (finalData.scope_locked === true && finalData.locked_contexts) {

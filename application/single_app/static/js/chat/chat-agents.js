@@ -195,14 +195,24 @@ function doesAgentMatchSelection(agent, selectedAgentObj) {
     return (idMatches || nameMatches) && contextMatches && groupMatches;
 }
 
-function rebuildAgentOptions(sections, selectedAgentObj) {
+function rebuildAgentOptions(sections, selectedAgentObj, filteringContext) {
     if (!agentSelect) {
         return;
     }
 
     agentSelect.innerHTML = '';
 
-    const flattenedAgents = sections.flatMap(section => section.agents);
+    const hideUnavailableOptions = !filteringContext.isNewConversation;
+    const renderedSections = sections
+        .map(section => ({
+            ...section,
+            agents: hideUnavailableOptions
+                ? section.agents.filter(agent => !agent.disabled)
+                : section.agents,
+        }))
+        .filter(section => section.agents.length > 0);
+
+    const flattenedAgents = renderedSections.flatMap(section => section.agents);
     if (!flattenedAgents.length) {
         agentSelect.disabled = true;
         return;
@@ -214,7 +224,7 @@ function rebuildAgentOptions(sections, selectedAgentObj) {
         ? String(selectedAgent.id || selectedAgent.agent_id || selectedAgent.name || '')
         : String(fallbackAgent?.id || fallbackAgent?.agent_id || fallbackAgent?.name || '');
 
-    sections.forEach(section => {
+    renderedSections.forEach(section => {
         const optGroup = document.createElement('optgroup');
         optGroup.label = section.label;
 
@@ -452,7 +462,7 @@ export async function populateAgentDropdown() {
         const filteringContext = getConversationFilteringContext();
         const sections = buildAgentSections(getPreloadedAgentOptions(), scopes, filteringContext);
 
-        rebuildAgentOptions(sections, selectedAgent);
+        rebuildAgentOptions(sections, selectedAgent, filteringContext);
         updateScopeClearAction(scopes, filteringContext);
         agentSelectorController?.refresh();
         agentSelect.onchange = async function () {

@@ -492,7 +492,7 @@ def register_route_frontend_admin_settings(app):
                 log_event(f"Error parsing Image Gen model data: {e}", level=logging.ERROR)
                 image_gen_model_obj = settings.get('image_gen_model', {'selected': [], 'all': []}) # Fallback
 
-            enable_multi_model_endpoints = form_data.get('enable_multi_model_endpoints') == 'on'
+            requested_enable_multi_model_endpoints = form_data.get('enable_multi_model_endpoints') == 'on'
             model_endpoints_json = form_data.get('model_endpoints_json', '[]')
             existing_model_endpoints = settings.get('model_endpoints', []) or []
             parsed_model_endpoints = []
@@ -508,6 +508,10 @@ def register_route_frontend_admin_settings(app):
                 parsed_model_endpoints = settings.get('model_endpoints', [])
 
             existing_multi_endpoints_enabled = settings.get('enable_multi_model_endpoints', False)
+            enable_multi_model_endpoints = coerce_multi_model_endpoint_enablement(
+                existing_multi_endpoints_enabled,
+                requested_enable_multi_model_endpoints,
+            )
             should_migrate_endpoints = enable_multi_model_endpoints and not existing_multi_endpoints_enabled
             migration_notice = settings.get('multi_endpoint_migration_notice', {
                 'enabled': False,

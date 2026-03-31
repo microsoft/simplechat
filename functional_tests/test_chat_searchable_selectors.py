@@ -2,13 +2,14 @@
 # test_chat_searchable_selectors.py
 """
 Functional test for grouped searchable chat selectors.
-Version: 0.239.195
-Implemented in: 0.239.195
+Version: 0.239.199
+Implemented in: 0.239.197
 
 This test ensures that the chat page exposes grouped searchable selectors for
 documents, prompts, models, and agents, that grouped headers are preserved by
 the shared renderer during search, and that chat prompt data is preloaded for
-personal, group, and public workspace scopes.
+personal, group, and public workspace scopes while locked conversations hide
+unavailable agents and models.
 """
 
 import os
@@ -299,7 +300,9 @@ def test_model_and_agent_selectors_use_grouped_scope_sections():
             "[Group] ${group.name || 'Unnamed Group'}",
             "actionButton.textContent = 'Use all available workspaces';",
             "const optGroup = document.createElement('optgroup');",
-            'modelOption.disabled = option.disabled;',
+            'const hideUnavailableOptions = !filteringContext.isNewConversation;',
+            'options: hideUnavailableOptions',
+            'filter(option => !option.disabled)',
         ]
         agent_snippets = [
             "import { createSearchableSingleSelect } from './chat-searchable-select.js';",
@@ -308,7 +311,9 @@ def test_model_and_agent_selectors_use_grouped_scope_sections():
             "[Group] ${group.name || 'Unnamed Group'}",
             "actionButton.textContent = 'Use all available workspaces';",
             "const optGroup = document.createElement('optgroup');",
-            'option.disabled = agent.disabled;',
+            'const hideUnavailableOptions = !filteringContext.isNewConversation;',
+            'agents: hideUnavailableOptions',
+            'filter(agent => !agent.disabled)',
             'agentSelectorController?.refresh();',
         ]
 
@@ -371,7 +376,7 @@ def test_version_bumped_for_grouped_chat_selector_change():
 
     try:
         config_content = read_file(CONFIG_FILE)
-        assert 'VERSION = "0.239.195"' in config_content, 'Expected config.py version 0.239.195'
+        assert 'VERSION = "0.239.199"' in config_content, 'Expected config.py version 0.239.199'
 
         print('✅ Config version bump passed')
         return True

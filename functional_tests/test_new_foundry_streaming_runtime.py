@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for new Foundry REST streaming runtime.
-Version: 0.239.177
+Version: 0.239.205
 Implemented in: 0.239.177
 
 This test ensures that new Foundry application discovery stays REST-based,
@@ -49,7 +49,7 @@ def test_new_foundry_streaming_runtime() -> None:
     assert_contains(chats_path, "response = loop.run_until_complete(agent_stream.__anext__())")
     assert_not_contains(chats_path, "chunks, stream_usage = loop.run_until_complete(stream_agent_async())")
 
-    assert_contains(config_path, 'VERSION = "0.239.177"')
+    assert_contains(config_path, 'VERSION = "0.239.205"')
 
     print("✅ New Foundry REST streaming runtime verified.")
 

@@ -1,13 +1,13 @@
 # test_chat_scope_selector_sync.py
 """
 Functional test for chat scope selector synchronization.
-Version: 0.239.194
-Implemented in: 0.239.194
+Version: 0.239.199
+Implemented in: 0.239.198
 
 This test ensures that chat scope changes synchronize the agent and model
 selectors, that explicit scoped selections can narrow the workspace context,
-and that conversation metadata now carries the context needed to render
-workspace badges immediately.
+and that stream-driven conversation metadata updates now refresh both the
+sidebar workspace badge and locked-scope selector filtering immediately.
 """
 
 import os
@@ -87,6 +87,21 @@ BACKEND_CONVERSATIONS_FILE = os.path.join(
     'application',
     'single_app',
     'route_backend_conversations.py',
+)
+CHAT_SIDEBAR_CONVERSATIONS_FILE = os.path.join(
+    ROOT_DIR,
+    'application',
+    'single_app',
+    'static',
+    'js',
+    'chat',
+    'chat-sidebar-conversations.js',
+)
+CONFIG_FILE = os.path.join(
+    ROOT_DIR,
+    'application',
+    'single_app',
+    'config.py',
 )
 
 
@@ -170,6 +185,7 @@ def test_conversation_metadata_is_returned_for_immediate_badges():
 
     conversations_content = read_file(CHAT_CONVERSATIONS_FILE)
     streaming_content = read_file(CHAT_STREAMING_FILE)
+    sidebar_content = read_file(CHAT_SIDEBAR_CONVERSATIONS_FILE)
     metadata_content = read_file(CONVERSATION_METADATA_FILE)
     backend_chats_content = read_file(BACKEND_CHATS_FILE)
     backend_conversations_content = read_file(BACKEND_CONVERSATIONS_FILE)
@@ -177,14 +193,22 @@ def test_conversation_metadata_is_returned_for_immediate_badges():
     required_snippets = {
         'chat-conversations.js': [
             'export function applyConversationMetadataUpdate(conversationId, updates = {})',
+            'applySidebarConversationMetadataUpdate(conversationId, updates);',
+            'void refreshAgentsAndModelsForActiveConversation();',
             'renderConversationHeaderBadges(convoItem);',
             "convoItem.removeAttribute('data-chat-state');",
         ],
         'chat-streaming.js': [
-            'applyConversationMetadataUpdate(finalData.conversation_id, {',
-            'context: finalData.context || [],',
-            'chat_type: finalData.chat_type || null,',
+            'const metadataUpdates = {};',
+            'metadataUpdates.context = finalData.context;',
+            'metadataUpdates.chat_type = finalData.chat_type || null;',
+            'Object.keys(metadataUpdates).length > 0',
             'if (finalData.scope_locked === true && finalData.locked_contexts) {',
+        ],
+        'chat-sidebar-conversations.js': [
+            'function applySidebarConversationContextAttributes(sidebarItem, chatType, context = []) {',
+            'function renderSidebarConversationScopeBadge(sidebarItem, chatType, context = []) {',
+            'export function applySidebarConversationMetadataUpdate(conversationId, updates = {}) {',
         ],
         'functions_conversation_metadata.py': [
             'def _build_primary_context_from_scope_selection(',
@@ -206,6 +230,7 @@ def test_conversation_metadata_is_returned_for_immediate_badges():
     file_map = {
         'chat-conversations.js': conversations_content,
         'chat-streaming.js': streaming_content,
+        'chat-sidebar-conversations.js': sidebar_content,
         'functions_conversation_metadata.py': metadata_content,
         'route_backend_chats.py': backend_chats_content,
         'route_backend_conversations.py': backend_conversations_content,
@@ -224,11 +249,23 @@ def test_conversation_metadata_is_returned_for_immediate_badges():
     return True
 
 
+def test_config_version_is_bumped_for_post_response_scope_sync_fix():
+    """Verify config version was bumped for the post-response scope sync fix."""
+    print('🔍 Testing config version bump...')
+
+    config_content = read_file(CONFIG_FILE)
+    assert 'VERSION = "0.239.199"' in config_content, 'Expected config.py version 0.239.199'
+
+    print('✅ Config version bump passed')
+    return True
+
+
 if __name__ == '__main__':
     tests = [
         test_scope_change_pipeline_is_exported_for_selector_sync,
         test_agent_and_model_selectors_use_preloaded_scope_catalogs,
         test_conversation_metadata_is_returned_for_immediate_badges,
+        test_config_version_is_bumped_for_post_response_scope_sync_fix,
     ]
 
     results = []

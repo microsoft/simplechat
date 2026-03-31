@@ -22,6 +22,7 @@ import os
 import app_settings_cache
 import queue
 import re
+import traceback
 from urllib.parse import urlparse
 import threading
 from typing import Any, Dict, List, Mapping, Optional
@@ -31,7 +32,7 @@ from functions_authentication import *
 from functions_search import *
 from functions_settings import *
 from functions_agents import get_agent_id_by_name
-from functions_group import find_group_by_id, get_user_role_in_group
+from functions_group import find_group_by_id, get_group_model_endpoints, get_user_role_in_group
 from functions_chat import *
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_conversation_unread import mark_conversation_unread
@@ -40,7 +41,8 @@ from functions_notifications import create_chat_response_notification
 from functions_activity_logging import log_chat_activity, log_conversation_creation, log_token_usage
 from flask import current_app
 from swagger_wrapper import swagger_route, get_auth_security
-from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from azure.identity import ClientSecretCredential, DefaultAzureCredential, get_bearer_token_provider
+from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
 from functions_thoughts import ThoughtTracker
 
 
@@ -2279,6 +2281,339 @@ def determine_tabular_source_hint(document_scope, active_group_id=None, active_p
     if document_scope == 'public' and active_public_workspace_id:
         return 'public'
     return 'workspace'
+
+
+def resolve_foundry_scope_for_auth(auth_settings, endpoint=None):
+    """Resolve the correct scope for Foundry-backed inference authentication."""
+    auth_settings = auth_settings or {}
+    custom_scope = str(auth_settings.get('foundry_scope') or '').strip()
+    if custom_scope:
+        return custom_scope
+
+    management_cloud = str(auth_settings.get('management_cloud') or 'public').lower()
+    if management_cloud in ('government', 'usgovernment', 'usgov'):
+        return 'https://ai.azure.us/.default'
+    if management_cloud == 'china':
+        return 'https://ai.azure.cn/.default'
+    if management_cloud == 'germany':
+        return 'https://ai.azure.de/.default'
+
+    endpoint_value = str(endpoint or '').lower()
+    if 'azure.us' in endpoint_value:
+        return 'https://ai.azure.us/.default'
+    if 'azure.cn' in endpoint_value:
+        return 'https://ai.azure.cn/.default'
+    if 'azure.de' in endpoint_value:
+        return 'https://ai.azure.de/.default'
+
+    return 'https://ai.azure.com/.default'
+
+
+def build_streaming_multi_endpoint_client(auth_settings, provider, endpoint, api_version):
+    """Create an inference client for a resolved streaming model endpoint."""
+    auth_settings = auth_settings or {}
+    auth_type = str(auth_settings.get('type') or 'managed_identity').lower()
+    normalized_provider = str(provider or 'aoai').lower()
+
+    if auth_type in ('api_key', 'key'):
+        api_key = auth_settings.get('api_key')
+        if not api_key:
+            raise ValueError('Selected model endpoint is missing an API key.')
+        return AzureOpenAI(
+            api_version=api_version,
+            azure_endpoint=endpoint,
+            api_key=api_key,
+        )
+
+    if auth_type == 'service_principal':
+        credential = ClientSecretCredential(
+            tenant_id=auth_settings.get('tenant_id'),
+            client_id=auth_settings.get('client_id'),
+            client_secret=auth_settings.get('client_secret'),
+            authority=resolve_authority(auth_settings),
+        )
+    else:
+        managed_identity_client_id = auth_settings.get('managed_identity_client_id') or None
+        credential = DefaultAzureCredential(managed_identity_client_id=managed_identity_client_id)
+
+    scope = cognitive_services_scope
+    if normalized_provider in ('aifoundry', 'new_foundry'):
+        scope = resolve_foundry_scope_for_auth(auth_settings, endpoint=endpoint)
+        if auth_type == 'service_principal':
+            debug_print(
+                f"[Streaming][Model Resolution] Multi-endpoint SP scope={scope} provider={normalized_provider}"
+            )
+        else:
+            debug_print(
+                f"[Streaming][Model Resolution] Multi-endpoint MI scope={scope} provider={normalized_provider}"
+            )
+
+    token_provider = get_bearer_token_provider(credential, scope)
+    return AzureOpenAI(
+        api_version=api_version,
+        azure_endpoint=endpoint,
+        azure_ad_token_provider=token_provider,
+    )
+
+
+def get_streaming_model_endpoint_candidates(settings, user_id, active_group_ids=None):
+    """Collect normalized endpoint candidates available to the streaming request."""
+    endpoints = []
+    active_group_ids = active_group_ids or []
+
+    user_settings_doc = get_user_settings(user_id) if user_id else {}
+    user_settings = user_settings_doc.get('settings', {}) if isinstance(user_settings_doc, dict) else {}
+
+    if settings.get('allow_user_custom_endpoints', False):
+        personal_endpoints, _ = normalize_model_endpoints(user_settings.get('personal_model_endpoints', []) or [])
+        endpoints.extend([
+            {**endpoint, '_endpoint_scope': 'user'}
+            for endpoint in personal_endpoints
+            if isinstance(endpoint, dict)
+        ])
+
+    if settings.get('allow_group_custom_endpoints', False):
+        seen_group_ids = set()
+        for group_id in active_group_ids:
+            group_key = str(group_id or '').strip()
+            if not group_key or group_key in seen_group_ids:
+                continue
+            seen_group_ids.add(group_key)
+
+            try:
+                group_endpoints, _ = normalize_model_endpoints(get_group_model_endpoints(group_key) or [])
+            except Exception as group_error:
+                debug_print(
+                    f"[Streaming][Model Resolution] Failed to load group endpoints for group_id={group_key}: {group_error}"
+                )
+                continue
+
+            endpoints.extend([
+                {**endpoint, '_endpoint_scope': 'group'}
+                for endpoint in group_endpoints
+                if isinstance(endpoint, dict)
+            ])
+
+    global_endpoints, _ = normalize_model_endpoints(settings.get('model_endpoints', []) or [])
+    endpoints.extend([
+        {**endpoint, '_endpoint_scope': 'global'}
+        for endpoint in global_endpoints
+        if isinstance(endpoint, dict)
+    ])
+
+    return endpoints
+
+
+def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_group_ids=None, allow_default_selection=False):
+    """Resolve a streaming GPT config from explicit or default multi-endpoint selections."""
+    if not settings.get('enable_multi_model_endpoints', False):
+        return None
+
+    requested_endpoint_id = str(data.get('model_endpoint_id') or '').strip()
+    requested_model_id = str(data.get('model_id') or '').strip()
+    requested_provider = str(data.get('model_provider') or '').strip().lower()
+    requested_deployment = str(data.get('model_deployment') or '').strip()
+
+    selection_source = None
+    if requested_model_id and not requested_endpoint_id:
+        raise ValueError('Selected model endpoint is missing for the streaming request.')
+
+    if requested_endpoint_id:
+        if not (requested_model_id or requested_deployment):
+            raise ValueError('Selected model information is incomplete for the streaming request.')
+        selection_source = 'request'
+    elif allow_default_selection:
+        default_selection = settings.get('default_model_selection', {}) or {}
+        default_endpoint_id = str(default_selection.get('endpoint_id') or '').strip()
+        default_model_id = str(default_selection.get('model_id') or '').strip()
+        default_provider = str(default_selection.get('provider') or '').strip().lower()
+        if default_endpoint_id and default_model_id:
+            requested_endpoint_id = default_endpoint_id
+            requested_model_id = default_model_id
+            requested_provider = requested_provider or default_provider
+            selection_source = 'default'
+        else:
+            return None
+    else:
+        return None
+
+    endpoint_candidates = get_streaming_model_endpoint_candidates(
+        settings,
+        user_id,
+        active_group_ids=active_group_ids,
+    )
+    endpoint_cfg = next((endpoint for endpoint in endpoint_candidates if endpoint.get('id') == requested_endpoint_id), None)
+
+    if not endpoint_cfg:
+        if selection_source == 'request':
+            raise LookupError('Selected model endpoint could not be found.')
+        debug_print(
+            f"[Streaming][Model Resolution] Default model endpoint_id={requested_endpoint_id} was not found. Falling back to legacy streaming config."
+        )
+        return None
+
+    if not endpoint_cfg.get('enabled', True):
+        if selection_source == 'request':
+            raise ValueError('Selected model endpoint is disabled.')
+        debug_print(
+            f"[Streaming][Model Resolution] Default model endpoint_id={requested_endpoint_id} is disabled. Falling back to legacy streaming config."
+        )
+        return None
+
+    endpoint_scope = endpoint_cfg.get('_endpoint_scope', 'global')
+    resolved_endpoint_cfg = dict(endpoint_cfg)
+    resolved_endpoint_cfg.pop('_endpoint_scope', None)
+    resolved_endpoint_cfg = keyvault_model_endpoint_get_helper(
+        resolved_endpoint_cfg,
+        resolved_endpoint_cfg.get('id') or requested_endpoint_id,
+        scope=endpoint_scope,
+        return_type=SecretReturnType.VALUE,
+    )
+
+    models = resolved_endpoint_cfg.get('models', []) or []
+    model_cfg = None
+    if requested_model_id:
+        model_cfg = next((model for model in models if model.get('id') == requested_model_id), None)
+    if model_cfg is None and requested_deployment:
+        model_cfg = next(
+            (
+                model for model in models
+                if str(model.get('deploymentName') or model.get('deployment') or '').strip() == requested_deployment
+            ),
+            None,
+        )
+
+    if not model_cfg:
+        if selection_source == 'request':
+            raise LookupError('Selected model could not be found on the configured endpoint.')
+        debug_print(
+            f"[Streaming][Model Resolution] Default model_id={requested_model_id} was not found on endpoint_id={requested_endpoint_id}. Falling back to legacy streaming config."
+        )
+        return None
+
+    if not model_cfg.get('enabled', True):
+        if selection_source == 'request':
+            raise ValueError('Selected model is disabled.')
+        debug_print(
+            f"[Streaming][Model Resolution] Default model_id={requested_model_id} is disabled. Falling back to legacy streaming config."
+        )
+        return None
+
+    provider = str(resolved_endpoint_cfg.get('provider') or requested_provider or 'aoai').lower()
+    if provider not in ('aoai', 'aifoundry', 'new_foundry'):
+        if selection_source == 'request':
+            raise ValueError('Selected model provider is not supported for streaming.')
+        debug_print(
+            f"[Streaming][Model Resolution] Default provider '{provider}' is not supported for streaming. Falling back to legacy streaming config."
+        )
+        return None
+
+    connection = resolved_endpoint_cfg.get('connection', {}) or {}
+    auth_settings = resolved_endpoint_cfg.get('auth', {}) or {}
+    deployment = str(model_cfg.get('deploymentName') or model_cfg.get('deployment') or '').strip()
+    endpoint = str(connection.get('endpoint') or '').strip()
+    api_version = str(connection.get('openai_api_version') or connection.get('api_version') or '').strip()
+
+    if requested_provider and requested_provider != provider:
+        debug_print(
+            f"[Streaming][Model Resolution] Request provider '{requested_provider}' did not match saved provider '{provider}' for endpoint_id={requested_endpoint_id}."
+        )
+
+    if not endpoint or not api_version or not deployment:
+        if selection_source == 'request':
+            raise ValueError('Selected model endpoint is missing endpoint, API version, or deployment configuration.')
+        debug_print(
+            f"[Streaming][Model Resolution] Default selection for endpoint_id={requested_endpoint_id} is incomplete. Falling back to legacy streaming config."
+        )
+        return None
+
+    gpt_client = build_streaming_multi_endpoint_client(auth_settings, provider, endpoint, api_version)
+    debug_print(
+        f"[Streaming][Model Resolution] Resolved {selection_source} multi-endpoint model | "
+        f"provider={provider} | endpoint_id={requested_endpoint_id} | model_id={model_cfg.get('id')} | "
+        f"deployment={deployment} | api_version={api_version}"
+    )
+    return gpt_client, deployment, provider, endpoint, auth_settings, api_version
+
+
+def classify_agent_stream_retry_mode(stream_error):
+    """Return retry details for agent streaming failures that can recover without tools."""
+    normalized_error = str(stream_error or '').lower()
+
+    if (
+        'auto tool choice requires' in normalized_error
+        or 'tool-call-parser' in normalized_error
+        or 'does not support tool calling' in normalized_error
+        or ('tool choice' in normalized_error and 'parser' in normalized_error)
+    ):
+        return {
+            'mode': 'disable_tools',
+            'reason': 'tool_choice_unsupported',
+        }
+
+    if (
+        '431' in normalized_error
+        or 'header fields too large' in normalized_error
+        or ('request header' in normalized_error and 'too large' in normalized_error)
+        or ('header' in normalized_error and 'too large' in normalized_error)
+    ):
+        return {
+            'mode': 'disable_tools',
+            'reason': 'request_headers_too_large',
+        }
+
+    return None
+
+
+def apply_agent_stream_retry_mode(agent, retry_mode):
+    """Temporarily adjust agent tool settings for a retry attempt."""
+    retry_state = {
+        'function_choice_behavior': None,
+        'execution_settings': [],
+        'service_prompt_settings': None,
+    }
+
+    if agent is None or retry_mode != 'disable_tools':
+        return retry_state
+
+    retry_state['function_choice_behavior'] = getattr(agent, 'function_choice_behavior', None)
+    agent.function_choice_behavior = None
+
+    agent_arguments = getattr(agent, 'arguments', None)
+    execution_settings = getattr(agent_arguments, 'execution_settings', None)
+    if isinstance(execution_settings, dict):
+        for settings in execution_settings.values():
+            if hasattr(settings, 'function_choice_behavior'):
+                retry_state['execution_settings'].append(
+                    (settings, getattr(settings, 'function_choice_behavior', None))
+                )
+                settings.function_choice_behavior = None
+
+    prompt_execution_settings = getattr(getattr(agent, 'service', None), 'prompt_execution_settings', None)
+    if prompt_execution_settings is not None and hasattr(prompt_execution_settings, 'function_choice_behavior'):
+        retry_state['service_prompt_settings'] = (
+            prompt_execution_settings,
+            getattr(prompt_execution_settings, 'function_choice_behavior', None),
+        )
+        prompt_execution_settings.function_choice_behavior = None
+
+    return retry_state
+
+
+def restore_agent_stream_retry_state(agent, retry_state):
+    """Restore any temporary agent retry settings after the stream attempt finishes."""
+    if agent is None or not retry_state:
+        return
+
+    agent.function_choice_behavior = retry_state.get('function_choice_behavior')
+
+    for settings, original_behavior in retry_state.get('execution_settings', []):
+        settings.function_choice_behavior = original_behavior
+
+    service_prompt_settings = retry_state.get('service_prompt_settings')
+    if service_prompt_settings:
+        settings, original_behavior = service_prompt_settings
+        settings.function_choice_behavior = original_behavior
 
 
 def register_route_backend_chats(app):
@@ -5482,6 +5817,9 @@ def register_route_backend_chats(app):
                 if not active_public_workspace_ids and active_public_workspace_id:
                     active_public_workspace_ids = [active_public_workspace_id]
                 frontend_gpt_model = data.get('model_deployment')
+                frontend_model_id = data.get('model_id')
+                frontend_model_endpoint_id = data.get('model_endpoint_id')
+                frontend_model_provider = data.get('model_provider')
                 classifications_to_send = data.get('classifications')
                 chat_type = data.get('chat_type', 'user')
                 reasoning_effort = data.get('reasoning_effort')  # Extract reasoning effort for reasoning models
@@ -5502,6 +5840,9 @@ def register_route_backend_chats(app):
                     f"active_group_ids={len(active_group_ids)} | "
                     f"active_public_workspace_id={active_public_workspace_id} | "
                     f"frontend_model={frontend_gpt_model} | "
+                    f"frontend_model_id={frontend_model_id} | "
+                    f"frontend_model_endpoint_id={frontend_model_endpoint_id} | "
+                    f"frontend_model_provider={frontend_model_provider} | "
                     f"reasoning_effort={reasoning_effort}"
                 )
                 
@@ -5601,6 +5942,10 @@ def register_route_backend_chats(app):
                 # Initialize GPT client (simplified version)
                 gpt_model = ""
                 gpt_client = None
+                gpt_provider = None
+                gpt_endpoint = None
+                gpt_auth = None
+                gpt_api_version = None
                 enable_gpt_apim = settings.get('enable_gpt_apim', False)
                 should_use_default_model = (
                     bool(request_agent_info)
@@ -5610,17 +5955,20 @@ def register_route_backend_chats(app):
                 )
                 
                 try:
-                    default_model_config = None
-                    if should_use_default_model:
-                        try:
-                            default_model_config = resolve_default_model_gpt_config(settings)
-                            if default_model_config:
-                                debug_print("[GPTClient] Using default multi-endpoint model for agent streaming request.")
-                        except Exception as default_exc:
-                            debug_print(f"[GPTClient] Default model selection unavailable: {default_exc}")
+                    streaming_multi_endpoint_config = None
+                    if settings.get('enable_multi_model_endpoints', False):
+                        streaming_multi_endpoint_config = resolve_streaming_multi_endpoint_gpt_config(
+                            settings,
+                            data,
+                            user_id,
+                            active_group_ids=active_group_ids,
+                            allow_default_selection=should_use_default_model,
+                        )
+                        if streaming_multi_endpoint_config and should_use_default_model and not frontend_model_endpoint_id:
+                            debug_print("[GPTClient] Using default multi-endpoint model for agent streaming request.")
 
-                    if default_model_config:
-                        gpt_client, gpt_model, _, _, _, _ = default_model_config
+                    if streaming_multi_endpoint_config:
+                        gpt_client, gpt_model, gpt_provider, gpt_endpoint, gpt_auth, gpt_api_version = streaming_multi_endpoint_config
                     elif enable_gpt_apim:
                         raw = settings.get('azure_apim_gpt_deployment', '')
                         if not raw:
@@ -5636,10 +5984,14 @@ def register_route_backend_chats(app):
                             gpt_model = frontend_gpt_model
                         else:
                             gpt_model = apim_models[0]
+
+                        gpt_provider = 'aoai'
+                        gpt_endpoint = settings.get('azure_apim_gpt_endpoint')
+                        gpt_api_version = settings.get('azure_apim_gpt_api_version')
                         
                         gpt_client = AzureOpenAI(
-                            api_version=settings.get('azure_apim_gpt_api_version'),
-                            azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
+                            api_version=gpt_api_version,
+                            azure_endpoint=gpt_endpoint,
                             api_key=settings.get('azure_apim_gpt_subscription_key')
                         )
                     else:
@@ -5655,6 +6007,10 @@ def register_route_backend_chats(app):
                         
                         if frontend_gpt_model:
                             gpt_model = frontend_gpt_model
+
+                        gpt_provider = 'aoai'
+                        gpt_endpoint = endpoint
+                        gpt_api_version = api_version
                         
                         if auth_type == 'managed_identity':
                             credential = DefaultAzureCredential()
@@ -5679,7 +6035,10 @@ def register_route_backend_chats(app):
                         return
 
                     debug_print(
-                        f"[Streaming] Initialized model client | model={gpt_model} | enable_gpt_apim={enable_gpt_apim}"
+                        "[Streaming] Initialized model client | "
+                        f"model={gpt_model} | provider={gpt_provider or 'legacy'} | "
+                        f"endpoint_id={frontend_model_endpoint_id or ''} | api_version={gpt_api_version or ''} | "
+                        f"enable_gpt_apim={enable_gpt_apim}"
                     )
                         
                 except Exception as e:
@@ -6694,9 +7053,6 @@ def register_route_backend_chats(app):
                             f"[Streaming][Plugin Callback] Registering callback for key={callback_key}"
                         )
 
-                        # Import required classes
-                        from semantic_kernel.contents.chat_message_content import ChatMessageContent
-                        
                         # Convert conversation history to ChatMessageContent (same as non-streaming)
                         agent_message_history = [
                             ChatMessageContent(
@@ -6720,42 +7076,89 @@ def register_route_backend_chats(app):
                             loop = asyncio.new_event_loop()
                             asyncio.set_event_loop(loop)
                         
+                        agent_retry_plan = None
+                        retry_state = None
+
                         try:
-                            agent_stream = selected_agent.invoke_stream(messages=agent_message_history)
-                            while True:
+                            for attempt_number in range(2):
                                 try:
-                                    response = loop.run_until_complete(agent_stream.__anext__())
-                                except StopAsyncIteration:
+                                    if agent_retry_plan:
+                                        debug_print(
+                                            f"[Streaming][Agent Retry] Retrying agent stream | "
+                                            f"agent={getattr(selected_agent, 'name', None)} | "
+                                            f"model={getattr(selected_agent, 'deployment_name', actual_model_used)} | "
+                                            f"mode={agent_retry_plan['mode']} | "
+                                            f"reason={agent_retry_plan['reason']}"
+                                        )
+
+                                    agent_stream = selected_agent.invoke_stream(messages=agent_message_history)
+                                    while True:
+                                        try:
+                                            response = loop.run_until_complete(agent_stream.__anext__())
+                                        except StopAsyncIteration:
+                                            break
+
+                                        response_metadata = getattr(response, 'metadata', None)
+                                        if isinstance(response_metadata, dict):
+                                            usage = response_metadata.get('usage')
+                                            if usage:
+                                                stream_usage = usage
+                                            response_model = response_metadata.get('model')
+                                            if isinstance(response_model, str) and response_model.strip():
+                                                actual_model_used = response_model.strip()
+
+                                        chunk_content = None
+                                        if hasattr(response, 'content') and response.content:
+                                            chunk_content = str(response.content)
+                                        elif isinstance(response, str) and response:
+                                            chunk_content = response
+
+                                        if chunk_content:
+                                            accumulated_content += chunk_content
+                                            yield f"data: {json.dumps({'content': chunk_content})}\\n\\n"
+
+                                    if agent_retry_plan:
+                                        debug_print(
+                                            f"[Streaming][Agent Retry] Agent retry succeeded | "
+                                            f"agent={getattr(selected_agent, 'name', None)} | "
+                                            f"model={actual_model_used} | "
+                                            f"reason={agent_retry_plan['reason']}"
+                                        )
                                     break
-
-                                response_metadata = getattr(response, 'metadata', None)
-                                if isinstance(response_metadata, dict):
-                                    usage = response_metadata.get('usage')
-                                    if usage:
-                                        stream_usage = usage
-                                    response_model = response_metadata.get('model')
-                                    if isinstance(response_model, str) and response_model.strip():
-                                        actual_model_used = response_model.strip()
-
-                                chunk_content = None
-                                if hasattr(response, 'content') and response.content:
-                                    chunk_content = str(response.content)
-                                elif isinstance(response, str) and response:
-                                    chunk_content = response
-
-                                if chunk_content:
-                                    accumulated_content += chunk_content
-                                    yield f"data: {json.dumps({'content': chunk_content})}\n\n"
+                                except Exception as stream_error:
+                                    if agent_retry_plan is None:
+                                        candidate_retry_plan = classify_agent_stream_retry_mode(stream_error)
+                                        if candidate_retry_plan and not accumulated_content and attempt_number == 0:
+                                            agent_retry_plan = candidate_retry_plan
+                                            retry_state = apply_agent_stream_retry_mode(
+                                                selected_agent,
+                                                agent_retry_plan['mode'],
+                                            )
+                                            debug_print(
+                                                f"[Streaming][Agent Retry] Retrying agent stream without tool calling | "
+                                                f"agent={getattr(selected_agent, 'name', None)} | "
+                                                f"model={getattr(selected_agent, 'deployment_name', actual_model_used)} | "
+                                                f"reason={agent_retry_plan['reason']} | "
+                                                f"error={stream_error}"
+                                            )
+                                            continue
+                                    raise
                         except Exception as stream_error:
+                            import traceback
                             plugin_logger_cb.deregister_callbacks(callback_key)
                             debug_print(
                                 f"[Streaming][Plugin Callback] Deregistered callback after streaming error for key={callback_key}"
                             )
+                            debug_print(
+                                f"[Streaming][Agent Retry] Terminal agent streaming error | "
+                                f"retried={agent_retry_plan is not None} | error={stream_error}"
+                            )
                             debug_print(f"❌ Agent streaming error: {stream_error}")
-                            import traceback
                             traceback.print_exc()
                             yield f"data: {json.dumps({'error': f'Agent streaming failed: {str(stream_error)}'})}\n\n"
                             return
+                        finally:
+                            restore_agent_stream_retry_state(selected_agent, retry_state)
 
                         actual_model_used = (
                             getattr(selected_agent, 'last_run_model', None)

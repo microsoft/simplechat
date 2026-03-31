@@ -265,7 +265,18 @@ function rebuildModelOptions(sections, restoreOptions = {}) {
 
     modelSelect.innerHTML = '';
 
-    const flattenedOptions = sections.flatMap(section => section.options);
+    const filteringContext = restoreOptions.filteringContext || getConversationFilteringContext();
+    const hideUnavailableOptions = !filteringContext.isNewConversation;
+    const renderedSections = sections
+        .map(section => ({
+            ...section,
+            options: hideUnavailableOptions
+                ? section.options.filter(option => !option.disabled)
+                : section.options,
+        }))
+        .filter(section => section.options.length > 0);
+
+    const flattenedOptions = renderedSections.flatMap(section => section.options);
 
     if (!flattenedOptions.length) {
         const emptyOption = document.createElement('option');
@@ -278,7 +289,7 @@ function rebuildModelOptions(sections, restoreOptions = {}) {
 
     const selectedSelectionKey = resolveSelectedSelectionKey(flattenedOptions, restoreOptions);
 
-    sections.forEach(section => {
+    renderedSections.forEach(section => {
         const optGroup = document.createElement('optgroup');
         optGroup.label = section.label;
 
@@ -490,6 +501,7 @@ export async function populateModelDropdown(restoreOptions = {}) {
         preserveCurrentSelection: restoreOptions.preserveCurrentSelection !== false,
         preferredModelId: restoreOptions.preferredModelId || null,
         preferredModelDeployment: restoreOptions.preferredModelDeployment || null,
+        filteringContext,
     });
     updateScopeClearAction(scopes, filteringContext);
     modelSelectorController?.refresh();

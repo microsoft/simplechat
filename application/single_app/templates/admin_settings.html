@@ -1345,10 +1345,12 @@
                         Manage multiple AI model endpoints (Azure OpenAI and Azure AI Foundry). When enabled, model selection in chat is driven by these endpoints.
                     </p>
 
+                    {% if not settings.enable_multi_model_endpoints %}
                     <div class="form-check form-switch mb-3 d-flex align-items-center">
                         <input type="checkbox" class="form-check-input me-2" id="enable_multi_model_endpoints" name="enable_multi_model_endpoints" {% if settings.enable_multi_model_endpoints %}checked{% endif %}>
                         <label class="form-check-label" for="enable_multi_model_endpoints">Enable multi-endpoint model management</label>
                     </div>
+                    {% endif %}
 
                     <div id="multi-endpoint-warning" class="alert alert-warning {% if not settings.multi_endpoint_migration_notice.enabled %}d-none{% endif %}">
                         <i class="bi bi-exclamation-triangle me-2"></i>

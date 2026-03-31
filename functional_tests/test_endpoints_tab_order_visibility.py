@@ -1,15 +1,24 @@
-# test_endpoints_tab_order_visibility.py
 #!/usr/bin/env python3
+# test_endpoints_tab_order_visibility.py
 """
 Functional test for workspace/group endpoints tab order and visibility.
-Version: 0.236.046
-Implemented in: 0.236.046
+Version: 0.239.197
+Implemented in: 0.239.197
 
-This test ensures endpoints tabs appear after actions and are gated by admin
-custom endpoint settings.
+This test ensures endpoints tabs only render when multi-endpoint management is
+enabled, the personal and group admin-controlled toggles stay hidden, and the
+admin multi-endpoint toggle is removed after migration while its script keeps
+the endpoint editor initialized.
 """
 
 import os
+
+
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+WORKSPACE_TEMPLATE = os.path.join(REPO_ROOT, "application", "single_app", "templates", "workspace.html")
+GROUP_TEMPLATE = os.path.join(REPO_ROOT, "application", "single_app", "templates", "group_workspaces.html")
+ADMIN_TEMPLATE = os.path.join(REPO_ROOT, "application", "single_app", "templates", "admin_settings.html")
+ADMIN_ENDPOINTS_JS = os.path.join(REPO_ROOT, "application", "single_app", "static", "js", "admin", "admin_model_endpoints.js")
 
 
 def read_file_text(file_path):
@@ -18,9 +27,7 @@ def read_file_text(file_path):
 
 
 def test_workspace_endpoints_tab_order_visibility():
-    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    template_path = os.path.join(repo_root, "application", "single_app", "templates", "workspace.html")
-    content = read_file_text(template_path)
+    content = read_file_text(WORKSPACE_TEMPLATE)
 
     agents_idx = content.find('id="agents-tab-btn"')
     actions_idx = content.find('id="plugins-tab-btn"')
@@ -37,15 +44,16 @@ def test_workspace_endpoints_tab_order_visibility():
     assert endpoints_pane_idx != -1, "Endpoints tab pane missing in workspace template."
     assert actions_pane_idx < endpoints_pane_idx, "Endpoints tab pane should appear after actions pane."
 
-    assert "settings.allow_user_custom_agent_endpoints" in content, "Workspace endpoints should be gated by custom endpoint settings."
+    expected_gate = "{% if settings.allow_user_custom_endpoints and settings.enable_multi_model_endpoints %}"
+    assert content.count(expected_gate) >= 2, "Workspace endpoints tab button and pane should share the multi-endpoint gate."
+    assert 'form-check form-switch mb-3 d-flex align-items-center d-none' in content, "Workspace admin-controlled endpoint toggle should stay hidden in the DOM."
+    assert 'Multi-endpoint management is controlled by your admin' in content, "Workspace hidden admin-controlled endpoint toggle text missing."
 
     print("✅ Workspace endpoints tab order and visibility verified.")
 
 
 def test_group_endpoints_tab_order_visibility():
-    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    template_path = os.path.join(repo_root, "application", "single_app", "templates", "group_workspaces.html")
-    content = read_file_text(template_path)
+    content = read_file_text(GROUP_TEMPLATE)
 
     agents_idx = content.find('id="group-agents-tab-btn"')
     actions_idx = content.find('id="group-plugins-tab-btn"')
@@ -62,15 +70,38 @@ def test_group_endpoints_tab_order_visibility():
     assert endpoints_pane_idx != -1, "Group endpoints tab pane missing in group workspace template."
     assert actions_pane_idx < endpoints_pane_idx, "Group endpoints tab pane should appear after actions pane."
 
-    assert "settings.allow_group_custom_agent_endpoints" in content, "Group endpoints should be gated by custom endpoint settings."
+    expected_gate = "{% if settings.enable_semantic_kernel and settings.allow_group_custom_endpoints and settings.enable_multi_model_endpoints %}"
+    assert content.count(expected_gate) >= 2, "Group endpoints tab button and pane should share the multi-endpoint gate."
+    assert 'form-check form-switch mb-3 d-flex align-items-center d-none' in content, "Group admin-controlled endpoint toggle should stay hidden in the DOM."
+    assert 'Multi-endpoint management is controlled by your admin' in content, "Group hidden admin-controlled endpoint toggle text missing."
 
     print("✅ Group endpoints tab order and visibility verified.")
+
+
+def test_admin_multi_endpoint_toggle_is_omitted_after_enablement():
+    content = read_file_text(ADMIN_TEMPLATE)
+
+    assert '{% if not settings.enable_multi_model_endpoints %}' in content, "Admin multi-endpoint toggle should only render before migration is enabled."
+    assert 'Enable multi-endpoint model management' in content, "Admin multi-endpoint toggle label missing from template."
+
+    print("✅ Admin multi-endpoint toggle render gating verified.")
+
+
+def test_admin_endpoints_script_supports_missing_toggle():
+    content = read_file_text(ADMIN_ENDPOINTS_JS)
+
+    assert 'const isMultiEndpointEnabled = enableMultiEndpointToggle ? enableMultiEndpointToggle.checked : true;' in content, "Admin endpoints script should default to enabled when the toggle is not rendered."
+    assert 'if (!enableMultiEndpointToggle) {' not in content, "Admin endpoints init should not exit early when the toggle is omitted."
+
+    print("✅ Admin endpoints script missing-toggle support verified.")
 
 
 def run_tests():
     tests = [
         test_workspace_endpoints_tab_order_visibility,
-        test_group_endpoints_tab_order_visibility
+        test_group_endpoints_tab_order_visibility,
+        test_admin_multi_endpoint_toggle_is_omitted_after_enablement,
+        test_admin_endpoints_script_supports_missing_toggle,
     ]
     results = []
 
