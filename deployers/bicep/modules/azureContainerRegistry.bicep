@@ -30,10 +30,7 @@ resource acr 'Microsoft.ContainerRegistry/registries@2025-04-01' = {
   properties: {
     adminUserEnabled: true
     publicNetworkAccess: 'Enabled'  // configuration is set in post provision step in azure.yaml with post deployment script
-    networkRuleSet: enablePrivateNetworking ? {
-      defaultAction: 'Deny'
-      ipRules: allowedIpAddresses
-    } : null
+
   }
   tags: tags
 }
