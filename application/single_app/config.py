@@ -94,7 +94,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.240.004"
+VERSION = "0.240.006"
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
@@ -214,6 +214,11 @@ HOME_REDIRECT_URL = os.getenv("HOME_REDIRECT_URL")  # Front Door URL for home pa
 AZURE_ENVIRONMENT = os.getenv("AZURE_ENVIRONMENT", "public") # public, usgovernment, custom
 
 WORD_CHUNK_SIZE = 400
+
+DEFAULT_VIDEO_INDEXER_ARM_API_VERSION = os.getenv(
+    'VIDEO_INDEXER_ARM_API_VERSION',
+    '2024-01-01' if AZURE_ENVIRONMENT == 'usgovernment' else '2025-04-01'
+)
 
 if AZURE_ENVIRONMENT == "custom" or CUSTOM_IDENTITY_URL_VALUE or CUSTOM_GRAPH_AUTHORITY_URL_VALUE:
     AUTHORITY = f"{CUSTOM_IDENTITY_URL_VALUE.rstrip('/')}/{TENANT_ID}"

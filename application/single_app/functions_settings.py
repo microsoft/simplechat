@@ -6,10 +6,6 @@ import app_settings_cache
 import inspect
 import copy
 
-DEFAULT_VIDEO_INDEXER_ARM_API_VERSION = os.getenv(
-    'VIDEO_INDEXER_ARM_API_VERSION',
-    '2024-01-01' if AZURE_ENVIRONMENT == 'usgovernment' else '2025-04-01'
-)
 
 def is_tabular_processing_enabled(settings):
     """Tabular processing is available whenever enhanced citations is enabled."""
@@ -445,10 +441,7 @@ def get_settings(use_cosmos=False, include_source=False):
                     caller_file = code.co_filename
                     caller_line = caller.f_lineno
                     caller_func = code.co_name
-                    # print(
-                    #     "Warning: Failed to get settings from cache, read from Cosmos DB instead. "
-                    #     f"Called from {caller_file}:{caller_line} in {caller_func}()."
-                    # )
+
                     log_event(
                         "App settings cache miss. Falling back to Cosmos DB.",
                         extra={
@@ -460,10 +453,7 @@ def get_settings(use_cosmos=False, include_source=False):
                         level=logging.WARNING
                     )
                 else:
-                    # print(
-                    #     "Warning: Failed to get settings from cache, "
-                    #     "read from Cosmos DB instead. (no caller frame)"
-                    # )
+
                     log_event(
                         "App settings cache miss. Falling back to Cosmos DB (no caller frame).",
                         extra={
@@ -471,16 +461,16 @@ def get_settings(use_cosmos=False, include_source=False):
                         },
                         level=logging.WARNING
                     )
-        #print("Successfully retrieved settings from Cosmos DB.")
 
         # Merge default_settings in, to fill in any missing or nested keys
-        merged = deep_merge_dicts(default_settings, settings_item)
+        merge_changed = deep_merge_dicts(default_settings, settings_item)
+        merged = settings_item
         migration_updated = apply_custom_endpoint_setting_migration(merged)
 
         merged['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(merged)
 
         # If merging added anything new, upsert back to Cosmos so future reads remain up to date
-        if merged != settings_item or migration_updated:
+        if merge_changed or migration_updated:
             cosmos_settings_container.upsert_item(merged)
             cache_updater = getattr(app_settings_cache, "update_settings_cache", None)
             if callable(cache_updater):
@@ -495,7 +485,7 @@ def get_settings(use_cosmos=False, include_source=False):
                         },
                         level=logging.WARNING
                     )
-            # print("App Settings had missing keys and was updated in Cosmos DB.")
+
             log_event(
                 "App settings missing keys were merged and persisted to Cosmos DB.",
                 extra={
@@ -510,7 +500,7 @@ def get_settings(use_cosmos=False, include_source=False):
 
     except CosmosResourceNotFoundError:
         cosmos_settings_container.create_item(body=default_settings)
-        # print("Default settings created in Cosmos and returned.")
+
         log_event(
             "App settings document not found. Default settings created in Cosmos DB.",
             extra={
@@ -521,7 +511,6 @@ def get_settings(use_cosmos=False, include_source=False):
         return _format_result(default_settings, "cosmos_default_created")
 
     except Exception as e:
-        # print(f"Error retrieving settings: {str(e)}")
         log_event(
             "Error retrieving app settings.",
             extra={
@@ -745,12 +734,9 @@ def extract_latest_version_from_html(html_content):
                         # Validate the format (digits and dots only) using regex
                         if re.match(r'^\d+(\.\d+)*$', version_str):
                             versions_found.add(version_str)
-                        # else:
-                        #     print(f"Skipping invalid version format from href '{href}': '{version_str}'")
 
                 except (IndexError, ValueError):
                     # Ignore links where splitting or processing fails
-                    # print(f"Could not process href: {href}")
                     continue # Skip to the next link
 
         if not versions_found:
@@ -765,13 +751,10 @@ def extract_latest_version_from_html(html_content):
         for current_version in versions_found:
             if latest_version is None:
                 latest_version = current_version
-                # print(f"Initial latest version set to: {latest_version}")
             else:
-                # print(f"Comparing '{current_version}' with current latest '{latest_version}'")
                 comparison_result = compare_versions(current_version, latest_version)
 
                 if comparison_result == 1: # current_version > latest_version
-                    # print(f"  -> New latest version: {current_version}")
                     latest_version = current_version
                 elif comparison_result is None:
                      # Log if comparison fails, but continue trying others
@@ -783,9 +766,6 @@ def extract_latest_version_from_html(html_content):
                          },
                          level=logging.WARNING
                      )
-                # else: comparison is -1 or 0, keep existing latest_version
-                #     print(f"  -> '{latest_version}' remains latest.")
-
 
         log_event(
             "Latest release version identified from HTML.",
@@ -836,6 +816,9 @@ def deep_merge_dicts(default_dict, existing_dict):
     return changed
 
 def apply_custom_endpoint_setting_migration(settings_item):
+    if not isinstance(settings_item, dict):
+        return False
+
     updated = False
     if "allow_user_custom_endpoints" not in settings_item:
         settings_item["allow_user_custom_endpoints"] = settings_item.get("allow_user_custom_agent_endpoints", False)
