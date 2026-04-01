@@ -115,7 +115,7 @@ def register_route_frontend_profile(app):
                             dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
                             date_key = dt.strftime('%Y-%m-%d')
                             logins_by_date[date_key] += 1
-                        except:
+                        except Exception as ex:
                             pass
             except Exception as e:
                 debug_print(f"Error fetching login trends: {e}")
@@ -146,7 +146,7 @@ def register_route_frontend_profile(app):
                             dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
                             date_key = dt.strftime('%Y-%m-%d')
                             conversations_by_date[date_key] += 1
-                        except:
+                        except Exception as ex:
                             pass
             except Exception as e:
                 debug_print(f"Error fetching conversation trends: {e}")
@@ -173,7 +173,7 @@ def register_route_frontend_profile(app):
                             dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
                             date_key = dt.strftime('%Y-%m-%d')
                             conversations_delete_by_date[date_key] += 1
-                        except:
+                        except Exception as ex:
                             pass
             except Exception as e:
                 debug_print(f"Error fetching conversation deletion trends: {e}")
@@ -204,7 +204,7 @@ def register_route_frontend_profile(app):
                             dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
                             date_key = dt.strftime('%Y-%m-%d')
                             documents_upload_by_date[date_key] += 1
-                        except:
+                        except Exception as ex:
                             pass
             except Exception as e:
                 debug_print(f"Error fetching document upload trends: {e}")
@@ -231,7 +231,7 @@ def register_route_frontend_profile(app):
                             dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
                             date_key = dt.strftime('%Y-%m-%d')
                             documents_delete_by_date[date_key] += 1
-                        except:
+                        except Exception as ex:
                             pass
             except Exception as e:
                 debug_print(f"Error fetching document delete trends: {e}")
@@ -265,7 +265,7 @@ def register_route_frontend_profile(app):
                             usage = record.get('usage', {})
                             total_tokens = usage.get('total_tokens', 0)
                             tokens_by_date[date_key] += total_tokens
-                        except:
+                        except Exception as ex:
                             pass
             except Exception as e:
                 debug_print(f"Error fetching token usage trends: {e}")

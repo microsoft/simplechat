@@ -1,0 +1,50 @@
+name: Swagger Route Check
+
+on:
+  pull_request:
+    branches:
+      - main
+      - Development
+      - staging
+    paths:
+      - 'application/single_app/**/*.py'
+      - 'scripts/check_swagger_routes.py'
+      - '.github/workflows/swagger-route-check.yml'
+
+jobs:
+  swagger-route-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Get changed Python files
+        id: changed-files
+        uses: tj-actions/changed-files@v46.0.1
+        with:
+          files_yaml: |
+            route_python:
+              - 'application/single_app/**/*.py'
+              - 'scripts/check_swagger_routes.py'
+
+      - name: Run swagger route validation
+        env:
+          CHANGED_ROUTE_FILES: ${{ steps.changed-files.outputs.route_python_all_changed_files }}
+        run: |
+          if [[ -z "$CHANGED_ROUTE_FILES" ]]; then
+            echo "No changed application Python files detected."
+            exit 0
+          fi
+
+          echo "Changed Python files:"
+          printf '%s\n' "$CHANGED_ROUTE_FILES" | tr ' ' '\n'
+
+          python scripts/check_swagger_routes.py $CHANGED_ROUTE_FILES

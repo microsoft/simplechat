@@ -176,7 +176,7 @@ def test_azure_di_api_call():
             try:
                 os.unlink(test_pdf_path)
                 print(f"✅ Cleaned up test file: {test_pdf_path}")
-            except:
+            except Exception as ex:
                 pass
         
     except Exception as e:

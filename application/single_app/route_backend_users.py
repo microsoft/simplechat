@@ -146,6 +146,7 @@ def register_route_backend_users(app):
                     'activeGroupOid', 'layoutPreference', 'splitSizesPreference', 'dockedSidebarHidden', 
                     'darkModeEnabled', 'preferredModelDeployment', 'agents', 'plugins', "selected_agent", 
                     'navLayout', 'profileImage', 'enable_agents', 'streamingEnabled', 'reasoningEffortSettings',
+                    'preferredModelId', 'dismissedMultiEndpointNotice',
                     # Public directory and workspace settings
                     'publicDirectorySavedLists', 'publicDirectorySettings', 'activePublicWorkspaceOid',
                     # Chat UI settings

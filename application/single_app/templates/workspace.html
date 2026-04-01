@@ -7,8 +7,8 @@
    <link rel="stylesheet" href="/static/css/simplemde.min.css" />
 
   <style>
-    /* Force fixed layout so columns don't expand when content changes */
-    #documents-table, #prompts-table, #agents-table { /* Apply to all tables */
+    /* Keep fixed layout for document and prompt tables only. */
+    #documents-table, #prompts-table {
       table-layout: fixed;
       width: 100%;
     }
@@ -93,24 +93,25 @@
     /* --- Agents Table Styles --- */
     #agents-table th:nth-child(1), /* Display Name */
     #agents-table td:nth-child(1) {
-        width: 25%; /* Agent name column */
+      width: 28%;
         overflow: hidden;
         white-space: nowrap;
         text-overflow: ellipsis;
-        min-width: 120px;
+      min-width: 140px;
     }
     #agents-table th:nth-child(2), /* Description */
     #agents-table td:nth-child(2) {
-        width: 55%; /* Description column - largest */
+      width: 47%;
         overflow: hidden;
         white-space: nowrap;
         text-overflow: ellipsis;
-        min-width: 200px;
+      max-width: 0;
     }
     #agents-table th:nth-child(3), /* Actions */
     #agents-table td:nth-child(3) {
-        width: 20%; /* Actions column */
-        min-width: 120px;
+      width: 25%;
+      min-width: 160px;
+      white-space: nowrap;
     }
 
     /* Style for the classification badge */
@@ -272,6 +273,166 @@
         overflow-y: auto;
     }
 
+    #workspace-tutorial-launch {
+      z-index: 1099;
+      pointer-events: none;
+      top: 80px;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(-8px);
+      transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s ease;
+    }
+
+    #workspace-tutorial-launch.is-ready {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0);
+    }
+
+    #workspace-tutorial-btn {
+      pointer-events: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 0;
+      overflow: hidden;
+      white-space: nowrap;
+      border-radius: 999px;
+      padding: 0.5rem 0.75rem;
+      transition: gap 0.2s ease, padding 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    #workspace-tutorial-btn:hover,
+    #workspace-tutorial-btn:focus-visible {
+      gap: 0.5rem;
+      padding-right: 1rem;
+      box-shadow: 0 0.35rem 0.9rem rgba(13, 110, 253, 0.28) !important;
+    }
+
+    #workspace-tutorial-btn .tutorial-btn-label {
+      max-width: 0;
+      opacity: 0;
+      overflow: hidden;
+      transition: max-width 0.2s ease, opacity 0.2s ease;
+      font-weight: 600;
+    }
+
+    #workspace-tutorial-btn:hover .tutorial-btn-label,
+    #workspace-tutorial-btn:focus-visible .tutorial-btn-label {
+      max-width: 120px;
+      opacity: 1;
+    }
+
+    .chat-tutorial-tooltip {
+      --bs-tooltip-zindex: 1115;
+    }
+
+    .workspace-tutorial-layer {
+        position: fixed;
+        inset: 0;
+        z-index: 1100;
+        pointer-events: auto;
+        overflow: visible;
+    }
+
+    .workspace-tutorial-highlight {
+        position: fixed;
+        border-radius: 12px;
+        box-shadow: 0 0 0 3px var(--bs-primary), 0 0 0 9999px rgba(0, 0, 0, 0.55);
+        transition: all 0.2s ease;
+        pointer-events: none;
+    }
+
+    .workspace-tutorial-card {
+        position: fixed;
+        max-width: 360px;
+      z-index: 1105;
+    }
+
+    .workspace-tutorial-actions .btn {
+        min-width: 80px;
+    }
+
+    .workspace-tutorial-surface {
+      position: fixed;
+      inset: 0;
+    }
+
+    .workspace-tutorial-surface .workspace-tutorial-modal-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.12);
+    }
+
+    .workspace-tutorial-surface .workspace-tutorial-modal-dialog {
+      position: absolute;
+      z-index: 1;
+    }
+
+    .workspace-tutorial-surface .modal-content,
+    .workspace-tutorial-menu-clone .dropdown-menu {
+      background: var(--bs-body-bg, #fff);
+      opacity: 1;
+    }
+
+    .workspace-tutorial-surface .modal-content {
+      border: 1px solid rgba(0, 0, 0, 0.12);
+      box-shadow: 0 1rem 2.5rem rgba(0, 0, 0, 0.22);
+    }
+
+    .workspace-tutorial-target-highlight {
+      position: relative;
+      z-index: 2;
+      border-radius: 0.75rem !important;
+      background: var(--bs-body-bg, #fff) !important;
+      box-shadow: 0 0 0 3px var(--bs-primary), 0 0 0 6px rgba(13, 110, 253, 0.18), 0 0.75rem 1.5rem rgba(0, 0, 0, 0.18);
+    }
+
+    .workspace-tutorial-static-field {
+      background: var(--bs-body-bg, #fff);
+      color: var(--bs-body-color, #212529);
+      min-height: calc(1.5em + 0.75rem + 2px);
+      display: flex;
+      align-items: center;
+    }
+
+    .workspace-tutorial-static-field.is-textarea {
+      display: block;
+      min-height: 120px;
+      white-space: pre-wrap;
+    }
+
+    .workspace-tutorial-static-field.is-select {
+      position: relative;
+      padding-right: 2.25rem;
+    }
+
+    .workspace-tutorial-static-field.is-select::after {
+      content: "";
+      position: absolute;
+      right: 0.9rem;
+      top: 50%;
+      width: 0.7rem;
+      height: 0.7rem;
+      border-right: 2px solid currentColor;
+      border-bottom: 2px solid currentColor;
+      transform: translateY(-65%) rotate(45deg);
+      opacity: 0.7;
+    }
+
+    .workspace-tutorial-static-field.is-color {
+      width: 3rem;
+      min-width: 3rem;
+      min-height: 2.5rem;
+      padding: 0.25rem;
+    }
+
+    .workspace-tutorial-static-color-swatch {
+      width: 100%;
+      height: 100%;
+      border-radius: 0.375rem;
+      border: 1px solid rgba(0, 0, 0, 0.12);
+    }
+
   </style>
 {% endblock %}
 
@@ -333,34 +494,55 @@
         </button>
       </li>
       {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
-      <li class="nav-item" role="presentation">
-        <button
-          class="nav-link"
-          id="agents-tab-btn"
-          data-bs-toggle="tab"
-          data-bs-target="#agents-tab"
-          type="button"
-          role="tab"
-          aria-controls="agents-tab"
-          aria-selected="false"
-        >
-          Your Agents
-        </button>
-      </li>
-      <li class="nav-item" role="presentation">
-        <button
-          class="nav-link"
-          id="plugins-tab-btn"
-          data-bs-toggle="tab"
-          data-bs-target="#plugins-tab"
-          type="button"
-          role="tab"
-          aria-controls="plugins-tab"
-          aria-selected="false"
-        >
-          Your Actions
-        </button>
-      </li>
+        {% if settings.allow_user_agents %}
+          <li class="nav-item" role="presentation">
+            <button
+              class="nav-link"
+              id="agents-tab-btn"
+              data-bs-toggle="tab"
+              data-bs-target="#agents-tab"
+              type="button"
+              role="tab"
+              aria-controls="agents-tab"
+              aria-selected="false"
+            >
+              Your Agents
+            </button>
+          </li>
+      
+          {% if settings.allow_user_plugins %}
+            <li class="nav-item" role="presentation">
+              <button
+                class="nav-link"
+                id="plugins-tab-btn"
+                data-bs-toggle="tab"
+                data-bs-target="#plugins-tab"
+                type="button"
+                role="tab"
+                aria-controls="plugins-tab"
+                aria-selected="false"
+              >
+                Your Actions
+              </button>
+            </li>
+          {% endif %}
+        {% endif %}
+      {% endif %}
+      {% if settings.allow_user_custom_endpoints and settings.enable_multi_model_endpoints %}
+        <li class="nav-item" role="presentation">
+          <button
+            class="nav-link"
+            id="endpoints-tab-btn"
+            data-bs-toggle="tab"
+            data-bs-target="#endpoints-tab"
+            type="button"
+            role="tab"
+            aria-controls="endpoints-tab"
+            aria-selected="false"
+          >
+            Your Endpoints
+          </button>
+        </li>
       {% endif %}
     </ul>
 
@@ -669,7 +851,6 @@
         </div> <!-- End Card -->
       </div>
       <!-- End PROMPTS TAB -->
-      {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
       <!-- ============= AGENTS TAB ============= -->
       <div
         class="tab-pane fade"
@@ -724,7 +905,7 @@
         {% endif %}
       </div>
       <!-- End AGENTS TAB -->
-      {% endif %}
+      
 
       {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
       <!-- ============= ACTIONS TAB ============= -->
@@ -764,18 +945,68 @@
               <div id="plugins-grid-view" class="row g-3 d-none"></div>
             </div>
           </template>
-          </div>
         {% else %}
           <div class="alert alert-warning text-center my-4">
             Custom User Actions are currently disabled. Please ask your admin to enable actions for your workspace.
           </div>
         {% endif %}
+      </div>
+      <!-- End ACTIONS TAB -->
+
+      {% if settings.allow_user_custom_endpoints and settings.enable_multi_model_endpoints %}
+      <!-- ============= ENDPOINTS TAB ============= -->
+      <div
+        class="tab-pane fade"
+        id="endpoints-tab"
+        role="tabpanel"
+        aria-labelledby="endpoints-tab-btn"
+      >
+        <div class="tab-pane-inner">
+          <!-- Workspace Model Endpoints -->
+          <div class="card p-3 my-3" id="workspace-multi-endpoint-configuration">
+            <h6 class="mb-2"><i class="bi bi-hdd-network me-2"></i>Workspace Model Endpoints</h6>
+            <p class="text-muted small mb-2">Manage personal model endpoints used by your workspace agents. Global endpoints are managed by admins.</p>
+            <div class="form-check form-switch mb-3 d-flex align-items-center d-none">
+              <input type="checkbox" class="form-check-input me-2" id="enable_multi_model_endpoints" name="enable_multi_model_endpoints" {% if settings.enable_multi_model_endpoints %}checked{% endif %} disabled />
+              <label class="form-check-label" for="enable_multi_model_endpoints">Multi-endpoint management is controlled by your admin</label>
+            </div>
+            <div id="model-endpoints-wrapper" class="{% if not settings.enable_multi_model_endpoints %}d-none{% endif %}">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="mb-0">Your Endpoints</h6>
+                <button type="button" class="btn btn-sm btn-outline-primary" id="add-model-endpoint-btn">
+                  <i class="bi bi-plus-circle me-1"></i>Add Endpoint
+                </button>
+              </div>
+              <div class="table-responsive">
+                <table class="table table-sm table-bordered">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Provider</th>
+                      <th>Selected Models</th>
+                      <th>Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="model-endpoints-tbody">
+                    <!-- Populated by JS -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <input type="hidden" id="model_endpoints_json" />
+          </div>
+        </div>
+      </div>
+      <!-- End ENDPOINTS TAB -->
+      {% endif %}
       {% endif %}
     </div>
     <!-- End Tab Content -->
   </div>
   <!--</div>-->
 
+  {% include '_multiendpoint_modal.html' %}
   <!-- Shared Item View Modal (read-only details for agents/actions) -->
   <div class="modal fade" id="item-view-modal" tabindex="-1" aria-labelledby="item-view-modal-label" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
@@ -1264,6 +1495,24 @@
     </form>
   </div>
 </div>
+
+<div id="workspace-tutorial-launch" class="position-fixed top-0 end-0 p-3 is-ready">
+  <button
+      id="workspace-tutorial-btn"
+      class="btn btn-primary btn-sm shadow"
+      type="button"
+      aria-label="Open workspace walkthrough"
+      data-bs-toggle="tooltip"
+      data-bs-trigger="hover"
+      data-bs-custom-class="chat-tutorial-tooltip"
+      data-bs-placement="left"
+      data-bs-offset="0,132"
+      title="Let us walk you through getting the most out of your workspace"
+  >
+      <i class="bi bi-question-circle"></i>
+      <span class="tutorial-btn-label">Workspace Tutorial</span>
+  </button>
+</div>
 <!-- Approve Shared Document Modal -->
 <div class="modal fade" id="approveSharedModal" tabindex="-1" aria-labelledby="approveSharedModalLabel" aria-hidden="true">
   <div class="modal-dialog">
@@ -1293,6 +1542,13 @@
     <script type="module" src="/static/js/workspace/workspace_agents.js"></script>
     <script type="module" src="/static/js/workspace/workspace_plugins.js"></script>
   {% endif %}
+  <script>
+    window.enableMultiModelEndpoints = {{ 'true' if settings.enable_multi_model_endpoints else 'false' }};
+    window.modelEndpointScope = 'user';
+    window.workspaceModelEndpoints = JSON.parse('{{ personal_model_endpoints|default([])|tojson|safe }}' || '[]');
+    window.globalModelEndpoints = JSON.parse('{{ global_model_endpoints|default([])|tojson|safe }}' || '[]');
+  </script>
+  <script type="module" src="{{ url_for('static', filename='js/workspace/workspace_model_endpoints.js') }}"></script>
   <!-- <script src="https://cdn.jsdelivr.net/npm/simplemde/dist/simplemde.min.js"></script>
    LOCAL VERSION BELOW -->
    <script src="/static/js/simplemde/simplemde.min.js"></script>
@@ -1408,5 +1664,6 @@
   <script src="{{ url_for('static', filename='js/workspace_sidebar_nav.js') }}"></script>
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-migration.js') }}"></script>
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-init.js') }}"></script>
+  <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-tutorial.js') }}"></script>
 
 {% endblock %}

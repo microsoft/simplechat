@@ -66,16 +66,8 @@ class LoggedPluginLoader:
                 debug_print(f"[Logged Plugin Loader] Enabling invocation logging for {plugin_name}")
                 plugin_instance.enable_invocation_logging(True)
             
-            # Auto-wrap plugin functions with logging
-            if isinstance(plugin_instance, BasePlugin):
-                log_event(f"[Logged Plugin Loader] Wrapping functions for BasePlugin", 
-                         extra={"plugin_name": plugin_name}, 
-                         level=logging.DEBUG)
-                self._wrap_plugin_functions(plugin_instance, plugin_name)
-            else:
-                log_event(f"[Logged Plugin Loader] Plugin is not a BasePlugin", 
-                         extra={"plugin_name": plugin_name, "plugin_type": type(plugin_instance).__name__}, 
-                         level=logging.WARNING)
+            # Auto-wrap plugin functions with logging for any plugin instance exposing kernel functions.
+            self._wrap_plugin_functions(plugin_instance, plugin_name)
             
             # Register the plugin with the kernel
             self._register_plugin_with_kernel(plugin_instance, plugin_name)
@@ -285,7 +277,7 @@ class LoggedPluginLoader:
                  extra={"plugin_name": plugin_name}, 
                  level=logging.DEBUG)
         
-        if not hasattr(plugin_instance, 'is_logging_enabled') or not plugin_instance.is_logging_enabled():
+        if hasattr(plugin_instance, 'is_logging_enabled') and not plugin_instance.is_logging_enabled():
             log_event(f"[Logged Plugin Loader] Plugin does not have logging enabled", 
                      extra={"plugin_name": plugin_name}, 
                      level=logging.WARNING)
@@ -294,77 +286,27 @@ class LoggedPluginLoader:
         log_event(f"[Logged Plugin Loader] Starting to wrap functions for plugin", 
                  extra={"plugin_name": plugin_name}, 
                  level=logging.DEBUG)
-        wrapped_count = 0
-        
-        # Debug: List all attributes
-        all_attrs = [attr for attr in dir(plugin_instance) if not attr.startswith('_')]
-        log_event(f"[Logged Plugin Loader] Plugin attribute analysis", 
-                 extra={
-                     "plugin_name": plugin_name, 
-                     "total_public_attributes": len(all_attrs),
-                     "sample_attributes": all_attrs[:10]
-                 }, 
-                 level=logging.DEBUG)
-        
-        # Find and wrap all kernel functions
+        wrapped_before = 0
         for attr_name in dir(plugin_instance):
-            if attr_name.startswith('_'):
-                continue
-                
             attr = getattr(plugin_instance, attr_name)
-            
-            # Debug: Check each callable attribute
-            if callable(attr):
-                has_sk_function = hasattr(attr, '__sk_function__')
-                sk_function_value = getattr(attr, '__sk_function__', None) if has_sk_function else None
-                log_event(f"[Logged Plugin Loader] Function analysis", 
-                         extra={
-                             "plugin_name": plugin_name,
-                             "function_name": attr_name,
-                             "callable": True,
-                             "has_sk_function": has_sk_function,
-                             "sk_function_value": sk_function_value
-                         }, 
-                         level=logging.DEBUG)
-            
-            # Check if it's a kernel function
-            is_kernel_function = False
-            
-            # Standard check for __sk_function__ attribute
-            if (callable(attr) and 
-                hasattr(attr, '__sk_function__') and 
-                attr.__sk_function__):
-                is_kernel_function = True
-            
-            # For OpenAPI plugins, also check if this is one of the known API operation functions
-            elif (callable(attr) and 
-                  attr_name in ['listAPIs', 'getMetrics', 'getProviders', 'getProvider', 'getAPI', 'getServiceAPI', 'getServices'] and
-                  hasattr(plugin_instance, 'base_url')):  # OpenAPI plugins have base_url
-                is_kernel_function = True
-                log_event(f"[Logged Plugin Loader] Detected OpenAPI function for enhanced logging", 
-                         extra={"plugin_name": plugin_name, "function_name": attr_name}, 
-                         level=logging.DEBUG)
-            
-            if is_kernel_function:
-                # Create a logged wrapper
-                logged_method = self._create_logged_method(attr, plugin_name, attr_name)
-                
-                # Replace the method on the instance
-                setattr(plugin_instance, attr_name, logged_method)
-                
-                wrapped_count += 1
-                log_event(f"[Logged Plugin Loader] Wrapped function with logging", 
-                         extra={"plugin_name": plugin_name, "function_name": attr_name}, 
-                         level=logging.INFO)
-        
-        # DISABLED: OpenAPI kernel plugin wrapping to prevent excessive logging
-        # Plugin logging is now handled by the @plugin_function_logger decorator system
-        log_event(f"[Logged Plugin Loader] Skipping OpenAPI kernel function wrapping to avoid duplication with decorator logging", 
-                 extra={"plugin_name": plugin_name}, 
-                 level=logging.DEBUG)
+            if callable(attr) and getattr(attr, '__plugin_invocation_logger_wrapped__', False):
+                wrapped_before += 1
+
+        auto_wrap_plugin_functions(plugin_instance, plugin_name)
+
+        wrapped_after = 0
+        for attr_name in dir(plugin_instance):
+            attr = getattr(plugin_instance, attr_name)
+            if callable(attr) and getattr(attr, '__plugin_invocation_logger_wrapped__', False):
+                wrapped_after += 1
         
         log_event(f"[Logged Plugin Loader] Function wrapping completed", 
-                 extra={"plugin_name": plugin_name, "wrapped_count": wrapped_count}, 
+                 extra={
+                     "plugin_name": plugin_name,
+                     "wrapped_before": wrapped_before,
+                     "wrapped_after": wrapped_after,
+                     "newly_wrapped": max(wrapped_after - wrapped_before, 0)
+                 }, 
                  level=logging.INFO)
     
     def _create_logged_method(self, original_method, plugin_name: str, function_name: str):

@@ -81,6 +81,245 @@
                 min-width: 140px;
             }
         }
+
+        .latest-feature-card {
+            border: 1px solid rgba(13, 110, 253, 0.12);
+        }
+
+        .latest-feature-header {
+            display: flex;
+            align-items: flex-start;
+            gap: 1rem;
+        }
+
+        .latest-feature-copy {
+            flex: 1 1 auto;
+            min-width: 0;
+        }
+
+        .latest-feature-toggle {
+            text-decoration: none;
+            margin-left: auto;
+            flex: 0 0 auto;
+            white-space: nowrap;
+            align-self: flex-start;
+        }
+
+        .latest-feature-toggle:hover {
+            text-decoration: none;
+        }
+
+        .latest-feature-nav-badge {
+            font-size: 0.72rem;
+            letter-spacing: 0.04em;
+            vertical-align: middle;
+        }
+
+        .latest-feature-placeholder {
+            border: 1px dashed #6c757d;
+            border-radius: 0.5rem;
+            background: rgba(248, 249, 250, 0.85);
+            padding: 0.9rem 1rem;
+        }
+
+        .latest-feature-gallery {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 340px));
+            justify-content: flex-start;
+            gap: 1rem;
+        }
+
+        .latest-feature-thumbnail-trigger {
+            border: 0;
+            background: transparent;
+            padding: 0;
+            text-align: left;
+            width: 100%;
+            color: inherit;
+        }
+
+        .latest-feature-thumbnail-card {
+            border: 1px solid rgba(13, 110, 253, 0.16);
+            border-radius: 0.75rem;
+            background: #fff;
+            overflow: hidden;
+            box-shadow: 0 0.35rem 1.1rem rgba(15, 23, 42, 0.08);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            height: 100%;
+        }
+
+        .latest-feature-thumbnail-trigger:hover .latest-feature-thumbnail-card,
+        .latest-feature-thumbnail-trigger:focus-visible .latest-feature-thumbnail-card {
+            transform: translateY(-2px);
+            box-shadow: 0 0.7rem 1.6rem rgba(15, 23, 42, 0.12);
+        }
+
+        .latest-feature-thumbnail-trigger:focus-visible {
+            outline: none;
+        }
+
+        .latest-feature-thumbnail-image {
+            display: block;
+            width: 100%;
+            aspect-ratio: 16 / 10;
+            object-fit: cover;
+            background: linear-gradient(135deg, rgba(13, 110, 253, 0.08), rgba(25, 135, 84, 0.08));
+        }
+
+        .latest-feature-thumbnail-body {
+            padding: 0.8rem 0.95rem 0.95rem;
+        }
+
+        .latest-feature-thumbnail-title {
+            font-weight: 600;
+            margin-bottom: 0.2rem;
+        }
+
+        .latest-feature-thumbnail-meta {
+            color: #6c757d;
+            font-size: 0.9rem;
+        }
+
+        .latest-feature-image-modal .modal-dialog {
+            max-width: min(1100px, calc(100vw - 2rem));
+        }
+
+        .latest-feature-image-modal .modal-content {
+            background: linear-gradient(180deg, rgba(25, 33, 52, 0.98), rgba(14, 20, 34, 0.98));
+            color: #f8f9fa;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 1rem;
+            overflow: hidden;
+            box-shadow: 0 1.4rem 3rem rgba(0, 0, 0, 0.38);
+        }
+
+        .latest-feature-image-modal .modal-header,
+        .latest-feature-image-modal .modal-footer {
+            border-color: rgba(248, 249, 250, 0.12);
+        }
+
+        .latest-feature-image-modal .modal-header {
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .latest-feature-image-modal .modal-body {
+            padding: 1rem 1.2rem 1.2rem;
+            background: radial-gradient(circle at top, rgba(96, 165, 250, 0.08), transparent 45%), rgba(12, 18, 30, 0.92);
+        }
+
+        .latest-feature-image-modal .modal-title {
+            color: #ffffff;
+        }
+
+        .latest-feature-image-modal-caption {
+            color: rgba(248, 250, 252, 0.9);
+            font-size: 0.98rem;
+        }
+
+        .latest-feature-image-modal .btn-close {
+            filter: invert(1) grayscale(100%) brightness(200%);
+        }
+
+        .latest-feature-image-frame {
+            border-radius: 1rem;
+            padding: 0.9rem;
+            border: 1px solid rgba(148, 163, 184, 0.24);
+            background: linear-gradient(180deg, rgba(30, 41, 59, 0.9), rgba(15, 23, 42, 0.88));
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+        }
+
+        .latest-feature-image-modal img {
+            display: block;
+            width: 100%;
+            max-height: 75vh;
+            object-fit: contain;
+            border-radius: 0.9rem;
+            background: rgba(248, 250, 252, 0.98);
+            box-shadow: 0 0.8rem 2rem rgba(0, 0, 0, 0.24);
+        }
+
+        [data-bs-theme="dark"] .latest-feature-image-modal .modal-content {
+            background: linear-gradient(180deg, rgba(26, 32, 44, 0.99), rgba(10, 14, 24, 0.99));
+            border-color: rgba(148, 163, 184, 0.22);
+            box-shadow: 0 1.5rem 3.2rem rgba(0, 0, 0, 0.55);
+        }
+
+        [data-bs-theme="dark"] .latest-feature-image-modal .modal-header {
+            background: rgba(255, 255, 255, 0.025);
+        }
+
+        [data-bs-theme="dark"] .latest-feature-image-modal .modal-body {
+            background: radial-gradient(circle at top, rgba(59, 130, 246, 0.12), transparent 42%), rgba(8, 12, 20, 0.96);
+        }
+
+        [data-bs-theme="dark"] .latest-feature-image-frame {
+            background: linear-gradient(180deg, rgba(17, 24, 39, 0.96), rgba(30, 41, 59, 0.92));
+            border-color: rgba(96, 165, 250, 0.18);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 0.75rem 1.8rem rgba(0, 0, 0, 0.28);
+        }
+
+        .latest-feature-placeholder-path {
+            font-family: monospace;
+            font-size: 0.9rem;
+            word-break: break-word;
+        }
+
+        .latest-feature-command {
+            background: #f8fafc;
+            color: #0f172a;
+            border: 1px solid rgba(148, 163, 184, 0.35);
+            border-radius: 0.5rem;
+            padding: 0.75rem 1rem;
+            font-family: monospace;
+            margin-bottom: 0;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+        }
+
+        [data-bs-theme="dark"] .latest-feature-command {
+            background: rgba(15, 23, 42, 0.95);
+            color: #e5eefb;
+            border-color: rgba(96, 165, 250, 0.28);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+        }
+
+        .admin-send-feedback-status {
+            min-height: 1px;
+        }
+
+        .release-notifications-status-btn {
+            border: 0;
+            padding: 0.35rem 0.6rem;
+            line-height: 1;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .release-notifications-status-btn:hover,
+        .release-notifications-status-btn:focus {
+            opacity: 0.95;
+        }
+
+        .release-notifications-summary dt {
+            font-size: 0.78rem;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+            color: #6c757d;
+        }
+
+        .release-notifications-summary dd {
+            margin-bottom: 0.9rem;
+            word-break: break-word;
+        }
+
+        @media (max-width: 768px) {
+            .latest-feature-header {
+                gap: 0.75rem;
+            }
+
+            .latest-feature-toggle {
+                font-size: 0.95rem;
+            }
+        }
     </style>
 {% endblock %}
 
@@ -148,6 +387,81 @@
         </div>
     </div>
 </div>
+<div class="modal fade" id="releaseNotificationsModal" tabindex="-1" aria-labelledby="releaseNotificationsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h5 class="modal-title mb-0" id="releaseNotificationsModalLabel">Release Notifications Registration</h5>
+                    <small class="text-muted">Register for latest release updates and community call notifications.</small>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert d-none admin-send-feedback-status" id="release-notifications-status" role="alert"></div>
+                <div id="release-notifications-read-view" class="d-none">
+                    <div class="alert alert-success" role="alert">
+                        This admin settings instance is registered to receive latest release and community call notifications.
+                    </div>
+                    <dl class="release-notifications-summary mb-0">
+                        <dt>Name</dt>
+                        <dd id="release-notifications-read-name">-</dd>
+                        <dt>Email</dt>
+                        <dd id="release-notifications-read-email">-</dd>
+                        <dt>Organization</dt>
+                        <dd id="release-notifications-read-org">-</dd>
+                        <dt>Registered</dt>
+                        <dd id="release-notifications-read-registered-at">-</dd>
+                        <dt>Last Updated</dt>
+                        <dd id="release-notifications-read-updated-at">-</dd>
+                    </dl>
+                </div>
+                <div id="release-notifications-edit-view" class="d-none">
+                    <div class="alert alert-warning" role="alert">
+                        Submitting this form opens a prefilled email draft to simplechat@microsoft.com and updates Admin Settings with the registration details.
+                    </div>
+                    <div class="mb-3">
+                        <label for="release_notifications_modal_name" class="form-label">Your Name</label>
+                        <input type="text" class="form-control" id="release_notifications_modal_name" autocomplete="name">
+                    </div>
+                    <div class="mb-3">
+                        <label for="release_notifications_modal_email" class="form-label">Email</label>
+                        <input type="email" class="form-control" id="release_notifications_modal_email" autocomplete="email">
+                    </div>
+                    <div class="mb-0">
+                        <label for="release_notifications_modal_org" class="form-label">Organization</label>
+                        <input type="text" class="form-control" id="release_notifications_modal_org" autocomplete="organization">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary d-none" id="release-notifications-edit-btn">Edit Registration</button>
+                <button type="button" class="btn btn-outline-secondary d-none" id="release-notifications-cancel-edit-btn">Cancel</button>
+                <button type="button" class="btn btn-primary d-none" id="release-notifications-submit-btn">
+                    <i class="bi bi-envelope me-1"></i>Submit Registration
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal fade latest-feature-image-modal" id="latestFeatureImageModal" tabindex="-1" aria-labelledby="latestFeatureImageModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h5 class="modal-title mb-1" id="latestFeatureImageModalLabel">Latest Feature Preview</h5>
+                    <small class="latest-feature-image-modal-caption" id="latestFeatureImageModalCaption">Click outside the popup to close it.</small>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body pt-2">
+                <div class="latest-feature-image-frame">
+                    <img id="latestFeatureImageModalImage" src="" alt="Latest feature preview">
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 <div id="index-warning-user" class="alert alert-warning" style="display:none;">
     <strong>⚠️ User-index schema mismatch:</strong>
     Missing fields: <span id="missing-fields-user"></span>
@@ -180,9 +494,25 @@
 
 <div class="container">
     <h2>Admin Settings</h2>
-    <form method="post" enctype="multipart/form-data" id="admin-settings-form" style="padding-bottom:80px;" novalidate>
+    <form method="post" enctype="multipart/form-data" id="admin-settings-form" style="padding-bottom:80px;" novalidate autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
+        <input type="hidden" id="release_notifications_registered" name="release_notifications_registered" value="{{ 'true' if settings.release_notifications_registered else 'false' }}">
+        <input type="hidden" id="release_notifications_name" name="release_notifications_name" value="{{ settings.release_notifications_name or '' }}">
+        <input type="hidden" id="release_notifications_email" name="release_notifications_email" value="{{ settings.release_notifications_email or '' }}">
+        <input type="hidden" id="release_notifications_org" name="release_notifications_org" value="{{ settings.release_notifications_org or '' }}">
+        <input type="hidden" id="release_notifications_registered_at" name="release_notifications_registered_at" value="{{ settings.release_notifications_registered_at or '' }}">
+        <input type="hidden" id="release_notifications_updated_at" name="release_notifications_updated_at" value="{{ settings.release_notifications_updated_at or '' }}">
         <p class="text-muted">Use this form to configure the administrative settings for your application.</p>
-        <p class="text-muted">
+        <p class="text-muted d-flex flex-wrap align-items-center gap-2">
+            <button
+                type="button"
+                class="badge release-notifications-status-btn {{ 'bg-success text-white' if settings.release_notifications_registered else 'bg-secondary text-white' }}"
+                id="release-notifications-status-badge"
+                data-registered="{{ 'true' if settings.release_notifications_registered else 'false' }}"
+                data-bs-toggle="modal"
+                data-bs-target="#releaseNotificationsModal"
+            >
+                {{ 'Registered' if settings.release_notifications_registered else 'Unregistered' }}
+            </button>
             Version: {{ config['VERSION'] }}
             {% if update_available %}
                 <span class="ms-2 badge bg-warning text-dark align-middle"> 
@@ -524,8 +854,14 @@
         <ul class="nav nav-tabs" id="adminSettingsTab" role="tablist">
             <!-- Core Settings -->
             <li class="nav-item" role="presentation">
-                <button class="nav-link active" id="general-tab" data-bs-toggle="tab" data-bs-target="#general"
-                    type="button" role="tab" aria-controls="general" aria-selected="true">
+                <button class="nav-link active" id="latest-features-tab" data-bs-toggle="tab" data-bs-target="#latest-features"
+                    type="button" role="tab" aria-controls="latest-features" aria-selected="true">
+                    Latest Features <span class="badge bg-warning text-dark text-uppercase ms-2 latest-feature-nav-badge">New</span>
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="general-tab" data-bs-toggle="tab" data-bs-target="#general"
+                    type="button" role="tab" aria-controls="general" aria-selected="false">
                     General
                 </button>
             </li>
@@ -571,13 +907,6 @@
             </li>
             
             <li class="nav-item" role="presentation">
-                <button class="nav-link" id="security-tab" data-bs-toggle="tab" data-bs-target="#security"
-                    type="button" role="tab" aria-controls="security" aria-selected="false">
-                    Security
-                </button>
-            </li>
-            
-            <li class="nav-item" role="presentation">
                 <button class="nav-link" id="agents-tab" data-bs-toggle="tab" data-bs-target="#agents" 
                     type="button" role="tab" aria-controls="agents" aria-selected="false">
                     Agents
@@ -604,13 +933,20 @@
                     Logging
                 </button>
             </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="send-feedback-tab" data-bs-toggle="tab" data-bs-target="#send-feedback"
+                    type="button" role="tab" aria-controls="send-feedback" aria-selected="false">
+                    Send Feedback
+                </button>
+            </li>
         </ul>
         {% endif %}
         
         <div class="tab-content mt-3" id="adminSettingsTabContent">
-            <div class="tab-pane fade show active" id="security" role="tabpanel" aria-labelledby="security-tab">
+            <div class="tab-pane fade" id="security" role="tabpanel" aria-labelledby="security-tab">
                 <p class="text-muted">
                     Manage security settings for key vault and other security configurations.
+                </p>
                 <div class="card p-3 mb-3" id="keyvault-section">
                     <div class="d-flex justify-content-between align-items-center mb-2">
                         <h5>
@@ -719,14 +1055,14 @@
                                     <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage group-level agents that can be shared within workgroups and teams."></i>
                                 </div>
                                 <div class="form-check form-switch mb-2">
-                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-custom-agent-endpoints" name="allow_user_custom_agent_endpoints" {% if settings.allow_user_custom_agent_endpoints %}checked{% endif %}>
-                                    <label class="form-check-label ms-2" for="toggle-allow-user-custom-agent-endpoints">Allow User Custom Agent Endpoints</label>
-                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to configure custom API endpoints for their personal agents to connect to external services and models."></i>
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-custom-endpoints" name="allow_user_custom_endpoints" {% if settings.allow_user_custom_endpoints %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-user-custom-endpoints">Allow User Custom Endpoints</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to configure custom endpoints for their personal workspace agents and model endpoints."></i>
                                 </div>
                                 <div class="form-check form-switch mb-2">
-                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-custom-agent-endpoints" name="allow_group_custom_agent_endpoints" {% if settings.allow_group_custom_agent_endpoints %}checked{% endif %}>
-                                    <label class="form-check-label ms-2" for="toggle-allow-group-custom-agent-endpoints">Allow Group Custom Agent Endpoints</label>
-                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to configure custom API endpoints for group-level agents to connect to shared external services and models."></i>
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-custom-endpoints" name="allow_group_custom_endpoints" {% if settings.allow_group_custom_endpoints %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-group-custom-endpoints">Allow Group Custom Endpoints</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to configure custom endpoints for group workspace agents and model endpoints."></i>
                                 </div>
                                 <div class="form-check form-switch mb-2">
                                     <input class="form-check-input" type="checkbox" role="switch" id="toggle-merge-global-sk" name="merge_global_semantic_kernel_with_workspace" {% if settings.merge_global_semantic_kernel_with_workspace %}checked{% endif %}>
@@ -797,22 +1133,8 @@
                 {% endif %}
                 </div>
 
-                <!-- Agent Template Submissions Section -->
-                <div class="card p-3 mb-4" id="agent-templates-admin-panel">
-                    <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
-                        <div>
-                            <h5 class="mb-1">
-                                <i class="bi bi-layers me-2"></i>Agent Template Gallery
-                            </h5>
-                            <p class="text-muted small mb-0">Approve community templates before they appear in the gallery.</p>
-                        </div>
-                        <div class="btn-group btn-group-sm" role="group" id="agent-template-status-filters">
-                            <button type="button" class="btn btn-outline-secondary active" data-status="pending">Pending</button>
-                            <button type="button" class="btn btn-outline-secondary" data-status="approved">Approved</button>
-                            <button type="button" class="btn btn-outline-secondary" data-status="rejected">Rejected</button>
-                            <button type="button" class="btn btn-outline-secondary" data-status="all">All</button>
-                        </div>
-                    </div>
+                {% if settings.enable_agent_template_gallery %}
+                <div class="card p-3 mb-4">
                     <div class="row g-3 mb-3">
                         <div class="col-xl-6">
                             <div class="form-check form-switch mb-0">
@@ -829,55 +1151,19 @@
                             </div>
                         </div>
                     </div>
-                    <div class="row g-3 align-items-end mb-3">
-                        <div class="col-lg-6">
-                            <label for="agent-template-search" class="form-label mb-1">Search templates</label>
-                            <div class="input-group">
-                                <span class="input-group-text"><i class="bi bi-search"></i></span>
-                                <input type="search" class="form-control" id="agent-template-search" placeholder="Search by template name or submitter">
-                            </div>
+                    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
+                        <div>
+                            <h5 class="mb-1">
+                                <i class="bi bi-layers me-2"></i>Agent Template Approvals
+                            </h5>
+                            <p class="text-muted small mb-0">Template submissions are now reviewed from the shared approvals page.</p>
                         </div>
-                        <div class="col-lg-6">
-                            <div class="form-text">Matches template titles, display names, and submitter names/emails.</div>
-                        </div>
-                    </div>
-                    <div class="alert alert-info d-none" id="agent-templates-disabled-alert">
-                        <div class="d-flex gap-2 align-items-start">
-                            <i class="bi bi-info-circle"></i>
-                            <div>
-                                <strong>Template gallery is disabled.</strong>
-                                <div>Enable it under Global Agent Feature Toggles (and allow submissions) to collect templates.</div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="table-responsive">
-                        <table class="table align-middle" id="agent-templates-table">
-                            <thead>
-                                <tr>
-                                    <th>Template</th>
-                                    <th>Status</th>
-                                    <th>Submitted By</th>
-                                    <th>Updated</th>
-                                    <th class="text-end">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody id="agent-template-table-body">
-                                <tr>
-                                    <td colspan="5" class="text-center text-muted py-4">
-                                        <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
-                                        Loading templates...
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                    <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 mt-2">
-                        <div class="text-muted small" id="agent-template-pagination-summary"></div>
-                        <nav id="agent-template-pagination-nav" aria-label="Template pagination">
-                            <ul class="pagination pagination-sm mb-0" id="agent-template-pagination"></ul>
-                        </nav>
+                        <a class="btn btn-outline-primary align-self-start align-self-lg-center" href="/approvals#agent-template-approvals">
+                            <i class="bi bi-box-arrow-up-right me-1"></i>Open Approvals Queue
+                        </a>
                     </div>
                 </div>
+                {% endif %}
 
                 <!-- Actions Configuration Section -->
                 <div class="card p-3 mb-4" id="actions-configuration">
@@ -953,11 +1239,12 @@
                                     <label class="form-check-label ms-2" for="toggle-fact-memory-plugin">Enable Fact Memory Action</label>
                                     <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to store and retrieve facts and information across conversations for improved memory and context retention."></i>
                                 </div>
-                                <div class="form-check form-switch mb-2" id="tabular-processing-toggle-wrapper">
-                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-tabular-processing-plugin" name="enable_tabular_processing_plugin">
-                                    <label class="form-check-label ms-2" for="toggle-tabular-processing-plugin">Enable Tabular Processing Action</label>
-                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to analyze tabular data files (CSV, XLSX) using pandas for aggregations, filtering, and full dataset operations. Requires Enhanced Citations."></i>
-                                    <small class="text-muted d-block ms-4" id="tabular-processing-dependency-note">Requires Enhanced Citations</small>
+                                <div class="mb-2" id="tabular-processing-toggle-wrapper">
+                                    <div class="d-flex align-items-center">
+                                        <span class="fw-semibold">Tabular Processing Action</span>
+                                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Agents can analyze tabular data files (CSV, XLSX) using pandas for aggregations, filtering, and full dataset operations. This action is automatically enabled whenever Enhanced Citations is enabled."></i>
+                                    </div>
+                                    <small class="text-muted d-block ms-4" id="tabular-processing-dependency-note">Automatically enabled when Enhanced Citations is enabled</small>
                                 </div>
                             </div>
                             <table class="table table-bordered" id="plugins-table">
@@ -1114,7 +1401,7 @@
                 </div>
             </div>
             
-            <div class="tab-pane fade show active" id="general" role="tabpanel" aria-labelledby="general-tab">
+            <div class="tab-pane fade" id="general" role="tabpanel" aria-labelledby="general-tab">
                 
                  <p class="text-muted">
                     Configure general application settings, including the application's title, logo, and landing page text.
@@ -1160,14 +1447,12 @@
                     </div>
                 </div>
 
-                
                 <div class="card p-3 mb-3" id="home-page-text-section">
                     <h5>
                         <i class="bi bi-house me-2"></i>Home Page Text
                     </h5>
                     <p class="text-muted small">Configure the text content displayed on your application's home page using Markdown formatting.</p>
 
-                    <!-- Alignment Selector -->
                     <div class="mb-3">
                         <label for="landing_page_alignment" class="form-label">Markdown Alignment</label>
                         <select class="form-select" id="landing_page_alignment" name="landing_page_alignment">
@@ -1177,7 +1462,7 @@
                         </select>
                         <small class="form-text text-muted">Choose how the landing page markdown is aligned on the home page.</small>
                     </div>
-                    
+
                     <div class="form-check form-switch mb-3">
                         <input
                             class="form-check-input"
@@ -1192,7 +1477,6 @@
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable the markdown editor for editing landing page content, otherwise text will be displayed as read-only preview."></i>
                     </div>
 
-                    
                     <div id="landingPageEditorContainer" style="display: none;">
                         <textarea
                             class="form-control"
@@ -1202,7 +1486,6 @@
                         >{{ settings.landing_page_text }}</textarea>
                     </div>
 
-                    
                     <div
                         id="landingPageMarkdownPreview"
                         class="p-2 border rounded"
@@ -1210,15 +1493,12 @@
                     ></div>
                 </div>
 
-
-
-                <!-- Dark Mode Card -->
                 <div class="card p-3 mb-3" id="appearance-section">
                     <h5>
                         <i class="bi bi-brush me-2"></i>Appearance
                     </h5>
                     <p class="text-muted small">Configure the app appearance and theme settings.</p>
-                    
+
                     <div class="mb-3">
                         <label class="form-label">Default Theme</label>
                         <div class="form-group form-check form-switch mb-3">
@@ -1236,7 +1516,7 @@
                         </div>
                         <p class="text-muted small">Users can still toggle dark mode individually from the navigation bar.</p>
                     </div>
-                    
+
                     <div class="mb-3">
                         <label class="form-label">Default Navigation</label>
                         <div class="form-group form-check form-switch mb-3">
@@ -1255,7 +1535,7 @@
                         <p class="text-muted small">Users can still toggle the left navigation sidebar individually from the header.</p>
                     </div>
                 </div>
-                <!-- Health Check Configuration -->
+
                 <div class="card p-3 mb-3" id="health-check-section">
                     <div class="d-flex justify-content-between align-items-center mb-2">
                         <h5 class="mb-0">
@@ -1266,8 +1546,7 @@
                         </button>
                     </div>
                     <p class="text-muted mb-3">Configure health check endpoint for external monitoring systems.</p>
-                    
-                    <!-- External Health Check -->
+
                     <div class="form-check form-switch mb-2">
                         <input
                             type="checkbox"
@@ -1283,7 +1562,6 @@
                     <p class="text-muted small mb-0">Health check endpoint for external monitoring systems that require endpoint verification.</p>
                 </div>
 
-                <!-- API Documentation Section -->
                 <div class="card p-3 mb-3" id="swagger-section">
                     <div class="d-flex align-items-center justify-content-between mb-2">
                         <h5 class="mb-0">
@@ -1299,8 +1577,7 @@
                         </div>
                     </div>
                     <p class="text-muted mb-3">Configure automatic OpenAPI/Swagger documentation for API endpoints.</p>
-                    
-                    <!-- Enable Swagger Documentation -->
+
                     <div class="form-check form-switch mb-2">
                         <input
                             type="checkbox"
@@ -1314,11 +1591,11 @@
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable automatic API documentation with Swagger UI interface for testing and exploring endpoints."></i>
                     </div>
                     <p class="text-muted small mb-0">
-                        Provides interactive API documentation, endpoint testing, and schema validation. 
+                        Provides interactive API documentation, endpoint testing, and schema validation.
                         Useful for developers, API integration, and system troubleshooting.
                     </p>
                 </div>
-                <!-- New Classification Banner Section -->
+
                 <div class="card p-3 mb-3" id="classification-banner-section">
                     <h5>
                         <i class="bi bi-shield-exclamation me-2"></i>Classification Banner
@@ -1354,7 +1631,6 @@
                     </div>
                 </div>
 
-                <!-- External Links Section -->
                 <div class="card p-3 mb-3" id="external-links-section">
                     <h5>
                         <i class="bi bi-box-arrow-up-right me-2"></i>External Links
@@ -1368,15 +1644,15 @@
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Display a menu of external links in the navigation bar for quick access to external resources and websites."></i>
                     </div>
                     <p class="text-muted small">When enabled, external links will be displayed in the navigation bar for easy access to external resources.</p>
-                    
+
                     <div id="external_links_settings" {% if not settings.enable_external_links %}style="display: none;"{% endif %}>
                         <div class="mb-3">
                             <label for="external_links_menu_name" class="form-label">Menu Name</label>
-                            <input type="text" class="form-control" id="external_links_menu_name" name="external_links_menu_name" 
+                            <input type="text" class="form-control" id="external_links_menu_name" name="external_links_menu_name"
                                    value="{{ settings.external_links_menu_name or 'External Links' }}" placeholder="External Links">
                             <small class="form-text text-muted">This name will appear in the navigation bar as the menu title.</small>
                         </div>
-                        
+
                         <div class="form-check form-switch mb-3">
                             <input class="form-check-input" type="checkbox" id="external_links_force_menu" name="external_links_force_menu"
                                 {% if settings.external_links_force_menu %}checked{% endif %}>
@@ -1386,10 +1662,10 @@
                             <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Always show external links as a dropdown menu. When disabled, 1-2 links show as top-level nav items, 3+ links show as a dropdown menu."></i>
                             <small class="form-text text-muted d-block">When enabled, external links will always display as a dropdown menu. When disabled, 1-2 links show as top-level nav items, 3+ links show as a dropdown menu.</small>
                         </div>
-                        
+
                         <h6>External Links</h6>
                         <p class="text-muted small">Define custom links that will appear in the navigation bar for users to access external resources.</p>
-                        
+
                         <table class="table table-sm table-bordered">
                             <thead>
                                 <tr>
@@ -1402,19 +1678,18 @@
                                 <!-- Populated by JavaScript -->
                             </tbody>
                         </table>
-                        
+
                         <button type="button" class="btn btn-sm btn-outline-primary" id="add-external-link-btn">Add New Link</button>
                         <input type="hidden" name="external_links_json" id="external_links_json">
                     </div>
                 </div>
 
-                <!-- System Settings Section -->
                 <div class="card p-3 mb-3" id="system-settings-section">
                     <h5>
                         <i class="bi bi-gear-fill me-2"></i>System Settings
                     </h5>
                     <p class="text-muted">
-                        System-level settings that control application behavior, including file size limits, conversation history, 
+                        System-level settings that control application behavior, including file size limits, conversation history,
                         and default prompts.
                     </p>
                     <div class="mb-3">
@@ -1496,6 +1771,645 @@
                 </div>
             </div>
 
+            <div class="tab-pane fade show active" id="latest-features" role="tabpanel" aria-labelledby="latest-features-tab">
+                <p class="text-muted mb-2">
+                    Review the main capabilities introduced in v{{ config['VERSION'] }} and use this page as an admin-facing overview for what to highlight with your teams.
+                </p>
+                <div class="alert alert-primary" role="alert">
+                    This tab is intentionally curated. It groups related improvements together and mirrors a small number of high-impact settings so admins can enable them from the same overview.
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-deployment-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-hdd-rack me-2"></i>Performance Improvements for Apps running Native Python (not containers)
+                            </h5>
+                            <p class="text-muted mb-0">Native Python App Service deployments should use Gunicorn as the startup command. Container deployments already do this for you.</p>
+                        </div>
+                        <a href="#latestFeaturesDeployment" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesDeployment">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesDeployment">
+                        <div class="card card-body">
+                            <p class="mb-2">If you run the native Python App Service deployment instead of the container deployment, set the App Service Startup command to the following:</p>
+                            <pre class="latest-feature-command">python -m gunicorn -c gunicorn.conf.py app:app</pre>
+                            <p class="mt-3 mb-2">Use container deployments when possible if you want the runtime defaults and startup behavior handled by the shipped image.</p>
+                            <div class="d-flex flex-wrap gap-2 mb-3">
+                                <a href="https://github.com/microsoft/simplechat/blob/main/docs/explanation/features/SIMPLECHAT_STARTUP.md" target="_blank" rel="noopener noreferrer" class="btn btn-outline-primary btn-sm">
+                                    <i class="bi bi-box-arrow-up-right me-1"></i>Startup Guidance
+                                </a>
+                                <a href="https://github.com/microsoft/simplechat/blob/main/README.md#deployment-runtime-notes" target="_blank" rel="noopener noreferrer" class="btn btn-outline-secondary btn-sm">
+                                    <i class="bi bi-box-arrow-up-right me-1"></i>Runtime Notes
+                                </a>
+                            </div>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/gunicorn_startup_guidance.png') }}"
+                                    data-latest-feature-image-title="Gunicorn Startup Guidance"
+                                    data-latest-feature-image-caption="Native Python App Service startup command guidance preview."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/gunicorn_startup_guidance.png') }}" alt="Gunicorn startup guidance screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Gunicorn Startup Guidance</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-guided-tutorials-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-signpost-split me-2"></i>Guided Tutorials
+                            </h5>
+                            <p class="text-muted mb-0">New guided walkthroughs help users learn the live chat and personal workspace interfaces without leaving the app.</p>
+                        </div>
+                        <a href="#latestFeaturesGuidedTutorials" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesGuidedTutorials">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesGuidedTutorials">
+                        <div class="card card-body">
+                            <p class="mb-2">Admins can use these walkthroughs to accelerate onboarding for new users and reduce orientation time across the primary product surfaces.</p>
+                            <ul class="mb-3">
+                                <li>Guided Chat Tutorial covers the active chat experience, message actions, search flows, citations, thoughts, and export-related actions.</li>
+                                <li>Personal Workspace Guided Tutorial walks through uploads, search, filters, list and grid views, prompts, agents, actions, and tags.</li>
+                            </ul>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/guided_tutorials_chat.png') }}"
+                                    data-latest-feature-image-title="Guided Chat Tutorial"
+                                    data-latest-feature-image-caption="Chat walkthrough preview for end users."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/guided_tutorials_chat.png') }}" alt="Guided chat tutorial screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Guided Chat Tutorial</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/guided_tutorials_workspace.png') }}"
+                                    data-latest-feature-image-title="Workspace Guided Tutorial"
+                                    data-latest-feature-image-caption="Personal workspace walkthrough preview."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/guided_tutorials_workspace.png') }}" alt="Workspace guided tutorial screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Workspace Guided Tutorial</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-background-chat-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-bell me-2"></i>Background Chat Completion
+                            </h5>
+                            <p class="text-muted mb-0">Personal chats can continue finishing after a user leaves the chat page, and completed responses surface as notifications with unread indicators.</p>
+                        </div>
+                        <a href="#latestFeaturesBackgroundChat" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesBackgroundChat">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesBackgroundChat">
+                        <div class="card card-body">
+                            <p class="mb-2">This makes long-running responses more reliable for users who navigate into other areas of the app before generation finishes.</p>
+                            <ul class="mb-3">
+                                <li>Completion notifications deep-link back into the finished conversation.</li>
+                                <li>Unread markers remain visible until the response is actually opened.</li>
+                                <li>Personal, workspace, and navigation flows now behave more consistently while chat completion continues in the background.</li>
+                            </ul>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/background_completion_notifications-01.png') }}"
+                                    data-latest-feature-image-title="Background Completion Notification"
+                                    data-latest-feature-image-caption="Unread completion notification state for background chat responses."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/background_completion_notifications-01.png') }}" alt="Background completion notification screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Notification State</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/background_completion_notifications-02.png') }}"
+                                    data-latest-feature-image-title="Background Completion Deep Link"
+                                    data-latest-feature-image-caption="Finished response entry point back into the completed chat."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/background_completion_notifications-02.png') }}" alt="Background completion deep link screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Deep Link Back to Chat</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-tabular-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-table me-2"></i>Tabular Data Analysis
+                            </h5>
+                            <p class="text-muted mb-0">Enhanced citations now unlock a more consistent tabular analysis experience for normal chat and workspace-backed files, not just dedicated agent scenarios.</p>
+                        </div>
+                        <a href="#latestFeaturesTabular" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesTabular">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesTabular">
+                        <div class="card card-body">
+                            <p class="mb-2">This is the highest-impact settings area to mirror here because it combines storage-backed citations, tabular previews, and consistent behavior across workspace and chat uploads.</p>
+                            <ul class="mb-3">
+                                <li>Tabular files can be analyzed with the same core approach whether they come from chat uploads or any workspace container.</li>
+                                <li>Enhanced citations provide the blob-backed dependency for richer tabular processing and citation transparency.</li>
+                                <li>Admins can right-size tabular preview limits based on the memory profile of their runtime.</li>
+                            </ul>
+                            <div class="alert alert-secondary mb-3" role="alert">
+                                These controls mirror the saved values in the <a href="#citation" onclick="switchTab(event, 'citation-tab')">Citations</a> tab.
+                            </div>
+                            <div class="form-check form-switch mb-3">
+                                <input
+                                    type="checkbox"
+                                    class="form-check-input"
+                                    id="latest_features_enable_enhanced_citations"
+                                    name="latest_features_enable_enhanced_citations_proxy"
+                                    autocomplete="off"
+                                    data-ignore-settings-change="true"
+                                    data-lpignore="true"
+                                    data-1p-ignore="true"
+                                    data-bwignore="true"
+                                    {% if settings.enable_enhanced_citations %}checked{% endif %}
+                                >
+                                <label class="form-check-label ms-2" for="latest_features_enable_enhanced_citations">
+                                    Enable Enhanced Citations
+                                </label>
+                            </div>
+
+                            <div id="latest_features_enhanced_citation_settings" class="{% if not settings.enable_enhanced_citations %}d-none{% endif %}">
+                                <div class="card mb-3 p-3">
+                                    <h6><strong>All filetypes</strong></h6>
+                                    <div class="mb-3">
+                                        <label for="latest_features_office_docs_authentication_type" class="form-label">
+                                            Storage Account Authentication Type
+                                        </label>
+                                        <select class="form-select" id="latest_features_office_docs_authentication_type" name="latest_features_office_docs_authentication_type_proxy" autocomplete="off" data-ignore-settings-change="true" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
+                                            <option value="key" {% if settings.office_docs_authentication_type == "key" or not settings.office_docs_authentication_type %}selected{% endif %}>Connection String</option>
+                                            <option value="managed_identity" {% if settings.office_docs_authentication_type == "managed_identity" %}selected{% endif %}>Managed Identity</option>
+                                        </select>
+                                    </div>
+
+                                    <div class="mb-3 {% if settings.office_docs_authentication_type == 'managed_identity' %}d-none{% endif %}" id="latest_features_office_docs_storage_conn_str_group">
+                                        <label for="latest_features_office_docs_storage_account_url" class="form-label">
+                                            Storage Account Connection String
+                                        </label>
+                                        <div class="input-group">
+                                            <input
+                                                type="password"
+                                                class="form-control"
+                                                id="latest_features_office_docs_storage_account_url"
+                                                name="latest_features_office_docs_storage_account_url_proxy"
+                                                autocomplete="off"
+                                                data-ignore-settings-change="true"
+                                                data-lpignore="true"
+                                                data-1p-ignore="true"
+                                                data-bwignore="true"
+                                                value="{{ settings.office_docs_storage_account_url or '' }}"
+                                            >
+                                            <button type="button" class="btn btn-outline-secondary" id="toggle_latest_features_office_conn_str">Show</button>
+                                        </div>
+                                    </div>
+
+                                    <div class="mb-3 {% if settings.office_docs_authentication_type != 'managed_identity' %}d-none{% endif %}" id="latest_features_office_docs_storage_url_group">
+                                        <label for="latest_features_office_docs_storage_account_blob_endpoint" class="form-label">
+                                            Storage Account Blob Service Endpoint
+                                        </label>
+                                        <div class="input-group">
+                                            <input
+                                                type="password"
+                                                class="form-control"
+                                                id="latest_features_office_docs_storage_account_blob_endpoint"
+                                                name="latest_features_office_docs_storage_account_blob_endpoint_proxy"
+                                                autocomplete="off"
+                                                data-ignore-settings-change="true"
+                                                data-lpignore="true"
+                                                data-1p-ignore="true"
+                                                data-bwignore="true"
+                                                value="{{ settings.office_docs_storage_account_blob_endpoint or '' }}"
+                                            >
+                                            <button type="button" class="btn btn-outline-secondary" id="toggle_latest_features_office_url">Show</button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="card mb-3 p-3">
+                                    <h6><strong>Tabular Preview Limits</strong></h6>
+                                    <div class="mb-3">
+                                        <label for="latest_features_tabular_preview_max_blob_size_mb" class="form-label">
+                                            Maximum File Size for Tabular Preview (MB)
+                                        </label>
+                                        <input type="number" class="form-control" id="latest_features_tabular_preview_max_blob_size_mb" name="latest_features_tabular_preview_max_blob_size_mb_proxy" autocomplete="off" inputmode="numeric" data-ignore-settings-change="true" data-lpignore="true" data-1p-ignore="true" data-bwignore="true"
+                                            min="1" max="1024"
+                                            value="{{ settings.tabular_preview_max_blob_size_mb or 200 }}">
+                                        <small class="form-text text-muted">
+                                            Mirror of the Citations setting. Larger values support bigger previews but increase runtime memory pressure.
+                                        </small>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/tabular_analysis_enhanced_citations.png') }}"
+                                    data-latest-feature-image-title="Tabular Analysis with Enhanced Citations"
+                                    data-latest-feature-image-caption="Enhanced citations and tabular analysis preview."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/tabular_analysis_enhanced_citations.png') }}" alt="Tabular analysis enhanced citations screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Tabular Analysis Preview</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-export-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-file-earmark-arrow-down me-2"></i>Conversation Summaries and Export
+                            </h5>
+                            <p class="text-muted mb-0">Conversation export now includes persistent summaries, PDF output, and easier per-message reuse and sharing actions.</p>
+                        </div>
+                        <a href="#latestFeaturesExports" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesExports">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesExports">
+                        <div class="card card-body">
+                            <ul class="mb-3">
+                                <li>Conversation details now surface a summary card with generate and regenerate actions.</li>
+                                <li>Export supports PDF alongside existing export options.</li>
+                                <li>Per-message actions support Markdown export, Word export, open in email, and use as prompt.</li>
+                            </ul>
+                            <div class="row g-3">
+                                <div class="col-lg-6">
+                                    <button
+                                        type="button"
+                                        class="latest-feature-thumbnail-trigger"
+                                        data-latest-feature-image-src="{{ url_for('static', filename='images/features/conversation_summary_card.png') }}"
+                                        data-latest-feature-image-title="Conversation Summary Card"
+                                        data-latest-feature-image-caption="Conversation summary panel preview in the chat experience."
+                                    >
+                                        <div class="latest-feature-thumbnail-card h-100">
+                                            <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/conversation_summary_card.png') }}" alt="Conversation summary card screenshot">
+                                            <div class="latest-feature-thumbnail-body">
+                                                <div class="latest-feature-thumbnail-title">Conversation Summary Card</div>
+                                                <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                            </div>
+                                        </div>
+                                    </button>
+                                </div>
+                                <div class="col-lg-6">
+                                    <div class="latest-feature-gallery h-100">
+                                        <button
+                                            type="button"
+                                            class="latest-feature-thumbnail-trigger"
+                                            data-latest-feature-image-src="{{ url_for('static', filename='images/features/pdf_export_option.png') }}"
+                                            data-latest-feature-image-title="PDF Export Option"
+                                            data-latest-feature-image-caption="PDF export entry in the conversation export workflow."
+                                        >
+                                            <div class="latest-feature-thumbnail-card h-100">
+                                                <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/pdf_export_option.png') }}" alt="PDF export option screenshot">
+                                                <div class="latest-feature-thumbnail-body">
+                                                    <div class="latest-feature-thumbnail-title">PDF Export Option</div>
+                                                    <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                                </div>
+                                            </div>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="latest-feature-thumbnail-trigger"
+                                            data-latest-feature-image-src="{{ url_for('static', filename='images/features/per_message_export_menu.png') }}"
+                                            data-latest-feature-image-title="Per-Message Export Menu"
+                                            data-latest-feature-image-caption="Expanded per-message export and reuse actions."
+                                        >
+                                            <div class="latest-feature-thumbnail-card h-100">
+                                                <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/per_message_export_menu.png') }}" alt="Per-message export menu screenshot">
+                                                <div class="latest-feature-thumbnail-body">
+                                                    <div class="latest-feature-thumbnail-title">Per-Message Export Menu</div>
+                                                    <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                                </div>
+                                            </div>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-agent-ops-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-grid me-2"></i>Agent and Action Operations
+                            </h5>
+                            <p class="text-muted mb-0">Recent updates improve manageability for agents and actions with richer views, easier SQL connectivity checks, and better operational tracking.</p>
+                        </div>
+                        <a href="#latestFeaturesAgentOps" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesAgentOps">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesAgentOps">
+                        <div class="card card-body">
+                            <ul class="mb-3">
+                                <li>List and grid view toggles give admins and users a better way to browse agents and actions.</li>
+                                <li>SQL actions now include an inline Test Connection button before save.</li>
+                                <li>User tracking and activity logging improve auditability for agent and action changes.</li>
+                            </ul>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/agent_action_grid_view.png') }}"
+                                    data-latest-feature-image-title="Agent and Action Grid View"
+                                    data-latest-feature-image-caption="Grid browsing experience for agents and actions."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/agent_action_grid_view.png') }}" alt="Agent and action grid view screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Grid View</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/sql_test_connection.png') }}"
+                                    data-latest-feature-image-title="SQL Test Connection"
+                                    data-latest-feature-image-caption="Inline SQL connection test preview before save."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/sql_test_connection.png') }}" alt="SQL test connection screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">SQL Test Connection</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-thoughts-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-stars me-2"></i>AI Transparency
+                            </h5>
+                            <p class="text-muted mb-0">Processing Thoughts provide a clearer view into model activity, duration, and execution flow while responses are being generated.</p>
+                        </div>
+                        <a href="#latestFeaturesThoughts" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesThoughts">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesThoughts">
+                        <div class="card card-body">
+                            <p class="mb-2">Admins can enable this once and let users see more of the model pipeline, including sending, generating, and responded states with clearer timing information.</p>
+                            <div class="alert alert-secondary mb-3" role="alert">
+                                This toggle mirrors the saved value in the <a href="#ai-models" onclick="switchTab(event, 'ai-models-tab')">AI Models</a> tab.
+                            </div>
+                            <div class="form-check form-switch mb-3">
+                                <input
+                                    type="checkbox"
+                                    class="form-check-input"
+                                    id="latest_features_enable_thoughts"
+                                    name="latest_features_enable_thoughts_proxy"
+                                    autocomplete="off"
+                                    data-ignore-settings-change="true"
+                                    data-lpignore="true"
+                                    data-1p-ignore="true"
+                                    data-bwignore="true"
+                                    {% if settings.enable_thoughts %}checked{% endif %}
+                                >
+                                <label class="form-check-label ms-2" for="latest_features_enable_thoughts">
+                                    Enable Processing Thoughts
+                                </label>
+                            </div>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/thoughts_visibility.png') }}"
+                                    data-latest-feature-image-title="Processing Thoughts Visibility"
+                                    data-latest-feature-image-caption="Processing thoughts state and timing details preview."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/thoughts_visibility.png') }}" alt="Processing thoughts visibility screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Processing Thoughts</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-redis-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-key me-2"></i>Redis and Key Vault
+                            </h5>
+                            <p class="text-muted mb-0">Redis configuration now supports using a Key Vault secret name instead of storing the access key directly in settings.</p>
+                        </div>
+                        <a href="#latestFeaturesRedis" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesRedis">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesRedis">
+                        <div class="card card-body">
+                            <p class="mb-2">This is useful for teams standardizing on Key Vault-backed secret storage while still using Redis for cache and session scenarios.</p>
+                            <ul class="mb-3">
+                                <li>Use Redis authentication type <strong>Key Vault</strong> when you want the stored value to represent a secret name instead of a raw Redis key.</li>
+                                <li>This works best when Key Vault is already configured for the app.</li>
+                            </ul>
+                            <div class="alert alert-secondary mb-3" role="alert">
+                                These controls mirror the saved values in the <a href="#scale" onclick="switchTab(event, 'scale-tab')">Scale</a> tab.
+                            </div>
+                            <div class="form-check form-switch mb-3">
+                                <input
+                                    type="checkbox"
+                                    class="form-check-input"
+                                    id="latest_features_enable_redis_cache"
+                                    name="latest_features_enable_redis_cache_proxy"
+                                    autocomplete="off"
+                                    data-ignore-settings-change="true"
+                                    data-lpignore="true"
+                                    data-1p-ignore="true"
+                                    data-bwignore="true"
+                                    {% if settings.enable_redis_cache %}checked{% endif %}
+                                >
+                                <label class="form-check-label ms-2" for="latest_features_enable_redis_cache">
+                                    Enable Redis Cache
+                                </label>
+                            </div>
+
+                            <div id="latest_features_redis_settings" class="{% if not settings.enable_redis_cache %}d-none{% endif %}">
+                                <div class="card mb-3 p-3">
+                                    <h6><strong>Redis Cache Settings</strong></h6>
+                                    <div class="mb-3">
+                                        <label for="latest_features_redis_url" class="form-label">Redis Server Host Name</label>
+                                        <input
+                                            type="text"
+                                            class="form-control"
+                                            id="latest_features_redis_url"
+                                            name="latest_features_redis_url_proxy"
+                                            autocomplete="off"
+                                            data-ignore-settings-change="true"
+                                            data-lpignore="true"
+                                            data-1p-ignore="true"
+                                            data-bwignore="true"
+                                            value="{{ settings.redis_url or '' }}"
+                                        >
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="latest_features_redis_auth_type" class="form-label">Redis Authentication Type</label>
+                                        <select
+                                            class="form-select"
+                                            id="latest_features_redis_auth_type"
+                                            name="latest_features_redis_auth_type_proxy"
+                                            autocomplete="off"
+                                            data-ignore-settings-change="true"
+                                            data-lpignore="true"
+                                            data-1p-ignore="true"
+                                            data-bwignore="true"
+                                        >
+                                            <option value="key" {% if settings.redis_auth_type == 'key' or not settings.redis_auth_type %}selected{% endif %}>Key</option>
+                                            <option value="managed_identity" {% if settings.redis_auth_type == 'managed_identity' %}selected{% endif %}>Managed Identity</option>
+                                            <option value="key_vault" {% if settings.redis_auth_type == 'key_vault' %}selected{% endif %}>Key Vault</option>
+                                        </select>
+                                    </div>
+                                    <div class="mb-3 {% if settings.redis_auth_type == 'managed_identity' %}d-none{% endif %}" id="latest_features_redis_key_container">
+                                        <label for="latest_features_redis_key" class="form-label" id="latest_features_redis_key_label">
+                                            {%- if settings.redis_auth_type == 'key_vault' -%}
+                                                Key Vault Secret Name
+                                            {%- else -%}
+                                                Redis Access Key
+                                            {%- endif -%}
+                                        </label>
+                                        <div class="input-group">
+                                            <input
+                                                type="password"
+                                                class="form-control"
+                                                id="latest_features_redis_key"
+                                                name="latest_features_redis_key_proxy"
+                                                autocomplete="off"
+                                                data-ignore-settings-change="true"
+                                                data-lpignore="true"
+                                                data-1p-ignore="true"
+                                                data-bwignore="true"
+                                                value="{{ settings.redis_key or '' }}"
+                                            >
+                                            <button type="button" class="btn btn-outline-secondary" id="toggle_latest_features_redis_key">Show</button>
+                                        </div>
+                                        <div id="latest_features_redis_key_vault_hint" class="form-text text-muted {% if settings.redis_auth_type != 'key_vault' %}d-none{% endif %}">
+                                            When using Key Vault, store the secret name here instead of the raw Redis key.
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/redis_key_vault.png') }}"
+                                    data-latest-feature-image-title="Redis Key Vault Configuration"
+                                    data-latest-feature-image-caption="Redis authentication with Key Vault secret name preview."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/redis_key_vault.png') }}" alt="Redis Key Vault configuration screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Redis Key Vault</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-send-feedback-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-envelope-paper me-2"></i>Send Feedback to the SimpleChat Team
+                            </h5>
+                            <p class="text-muted mb-0">Admins now have a dedicated Send Feedback tab for bug reports and feature requests that opens a prefilled email draft and writes an audit record to the activity log.</p>
+                        </div>
+                        <a href="#latestFeaturesSendFeedback" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesSendFeedback">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesSendFeedback">
+                        <div class="card card-body">
+                            <p class="mb-3">Use the Send Feedback tab when you want to report a bug or suggest a feature directly from Admin Settings without leaving the page.</p>
+                            <ul class="mb-3">
+                                <li>Opens a prefilled email draft addressed to <strong>simplechat@microsoft.com</strong>.</li>
+                                <li>Logs the action to the activity log so admins can audit when feedback emails were prepared.</li>
+                                <li>Keeps the workflow simple by using text-only email content with no confusing pseudo-attachment step.</li>
+                            </ul>
+                            <a href="#send-feedback" onclick="switchTab(event, 'send-feedback-tab')" class="btn btn-outline-primary align-self-start">
+                                <i class="bi bi-envelope-paper me-1"></i>Open Send Feedback
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             
             <div class="tab-pane fade" id="ai-models" role="tabpanel" aria-labelledby="ai-models-tab">
                 
@@ -1503,146 +2417,66 @@
                     Configure all AI model settings including GPT for text generation, embeddings for semantic search, and image generation capabilities.
                 </p>
 
-                <!-- GPT Configuration Section -->
-                <div class="card p-3 mb-4" id="gpt-configuration">
+                <div class="card p-3 mb-4" id="multi-endpoint-configuration">
                     <h5 class="card-title">
-                        <i class="bi bi-chat-text me-2"></i>GPT Configuration
+                        <i class="bi bi-hdd-network me-2"></i>Model Endpoints
                     </h5>
                     <p class="text-muted small">
-                        Configure your GPT model settings. These are used for generating AI text responses.
+                        Manage multiple AI model endpoints (Azure OpenAI and Azure AI Foundry). When enabled, model selection in chat is driven by these endpoints.
                     </p>
 
-                <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
-                    <input type="checkbox" class="form-check-input me-2" id="enable_gpt_apim" name="enable_gpt_apim" {%
-                        if settings.enable_gpt_apim %}checked{% endif %}>
-                    <label class="form-check-label" for="enable_gpt_apim">Use APIM instead of direct to Azure OpenAI
-                        endpoint</label>
-                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Route GPT model requests through Azure API Management instead of directly to Azure OpenAI service for additional governance and monitoring."></i>
-                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="APIM provides an additional layer for security, monitoring, and rate limiting. When using APIM, you'll need to manually specify your model names and will not be able to fetch models automatically."></i>
-                </div>
+                    {% if not settings.enable_multi_model_endpoints %}
+                    <div class="form-check form-switch mb-3 d-flex align-items-center">
+                        <input type="checkbox" class="form-check-input me-2" id="enable_multi_model_endpoints" name="enable_multi_model_endpoints" {% if settings.enable_multi_model_endpoints %}checked{% endif %}>
+                        <label class="form-check-label" for="enable_multi_model_endpoints">Enable multi-endpoint model management</label>
+                    </div>
+                    {% endif %}
 
-                <div id="non_apim_gpt_settings" {% if settings.enable_gpt_apim %}style="display: none;" {% endif %}>
-                    <div class="card p-3 mb-3">
-                        <div class="mb-3">
-                            <label for="azure_openai_gpt_endpoint" class="form-label">
-                                Azure OpenAI GPT Endpoint
-                            </label>
-                            <input type="text" class="form-control" id="azure_openai_gpt_endpoint"
-                                name="azure_openai_gpt_endpoint" value="{{ settings.azure_openai_gpt_endpoint or '' }}">
-                        </div>
-                        <div class="mb-3">
-                            <label for="azure_openai_gpt_authentication_type" class="form-label">
-                                Authentication Type
-                            </label>
-                            <select class="form-select" id="azure_openai_gpt_authentication_type"
-                                name="azure_openai_gpt_authentication_type">
-                                <option value="key" {% if settings.azure_openai_gpt_authentication_type=='key'
-                                    %}selected{% endif %}>
-                                    Key
-                                </option>
-                                <option value="managed_identity" {% if
-                                    settings.azure_openai_gpt_authentication_type=='managed_identity' %}selected{% endif
-                                    %}>
-                                    Managed Identity
-                                </option>
-                            </select>
-                        </div>
-                        <div class="mb-3">
-                            <label for="azure_openai_gpt_subscription_id" class="form-label">Subscription ID</label>
-                            <input type="text" class="form-control" id="azure_openai_gpt_subscription_id"
-                                name="azure_openai_gpt_subscription_id"
-                                value="{{ settings.azure_openai_gpt_subscription_id or '' }}">
-                        </div>
-                        <div class="mb-3">
-                            <label for="azure_openai_gpt_resource_group" class="form-label">Resource Group</label>
-                            <input type="text" class="form-control" id="azure_openai_gpt_resource_group"
-                                name="azure_openai_gpt_resource_group"
-                                value="{{ settings.azure_openai_gpt_resource_group or '' }}">
-                        </div>
-                        <div class="mb-3" id="gpt_key_container" {% if settings.azure_openai_gpt_authentication_type
-                            !='key' %}style="display: none;" {% endif %}>
-                            <label for="azure_openai_gpt_key" class="form-label">Azure OpenAI GPT Key</label>
-                            <div class="input-group">
-                                <input type="password" class="form-control" id="azure_openai_gpt_key"
-                                    name="azure_openai_gpt_key" value="{{ settings.azure_openai_gpt_key or '' }}">
-                                <button type="button" class="btn btn-outline-secondary"
-                                    id="toggle_gpt_key">Show</button>
-                            </div>
-                        </div>
-                        <div class="mb-3">
-                            <label for="gpt_model" class="form-label">Azure OpenAI GPT Model Selection</label>
-                            <br><small>Each selected model will be available in the Chat UI as an option for the User. You can select multiple models.</small>
-                            <br><small>Save Pending Changes to settings before clicking Fetch Models</small>
-                            <div id="gpt_models_list" class="mt-2 mb-3">
-                                
-                            </div>
-                            
-                            <small>Save pending changes to settings before clicking Fetch Embedding Models</small><br>
+                    <div id="multi-endpoint-warning" class="alert alert-warning {% if not settings.multi_endpoint_migration_notice.enabled %}d-none{% endif %}">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        <span>{{ settings.multi_endpoint_migration_notice.message }}</span>
+                    </div>
 
-                            <input type="hidden" name="gpt_model_json" id="gpt_model_json" />
+                    <div id="default-model-selection-wrapper" class="mt-3">
+                        <label for="default-model-selection" class="form-label">Default model for fallbacks</label>
+                        <select class="form-select" id="default-model-selection" aria-label="Default model for fallback selection"></select>
+                        <div class="form-text">
+                            Used for tasks such as conversation summarization, fallback, and other operations when an agent is selected.
+                        </div>
+                    </div>
 
-                            
-                            <input type="hidden" id="gpt_model" value="{{ settings.gpt_model.selected[0].deploymentName if settings.gpt_model.selected else '' }}" />
+                    <input type="hidden" name="model_endpoints_json" id="model_endpoints_json" />
+                    <input type="hidden" name="default_model_selection_json" id="default_model_selection_json" />
 
-                            <button type="button" class="btn btn-secondary" id="fetch_gpt_models_btn">
-                                Fetch GPT Models
+                    <div id="model-endpoints-wrapper" class="{% if not settings.enable_multi_model_endpoints %}d-none{% endif %}">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h6 class="mb-0">Configured Endpoints</h6>
+                            <button type="button" class="btn btn-sm btn-outline-primary" id="add-model-endpoint-btn">
+                                <i class="bi bi-plus-circle me-1"></i>Add Endpoint
                             </button>
                         </div>
-                        <a href="#" class="fw-bold text-decoration-none mb-2" data-bs-toggle="collapse"
-                            data-bs-target="#advancedGptFields" aria-expanded="false" aria-controls="advancedGptFields">
-                            Show Advanced
-                        </a>
-                        <div class="collapse" id="advancedGptFields">
-                            <div class="card card-body mt-2">
-                                <div class="mb-3">
-                                    <label for="azure_openai_gpt_api_version" class="form-label">
-                                        Azure OpenAI GPT API Version
-                                    </label>
-                                    <input type="text" class="form-control" id="azure_openai_gpt_api_version"
-                                        name="azure_openai_gpt_api_version"
-                                        value="{{ settings.azure_openai_gpt_api_version or '' }}">
-                                </div>
-                            </div>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Provider</th>
+                                        <th>Selected Models</th>
+                                        <th>Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="model-endpoints-tbody">
+                                    <!-- Populated by JavaScript -->
+                                </tbody>
+                            </table>
                         </div>
                     </div>
-                </div>
-
-                <div id="apim_gpt_settings" class="card p-3 mb-3" {% if not settings.enable_gpt_apim
-                    %}style="display: none;" {% endif %}>
-                    <div class="mb-3">
-                        <label for="azure_apim_gpt_endpoint" class="form-label">Azure APIM Endpoint</label>
-                        <input type="text" class="form-control" id="azure_apim_gpt_endpoint"
-                            name="azure_apim_gpt_endpoint" value="{{ settings.azure_apim_gpt_endpoint or '' }}">
-                    </div>
-                    <div class="mb-3">
-                        <label for="azure_apim_gpt_api_version" class="form-label">Azure APIM API Version</label>
-                        <input type="text" class="form-control" id="azure_apim_gpt_api_version"
-                            name="azure_apim_gpt_api_version" value="{{ settings.azure_apim_gpt_api_version or '' }}">
-                    </div>
-                    <div class="mb-3">
-                        <label for="azure_apim_gpt_deployment" class="form-label">Azure APIM Deployment</label>
-                        <br><small class="text-muted">Each model defined here will be available in the Chat UI as an option for the User. You can include multiple models seperated by a comma (example: gpt-4o, o-1, o-3).</small>
-                        <br><small class="text-muted">NOTE: The APIM GPT Test is against the first model in the list.</small>
-                        <input type="text" class="form-control" id="azure_apim_gpt_deployment"
-                            name="azure_apim_gpt_deployment" value="{{ settings.azure_apim_gpt_deployment or '' }}">
-                    </div>
-                    <div class="mb-3">
-                        <label for="azure_apim_gpt_subscription_key" class="form-label">Azure APIM Subscription
-                            Key</label>
-                        <div class="input-group">
-                            <input type="password" class="form-control" id="azure_apim_gpt_subscription_key"
-                                name="azure_apim_gpt_subscription_key"
-                                value="{{ settings.azure_apim_gpt_subscription_key or '' }}">
-                            <button type="button" class="btn btn-outline-secondary"
-                                id="toggle_azure_apim_gpt_subscription_key">Show</button>
-                        </div>
-                    </div>
-                </div>
-
-                <button type="button" class="btn btn-secondary mt-3" id="test_gpt_button">
-                    Test GPT Connection
-                </button>
-                <div id="test_gpt_result" class="mt-2"></div>
+                    {% if not settings.enable_multi_model_endpoints %}
+                        <button type="button" class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#legacyModelSettingsModal">
+                            <i class="bi bi-sliders me-1"></i>Open Legacy Model Configuration
+                        </button>
+                    {% endif %}
                 </div>
 
                 <!-- Processing Thoughts Section -->
@@ -1971,6 +2805,167 @@
                     Test Image Connection
                 </button>
                 <div id="test_image_result" class="mt-2"></div>
+                </div>
+
+                {% include '_multiendpoint_modal.html' %}
+
+                <!-- Legacy AI Models Modal -->
+                <div class="modal fade" id="legacyModelSettingsModal" tabindex="-1" aria-labelledby="legacyModelSettingsModalLabel" aria-hidden="true">
+                    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="legacyModelSettingsModalLabel">Legacy AI Model Configuration</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <!-- GPT Configuration Section -->
+                                <div class="card p-3 mb-4" id="gpt-configuration">
+                                    <h5 class="card-title">
+                                        <i class="bi bi-chat-text me-2"></i>GPT Configuration
+                                    </h5>
+                                    <p class="text-muted small">
+                                        Configure your GPT model settings. These are used for generating AI text responses.
+                                    </p>
+
+                                <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
+                                    <input type="checkbox" class="form-check-input me-2" id="enable_gpt_apim" name="enable_gpt_apim" {%
+                                        if settings.enable_gpt_apim %}checked{% endif %}>
+                                    <label class="form-check-label" for="enable_gpt_apim">Use APIM instead of direct to Azure OpenAI
+                                        endpoint</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Route GPT model requests through Azure API Management instead of directly to Azure OpenAI service for additional governance and monitoring."></i>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="APIM provides an additional layer for security, monitoring, and rate limiting. When using APIM, you'll need to manually specify your model names and will not be able to fetch models automatically."></i>
+                                </div>
+
+                                <div id="non_apim_gpt_settings" {% if settings.enable_gpt_apim %}style="display: none;" {% endif %}>
+                                    <div class="card p-3 mb-3">
+                                        <div class="mb-3">
+                                            <label for="azure_openai_gpt_endpoint" class="form-label">
+                                                Azure OpenAI GPT Endpoint
+                                            </label>
+                                            <input type="text" class="form-control" id="azure_openai_gpt_endpoint"
+                                                name="azure_openai_gpt_endpoint" value="{{ settings.azure_openai_gpt_endpoint or '' }}">
+                                        </div>
+                                        <div class="mb-3">
+                                            <label for="azure_openai_gpt_authentication_type" class="form-label">
+                                                Authentication Type
+                                            </label>
+                                            <select class="form-select" id="azure_openai_gpt_authentication_type"
+                                                name="azure_openai_gpt_authentication_type">
+                                                <option value="key" {% if settings.azure_openai_gpt_authentication_type=='key'
+                                                    %}selected{% endif %}>
+                                                    Key
+                                                </option>
+                                                <option value="managed_identity" {% if
+                                                    settings.azure_openai_gpt_authentication_type=='managed_identity' %}selected{% endif
+                                                    %}>
+                                                    Managed Identity
+                                                </option>
+                                            </select>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label for="azure_openai_gpt_subscription_id" class="form-label">Subscription ID</label>
+                                            <input type="text" class="form-control" id="azure_openai_gpt_subscription_id"
+                                                name="azure_openai_gpt_subscription_id"
+                                                value="{{ settings.azure_openai_gpt_subscription_id or '' }}">
+                                        </div>
+                                        <div class="mb-3">
+                                            <label for="azure_openai_gpt_resource_group" class="form-label">Resource Group</label>
+                                            <input type="text" class="form-control" id="azure_openai_gpt_resource_group"
+                                                name="azure_openai_gpt_resource_group"
+                                                value="{{ settings.azure_openai_gpt_resource_group or '' }}">
+                                        </div>
+                                        <div class="mb-3" id="gpt_key_container" {% if settings.azure_openai_gpt_authentication_type
+                                            !='key' %}style="display: none;" {% endif %}>
+                                            <label for="azure_openai_gpt_key" class="form-label">Azure OpenAI GPT Key</label>
+                                            <div class="input-group">
+                                                <input type="password" class="form-control" id="azure_openai_gpt_key"
+                                                    name="azure_openai_gpt_key" value="{{ settings.azure_openai_gpt_key or '' }}">
+                                                <button type="button" class="btn btn-outline-secondary"
+                                                    id="toggle_gpt_key">Show</button>
+                                            </div>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label for="gpt_model" class="form-label">Azure OpenAI GPT Model Selection</label>
+                                            <br><small>Each selected model will be available in the Chat UI as an option for the User. You can select multiple models.</small>
+                                            <br><small>Save Pending Changes to settings before clicking Fetch Models</small>
+                                            <div id="gpt_models_list" class="mt-2 mb-3">
+
+                                            </div>
+
+                                            <small>Save pending changes to settings before clicking Fetch Embedding Models</small><br>
+
+                                            <input type="hidden" name="gpt_model_json" id="gpt_model_json" />
+
+
+                                            <input type="hidden" id="gpt_model" value="{{ settings.gpt_model.selected[0].deploymentName if settings.gpt_model.selected else '' }}" />
+
+                                            <button type="button" class="btn btn-secondary" id="fetch_gpt_models_btn">
+                                                Fetch GPT Models
+                                            </button>
+                                        </div>
+                                        <a href="#" class="fw-bold text-decoration-none mb-2" data-bs-toggle="collapse"
+                                            data-bs-target="#advancedGptFields" aria-expanded="false" aria-controls="advancedGptFields">
+                                            Show Advanced
+                                        </a>
+                                        <div class="collapse" id="advancedGptFields">
+                                            <div class="card card-body mt-2">
+                                                <div class="mb-3">
+                                                    <label for="azure_openai_gpt_api_version" class="form-label">
+                                                        Azure OpenAI GPT API Version
+                                                    </label>
+                                                    <input type="text" class="form-control" id="azure_openai_gpt_api_version"
+                                                        name="azure_openai_gpt_api_version"
+                                                        value="{{ settings.azure_openai_gpt_api_version or '' }}">
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div id="apim_gpt_settings" class="card p-3 mb-3" {% if not settings.enable_gpt_apim
+                                    %}style="display: none;" {% endif %}>
+                                    <div class="mb-3">
+                                        <label for="azure_apim_gpt_endpoint" class="form-label">Azure APIM Endpoint</label>
+                                        <input type="text" class="form-control" id="azure_apim_gpt_endpoint"
+                                            name="azure_apim_gpt_endpoint" value="{{ settings.azure_apim_gpt_endpoint or '' }}">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="azure_apim_gpt_api_version" class="form-label">Azure APIM API Version</label>
+                                        <input type="text" class="form-control" id="azure_apim_gpt_api_version"
+                                            name="azure_apim_gpt_api_version" value="{{ settings.azure_apim_gpt_api_version or '' }}">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="azure_apim_gpt_deployment" class="form-label">Azure APIM Deployment</label>
+                                        <br><small class="text-muted">Each model defined here will be available in the Chat UI as an option for the User. You can include multiple models seperated by a comma (example: gpt-4o, o-1, o-3).</small>
+                                        <br><small class="text-muted">NOTE: The APIM GPT Test is against the first model in the list.</small>
+                                        <input type="text" class="form-control" id="azure_apim_gpt_deployment"
+                                            name="azure_apim_gpt_deployment" value="{{ settings.azure_apim_gpt_deployment or '' }}">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="azure_apim_gpt_subscription_key" class="form-label">Azure APIM Subscription
+                                            Key</label>
+                                        <div class="input-group">
+                                            <input type="password" class="form-control" id="azure_apim_gpt_subscription_key"
+                                                name="azure_apim_gpt_subscription_key"
+                                                value="{{ settings.azure_apim_gpt_subscription_key or '' }}">
+                                            <button type="button" class="btn btn-outline-secondary"
+                                                id="toggle_azure_apim_gpt_subscription_key">Show</button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <button type="button" class="btn btn-secondary mt-3" id="test_gpt_button">
+                                    Test GPT Connection
+                                </button>
+                                <div id="test_gpt_result" class="mt-2"></div>
+                                </div>
+
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -3403,7 +4398,7 @@
                             </div>
                             <div class="col-md-6">
                                 <label for="web_search_foundry_agent_id" class="form-label">Foundry Agent ID</label>
-                                <input type="text" class="form-control" id="web_search_foundry_agent_id" name="web_search_foundry_agent_id" value="{{ settings.web_search_agent.other_settings.azure_ai_foundry.agent_id if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else '' }}" placeholder="GUID from Azure AI Foundry">
+                                <input type="text" class="form-control" id="web_search_foundry_agent_id" name="web_search_foundry_agent_id" value="{{ settings.web_search_agent.other_settings.azure_ai_foundry.agent_id if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else '' }}" placeholder="ID from Azure AI Foundry. Typically starts with asst_">
                             </div>
                             <div class="col-md-4">
                                 <label for="web_search_foundry_auth_type" class="form-label">Authentication Type</label>
@@ -3718,6 +4713,110 @@
                             Test Document Intelligence Connection
                         </button>
                         <div id="test_azure_doc_intelligence_result" class="mt-2"></div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3" id="chunk-size-section">
+                    <div class="d-flex align-items-center justify-content-between mb-2">
+                        <h5 class="mb-0"><i class="bi bi-collection me-2"></i>Chunk Sizes</h5>
+                        <span class="badge bg-primary-subtle text-primary-emphasis">Cap: {{ chunk_size_cap }}</span>
+                    </div>
+                    <p class="text-muted mb-2 small">Custom chunk sizes apply to new uploads only. Existing documents keep their current chunks.</p>
+                    <div class="alert alert-warning small mb-3">
+                        <strong>Heads up:</strong> Overrides are capped at {{ chunk_size_cap }} (2x embedding context window, fallback 16,384).
+                    </div>
+                    <div class="form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_chunk_size_override"
+                            name="enable_chunk_size_override"
+                            {% if settings.enable_chunk_size_override %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_chunk_size_override">
+                            Enable custom chunk sizes by file type
+                        </label>
+                    </div>
+
+                    <div id="chunk-size-fields" class="{% if not settings.enable_chunk_size_override %}d-none{% endif %}">
+                        <div id="chunk-size-cap-warning" class="alert alert-warning d-none" role="alert">
+                            <span id="chunk-size-cap-warning-text">Chunk sizes above the cap will be reduced automatically.</span>
+                        </div>
+                        <input type="hidden" id="chunk_size_cap" value="{{ chunk_size_cap }}" />
+                        {% set chunk_settings = chunk_size_settings or {} %}
+                        {% set chunk_defaults = chunk_size_defaults or {} %}
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label for="chunk_size_txt" class="form-label">TXT (words)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="TXT" id="chunk_size_txt" name="chunk_size_txt" value="{{ chunk_settings.get('txt', {}).get('value', chunk_defaults.get('txt', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_log" class="form-label">LOG (words)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="LOG" id="chunk_size_log" name="chunk_size_log" value="{{ chunk_settings.get('log', {}).get('value', chunk_defaults.get('log', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="chunk_size_doc" class="form-label">DOC (words)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="DOC" id="chunk_size_doc" name="chunk_size_doc" value="{{ chunk_settings.get('doc', {}).get('value', chunk_defaults.get('doc', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="chunk_size_docm" class="form-label">DOCM (words)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="DOCM" id="chunk_size_docm" name="chunk_size_docm" value="{{ chunk_settings.get('docm', {}).get('value', chunk_defaults.get('docm', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="chunk_size_docx" class="form-label">DOCX (words)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="DOCX" id="chunk_size_docx" name="chunk_size_docx" value="{{ chunk_settings.get('docx', {}).get('value', chunk_defaults.get('docx', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_html" class="form-label">HTML (words)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="HTML" id="chunk_size_html" name="chunk_size_html" value="{{ chunk_settings.get('html', {}).get('value', chunk_defaults.get('html', {}).get('value')) }}">
+                                <div class="form-text">Minimum enforced at 50% of target on merge.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_md" class="form-label">Markdown (words)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="MD" id="chunk_size_md" name="chunk_size_md" value="{{ chunk_settings.get('md', {}).get('value', chunk_defaults.get('md', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_xml" class="form-label">XML (characters)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="XML" id="chunk_size_xml" name="chunk_size_xml" value="{{ chunk_settings.get('xml', {}).get('value', chunk_defaults.get('xml', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_yaml" class="form-label">YAML (characters)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="YAML" id="chunk_size_yaml" name="chunk_size_yaml" value="{{ chunk_settings.get('yaml', {}).get('value', chunk_defaults.get('yaml', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_yml" class="form-label">YML (characters)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="YML" id="chunk_size_yml" name="chunk_size_yml" value="{{ chunk_settings.get('yml', {}).get('value', chunk_defaults.get('yml', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_json" class="form-label">JSON (characters)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="JSON" id="chunk_size_json" name="chunk_size_json" value="{{ chunk_settings.get('json', {}).get('value', chunk_defaults.get('json', {}).get('value')) }}">
+                            </div>
+                            <!--
+                            <div class="col-md-6">
+                                <label for="chunk_size_csv" class="form-label">CSV (characters)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="CSV" id="chunk_size_csv" name="chunk_size_csv" value="{{ chunk_settings.get('csv', {}).get('value', chunk_defaults.get('csv', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_excel" class="form-label">Excel (characters)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="EXCEL" id="chunk_size_excel" name="chunk_size_excel" value="{{ chunk_settings.get('excel', {}).get('value', chunk_defaults.get('excel', {}).get('value')) }}">
+                            </div>
+                            -->
+                            <div class="col-md-6">
+                                <label for="chunk_size_transcript" class="form-label">Transcripts (words)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="TRANSCRIPT" id="chunk_size_transcript" name="chunk_size_transcript" value="{{ chunk_settings.get('transcript', {}).get('value', chunk_defaults.get('transcript', {}).get('value')) }}">
+                                <div class="form-text">Applies to new audio transcripts.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_pdf" class="form-label">PDF (pages)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="PDF" id="chunk_size_pdf" name="chunk_size_pdf" value="{{ chunk_settings.get('pdf', {}).get('value', chunk_defaults.get('pdf', {}).get('value')) }}">
+                                <div class="form-text">Pages per chunk after extraction.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_pptx" class="form-label">PPT/PPTX (slides)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="PPT/PPTX" id="chunk_size_pptx" name="chunk_size_pptx" value="{{ chunk_settings.get('pptx', {}).get('value', chunk_defaults.get('pptx', {}).get('value')) }}">
+                                <div class="form-text">Slides per chunk after extraction.</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -4042,65 +5141,82 @@
                     </p>
                 </div>
             </div>
-            
+            </div>
 
-        </div>
-        <div class="tab-pane fade" id="security" role="tabpanel" aria-labelledby="security-tab">
-                 <p class="text-muted">
-                    Configure Security Settings.
+            <div class="tab-pane fade" id="send-feedback" role="tabpanel" aria-labelledby="send-feedback-tab" data-app-version="{{ config['VERSION'] }}">
+                <p class="text-muted">
+                    Prepare a prefilled email draft for bug reports or feature requests. This utility is separate from saved settings and records each submission intent in the activity log before opening your local email client.
                 </p>
-                <div class="card p-3 mb-3" id="keyvault-section">
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <h5>
-                            <i class="bi bi-safe me-2"></i>Key Vault
-                        </h5>
-                        <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#keyVaultInfoModal">
-                            <i class="bi bi-info-circle me-1"></i>Configuration Guide
-                        </button>
+                <div class="alert alert-warning" role="alert" id="send-feedback-overview-card">
+                    <strong>Email workflow:</strong> This opens a text-only email draft in your local mail client. If you need to share screenshots or files, add them manually after the draft opens.
+                </div>
+
+                <div class="row g-4">
+                    <div class="col-xl-6">
+                        <div class="card p-4 h-100" id="send-feedback-bug-card">
+                            <h5 class="mb-1">
+                                <i class="bi bi-bug me-2"></i>Report a Bug
+                            </h5>
+                            <p class="text-muted small mb-3">Something isn’t working as expected.</p>
+                            <div class="admin-send-feedback-form" data-feedback-type="bug_report" data-feedback-label="Bug Report">
+                                <div class="mb-3">
+                                    <label for="send_feedback_bug_name" class="form-label">Name</label>
+                                    <input type="text" class="form-control" id="send_feedback_bug_name" name="send_feedback_bug_name" autocomplete="name" value="{{ session.get('user', {}).get('name', '') }}" data-ignore-settings-change="true" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="send_feedback_bug_email" class="form-label">Email</label>
+                                    <input type="email" class="form-control" id="send_feedback_bug_email" name="send_feedback_bug_email" autocomplete="email" value="{{ session.get('user', {}).get('preferred_username', session.get('user', {}).get('email', '')) }}" data-ignore-settings-change="true" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="send_feedback_bug_org" class="form-label">Organization</label>
+                                    <input type="text" class="form-control" id="send_feedback_bug_org" name="send_feedback_bug_org" autocomplete="organization" data-ignore-settings-change="true" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="send_feedback_bug_details" class="form-label">Bug Details</label>
+                                    <textarea class="form-control" id="send_feedback_bug_details" name="send_feedback_bug_details" autocomplete="off" rows="6" placeholder="Describe what happened, what you expected, and how to reproduce it." data-ignore-settings-change="true" required></textarea>
+                                </div>
+                                <div class="alert d-none admin-send-feedback-status" role="alert"></div>
+                                <button type="button" class="btn btn-primary admin-send-feedback-submit" data-ignore-settings-change="true">
+                                    <i class="bi bi-envelope me-1"></i>Open Bug Report Email
+                                </button>
+                            </div>
+                        </div>
                     </div>
-                    
-                    <p class="text-muted">
-                        Configure Key Vault settings.
-                    </p>
-                    <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
-                        <input
-                            type="checkbox"
-                            class="form-check-input me-2"
-                            id="enable_key_vault_secret_storage"
-                            name="enable_key_vault_secret_storage"
-                            {% if settings.enable_key_vault_secret_storage %}checked{% endif %}
-                        >
-                        <label class="form-check-label" for="enable_key_vault_secret_storage">
-                            Enable Key Vault for Agent and Action Secrets
-                        </label>
-                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Store agent and action sensitive information like API keys and secrets securely in Azure Key Vault."></i>
-                    </div>
-                    <div id="key-vault-warning" class="alert alert-warning mt-2">
-                        <strong>⚠️ Warning:</strong> Once you enable Key Vault, you should <u>NOT</u> disable it. Disabling Key Vault after enabling <u>WILL</u> cause loss of access to secrets and break application functionality.
-                    </div>
-                    <div class="mb-3">
-                        <label for="key_vault_name" class="form-label">Key Vault Name</label>
-                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="The name of the key vault resource. Endpoint is determined by your AZURE_ENVIRONMENT app service configuration."></i>
-                        <input type="text" class="form-control" id="key_vault_name" name="key_vault_name" value="{{ settings.key_vault_name or '' }}" {% if settings.enable_key_vault_secret_storage %}required{% endif %}>
-                    </div>
-                    <div class="mb-3">
-                        <label for="key_vault_identity" class="form-label">Key Vault Managed Identity Client ID</label>
-                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="The Client ID of the User Assigned Managed Identity. Leave blank for system-assigned identity of the app service."></i>
-                        <input type="text" class="form-control" id="key_vault_identity" name="key_vault_identity" value="{{ settings.key_vault_identity or '' }}">
-                    </div>
-                    <button
-                        type="button"
-                        class="btn btn-secondary mt-3"
-                        style="width: auto;"
-                        id="test_key_vault_button"
-                    >
-                        Test Key Vault Connection
-                    </button>
-                    <div id="test_key_vault_result" class="mt-2">
+
+                    <div class="col-xl-6">
+                        <div class="card p-4 h-100" id="send-feedback-feature-card">
+                            <h5 class="mb-1">
+                                <i class="bi bi-lightbulb me-2"></i>Request a Feature
+                            </h5>
+                            <p class="text-muted small mb-3">Suggest an improvement or new capability.</p>
+                            <div class="admin-send-feedback-form" data-feedback-type="feature_request" data-feedback-label="Feature Request">
+                                <div class="mb-3">
+                                    <label for="send_feedback_feature_name" class="form-label">Name</label>
+                                    <input type="text" class="form-control" id="send_feedback_feature_name" name="send_feedback_feature_name" autocomplete="name" value="{{ session.get('user', {}).get('name', '') }}" data-ignore-settings-change="true" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="send_feedback_feature_email" class="form-label">Email</label>
+                                    <input type="email" class="form-control" id="send_feedback_feature_email" name="send_feedback_feature_email" autocomplete="email" value="{{ session.get('user', {}).get('preferred_username', session.get('user', {}).get('email', '')) }}" data-ignore-settings-change="true" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="send_feedback_feature_org" class="form-label">Organization</label>
+                                    <input type="text" class="form-control" id="send_feedback_feature_org" name="send_feedback_feature_org" autocomplete="organization" data-ignore-settings-change="true" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="send_feedback_feature_details" class="form-label">Feature Request Details</label>
+                                    <textarea class="form-control" id="send_feedback_feature_details" name="send_feedback_feature_details" autocomplete="off" rows="6" placeholder="Describe the problem, the improvement you want, and the outcome you need." data-ignore-settings-change="true" required></textarea>
+                                </div>
+                                <div class="alert d-none admin-send-feedback-status" role="alert"></div>
+                                <button type="button" class="btn btn-primary admin-send-feedback-submit" data-ignore-settings-change="true">
+                                    <i class="bi bi-envelope me-1"></i>Open Feature Request Email
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
-        </div> <!-- End of Admin tab content -->
+        </div>
+        <!-- End of Admin tab content -->
     </form>
     
     <!-- Floating Save Button -->
@@ -4429,20 +5545,22 @@
         }
     }
 
-    // Listen for changes on the toggle
-    toggleLandingPageEditor.addEventListener("change", () => {
+    if (toggleLandingPageEditor && landingPageEditorContainer && landingPageMarkdownPreview) {
+        // Listen for changes on the toggle
+        toggleLandingPageEditor.addEventListener("change", () => {
+            if (toggleLandingPageEditor.checked) {
+                showEditor();
+            } else {
+                showPreview();
+            }
+        });
+
+        // On page load, decide which view to show, based on user’s stored setting
         if (toggleLandingPageEditor.checked) {
             showEditor();
         } else {
             showPreview();
         }
-    });
-
-    // On page load, decide which view to show, based on user’s stored setting
-    if (toggleLandingPageEditor.checked) {
-        showEditor();
-    } else {
-        showPreview();
     }
 </script>
 
@@ -4456,6 +5574,11 @@
 
     window.imageSelected = JSON.parse('{{ settings.image_gen_model.selected|tojson()|safe }}' || '[]');
     window.imageAll      = JSON.parse('{{ settings.image_gen_model.all|tojson()|safe }}' || '[]');
+
+    window.enableMultiModelEndpoints = {{ 'true' if settings.enable_multi_model_endpoints else 'false' }};
+    window.modelEndpoints = JSON.parse('{{ settings.model_endpoints|tojson()|safe }}' || '[]');
+    window.defaultModelSelection = JSON.parse('{{ settings.default_model_selection|tojson()|safe }}' || '{}');
+    window.multiEndpointMigrationNotice = JSON.parse('{{ settings.multi_endpoint_migration_notice|tojson()|safe }}' || '{}');
 
     // *** NEW: Classification Data ***
     try {
@@ -4492,15 +5615,25 @@
     window.enableExternalLinks = "{{ enable_external_links }}";
     window.externalLinksMenuName = "{{ settings.external_links_menu_name or 'External Links' }}";
     window.externalLinksForceMenu = "{{ settings.external_links_force_menu }}";
+    window.releaseNotificationsRegistration = {
+        registered: {{ 'true' if settings.release_notifications_registered else 'false' }},
+        name: {{ (settings.release_notifications_name or session.get('user', {}).get('name', ''))|tojson|safe }},
+        email: {{ (settings.release_notifications_email or session.get('user', {}).get('preferred_username', session.get('user', {}).get('email', '')))|tojson|safe }},
+        organization: {{ (settings.release_notifications_org or '')|tojson|safe }},
+        registeredAt: {{ (settings.release_notifications_registered_at or '')|tojson|safe }},
+        updatedAt: {{ (settings.release_notifications_updated_at or '')|tojson|safe }},
+        recipientEmail: 'simplechat@microsoft.com',
+        appVersion: {{ config['VERSION']|tojson|safe }}
+    };
 
 </script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_settings.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/admin/admin_model_endpoints.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_sidebar_nav.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/plugin_modal_stepper.js') }}"></script>
 {% if settings.enable_semantic_kernel %}
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_plugins.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_agents.js') }}"></script>
-<script type="module" src="{{ url_for('static', filename='js/admin/admin_agent_templates.js') }}"></script>
 {% endif %}
 
 <!-- Script to update the walkthrough steps based on form changes -->

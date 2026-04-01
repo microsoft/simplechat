@@ -22,6 +22,10 @@
 .PARAMETER AppRolesJsonPath
     Path to appRegistrationRoles.json file (Optional, default: ./appRegistrationRoles.json)
 
+.PARAMETER AzureCloudEnvironment
+    Optional Azure cloud name. You can pass AzureCloud, AzureUSGovernment, or a custom Azure CLI cloud name.
+    If omitted during interactive use, the script prompts for the target cloud before login.
+
 .EXAMPLE
     .\Initialize-EntraApplication.ps1 -AppName "simplechat" -Environment "dev" 
 
@@ -40,29 +44,27 @@
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
-    [ValidateLength(3, 12)]                # Length between 3 and 12
-    [ValidatePattern('^[a-zA-Z0-9]+$')]    # Only letters and numbers
+    [Parameter(Mandatory = $false)]
     [string]$AppName,
 
-    [Parameter(Mandatory = $true)]
-    [ValidateLength(2, 10)]                # Length between 2 and 10
-    [ValidatePattern('^[a-zA-Z0-9]+$')]    # Only letters and numbers
+    [Parameter(Mandatory = $false)]
     [string]$Environment,
 
     [Parameter(Mandatory = $false)]
-    [string]$AppServiceName = "$AppName-$Environment-app",
+    [string]$AppServiceName,
 
     [Parameter(Mandatory = $false)]
     [int]$SecretExpirationDays = 180,
 
     [Parameter(Mandatory = $false)]
-    [string]$AppRolesJsonPath = "./appRegistrationRoles.json"
+    [string]$AppRolesJsonPath = "./appRegistrationRoles.json",
+
+    [Parameter(Mandatory = $false)]
+    [string]$AzureCloudEnvironment
 )
 
 # Script configuration
 $ErrorActionPreference = "Stop"
-$appRegistrationName = "$AppName-$Environment-ar"
 
 #region Helper Functions
 
@@ -84,6 +86,261 @@ function Write-ErrorMessage {
 function Write-WarningMessage {
     param([string]$Message)
     Write-Host "WARNING: $Message" -ForegroundColor Yellow
+}
+
+function Get-CommandOutputText {
+    param($CommandOutput)
+
+    if ($null -eq $CommandOutput) {
+        return ""
+    }
+
+    return (($CommandOutput | Out-String).Trim())
+}
+
+function Test-PermissionGrantRequiredMessage {
+    param([string]$Message)
+
+    return ($Message -match 'az ad app permission grant' -and $Message -match 'needed to make the change effective')
+}
+
+function Try-GrantAppPermissions {
+    param(
+        [string]$AppId,
+        [string]$ApiId
+    )
+
+    $grantOutput = az ad app permission grant --id $AppId --api $ApiId --only-show-errors 2>&1
+    $grantExitCode = $LASTEXITCODE
+    $grantOutputText = Get-CommandOutputText -CommandOutput $grantOutput
+
+    return [PSCustomObject]@{
+        Succeeded  = ($grantExitCode -eq 0)
+        OutputText = $grantOutputText
+    }
+}
+
+function Test-AzureCloudExists {
+    param([string]$CloudName)
+
+    try {
+        az cloud show --name $CloudName --output none 2>$null
+        return ($LASTEXITCODE -eq 0)
+    }
+    catch {
+        return $false
+    }
+}
+
+function Read-AzureCloudMenuSelection {
+    param([int]$TimeoutSeconds = 10)
+
+    $options = @(
+        [PSCustomObject]@{ Key = '1'; Label = 'Public Azure'; Value = 'AzureCloud' },
+        [PSCustomObject]@{ Key = '2'; Label = 'Azure Government'; Value = 'AzureUSGovernment' },
+        [PSCustomObject]@{ Key = '3'; Label = 'Custom Azure CLI cloud'; Value = '__custom__' }
+    )
+
+    if (-not [Environment]::UserInteractive) {
+        return $options[0].Value
+    }
+
+    try {
+        $selectedIndex = 0
+        $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+        $bufferWidth = 120
+        $lastStatusLine = ""
+
+        Write-Host "Select the Azure cloud to use:" -ForegroundColor Cyan
+        for ($index = 0; $index -lt $options.Count; $index++) {
+            Write-Host ("  [{0}] {1}" -f $options[$index].Key, $options[$index].Label)
+        }
+        Write-Host ""
+
+        while ($true) {
+            $remainingSeconds = [Math]::Max(0, [int][Math]::Ceiling(($deadline - [DateTime]::UtcNow).TotalSeconds))
+
+            $statusLine = "Current selection: [{0}] {1}. Use Up/Down to change, Enter to confirm, or press 1-3. Default is #1 in {2}s." -f $options[$selectedIndex].Key, $options[$selectedIndex].Label, $remainingSeconds
+            if ($statusLine -ne $lastStatusLine) {
+                Write-Host (("`r" + $statusLine).PadRight($bufferWidth)) -NoNewline -ForegroundColor Green
+                $lastStatusLine = $statusLine
+            }
+
+            if ($remainingSeconds -le 0) {
+                Write-Host ""
+                return $options[$selectedIndex].Value
+            }
+
+            $pollUntil = [DateTime]::UtcNow.AddMilliseconds(250)
+            while ([DateTime]::UtcNow -lt $pollUntil) {
+                if ([Console]::KeyAvailable) {
+                    $key = [Console]::ReadKey($true)
+
+                    switch ($key.Key) {
+                        'UpArrow' {
+                            $selectedIndex = if ($selectedIndex -eq 0) { $options.Count - 1 } else { $selectedIndex - 1 }
+                            break
+                        }
+                        'DownArrow' {
+                            $selectedIndex = if ($selectedIndex -eq ($options.Count - 1)) { 0 } else { $selectedIndex + 1 }
+                            break
+                        }
+                        'Enter' {
+                            Write-Host ""
+                            return $options[$selectedIndex].Value
+                        }
+                        'D1' { Write-Host ""; return $options[0].Value }
+                        'NumPad1' { Write-Host ""; return $options[0].Value }
+                        'D2' { Write-Host ""; return $options[1].Value }
+                        'NumPad2' { Write-Host ""; return $options[1].Value }
+                        'D3' { Write-Host ""; return $options[2].Value }
+                        'NumPad3' { Write-Host ""; return $options[2].Value }
+                    }
+
+                    switch ($key.KeyChar) {
+                        '1' {
+                            Write-Host ""
+                            return $options[0].Value
+                        }
+                        '2' {
+                            Write-Host ""
+                            return $options[1].Value
+                        }
+                        '3' {
+                            Write-Host ""
+                            return $options[2].Value
+                        }
+                    }
+                }
+
+                Start-Sleep -Milliseconds 50
+            }
+        }
+    }
+    catch {
+        Write-Host "Select the Azure cloud to use:" -ForegroundColor Cyan
+        Write-Host "1. Public Azure (AzureCloud)"
+        Write-Host "2. Azure Government (AzureUSGovernment)"
+        Write-Host "3. Custom Azure CLI cloud"
+        $selection = Read-Host "Enter 1, 2, or 3"
+
+        switch ($selection.Trim()) {
+            '1' { return 'AzureCloud' }
+            '2' { return 'AzureUSGovernment' }
+            '3' { return '__custom__' }
+            default { return $null }
+        }
+    }
+}
+
+function Resolve-AzureCloudEnvironment {
+    param([string]$RequestedCloudName)
+
+    $candidateCloudName = $RequestedCloudName
+
+    while ($true) {
+        if ([string]::IsNullOrWhiteSpace($candidateCloudName)) {
+            if (-not [Environment]::UserInteractive) {
+                return 'AzureCloud'
+            }
+
+            $menuSelection = Read-AzureCloudMenuSelection
+
+            if ($menuSelection -eq '__custom__') {
+                $candidateCloudName = Read-Host "Enter the registered Azure CLI custom cloud name"
+            } elseif (-not [string]::IsNullOrWhiteSpace($menuSelection)) {
+                $candidateCloudName = $menuSelection
+            } else {
+                Write-WarningMessage "Invalid cloud selection."
+                $candidateCloudName = $null
+                continue
+            }
+        }
+
+        if (Test-AzureCloudExists -CloudName $candidateCloudName) {
+            return $candidateCloudName
+        }
+
+        if (-not [Environment]::UserInteractive) {
+            throw "Azure CLI cloud '$candidateCloudName' is not registered. Register it first with 'az cloud register' or provide AzureCloud/AzureUSGovernment."
+        }
+
+        Write-WarningMessage "Azure CLI cloud '$candidateCloudName' is not registered on this machine."
+        Write-InfoMessage "Use 'az cloud list -o table' to see available clouds, or 'az cloud register' for a custom cloud."
+        $candidateCloudName = $null
+    }
+}
+
+function Get-ValidationMessage {
+    param(
+        [string]$Value,
+        [string]$DisplayName,
+        [int]$MinLength,
+        [int]$MaxLength,
+        [string]$AllowedPattern,
+        [string]$AllowedPatternDescription
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return "$DisplayName is required."
+    }
+
+    $validationIssues = @()
+
+    if ($Value.Length -lt $MinLength -or $Value.Length -gt $MaxLength) {
+        $validationIssues += "$DisplayName must be between $MinLength and $MaxLength characters long"
+    }
+
+    if ($Value -notmatch $AllowedPattern) {
+        $validationIssues += "$DisplayName must use only $AllowedPatternDescription"
+    }
+
+    if ($validationIssues.Count -eq 0) {
+        return $null
+    }
+
+    return ($validationIssues -join '; ') + '.'
+}
+
+function Resolve-ValidatedInput {
+    param(
+        [string]$InitialValue,
+        [string]$DisplayName,
+        [int]$MinLength,
+        [int]$MaxLength,
+        [string]$AllowedPattern,
+        [string]$AllowedPatternDescription,
+        [string]$PromptExample
+    )
+
+    $candidateValue = $InitialValue
+
+    while ($true) {
+        $validationMessage = Get-ValidationMessage `
+            -Value $candidateValue `
+            -DisplayName $DisplayName `
+            -MinLength $MinLength `
+            -MaxLength $MaxLength `
+            -AllowedPattern $AllowedPattern `
+            -AllowedPatternDescription $AllowedPatternDescription
+
+        if (-not $validationMessage) {
+            return $candidateValue
+        }
+
+        if (-not [Environment]::UserInteractive) {
+            throw "$validationMessage Example: $PromptExample"
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($candidateValue)) {
+            Write-WarningMessage "$DisplayName '$candidateValue' is incompatible. $validationMessage"
+        } else {
+            Write-WarningMessage $validationMessage
+        }
+
+        Write-InfoMessage "$DisplayName requirements: $MinLength-$MaxLength characters, $AllowedPatternDescription. Example: $PromptExample"
+        $candidateValue = Read-Host "Enter $DisplayName"
+    }
 }
 
 function Test-AzureCliInstalled {
@@ -136,6 +393,44 @@ function Get-AppServiceDomain {
     }
 }
 
+function Ensure-AzureCliAuthenticated {
+    param([string]$RequestedCloudName)
+
+    $targetCloudName = Resolve-AzureCloudEnvironment -RequestedCloudName $RequestedCloudName
+    $currentCloudName = Get-CloudEnvironment
+
+    if ($currentCloudName -ne $targetCloudName) {
+        Write-InfoMessage "Switching Azure CLI cloud from '$currentCloudName' to '$targetCloudName'..."
+        az cloud set --name $targetCloudName | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to switch Azure CLI cloud to '$targetCloudName'."
+        }
+    }
+
+    if (Test-AzureCliAuthenticated) {
+        Write-SuccessMessage "Azure CLI is authenticated"
+        return $targetCloudName
+    }
+
+    if (-not [Environment]::UserInteractive) {
+        throw "Azure CLI is not authenticated. Run 'az login' first or provide an authenticated non-interactive context."
+    }
+
+    Write-WarningMessage "Azure CLI is not authenticated for cloud '$targetCloudName'."
+    Write-InfoMessage "Running 'az login'..."
+    az login | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Azure CLI login failed for cloud '$targetCloudName'."
+    }
+
+    if (-not (Test-AzureCliAuthenticated)) {
+        throw "Azure CLI authentication could not be verified after login."
+    }
+
+    Write-SuccessMessage "Azure CLI is authenticated"
+    return $targetCloudName
+}
+
 #endregion
 
 #region Main Script
@@ -146,6 +441,30 @@ Write-Host "========================================`n" -ForegroundColor Cyan
 
 try {
     #region Dependency Checks
+
+    $AppName = Resolve-ValidatedInput `
+        -InitialValue $AppName `
+        -DisplayName "AppName" `
+        -MinLength 3 `
+        -MaxLength 12 `
+        -AllowedPattern '^[a-zA-Z0-9]+$' `
+        -AllowedPatternDescription "letters and numbers only, with no spaces or hyphens" `
+        -PromptExample "simplechat"
+
+    $Environment = Resolve-ValidatedInput `
+        -InitialValue $Environment `
+        -DisplayName "Environment" `
+        -MinLength 2 `
+        -MaxLength 10 `
+        -AllowedPattern '^[a-zA-Z0-9]+$' `
+        -AllowedPatternDescription "letters and numbers only, with no spaces or hyphens" `
+        -PromptExample "dev"
+
+    if ([string]::IsNullOrWhiteSpace($AppServiceName)) {
+        $AppServiceName = "$AppName-$Environment-app"
+    }
+
+    $appRegistrationName = "$AppName-$Environment-ar"
     
     Write-InfoMessage "Performing dependency checks..."
     
@@ -155,11 +474,7 @@ try {
     }
     Write-SuccessMessage "Azure CLI is installed"
     
-    # Check Azure CLI authentication
-    if (-not (Test-AzureCliAuthenticated)) {
-        throw "Azure CLI is not authenticated. Please run 'az login' first"
-    }
-    Write-SuccessMessage "Azure CLI is authenticated"
+    $cloudEnvironment = Ensure-AzureCliAuthenticated -RequestedCloudName $AzureCloudEnvironment
     
     # Check app roles JSON file exists
     if (-not (Test-Path $AppRolesJsonPath)) {
@@ -178,8 +493,6 @@ try {
     $tenantId = $accountInfo.tenantId
     Write-InfoMessage "Tenant ID: $tenantId"
     
-    # Get cloud environment
-    $cloudEnvironment = Get-CloudEnvironment
     Write-InfoMessage "Cloud Environment: $cloudEnvironment"
     
     # Get Graph URL
@@ -285,12 +598,16 @@ try {
     
     try {
         $body = @{ web = @{ logoutUrl = $logoutUrl } } | ConvertTo-Json -Compress
-        
-        az rest --method PATCH `
+
+        $logoutResult = az rest --method PATCH `
             --uri "$graphUrl/v1.0/applications/$($appRegistration.id)" `
             --headers "Content-Type=application/json" `
-            --body $body | Out-Null
-        
+            --body ($body -replace '"', '\"') 2>&1
+
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to configure logout URL. Azure CLI returned: $(Get-CommandOutputText -CommandOutput $logoutResult)"
+        }
+
         Write-SuccessMessage "Logout URL configured"
     }
     catch {
@@ -337,22 +654,93 @@ try {
     )
     
     $permissionErrors = @()
+    $permissionsRequiringPortalConsent = @()
+    $permissionGrantAttempted = $false
+    $permissionGrantSucceeded = $false
+    $permissionGrantOutput = ""
     
     foreach ($permission in $permissions) {
         try {
             Write-InfoMessage "Adding permission: $($permission.Name)"
-            
-            az ad app permission add `
-                --id $appRegistration.id `
+
+            $permissionResult = az ad app permission add `
+                --id $appRegistration.appId `
                 --api $microsoftGraphId `
-                --api-permissions "$($permission.Id)=Scope" 2>&1 | Out-Null
-            
+                --only-show-errors `
+                --api-permissions "$($permission.Id)=Scope" 2>&1
+
+            $permissionResultText = Get-CommandOutputText -CommandOutput $permissionResult
+
+            if ($LASTEXITCODE -ne 0) {
+                if (Test-PermissionGrantRequiredMessage -Message $permissionResultText) {
+                    Write-SuccessMessage "Added: $($permission.Name)"
+
+                    if (-not $permissionGrantAttempted) {
+                        Write-InfoMessage "Azure CLI indicates that a permission grant is needed. Attempting 'az ad app permission grant'..."
+                        $grantResult = Try-GrantAppPermissions -AppId $appRegistration.appId -ApiId $microsoftGraphId
+                        $permissionGrantAttempted = $true
+                        $permissionGrantSucceeded = $grantResult.Succeeded
+                        $permissionGrantOutput = $grantResult.OutputText
+
+                        if ($permissionGrantSucceeded) {
+                            Write-SuccessMessage "Permission grant command completed successfully."
+                        } else {
+                            Write-WarningMessage "Permission grant command did not complete successfully."
+                            if (-not [string]::IsNullOrWhiteSpace($permissionGrantOutput)) {
+                                Write-WarningMessage $permissionGrantOutput
+                            }
+                        }
+                    }
+
+                    if (-not $permissionGrantSucceeded) {
+                        $permissionsRequiringPortalConsent += $permission.Name
+                        Write-InfoMessage "Permission '$($permission.Name)' still needs portal approval or admin consent to become effective."
+                    }
+
+                    continue
+                }
+
+                throw $permissionResultText
+            }
+
             Write-SuccessMessage "Added: $($permission.Name)"
+
+            if (-not [string]::IsNullOrWhiteSpace($permissionResultText) -and (Test-PermissionGrantRequiredMessage -Message $permissionResultText)) {
+                if (-not $permissionGrantAttempted) {
+                    Write-InfoMessage "Azure CLI indicates that a permission grant is needed. Attempting 'az ad app permission grant'..."
+                    $grantResult = Try-GrantAppPermissions -AppId $appRegistration.appId -ApiId $microsoftGraphId
+                    $permissionGrantAttempted = $true
+                    $permissionGrantSucceeded = $grantResult.Succeeded
+                    $permissionGrantOutput = $grantResult.OutputText
+
+                    if ($permissionGrantSucceeded) {
+                        Write-SuccessMessage "Permission grant command completed successfully."
+                    } else {
+                        Write-WarningMessage "Permission grant command did not complete successfully."
+                        if (-not [string]::IsNullOrWhiteSpace($permissionGrantOutput)) {
+                            Write-WarningMessage $permissionGrantOutput
+                        }
+                    }
+                }
+
+                if (-not $permissionGrantSucceeded) {
+                    $permissionsRequiringPortalConsent += $permission.Name
+                    Write-InfoMessage "Permission '$($permission.Name)' still needs portal approval or admin consent to become effective."
+                }
+            }
         }
         catch {
-            $permissionErrors += "Failed to add $($permission.Name): $_"
-            Write-WarningMessage "Failed to add permission $($permission.Name)"
+            $permissionErrorMessage = "Failed to add $($permission.Name): $_"
+            $permissionErrors += $permissionErrorMessage
+            Write-WarningMessage $permissionErrorMessage
         }
+    }
+
+    if ($permissionsRequiringPortalConsent.Count -gt 0) {
+        $uniquePermissionsRequiringPortalConsent = $permissionsRequiringPortalConsent | Sort-Object -Unique
+        Write-WarningMessage "Some permissions still require portal approval or admin consent to become effective."
+        Write-InfoMessage "Permissions awaiting approval: $($uniquePermissionsRequiringPortalConsent -join ', ')"
+        Write-InfoMessage "Open Azure Portal > Entra ID > App registrations > $appRegistrationName > API permissions, then grant admin consent if required by your tenant."
     }
     
     if ($permissionErrors.Count -eq 0) {
@@ -360,7 +748,7 @@ try {
     }
     else {
         Write-WarningMessage "Some permissions could not be added automatically"
-        Write-InfoMessage "Missing permissions can be added manually in Azure Portal"
+        Write-InfoMessage "Review the warnings above, then add or approve any missing permissions in Azure Portal if needed."
     }
     
     #endregion

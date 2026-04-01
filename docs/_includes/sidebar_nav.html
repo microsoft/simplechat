@@ -52,7 +52,7 @@
           {% for section in sections %}
             <li class="nav-item">
               <div class="nav-link d-flex align-items-center section-nav-toggle" data-target="{{ section.name | slugify }}-submenu">
-                <i class="bi bi-folder me-2"></i><span class="nav-text">{{ section.name | capitalize }}</span>
+                <i class="bi bi-folder me-2"></i><span class="nav-text">{{ section.name }}</span>
                 <i class="bi bi-caret-right-fill ms-auto transition section-caret" style="font-size: 0.8em; transition: transform 0.2s;"></i>
               </div>
               <ul class="nav flex-column ms-3" id="{{ section.name | slugify }}-submenu" style="display: none;">
@@ -156,49 +156,6 @@
   </div>
   
   <script>
-    // Collapsible Sections
-    document.addEventListener('DOMContentLoaded', function() {
-      var toggle = document.getElementById('sections-toggle');
-      var section = document.getElementById('sections-list');
-      var caret = document.getElementById('sections-caret');
-      var collapsed = false;
-      if (toggle && section && caret) {
-        toggle.addEventListener('click', function() {
-          collapsed = !collapsed;
-          section.style.display = collapsed ? 'none' : '';
-          caret.style.transform = collapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
-        });
-      }
-
-      // Collapsible External Links Section
-      var externalLinksToggle = document.getElementById('external-links-toggle');
-      var externalLinksSection = document.getElementById('external-links-section');
-      var externalLinksCaret = document.getElementById('external-links-caret');
-      var externalLinksCollapsed = false;
-      if (externalLinksToggle && externalLinksSection && externalLinksCaret) {
-        externalLinksToggle.addEventListener('click', function() {
-          externalLinksCollapsed = !externalLinksCollapsed;
-          externalLinksSection.style.display = externalLinksCollapsed ? 'none' : '';
-          externalLinksCaret.style.transform = externalLinksCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
-        });
-      }
-
-      // Section submenus
-      var sectionToggles = document.querySelectorAll('.section-nav-toggle');
-      sectionToggles.forEach(function(toggle) {
-        toggle.addEventListener('click', function() {
-          var targetId = toggle.getAttribute('data-target');
-          var submenu = document.getElementById(targetId);
-          var caret = toggle.querySelector('.section-caret');
-          if (submenu && caret) {
-            var isHidden = submenu.style.display === 'none' || submenu.style.display === '';
-            submenu.style.display = isHidden ? 'block' : 'none';
-            caret.style.transform = isHidden ? 'rotate(90deg)' : 'rotate(0deg)';
-          }
-        });
-      });
-    });
-
     // Sidebar Toggle Functionality
     function toggleSidebar() {
       var sidebar = document.getElementById('sidebar-nav');

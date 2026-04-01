@@ -1,5 +1,9 @@
 {# Sidebar Navigation Partial #}
-<div id="sidebar-nav" class="d-flex flex-column vh-100 bg-light border-end sidebar-expanded" style="width: 260px; min-width: 220px; position: fixed; left: 0; top: 0; z-index: 1040; transition: transform 0.3s ease;">
+<div id="sidebar-nav" class="d-flex flex-column vh-100 bg-light border-end sidebar-expanded" style="width: var(--sidebar-width, 260px); min-width: var(--sidebar-min-width, 220px); position: fixed; left: 0; top: 0; z-index: 1040; transition: transform 0.3s ease;">
+
+  <div id="sidebar-resize-handle" class="sidebar-resize-handle" aria-label="Resize sidebar" role="separator" tabindex="0">
+    <i class="bi bi-grip-vertical"></i>
+  </div>
   
   <!-- Collapse/Expand button -->
   <button type="button" id="sidebar-toggle-btn" class="btn btn-sm btn-outline-secondary position-absolute d-none d-sm-block"
@@ -230,6 +234,58 @@
       </div>
       <div id="admin-settings-section">
         <ul class="nav flex-column mb-2">
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="latest-features">
+              <i class="bi bi-lightning-charge me-2"></i><span class="nav-text">Latest Features</span><span class="badge bg-warning text-dark text-uppercase ms-2">New</span>
+            </a>
+            <ul class="nav flex-column ms-3" style="display: none;" id="latest-features-submenu">
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="latest-features" data-section="latest-features-guided-tutorials-card">
+                  <i class="bi bi-signpost-split me-2" style="font-size: 0.8em;"></i><span class="nav-text">Guided Tutorials</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="latest-features" data-section="latest-features-background-chat-card">
+                  <i class="bi bi-bell me-2" style="font-size: 0.8em;"></i><span class="nav-text">Background Chat</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="latest-features" data-section="latest-features-tabular-card">
+                  <i class="bi bi-table me-2" style="font-size: 0.8em;"></i><span class="nav-text">Tabular Analysis</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="latest-features" data-section="latest-features-export-card">
+                  <i class="bi bi-file-earmark-arrow-down me-2" style="font-size: 0.8em;"></i><span class="nav-text">Summaries and Export</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="latest-features" data-section="latest-features-agent-ops-card">
+                  <i class="bi bi-grid me-2" style="font-size: 0.8em;"></i><span class="nav-text">Agent Operations</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="latest-features" data-section="latest-features-thoughts-card">
+                  <i class="bi bi-stars me-2" style="font-size: 0.8em;"></i><span class="nav-text">AI Transparency</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="latest-features" data-section="latest-features-deployment-card">
+                  <i class="bi bi-hdd-rack me-2" style="font-size: 0.8em;"></i><span class="nav-text">Deployment</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="latest-features" data-section="latest-features-redis-card">
+                  <i class="bi bi-key me-2" style="font-size: 0.8em;"></i><span class="nav-text">Redis and Key Vault</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="latest-features" data-section="latest-features-send-feedback-card">
+                  <i class="bi bi-envelope-paper me-2" style="font-size: 0.8em;"></i><span class="nav-text">Send Feedback</span>
+                </a>
+              </li>
+            </ul>
+          </li>
           <li class="nav-item">
             <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="general">
               <i class="bi bi-gear me-2"></i><span class="nav-text">General</span>
@@ -491,6 +547,28 @@
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="search-extract" data-section="multimedia-support-section">
                   <i class="bi bi-play-circle me-2" style="font-size: 0.8em;"></i><span class="nav-text">Multimedia Support</span>
+                </a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="send-feedback">
+              <i class="bi bi-envelope-paper me-2"></i><span class="nav-text">Send Feedback</span>
+            </a>
+            <ul class="nav flex-column ms-3" style="display: none;" id="send-feedback-submenu">
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="send-feedback" data-section="send-feedback-overview-card">
+                  <i class="bi bi-info-circle me-2" style="font-size: 0.8em;"></i><span class="nav-text">Overview</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="send-feedback" data-section="send-feedback-bug-card">
+                  <i class="bi bi-bug me-2" style="font-size: 0.8em;"></i><span class="nav-text">Report a Bug</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="send-feedback" data-section="send-feedback-feature-card">
+                  <i class="bi bi-lightbulb me-2" style="font-size: 0.8em;"></i><span class="nav-text">Request a Feature</span>
                 </a>
               </li>
             </ul>
@@ -855,8 +933,8 @@
       
       /* Fixed user account section */
       #sidebar-user-account {
-        width: 260px;
-        min-width: 220px;
+        width: var(--sidebar-width, 260px);
+        min-width: var(--sidebar-min-width, 220px);
         transition: inherit;
         backdrop-filter: blur(10px);
         -webkit-backdrop-filter: blur(10px);

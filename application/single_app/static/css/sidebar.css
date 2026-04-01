@@ -1,5 +1,11 @@
 /* Sidebar Navigation Styles */
 
+:root {
+  --sidebar-width: 260px;
+  --sidebar-min-width: 100px;
+  --sidebar-max-width: 800px;
+}
+
 /* Base body adjustments for sidebar layout */
 body.sidebar-nav-enabled {
   padding-left: 0 !important; /* Remove body padding since we're using margin on containers */
@@ -28,8 +34,8 @@ body.sidebar-nav-enabled nav.navbar {
 body.sidebar-nav-enabled .main-content,
 body.sidebar-nav-enabled .container,
 body.sidebar-nav-enabled .container-fluid {
-  margin-left: 260px !important; /* Same as sidebar width */
-  max-width: calc(100% - 260px) !important; /* Prevent overflow */
+  margin-left: var(--sidebar-width) !important; /* Same as sidebar width */
+  max-width: calc(100% - var(--sidebar-width)) !important; /* Prevent overflow */
   margin-right: 0 !important;
   width: auto !important;
   transition: margin-left 0.3s ease-in-out;
@@ -146,6 +152,25 @@ body.sidebar-nav-enabled.has-classification-banner .container-fluid {
 #workspaces-section .nav-link {
   padding-top: 0.25rem !important;
   padding-bottom: 0.25rem !important;
+}
+
+.sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  width: 10px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: col-resize;
+  z-index: 1051;
+  color: var(--bs-border-color, #dee2e6);
+}
+
+.sidebar-resize-handle i {
+  pointer-events: none;
+  font-size: 0.9rem;
 }
 
 .sidebar-conversation-item {

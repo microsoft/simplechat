@@ -16,6 +16,34 @@ The application utilizes **Azure Cosmos DB** for storing conversations, metadata
 
 [Detailed deployment Guide](./deployers/bicep/README.md)
 
+If you prefer a PowerShell and Azure CLI driven deployment without AZD, or you want more script-level control over deployment and recovery steps, see [deployers/azurecli/README.md](./deployers/azurecli/README.md).
+
+### Prerequisites
+
+Install these tools before starting the deployment flow:
+
+1. Azure CLI
+    Download: https://learn.microsoft.com/cli/azure/install-azure-cli
+2. Azure Developer CLI (`azd`)
+    Download: https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd
+3. PowerShell 7
+    Download: https://learn.microsoft.com/powershell/scripting/install/installing-powershell
+4. Visual Studio Code
+    Download: https://code.visualstudio.com/download
+
+Shell guidance:
+
+- This quick-start section uses PowerShell examples.
+- Windows users can run the commands in PowerShell.
+- Linux and macOS users can run the PowerShell scripts by using PowerShell 7 with `pwsh`.
+- If you prefer bash for the surrounding shell commands, use the shell-specific examples in [deployers/bicep/README.md](./deployers/bicep/README.md).
+
+Minimum access and setup:
+
+- An Azure subscription where you have Owner or Contributor access for deployment.
+- Permission to create an Entra application registration, or coordination with an Entra admin who can run that step for you.
+- Access to Azure Container Registry Tasks so `azd up` can build the application image in ACR.
+
 ### Pre-Configuration:
 
 The following procedure must be completed with a user that has permissions to create an application registration in the users Entra tenant. 
@@ -26,15 +54,16 @@ The following procedure must be completed with a user that has permissions to cr
 cd ./deployers
 ```
 
-Define your application name and your environment:
+Define your application name and your environment in PowerShell:
 
-```
-appName = 
+```powershell
+$appName = "simplechat"
+$environment = "dev"
 ```
 
-```
-environment = 
-```
+If you type `appName = "simplechat"` in PowerShell, PowerShell treats `appName` as a command name. PowerShell variables must start with `$`.
+
+This main README uses PowerShell examples consistently. Linux and macOS users should run the same script with `pwsh`. If you prefer bash for the surrounding shell commands, use the shell-specific examples in [deployers/bicep/README.md](./deployers/bicep/README.md).
 
 The following script will create an Entra Enterprise Application, with an App Registration named *\<appName\>*-*\<environment\>*-ar for the web service called *\<appName\>*-*\<environment\>*-app.  
 
@@ -47,7 +76,13 @@ The following script will create an Entra Enterprise Application, with an App Re
 > A different expiration date for the secret which defaults to 180 days with the `-SecretExpirationDays` parameter.
 
 ```powershell
-.\Initialize-EntraApplication.ps1 -AppName "<appName>" -Environment "<environment>"  -AppRolesJsonPath "./azurecli/appRegistrationRoles.json"
+.\Initialize-EntraApplication.ps1 -AppName $appName -Environment $environment -AppRolesJsonPath "./azurecli/appRegistrationRoles.json"
+```
+
+Linux and macOS example:
+
+```bash
+pwsh ./Initialize-EntraApplication.ps1 -AppName simplechat -Environment dev -AppRolesJsonPath ./azurecli/appRegistrationRoles.json
 ```
 
 > [!NOTE]
@@ -85,7 +120,7 @@ In addition, the script will note additional steps that must be taken for the ap
 
 #### Configure AZD Environment
 
-Using the bash terminal in Visual Studio Code
+Using PowerShell in Visual Studio Code
 
 ```powershell
 cd ./deployers
@@ -103,16 +138,22 @@ This will open a browser window that the user with Owner level permissions to th
 azd auth login
 ```
 
-Use the same value for the \<environment\> that was used in the application registration.
+Initialize the AZD project in the current folder before creating or selecting the environment.
 
 ```powershell
-azd env new <environment>
+azd init
+```
+
+Use the same value for `$environment` that was used in the application registration.
+
+```powershell
+azd env new $environment
 ```
 
 Select the new environment
 
 ```powershell
-azd env select <environment>
+azd env select $environment
 ```
 
 This step will begin the deployment process.  
@@ -131,6 +172,7 @@ azd up
 - The repo-provided `azd`, Bicep, Terraform, and Azure CLI deployers are **container-based** App Service deployments.
 - For those container deployments, do **not** set an App Service Stack Settings Startup command. 
     - The container already starts Gunicorn through `application/single_app/Dockerfile`.
+- If your environment needs private or self-signed certificate authorities for outbound TLS checks to internal services, add them during image build using [docs/how-to/docker_customization.md](docs/how-to/docker_customization.md).
 
 ## Native Python
 - For **native Python App Service** deployments, deploy the `application/single_app` folder and set the App Service Startup command explicitly.

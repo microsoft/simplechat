@@ -2,7 +2,7 @@
 
 from unittest import result
 from config import *
-from functions_authentication import _build_msal_app, _load_cache, _save_cache
+from functions_authentication import _build_msal_app, _load_cache, _save_cache, clear_requested_oauth_scopes, get_requested_oauth_scopes
 from functions_debug import debug_print
 from swagger_wrapper import swagger_route, get_auth_security
 
@@ -36,6 +36,7 @@ def register_route_frontend_authentication(app):
         session.pop("user", None)
         session.pop("token_cache", None)
         session.pop("last_activity_epoch", None)
+        clear_requested_oauth_scopes()
 
         # Use helper to build app (cache not strictly needed here, but consistent)
         msal_app = _build_msal_app()
@@ -105,9 +106,10 @@ def register_route_frontend_authentication(app):
         
         print(f"Token exchange using redirect_uri: {redirect_uri}")
 
+        requested_scopes = get_requested_oauth_scopes(clear_after_read=True)
         result = msal_app.acquire_token_by_authorization_code(
             code=code,
-            scopes=SCOPE, # Request the same scopes again
+            scopes=requested_scopes,
             redirect_uri=redirect_uri
         )
 
@@ -196,9 +198,10 @@ def register_route_frontend_authentication(app):
         else:
             redirect_uri = url_for('authorized', _external=True, _scheme='https')
 
+        requested_scopes = get_requested_oauth_scopes(clear_after_read=True)
         result = msal_app.acquire_token_by_authorization_code(
             code=code,
-            scopes=SCOPE, # Request the same scopes again
+            scopes=requested_scopes,
             redirect_uri=redirect_uri
         )
 

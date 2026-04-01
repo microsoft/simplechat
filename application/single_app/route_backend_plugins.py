@@ -6,7 +6,7 @@ import json
 from flask import Blueprint, jsonify, request, current_app
 from semantic_kernel_plugins.plugin_loader import get_all_plugin_metadata
 from semantic_kernel_plugins.plugin_health_checker import PluginHealthChecker, PluginErrorRecovery
-from functions_settings import get_settings, update_settings
+from functions_settings import get_settings, is_tabular_processing_enabled, update_settings
 from functions_authentication import *
 from functions_appinsights import log_event
 from swagger_wrapper import swagger_route, get_auth_security
@@ -690,7 +690,7 @@ def get_core_plugin_settings():
         'enable_text_plugin': bool(settings.get('enable_text_plugin', True)),
         'enable_default_embedding_model_plugin': bool(settings.get('enable_default_embedding_model_plugin', True)),
         'enable_fact_memory_plugin': bool(settings.get('enable_fact_memory_plugin', True)),
-        'enable_tabular_processing_plugin': bool(settings.get('enable_tabular_processing_plugin', False)),
+        'enable_tabular_processing_plugin': is_tabular_processing_enabled(settings),
         'enable_enhanced_citations': bool(settings.get('enable_enhanced_citations', False)),
         'enable_semantic_kernel': bool(settings.get('enable_semantic_kernel', False)),
         'allow_user_plugins': bool(settings.get('allow_user_plugins', True)),
@@ -714,14 +714,14 @@ def update_core_plugin_settings():
         'enable_text_plugin',
         'enable_default_embedding_model_plugin',
         'enable_fact_memory_plugin',
-        'enable_tabular_processing_plugin',
         'allow_user_plugins',
         'allow_group_plugins'
     ]
+    deprecated_optional_keys = ['enable_tabular_processing_plugin']
     updates = {}
     # Check for unexpected keys in the data payload
     for key in data:
-        if key not in expected_keys:
+        if key not in expected_keys and key not in deprecated_optional_keys:
             return jsonify({'error': f"Unexpected field: {key}"}), 400
 
     # Validate required fields and their types
@@ -731,12 +731,10 @@ def update_core_plugin_settings():
         if not isinstance(data[key], bool):
             return jsonify({'error': f"Field '{key}' must be a boolean."}), 400
         updates[key] = data[key]
+    for key in deprecated_optional_keys:
+        if key in data and not isinstance(data[key], bool):
+            return jsonify({'error': f"Field '{key}' must be a boolean."}), 400
     logging.info("Validated plugin settings: %s", updates)
-    # Dependency: tabular processing requires enhanced citations
-    if updates.get('enable_tabular_processing_plugin', False):
-        full_settings = get_settings()
-        if not full_settings.get('enable_enhanced_citations', False):
-            return jsonify({'error': 'Tabular Processing requires Enhanced Citations to be enabled.'}), 400
     # Update settings
     success = update_settings(updates)
     if success:

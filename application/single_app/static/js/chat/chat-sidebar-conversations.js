@@ -6,16 +6,164 @@ import { showToast } from "./chat-toast.js";
 const sidebarConversationsList = document.getElementById("sidebar-conversations-list");
 const sidebarNewChatBtn = document.getElementById("sidebar-new-chat-btn");
 
+function dispatchSidebarConversationsLoaded(details = {}) {
+  document.dispatchEvent(new CustomEvent('chat:sidebar-conversations-loaded', {
+    detail: details
+  }));
+}
+
 let currentActiveConversationId = null;
 let sidebarShowHiddenConversations = false; // Track if hidden conversations should be shown in sidebar
 let isLoadingSidebarConversations = false; // Prevent concurrent sidebar loads
 let pendingSidebarReload = false; // Track if a reload is pending
+
+function getShortGroupLabel(name) {
+  const normalizedName = (name || '').trim();
+  if (!normalizedName) {
+    return 'group';
+  }
+  return normalizedName.slice(0, 8);
+}
+
+function normalizeSidebarChatType(chatType, context = []) {
+  if (chatType === 'personal') {
+    return 'personal_single_user';
+  }
+
+  if (chatType) {
+    return chatType;
+  }
+
+  const primaryContext = Array.isArray(context)
+    ? context.find(item => item?.type === 'primary')
+    : null;
+
+  if (primaryContext?.scope === 'group') {
+    return 'group-single-user';
+  }
+
+  if (primaryContext?.scope === 'public') {
+    return 'public';
+  }
+
+  return 'personal_single_user';
+}
+
+function applySidebarConversationContextAttributes(sidebarItem, chatType, context = []) {
+  if (!sidebarItem) {
+    return;
+  }
+
+  const normalizedChatType = normalizeSidebarChatType(chatType, context);
+  sidebarItem.setAttribute('data-chat-type', normalizedChatType);
+  sidebarItem.removeAttribute('data-group-name');
+  sidebarItem.removeAttribute('data-group-id');
+  sidebarItem.removeAttribute('data-public-workspace-id');
+
+  if (normalizedChatType.startsWith('group')) {
+    const primaryGroupContext = Array.isArray(context)
+      ? context.find(ctx => ctx?.type === 'primary' && ctx?.scope === 'group')
+      : null;
+
+    if (primaryGroupContext) {
+      sidebarItem.setAttribute('data-group-name', primaryGroupContext.name || 'Group');
+      if (primaryGroupContext.id) {
+        sidebarItem.setAttribute('data-group-id', primaryGroupContext.id);
+      }
+    }
+    return;
+  }
+
+  if (normalizedChatType.startsWith('public')) {
+    const primaryPublicContext = Array.isArray(context)
+      ? context.find(ctx => ctx?.type === 'primary' && ctx?.scope === 'public')
+      : null;
+
+    if (primaryPublicContext) {
+      sidebarItem.setAttribute('data-group-name', primaryPublicContext.name || 'Workspace');
+      if (primaryPublicContext.id) {
+        sidebarItem.setAttribute('data-public-workspace-id', primaryPublicContext.id);
+      }
+    }
+  }
+}
+
+function renderSidebarConversationScopeBadge(sidebarItem, chatType, context = []) {
+  const titleWrapper = sidebarItem?.querySelector('.sidebar-conversation-header');
+  if (!titleWrapper) {
+    return;
+  }
+
+  titleWrapper.querySelectorAll('.sidebar-conversation-group-badge').forEach(badge => badge.remove());
+
+  const normalizedChatType = normalizeSidebarChatType(chatType, context);
+  if (!normalizedChatType.startsWith('group')) {
+    return;
+  }
+
+  const primaryGroupContext = Array.isArray(context)
+    ? context.find(ctx => ctx?.type === 'primary' && ctx?.scope === 'group')
+    : null;
+
+  const badge = document.createElement('span');
+  badge.classList.add('badge', 'bg-info', 'sidebar-conversation-group-badge');
+  badge.textContent = getShortGroupLabel(primaryGroupContext?.name);
+  badge.title = primaryGroupContext?.name
+    ? `Group conversation: ${primaryGroupContext.name}`
+    : 'Group conversation';
+  titleWrapper.appendChild(badge);
+}
 
 function createUnreadDotElement() {
   const unreadDot = document.createElement('span');
   unreadDot.classList.add('conversation-unread-dot', 'sidebar-conversation-unread-dot');
   unreadDot.setAttribute('aria-hidden', 'true');
   return unreadDot;
+}
+
+function getSidebarConversationDropdownInstance(dropdownBtn) {
+  if (!dropdownBtn || !window.bootstrap || !bootstrap.Dropdown) {
+    return null;
+  }
+
+  return bootstrap.Dropdown.getOrCreateInstance(dropdownBtn, {
+    popperConfig(defaultConfig) {
+      const existingModifiers = Array.isArray(defaultConfig?.modifiers) ? defaultConfig.modifiers : [];
+      const hasFlipModifier = existingModifiers.some(modifier => modifier?.name === 'flip');
+
+      return {
+        ...defaultConfig,
+        strategy: 'fixed',
+        modifiers: hasFlipModifier
+          ? existingModifiers
+          : [
+              ...existingModifiers,
+              {
+                name: 'flip',
+                options: {
+                  fallbackPlacements: ['top-end', 'bottom-end']
+                }
+              }
+            ]
+      };
+    }
+  });
+}
+
+function closeSidebarConversationDropdown(dropdownBtn, dropdownInstance) {
+  if (dropdownInstance) {
+    dropdownInstance.hide();
+    return;
+  }
+
+  if (!dropdownBtn || !window.bootstrap || !bootstrap.Dropdown) {
+    return;
+  }
+
+  const fallbackDropdownInstance = bootstrap.Dropdown.getInstance(dropdownBtn);
+  if (fallbackDropdownInstance) {
+    fallbackDropdownInstance.hide();
+  }
 }
 
 export function setConversationUnreadState(conversationId, hasUnread) {
@@ -63,6 +211,7 @@ export function loadSidebarConversations() {
       sidebarConversationsList.innerHTML = "";
       if (!data.conversations || data.conversations.length === 0) {
         sidebarConversationsList.innerHTML = '<div class="text-center p-2 text-muted small">No conversations yet.</div>';
+        dispatchSidebarConversationsLoaded({ loaded: true, count: 0, hasVisibleConversations: false, isError: false });
         
         // Reset loading flag even when no conversations
         isLoadingSidebarConversations = false;
@@ -114,6 +263,13 @@ export function loadSidebarConversations() {
       visibleConversations.forEach(convo => {
         sidebarConversationsList.appendChild(createSidebarConversationItem(convo));
       });
+
+      dispatchSidebarConversationsLoaded({
+        loaded: true,
+        count: data.conversations.length,
+        hasVisibleConversations: visibleConversations.length > 0,
+        isError: false
+      });
       
       // Restore selection mode hints if selection mode is active
       if (window.chatConversations && window.chatConversations.isSelectionModeActive && window.chatConversations.isSelectionModeActive()) {
@@ -140,6 +296,7 @@ export function loadSidebarConversations() {
     .catch(error => {
       console.error("Error loading sidebar conversations:", error);
       sidebarConversationsList.innerHTML = `<div class="text-center p-2 text-danger small">Error loading conversations: ${error.error || 'Unknown error'}</div>`;
+      dispatchSidebarConversationsLoaded({ loaded: true, count: 0, hasVisibleConversations: false, isError: true });
       isLoadingSidebarConversations = false; // Reset flag on error too
       
       // If a reload was requested while we were loading, reload now even after error
@@ -156,19 +313,7 @@ function createSidebarConversationItem(convo) {
   convoItem.classList.add("sidebar-conversation-item");
   convoItem.setAttribute("data-conversation-id", convo.id);
   convoItem.dataset.hasUnreadAssistantResponse = convo.has_unread_assistant_response ? 'true' : 'false';
-  if (convo.chat_type) {
-    convoItem.setAttribute("data-chat-type", convo.chat_type);
-  }
-  let groupName = null;
-  if (Array.isArray(convo.context)) {
-    const primaryGroupContext = convo.context.find(ctx => ctx.type === "primary" && ctx.scope === "group");
-    if (primaryGroupContext) {
-      groupName = primaryGroupContext.name || null;
-    }
-  }
-  if (groupName) {
-    convoItem.setAttribute("data-group-name", groupName);
-  }
+  applySidebarConversationContextAttributes(convoItem, convo.chat_type || '', convo.context || []);
   
   const isPinned = convo.is_pinned || false;
   const isHidden = convo.is_hidden || false;
@@ -179,7 +324,7 @@ function createSidebarConversationItem(convo) {
     <div class="d-flex justify-content-between align-items-center">
       <div class="sidebar-conversation-title flex-grow-1" title="${convo.title} (Double-click to edit)">${pinIcon}${hiddenIcon}${convo.title}</div>
       <div class="dropdown conversation-dropdown" style="opacity: 0; transition: opacity 0.2s;">
-        <button class="btn btn-light btn-sm" type="button" data-bs-toggle="dropdown" data-bs-display="static" aria-expanded="false" title="Conversation options">
+        <button class="btn btn-light btn-sm" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Conversation options">
           <i class="bi bi-three-dots-vertical"></i>
         </button>
         <ul class="dropdown-menu dropdown-menu-end">
@@ -223,15 +368,6 @@ function createSidebarConversationItem(convo) {
       titleWrapper.insertBefore(createUnreadDotElement(), originalTitleElement);
     }
 
-    const isGroupConversation = (convo.chat_type && convo.chat_type.startsWith('group')) || groupName;
-    if (isGroupConversation) {
-      const badge = document.createElement('span');
-      badge.classList.add('badge', 'bg-info', 'sidebar-conversation-group-badge');
-      badge.textContent = 'group';
-      badge.title = groupName ? `Group conversation: ${groupName}` : 'Group conversation';
-      titleWrapper.appendChild(badge);
-    }
-    
     // Verify dropdown is still a valid child right before insertion
     try {
       if (headerRow.contains(dropdownElement) && dropdownElement.parentNode === headerRow) {
@@ -251,6 +387,8 @@ function createSidebarConversationItem(convo) {
         console.error('Critical error: Could not append titleWrapper:', appendErr, { convo: convo.id });
       }
     }
+
+    renderSidebarConversationScopeBadge(convoItem, convo.chat_type || '', convo.context || []);
   }
   
   // Add double-click editing to title
@@ -325,19 +463,15 @@ function createSidebarConversationItem(convo) {
   const exportBtn = convoItem.querySelector('.export-btn');
   const editBtn = convoItem.querySelector('.edit-btn');
   const deleteBtn = convoItem.querySelector('.delete-btn');
+  const dropdownBtn = convoItem.querySelector('[data-bs-toggle="dropdown"]');
+  const dropdownInstance = getSidebarConversationDropdownInstance(dropdownBtn);
   
   if (detailsBtn) {
     detailsBtn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
       // Close dropdown after action
-      const dropdownBtn = convoItem.querySelector('[data-bs-toggle="dropdown"]');
-      if (dropdownBtn) {
-        const dropdownInstance = bootstrap.Dropdown.getInstance(dropdownBtn);
-        if (dropdownInstance) {
-          dropdownInstance.hide();
-        }
-      }
+      closeSidebarConversationDropdown(dropdownBtn, dropdownInstance);
       // Show conversation details
       if (window.showConversationDetails) {
         window.showConversationDetails(convo.id);
@@ -350,13 +484,7 @@ function createSidebarConversationItem(convo) {
       e.preventDefault();
       e.stopPropagation();
       // Close dropdown after action
-      const dropdownBtn = convoItem.querySelector('[data-bs-toggle="dropdown"]');
-      if (dropdownBtn) {
-        const dropdownInstance = bootstrap.Dropdown.getInstance(dropdownBtn);
-        if (dropdownInstance) {
-          dropdownInstance.hide();
-        }
-      }
+      closeSidebarConversationDropdown(dropdownBtn, dropdownInstance);
       // Toggle pin status
       try {
         const response = await fetch(`/api/conversations/${convo.id}/pin`, {
@@ -387,13 +515,7 @@ function createSidebarConversationItem(convo) {
       e.preventDefault();
       e.stopPropagation();
       // Close dropdown after action
-      const dropdownBtn = convoItem.querySelector('[data-bs-toggle="dropdown"]');
-      if (dropdownBtn) {
-        const dropdownInstance = bootstrap.Dropdown.getInstance(dropdownBtn);
-        if (dropdownInstance) {
-          dropdownInstance.hide();
-        }
-      }
+      closeSidebarConversationDropdown(dropdownBtn, dropdownInstance);
       // Toggle hide status
       try {
         const response = await fetch(`/api/conversations/${convo.id}/hide`, {
@@ -424,13 +546,7 @@ function createSidebarConversationItem(convo) {
       e.preventDefault();
       e.stopPropagation();
       // Close dropdown after action
-      const dropdownBtn = convoItem.querySelector('[data-bs-toggle="dropdown"]');
-      if (dropdownBtn) {
-        const dropdownInstance = bootstrap.Dropdown.getInstance(dropdownBtn);
-        if (dropdownInstance) {
-          dropdownInstance.hide();
-        }
-      }
+      closeSidebarConversationDropdown(dropdownBtn, dropdownInstance);
       // Toggle selection mode
       if (window.chatConversations && window.chatConversations.toggleConversationSelection) {
         window.chatConversations.toggleConversationSelection(convo.id);
@@ -443,13 +559,7 @@ function createSidebarConversationItem(convo) {
       e.preventDefault();
       e.stopPropagation();
       // Close dropdown after action
-      const dropdownBtn = convoItem.querySelector('[data-bs-toggle="dropdown"]');
-      if (dropdownBtn) {
-        const dropdownInstance = bootstrap.Dropdown.getInstance(dropdownBtn);
-        if (dropdownInstance) {
-          dropdownInstance.hide();
-        }
-      }
+      closeSidebarConversationDropdown(dropdownBtn, dropdownInstance);
       // Open export wizard for this single conversation
       if (window.chatExport && window.chatExport.openExportWizard) {
         window.chatExport.openExportWizard([convo.id], true);
@@ -462,13 +572,7 @@ function createSidebarConversationItem(convo) {
       e.preventDefault();
       e.stopPropagation();
       // Close dropdown after action
-      const dropdownBtn = convoItem.querySelector('[data-bs-toggle="dropdown"]');
-      if (dropdownBtn) {
-        const dropdownInstance = bootstrap.Dropdown.getInstance(dropdownBtn);
-        if (dropdownInstance) {
-          dropdownInstance.hide();
-        }
-      }
+      closeSidebarConversationDropdown(dropdownBtn, dropdownInstance);
       // Enable inline editing for this conversation
       enableSidebarTitleEdit(convo.id);
     });
@@ -479,13 +583,7 @@ function createSidebarConversationItem(convo) {
       e.preventDefault();
       e.stopPropagation();
       // Close dropdown after action
-      const dropdownBtn = convoItem.querySelector('[data-bs-toggle="dropdown"]');
-      if (dropdownBtn) {
-        const dropdownInstance = bootstrap.Dropdown.getInstance(dropdownBtn);
-        if (dropdownInstance) {
-          dropdownInstance.hide();
-        }
-      }
+      closeSidebarConversationDropdown(dropdownBtn, dropdownInstance);
       // Delete conversation
       if (window.chatConversations && window.chatConversations.deleteConversation) {
         window.chatConversations.deleteConversation(convo.id);
@@ -494,7 +592,6 @@ function createSidebarConversationItem(convo) {
   }
   
   // Handle dropdown show/hide events for opacity
-  const dropdownBtn = convoItem.querySelector('[data-bs-toggle="dropdown"]');
   if (dropdownBtn) {
     dropdownBtn.addEventListener('shown.bs.dropdown', () => {
       const dropdown = convoItem.querySelector('.conversation-dropdown');
@@ -708,6 +805,22 @@ export function updateSidebarConversationTitle(conversationId, newTitle) {
   // Update conversation header in right pane if this is the currently active conversation
   if (window.chatConversations && window.chatConversations.updateConversationHeader) {
     window.chatConversations.updateConversationHeader(conversationId, newTitle);
+  }
+}
+
+export function applySidebarConversationMetadataUpdate(conversationId, updates = {}) {
+  const sidebarItem = document.querySelector(`.sidebar-conversation-item[data-conversation-id="${conversationId}"]`);
+  if (!sidebarItem) {
+    return;
+  }
+
+  if (updates.title) {
+    updateSidebarConversationTitle(conversationId, updates.title);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(updates, 'chat_type') || Array.isArray(updates.context)) {
+    applySidebarConversationContextAttributes(sidebarItem, updates.chat_type || '', updates.context || []);
+    renderSidebarConversationScopeBadge(sidebarItem, updates.chat_type || '', updates.context || []);
   }
 }
 
@@ -950,6 +1063,7 @@ window.chatSidebarConversations = {
   setSidebarSelectionMode,
   updateSidebarDeleteButton,
   updateSidebarConversationTitle,
+  applySidebarConversationMetadataUpdate,
   enableSidebarTitleEdit,
   loadSidebarConversations,
   setActiveConversation,

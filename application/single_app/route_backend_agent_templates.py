@@ -179,7 +179,7 @@ def admin_reject_agent_template(template_id):
 @swagger_route(security=get_auth_security())
 def admin_delete_agent_template(template_id):
     try:
-        deleted = delete_agent_template(template_id)
+        deleted = delete_agent_template(template_id, actor_info=get_current_user_info())
     except Exception:
         return jsonify({'error': 'Failed to delete template.'}), 500
 
