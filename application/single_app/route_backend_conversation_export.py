@@ -18,6 +18,11 @@ from functions_authentication import *
 from functions_chat import sort_messages_by_thread
 from functions_conversation_metadata import update_conversation_with_metadata
 from functions_debug import debug_print
+from functions_message_artifacts import (
+    build_message_artifact_payload_map,
+    hydrate_agent_citations_from_artifacts,
+    is_assistant_artifact_role,
+)
 from functions_settings import *
 from functions_thoughts import get_thoughts_for_conversation
 from swagger_wrapper import swagger_route, get_auth_security
@@ -188,6 +193,20 @@ def register_route_backend_conversation_export(app):
             if message.get('conversation_id') != conversation_id:
                 return jsonify({'error': 'Message not found'}), 404
 
+            if isinstance(message.get('agent_citations'), list) and any(
+                isinstance(citation, dict) and citation.get('artifact_id')
+                for citation in message.get('agent_citations', [])
+            ):
+                conversation_messages = list(cosmos_messages_container.query_items(
+                    query="SELECT * FROM c WHERE c.conversation_id = @conversation_id",
+                    parameters=[{'name': '@conversation_id', 'value': conversation_id}],
+                    partition_key=conversation_id,
+                ))
+                artifact_payload_map = build_message_artifact_payload_map(conversation_messages)
+                hydrated_messages = hydrate_agent_citations_from_artifacts([message], artifact_payload_map)
+                if hydrated_messages:
+                    message = hydrated_messages[0]
+
             document_bytes = _message_to_docx_bytes(message)
             timestamp_str = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
             filename = f"message_export_{timestamp_str}.docx"
@@ -213,7 +232,9 @@ def _build_export_entry(
     include_summary_intro: bool = False,
     summary_model_deployment: str = ''
 ) -> Dict[str, Any]:
+    artifact_payload_map = build_message_artifact_payload_map(raw_messages)
     filtered_messages = _filter_messages_for_export(raw_messages)
+    filtered_messages = hydrate_agent_citations_from_artifacts(filtered_messages, artifact_payload_map)
     ordered_messages = sort_messages_by_thread(filtered_messages)
 
     raw_thoughts = get_thoughts_for_conversation(conversation.get('id'), user_id)
@@ -285,6 +306,9 @@ def _build_export_entry(
 def _filter_messages_for_export(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     filtered_messages = []
     for message in messages:
+        if is_assistant_artifact_role(message.get('role')):
+            continue
+
         metadata = message.get('metadata', {}) or {}
         if metadata.get('is_deleted') is True:
             continue

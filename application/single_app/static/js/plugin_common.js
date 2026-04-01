@@ -331,6 +331,20 @@ export async function validatePluginManifest(pluginManifest) {
   return await validatePluginManifestServerSide(pluginManifest);
 }
 
+export async function getErrorMessageFromResponse(response, fallbackMessage = 'Request failed') {
+  const responseText = await response.text();
+  if (!responseText) {
+    return fallbackMessage;
+  }
+
+  try {
+    const errorData = JSON.parse(responseText);
+    return errorData.error || responseText;
+  } catch (error) {
+    return responseText;
+  }
+}
+
 // Server-side validation fallback
 async function validatePluginManifestServerSide(pluginManifest) {
   try {

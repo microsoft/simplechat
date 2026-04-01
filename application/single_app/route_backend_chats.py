@@ -43,7 +43,65 @@ from flask import current_app
 from swagger_wrapper import swagger_route, get_auth_security
 from azure.identity import ClientSecretCredential, DefaultAzureCredential, get_bearer_token_provider
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
+from functions_message_artifacts import (
+    build_agent_citation_artifact_documents,
+    filter_assistant_artifact_items,
+)
 from functions_thoughts import ThoughtTracker
+
+
+def _strip_agent_citation_artifact_refs(agent_citations):
+    """Drop artifact references when auxiliary payload persistence fails."""
+    compact_citations = []
+    for citation in agent_citations or []:
+        if not isinstance(citation, dict):
+            compact_citations.append(citation)
+            continue
+
+        compact_citation = dict(citation)
+        compact_citation.pop('artifact_id', None)
+        compact_citation.pop('raw_payload_externalized', None)
+        compact_citations.append(compact_citation)
+
+    return compact_citations
+
+
+def persist_agent_citation_artifacts(
+    conversation_id,
+    assistant_message_id,
+    agent_citations,
+    created_timestamp,
+    user_info=None,
+):
+    """Persist raw agent citation payloads outside the primary assistant message doc."""
+    if not agent_citations:
+        return []
+
+    compact_citations, artifact_docs = build_agent_citation_artifact_documents(
+        conversation_id=conversation_id,
+        assistant_message_id=assistant_message_id,
+        agent_citations=agent_citations,
+        created_timestamp=created_timestamp,
+        user_info=user_info,
+    )
+
+    try:
+        for artifact_doc in artifact_docs:
+            cosmos_messages_container.upsert_item(artifact_doc)
+        return compact_citations
+    except Exception as exc:
+        log_event(
+            f"[Agent Citations] Failed to persist assistant artifacts: {exc}",
+            extra={
+                'conversation_id': conversation_id,
+                'assistant_message_id': assistant_message_id,
+                'artifact_count': len(artifact_docs),
+                'citation_count': len(agent_citations),
+            },
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        return _strip_agent_citation_artifact_refs(compact_citations)
 
 
 def get_tabular_discovery_function_names():
@@ -230,10 +288,18 @@ def build_search_augmentation_system_prompt(retrieved_content):
 
 def build_tabular_computed_results_system_message(source_label, tabular_analysis):
     """Build the outer-model handoff message for successful tabular analysis."""
+    rendered_analysis = str(tabular_analysis or '').strip()
+    max_handoff_chars = 24000
+    if len(rendered_analysis) > max_handoff_chars:
+        rendered_analysis = (
+            rendered_analysis[:max_handoff_chars]
+            + "\n[Computed results handoff truncated for prompt budget.]"
+        )
+
     return (
         f"The following tabular results were computed from {source_label} using "
         f"tabular_processing plugin functions:\n\n"
-        f"{tabular_analysis}\n\n"
+        f"{rendered_analysis}\n\n"
         "These are tool-backed results derived from the full underlying tabular data, not just retrieved schema excerpts. "
         "Treat them as authoritative for row-level facts, calculations, and numeric conclusions. "
         "Do not say that you lack direct access to the data if the answer is present in these computed results."
@@ -722,7 +788,50 @@ def describe_tabular_invocation_conditions(invocation):
     return None
 
 
-def get_tabular_query_overlap_summary(invocations, max_rows=25):
+def compact_tabular_fallback_value(value, depth=0, max_depth=2):
+    """Reduce large tabular fallback values to prompt-safe summaries."""
+    if value is None or isinstance(value, (int, float, bool)):
+        return value
+
+    if isinstance(value, str):
+        max_string_length = 400
+        if len(value) <= max_string_length:
+            return value
+        return f"{value[:max_string_length]}... [truncated {len(value) - max_string_length} chars]"
+
+    if depth >= max_depth:
+        if isinstance(value, dict):
+            return f"<dict with {len(value)} keys>"
+        if isinstance(value, list):
+            return f"<list with {len(value)} items>"
+        return str(value)
+
+    if isinstance(value, list):
+        compact_items = [
+            compact_tabular_fallback_value(item, depth=depth + 1, max_depth=max_depth)
+            for item in value[:5]
+        ]
+        if len(value) > 5:
+            compact_items.append({'remaining_items': len(value) - 5})
+        return compact_items
+
+    if isinstance(value, dict):
+        compact_mapping = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= 12:
+                compact_mapping['remaining_keys'] = len(value) - 12
+                break
+            compact_mapping[str(key)] = compact_tabular_fallback_value(
+                item,
+                depth=depth + 1,
+                max_depth=max_depth,
+            )
+        return compact_mapping
+
+    return str(value)
+
+
+def get_tabular_query_overlap_summary(invocations, max_rows=10):
     """Summarize overlap across successful row-returning tabular calls.
 
     This is a defensive fallback for cases where tool execution succeeded but the
@@ -786,7 +895,7 @@ def get_tabular_query_overlap_summary(invocations, max_rows=25):
             if row_key not in overlapping_keys or row_key in seen_sample_keys:
                 continue
 
-            ordered_sample_rows.append(row)
+            ordered_sample_rows.append(compact_tabular_fallback_value(row))
             seen_sample_keys.add(row_key)
             if len(ordered_sample_rows) >= max_rows:
                 break
@@ -795,7 +904,7 @@ def get_tabular_query_overlap_summary(invocations, max_rows=25):
         for grouped_item in grouped_items:
             rendered_conditions = describe_tabular_invocation_conditions(grouped_item['invocation'])
             if rendered_conditions:
-                source_queries.append(rendered_conditions)
+                source_queries.append(compact_tabular_fallback_value(rendered_conditions))
 
         overlap_summary = {
             'filename': filename or None,
@@ -813,7 +922,7 @@ def get_tabular_query_overlap_summary(invocations, max_rows=25):
     return best_summary
 
 
-def get_tabular_invocation_compact_payload(invocation, max_rows=10):
+def get_tabular_invocation_compact_payload(invocation, max_rows=5):
     """Return a compact, prompt-safe summary of a successful tabular invocation."""
     result_payload = get_tabular_invocation_result_payload(invocation)
     if not result_payload:
@@ -822,15 +931,15 @@ def get_tabular_invocation_compact_payload(invocation, max_rows=10):
     function_name = getattr(invocation, 'function_name', '')
     compact_payload = {
         'function': function_name,
-        'filename': result_payload.get('filename'),
-        'selected_sheet': result_payload.get('selected_sheet'),
+        'filename': compact_tabular_fallback_value(result_payload.get('filename')),
+        'selected_sheet': compact_tabular_fallback_value(result_payload.get('selected_sheet')),
     }
 
     if function_name == 'aggregate_column':
         compact_payload.update({
-            'column': result_payload.get('column'),
-            'operation': result_payload.get('operation'),
-            'result': result_payload.get('result'),
+            'column': compact_tabular_fallback_value(result_payload.get('column')),
+            'operation': compact_tabular_fallback_value(result_payload.get('operation')),
+            'result': compact_tabular_fallback_value(result_payload.get('result')),
         })
     elif function_name in {'group_by_aggregate', 'group_by_datetime_component'}:
         for key_name in (
@@ -846,7 +955,7 @@ def get_tabular_invocation_compact_payload(invocation, max_rows=10):
             'top_results',
         ):
             if key_name in result_payload:
-                compact_payload[key_name] = result_payload.get(key_name)
+                compact_payload[key_name] = compact_tabular_fallback_value(result_payload.get(key_name))
     elif function_name == 'lookup_value':
         for key_name in (
             'lookup_column',
@@ -857,27 +966,39 @@ def get_tabular_invocation_compact_payload(invocation, max_rows=10):
             'returned_rows',
         ):
             if key_name in result_payload:
-                compact_payload[key_name] = result_payload.get(key_name)
+                compact_payload[key_name] = compact_tabular_fallback_value(result_payload.get(key_name))
 
         data_rows = get_tabular_invocation_data_rows(invocation)
         if data_rows:
-            compact_payload['sample_rows'] = data_rows[:max_rows]
+            compact_payload['sample_rows'] = [
+                compact_tabular_fallback_value(row)
+                for row in data_rows[:max_rows]
+            ]
             compact_payload['sample_rows_limited'] = len(data_rows) > max_rows
     elif function_name in {'query_tabular_data', 'filter_rows'}:
         for key_name in ('total_matches', 'returned_rows'):
             if key_name in result_payload:
-                compact_payload[key_name] = result_payload.get(key_name)
+                compact_payload[key_name] = compact_tabular_fallback_value(result_payload.get(key_name))
 
         data_rows = get_tabular_invocation_data_rows(invocation)
         if data_rows:
-            compact_payload['sample_rows'] = data_rows[:max_rows]
+            compact_payload['sample_rows'] = [
+                compact_tabular_fallback_value(row)
+                for row in data_rows[:max_rows]
+            ]
             compact_payload['sample_rows_limited'] = len(data_rows) > max_rows
 
         rendered_conditions = describe_tabular_invocation_conditions(invocation)
         if rendered_conditions:
-            compact_payload['conditions'] = rendered_conditions
+            compact_payload['conditions'] = compact_tabular_fallback_value(rendered_conditions)
     else:
-        compact_payload.update(result_payload)
+        compact_payload.update({
+            key: compact_tabular_fallback_value(value)
+            for key, value in result_payload.items()
+        })
+
+    if '[truncated ' in json.dumps(compact_payload, default=str):
+        compact_payload['result_summary_truncated'] = True
 
     return compact_payload
 
@@ -895,32 +1016,86 @@ def build_tabular_analysis_fallback_from_invocations(invocations):
     if not successful_invocations:
         return None
 
-    overlap_summary = get_tabular_query_overlap_summary(successful_invocations)
-    compact_results = []
-    for invocation in successful_invocations[:8]:
-        compact_payload = get_tabular_invocation_compact_payload(invocation)
-        if compact_payload is None:
-            continue
-        compact_results.append(compact_payload)
-
-    if not overlap_summary and not compact_results:
-        return None
-
+    max_fallback_chars = 24000
+    coverage_note_reserve = 1200
+    overlap_summary = get_tabular_query_overlap_summary(successful_invocations, max_rows=10)
     rendered_sections = [
         "The following structured results come directly from successful tabular tool executions.",
         "Use them as computed evidence even though the inner tabular synthesis step did not complete.",
     ]
 
     if overlap_summary:
+        if overlap_summary.get('sample_rows') and len(json.dumps(overlap_summary, default=str)) > 6000:
+            overlap_summary = dict(overlap_summary)
+            overlap_summary['sample_rows'] = overlap_summary.get('sample_rows', [])[:5]
+            overlap_summary['sample_rows_limited'] = True
+
         rendered_sections.append(
             "OVERLAP SUMMARY:\n"
             f"{json.dumps(overlap_summary, indent=2, default=str)}"
         )
 
+    base_rendered_text = "\n\n".join(rendered_sections)
+    compact_results = []
+    invocation_limit = 8
+    candidate_invocations = successful_invocations[:invocation_limit]
+    for invocation in candidate_invocations:
+        compact_payload = get_tabular_invocation_compact_payload(invocation, max_rows=5)
+        if compact_payload is None:
+            continue
+
+        candidate_results = compact_results + [compact_payload]
+        candidate_section = (
+            "TOOL RESULT SUMMARIES:\n"
+            f"{json.dumps(candidate_results, indent=2, default=str)}"
+        )
+        candidate_text = base_rendered_text + ("\n\n" if base_rendered_text else "") + candidate_section
+        if len(candidate_text) <= (max_fallback_chars - coverage_note_reserve):
+            compact_results = candidate_results
+            continue
+
+        if compact_results:
+            break
+
+        shrunk_payload = dict(compact_payload)
+        if 'sample_rows' in shrunk_payload:
+            shrunk_payload['sample_rows'] = shrunk_payload['sample_rows'][:2]
+            shrunk_payload['sample_rows_limited'] = True
+        if isinstance(shrunk_payload.get('top_results'), dict):
+            shrunk_payload['top_results'] = dict(list(shrunk_payload['top_results'].items())[:3])
+
+        candidate_section = (
+            "TOOL RESULT SUMMARIES:\n"
+            f"{json.dumps([shrunk_payload], indent=2, default=str)}"
+        )
+        candidate_text = base_rendered_text + ("\n\n" if base_rendered_text else "") + candidate_section
+        if len(candidate_text) > (max_fallback_chars - coverage_note_reserve):
+            shrunk_payload.pop('sample_rows', None)
+            shrunk_payload['sample_rows_limited'] = True
+            shrunk_payload['result_summary_truncated'] = True
+            if isinstance(shrunk_payload.get('top_results'), dict):
+                shrunk_payload['top_results'] = dict(list(shrunk_payload['top_results'].items())[:2])
+
+        compact_results = [shrunk_payload]
+        break
+
+    if not overlap_summary and not compact_results:
+        return None
+
     if compact_results:
         rendered_sections.append(
             "TOOL RESULT SUMMARIES:\n"
             f"{json.dumps(compact_results, indent=2, default=str)}"
+        )
+
+    omitted_invocation_count = len(candidate_invocations) - len(compact_results)
+    if len(successful_invocations) > invocation_limit:
+        omitted_invocation_count += len(successful_invocations) - invocation_limit
+    if omitted_invocation_count > 0:
+        rendered_sections.append(
+            "RESULT COVERAGE NOTE:\n"
+            f"Included {len(compact_results)} compact tool summaries out of {len(successful_invocations)} successful tool executions to stay within the prompt budget. "
+            "Use targeted follow-up tool calls if additional raw detail is required."
         )
 
     return "\n\n".join(rendered_sections)
@@ -4422,6 +4597,7 @@ def register_route_backend_chats(app):
                 all_messages = list(cosmos_messages_container.query_items(
                     query=all_messages_query, parameters=params_all, partition_key=conversation_id, enable_cross_partition_query=True
                 ))
+                all_messages = filter_assistant_artifact_items(all_messages)
 
                 # Sort messages using threading logic
                 all_messages = sort_messages_by_thread(all_messages)
@@ -5589,18 +5765,26 @@ def register_route_backend_chats(app):
             
             # Assistant message should be part of the same thread as the user message
             # Only system/augmentation messages create new threads within a conversation
+            assistant_timestamp = datetime.utcnow().isoformat()
+            prepared_agent_citations = persist_agent_citation_artifacts(
+                conversation_id=conversation_id,
+                assistant_message_id=assistant_message_id,
+                agent_citations=agent_citations_list,
+                created_timestamp=assistant_timestamp,
+                user_info=user_info_for_assistant,
+            )
+
             assistant_doc = {
                 'id': assistant_message_id,
                 'conversation_id': conversation_id,
                 'role': 'assistant',
                 'content': ai_message,
-                'timestamp': datetime.utcnow().isoformat(),
+                'timestamp': assistant_timestamp,
                 'augmented': bool(system_messages_for_augmentation),
                 'hybrid_citations': hybrid_citations_list, # <--- SIMPLIFIED: Directly use the list
                 'web_search_citations': web_search_citations_list,
                 'hybridsearch_query': search_query if hybrid_search_enabled and search_results else None, # Log query only if hybrid search ran and found results
-                'agent_citations': agent_citations_list, # <--- NEW: Store agent tool invocation results
-                'user_message': user_message,
+                'agent_citations': prepared_agent_citations,
                 'model_deployment_name': actual_model_used,
                 'agent_display_name': agent_display_name,
                 'agent_name': agent_name,
@@ -5737,7 +5921,7 @@ def register_route_backend_chats(app):
                 'augmented': bool(system_messages_for_augmentation),
                 'hybrid_citations': hybrid_citations_list,
                 'web_search_citations': web_search_citations_list,
-                'agent_citations': agent_citations_list,
+                'agent_citations': prepared_agent_citations,
                 'reload_messages': reload_messages_required,
                 'kernel_fallback_notice': kernel_fallback_notice,
                 'thoughts_enabled': thought_tracker.enabled
@@ -6876,6 +7060,7 @@ def register_route_backend_chats(app):
                         query=all_messages_query, parameters=params_all, 
                         partition_key=conversation_id, enable_cross_partition_query=True
                     ))
+                    all_messages = filter_assistant_artifact_items(all_messages)
                     
                     # Sort messages using threading logic
                     all_messages = sort_messages_by_thread(all_messages)
@@ -7481,28 +7666,37 @@ def register_route_backend_chats(app):
                     # Get user thread info to maintain thread consistency
                     user_thread_id = None
                     user_previous_thread_id = None
+                    user_info_for_assistant = None
                     try:
                         user_msg = cosmos_messages_container.read_item(
                             item=user_message_id,
                             partition_key=conversation_id
                         )
+                        user_info_for_assistant = user_msg.get('metadata', {}).get('user_info')
                         user_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
                         user_previous_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
                     except Exception as e:
                         debug_print(f"Warning: Could not retrieve thread_id from user message: {e}")
-                    
+                    assistant_timestamp = datetime.utcnow().isoformat()
+                    prepared_agent_citations = persist_agent_citation_artifacts(
+                        conversation_id=conversation_id,
+                        assistant_message_id=assistant_message_id,
+                        agent_citations=agent_citations_list,
+                        created_timestamp=assistant_timestamp,
+                        user_info=user_info_for_assistant,
+                    )
+
                     assistant_doc = {
                         'id': assistant_message_id,
                         'conversation_id': conversation_id,
                         'role': 'assistant',
                         'content': accumulated_content,
-                        'timestamp': datetime.utcnow().isoformat(),
+                        'timestamp': assistant_timestamp,
                         'augmented': bool(system_messages_for_augmentation),
                         'hybrid_citations': hybrid_citations_list,
                         'web_search_citations': web_search_citations_list,
                         'hybridsearch_query': search_query if hybrid_search_enabled and search_results else None,
-                        'agent_citations': agent_citations_list,
-                        'user_message': user_message,
+                        'agent_citations': prepared_agent_citations,
                         'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
                         'agent_display_name': agent_display_name_used if use_agent_streaming else None,
                         'agent_name': agent_name_used if use_agent_streaming else None,
@@ -7621,7 +7815,7 @@ def register_route_backend_chats(app):
                         'augmented': bool(system_messages_for_augmentation),
                         'hybrid_citations': hybrid_citations_list,
                         'web_search_citations': web_search_citations_list,
-                        'agent_citations': agent_citations_list,
+                        'agent_citations': prepared_agent_citations,
                         'agent_display_name': agent_display_name_used if use_agent_streaming else None,
                         'agent_name': agent_name_used if use_agent_streaming else None,
                         'full_content': accumulated_content,
@@ -7643,19 +7837,26 @@ def register_route_backend_chats(app):
                     # Save partial response if we have content
                     if accumulated_content:
                         current_assistant_thread_id = str(uuid.uuid4())
+                        assistant_timestamp = datetime.utcnow().isoformat()
+                        prepared_agent_citations = persist_agent_citation_artifacts(
+                            conversation_id=conversation_id,
+                            assistant_message_id=assistant_message_id,
+                            agent_citations=agent_citations_list,
+                            created_timestamp=assistant_timestamp,
+                            user_info=user_info_for_assistant,
+                        )
                         
                         assistant_doc = {
                             'id': assistant_message_id,
                             'conversation_id': conversation_id,
                             'role': 'assistant',
                             'content': accumulated_content,
-                            'timestamp': datetime.utcnow().isoformat(),
+                            'timestamp': assistant_timestamp,
                             'augmented': bool(system_messages_for_augmentation),
                             'hybrid_citations': hybrid_citations_list,
                             'web_search_citations': web_search_citations_list,
                             'hybridsearch_query': search_query if hybrid_search_enabled and search_results else None,
-                            'agent_citations': agent_citations_list,
-                            'user_message': user_message,
+                            'agent_citations': prepared_agent_citations,
                             'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
                             'agent_display_name': agent_display_name_used if use_agent_streaming else None,
                             'agent_name': agent_name_used if use_agent_streaming else None,

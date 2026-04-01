@@ -37,7 +37,7 @@ from functions_keyvault import (
 #from functions_personal_actions import delete_personal_action
 
 from functions_debug import debug_print
-from json_schema_validation import validate_plugin
+from json_schema_validation import PLUGIN_STORAGE_MANAGED_FIELDS, validate_plugin
 from functions_activity_logging import (
     log_action_creation,
     log_action_update,
@@ -347,11 +347,9 @@ def set_user_plugins():
         plugin.setdefault('metadata', {})
         plugin.setdefault('additionalFields', {})
         
-        # Remove Cosmos DB system fields that are not part of the plugin schema
-        cosmos_fields = ['_attachments', '_etag', '_rid', '_self', '_ts', 'created_at', 'updated_at', 'user_id', 'last_updated']
-        for field in cosmos_fields:
-            if field in plugin:
-                del plugin[field]
+        # Remove storage-managed fields that are not part of the plugin manifest schema.
+        for field in PLUGIN_STORAGE_MANAGED_FIELDS:
+            plugin.pop(field, None)
         
         # Handle endpoint based on plugin type
         plugin_type = plugin.get('type', '')

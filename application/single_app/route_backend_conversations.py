@@ -8,6 +8,7 @@ from functions_conversation_unread import clear_conversation_unread, normalize_c
 from functions_notifications import mark_chat_response_notifications_read_for_conversation
 from flask import Response, request
 from functions_debug import debug_print
+from functions_message_artifacts import filter_assistant_artifact_items
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_activity_logging import log_conversation_creation, log_conversation_deletion, log_conversation_archival
 from functions_thoughts import archive_thoughts_for_conversation, delete_thoughts_for_conversation
@@ -36,6 +37,40 @@ def normalize_chat_type(conversation_item):
 
     conversation_item['chat_type'] = chat_type
     return chat_type, True
+
+
+def _collect_child_message_documents(conversation_id, root_message_ids):
+    """Collect child records linked by parent_message_id for the provided message ids."""
+    pending_ids = [message_id for message_id in root_message_ids if message_id]
+    seen_ids = set(pending_ids)
+    child_docs = []
+
+    while pending_ids:
+        parent_message_id = pending_ids.pop(0)
+        child_query = (
+            "SELECT * FROM c "
+            "WHERE c.conversation_id = @conversation_id "
+            "AND c.parent_message_id = @parent_message_id"
+        )
+        child_results = list(cosmos_messages_container.query_items(
+            query=child_query,
+            parameters=[
+                {'name': '@conversation_id', 'value': conversation_id},
+                {'name': '@parent_message_id', 'value': parent_message_id},
+            ],
+            partition_key=conversation_id,
+        ))
+
+        for child_doc in child_results:
+            child_id = child_doc.get('id')
+            if not child_id or child_id in seen_ids:
+                continue
+
+            seen_ids.add(child_id)
+            child_docs.append(child_doc)
+            pending_ids.append(child_id)
+
+    return child_docs
 
 def register_route_backend_conversations(app):
 
@@ -69,6 +104,7 @@ def register_route_backend_conversations(app):
                 query=message_query,
                 partition_key=conversation_id
             ))
+            all_items = filter_assistant_artifact_items(all_items)
             
             debug_print(f"Query returned {len(all_items)} total items (before filtering)")
             
@@ -949,6 +985,7 @@ def register_route_backend_conversations(app):
                 parameters=params,
                 enable_cross_partition_query=True
             ))
+            raw_messages = filter_assistant_artifact_items(raw_messages)
         except Exception as e:
             debug_print(f"Error querying messages for summary: {e}")
             return jsonify({'error': 'Failed to query messages'}), 500
@@ -1500,6 +1537,13 @@ def register_route_backend_conversations(app):
             else:
                 # Delete only the specified message
                 messages_to_delete = [message_doc]
+
+            child_message_docs = _collect_child_message_documents(
+                conversation_id,
+                [message.get('id') for message in messages_to_delete],
+            )
+            if child_message_docs:
+                messages_to_delete.extend(child_message_docs)
             
             # THREAD ATTEMPT PROMOTION: If deleting an active thread attempt, promote next attempt
             if messages_to_delete:
