@@ -11,6 +11,7 @@ import app_settings_cache
 # Singleton for the logger and Azure Monitor configuration
 _appinsights_logger = None
 _azure_monitor_configured = False
+_logging_settings_load_state = threading.local()
 
 
 def _format_message(message: Any, message_args: Optional[Tuple[Any, ...]] = None) -> str:
@@ -28,6 +29,9 @@ def _format_message(message: Any, message_args: Optional[Tuple[Any, ...]] = None
 
 def _load_logging_settings() -> Dict[str, Any]:
     """Read cached settings first and fall back to live settings when needed."""
+    if getattr(_logging_settings_load_state, 'active', False):
+        return {}
+
     try:
         cache = app_settings_cache.get_settings_cache()
         if isinstance(cache, dict):
@@ -38,11 +42,14 @@ def _load_logging_settings() -> Dict[str, Any]:
     try:
         from functions_settings import get_settings
 
+        _logging_settings_load_state.active = True
         settings = get_settings()
         if isinstance(settings, dict):
             return settings
     except Exception:
         pass
+    finally:
+        _logging_settings_load_state.active = False
 
     return {}
 

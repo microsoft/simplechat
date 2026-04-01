@@ -1704,6 +1704,59 @@
                         <input type="number" class="form-control" id="conversation_history_limit"
                             name="conversation_history_limit" value="{{ settings.conversation_history_limit }}">
                     </div>
+                    <div class="form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_idle_timeout"
+                            name="enable_idle_timeout"
+                            {% if settings.enable_idle_timeout %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_idle_timeout">
+                            Enable Idle Session Timeout and Warning
+                        </label>
+                        <button
+                             type="button"
+                             class="btn btn-link p-0 ms-2"
+                             data-bs-toggle="tooltip"
+                             title="When enabled, inactive users receive a warning and are automatically logged out after the configured timeout."
+                             aria-label="More information about idle timeout settings">
+                             <i class="bi bi-info-circle" aria-hidden="true"></i>
+                         </button>
+                    </div>
+                    <div id="idle_timeout_settings" class="{% if settings.enable_idle_timeout is not defined or not settings.enable_idle_timeout %}d-none{% endif %}">
+                        <div class="mb-3">
+                            <label for="idle_timeout_minutes" class="form-label">Idle Logout Timeout (Minutes)</label>
+                            <input
+                                type="number"
+                                class="form-control"
+                                id="idle_timeout_minutes"
+                                name="idle_timeout_minutes"
+                                min="10"
+                                value="{{ settings.idle_timeout_minutes | default(30) }}">
+                            <small class="form-text text-muted">Users are logged out locally after this many minutes of inactivity. Minimum value: 10 minutes.</small>
+                        </div>
+                        <div class="mb-3">
+                            <label for="idle_warning_minutes" class="form-label">Idle Warning Time (Minutes)</label>
+                            <input
+                                type="number"
+                                class="form-control"
+                                id="idle_warning_minutes"
+                                name="idle_warning_minutes"
+                                min="0"
+                                value="{{ settings.idle_warning_minutes | default(28) }}">
+                            <small class="form-text text-muted">Show the warning modal after this many minutes of inactivity. Set this equal to the logout timeout to disable the warning dialog window.</small>
+                        </div>
+                        <div class="mb-3">
+                            <label for="idle_warning_message" class="form-label">Idle Warning Message</label>
+                            <input
+                                type="text"
+                                class="form-control"
+                                id="idle_warning_message"
+                                name="idle_warning_message"
+                                value="{{ settings.idle_warning_message | default("You've been inactive for a while.") }}">
+                            <small class="form-text text-muted">Custom text shown at the top of the idle warning dialog.</small>
+                        </div>
+                    </div>
                     <div class="mb-3">
                         <label for="default_system_prompt" class="form-label">Default System Prompt</label>
                         <textarea class="form-control" id="default_system_prompt" name="default_system_prompt"

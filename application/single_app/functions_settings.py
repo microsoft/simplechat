@@ -4,17 +4,14 @@ from config import *
 from functions_appinsights import log_event
 import app_settings_cache
 import inspect
+import copy
 
 
 def is_tabular_processing_enabled(settings):
     """Tabular processing is available whenever enhanced citations is enabled."""
     return bool((settings or {}).get('enable_enhanced_citations', False))
-DEFAULT_VIDEO_INDEXER_ARM_API_VERSION = os.getenv(
-    'VIDEO_INDEXER_ARM_API_VERSION',
-    '2024-01-01' if AZURE_ENVIRONMENT == 'usgovernment' else '2025-04-01'
-)
 
-def get_settings(use_cosmos=False):
+def get_settings(use_cosmos=False, include_source=False):
     import secrets
     default_settings = {
         # External health check
@@ -319,6 +316,10 @@ def get_settings(use_cosmos=False):
         'max_file_size_mb': 150,
         'tabular_preview_max_blob_size_mb': 200,
         'conversation_history_limit': 10,
+        'enable_idle_timeout': False,
+        'idle_timeout_minutes': 30,
+        'idle_warning_minutes': 28,
+        'idle_warning_message': "You've been inactive for a while.",
         'default_system_prompt': '',
         # Access denied message shown on the home page for signed-in users who lack required roles.
         # Default is hard-coded; admins can override via Admin Settings (persisted in Cosmos DB).
@@ -386,6 +387,11 @@ def get_settings(use_cosmos=False):
         'default_retention_document_public': 'none',
     }
 
+    def _format_result(settings_payload, source):
+        if include_source:
+            return settings_payload, source
+        return settings_payload
+
     try:
         # Attempt to read the existing doc
         if use_cosmos:
@@ -393,17 +399,35 @@ def get_settings(use_cosmos=False):
                 item="app_settings",
                 partition_key="app_settings"
             )
+            settings_source = "cosmos_forced"
+            log_event(
+                "App settings loaded from Cosmos DB (forced).",
+                extra={
+                    "settings_source": settings_source,
+                    "use_cosmos": True
+                },
+                level=logging.INFO
+            )
         else:
             settings_item = None
+            settings_source = "cache"
 
             cache_accessor = getattr(app_settings_cache, "get_settings_cache", None)
             if callable(cache_accessor):
                 try:
                     settings_item = cache_accessor()
-                except Exception:
+                except Exception as cache_error:
                     settings_item = None
+                    log_event(
+                        "Error reading app settings from cache accessor.",
+                        extra={
+                            "error": str(cache_error)
+                        },
+                        level=logging.WARNING
+                    )
 
             if not settings_item:
+                settings_source = "cosmos_fallback"
                 settings_item = cosmos_settings_container.read_item(
                     item="app_settings",
                     partition_key="app_settings"
@@ -417,40 +441,86 @@ def get_settings(use_cosmos=False):
                     caller_file = code.co_filename
                     caller_line = caller.f_lineno
                     caller_func = code.co_name
-                    print(
-                        "Warning: Failed to get settings from cache, read from Cosmos DB instead. "
-                        f"Called from {caller_file}:{caller_line} in {caller_func}()."
+
+                    log_event(
+                        "App settings cache miss. Falling back to Cosmos DB.",
+                        extra={
+                            "settings_source": settings_source,
+                            "caller_file": caller_file,
+                            "caller_line": caller_line,
+                            "caller_func": caller_func
+                        },
+                        level=logging.WARNING
                     )
                 else:
-                    print(
-                        "Warning: Failed to get settings from cache, "
-                        "read from Cosmos DB instead. (no caller frame)"
+
+                    log_event(
+                        "App settings cache miss. Falling back to Cosmos DB (no caller frame).",
+                        extra={
+                            "settings_source": settings_source
+                        },
+                        level=logging.WARNING
                     )
-        #print("Successfully retrieved settings from Cosmos DB.")
 
         # Merge default_settings in, to fill in any missing or nested keys
-        merged = deep_merge_dicts(default_settings, settings_item)
+        merge_changed = deep_merge_dicts(default_settings, settings_item)
+        merged = settings_item
         migration_updated = apply_custom_endpoint_setting_migration(merged)
 
         merged['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(merged)
 
         # If merging added anything new, upsert back to Cosmos so future reads remain up to date
-        if merged != settings_item or migration_updated:
+        if merge_changed or migration_updated:
             cosmos_settings_container.upsert_item(merged)
-            print("App Settings had missing keys and was updated in Cosmos DB.")
-            return merged
+            cache_updater = getattr(app_settings_cache, "update_settings_cache", None)
+            if callable(cache_updater):
+                try:
+                    cache_updater(copy.deepcopy(merged))
+                except Exception as cache_error:
+                    log_event(
+                        "App settings cache update failed after merge upsert.",
+                        extra={
+                            "settings_source": settings_source,
+                            "error": str(cache_error)
+                        },
+                        level=logging.WARNING
+                    )
+
+            log_event(
+                "App settings missing keys were merged and persisted to Cosmos DB.",
+                extra={
+                    "settings_source": settings_source
+                },
+                level=logging.INFO
+            )
+            return _format_result(merged, settings_source)
         else:
             # If merged is unchanged, no new keys needed
-            return merged
+            return _format_result(merged, settings_source)
 
     except CosmosResourceNotFoundError:
         cosmos_settings_container.create_item(body=default_settings)
-        print("Default settings created in Cosmos and returned.")
-        return default_settings
+
+        log_event(
+            "App settings document not found. Default settings created in Cosmos DB.",
+            extra={
+                "settings_source": "cosmos_default_created"
+            },
+            level=logging.WARNING
+        )
+        return _format_result(default_settings, "cosmos_default_created")
 
     except Exception as e:
-        print(f"Error retrieving settings: {str(e)}")
-        return None
+        log_event(
+            "Error retrieving app settings.",
+            extra={
+                "error": str(e),
+                "use_cosmos": use_cosmos
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
+        return _format_result(None, "error")
 
 def update_settings(new_settings):
     try:
@@ -467,10 +537,20 @@ def update_settings(new_settings):
         cache_updater = getattr(app_settings_cache, "update_settings_cache", None)
         if callable(cache_updater):
             cache_updater(settings_item)
-        print("Settings updated successfully.")
+        log_event(
+            "App settings updated successfully.",
+            level=logging.INFO
+        )
         return True
     except Exception as e:
-        print(f"Error updating settings: {str(e)}")
+        log_event(
+            "Error updating app settings.",
+            extra={
+                "error": str(e)
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
         return False
 
 
@@ -588,7 +668,14 @@ def compare_versions(v1_str, v2_str):
         v2_parts = [int(part) for part in v2_str.split('.')]
     except ValueError:
         # Handle cases where parts are not integers or contain invalid chars
-        print(f"Invalid version format encountered: '{v1_str}' or '{v2_str}'")
+        log_event(
+            "Invalid version format encountered during comparison.",
+            extra={
+                "version_1": v1_str,
+                "version_2": v2_str
+            },
+            level=logging.WARNING
+        )
         return None
 
     # Compare parts element by element
@@ -620,7 +707,10 @@ def extract_latest_version_from_html(html_content):
              valid versions are found or an error occurs.
     """
     if not html_content:
-        print("HTML content is empty.")
+        log_event(
+            "Latest-version extraction skipped because HTML content is empty.",
+            level=logging.WARNING
+        )
         return None
 
     try:
@@ -644,16 +734,16 @@ def extract_latest_version_from_html(html_content):
                         # Validate the format (digits and dots only) using regex
                         if re.match(r'^\d+(\.\d+)*$', version_str):
                             versions_found.add(version_str)
-                        # else:
-                        #     print(f"Skipping invalid version format from href '{href}': '{version_str}'")
 
                 except (IndexError, ValueError):
                     # Ignore links where splitting or processing fails
-                    # print(f"Could not process href: {href}")
                     continue # Skip to the next link
 
         if not versions_found:
-            print("No valid version tags found in HTML matching the pattern.")
+            log_event(
+                "No valid release version tags found in HTML content.",
+                level=logging.WARNING
+            )
             return None
 
         # Now compare the found versions to find the latest
@@ -661,40 +751,74 @@ def extract_latest_version_from_html(html_content):
         for current_version in versions_found:
             if latest_version is None:
                 latest_version = current_version
-                # print(f"Initial latest version set to: {latest_version}")
             else:
-                # print(f"Comparing '{current_version}' with current latest '{latest_version}'")
                 comparison_result = compare_versions(current_version, latest_version)
 
                 if comparison_result == 1: # current_version > latest_version
-                    # print(f"  -> New latest version: {current_version}")
                     latest_version = current_version
                 elif comparison_result is None:
                      # Log if comparison fails, but continue trying others
-                     print(f"Warning: Could not compare version '{current_version}' with '{latest_version}'. Skipping this comparison.")
-                # else: comparison is -1 or 0, keep existing latest_version
-                #     print(f"  -> '{latest_version}' remains latest.")
+                     log_event(
+                         "Could not compare release version values while scanning HTML.",
+                         extra={
+                             "current_version": current_version,
+                             "latest_version": latest_version
+                         },
+                         level=logging.WARNING
+                     )
 
-
-        print(f"Latest version identified from HTML: {latest_version}")
+        log_event(
+            "Latest release version identified from HTML.",
+            extra={
+                "latest_version": latest_version
+            },
+            level=logging.INFO
+        )
         return latest_version
 
     except Exception as e:
-        print(f"Error parsing HTML or finding latest version: {e}")
+        log_event(
+            "Error parsing HTML while identifying latest release version.",
+            extra={
+                "error": str(e)
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
         return None
     
 def deep_merge_dicts(default_dict, existing_dict):
+    """
+    Recursively merge keys from default_dict into existing_dict in place.
+    This function DOES NOT return a merged dictionary. Instead, it mutates
+    existing_dict directly, adding any keys that are missing (and, for nested
+    dict values, recursing to merge their contents as well). Non-dict values
+    in existing_dict are left as-is and are not overwritten.
+
+    Args:
+        default_dict (dict): Source of default values.
+        existing_dict (dict): Target dictionary that will be updated in place.
+        
+    Returns:
+        bool: True if existing_dict was modified at any depth, otherwise False.
+    """
+    changed = False
     for k, default_val in default_dict.items():
         if k not in existing_dict:
             existing_dict[k] = default_val
+            changed = True
         else:
             existing_val = existing_dict[k]
             if isinstance(default_val, dict) and isinstance(existing_val, dict):
-                deep_merge_dicts(default_val, existing_val)
+                if deep_merge_dicts(default_val, existing_val):
+                    changed = True
             # For lists or other types, we skip overwriting.
-    return existing_dict
+    return changed
 
 def apply_custom_endpoint_setting_migration(settings_item):
+    if not isinstance(settings_item, dict):
+        return False
+
     updated = False
     if "allow_user_custom_endpoints" not in settings_item:
         settings_item["allow_user_custom_endpoints"] = settings_item.get("allow_user_custom_agent_endpoints", False)
@@ -879,7 +1003,10 @@ def decrypt_key(encrypted_key):
         decrypted_key = cipher_suite.decrypt(encrypted_key_bytes).decode()
         return decrypted_key
     except InvalidToken:
-        print("Decryption failed: Invalid token")
+        log_event(
+            "Decryption failed due to invalid token.",
+            level=logging.WARNING
+        )
         return None
 
 def get_user_settings(user_id):
@@ -921,7 +1048,14 @@ def get_user_settings(user_id):
                 doc['settings']['profileImage'] = profile_image
                 updated = True
             except Exception as e:
-                print(f"Warning: Could not fetch profile image for user {user_id}: {e}")
+                log_event(
+                    "Could not fetch profile image for existing user.",
+                    extra={
+                        "user_id": user_id,
+                        "error": str(e)
+                    },
+                    level=logging.WARNING
+                )
                 doc['settings']['profileImage'] = None
                 updated = True
         
@@ -946,13 +1080,28 @@ def get_user_settings(user_id):
             profile_image = get_user_profile_image()
             doc['settings']['profileImage'] = profile_image
         except Exception as e:
-            print(f"Warning: Could not fetch profile image for new user {user_id}: {e}")
+            log_event(
+                "Could not fetch profile image for new user.",
+                extra={
+                    "user_id": user_id,
+                    "error": str(e)
+                },
+                level=logging.WARNING
+            )
             doc['settings']['profileImage'] = None
             
         cosmos_user_settings_container.upsert_item(body=doc)
         return doc
     except Exception as e:
-        print(f"Error in get_user_settings for {user_id}: {e}")
+        log_event(
+            "Error retrieving user settings.",
+            extra={
+                "user_id": user_id,
+                "error": str(e)
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
         raise # Re-raise the exception to be handled by the route
     
 def update_user_settings(user_id, settings_to_update):
@@ -968,7 +1117,6 @@ def update_user_settings(user_id, settings_to_update):
     Returns:
         bool: True if the update was successful, False otherwise.
     """
-    log_prefix = f"User settings update for {user_id}:"
     sanitized_settings_to_update = sanitize_settings_for_logging(settings_to_update)
     log_event("[UserSettings] Update Attempt", {"user_id": user_id, "settings_to_update": sanitized_settings_to_update})
 
@@ -1102,12 +1250,28 @@ def update_user_settings(user_id, settings_to_update):
         return True
 
     except exceptions.CosmosHttpResponseError as e:
-        print(f"{log_prefix} Cosmos DB HTTP error: {e}")
+        log_event(
+            "User settings update failed with Cosmos DB HTTP error.",
+            extra={
+                "user_id": user_id,
+                "error": str(e)
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
 
         return False
     except Exception as e:
         # Catch any other unexpected errors during the update process
-        print(f"{log_prefix} Unexpected error during update: {e}")
+        log_event(
+            "User settings update failed with unexpected error.",
+            extra={
+                "user_id": user_id,
+                "error": str(e)
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
 
         return False
 
@@ -1198,7 +1362,15 @@ def get_user_search_history(user_id):
     except exceptions.CosmosResourceNotFoundError:
         return []
     except Exception as e:
-        print(f"Error getting search history: {e}")
+        log_event(
+            "Error retrieving user search history.",
+            extra={
+                "user_id": user_id,
+                "error": str(e)
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
         return []
 
 def add_search_to_history(user_id, search_term):
@@ -1228,7 +1400,15 @@ def add_search_to_history(user_id, search_term):
         
         return search_history
     except Exception as e:
-        print(f"Error adding search to history: {e}")
+        log_event(
+            "Error adding search term to user history.",
+            extra={
+                "user_id": user_id,
+                "error": str(e)
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
         return []
 
 def clear_user_search_history(user_id):
@@ -1244,5 +1424,13 @@ def clear_user_search_history(user_id):
         
         return True
     except Exception as e:
-        print(f"Error clearing search history: {e}")
+        log_event(
+            "Error clearing user search history.",
+            extra={
+                "user_id": user_id,
+                "error": str(e)
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
         return False
