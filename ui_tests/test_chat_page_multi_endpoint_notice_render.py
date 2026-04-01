@@ -1,11 +1,13 @@
 # test_chat_page_multi_endpoint_notice_render.py
+# test_chat_page_multi_endpoint_notice_render.py
 """
 UI test for chat page multi-endpoint notice rendering.
-Version: 0.240.004
-Implemented in: 0.240.004
+Version: 0.240.008
+Implemented in: 0.240.008
 
 This test ensures the authenticated chats page loads successfully and renders
-the primary chat UI without a server-side template failure.
+the primary chat UI without a server-side template failure or a JavaScript
+bootstrap syntax error.
 """
 
 import os
@@ -33,6 +35,18 @@ def test_chat_page_multi_endpoint_notice_render(playwright):
         viewport={"width": 1440, "height": 900},
     )
     page = context.new_page()
+    page_errors = []
+    console_errors = []
+
+    def track_page_error(error):
+        page_errors.append(str(error))
+
+    def track_console(message):
+        if message.type == "error":
+            console_errors.append(message.text)
+
+    page.on("pageerror", track_page_error)
+    page.on("console", track_console)
 
     try:
         response = page.goto(f"{BASE_URL}/chats", wait_until="domcontentloaded")
@@ -42,6 +56,22 @@ def test_chat_page_multi_endpoint_notice_render(playwright):
 
         expect(page.locator("#chatbox")).to_be_visible()
         expect(page.locator("#user-input")).to_be_visible()
+        page.wait_for_load_state("networkidle")
+
+        syntax_errors = [message for message in page_errors if "SyntaxError" in message]
+        bad_control_errors = [
+            message for message in console_errors
+            if "Bad control character" in message or "JSON.parse" in message
+        ]
+
+        assert not syntax_errors, (
+            "Expected /chats to boot without JavaScript syntax errors. "
+            f"Observed: {syntax_errors}"
+        )
+        assert not bad_control_errors, (
+            "Expected /chats to avoid JSON bootstrap parse errors. "
+            f"Observed: {bad_control_errors}"
+        )
     finally:
         context.close()
         browser.close()

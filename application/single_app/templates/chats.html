@@ -1133,39 +1133,39 @@
 {% block scripts %}
 <script>
     // Ensure global variables are still accessible if needed by older scripts
-    window.enableUserFeedback = "{{ enable_user_feedback }}";
-    window.activeGroupId = "{{ active_group_id }}";
-    window.activeGroupName = "{{ active_group_name }}";
-    window.activePublicWorkspaceId = "{{ active_public_workspace_id }}";
-    window.userGroups = JSON.parse('{{ user_groups|tojson|safe }}');
-    window.userVisiblePublicWorkspaces = JSON.parse('{{ user_visible_public_workspaces|tojson|safe }}');
-    window.chatPromptOptions = JSON.parse('{{ chat_prompt_options|tojson|safe }}');
-    window.chatAgentOptions = JSON.parse('{{ chat_agent_options|tojson|safe }}');
-    window.chatModelOptions = JSON.parse('{{ chat_model_options|tojson|safe }}');
-    window.enableEnhancedCitations = "{{ enable_enhanced_citations }}";
-    window.enable_document_classification = "{{ enable_document_classification }}";
-    window.classification_categories = JSON.parse('{{ settings.document_classification_categories|tojson(indent=None)|safe }}' || '[]');
+    window.enableUserFeedback = {{ enable_user_feedback|tojson }};
+    window.activeGroupId = {{ active_group_id|tojson }};
+    window.activeGroupName = {{ active_group_name|tojson }};
+    window.activePublicWorkspaceId = {{ active_public_workspace_id|tojson }};
+    window.userGroups = {{ user_groups|default([], true)|tojson|safe }};
+    window.userVisiblePublicWorkspaces = {{ user_visible_public_workspaces|default([], true)|tojson|safe }};
+    window.chatPromptOptions = {{ chat_prompt_options|default([], true)|tojson|safe }};
+    window.chatAgentOptions = {{ chat_agent_options|default([], true)|tojson|safe }};
+    window.chatModelOptions = {{ chat_model_options|default([], true)|tojson|safe }};
+    window.enableEnhancedCitations = {{ enable_enhanced_citations|tojson }};
+    window.enable_document_classification = {{ enable_document_classification|tojson }};
+    window.classification_categories = {{ settings.document_classification_categories|default([], true)|tojson(indent=None)|safe }};
     if (!Array.isArray(window.classification_categories)) {
         window.classification_categories = [];
     }
 
     // Current user information for message masking
     window.currentUser = {
-        id: "{{ user_id }}",
-        display_name: "{{ user_display_name }}"
+        id: {{ user_id|tojson }},
+        display_name: {{ user_display_name|tojson }}
     };
 
     // App settings for feature detection
     window.appSettings = {
-        enable_text_to_speech: JSON.parse('{{ 'true' if app_settings.enable_text_to_speech else 'false' }}'),
-        enable_speech_to_text_input: JSON.parse('{{ 'true' if app_settings.enable_speech_to_text_input else 'false' }}'),
-        enable_web_search_user_notice: JSON.parse('{{ 'true' if settings.enable_web_search_user_notice else 'false' }}'),
-        enforce_workspace_scope_lock: JSON.parse('{{ 'true' if settings.enforce_workspace_scope_lock else 'false' }}'),
-        enable_multi_model_endpoints: JSON.parse('{{ 'true' if enable_multi_model_endpoints else 'false' }}'),
-        enable_thoughts: JSON.parse('{{ 'true' if settings.enable_thoughts else 'false' }}')
+        enable_text_to_speech: {{ app_settings.enable_text_to_speech|tojson }},
+        enable_speech_to_text_input: {{ app_settings.enable_speech_to_text_input|tojson }},
+        enable_web_search_user_notice: {{ settings.enable_web_search_user_notice|tojson }},
+        enforce_workspace_scope_lock: {{ settings.enforce_workspace_scope_lock|tojson }},
+        enable_multi_model_endpoints: {{ enable_multi_model_endpoints|tojson }},
+        enable_thoughts: {{ settings.enable_thoughts|tojson }}
     };
 
-    window.multiEndpointNotice = JSON.parse('{{ multi_endpoint_notice_data|tojson()|safe }}');
+    window.multiEndpointNotice = {{ multi_endpoint_notice_data|tojson|safe }};
 
     // Layout related globals (can stay here or move entirely into chat-layout.js if preferred)
     let splitInstance = null;

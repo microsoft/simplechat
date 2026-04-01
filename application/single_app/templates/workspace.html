@@ -1032,9 +1032,13 @@
     tabindex="-1"
     aria-labelledby="promptModalLabel"
     aria-hidden="true"
+    autocomplete="off"
+    data-lpignore="true"
+    data-1p-ignore="true"
+    data-bwignore="true"
   >
     <div class="modal-dialog modal-xl" style="max-width: 80%">
-      <form id="prompt-form">
+      <form id="prompt-form" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
         <div class="modal-content">
           <div class="modal-header">
             <h5 class="modal-title" id="promptModalLabel">Create Prompt</h5>
@@ -1086,9 +1090,13 @@
     tabindex="-1"
     aria-labelledby="docMetadataModalLabel"
     aria-hidden="true"
+    autocomplete="off"
+    data-lpignore="true"
+    data-1p-ignore="true"
+    data-bwignore="true"
   >
     <div class="modal-dialog">
-      <form id="doc-metadata-form">
+      <form id="doc-metadata-form" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
         <div class="modal-content">
           <div class="modal-header">
             <h5 class="modal-title" id="docMetadataModalLabel">
@@ -1199,7 +1207,7 @@
   </div>
 
 <!-- Bulk Tag Assignment Modal -->
-<div class="modal fade" id="bulkTagModal" tabindex="-1" aria-labelledby="bulkTagModalLabel" aria-hidden="true">
+<div class="modal fade" id="bulkTagModal" tabindex="-1" aria-labelledby="bulkTagModalLabel" aria-hidden="true" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header">
@@ -1259,7 +1267,7 @@
 </div>
 
 <!-- Tag Management Modal (Shared by both bulk and individual) -->
-<div class="modal fade" id="tagManagementModal" tabindex="-1" aria-labelledby="tagManagementModalLabel" aria-hidden="true">
+<div class="modal fade" id="tagManagementModal" tabindex="-1" aria-labelledby="tagManagementModalLabel" aria-hidden="true" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header">
@@ -1352,7 +1360,7 @@
 </div>
 
 <!-- Tag Selection Modal (for selecting from existing tags) -->
-<div class="modal fade" id="tagSelectionModal" tabindex="-1" aria-labelledby="tagSelectionModalLabel" aria-hidden="true">
+<div class="modal fade" id="tagSelectionModal" tabindex="-1" aria-labelledby="tagSelectionModalLabel" aria-hidden="true" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
   <div class="modal-dialog">
     <div class="modal-content">
       <div class="modal-header">
@@ -1383,9 +1391,9 @@
 </div>
 
 <!-- Share Document Modal -->
-<div class="modal fade" id="shareDocumentModal" tabindex="-1" aria-hidden="true">
+<div class="modal fade" id="shareDocumentModal" tabindex="-1" aria-hidden="true" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
   <div class="modal-dialog">
-    <form id="shareDocumentForm">
+    <form id="shareDocumentForm" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title">Share Document</h5>
@@ -1571,8 +1579,67 @@
     // Pass current user ID for ownership checks
     window.current_user_id = "{{ session.get('user', {}).get('oid', '') }}";
 
+    function applyWorkspaceAutofillMetadata(root) {
+      if (!root) {
+        return;
+      }
+
+      if (!root.hasAttribute("autocomplete")) {
+        root.setAttribute("autocomplete", "off");
+      }
+
+      if (!root.hasAttribute("data-lpignore")) {
+        root.setAttribute("data-lpignore", "true");
+      }
+
+      if (!root.hasAttribute("data-1p-ignore")) {
+        root.setAttribute("data-1p-ignore", "true");
+      }
+
+      if (!root.hasAttribute("data-bwignore")) {
+        root.setAttribute("data-bwignore", "true");
+      }
+
+      root.querySelectorAll("input, select, textarea").forEach((field) => {
+        const autocompleteValue = field.getAttribute("type") === "password" ? "new-password" : "off";
+
+        if (!field.hasAttribute("autocomplete")) {
+          field.setAttribute("autocomplete", autocompleteValue);
+        }
+
+        if (!field.hasAttribute("data-lpignore")) {
+          field.setAttribute("data-lpignore", "true");
+        }
+
+        if (!field.hasAttribute("data-1p-ignore")) {
+          field.setAttribute("data-1p-ignore", "true");
+        }
+
+        if (!field.hasAttribute("data-bwignore")) {
+          field.setAttribute("data-bwignore", "true");
+        }
+      });
+    }
+
+    function setupWorkspaceAutofillMetadata() {
+      [
+        document.getElementById("workspaceTabContent"),
+        document.getElementById("promptModal"),
+        document.getElementById("docMetadataModal"),
+        document.getElementById("bulkTagModal"),
+        document.getElementById("tagManagementModal"),
+        document.getElementById("tagSelectionModal"),
+        document.getElementById("shareDocumentModal"),
+        document.getElementById("modelEndpointModal"),
+        document.getElementById("agentModal"),
+        document.getElementById("plugin-modal")
+      ].forEach(applyWorkspaceAutofillMetadata);
+    }
+
     // --- Filter toggle button logic ---
     document.addEventListener("DOMContentLoaded", function() {
+      setupWorkspaceAutofillMetadata();
+
       // Documents tab
       var docsToggleBtn = document.getElementById("docs-filters-toggle-btn");
       var docsCollapse = document.getElementById("docs-filters-collapse");

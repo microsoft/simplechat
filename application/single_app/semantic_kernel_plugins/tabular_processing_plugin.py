@@ -465,6 +465,7 @@ class TabularProcessingPlugin:
         sheets_searched = []
         sheets_matched = []
         total_matches = 0
+        query_errors = []
 
         for sheet in available_sheets:
             df = self._read_tabular_blob_to_dataframe(
@@ -476,8 +477,11 @@ class TabularProcessingPlugin:
 
             try:
                 result_df = df.query(query_expression)
-            except Exception:
-                # Query expression references columns not in this sheet — skip
+            except Exception as query_error:
+                query_errors.append({
+                    'sheet_name': sheet,
+                    'error': str(query_error),
+                })
                 continue
 
             sheets_searched.append(sheet)
@@ -494,6 +498,29 @@ class TabularProcessingPlugin:
                     combined_results.append(row)
 
         if not sheets_searched:
+            if query_errors:
+                unique_errors = []
+                seen_errors = set()
+                for query_error in query_errors:
+                    normalized_error = str(query_error.get('error') or '').strip()
+                    if not normalized_error or normalized_error in seen_errors:
+                        continue
+                    seen_errors.add(normalized_error)
+                    unique_errors.append(normalized_error)
+
+                return json.dumps({
+                    "error": (
+                        "Query error: the expression could not be evaluated on any worksheet during cross-sheet search. "
+                        "Use simple DataFrame.query() syntax with existing column names, or provide sheet_name to target a specific worksheet."
+                    ),
+                    "filename": filename,
+                    "selected_sheet": "ALL (cross-sheet search)",
+                    "query_expression": query_expression,
+                    "sheets_evaluated": [
+                        query_error['sheet_name'] for query_error in query_errors
+                    ],
+                    "details": unique_errors[:3],
+                }, indent=2, default=str)
             return None
 
         log_event(

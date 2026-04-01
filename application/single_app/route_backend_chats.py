@@ -1190,6 +1190,80 @@ def _tokenize_tabular_sheet_text(text):
     return tokens
 
 
+def _extract_tabular_entity_anchor_terms(question_text):
+    """Extract likely primary-entity terms from an entity lookup question."""
+    normalized_question = str(question_text or '').strip().lower()
+    if not normalized_question:
+        return []
+
+    stopwords = {
+        'and',
+        'any',
+        'by',
+        'detail',
+        'details',
+        'exact',
+        'explain',
+        'find',
+        'for',
+        'from',
+        'full',
+        'get',
+        'give',
+        'lookup',
+        'me',
+        'of',
+        'or',
+        'profile',
+        'profiles',
+        'record',
+        'records',
+        'related',
+        'show',
+        'story',
+        'summaries',
+        'summarize',
+        'summary',
+        'that',
+        'the',
+        'their',
+        'this',
+        'those',
+        'these',
+        'to',
+        'up',
+        'with',
+    }
+    capture_patterns = (
+        r'\bfind\s+([^\.;:!?]+)',
+        r'\blookup\s+([^\.;:!?]+)',
+    )
+    anchor_terms = []
+    seen_anchor_terms = set()
+
+    for capture_pattern in capture_patterns:
+        match = re.search(capture_pattern, normalized_question)
+        if not match:
+            continue
+
+        captured_text = re.split(
+            r'\b(?:and|show|summarize|summary|profile|with|where|which|who|that)\b',
+            match.group(1),
+            maxsplit=1,
+        )[0]
+        for token in _tokenize_tabular_sheet_text(captured_text):
+            if token in stopwords:
+                continue
+            if any(character.isdigit() for character in token):
+                continue
+            if token in seen_anchor_terms:
+                continue
+            seen_anchor_terms.add(token)
+            anchor_terms.append(token)
+
+    return anchor_terms
+
+
 def _score_tabular_sheet_match(sheet_name, question_text, columns=None):
     """Score how strongly a worksheet name matches the user question.
 
@@ -1228,15 +1302,54 @@ def _score_tabular_sheet_match(sheet_name, question_text, columns=None):
     return score
 
 
-def _select_relevant_workbook_sheets(sheet_names, question_text, minimum_score=1, per_sheet=None):
+def _score_tabular_entity_sheet_match(sheet_name, question_text, columns=None):
+    """Score worksheets for entity lookups, prioritizing the primary entity sheet."""
+    score = _score_tabular_sheet_match(sheet_name, question_text, columns=columns)
+    anchor_terms = _extract_tabular_entity_anchor_terms(question_text)
+    if not anchor_terms:
+        return score
+
+    question_tokens = set(_tokenize_tabular_sheet_text(question_text))
+    sheet_tokens = set(_tokenize_tabular_sheet_text(sheet_name))
+    column_tokens = set()
+    for column_name in columns or []:
+        column_tokens.update(_tokenize_tabular_sheet_text(column_name))
+
+    for anchor_term in anchor_terms:
+        if anchor_term in sheet_tokens:
+            score += 12
+        elif anchor_term in column_tokens:
+            score += 4
+
+    if 'profile' in question_tokens and column_tokens.intersection({
+        'address',
+        'city',
+        'displayname',
+        'dob',
+        'email',
+        'firstname',
+        'fullname',
+        'lastname',
+        'name',
+        'phone',
+        'state',
+        'status',
+    }):
+        score += 6
+
+    return score
+
+
+def _select_relevant_workbook_sheets(sheet_names, question_text, minimum_score=1, per_sheet=None, score_match_fn=None):
     """Return all workbook sheets that appear relevant to the question."""
+    score_match_fn = score_match_fn or _score_tabular_sheet_match
     ranked_sheets = []
     for sheet_name in sheet_names or []:
         columns = None
         if per_sheet:
             sheet_info = per_sheet.get(sheet_name, {})
             columns = sheet_info.get('columns', [])
-        score = _score_tabular_sheet_match(sheet_name, question_text, columns=columns)
+        score = score_match_fn(sheet_name, question_text, columns=columns)
         if score < minimum_score:
             continue
         ranked_sheets.append((score, sheet_name))
@@ -1323,8 +1436,9 @@ def is_tabular_access_limited_analysis(analysis_text):
     return any(phrase in normalized_analysis for phrase in inaccessible_phrases)
 
 
-def _select_likely_workbook_sheet(sheet_names, question_text, per_sheet=None):
+def _select_likely_workbook_sheet(sheet_names, question_text, per_sheet=None, score_match_fn=None):
     """Return a likely sheet name when the user question strongly matches one sheet."""
+    score_match_fn = score_match_fn or _score_tabular_sheet_match
     best_sheet = None
     best_score = 0
     runner_up_score = 0
@@ -1334,7 +1448,7 @@ def _select_likely_workbook_sheet(sheet_names, question_text, per_sheet=None):
         if per_sheet:
             sheet_info = per_sheet.get(sheet_name, {})
             columns = sheet_info.get('columns', [])
-        score = _score_tabular_sheet_match(sheet_name, question_text, columns=columns)
+        score = score_match_fn(sheet_name, question_text, columns=columns)
 
         if score > best_score:
             runner_up_score = best_score
@@ -1427,6 +1541,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
         workbook_blob_locations = {}
         retry_sheet_overrides = {}
         previous_failed_call_parameters = []  # entity lookup: concrete failed call params for retry hints
+        sheet_score_match_fn = _score_tabular_entity_sheet_match if entity_lookup_mode else _score_tabular_sheet_match
         allowed_function_filters = {
             'included_functions': [
                 f"tabular_processing-{function_name}"
@@ -1459,11 +1574,13 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                         schema_info.get('sheet_names', []),
                         user_question,
                         per_sheet=per_sheet,
+                        score_match_fn=sheet_score_match_fn,
                     )
                     relevant_sheets = _select_relevant_workbook_sheets(
                         schema_info.get('sheet_names', []),
                         user_question,
                         per_sheet=per_sheet,
+                        score_match_fn=sheet_score_match_fn,
                     )
                     cross_sheet_bridge_plan = None
                     if not schema_summary_mode and not entity_lookup_mode:
@@ -1739,19 +1856,22 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     f"{missing_sheet_feedback}"
                     f"FILE SCHEMAS:\n"
                     f"{schema_context}\n\n"
-                    "AVAILABLE FUNCTIONS: lookup_value, aggregate_column, filter_rows, query_tabular_data, "
+                    "AVAILABLE FUNCTIONS: filter_rows, query_tabular_data, lookup_value, aggregate_column, "
                     "group_by_aggregate, and group_by_datetime_component.\n\n"
                     "Discovery functions are not available in this analysis run because schema context is already pre-loaded.\n\n"
                     "IMPORTANT:\n"
-                    "1. Pass sheet_name='<name>' on EVERY analytical call for multi-sheet workbooks. Do not rely on a default sheet for cross-sheet entity lookups.\n"
-                    "2. First retrieve the primary entity row on the most relevant worksheet.\n"
-                    "3. Then query other relevant worksheets explicitly to collect related records.\n"
-                    "4. When a retrieved row contains a secondary identifier such as ReturnID, CaseID, AccountID, PaymentID, W2ID, or Form1099ID, reuse it to query dependent worksheets.\n"
-                    "5. Do not stop after the first successful row if the question asks for related records across sheets.\n"
-                    "6. If a requested record type has no corresponding worksheet in the workbook, say that the workbook does not contain that record type.\n"
-                    "7. Clearly distinguish between no matching rows and no corresponding worksheet.\n"
-                    "8. Summarize concrete found records sheet-by-sheet using the tool results, not schema placeholders.\n"
-                    "9. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report."
+                    "1. If the question includes an exact identifier or exact entity name and the correct starting worksheet is unclear, begin with filter_rows or query_tabular_data without sheet_name so the plugin can perform a cross-sheet discovery search.\n"
+                    "2. After the first discovery step, pass sheet_name='<name>' on follow-up analytical calls for multi-sheet workbooks. Do not rely on a default sheet for cross-sheet entity lookups.\n"
+                    "3. Use filter_rows or query_tabular_data first when you need full matching rows. Use lookup_value only when you already know the exact worksheet and target column.\n"
+                    "4. Do not start with aggregate_column, group_by_aggregate, or group_by_datetime_component until you have located the relevant entity rows.\n"
+                    "5. When using query_tabular_data, use simple DataFrame.query() syntax with backticked column names for columns containing spaces. Avoid method calls such as .str.lower() or .astype(...).\n"
+                    "6. Then query other relevant worksheets explicitly to collect related records.\n"
+                    "7. When a retrieved row contains a secondary identifier such as ReturnID, CaseID, AccountID, PaymentID, W2ID, or Form1099ID, reuse it to query dependent worksheets.\n"
+                    "8. Do not stop after the first successful row if the question asks for related records across sheets.\n"
+                    "9. If a requested record type has no corresponding worksheet in the workbook, say that the workbook does not contain that record type.\n"
+                    "10. Clearly distinguish between no matching rows and no corresponding worksheet.\n"
+                    "11. Summarize concrete found records sheet-by-sheet using the tool results, not schema placeholders.\n"
+                    "12. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report."
                 )
 
             return (
@@ -1790,7 +1910,8 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 "14. For identifier-based workbook questions, locate the identifier on the correct sheet before explaining downstream calculations.\n"
                 "15. For peak, busiest, highest, or lowest questions, use grouped functions and inspect the highest_group, highest_value, lowest_group, and lowest_value summary fields.\n"
                 "16. Return only computed findings and name the strongest drivers clearly.\n"
-                "17. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report."
+                "17. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report.\n"
+                "18. When using query_tabular_data, use simple DataFrame.query() syntax with backticked column names for columns containing spaces. Avoid method calls such as .str.lower(), .astype(...), or other Python expressions that DataFrame.query() may reject."
             )
 
         baseline_invocations = plugin_logger.get_invocations_for_conversation(

@@ -2,8 +2,8 @@
 # test_tabular_entity_lookup_mode.py
 """
 Functional test for cross-sheet entity lookup routing fix.
-Version: 0.239.120
-Implemented in: 0.239.119 (entity-lookup routing); 0.239.120 (concrete call example retry)
+Version: 0.240.009
+Implemented in: 0.240.009
 
 This test ensures related-record workbook questions route to entity-lookup
 mode, rank relevant worksheets beyond the first successful sheet, keep the
@@ -33,7 +33,10 @@ TARGET_FUNCTIONS = {
     'get_tabular_invocation_selected_sheets',
     '_normalize_tabular_sheet_token',
     '_tokenize_tabular_sheet_text',
+    '_extract_tabular_entity_anchor_terms',
     '_score_tabular_sheet_match',
+    '_score_tabular_entity_sheet_match',
+    '_select_likely_workbook_sheet',
     '_select_relevant_workbook_sheets',
     'is_tabular_access_limited_analysis',
 }
@@ -142,6 +145,70 @@ def test_entity_lookup_sheet_selection_prioritizes_related_worksheets():
         assert 'ReferenceData' not in relevant_sheets, relevant_sheets
 
         print('✅ Entity-lookup worksheet ranking passed')
+        return True
+
+    except Exception as exc:
+        print(f'❌ Test failed: {exc}')
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_entity_lookup_primary_sheet_hint_prefers_anchor_entity_sheet():
+    """Verify entity lookup mode prioritizes the primary entity worksheet."""
+    print('🔍 Testing entity-lookup primary worksheet hinting...')
+
+    try:
+        helpers, route_content = load_tabular_route_helpers()
+        extract_anchor_terms = helpers['_extract_tabular_entity_anchor_terms']
+        score_entity_sheet = helpers['_score_tabular_entity_sheet_match']
+        select_likely_sheet = helpers['_select_likely_workbook_sheet']
+        select_relevant_sheets = helpers['_select_relevant_workbook_sheets']
+
+        entity_lookup_question = (
+            'Find taxpayer TP000123. Show their profile, tax return summary, and '
+            'any related W-2, 1099, payment, refund, notice, audit, or '
+            'installment agreement records.'
+        )
+        per_sheet = {
+            'Taxpayers': {
+                'columns': ['TaxpayerID', 'FirstName', 'LastName', 'Status'],
+            },
+            'TaxReturns': {
+                'columns': ['ReturnID', 'TaxpayerID', 'TaxLiability', 'RefundAmount'],
+            },
+            'Audits': {
+                'columns': ['AuditID', 'TaxpayerID', 'AuditStatus'],
+            },
+            'Notices': {
+                'columns': ['NoticeID', 'TaxpayerID', 'NoticeType'],
+            },
+        }
+        sheet_names = list(per_sheet.keys())
+
+        anchor_terms = extract_anchor_terms(entity_lookup_question)
+        likely_sheet = select_likely_sheet(
+            sheet_names,
+            entity_lookup_question,
+            per_sheet=per_sheet,
+            score_match_fn=score_entity_sheet,
+        )
+        relevant_sheets = select_relevant_sheets(
+            sheet_names,
+            entity_lookup_question,
+            per_sheet=per_sheet,
+            score_match_fn=score_entity_sheet,
+        )
+
+        assert anchor_terms[0] == 'taxpayer', anchor_terms
+        assert 'taxpayer' in anchor_terms, anchor_terms
+        assert likely_sheet == 'Taxpayers', likely_sheet
+        assert relevant_sheets[0] == 'Taxpayers', relevant_sheets
+        assert relevant_sheets.index('Taxpayers') < relevant_sheets.index('Notices'), relevant_sheets
+        assert 'begin with filter_rows or query_tabular_data without sheet_name so the plugin can perform a cross-sheet discovery search' in route_content, route_content
+        assert 'Do not start with aggregate_column, group_by_aggregate, or group_by_datetime_component until you have located the relevant entity rows.' in route_content, route_content
+
+        print('✅ Entity-lookup primary worksheet hinting passed')
         return True
 
     except Exception as exc:
@@ -277,6 +344,7 @@ if __name__ == '__main__':
     tests = [
         test_cross_sheet_questions_route_to_entity_lookup_mode,
         test_entity_lookup_sheet_selection_prioritizes_related_worksheets,
+        test_entity_lookup_primary_sheet_hint_prefers_anchor_entity_sheet,
         test_entity_lookup_retry_guardrails_detect_incomplete_successes,
         test_entity_lookup_missing_sheet_feedback_generates_concrete_examples,
     ]
