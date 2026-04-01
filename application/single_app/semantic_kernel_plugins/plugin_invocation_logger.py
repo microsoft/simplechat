@@ -11,12 +11,28 @@ import time
 import logging
 import functools
 import inspect
+import threading
 from typing import Any, Dict, List, Optional, Callable
 from datetime import datetime
 from dataclasses import dataclass, asdict
 from functions_appinsights import log_event, get_appinsights_logger
 from functions_authentication import get_current_user_id
 from functions_debug import debug_print
+
+
+@dataclass
+class PluginInvocationStart:
+    """Data class for tracking plugin invocation starts."""
+    plugin_name: str
+    function_name: str
+    parameters: Dict[str, Any]
+    user_id: Optional[str]
+    timestamp: str
+    conversation_id: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for logging."""
+        return asdict(self)
 
 
 @dataclass
@@ -51,24 +67,34 @@ class PluginInvocationLogger:
         self.invocations: List[PluginInvocation] = []
         self.max_history = 1000  # Keep last 1000 invocations in memory
         self.logger = get_appinsights_logger() or logging.getLogger(__name__)
+        self._callbacks: Dict[str, List[Callable[[PluginInvocation], None]]] = {}
+        self._start_callbacks: Dict[str, List[Callable[[PluginInvocationStart], None]]] = {}
+        self._callback_lock = threading.Lock()
+
+    def log_invocation_start(self, invocation_start: PluginInvocationStart):
+        """Fire callbacks for the start of a plugin invocation."""
+        self._fire_start_callbacks(invocation_start)
         
     def log_invocation(self, invocation: PluginInvocation):
         """Log a plugin invocation to Application Insights and local history."""
         # Add to local history
         self.invocations.append(invocation)
-        
+
         # Trim history if needed
         if len(self.invocations) > self.max_history:
             self.invocations = self.invocations[-self.max_history:]
-        
+
         # Enhanced terminal logging
         self._log_to_terminal(invocation)
-        
+
         # Log to Application Insights
         self._log_to_appinsights(invocation)
-        
+
         # Log to standard logging
         self._log_to_standard(invocation)
+
+        # Fire registered thought callbacks
+        self._fire_callbacks(invocation)
     
     def _log_to_terminal(self, invocation: PluginInvocation):
         """Log detailed invocation information to terminal."""
@@ -277,6 +303,53 @@ class PluginInvocationLogger:
         """Clear the invocation history."""
         self.invocations.clear()
 
+    def register_callback(self, key, callback):
+        """Register a callback fired on each plugin invocation for the given key.
+
+        Args:
+            key: A string key, typically f"{user_id}:{conversation_id}".
+            callback: Called with the PluginInvocation after it is logged.
+        """
+        with self._callback_lock:
+            if key not in self._callbacks:
+                self._callbacks[key] = []
+            self._callbacks[key].append(callback)
+
+    def register_start_callback(self, key, callback):
+        """Register a callback fired when a plugin invocation starts for the given key."""
+        with self._callback_lock:
+            if key not in self._start_callbacks:
+                self._start_callbacks[key] = []
+            self._start_callbacks[key].append(callback)
+
+    def deregister_callbacks(self, key):
+        """Remove all completion and start callbacks for the given key."""
+        with self._callback_lock:
+            self._callbacks.pop(key, None)
+            self._start_callbacks.pop(key, None)
+
+    def _fire_start_callbacks(self, invocation_start):
+        """Fire matching callbacks for the start of a plugin invocation."""
+        key = f"{invocation_start.user_id}:{invocation_start.conversation_id}"
+        with self._callback_lock:
+            callbacks = list(self._start_callbacks.get(key, []))
+        for cb in callbacks:
+            try:
+                cb(invocation_start)
+            except Exception as e:
+                log_event(f"Plugin invocation start callback error: {e}", level="WARNING")
+
+    def _fire_callbacks(self, invocation):
+        """Fire matching callbacks for this invocation's user+conversation."""
+        key = f"{invocation.user_id}:{invocation.conversation_id}"
+        with self._callback_lock:
+            callbacks = list(self._callbacks.get(key, []))
+        for cb in callbacks:
+            try:
+                cb(invocation)
+            except Exception as e:
+                log_event(f"Plugin invocation callback error: {e}", level="WARNING")
+
 
 # Global instance
 _plugin_logger = PluginInvocationLogger()
@@ -287,24 +360,51 @@ def get_plugin_logger() -> PluginInvocationLogger:
     return _plugin_logger
 
 
-def log_plugin_invocation(plugin_name: str, function_name: str, 
-                         parameters: Dict[str, Any], result: Any,
-                         start_time: float, end_time: float, 
-                         success: bool = True, error_message: Optional[str] = None,
-                         conversation_id: Optional[str] = None):
-    """Convenience function to log a plugin invocation."""
+def _resolve_invocation_context(conversation_id: Optional[str] = None):
+    """Resolve user and conversation context for plugin invocation logging."""
     try:
         user_id = get_current_user_id()
     except Exception:
         user_id = None
-    
-    # Try to get conversation_id from Flask context if not provided
+
     if conversation_id is None:
         try:
             from flask import g
             conversation_id = getattr(g, 'conversation_id', None)
         except Exception:
             conversation_id = None
+
+    return user_id, conversation_id
+
+
+def log_plugin_invocation_started(
+    plugin_name: str,
+    function_name: str,
+    parameters: Dict[str, Any],
+    conversation_id: Optional[str] = None,
+):
+    """Convenience function to log the start of a plugin invocation."""
+    user_id, resolved_conversation_id = _resolve_invocation_context(conversation_id)
+
+    invocation_start = PluginInvocationStart(
+        plugin_name=plugin_name,
+        function_name=function_name,
+        parameters=parameters,
+        user_id=user_id,
+        conversation_id=resolved_conversation_id,
+        timestamp=datetime.utcnow().isoformat(),
+    )
+
+    _plugin_logger.log_invocation_start(invocation_start)
+
+
+def log_plugin_invocation(plugin_name: str, function_name: str, 
+                         parameters: Dict[str, Any], result: Any,
+                         start_time: float, end_time: float, 
+                         success: bool = True, error_message: Optional[str] = None,
+                         conversation_id: Optional[str] = None):
+    """Convenience function to log a plugin invocation."""
+    user_id, resolved_conversation_id = _resolve_invocation_context(conversation_id)
     
     invocation = PluginInvocation(
         plugin_name=plugin_name,
@@ -315,7 +415,7 @@ def log_plugin_invocation(plugin_name: str, function_name: str,
         end_time=end_time,
         duration_ms=(end_time - start_time) * 1000,
         user_id=user_id,
-        conversation_id=conversation_id,
+        conversation_id=resolved_conversation_id,
         timestamp=datetime.utcnow().isoformat(),
         success=success,
         error_message=error_message
@@ -413,14 +513,26 @@ def plugin_function_logger(plugin_name: str):
                 level=logging.ERROR
             )
 
+        def _resolve_function_name(wrapper_func: Callable) -> str:
+            return (
+                getattr(wrapper_func, '__kernel_function_name__', None)
+                or getattr(func, '__kernel_function_name__', None)
+                or getattr(func, '__name__', 'unknown')
+            )
+
         if is_async_callable:
             @functools.wraps(func)
             async def wrapper(*args, **kwargs):
                 start_time = time.time()
-                function_name = func.__name__
+                function_name = _resolve_function_name(wrapper)
                 _log_start(function_name)
                 parameters = _build_parameters(args, kwargs)
                 _log_parameters(function_name, parameters)
+                log_plugin_invocation_started(
+                    plugin_name=plugin_name,
+                    function_name=function_name,
+                    parameters=parameters,
+                )
 
                 try:
                     result = await func(*args, **kwargs)
@@ -461,10 +573,15 @@ def plugin_function_logger(plugin_name: str):
             @functools.wraps(func)
             def wrapper(*args, **kwargs):
                 start_time = time.time()
-                function_name = func.__name__
+                function_name = _resolve_function_name(wrapper)
                 _log_start(function_name)
                 parameters = _build_parameters(args, kwargs)
                 _log_parameters(function_name, parameters)
+                log_plugin_invocation_started(
+                    plugin_name=plugin_name,
+                    function_name=function_name,
+                    parameters=parameters,
+                )
 
                 try:
                     result = func(*args, **kwargs)
@@ -547,6 +664,8 @@ def plugin_function_logger(plugin_name: str):
 
                     raise
 
+        setattr(wrapper, '__plugin_invocation_logger_wrapped__', True)
+
         return wrapper
     return decorator
 
@@ -559,13 +678,21 @@ def wrap_kernel_function(original_func: Callable, plugin_name: str) -> Callable:
 def auto_wrap_plugin_functions(plugin_instance, plugin_name: str):
     """Automatically wrap all kernel_function decorated methods in a plugin instance."""
     for attr_name in dir(plugin_instance):
+        if attr_name.startswith('_'):
+            continue
+
         attr = getattr(plugin_instance, attr_name)
-        
+
         # Check if it's a method with the kernel_function decorator
-        if (callable(attr) and 
-            hasattr(attr, '__annotations__') and 
-            hasattr(attr, '__sk_function__')):  # SK functions have this attribute
-            
+        if not callable(attr):
+            continue
+
+        if getattr(attr, '__plugin_invocation_logger_wrapped__', False):
+            continue
+
+        if getattr(attr, '__kernel_function__', False) or getattr(attr, '__sk_function__', False):
             # Wrap the method
             wrapped_method = plugin_function_logger(plugin_name)(attr)
-            setattr(plugin_instance, attr_name, wrapped_method)
+            object.__setattr__(plugin_instance, attr_name, wrapped_method)
+
+    return plugin_instance

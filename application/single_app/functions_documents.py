@@ -1,5 +1,6 @@
 # functions_documents.py that has some changes I need to merge into Development
 
+import traceback
 from config import *
 from functions_content import *
 from functions_settings import *
@@ -1089,7 +1090,6 @@ def process_video_document(
             total += 1
         except Exception as e:
             debug_print(f"[VIDEO INDEXER] Failed to save chunk {chunk_num + 1}: {str(e)}")
-            import traceback
             debug_print(f"[VIDEO INDEXER] Chunk save traceback: {traceback.format_exc()}")
     
     debug_print(f"[VIDEO INDEXER] Chunk processing complete - Total chunks saved: {total}")
@@ -1645,6 +1645,191 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
     
     # Return token usage information for accumulation
     return token_usage
+
+def save_chunks_batch(chunks_data, user_id, document_id, group_id=None, public_workspace_id=None):
+    """
+    Save multiple chunks at once using batch embedding and batch AI Search upload.
+    Significantly faster than calling save_chunks() per chunk.
+
+    Args:
+        chunks_data: list of dicts with keys: page_text_content, page_number, file_name
+        user_id: The user ID
+        document_id: The document ID
+        group_id: Optional group ID for group documents
+        public_workspace_id: Optional public workspace ID for public documents
+
+    Returns:
+        dict with 'total_tokens', 'prompt_tokens', 'model_deployment_name'
+    """
+    from functions_content import generate_embeddings_batch
+
+    current_time = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    # Retrieve metadata once for all chunks
+    try:
+        if is_public_workspace:
+            metadata = get_document_metadata(
+                document_id=document_id,
+                user_id=user_id,
+                public_workspace_id=public_workspace_id
+            )
+        elif is_group:
+            metadata = get_document_metadata(
+                document_id=document_id,
+                user_id=user_id,
+                group_id=group_id
+            )
+        else:
+            metadata = get_document_metadata(
+                document_id=document_id,
+                user_id=user_id
+            )
+
+        if not metadata:
+            raise ValueError(f"No metadata found for document {document_id}")
+
+        version = metadata.get("version") if metadata.get("version") else 1
+    except Exception as e:
+        log_event(f"[save_chunks_batch] Error retrieving metadata for document {document_id}: {repr(e)}", level=logging.ERROR)
+        raise
+
+    # Generate all embeddings in batches
+    texts = [c['page_text_content'] for c in chunks_data]
+    try:
+        embedding_results = generate_embeddings_batch(texts)
+    except Exception as e:
+        log_event(f"[save_chunks_batch] Error generating batch embeddings for document {document_id}: {e}", level=logging.ERROR)
+        raise
+
+    # Check for vision analysis once
+    vision_analysis = metadata.get('vision_analysis')
+    vision_text = ""
+    if vision_analysis:
+        vision_text_parts = []
+        vision_text_parts.append("\n\n=== AI Vision Analysis ===")
+        vision_text_parts.append(f"Model: {vision_analysis.get('model', 'unknown')}")
+        if vision_analysis.get('description'):
+            vision_text_parts.append(f"\nDescription: {vision_analysis['description']}")
+        if vision_analysis.get('objects'):
+            objects_list = vision_analysis['objects']
+            if isinstance(objects_list, list):
+                vision_text_parts.append(f"\nObjects Detected: {', '.join(objects_list)}")
+            else:
+                vision_text_parts.append(f"\nObjects Detected: {objects_list}")
+        if vision_analysis.get('text'):
+            vision_text_parts.append(f"\nVisible Text: {vision_analysis['text']}")
+        if vision_analysis.get('analysis'):
+            vision_text_parts.append(f"\nContextual Analysis: {vision_analysis['analysis']}")
+        vision_text = "\n".join(vision_text_parts)
+
+    # Build all chunk documents
+    chunk_documents = []
+    total_token_usage = {'total_tokens': 0, 'prompt_tokens': 0, 'model_deployment_name': None}
+
+    for idx, chunk_info in enumerate(chunks_data):
+        embedding, token_usage = embedding_results[idx]
+        page_number = chunk_info['page_number']
+        file_name = chunk_info['file_name']
+        page_text_content = chunk_info['page_text_content']
+
+        if token_usage:
+            total_token_usage['total_tokens'] += token_usage.get('total_tokens', 0)
+            total_token_usage['prompt_tokens'] += token_usage.get('prompt_tokens', 0)
+            if not total_token_usage['model_deployment_name']:
+                total_token_usage['model_deployment_name'] = token_usage.get('model_deployment_name')
+
+        chunk_id = f"{document_id}_{page_number}"
+        enhanced_chunk_text = page_text_content + vision_text if vision_text else page_text_content
+
+        if is_public_workspace:
+            chunk_document = {
+                "id": chunk_id,
+                "document_id": document_id,
+                "chunk_id": str(page_number),
+                "chunk_text": enhanced_chunk_text,
+                "embedding": embedding,
+                "file_name": file_name,
+                "chunk_keywords": [],
+                "chunk_summary": "",
+                "page_number": page_number,
+                "author": [],
+                "title": "",
+                "document_classification": "None",
+                "document_tags": metadata.get('tags', []),
+                "chunk_sequence": page_number,
+                "upload_date": current_time,
+                "version": version,
+                "public_workspace_id": public_workspace_id
+            }
+        elif is_group:
+            shared_group_ids = metadata.get('shared_group_ids', []) if metadata else []
+            chunk_document = {
+                "id": chunk_id,
+                "document_id": document_id,
+                "chunk_id": str(page_number),
+                "chunk_text": enhanced_chunk_text,
+                "embedding": embedding,
+                "file_name": file_name,
+                "chunk_keywords": [],
+                "chunk_summary": "",
+                "page_number": page_number,
+                "author": [],
+                "title": "",
+                "document_classification": "None",
+                "document_tags": metadata.get('tags', []),
+                "chunk_sequence": page_number,
+                "upload_date": current_time,
+                "version": version,
+                "group_id": group_id,
+                "shared_group_ids": shared_group_ids
+            }
+        else:
+            shared_user_ids = metadata.get('shared_user_ids', []) if metadata else []
+            chunk_document = {
+                "id": chunk_id,
+                "document_id": document_id,
+                "chunk_id": str(page_number),
+                "chunk_text": enhanced_chunk_text,
+                "embedding": embedding,
+                "file_name": file_name,
+                "chunk_keywords": [],
+                "chunk_summary": "",
+                "page_number": page_number,
+                "author": [],
+                "title": "",
+                "document_classification": "None",
+                "document_tags": metadata.get('tags', []),
+                "chunk_sequence": page_number,
+                "upload_date": current_time,
+                "version": version,
+                "user_id": user_id,
+                "shared_user_ids": shared_user_ids
+            }
+
+        chunk_documents.append(chunk_document)
+
+    # Batch upload to AI Search
+    try:
+        if is_public_workspace:
+            search_client = CLIENTS["search_client_public"]
+        elif is_group:
+            search_client = CLIENTS["search_client_group"]
+        else:
+            search_client = CLIENTS["search_client_user"]
+
+        # Upload in sub-batches of 32 to avoid request size limits
+        upload_batch_size = 32
+        for i in range(0, len(chunk_documents), upload_batch_size):
+            sub_batch = chunk_documents[i:i + upload_batch_size]
+            search_client.upload_documents(documents=sub_batch)
+
+    except Exception as e:
+        log_event(f"[save_chunks_batch] Error uploading batch to AI Search for document {document_id}: {e}", level=logging.ERROR)
+        raise
+
+    return total_token_usage
 
 def get_document_metadata_for_citations(document_id, user_id=None, group_id=None, public_workspace_id=None):
     """
@@ -2429,7 +2614,7 @@ def detect_doc_type(document_id, user_id=None):
             pass
         else:
             return "personal", doc_item['user_id']
-    except:
+    except Exception as ex:
         pass
 
     try:
@@ -2438,7 +2623,7 @@ def detect_doc_type(document_id, user_id=None):
             partition_key=document_id
         )
         return "group", group_doc_item['group_id']
-    except:
+    except Exception as ex:
         pass
 
     try:
@@ -2447,7 +2632,7 @@ def detect_doc_type(document_id, user_id=None):
             partition_key=document_id
         )
         return "public", public_doc_item['public_workspace_id']
-    except:
+    except Exception as ex:
         pass
 
     return None
@@ -3357,7 +3542,6 @@ Format your response as JSON with these keys:
         
     except Exception as e:
         print(f"Error in vision analysis for {document_id}: {str(e)}")
-        import traceback
         traceback.print_exc()
         return None
 
@@ -3420,7 +3604,8 @@ def process_txt(document_id, user_id, temp_file_path, original_filename, enable_
     total_chunks_saved = 0
     total_embedding_tokens = 0
     embedding_model_name = None
-    target_words_per_chunk = 400
+    chunk_config = get_chunk_size_config(get_settings())
+    target_words_per_chunk = chunk_config.get('txt', {}).get('value', 400)
 
     if enable_enhanced_citations:
         args = {
@@ -3494,7 +3679,8 @@ def process_xml(document_id, user_id, temp_file_path, original_filename, enable_
     total_embedding_tokens = 0
     embedding_model_name = None
     # Character-based chunking for XML structure preservation
-    max_chunk_size_chars = 4000
+    chunk_config = get_chunk_size_config(get_settings())
+    max_chunk_size_chars = chunk_config.get('xml', {}).get('value', 4000)
 
     if enable_enhanced_citations:
         args = {
@@ -3589,7 +3775,8 @@ def process_yaml(document_id, user_id, temp_file_path, original_filename, enable
     total_embedding_tokens = 0
     embedding_model_name = None
     # Character-based chunking for YAML structure preservation
-    max_chunk_size_chars = 4000
+    chunk_config = get_chunk_size_config(get_settings())
+    max_chunk_size_chars = chunk_config.get('yaml', {}).get('value', 4000)
 
     if enable_enhanced_citations:
         args = {
@@ -3683,7 +3870,8 @@ def process_log(document_id, user_id, temp_file_path, original_filename, enable_
     total_chunks_saved = 0
     total_embedding_tokens = 0
     embedding_model_name = None
-    target_words_per_chunk = 1000  # Word-based chunking for better semantic grouping
+    chunk_config = get_chunk_size_config(get_settings())
+    target_words_per_chunk = chunk_config.get('log', {}).get('value', 1000)  # Word-based chunking for better semantic grouping
 
     if enable_enhanced_citations:
         args = {
@@ -3781,7 +3969,8 @@ def process_doc(document_id, user_id, temp_file_path, original_filename, enable_
 
     update_callback(status=f"Processing {original_filename.split('.')[-1].upper()} file...")
     total_chunks_saved = 0
-    target_words_per_chunk = 400  # Consistent with other text-based chunking
+    chunk_config = get_chunk_size_config(get_settings())
+    target_words_per_chunk = chunk_config.get('doc', {}).get('value', 400)  # Consistent with other text-based chunking
 
     if enable_enhanced_citations:
         args = {
@@ -3870,8 +4059,9 @@ def process_xml(document_id, user_id, temp_file_path, original_filename, enable_
 
     update_callback(status="Processing XML file...")
     total_chunks_saved = 0
-    # Character-based chunking for XML structure preservation
-    max_chunk_size_chars = 4000
+    # Character-based chunking for XML structure preservation, capped by embedding context
+    chunk_config = get_chunk_size_config(get_settings())
+    max_chunk_size_chars = chunk_config.get('xml', {}).get('value', 4000)
 
     if enable_enhanced_citations:
         args = {
@@ -3957,8 +4147,9 @@ def process_yaml(document_id, user_id, temp_file_path, original_filename, enable
 
     update_callback(status="Processing YAML file...")
     total_chunks_saved = 0
-    # Character-based chunking for YAML structure preservation
-    max_chunk_size_chars = 4000
+    # Character-based chunking for YAML structure preservation, capped by embedding context
+    chunk_config = get_chunk_size_config(get_settings())
+    max_chunk_size_chars = chunk_config.get('yaml', {}).get('value', 4000)
 
     if enable_enhanced_citations:
         args = {
@@ -4221,8 +4412,9 @@ def process_html(document_id, user_id, temp_file_path, original_filename, enable
     total_chunks_saved = 0
     total_embedding_tokens = 0
     embedding_model_name = None
-    target_chunk_words = 1200 # Target size based on requirement
-    min_chunk_words = 600 # Minimum size based on requirement
+    chunk_config = get_chunk_size_config(get_settings())
+    target_chunk_words = chunk_config.get('html', {}).get('value', 1200) # Target size based on requirement
+    min_chunk_words = max(1, int(target_chunk_words * 0.5)) # Minimum size based on requirement
 
     if enable_enhanced_citations:
         args = {
@@ -4351,8 +4543,9 @@ def process_md(document_id, user_id, temp_file_path, original_filename, enable_e
     total_chunks_saved = 0
     total_embedding_tokens = 0
     embedding_model_name = None
-    target_chunk_words = 1200 # Target size based on requirement
-    min_chunk_words = 600 # Minimum size based on requirement
+    chunk_config = get_chunk_size_config(get_settings())
+    target_chunk_words = chunk_config.get('md', {}).get('value', 1200) # Target size based on requirement
+    min_chunk_words = max(1, int(target_chunk_words * 0.5)) # Minimum size based on requirement
 
     if enable_enhanced_citations:
         args = {
@@ -4487,8 +4680,9 @@ def process_json(document_id, user_id, temp_file_path, original_filename, enable
     total_chunks_saved = 0
     total_embedding_tokens = 0
     embedding_model_name = None
+    chunk_config = get_chunk_size_config(get_settings())
     # Reflects character count limit for the splitter
-    max_chunk_size_chars = 4000 # As per original requirement
+    max_chunk_size_chars = chunk_config.get('json', {}).get('value', 4000)
 
     if enable_enhanced_citations:
         args = {
@@ -4623,7 +4817,10 @@ def process_single_tabular_sheet(df, document_id, user_id, file_name, update_cal
     total_chunks_saved = 0
     total_embedding_tokens = 0
     embedding_model_name = None
-    target_chunk_size_chars = 800 # Requirement: "800 size chunk" (assuming characters)
+    chunk_config = get_chunk_size_config(get_settings())
+    _, ext = os.path.splitext(file_name.lower())
+    config_key = 'csv' if ext == '.csv' else 'excel'
+    target_chunk_size_chars = chunk_config.get(config_key, {}).get('value', 800) # Requirement: "800 size chunk" (assuming characters)
 
     if df.empty:
         print(f"Skipping empty sheet/file: {file_name}")
@@ -4669,37 +4866,30 @@ def process_single_tabular_sheet(df, document_id, user_id, file_name, update_cal
     # Consider accumulating page count in the caller if needed.
     update_callback(number_of_pages=num_chunks_final)
 
-    # Save chunks, prepending the header to each
+    # Save chunks, prepending the header to each — use batch processing for speed
+    all_chunks = []
     for idx, chunk_rows_content in enumerate(final_chunks_content, start=1):
-        # Prepend header - header length does not count towards chunk size limit
         chunk_with_header = header_string + chunk_rows_content
-
-        update_callback(
-            current_file_chunk=idx,
-            status=f"Saving chunk {idx}/{num_chunks_final} from {file_name}..."
-        )
-
-        args = {
+        all_chunks.append({
             "page_text_content": chunk_with_header,
             "page_number": idx,
-            "file_name": file_name,
-            "user_id": user_id,
-            "document_id": document_id
-        }
+            "file_name": file_name
+        })
 
-        if is_public_workspace:
-            args["public_workspace_id"] = public_workspace_id
-        elif is_group:
-            args["group_id"] = group_id
+    if all_chunks:
+        update_callback(
+            current_file_chunk=1,
+            status=f"Batch processing {num_chunks_final} chunks from {file_name}..."
+        )
 
-        token_usage = save_chunks(**args)
-        total_chunks_saved += 1
-        
-        # Accumulate embedding tokens
-        if token_usage:
-            total_embedding_tokens += token_usage.get('total_tokens', 0)
-            if not embedding_model_name:
-                embedding_model_name = token_usage.get('model_deployment_name')
+        batch_token_usage = save_chunks_batch(
+            all_chunks, user_id, document_id,
+            group_id=group_id, public_workspace_id=public_workspace_id
+        )
+        total_chunks_saved = len(all_chunks)
+        if batch_token_usage:
+            total_embedding_tokens = batch_token_usage.get('total_tokens', 0)
+            embedding_model_name = batch_token_usage.get('model_deployment_name')
 
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
@@ -4729,63 +4919,93 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
             args["group_id"] = group_id
 
         upload_to_blob(**args)
+        update_callback(enhanced_citations=True, status=f"Enhanced citations enabled for {file_ext}")
 
-    try:
-        if file_ext == '.csv':
-            # Process CSV
-             # Read CSV, attempt to infer header, keep data as string initially
-            df = pandas.read_csv(
-                temp_file_path, 
-                keep_default_na=False, 
-                dtype=str
-            )
-            args = {
-                "df": df,
-                "document_id": document_id,
-                "user_id": user_id,
-                "file_name": original_filename,
-                "update_callback": update_callback
-            }
+    # When enhanced citations is on, index a single schema summary chunk
+    # instead of row-by-row chunking. The tabular processing plugin handles analysis.
+    if enable_enhanced_citations:
+        try:
+            if file_ext == '.csv':
+                df_preview = pandas.read_csv(temp_file_path, keep_default_na=False, dtype=str, nrows=5)
+                full_df = pandas.read_csv(temp_file_path, keep_default_na=False, dtype=str)
+                row_count = len(full_df)
+                columns = [str(column) for column in df_preview.columns]
+                preview_rows = df_preview.head(5).to_string(index=False)
 
-            if is_public_workspace:
-                args["public_workspace_id"] = public_workspace_id
-            elif is_group:
-                args["group_id"] = group_id
+                schema_summary = (
+                    f"Tabular data file: {original_filename}\n"
+                    f"Columns ({len(columns)}): {', '.join(columns)}\n"
+                    f"Total rows: {row_count}\n"
+                    f"Preview (first 5 rows):\n{preview_rows}\n\n"
+                    f"This file is available for detailed analysis via the Tabular Processing plugin."
+                )
+            elif file_ext in ('.xlsx', '.xls', '.xlsm'):
+                engine = 'openpyxl' if file_ext in ('.xlsx', '.xlsm') else 'xlrd'
+                excel_file = pandas.ExcelFile(temp_file_path, engine=engine)
+                workbook_sections = []
 
-            result = process_single_tabular_sheet(**args)
-            if isinstance(result, tuple) and len(result) == 3:
-                chunks, tokens, model = result
-                total_chunks_saved = chunks
-                total_embedding_tokens += tokens
-                if not embedding_model_name:
-                    embedding_model_name = model
+                for sheet_name in excel_file.sheet_names:
+                    df_preview = excel_file.parse(sheet_name, keep_default_na=False, dtype=str, nrows=3)
+                    full_df = excel_file.parse(sheet_name, keep_default_na=False, dtype=str)
+                    columns = [str(column) for column in df_preview.columns]
+                    preview_rows = df_preview.head(3).to_string(index=False)
+                    workbook_sections.append(
+                        f"Sheet: {sheet_name}\n"
+                        f"Columns ({len(columns)}): {', '.join(columns)}\n"
+                        f"Total rows: {len(full_df)}\n"
+                        f"Preview (first 3 rows):\n{preview_rows}"
+                    )
+
+                schema_summary = (
+                    f"Tabular workbook: {original_filename}\n"
+                    f"Sheets ({len(excel_file.sheet_names)}): {', '.join(excel_file.sheet_names)}\n\n"
+                    + "\n\n".join(workbook_sections)
+                    + "\n\nThis workbook is available for detailed analysis via the Tabular Processing plugin."
+                )
             else:
-                total_chunks_saved = result
+                raise ValueError(f"Unsupported tabular file type: {file_ext}")
 
-        elif file_ext in ('.xlsx', '.xls', '.xlsm'):
-            # Process Excel (potentially multiple sheets)
-            excel_file = pandas.ExcelFile(
-                temp_file_path, 
-                engine='openpyxl' if file_ext in ('.xlsx', '.xlsm') else 'xlrd'
-            )
-            sheet_names = excel_file.sheet_names
-            base_name, ext = os.path.splitext(original_filename)
+            update_callback(number_of_pages=1, status=f"Indexing schema summary for {original_filename}...")
 
-            accumulated_total_chunks = 0
-            for sheet_name in sheet_names:
-                update_callback(status=f"Processing sheet '{sheet_name}'...")
-                # Read specific sheet, get values (not formulas), keep data as string
-                # Note: pandas typically reads values, not formulas by default.
-                df = excel_file.parse(sheet_name, keep_default_na=False, dtype=str)
+            save_args = {
+                "page_text_content": schema_summary,
+                "page_number": 1,
+                "file_name": original_filename,
+                "user_id": user_id,
+                "document_id": document_id
+            }
+            if is_public_workspace:
+                save_args["public_workspace_id"] = public_workspace_id
+            elif is_group:
+                save_args["group_id"] = group_id
 
-                # Create effective filename for this sheet
-                effective_filename = f"{base_name}-{sheet_name}{ext}" if len(sheet_names) > 1 else original_filename
+            token_usage = save_chunks(**save_args)
+            total_chunks_saved = 1
+            if token_usage:
+                total_embedding_tokens = token_usage.get('total_tokens', 0)
+                embedding_model_name = token_usage.get('model_deployment_name')
 
+            # Don't return here — fall through to metadata extraction below
+        except Exception as e:
+            log_event(f"[process_tabular] Error creating schema summary, falling back to row-by-row: {e}", level=logging.WARNING)
+            # Fall through to existing row-by-row processing
+
+    # Only do row-by-row chunking if schema-only didn't produce chunks
+    if total_chunks_saved == 0:
+        try:
+            if file_ext == '.csv':
+                # Process CSV
+                # Read CSV, attempt to infer header, keep data as string initially
+                df = pandas.read_csv(
+                    temp_file_path,
+                    keep_default_na=False,
+                    dtype=str
+                )
                 args = {
                     "df": df,
                     "document_id": document_id,
                     "user_id": user_id,
-                    "file_name": effective_filename,
+                    "file_name": original_filename,
                     "update_callback": update_callback
                 }
 
@@ -4797,21 +5017,62 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
                 result = process_single_tabular_sheet(**args)
                 if isinstance(result, tuple) and len(result) == 3:
                     chunks, tokens, model = result
-                    accumulated_total_chunks += chunks
+                    total_chunks_saved = chunks
                     total_embedding_tokens += tokens
                     if not embedding_model_name:
                         embedding_model_name = model
                 else:
-                    accumulated_total_chunks += result
+                    total_chunks_saved = result
 
-            total_chunks_saved = accumulated_total_chunks # Total across all sheets
+            elif file_ext in ('.xlsx', '.xls', '.xlsm'):
+                # Process Excel (potentially multiple sheets)
+                excel_file = pandas.ExcelFile(
+                    temp_file_path,
+                    engine='openpyxl' if file_ext in ('.xlsx', '.xlsm') else 'xlrd'
+                )
+                sheet_names = excel_file.sheet_names
+                base_name, ext = os.path.splitext(original_filename)
 
+                accumulated_total_chunks = 0
+                for sheet_name in sheet_names:
+                    update_callback(status=f"Processing sheet '{sheet_name}'...")
+                    # Read specific sheet, get values (not formulas), keep data as string
+                    # Note: pandas typically reads values, not formulas by default.
+                    df = excel_file.parse(sheet_name, keep_default_na=False, dtype=str)
 
-    except pandas.errors.EmptyDataError:
-        print(f"Warning: Tabular file or sheet is empty: {original_filename}")
-        update_callback(status=f"Warning: File/sheet is empty - {original_filename}", number_of_pages=0)
-    except Exception as e:
-        raise Exception(f"Failed processing Tabular file {original_filename}: {e}")
+                    # Create effective filename for this sheet
+                    effective_filename = f"{base_name}-{sheet_name}{ext}" if len(sheet_names) > 1 else original_filename
+
+                    args = {
+                        "df": df,
+                        "document_id": document_id,
+                        "user_id": user_id,
+                        "file_name": effective_filename,
+                        "update_callback": update_callback
+                    }
+
+                    if is_public_workspace:
+                        args["public_workspace_id"] = public_workspace_id
+                    elif is_group:
+                        args["group_id"] = group_id
+
+                    result = process_single_tabular_sheet(**args)
+                    if isinstance(result, tuple) and len(result) == 3:
+                        chunks, tokens, model = result
+                        accumulated_total_chunks += chunks
+                        total_embedding_tokens += tokens
+                        if not embedding_model_name:
+                            embedding_model_name = model
+                    else:
+                        accumulated_total_chunks += result
+
+                total_chunks_saved = accumulated_total_chunks # Total across all sheets
+
+        except pandas.errors.EmptyDataError:
+            log_event(f"[process_tabular] Warning: Tabular file or sheet is empty: {original_filename}", level=logging.WARNING)
+            update_callback(status=f"Warning: File/sheet is empty - {original_filename}", number_of_pages=0)
+        except Exception as e:
+            raise Exception(f"Failed processing Tabular file {original_filename}: {e}")
 
     # Extract metadata if enabled and chunks were processed
     settings = get_settings()
@@ -4887,6 +5148,7 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
 
     # --- DI Processing Logic ---
     settings = get_settings() # Assuming get_settings is accessible
+    chunk_config = get_chunk_size_config(settings)
     di_limit_bytes = 500 * 1024 * 1024
     di_page_limit = 2000
     file_size = os.path.getsize(temp_file_path)
@@ -5003,7 +5265,6 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
                         
                 except Exception as e:
                     print(f"Warning: Error in vision analysis for {document_id}: {str(e)}")
-                    import traceback
                     traceback.print_exc()
                     # Don't fail the whole process, just update status
                     update_callback(status=f"Processing continues (vision analysis warning)")
@@ -5013,14 +5274,44 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
         if is_word:
             update_callback(status=f"Chunking Word content from {chunk_effective_filename}...")
             try:
-                final_chunks_to_save = chunk_word_file_into_pages(di_pages=di_extracted_pages)
+                word_key = 'docx' if file_ext == '.docx' else 'doc'
+                target_word_chunk = chunk_config.get(word_key, {}).get('value', WORD_CHUNK_SIZE)
+                final_chunks_to_save = chunk_word_file_into_pages(
+                    di_pages=di_extracted_pages,
+                    chunk_size=target_word_chunk
+                )
                 num_final_chunks = len(final_chunks_to_save)
                 # Update number_of_pages again for Word to reflect final chunk count
                 update_callback(number_of_pages=num_final_chunks, status=f"Created {num_final_chunks} content chunks for {chunk_effective_filename}.")
             except Exception as e:
                  raise Exception(f"Error chunking Word content for {chunk_effective_filename}: {str(e)}")
         elif is_pdf or is_ppt:
-            final_chunks_to_save = di_extracted_pages # Use DI pages/slides directly
+            target_key = 'pdf' if is_pdf else 'pptx'
+            try:
+                target_size = int(chunk_config.get(target_key, {}).get('value', 1))
+            except Exception:
+                target_size = 1
+            target_size = max(1, target_size)
+
+            if target_size == 1:
+                final_chunks_to_save = di_extracted_pages # Use DI pages/slides directly
+            else:
+                final_chunks_to_save = []
+                for start in range(0, len(di_extracted_pages), target_size):
+                    slice_pages = di_extracted_pages[start:start + target_size]
+                    combined_content = "\n\n".join([page.get('content', '') or '' for page in slice_pages]).strip()
+                    if not combined_content:
+                        continue
+                    first_page_number = slice_pages[0].get('page_number', start + 1)
+                    final_chunks_to_save.append({
+                        "page_number": first_page_number,
+                        "content": combined_content
+                    })
+
+                update_callback(
+                    number_of_pages=len(final_chunks_to_save),
+                    status=f"Grouped {len(final_chunks_to_save)} chunk(s) for {chunk_effective_filename} using {target_size} page(s)/slide(s) per chunk."
+                )
         elif is_image:
             if di_extracted_pages:
                  if 'page_number' not in di_extracted_pages[0]: di_extracted_pages[0]['page_number'] = 1
@@ -5419,7 +5710,8 @@ def process_audio_document(
     # 5) stitch and save transcript chunks
     full_text = ' '.join(all_phrases).strip()
     words = full_text.split()
-    chunk_size = 400
+    chunk_settings = get_chunk_size_config(settings)
+    chunk_size = chunk_settings.get('transcript', {}).get('value', 400)
     total_pages = max(1, math.ceil(len(words) / chunk_size))
     print(f"Creating {total_pages} transcript pages")
 

@@ -4,10 +4,46 @@ import { showToast } from './chat-toast.js';
 
 let reasoningEffortSettings = {}; // Per-model settings: {modelName: 'low', ...}
 
+function setTooltipText(element, text, options = {}) {
+    if (!element) {
+        return;
+    }
+
+    if (typeof bootstrap === 'undefined' || !bootstrap.Tooltip) {
+        element.title = text;
+        return;
+    }
+
+    element.setAttribute('data-bs-toggle', 'tooltip');
+    element.setAttribute('data-bs-title', text);
+    element.setAttribute('data-bs-original-title', text);
+    element.removeAttribute('title');
+
+    if (options.placement) {
+        element.setAttribute('data-bs-placement', options.placement);
+    }
+
+    if (options.trigger) {
+        element.setAttribute('data-bs-trigger', options.trigger);
+    }
+
+    const tooltip = bootstrap.Tooltip.getOrCreateInstance(element, options);
+    if (typeof tooltip.setContent === 'function') {
+        tooltip.setContent({ '.tooltip-inner': text });
+    }
+}
+
+function applyReasoningSettings(settings = {}) {
+    console.log('Loaded reasoning settings:', settings);
+    reasoningEffortSettings = settings.reasoningEffortSettings || {};
+    console.log('Reasoning effort settings:', reasoningEffortSettings);
+    syncReasoningStateForCurrentModel();
+}
+
 /**
  * Initialize the reasoning effort toggle button
  */
-export function initializeReasoningToggle() {
+export function initializeReasoningToggle(initialSettings = null) {
     const reasoningToggleBtn = document.getElementById('reasoning-toggle-btn');
     if (!reasoningToggleBtn) {
         console.warn('Reasoning toggle button not found');
@@ -17,16 +53,16 @@ export function initializeReasoningToggle() {
     console.log('Initializing reasoning toggle...');
     
     // Load initial state from user settings
-    loadUserSettings().then(settings => {
-        console.log('Loaded reasoning settings:', settings);
-        reasoningEffortSettings = settings.reasoningEffortSettings || {};
-        console.log('Reasoning effort settings:', reasoningEffortSettings);
-        
-        // Update icon based on current model
-        updateReasoningIconForCurrentModel();
-    }).catch(error => {
-        console.error('Error loading reasoning settings:', error);
-    });
+    if (initialSettings) {
+        applyReasoningSettings(initialSettings);
+    } else {
+        loadUserSettings().then(settings => {
+            applyReasoningSettings(settings);
+        }).catch(error => {
+            console.error('Error loading reasoning settings:', error);
+            syncReasoningStateForCurrentModel();
+        });
+    }
     
     // Handle toggle click - show slider modal
     reasoningToggleBtn.addEventListener('click', () => {
@@ -37,8 +73,7 @@ export function initializeReasoningToggle() {
     const modelSelect = document.getElementById('model-select');
     if (modelSelect) {
         modelSelect.addEventListener('change', () => {
-            updateReasoningIconForCurrentModel();
-            updateReasoningButtonVisibility();
+            syncReasoningStateForCurrentModel();
         });
     }
     
@@ -60,6 +95,11 @@ export function initializeReasoningToggle() {
         observer.observe(enableAgentsBtn, { attributes: true, attributeFilter: ['class'] });
     }
     
+    updateReasoningButtonVisibility();
+}
+
+export function syncReasoningStateForCurrentModel() {
+    updateReasoningIconForCurrentModel();
     updateReasoningButtonVisibility();
 }
 
@@ -108,7 +148,9 @@ function getCurrentModelName() {
     if (!modelSelect || !modelSelect.value) {
         return null;
     }
-    return modelSelect.value;
+
+    const selectedOption = modelSelect.options[modelSelect.selectedIndex];
+    return selectedOption?.dataset?.modelId || selectedOption?.dataset?.deploymentName || modelSelect.value;
 }
 
 /**
@@ -230,7 +272,7 @@ export function updateReasoningIcon(level) {
         'medium': 'Medium reasoning effort',
         'high': 'High reasoning effort'
     };
-    reasoningToggleBtn.title = labelMap[level] || 'Configure reasoning effort';
+    setTooltipText(reasoningToggleBtn, labelMap[level] || 'Configure reasoning effort');
 }
 
 /**
@@ -292,7 +334,6 @@ export function showReasoningSlider() {
         const levelDiv = document.createElement('div');
         levelDiv.className = `reasoning-level ${isActive ? 'active' : ''} ${!isSupported ? 'disabled' : ''}`;
         levelDiv.dataset.level = level;
-        levelDiv.title = levelDescriptions[level];
         
         levelDiv.innerHTML = `
             <div class="reasoning-level-icon">
@@ -300,6 +341,8 @@ export function showReasoningSlider() {
             </div>
             <div class="reasoning-level-label">${levelLabels[level]}</div>
         `;
+
+        setTooltipText(levelDiv, levelDescriptions[level], { placement: 'right' });
         
         if (isSupported) {
             levelDiv.addEventListener('click', () => {

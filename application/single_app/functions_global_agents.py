@@ -111,6 +111,9 @@ def get_global_agents():
             agent.setdefault('is_global', True)
             agent.setdefault('is_group', False)
             agent.setdefault('agent_type', 'local')
+            agent.setdefault('model_endpoint_id', '')
+            agent.setdefault('model_id', '')
+            agent.setdefault('model_provider', '')
             # Remove empty reasoning_effort to prevent validation errors
             if agent.get('reasoning_effort') == '':
                 agent.pop('reasoning_effort', None)
@@ -147,6 +150,9 @@ def get_global_agent(agent_id):
         agent.setdefault('is_global', True)
         agent.setdefault('is_group', False)
         agent.setdefault('agent_type', 'local')
+        agent.setdefault('model_endpoint_id', '')
+        agent.setdefault('model_id', '')
+        agent.setdefault('model_provider', '')
         # Remove empty reasoning_effort to prevent validation errors
         if agent.get('reasoning_effort') == '':
             agent.pop('reasoning_effort', None)
@@ -163,25 +169,49 @@ def get_global_agent(agent_id):
         return None
 
 
-def save_global_agent(agent_data):
+def save_global_agent(agent_data, user_id=None):
     """
     Save or update a global agent.
     
     Args:
         agent_data (dict): Agent data to save
+        user_id (str, optional): The user ID of the person performing the action
         
     Returns:
         dict: Saved agent data or None if failed
     """
     try:
-        user_id = get_current_user_id()
+        if user_id is None:
+            user_id = get_current_user_id()
         cleaned_agent = sanitize_agent_payload(agent_data)
         if 'id' not in cleaned_agent:
             cleaned_agent['id'] = str(uuid.uuid4())
         cleaned_agent['is_global'] = True
         cleaned_agent['is_group'] = False
-        cleaned_agent['created_at'] = datetime.utcnow().isoformat()
-        cleaned_agent['updated_at'] = datetime.utcnow().isoformat()
+        now = datetime.utcnow().isoformat()
+
+        # Check if this is a new agent or an update to preserve created_by/created_at
+        existing_agent = None
+        try:
+            existing_agent = cosmos_global_agents_container.read_item(
+                item=cleaned_agent['id'],
+                partition_key=cleaned_agent['id']
+            )
+        except Exception:
+            pass
+
+        if existing_agent:
+            cleaned_agent['created_by'] = existing_agent.get('created_by', user_id)
+            cleaned_agent['created_at'] = existing_agent.get('created_at', now)
+        else:
+            cleaned_agent['created_by'] = user_id
+            cleaned_agent['created_at'] = now
+        cleaned_agent['modified_by'] = user_id
+        cleaned_agent['modified_at'] = now
+        cleaned_agent['updated_at'] = now
+        cleaned_agent.setdefault('model_endpoint_id', '')
+        cleaned_agent.setdefault('model_id', '')
+        cleaned_agent.setdefault('model_provider', '')
         log_event(
             "Saving global agent.",
             extra={"agent_name": cleaned_agent.get('name', 'Unknown')},
@@ -189,13 +219,13 @@ def save_global_agent(agent_data):
         print(f"Saving global agent: {cleaned_agent.get('name', 'Unknown')}")
         
         # Use the new helper to store sensitive agent keys in Key Vault
-        agent_data = keyvault_agent_save_helper(agent_data, agent_data['id'], scope="global")
-        if agent_data.get('max_completion_tokens') is None:
-            agent_data['max_completion_tokens'] = -1  # Default value
+        cleaned_agent = keyvault_agent_save_helper(cleaned_agent, cleaned_agent['id'], scope="global")
+        if cleaned_agent.get('max_completion_tokens') is None:
+            cleaned_agent['max_completion_tokens'] = -1  # Default value
         
         # Remove empty reasoning_effort to avoid schema validation errors
-        if agent_data.get('reasoning_effort') == '':
-            agent_data.pop('reasoning_effort', None)
+        if cleaned_agent.get('reasoning_effort') == '':
+            cleaned_agent.pop('reasoning_effort', None)
 
         result = cosmos_global_agents_container.upsert_item(body=cleaned_agent)
         log_event(

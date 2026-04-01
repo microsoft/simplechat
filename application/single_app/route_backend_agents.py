@@ -21,10 +21,102 @@ from functions_group_agents import (
 from functions_debug import debug_print
 from functions_authentication import *
 from functions_appinsights import log_event
+from functions_group import get_group_model_endpoints, require_active_group
 from json_schema_validation import validate_agent
 from swagger_wrapper import swagger_route, get_auth_security
+from functions_activity_logging import (
+    log_agent_creation,
+    log_agent_update,
+    log_agent_deletion,
+)
 
 bpa = Blueprint('admin_agents', __name__)
+
+
+def _build_user_selectable_agents(user_id, requested_agent=None):
+    """Build the set of agents the current user is allowed to select."""
+    settings = get_settings()
+    requested_agent = requested_agent or {}
+    candidates = []
+
+    for agent in get_personal_agents(user_id):
+        candidate = dict(agent)
+        candidate['is_global'] = False
+        candidate['is_group'] = False
+        candidate['group_id'] = None
+        candidate['group_name'] = None
+        candidates.append(candidate)
+
+    merge_global = settings.get('per_user_semantic_kernel', False) and settings.get('merge_global_semantic_kernel_with_workspace', False)
+    if merge_global or requested_agent.get('is_global'):
+        for agent in get_global_agents():
+            candidate = dict(agent)
+            candidate['is_global'] = True
+            candidate['is_group'] = False
+            candidate['group_id'] = None
+            candidate['group_name'] = None
+            candidates.append(candidate)
+
+    requested_group_id = str(requested_agent.get('group_id') or '').strip()
+    if requested_agent.get('is_group') and not requested_group_id:
+        try:
+            requested_group_id = require_active_group(user_id)
+        except Exception:
+            requested_group_id = ''
+
+    if requested_group_id:
+        requested_group_name = requested_agent.get('group_name')
+        for agent in get_group_agents(requested_group_id):
+            candidate = dict(agent)
+            candidate['is_global'] = False
+            candidate['is_group'] = True
+            candidate['group_id'] = requested_group_id
+            if requested_group_name and not candidate.get('group_name'):
+                candidate['group_name'] = requested_group_name
+            candidates.append(candidate)
+
+    return candidates
+
+
+def _find_matching_user_selected_agent(candidates, requested_agent):
+    """Return the canonical agent record matching the requested selection payload."""
+    if not isinstance(requested_agent, dict):
+        return None
+
+    requested_name = str(requested_agent.get('name') or '').strip()
+    requested_id = str(requested_agent.get('id') or '').strip()
+    requested_is_global = bool(requested_agent.get('is_global', False))
+    requested_is_group = bool(requested_agent.get('is_group', False))
+    requested_group_id = str(requested_agent.get('group_id') or '').strip()
+
+    def scope_matches(candidate):
+        candidate_is_global = bool(candidate.get('is_global', False))
+        candidate_is_group = bool(candidate.get('is_group', False))
+        if requested_is_group:
+            if not candidate_is_group:
+                return False
+            if requested_group_id:
+                return str(candidate.get('group_id') or '') == requested_group_id
+            return True
+        if requested_is_global:
+            return candidate_is_global and not candidate_is_group
+        return not candidate_is_global and not candidate_is_group
+
+    if requested_id:
+        match = next(
+            (candidate for candidate in candidates if str(candidate.get('id') or '') == requested_id and scope_matches(candidate)),
+            None,
+        )
+        if match:
+            return match
+
+    if requested_name:
+        return next(
+            (candidate for candidate in candidates if candidate.get('name') == requested_name and scope_matches(candidate)),
+            None,
+        )
+
+    return None
 
 # === AGENT GUID GENERATION ENDPOINT ===
 @bpa.route('/api/agents/generate_id', methods=['GET'])
@@ -43,6 +135,9 @@ def generate_agent_id():
 )
 @login_required
 def get_user_agents():
+    settings = get_settings()
+    if not settings.get('allow_user_agents', False):
+        return jsonify([])
     user_id = get_current_user_id()
     # Ensure migration is complete (will migrate any remaining legacy data)
     ensure_migration_complete(user_id)
@@ -57,7 +152,6 @@ def get_user_agents():
         agent.setdefault('agent_type', 'local')
 
     # Check global/merge toggles
-    settings = get_settings()
     per_user = settings.get('per_user_semantic_kernel', False)
     merge_global = settings.get('merge_global_semantic_kernel_with_workspace', False)
     if per_user and merge_global:
@@ -98,7 +192,7 @@ def set_user_agents():
     agents = request.json if isinstance(request.json, list) else []
     settings = get_settings()
     # If custom endpoints are not allowed, strip deployment settings for endpoint, key, and api-revision
-    if not settings.get('allow_user_custom_agent_endpoints', False):
+    if not settings.get('allow_user_custom_endpoints', False):
         for agent in agents:
             # APIM fields
             for k in ['azure_agent_apim_gpt_endpoint', 'azure_agent_apim_gpt_subscription_key', 'azure_agent_apim_gpt_api_revision']:
@@ -147,6 +241,18 @@ def set_user_agents():
     for agent_name in agents_to_delete:
         delete_personal_agent(user_id, agent_name)
     
+    # Log individual agent activities
+    for agent in filtered_agents:
+        a_name = agent.get('name', '')
+        a_id = agent.get('id', '')
+        a_display = agent.get('display_name', a_name)
+        if a_name in current_agent_names:
+            log_agent_update(user_id=user_id, agent_id=a_id, agent_name=a_name, agent_display_name=a_display, scope='personal')
+        else:
+            log_agent_creation(user_id=user_id, agent_id=a_id, agent_name=a_name, agent_display_name=a_display, scope='personal')
+    for agent_name in agents_to_delete:
+        log_agent_deletion(user_id=user_id, agent_id=agent_name, agent_name=agent_name, scope='personal')
+
     log_event("User agents updated", extra={"user_id": user_id, "agents_count": len(filtered_agents)})
     return jsonify({'success': True})
 
@@ -175,6 +281,9 @@ def delete_user_agent(agent_name):
     # Delete from personal_agents container
     delete_personal_agent(user_id, agent_name)
     
+    # Log agent deletion activity
+    log_agent_deletion(user_id=user_id, agent_id=agent_to_delete.get('id', agent_name), agent_name=agent_name, scope='personal')
+
     # Check if there are any agents left and if they match global_selected_agent
     remaining_agents = get_personal_agents(user_id)
     if len(remaining_agents) > 0:
@@ -193,6 +302,7 @@ def delete_user_agent(agent_name):
 @login_required
 @user_required
 @enabled_required('enable_group_workspaces')
+@enabled_required('allow_group_agents')
 def get_group_agents_route():
     user_id = get_current_user_id()
     try:
@@ -218,6 +328,7 @@ def get_group_agents_route():
 @login_required
 @user_required
 @enabled_required('enable_group_workspaces')
+@enabled_required('allow_group_agents')
 def get_group_agent_route(agent_id):
     user_id = get_current_user_id()
     try:
@@ -245,6 +356,7 @@ def get_group_agent_route(agent_id):
 @login_required
 @user_required
 @enabled_required('enable_group_workspaces')
+@enabled_required('allow_group_agents')
 def create_group_agent_route():
     user_id = get_current_user_id()
     try:
@@ -266,15 +378,28 @@ def create_group_agent_route():
     except (ValueError, AgentPayloadError) as exc:
         return jsonify({'error': str(exc)}), 400
 
+    settings = get_settings()
+    if not settings.get('allow_group_custom_endpoints', False):
+        for key in [
+            'azure_agent_apim_gpt_endpoint',
+            'azure_agent_apim_gpt_subscription_key',
+            'azure_agent_apim_gpt_api_revision',
+            'azure_openai_gpt_endpoint',
+            'azure_openai_gpt_key',
+            'azure_openai_gpt_api_revision'
+        ]:
+            cleaned_payload.pop(key, None)
+
     for key in ('group_id', 'last_updated', 'is_global', 'is_group'):
         cleaned_payload.pop(key, None)
 
     try:
-        saved = save_group_agent(active_group, cleaned_payload)
+        saved = save_group_agent(active_group, cleaned_payload, user_id=user_id)
     except Exception as exc:
         debug_print('Failed to save group agent: %s', exc)
         return jsonify({'error': 'Unable to save agent'}), 500
 
+    log_agent_creation(user_id=user_id, agent_id=saved.get('id', ''), agent_name=saved.get('name', ''), agent_display_name=saved.get('display_name', ''), scope='group', group_id=active_group)
     return jsonify(saved), 201
 
 
@@ -283,6 +408,7 @@ def create_group_agent_route():
 @login_required
 @user_required
 @enabled_required('enable_group_workspaces')
+@enabled_required('allow_group_agents')
 def update_group_agent_route(agent_id):
     user_id = get_current_user_id()
     try:
@@ -324,12 +450,25 @@ def update_group_agent_route(agent_id):
     except AgentPayloadError as exc:
         return jsonify({'error': str(exc)}), 400
 
+    settings = get_settings()
+    if not settings.get('allow_group_custom_endpoints', False):
+        for key in [
+            'azure_agent_apim_gpt_endpoint',
+            'azure_agent_apim_gpt_subscription_key',
+            'azure_agent_apim_gpt_api_revision',
+            'azure_openai_gpt_endpoint',
+            'azure_openai_gpt_key',
+            'azure_openai_gpt_api_revision'
+        ]:
+            cleaned_payload.pop(key, None)
+
     try:
-        saved = save_group_agent(active_group, cleaned_payload)
+        saved = save_group_agent(active_group, cleaned_payload, user_id=user_id)
     except Exception as exc:
         debug_print('Failed to update group agent %s: %s', agent_id, exc)
         return jsonify({'error': 'Unable to update agent'}), 500
 
+    log_agent_update(user_id=user_id, agent_id=agent_id, agent_name=saved.get('name', ''), agent_display_name=saved.get('display_name', ''), scope='group', group_id=active_group)
     return jsonify(saved), 200
 
 
@@ -338,6 +477,7 @@ def update_group_agent_route(agent_id):
 @login_required
 @user_required
 @enabled_required('enable_group_workspaces')
+@enabled_required('allow_group_agents')
 def delete_group_agent_route(agent_id):
     user_id = get_current_user_id()
     try:
@@ -360,6 +500,7 @@ def delete_group_agent_route(agent_id):
 
     if not removed:
         return jsonify({'error': 'Agent not found'}), 404
+    log_agent_deletion(user_id=user_id, agent_id=agent_id, agent_name=agent_id, scope='group', group_id=active_group)
     return jsonify({'message': 'Agent deleted'}), 200
 
 # User endpoint to set selected agent (new model, not legacy default_agent)
@@ -374,23 +515,31 @@ def set_user_selected_agent():
     selected_agent = data.get('selected_agent')
     if not selected_agent:
         return jsonify({'error': 'selected_agent is required.'}), 400
+    if not isinstance(selected_agent, dict):
+        return jsonify({'error': 'selected_agent must be an object.'}), 400
+
+    candidates = _build_user_selectable_agents(user_id, requested_agent=selected_agent)
+    matched_agent = _find_matching_user_selected_agent(candidates, selected_agent)
+    if not matched_agent:
+        return jsonify({'error': 'Selected agent is not available for this user or scope.'}), 400
+
     user_settings = get_user_settings(user_id)
     settings_to_update = user_settings.get('settings', {})
-    agent_name = (selected_agent.get('name') or '').strip()
+    agent_name = (matched_agent.get('name') or '').strip()
     if not agent_name:
         return jsonify({'error': 'selected_agent.name is required.'}), 400
     agent = {
-        "id": selected_agent.get('id'),
+        "id": matched_agent.get('id'),
         "name": agent_name,
-        "display_name": selected_agent.get('display_name'),
-        "is_global": selected_agent.get('is_global', False),
-        "is_group": selected_agent.get('is_group', False),
-        "group_id": selected_agent.get('group_id'),
-        "group_name": selected_agent.get('group_name')
+        "display_name": matched_agent.get('display_name', matched_agent.get('name')),
+        "is_global": matched_agent.get('is_global', False),
+        "is_group": matched_agent.get('is_group', False),
+        "group_id": matched_agent.get('group_id'),
+        "group_name": matched_agent.get('group_name')
     }
     settings_to_update['selected_agent'] = agent
     update_user_settings(user_id, settings_to_update)
-    log_event("User selected agent set", extra={"user_id": user_id, "selected_agent": selected_agent})
+    log_event("User selected agent set", extra={"user_id": user_id, "selected_agent": agent})
     return jsonify({'success': True})
 
 @bpa.route('/api/user/agent/settings', methods=['GET'])
@@ -399,7 +548,23 @@ def set_user_selected_agent():
 )
 @login_required
 def get_global_agent_settings_for_users():
-    return get_global_agent_settings(include_admin_extras=False)
+    user_id = get_current_user_id()
+    return get_global_agent_settings(include_admin_extras=False, user_id=user_id)
+
+@bpa.route('/api/group/agent/settings', methods=['GET'])
+@swagger_route(
+    security=get_auth_security()
+)
+@login_required
+@user_required
+@enabled_required('enable_group_workspaces')
+def get_group_agent_settings():
+    user_id = get_current_user_id()
+    try:
+        group_id = require_active_group(user_id)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    return get_global_agent_settings(include_admin_extras=False, user_id=user_id, group_id=group_id)
 
 # === ADMIN AGENTS ENDPOINTS ===
 @bpa.route('/api/admin/agent/settings', methods=['GET'])
@@ -504,10 +669,11 @@ def add_agent():
                 cleaned_agent['id'] = '15b0c92a-741d-42ff-ba0b-367c7ee0c848'
         
         # Save to global agents container
-        result = save_global_agent(cleaned_agent)
+        result = save_global_agent(cleaned_agent, user_id=str(get_current_user_id()))
         if not result:
             return jsonify({'error': 'Failed to save agent.'}), 500
 
+        log_agent_creation(user_id=str(get_current_user_id()), agent_id=cleaned_agent.get('id', ''), agent_name=cleaned_agent.get('name', ''), agent_display_name=cleaned_agent.get('display_name', ''), scope='global')
         log_event("Agent added", extra={"action": "add", "agent": {k: v for k, v in cleaned_agent.items() if k != 'id'}, "user": str(get_current_user_id())})
         # --- HOT RELOAD TRIGGER ---
         setattr(builtins, "kernel_reload_needed", True)
@@ -615,10 +781,11 @@ def edit_agent(agent_name):
             return jsonify({'error': 'Agent not found.'}), 404
         
         # Save the updated agent
-        result = save_global_agent(cleaned_agent)
+        result = save_global_agent(cleaned_agent, user_id=str(get_current_user_id()))
         if not result:
             return jsonify({'error': 'Failed to save agent.'}), 500
 
+        log_agent_update(user_id=str(get_current_user_id()), agent_id=cleaned_agent.get('id', ''), agent_name=agent_name, agent_display_name=cleaned_agent.get('display_name', ''), scope='global')
         log_event(
             f"Agent {agent_name} edited",
             extra={
@@ -660,6 +827,7 @@ def delete_agent(agent_name):
         if not success:
             return jsonify({'error': 'Failed to delete agent.'}), 500
         
+        log_agent_deletion(user_id=str(get_current_user_id()), agent_id=agent_to_delete.get('id', ''), agent_name=agent_name, scope='global')
         log_event("Agent deleted", extra={"action": "delete", "agent_name": agent_name, "user": str(get_current_user_id())})
         # --- HOT RELOAD TRIGGER ---
         setattr(builtins, "kernel_reload_needed", True)
@@ -725,9 +893,50 @@ def orchestration_settings():
             log_event(f"Error updating orchestration settings: {e}", level=logging.ERROR, exceptionTraceback=True)
             return jsonify({'error': 'Failed to update orchestration settings.'}), 500
 
-def get_global_agent_settings(include_admin_extras=False):    
+def build_combined_model_endpoints(settings, user_id=None, group_id=None):
+    endpoints = []
+    global_endpoints = settings.get("model_endpoints", []) or []
+    for endpoint in global_endpoints:
+        enriched = dict(endpoint)
+        enriched["scope"] = "global"
+        endpoints.append(enriched)
+
+    allow_user_custom_endpoints = settings.get("allow_user_custom_endpoints", False)
+    allow_group_custom_endpoints = settings.get("allow_group_custom_endpoints", False)
+
+    if group_id:
+        if allow_group_custom_endpoints:
+            group_endpoints = get_group_model_endpoints(group_id)
+            for endpoint in group_endpoints:
+                enriched = dict(endpoint)
+                enriched["scope"] = "group"
+                enriched["group_id"] = group_id
+                endpoints.append(enriched)
+    elif user_id:
+        if allow_user_custom_endpoints:
+            user_settings = get_user_settings(user_id)
+            personal = user_settings.get("settings", {}).get("personal_model_endpoints", [])
+            for endpoint in personal:
+                enriched = dict(endpoint)
+                enriched["scope"] = "user"
+                endpoints.append(enriched)
+
+    return sanitize_model_endpoints_for_frontend(endpoints)
+
+
+def get_global_agent_settings(include_admin_extras=False, user_id=None, group_id=None):    
     settings = get_settings()
     agents = get_global_agents()
+    combined_endpoints = []
+    base_endpoints = settings.get("model_endpoints", []) or []
+    multi_flag = settings.get("enable_multi_model_endpoints", False)
+    allow_custom = settings.get("allow_user_custom_endpoints", False) or settings.get("allow_group_custom_endpoints", False)
+    should_include_endpoints = multi_flag or base_endpoints or allow_custom
+
+    if should_include_endpoints:
+        combined_endpoints = build_combined_model_endpoints(settings, user_id=user_id, group_id=group_id)
+
+    effective_multi_flag = bool(multi_flag or combined_endpoints)
     
     # Return selected_agent and any other relevant settings for admin UI
     return jsonify({
@@ -749,8 +958,16 @@ def get_global_agent_settings(include_admin_extras=False):
         "azure_apim_gpt_deployment": settings.get("azure_apim_gpt_deployment", ""),
         "gpt_model": settings.get("gpt_model", {}),
         "allow_user_agents": settings.get("allow_user_agents", False),
-        "allow_user_custom_agent_endpoints": settings.get("allow_user_custom_agent_endpoints", False),
+        "allow_user_custom_endpoints": settings.get("allow_user_custom_endpoints", False),
         "allow_group_agents": settings.get("allow_group_agents", False),
-        "allow_group_custom_agent_endpoints": settings.get("allow_group_custom_agent_endpoints", False),
+        "allow_group_custom_endpoints": settings.get("allow_group_custom_endpoints", False),
+        "allow_ai_foundry_agents": settings.get("allow_ai_foundry_agents", False),
+        "allow_group_ai_foundry_agents": settings.get("allow_group_ai_foundry_agents", False),
+        "allow_personal_ai_foundry_agents": settings.get("allow_personal_ai_foundry_agents", False),
+        "allow_new_foundry_agents": settings.get("allow_new_foundry_agents", False),
+        "allow_group_new_foundry_agents": settings.get("allow_group_new_foundry_agents", False),
+        "allow_personal_new_foundry_agents": settings.get("allow_personal_new_foundry_agents", False),
+        "enable_multi_model_endpoints": effective_multi_flag,
+        "model_endpoints": combined_endpoints,
     })
     

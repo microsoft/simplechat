@@ -439,7 +439,7 @@ def get_cached_search_results(
             logger.debug(f"Cache expired for key: {cache_key}")
             try:
                 cosmos_search_cache_container.delete_item(item=cache_key, partition_key=partition_key)
-            except:
+            except Exception as ex:
                 pass  # Already deleted by TTL or doesn't exist
             
     except CosmosResourceNotFoundError:
@@ -807,7 +807,7 @@ def get_cache_stats() -> Dict[str, Any]:
                 enable_cross_partition_query=True
             ))
             expired_count = result_expired[0] if result_expired else 0
-        except:
+        except Exception as ex:
             expired_count = 0  # Ignore errors in counting expired
         
         return {

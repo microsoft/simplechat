@@ -51,6 +51,9 @@ def get_personal_agents(user_id):
             cleaned_agent.setdefault('is_global', False)
             cleaned_agent.setdefault('is_group', False)
             cleaned_agent.setdefault('agent_type', 'local')
+            cleaned_agent.setdefault('model_endpoint_id', '')
+            cleaned_agent.setdefault('model_id', '')
+            cleaned_agent.setdefault('model_provider', '')
             # Remove empty reasoning_effort to prevent validation errors
             if cleaned_agent.get('reasoning_effort') == '':
                 cleaned_agent.pop('reasoning_effort', None)
@@ -89,6 +92,9 @@ def get_personal_agent(user_id, agent_id):
         cleaned_agent.setdefault('is_global', False)
         cleaned_agent.setdefault('is_group', False)
         cleaned_agent.setdefault('agent_type', 'local')
+        cleaned_agent.setdefault('model_endpoint_id', '')
+        cleaned_agent.setdefault('model_id', '')
+        cleaned_agent.setdefault('model_provider', '')
         # Remove empty reasoning_effort to prevent validation errors
         if cleaned_agent.get('reasoning_effort') == '':
             cleaned_agent.pop('reasoning_effort', None)
@@ -126,11 +132,38 @@ def save_personal_agent(user_id, agent_data):
             'azure_agent_apim_gpt_api_version'
         ]:
             cleaned_agent.setdefault(field, '')
+        cleaned_agent.setdefault('model_endpoint_id', '')
+        cleaned_agent.setdefault('model_id', '')
+        cleaned_agent.setdefault('model_provider', '')
         if 'id' not in cleaned_agent:
             cleaned_agent['id'] = str(f"{user_id}_{cleaned_agent.get('name', 'default')}")
-            
+
+        # Check if this is a new agent or an update to preserve created_by/created_at
+        existing_agent = None
+        try:
+            existing_agent = cosmos_personal_agents_container.read_item(
+                item=cleaned_agent['id'],
+                partition_key=user_id
+            )
+        except exceptions.CosmosResourceNotFoundError:
+            pass
+        except Exception:
+            pass
+
+        now = datetime.utcnow().isoformat()
+        if existing_agent:
+            # Preserve original creation tracking
+            cleaned_agent['created_by'] = existing_agent.get('created_by', user_id)
+            cleaned_agent['created_at'] = existing_agent.get('created_at', now)
+        else:
+            # New agent
+            cleaned_agent['created_by'] = user_id
+            cleaned_agent['created_at'] = now
+        cleaned_agent['modified_by'] = user_id
+        cleaned_agent['modified_at'] = now
+
         cleaned_agent['user_id'] = user_id
-        cleaned_agent['last_updated'] = datetime.utcnow().isoformat()
+        cleaned_agent['last_updated'] = now
         cleaned_agent['is_global'] = False
         cleaned_agent['is_group'] = False
         
@@ -146,6 +179,9 @@ def save_personal_agent(user_id, agent_data):
         cleaned_agent.setdefault('azure_agent_apim_gpt_deployment', '')
         cleaned_agent.setdefault('azure_agent_apim_gpt_api_version', '')
         cleaned_agent.setdefault('enable_agent_gpt_apim', False)
+        cleaned_agent.setdefault('model_endpoint_id', '')
+        cleaned_agent.setdefault('model_id', '')
+        cleaned_agent.setdefault('model_provider', '')
         cleaned_agent.setdefault('reasoning_effort', '')
         cleaned_agent.setdefault('actions_to_load', [])
         cleaned_agent.setdefault('other_settings', {})

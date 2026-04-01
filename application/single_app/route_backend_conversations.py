@@ -3,11 +3,39 @@
 from config import *
 from functions_authentication import *
 from functions_settings import *
-from functions_conversation_metadata import get_conversation_metadata
+from functions_conversation_metadata import get_conversation_metadata, update_conversation_with_metadata
+from functions_conversation_unread import clear_conversation_unread, normalize_conversation_unread_state
+from functions_notifications import mark_chat_response_notifications_read_for_conversation
 from flask import Response, request
 from functions_debug import debug_print
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_activity_logging import log_conversation_creation, log_conversation_deletion, log_conversation_archival
+from functions_thoughts import archive_thoughts_for_conversation, delete_thoughts_for_conversation
+
+def normalize_chat_type(conversation_item):
+    chat_type = conversation_item.get('chat_type')
+    if chat_type:
+        if chat_type == 'personal':
+            conversation_item['chat_type'] = 'personal_single_user'
+            return conversation_item['chat_type'], True
+        return chat_type, False
+
+    primary_context = next(
+        (ctx for ctx in conversation_item.get('context', []) if ctx.get('type') == 'primary'),
+        None
+    )
+    if primary_context:
+        if primary_context.get('scope') == 'group':
+            chat_type = 'group-single-user'
+        elif primary_context.get('scope') == 'public':
+            chat_type = 'public'
+        else:
+            chat_type = 'personal_single_user'
+    else:
+        chat_type = 'personal_single_user'
+
+    conversation_item['chat_type'] = chat_type
+    return chat_type, True
 
 def register_route_backend_conversations(app):
 
@@ -287,8 +315,9 @@ def register_route_backend_conversations(app):
             return jsonify({'error': 'User not authenticated'}), 401
         query = f"SELECT * FROM c WHERE c.user_id = '{user_id}' ORDER BY c.last_updated DESC"
         items = list(cosmos_conversations_container.query_items(query=query, enable_cross_partition_query=True))
+        normalized_items = [normalize_conversation_unread_state(item) for item in items]
         return jsonify({
-            'conversations': items
+            'conversations': normalized_items
         }), 200
 
 
@@ -311,7 +340,11 @@ def register_route_backend_conversations(app):
             'tags': [],
             'strict': False,
             'is_pinned': False,
-            'is_hidden': False
+            'is_hidden': False,
+            'chat_type': 'new',
+            'has_unread_assistant_response': False,
+            'last_unread_assistant_message_id': None,
+            'last_unread_assistant_at': None,
         }
         cosmos_conversations_container.upsert_item(conversation_item)
         
@@ -371,7 +404,9 @@ def register_route_backend_conversations(app):
             return jsonify({
                 'message': 'Conversation updated', 
                 'title': new_title,
-                'classification': conversation_item.get('classification', []) # Send classifications if any
+                'classification': conversation_item.get('classification', []),
+                'context': conversation_item.get('context', []),
+                'chat_type': conversation_item.get('chat_type')
             }), 200
         except Exception as e:
             print(e)
@@ -430,7 +465,14 @@ def register_route_backend_conversations(app):
                 cosmos_archived_messages_container.upsert_item(archived_doc)
 
             cosmos_messages_container.delete_item(doc['id'], partition_key=conversation_id)
-        
+
+        # Archive/delete thoughts for conversation
+        user_id_for_thoughts = conversation_item.get('user_id')
+        if archiving_enabled:
+            archive_thoughts_for_conversation(conversation_id, user_id_for_thoughts)
+        else:
+            delete_thoughts_for_conversation(conversation_id, user_id_for_thoughts)
+
         # Log conversation deletion before actual deletion
         log_conversation_deletion(
             user_id=conversation_item.get('user_id'),
@@ -530,7 +572,13 @@ def register_route_backend_conversations(app):
                         cosmos_archived_messages_container.upsert_item(archived_message)
                     
                     cosmos_messages_container.delete_item(message['id'], partition_key=conversation_id)
-                
+
+                # Archive/delete thoughts for conversation
+                if archiving_enabled:
+                    archive_thoughts_for_conversation(conversation_id, user_id)
+                else:
+                    delete_thoughts_for_conversation(conversation_id, user_id)
+
                 # Log conversation deletion before actual deletion
                 log_conversation_deletion(
                     user_id=user_id,
@@ -779,11 +827,16 @@ def register_route_backend_conversations(app):
                 item=conversation_id,
                 partition_key=conversation_id
             )
+            conversation_item = normalize_conversation_unread_state(conversation_item)
             
             # Ensure that the conversation belongs to the current user
             if conversation_item.get('user_id') != user_id:
                 return jsonify({'error': 'Forbidden'}), 403
             
+            _, updated = normalize_chat_type(conversation_item)
+            if updated:
+                cosmos_conversations_container.upsert_item(conversation_item)
+
             # Return the full conversation metadata
             return jsonify({
                 "conversation_id": conversation_id,
@@ -796,9 +849,13 @@ def register_route_backend_conversations(app):
                 "strict": conversation_item.get('strict', False),
                 "is_pinned": conversation_item.get('is_pinned', False),
                 "is_hidden": conversation_item.get('is_hidden', False),
+                "has_unread_assistant_response": conversation_item.get('has_unread_assistant_response', False),
+                "last_unread_assistant_message_id": conversation_item.get('last_unread_assistant_message_id'),
+                "last_unread_assistant_at": conversation_item.get('last_unread_assistant_at'),
                 "scope_locked": conversation_item.get('scope_locked'),
                 "locked_contexts": conversation_item.get('locked_contexts', []),
-                "chat_type": conversation_item.get('chat_type', 'personal') # Default to 'personal' if chat_type is not defined (legacy conversations)
+                "chat_type": conversation_item.get('chat_type'),
+                "summary": conversation_item.get('summary')
             }), 200
             
         except CosmosResourceNotFoundError:
@@ -806,6 +863,135 @@ def register_route_backend_conversations(app):
         except Exception as e:
             print(f"Error retrieving conversation metadata: {e}")
             return jsonify({'error': 'Failed to retrieve conversation metadata'}), 500
+
+    @app.route('/api/conversations/<conversation_id>/mark-read', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def mark_conversation_read_api(conversation_id):
+        """Clear unread assistant-response state and related chat notifications."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        try:
+            conversation_item = cosmos_conversations_container.read_item(
+                item=conversation_id,
+                partition_key=conversation_id
+            )
+            conversation_item = normalize_conversation_unread_state(conversation_item)
+
+            if conversation_item.get('user_id') != user_id:
+                return jsonify({'error': 'Forbidden'}), 403
+
+            conversation_item = clear_conversation_unread(conversation_item)
+            cosmos_conversations_container.upsert_item(conversation_item)
+
+            notifications_marked_read = mark_chat_response_notifications_read_for_conversation(
+                user_id,
+                conversation_id
+            )
+
+            return jsonify({
+                'success': True,
+                'conversation_id': conversation_id,
+                'has_unread_assistant_response': False,
+                'notifications_marked_read': notifications_marked_read,
+            }), 200
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Conversation not found'}), 404
+        except Exception as e:
+            debug_print(f"Error marking conversation {conversation_id} as read: {e}")
+            return jsonify({'error': 'Failed to mark conversation as read'}), 500
+
+    @app.route('/api/conversations/<conversation_id>/summary', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def generate_conversation_summary_api(conversation_id):
+        """
+        Generate (or regenerate) a summary for a conversation and persist it.
+
+        Request body (optional):
+            { "model_deployment": "gpt-4o" }
+
+        Returns the generated summary dict on success.
+        """
+        from route_backend_conversation_export import generate_conversation_summary, _normalize_content
+        from functions_chat import sort_messages_by_thread
+
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        try:
+            conversation_item = cosmos_conversations_container.read_item(
+                item=conversation_id,
+                partition_key=conversation_id
+            )
+            if conversation_item.get('user_id') != user_id:
+                return jsonify({'error': 'Forbidden'}), 403
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Conversation not found'}), 404
+        except Exception as e:
+            debug_print(f"Error reading conversation for summary: {e}")
+            return jsonify({'error': 'Failed to read conversation'}), 500
+
+        body = request.get_json(silent=True) or {}
+        model_deployment = body.get('model_deployment', '')
+
+        # Query messages for this conversation
+        try:
+            query = "SELECT * FROM c WHERE c.conversation_id = @cid ORDER BY c.timestamp ASC"
+            params = [{"name": "@cid", "value": conversation_id}]
+            raw_messages = list(cosmos_messages_container.query_items(
+                query=query,
+                parameters=params,
+                enable_cross_partition_query=True
+            ))
+        except Exception as e:
+            debug_print(f"Error querying messages for summary: {e}")
+            return jsonify({'error': 'Failed to query messages'}), 500
+
+        if not raw_messages:
+            return jsonify({'error': 'No messages in this conversation'}), 400
+
+        # Build lightweight export-style message list for the summary helper
+        ordered_messages = sort_messages_by_thread(raw_messages)
+        export_messages = []
+        for msg in ordered_messages:
+            role = msg.get('role', 'unknown')
+            # Content may be a string OR a list of content parts — normalise it
+            content = _normalize_content(msg.get('content', ''))
+            speaker = 'USER' if role == 'user' else 'ASSISTANT' if role == 'assistant' else role.upper()
+            export_messages.append({
+                'role': role,
+                'content_text': content,
+                'speaker_label': speaker
+            })
+
+        message_time_start = ordered_messages[0].get('timestamp') if ordered_messages else None
+        message_time_end = ordered_messages[-1].get('timestamp') if ordered_messages else None
+
+        settings = get_settings()
+
+        try:
+            summary_data = generate_conversation_summary(
+                messages=export_messages,
+                conversation_title=conversation_item.get('title', 'Untitled'),
+                settings=settings,
+                model_deployment=model_deployment,
+                message_time_start=message_time_start,
+                message_time_end=message_time_end,
+                conversation_id=conversation_id
+            )
+            return jsonify({'success': True, 'summary': summary_data}), 200
+
+        except (ValueError, RuntimeError) as known_exc:
+            return jsonify({'error': str(known_exc)}), 400
+        except Exception as exc:
+            debug_print(f"Summary generation API error: {exc}")
+            return jsonify({'error': 'Summary generation failed'}), 500
 
     @app.route('/api/conversations/<conversation_id>/scope_lock', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
@@ -979,8 +1165,8 @@ def register_route_backend_conversations(app):
                 filtered_in = []
                 
                 for c in conversations:
-                    # Default to 'personal' if chat_type is not defined (legacy conversations)
-                    chat_type = c.get('chat_type', 'personal')
+                    # Default to 'personal_single_user' if chat_type is not defined (legacy conversations)
+                    chat_type = c.get('chat_type', 'personal_single_user')
                     if chat_type in chat_types:
                         filtered_in.append(c)
                     else:
@@ -991,7 +1177,7 @@ def register_route_backend_conversations(app):
                 
                 # Show some examples of filtered out chat types
                 if filtered_out:
-                    unique_types = set(c.get('chat_type', 'None/personal') for c in filtered_out[:10])
+                    unique_types = set(c.get('chat_type', 'None/personal_single_user') for c in filtered_out[:10])
                     debug_print(f"   Filtered out chat_types (sample): {unique_types}")
             
             # Filter by classifications if specified
@@ -1102,7 +1288,7 @@ def register_route_backend_conversations(app):
                             'title': conversation.get('title', 'Untitled'),
                             'last_updated': conversation.get('last_updated', ''),
                             'classification': conversation.get('classification', []),
-                            'chat_type': conversation.get('chat_type', 'personal'),
+                            'chat_type': conversation.get('chat_type', 'personal_single_user'),
                             'is_pinned': conversation.get('is_pinned', False),
                             'is_hidden': conversation.get('is_hidden', False)
                         },
@@ -1252,7 +1438,7 @@ def register_route_backend_conversations(app):
                     )
                     if conversation.get('user_id') != user_id:
                         return jsonify({'error': 'You can only delete messages from your own conversations'}), 403
-                except:
+                except Exception as ex:
                     return jsonify({'error': 'Conversation not found'}), 404
             elif message_user_id != user_id:
                 return jsonify({'error': 'You can only delete your own messages'}), 403
@@ -1451,7 +1637,7 @@ def register_route_backend_conversations(app):
                     )
                     if conversation.get('user_id') != user_id:
                         return jsonify({'error': 'You can only retry messages from your own conversations'}), 403
-                except:
+                except Exception as ex:
                     return jsonify({'error': 'Conversation not found'}), 404
             elif message_user_id != user_id:
                 return jsonify({'error': 'You can only retry your own messages'}), 403
@@ -1670,7 +1856,7 @@ def register_route_backend_conversations(app):
                     )
                     if conversation.get('user_id') != user_id:
                         return jsonify({'error': 'You can only edit messages from your own conversations'}), 403
-                except:
+                except Exception as ex:
                     return jsonify({'error': 'Conversation not found'}), 404
             elif message_user_id != user_id:
                 return jsonify({'error': 'You can only edit your own messages'}), 403
@@ -1879,7 +2065,7 @@ def register_route_backend_conversations(app):
                     )
                     if conversation.get('user_id') != user_id:
                         return jsonify({'error': 'You can only switch attempts in your own conversations'}), 403
-                except:
+                except Exception as ex:
                     return jsonify({'error': 'Conversation not found'}), 404
             elif message_user_id != user_id:
                 return jsonify({'error': 'You can only switch attempts in your own conversations'}), 403

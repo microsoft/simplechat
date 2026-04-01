@@ -7,6 +7,7 @@ from functions_settings import *
 from utils_cache import invalidate_personal_search_cache
 from functions_debug import *
 from functions_activity_logging import log_document_upload, log_document_metadata_update_transaction
+import io
 import os
 import requests
 from flask import current_app
@@ -72,7 +73,58 @@ def register_route_backend_documents(app):
 
             filename = items_sorted[0].get('filename', 'Untitled')
             is_table = items_sorted[0].get('is_table', False)
-            debug_print(f"[GET_FILE_CONTENT] Filename: {filename}, is_table: {is_table}")
+            file_content_source = items_sorted[0].get('file_content_source', '')
+            debug_print(f"[GET_FILE_CONTENT] Filename: {filename}, is_table: {is_table}, source: {file_content_source}")
+
+            # Handle blob-stored tabular files (enhanced citations enabled)
+            if file_content_source == 'blob':
+                blob_container = items_sorted[0].get('blob_container', '')
+                blob_path = items_sorted[0].get('blob_path', '')
+                debug_print(f"[GET_FILE_CONTENT] Blob-stored file: container={blob_container}, path={blob_path}")
+
+                if not blob_container or not blob_path:
+                    return jsonify({'error': 'Blob storage reference is incomplete'}), 500
+
+                try:
+                    blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+                    if not blob_service_client:
+                        return jsonify({'error': 'Blob storage client not available'}), 500
+
+                    blob_client = blob_service_client.get_blob_client(
+                        container=blob_container,
+                        blob=blob_path
+                    )
+                    stream = blob_client.download_blob()
+                    blob_data = stream.readall()
+
+                    # Convert to CSV using pandas for display
+                    file_ext = os.path.splitext(filename)[1].lower()
+                    if file_ext == '.csv':
+                        import pandas
+                        df = pandas.read_csv(io.BytesIO(blob_data))
+                        combined_content = df.to_csv(index=False)
+                    elif file_ext in ['.xlsx', '.xlsm']:
+                        import pandas
+                        df = pandas.read_excel(io.BytesIO(blob_data), engine='openpyxl')
+                        combined_content = df.to_csv(index=False)
+                    elif file_ext == '.xls':
+                        import pandas
+                        df = pandas.read_excel(io.BytesIO(blob_data), engine='xlrd')
+                        combined_content = df.to_csv(index=False)
+                    else:
+                        combined_content = blob_data.decode('utf-8', errors='replace')
+
+                    debug_print(f"[GET_FILE_CONTENT] Successfully read blob content, length: {len(combined_content)}")
+                    return jsonify({
+                        'file_content': combined_content,
+                        'filename': filename,
+                        'is_table': is_table,
+                        'file_content_source': 'blob'
+                    }), 200
+
+                except Exception as blob_err:
+                    debug_print(f"[GET_FILE_CONTENT] Error reading from blob: {blob_err}")
+                    return jsonify({'error': f'Error reading file from storage: {str(blob_err)}'}), 500
 
             add_file_task_to_file_processing_log(document_id=file_id, user_id=user_id, content="Combining file content from chunks, filename: " + filename + ", is_table: " + str(is_table))
             combined_parts = []
@@ -224,7 +276,7 @@ def register_route_backend_documents(app):
                         file.seek(0, 2)  # Seek to end
                         file_size = file.tell()
                         file.seek(0)  # Reset to beginning
-                    except:
+                    except Exception as ex:
                         file_size = 0
                         
                     log_document_upload(

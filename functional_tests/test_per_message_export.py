@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 # test_per_message_export.py
 """
-Functional tests for the per-message export feature (Markdown client-side
-equivalent + Word backend).
-Version: 0.239.008
-Implemented in: 0.239.008
+Functional tests for the per-message export feature and Word route regression fix.
+Version: 0.239.128
+Implemented in: 0.239.128
 
 Covers:
  - Happy path: Word document built successfully from a valid message.
  - Markdown export logic: correct header, timestamp and content rendered.
+ - Route regression: backend source defines POST /api/message/export-word.
  - Auth failure: unauthenticated caller receives 401.
  - Ownership failure: caller who does not own the conversation receives 403.
 """
 
+import ast
 import sys
 import os
 import io
@@ -183,6 +184,75 @@ def test_happy_path_markdown_export():
     return True
 
 
+def test_export_word_route_definition_present():
+    """Route regression: the backend must define POST /api/message/export-word."""
+    print("🔍 Testing backend route definition for Word export...")
+
+    route_file = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        '..',
+        'application',
+        'single_app',
+        'route_backend_conversation_export.py'
+    )
+
+    with open(route_file, 'r', encoding='utf-8') as handle:
+        source = handle.read()
+
+    tree = ast.parse(source)
+    register_func = next(
+        (
+            node for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == 'register_route_backend_conversation_export'
+        ),
+        None
+    )
+
+    assert register_func is not None, 'register_route_backend_conversation_export should exist'
+
+    export_route_found = False
+    for node in register_func.body:
+        if not isinstance(node, ast.FunctionDef):
+            continue
+
+        for decorator in node.decorator_list:
+            if not isinstance(decorator, ast.Call):
+                continue
+
+            func = decorator.func
+            if not isinstance(func, ast.Attribute) or func.attr != 'route':
+                continue
+
+            if not decorator.args:
+                continue
+
+            route_arg = decorator.args[0]
+            if not isinstance(route_arg, ast.Constant) or route_arg.value != '/api/message/export-word':
+                continue
+
+            methods_kw = next((keyword for keyword in decorator.keywords if keyword.arg == 'methods'), None)
+            assert methods_kw is not None, 'Export Word route should declare allowed methods'
+            assert isinstance(methods_kw.value, (ast.List, ast.Tuple)), 'Route methods should be a list or tuple'
+
+            methods = [
+                item.value for item in methods_kw.value.elts
+                if isinstance(item, ast.Constant)
+            ]
+            assert 'POST' in methods, f'Expected POST method, found {methods}'
+            assert node.name == 'api_export_message_word', f'Unexpected route handler name: {node.name}'
+            export_route_found = True
+            break
+
+        if export_route_found:
+            break
+
+    assert export_route_found, 'Expected POST /api/message/export-word to be defined'
+
+    print("✅ test_export_word_route_definition_present passed!")
+    return True
+
+
 def test_auth_failure_unauthenticated():
     """Auth failure: an unauthenticated caller (no user_id) should get 401."""
     print("🔍 Testing auth failure – unauthenticated request...")
@@ -285,6 +355,7 @@ if __name__ == "__main__":
     tests = [
         test_happy_path_word_export,
         test_happy_path_markdown_export,
+        test_export_word_route_definition_present,
         test_auth_failure_unauthenticated,
         test_ownership_failure_wrong_user,
         test_ownership_failure_missing_conversation,

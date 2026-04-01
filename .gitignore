@@ -48,3 +48,8 @@ nul
 
 # Teams manifest
 application/teams_app/manifest.json
+/.github/plans
+*.xlsx
+/artifacts/tests
+scripts/agent.json
+scripts/me.json

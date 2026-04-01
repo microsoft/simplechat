@@ -15,6 +15,7 @@ param azurePlatform string
 param cosmosDbName string
 param searchServiceName string
 param openAiServiceName string
+param openAiEndpoint string
 param openAiResourceGroupName string
 param documentIntelligenceServiceName string
 param appInsightsName string
@@ -41,6 +42,8 @@ param customResourceManagerUrl string?
 param customCognitiveServicesScope string?
 @description('Custom search resource URL for token audience, e.g. https://search.azure.us')
 param customSearchResourceUrl string?
+@description('Custom Video Indexer endpoint, e.g. https://api.videoindexer.ai')
+param customVideoIndexerEndpoint string?
 
 var tenantId = tenant().tenantId
 var openIdMetadataUrl = '${az.environment().authentication.loginEndpoint}${tenantId}/v2.0/.well-known/openid-configuration'
@@ -62,9 +65,6 @@ resource searchService 'Microsoft.Search/searchServices@2025-05-01' existing = {
   name: searchServiceName
 }
 
-resource openAiService 'Microsoft.CognitiveServices/accounts@2024-10-01' existing = {
-  name: openAiServiceName
-}
 resource documentIntelligence 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
   name: documentIntelligenceServiceName
 }
@@ -78,6 +78,9 @@ var acrDomain = az.environment().suffixes.acrLoginServer
 resource webApp 'Microsoft.Web/sites@2022-03-01' = {
   name: toLower('${appName}-${environment}-app')
   location: location
+  // This module deploys a Linux container App Service.
+  // Gunicorn startup comes from the container image entrypoint,
+  // so App Service native Python startup settings are not used here.
   kind: 'app,linux,container'
   properties: {
     serverFarmId: appServicePlanId
@@ -100,7 +103,7 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
         { name: 'AZURE_COSMOS_AUTHENTICATION_TYPE', value: toLower(authenticationType) }
         // Only add this setting if authenticationType is 'key'
         ...(authenticationType == 'key'
-          ? [{ name: 'AZURE_COSMOS_KEY', value: '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/cosmos-db-key)' }]
+          ? [{ name: 'AZURE_COSMOS_KEY', value: cosmosDb.listKeys().primaryMasterKey }]
           : [])
         { name: 'TENANT_ID', value: tenant().tenantId }
         { name: 'CLIENT_ID', value: enterpriseAppClientId }
@@ -127,22 +130,23 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
           ? [
               {
                 name: 'DOCKER_REGISTRY_SERVER_PASSWORD'
-                value: '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/container-registry-key)'
+                value: acrService.listCredentials().passwords[0].value
               }
             ]
           : [])
 
         { name: 'WEBSITE_AUTH_AAD_ALLOWED_TENANTS', value: tenant().tenantId }
-        { name: 'AZURE_OPENAI_RESOURCE_NAME', value: openAiService.name }
+        { name: 'AZURE_OPENAI_RESOURCE_NAME', value: openAiServiceName }
         { name: 'AZURE_OPENAI_RESOURCE_GROUP_NAME', value: openAiResourceGroupName }
-        { name: 'AZURE_OPENAI_URL', value: openAiService.properties.endpoint }
+        { name: 'AZURE_OPENAI_URL', value: openAiEndpoint }
+        { name: 'VIDEO_INDEXER_ARM_API_VERSION', value: azurePlatform == 'usgovernment' ? '2024-01-01' : '2025-04-01' }
         { name: 'AZURE_SEARCH_SERVICE_NAME', value: searchService.name }
         // Only add this setting if authenticationType is 'key'
         ...(authenticationType == 'key'
           ? [
               {
                 name: 'AZURE_SEARCH_API_KEY'
-                value: '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/search-service-key)'
+                value: searchService.listAdminKeys().primaryKey
               }
             ]
           : [])
@@ -152,7 +156,7 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
           ? [
               {
                 name: 'AZURE_DOCUMENT_INTELLIGENCE_API_KEY'
-                value: '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/document-intelligence-key)'
+                value: documentIntelligence.listKeys().key1
               }
             ]
           : [])
@@ -175,6 +179,7 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
         {name: 'CUSTOM_BLOB_STORAGE_URL_VALUE', value: customBlobStorageSuffix ?? ''}
         {name: 'CUSTOM_COGNITIVE_SERVICES_URL_VALUE', value: customCognitiveServicesScope ?? ''}
         {name: 'CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE', value: customSearchResourceUrl ?? ''}
+        {name: 'CUSTOM_VIDEO_INDEXER_ENDPOINT', value: customVideoIndexerEndpoint ?? ''}
         {name: 'KEY_VAULT_DOMAIN', value: az.environment().suffixes.keyvaultDns}
         {name: 'CUSTOM_OIDC_METADATA_URL_VALUE', value: openIdMetadataUrl ?? ''}]
         : [])

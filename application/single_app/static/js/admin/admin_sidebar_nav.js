@@ -133,10 +133,10 @@ function initAdminSidebarNav() {
     // Set the initial active tab (General) - but only if no tab is already active
     const activeTab = document.querySelector('.admin-nav-tab.active, .admin-nav-section.active');
     if (!activeTab) {
-        const firstTab = document.querySelector('.admin-nav-tab[data-tab="general"]');
+        const firstTab = document.querySelector('.admin-nav-tab[data-tab="latest-features"]');
         if (firstTab) {
             firstTab.classList.add('active');
-            showAdminTab('general');
+            showAdminTab('latest-features');
         }
     } else {
         console.log('initAdminSidebarNav - Found existing active tab, preserving current state:', activeTab.getAttribute('data-tab'));
@@ -144,17 +144,23 @@ function initAdminSidebarNav() {
 }
 
 function showAdminTab(tabId) {    
-    // Hide all tab panes
-    document.querySelectorAll('.tab-pane').forEach(pane => {
-        pane.classList.remove('show', 'active');
-    });
-    
-    // Show the selected tab pane
-    const targetTab = document.getElementById(tabId);
-    if (targetTab) {
-        targetTab.classList.add('show', 'active');
+    const bootstrapTabButton = document.querySelector(`button.nav-link[data-bs-target="#${tabId}"]`);
+    if (bootstrapTabButton && typeof bootstrap !== 'undefined' && typeof bootstrap.Tab === 'function') {
+        const tab = bootstrap.Tab.getOrCreateInstance(bootstrapTabButton);
+        tab.show();
     } else {
-        console.warn('❌ showAdminTab - Could not find tab pane with ID:', tabId);
+        // Hide all tab panes
+        document.querySelectorAll('.tab-pane').forEach(pane => {
+            pane.classList.remove('show', 'active');
+        });
+
+        // Show the selected tab pane
+        const targetTab = document.getElementById(tabId);
+        if (targetTab) {
+            targetTab.classList.add('show', 'active');
+        } else {
+            console.warn('❌ showAdminTab - Could not find tab pane with ID:', tabId);
+        }
     }
     
     // Update the hash in URL for deep linking

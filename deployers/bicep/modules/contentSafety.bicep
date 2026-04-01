@@ -8,10 +8,6 @@ param tags object
 param enableDiagLogging bool
 param logAnalyticsId string
 
-param keyVault string
-param authenticationType string
-param configureApplicationPermissions bool
-
 param enablePrivateNetworking bool
 
 // Import diagnostic settings configurations
@@ -44,18 +40,6 @@ resource contentSafetyDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05
     logs: diagnosticConfigs.outputs.standardLogCategories
     #disable-next-line BCP318 // expect one value to be null
     metrics: diagnosticConfigs.outputs.standardMetricsCategories
-  }
-}
-
-//=========================================================
-// store contentSafety keys in key vault if using key authentication and configure app permissions = true
-//=========================================================
-module contentSafetySecret 'keyVault-Secrets.bicep' = if (authenticationType == 'key' && configureApplicationPermissions) {
-  name: 'storeContentSafetySecret'
-  params: {
-    keyVaultName: keyVault
-    secretName: 'content-safety-key'
-    secretValue: contentSafety.listKeys().key1
   }
 }
 

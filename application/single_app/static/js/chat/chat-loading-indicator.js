@@ -39,10 +39,35 @@ export function showLoadingIndicatorInChatbox() {
     <div class="spinner-border text-primary" role="status">
       <span class="visually-hidden">AI is typing...</span>
     </div>
-    <span>AI is typing...</span>
+    <span id="loading-indicator-text">AI is typing...</span>
   `;
   chatbox.appendChild(loadingIndicator);
   chatbox.scrollTop = chatbox.scrollHeight;
+}
+
+/**
+ * Update the loading indicator text with a thought step.
+ * Called by the thought polling handler to replace "AI is typing..." dynamically.
+ * @param {string} text - The thought content to display.
+ * @param {string} iconClass - Bootstrap Icon class (e.g. 'bi-search').
+ */
+export function updateLoadingIndicatorText(text, iconClass) {
+  const textEl = document.getElementById("loading-indicator-text");
+  if (!textEl) return;
+
+  textEl.textContent = "";
+  if (iconClass) {
+    const icon = document.createElement("i");
+    icon.className = `bi ${iconClass} me-1`;
+    textEl.appendChild(icon);
+  }
+  textEl.appendChild(document.createTextNode(text));
+
+  // Scroll chatbox to keep indicator visible
+  const chatbox = document.getElementById("chatbox");
+  if (chatbox) {
+    chatbox.scrollTop = chatbox.scrollHeight;
+  }
 }
 
 export function hideLoadingIndicatorInChatbox() {

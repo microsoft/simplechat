@@ -55,6 +55,12 @@ const publicPromptContentEl = document.getElementById('public-prompt-content');
 if (publicPromptContentEl && window.SimpleMDE) {
   publicSimplemde = new SimpleMDE({ element: publicPromptContentEl, spellChecker:false, autoDownloadFontAwesome: false });
 }
+document.getElementById('publicPromptModal')?.addEventListener('shown.bs.modal', () => {
+  if (publicSimplemde?.codemirror) {
+    publicSimplemde.codemirror.refresh();
+    publicSimplemde.codemirror.focus();
+  }
+});
 
 // DOM elements
 const publicSelect = document.getElementById('public-select');
@@ -199,8 +205,6 @@ document.addEventListener('DOMContentLoaded', ()=>{
     if (activePublicId) fetchPublicDocs();
   });
 
-  Array.from(publicDropdownItems.children).forEach(()=>{}); // placeholder
-
   // --- Document selection event listeners ---
   // Event delegation for document checkboxes
   document.addEventListener('change', function(event) {
@@ -266,8 +270,6 @@ function updatePublicRoleDisplay(){
     if (nameRoleEl) nameRoleEl.textContent = activePublicName;
     if (display) display.style.display = 'block';
     if (uploadSection) uploadSection.style.display = ['Owner','Admin','DocumentManager'].includes(userRoleInActivePublic) ? 'block' : 'none';
-    // uploadHr was removed from template, so skip
-    
     // Control visibility of Settings tab (only for Owners and Admins)
     const settingsTabNav = document.getElementById('public-settings-tab-nav');
     const canManageSettings = ['Owner', 'Admin'].includes(userRoleInActivePublic);
@@ -491,6 +493,7 @@ function renderPublicDocumentRow(doc) {
         <p class="mb-1"><strong>Citations:</strong> ${getCitationBadge(doc.enhanced_citations)}</p>
         <p class="mb-1"><strong>Publication Date:</strong> ${escapeHtml(doc.publication_date || 'N/A')}</p>
         <p class="mb-1"><strong>Keywords:</strong> ${escapeHtml(doc.keywords || 'N/A')}</p>
+        <p class="mb-1"><strong>Tags:</strong> ${renderPublicTagBadges(doc.tags || [])}</p>
         <p class="mb-0"><strong>Abstract:</strong> ${escapeHtml(doc.abstract || 'N/A')}</p>
         <hr class="my-2">
         <div class="d-flex flex-wrap gap-2">
@@ -1708,7 +1711,7 @@ window.loadPublicWorkspaceTags = loadPublicWorkspaceTags;
 function isPublicColorLight(hex) {
   if (!hex) return true;
   hex = hex.replace('#', '');
-  const r = parseInt(hex.substr(0,2),16), g = parseInt(hex.substr(2,2),16), b = parseInt(hex.substr(4,2),16);
+  const r = parseInt(hex.substring(0, 2), 16), g = parseInt(hex.substring(2, 4), 16), b = parseInt(hex.substring(4, 6), 16);
   return (r * 299 + g * 587 + b * 114) / 1000 > 155;
 }
 
@@ -1716,6 +1719,29 @@ function escapePublicHtml(text) {
   const d = document.createElement('div');
   d.textContent = text;
   return d.innerHTML;
+}
+
+function renderPublicTagBadges(tags, maxDisplay = 3) {
+  if (!Array.isArray(tags) || tags.length === 0) {
+    return '<span class="text-muted small">No tags</span>';
+  }
+
+  let html = '';
+  const displayTags = tags.slice(0, maxDisplay);
+
+  displayTags.forEach(tagName => {
+    const tag = publicWorkspaceTags.find(t => t.name === tagName);
+    const color = tag && tag.color ? tag.color : '#6c757d';
+    const textClass = isPublicColorLight(color) ? 'text-dark' : 'text-light';
+
+    html += `<span class="tag-badge ${textClass}" style="background-color:${color};" title="${escapePublicHtml(tagName)}">${escapePublicHtml(tagName)}</span>`;
+  });
+
+  if (tags.length > maxDisplay) {
+    html += `<span class="badge bg-secondary">+${tags.length - maxDisplay}</span>`;
+  }
+
+  return html;
 }
 
 // --- Tag Management Modal ---
