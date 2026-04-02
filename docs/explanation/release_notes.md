@@ -3,40 +3,10 @@
 # Feature Release
 
 This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.240.001, and the per-version entries continue immediately after it.
-### **(v0.240.016)**
-
-#### Bug Fixes
-
-*   **Python Runtime Dependency Refresh and Supply-Chain Hardening**
-    *   Continued the requirements hardening work from `v0.240.014` by tightening the main application runtime to exact package pins, reducing dependency drift across local development, CI, and Azure deployments to help mitigate supply-chain exposure.
-    *   Upgraded the Flask runtime stack to `Flask==3.1.3` and `Werkzeug==3.1.6`, and updated the shared `Markup` import path to `markupsafe` so the app starts correctly with Flask 3's package boundary changes.
-    *   Refreshed key runtime dependencies including `gunicorn`, `requests`, `openai`, `Markdown`, `markdown2`, `azure-ai-projects`, `azure-ai-agents`, `pyjwt`, `pypdf`, `semantic-kernel`, `protobuf`, `redis`, `pyodbc`, `PyMySQL`, `cython`, and `aiohttp` to pick up current security, compatibility, and capability improvements while keeping builds reproducible.
-    *   (Ref: `application/single_app/requirements.txt`, `application/single_app/config.py`, `functional_tests/test_flask_markup_import_fix.py`, `docs/explanation/fixes/FLASK_31_MARKUP_IMPORT_FIX.md`)
-
-### **(v0.240.014)**
-
-#### Bug Fixes
-
-*   **Dependency Pinning and Requirements Hardening**
-    *   Pinned previously floating Python package requirements to exact versions across the main app, UI test, deployer, and external app requirement files to reduce unexpected dependency drift and tighten supply-chain control.
-    *   Corrected stale external app dependency entries by replacing `dotenv` with `python-dotenv`, removing the stdlib-only `logging` package, removing an unused `Flask` requirement from the databaseseeder utility, and adding `pytest-playwright` so the UI test dependency set matches the pytest fixture usage in the test suite.
-    *   (Ref: `application/single_app/requirements.txt`, `ui_tests/requirements.txt`, `deployers/bicep/requirements.txt`, `application/external_apps/databaseseeder/requirements.txt`, `application/external_apps/bulkloader/requirements.txt`)
-
-### **(v0.240.004)**
-
-#### New Features
-
-*   **Cross-Cloud Deployment Improvements**
-    *   Updated the Azure CLI, AZD, Bicep, and Terraform deployment paths to better align with the current SimpleChat runtime configuration and reduce post-deployment manual fixes.
-    *   Added optional Azure Video Indexer deployment support with cloud-aware defaults, including the correct endpoint and ARM API version handling for Azure Commercial, Azure Government, and registered custom clouds.
-    *   (Ref: `deployers/azure.yaml`, `deployers/azurecli/deploy-simplechat.ps1`, `deployers/bicep/main.bicep`, `deployers/bicep/modules/videoIndexer.bicep`, `deployers/terraform/main.tf`, `application/single_app/functions_settings.py`)
-### **(v0.239.187)**
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
-![Simple Chat release timeline](../images/release-timeline.png)
-
-### **(v0.240.001)**
+### **(v0.240.016)**
 
 #### New Features
 
@@ -189,6 +159,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   New admin setting fields: `redis_auth_type` (values: `key`, `managed_identity`, `key_vault`) and `redis_key` (used as the Key Vault secret name when `key_vault` auth type is selected).
     *   **Files Modified**: `app_settings_cache.py`, `app.py` `configure_sessions`, `route_backend_settings.py` `_test_redis_connection`, `functions_keyvault.py` `retrieve_secret_direct`
 
+*   **Cross-Cloud Deployment Improvements**
+    *   Updated the Azure CLI, AZD, Bicep, and Terraform deployment paths to better align with the current SimpleChat runtime configuration and reduce post-deployment manual fixes.
+    *   Added optional Azure Video Indexer deployment support with cloud-aware defaults, including the correct endpoint and ARM API version handling for Azure Commercial, Azure Government, and registered custom clouds.
+    *   (Ref: `deployers/azure.yaml`, `deployers/azurecli/deploy-simplechat.ps1`, `deployers/bicep/main.bicep`, `deployers/bicep/modules/videoIndexer.bicep`, `deployers/terraform/main.tf`, `application/single_app/functions_settings.py`)
+
 #### User Interface Enhancements
 
 *   **Agent Responded Thought — Seconds & Total Duration**
@@ -231,6 +206,17 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   (Ref: `_plugin_modal.html`, `plugin_modal_stepper.js`)
     
 #### Bug Fixes
+
+*   **Python Runtime Dependency Refresh and Supply-Chain Hardening**
+    *   Continued the requirements hardening work from `v0.240.014` by tightening the main application runtime to exact package pins, reducing dependency drift across local development, CI, and Azure deployments to help mitigate supply-chain exposure.
+    *   Upgraded the Flask runtime stack to `Flask==3.1.3` and `Werkzeug==3.1.6`, and updated the shared `Markup` import path to `markupsafe` so the app starts correctly with Flask 3's package boundary changes.
+    *   Refreshed key runtime dependencies including `gunicorn`, `requests`, `openai`, `Markdown`, `markdown2`, `azure-ai-projects`, `azure-ai-agents`, `pyjwt`, `pypdf`, `semantic-kernel`, `protobuf`, `redis`, `pyodbc`, `PyMySQL`, `cython`, and `aiohttp` to pick up current security, compatibility, and capability improvements while keeping builds reproducible.
+    *   (Ref: `application/single_app/requirements.txt`, `application/single_app/config.py`, `functional_tests/test_flask_markup_import_fix.py`, `docs/explanation/fixes/FLASK_31_MARKUP_IMPORT_FIX.md`)
+
+*   **Dependency Pinning and Requirements Hardening**
+    *   Pinned previously floating Python package requirements to exact versions across the main app, UI test, deployer, and external app requirement files to reduce unexpected dependency drift and tighten supply-chain control.
+    *   Corrected stale external app dependency entries by replacing `dotenv` with `python-dotenv`, removing the stdlib-only `logging` package, removing an unused `Flask` requirement from the databaseseeder utility, and adding `pytest-playwright` so the UI test dependency set matches the pytest fixture usage in the test suite.
+    *   (Ref: `application/single_app/requirements.txt`, `ui_tests/requirements.txt`, `deployers/bicep/requirements.txt`, `application/external_apps/databaseseeder/requirements.txt`, `application/external_apps/bulkloader/requirements.txt`)
 
 *   **Pillow PSD Upload Hardening**
     *   Updated the application to use `pillow==12.1.1`, moving the app off the vulnerable Pillow range for specially crafted PSD image parsing.
