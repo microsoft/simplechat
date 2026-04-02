@@ -173,6 +173,15 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Added optional Azure Video Indexer deployment support with cloud-aware defaults, including the correct endpoint and ARM API version handling for Azure Commercial, Azure Government, and registered custom clouds.
     *   (Ref: `deployers/azure.yaml`, `deployers/azurecli/deploy-simplechat.ps1`, `deployers/bicep/main.bicep`, `deployers/bicep/modules/videoIndexer.bicep`, `deployers/terraform/main.tf`, `application/single_app/functions_settings.py`)
 
+*   **Idle Session Timeout Feature**
+    *   Added a new idle timer that automatically clears the user session after a configurable set time and redirects to the main chat login page.
+    *   Added a frontend idle warning modal that pops up after a configurable set time, but disappears if the user moves the mouse over the chat window or interacts with the app in any way.
+    *   Default values are used if the idle logout and warning values are not set. 
+    *   Idle logout and idle warning values are validated and auto-fixed as needed.
+    *   Added a new admin switch to enable or disable idle session timeout and warning behavior.
+    *   Timeout and warning inputs are grouped under a toggleable section in General > System Settings.
+    *   (Ref: `application/single_app/templates/admin_settings.html`, `application/single_app/static/js/admin/admin_settings.js`, `application/single_app/route_frontend_admin_settings.py`, `application/single_app/functions_settings.py`, `application/single_app/app.py`, `application/single_app/templates/base.html`, `application/single_app/static/js/idle-logout-warning.js`, `application/single_app/config.py`, `functional_tests/test_idle_logout_timeout.py`, `application/single_app/route_frontend_authentication.py`)
+
 #### User Interface Enhancements
 
 *   **Agent Responded Thought — Seconds & Total Duration**
@@ -227,6 +236,12 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Corrected stale external app dependency entries by replacing `dotenv` with `python-dotenv`, removing the stdlib-only `logging` package, removing an unused `Flask` requirement from the databaseseeder utility, and adding `pytest-playwright` so the UI test dependency set matches the pytest fixture usage in the test suite.
     *   (Ref: `application/single_app/requirements.txt`, `ui_tests/requirements.txt`, `deployers/bicep/requirements.txt`, `application/external_apps/databaseseeder/requirements.txt`, `application/external_apps/bulkloader/requirements.txt`)
 
+*   **Settings Default Merge Persistence Fix**
+    *   Fixed app settings merge detection in `get_settings()` where `deep_merge_dicts()` mutates the existing settings object in place, causing change detection to always evaluate as unchanged.
+    *   Updated `deep_merge_dicts()` to return a boolean `changed` flag and wired `get_settings()` to call `upsert_item()` when `settings_changed` is `True`, so missing default keys correctly trigger persistence back to Cosmos DB.
+    *   Added a functional regression test to validate the merge detection and persistence markers.
+    *   (Ref: `application/single_app/functions_settings.py`, `application/single_app/config.py`, `functional_tests/test_settings_deep_merge_persistence_fix.py`)
+    
 *   **Pillow PSD Upload Hardening**
     *   Updated the application to use `pillow==12.1.1`, moving the app off the vulnerable Pillow range for specially crafted PSD image parsing.
     *   Hardened admin logo and favicon uploads so Pillow now only opens the PNG and JPEG formats already allowed by the route, preventing disguised PSD content from being decoded during upload processing.
