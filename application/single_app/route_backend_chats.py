@@ -1801,6 +1801,8 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                         'is_workbook': True,
                         'sheet_count': schema_info.get('sheet_count', 0),
                         'likely_sheet': likely_sheet,
+                        'sheet_role_hints': schema_info.get('sheet_role_hints', {}),
+                        'relationship_hints': schema_info.get('relationship_hints', [])[:5],
                         'sheet_directory': sheet_directory,
                     }
                     schema_parts.append(json.dumps(directory_schema, indent=2, default=str))
@@ -2031,8 +2033,8 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     f"{missing_sheet_feedback}"
                     f"FILE SCHEMAS:\n"
                     f"{schema_context}\n\n"
-                    "AVAILABLE FUNCTIONS: filter_rows, query_tabular_data, lookup_value, aggregate_column, "
-                    "group_by_aggregate, and group_by_datetime_component.\n\n"
+                    "AVAILABLE FUNCTIONS: filter_rows, query_tabular_data, lookup_value, get_distinct_values, count_rows, "
+                    "filter_rows_by_related_values, count_rows_by_related_values, aggregate_column, group_by_aggregate, and group_by_datetime_component.\n\n"
                     "Discovery functions are not available in this analysis run because schema context is already pre-loaded.\n\n"
                     "IMPORTANT:\n"
                     "1. If the question includes an exact identifier or exact entity name and the correct starting worksheet is unclear, begin with filter_rows or query_tabular_data without sheet_name so the plugin can perform a cross-sheet discovery search.\n"
@@ -2046,7 +2048,9 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     "9. If a requested record type has no corresponding worksheet in the workbook, say that the workbook does not contain that record type.\n"
                     "10. Clearly distinguish between no matching rows and no corresponding worksheet.\n"
                     "11. Summarize concrete found records sheet-by-sheet using the tool results, not schema placeholders.\n"
-                    "12. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report."
+                    "12. For count or percentage questions involving a cohort defined on one sheet and facts on another, prefer get_distinct_values, count_rows, filter_rows_by_related_values, or count_rows_by_related_values over manually counting sampled rows.\n"
+                    "13. Use normalize_match=true when matching names, owners, assignees, engineers, or similar entity-text columns across worksheets.\n"
+                    "14. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report."
                 )
 
             return (
@@ -2065,8 +2069,8 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 f"{missing_sheet_feedback}"
                 f"FILE SCHEMAS:\n"
                 f"{schema_context}\n\n"
-                "AVAILABLE FUNCTIONS: lookup_value, aggregate_column, filter_rows, query_tabular_data, "
-                "group_by_aggregate, and group_by_datetime_component for year/quarter/month/week/day/hour trend analysis.\n\n"
+                "AVAILABLE FUNCTIONS: lookup_value, get_distinct_values, count_rows, filter_rows, query_tabular_data, "
+                "filter_rows_by_related_values, count_rows_by_related_values, aggregate_column, group_by_aggregate, and group_by_datetime_component for year/quarter/month/week/day/hour trend analysis.\n\n"
                 "Discovery functions are not available in this analysis run because schema context is already pre-loaded.\n\n"
                 "IMPORTANT:\n"
                 "1. Use the pre-loaded schema to pick the correct columns, then call the plugin functions.\n"
@@ -2074,19 +2078,22 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 "3. If a previous tool error says a requested column is missing on the current sheet and suggests candidate sheets, switch to one of those candidate sheets immediately.\n"
                 "4. For account/category lookup questions at a specific period or metric, use lookup_value first. Provide lookup_column, lookup_value, and target_column.\n"
                 "5. If lookup_value is not sufficient, use filter_rows or query_tabular_data on the label column, then read the requested period column.\n"
-                "6. Only use aggregate_column when the user explicitly asks for a sum, average, min, max, or count across rows.\n"
-                "7. For time-based questions on datetime columns, use group_by_datetime_component.\n"
-                "8. For threshold, ranking, comparison, or correlation-like questions, first filter/query the relevant rows, then compute grouped metrics.\n"
-                "9. When the question asks for grouped results for each entity or category and a cross-sheet bridge plan is available, use the reference worksheet to identify the canonical entities or categories and the fact worksheet to compute the metric. Do not answer 'each X' by grouping a yes/no, boolean, or membership-flag column unless the user explicitly asked about that flag.\n"
-                "10. When the question asks for rows satisfying multiple conditions, prefer one combined query_expression using and/or instead of separate broad queries that you plan to intersect later.\n"
-                "11. Batch multiple independent function calls in a SINGLE response whenever possible.\n"
-                "12. Keep max_rows as small as possible. Only increase it when the user explicitly asked for an exhaustive row list or export; otherwise return total_matches plus representative rows.\n"
-                "13. For analytical questions, prefer lookup/filter/query plus aggregate/grouped computations over raw row or preview output.\n"
-                "14. For identifier-based workbook questions, locate the identifier on the correct sheet before explaining downstream calculations.\n"
-                "15. For peak, busiest, highest, or lowest questions, use grouped functions and inspect the highest_group, highest_value, lowest_group, and lowest_value summary fields.\n"
-                "16. Return only computed findings and name the strongest drivers clearly.\n"
-                "17. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report.\n"
-                "18. When using query_tabular_data, use simple DataFrame.query() syntax with backticked column names for columns containing spaces. Avoid method calls such as .str.lower(), .astype(...), or other Python expressions that DataFrame.query() may reject."
+                "6. For deterministic how-many questions, use count_rows instead of estimating counts from partial returned rows.\n"
+                "7. For cohort, membership, ownership-share, or percentage questions where one sheet defines the group and another sheet contains the fact rows, use get_distinct_values, filter_rows_by_related_values, or count_rows_by_related_values.\n"
+                "8. Use normalize_match=true when matching names, owners, assignees, engineers, or similar entity-text columns across worksheets.\n"
+                "9. Only use aggregate_column when the user explicitly asks for a sum, average, min, max, or count across rows and count_rows is not the simpler deterministic option.\n"
+                "10. For time-based questions on datetime columns, use group_by_datetime_component.\n"
+                "11. For threshold, ranking, comparison, or correlation-like questions, first filter/query the relevant rows, then compute grouped metrics.\n"
+                "12. When the question asks for grouped results for each entity or category and a cross-sheet bridge plan or relationship hint is available, use the reference worksheet to identify the canonical entities or categories and the fact worksheet to compute the metric. Do not answer 'each X' by grouping a yes/no, boolean, or membership-flag column unless the user explicitly asked about that flag.\n"
+                "13. When the question asks for rows satisfying multiple conditions, prefer one combined query_expression using and/or instead of separate broad queries that you plan to intersect later.\n"
+                "14. Batch multiple independent function calls in a SINGLE response whenever possible.\n"
+                "15. Keep max_rows as small as possible. Only increase it when the user explicitly asked for an exhaustive row list or export; otherwise return total_matches plus representative rows.\n"
+                "16. For analytical questions, prefer deterministic counts plus lookup/filter/query/grouped computations over raw row or preview output.\n"
+                "17. For identifier-based workbook questions, locate the identifier on the correct sheet before explaining downstream calculations.\n"
+                "18. For peak, busiest, highest, or lowest questions, use grouped functions and inspect the highest_group, highest_value, lowest_group, and lowest_value summary fields.\n"
+                "19. Return only computed findings and name the strongest drivers clearly.\n"
+                "20. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report.\n"
+                "21. When using query_tabular_data, use simple DataFrame.query() syntax with backticked column names for columns containing spaces. Avoid method calls such as .str.lower(), .astype(...), or other Python expressions that DataFrame.query() may reject."
             )
 
         baseline_invocations = plugin_logger.get_invocations_for_conversation(
