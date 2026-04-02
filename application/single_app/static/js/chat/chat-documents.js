@@ -1072,6 +1072,7 @@ export async function loadTagsForScope() {
   // Clear existing options in both hidden select and custom dropdown
   chatTagsFilter.innerHTML = '';
   if (tagsDropdownItems) tagsDropdownItems.innerHTML = '';
+  resetTagSelectionState();
 
   try {
     const scopes = getEffectiveScopes();
@@ -1280,6 +1281,24 @@ function hideTagsDropdown() {
   if (tagsSearchController) {
     tagsSearchController.resetFilter();
   }
+}
+
+function resetTagSelectionState() {
+  if (chatTagsFilter) {
+    Array.from(chatTagsFilter.options).forEach(option => {
+      option.selected = false;
+    });
+  }
+
+  if (tagsDropdownItems) {
+    tagsDropdownItems.querySelectorAll('.tag-checkbox').forEach(checkbox => {
+      checkbox.checked = false;
+    });
+  }
+
+  tagsSearchController?.resetFilter();
+  syncTagsDropdownButtonText();
+  filterDocumentsBySelectedTags();
 }
 
 /* ---------------------------------------------------------------------------

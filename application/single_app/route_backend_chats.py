@@ -192,8 +192,33 @@ def is_tabular_entity_lookup_question(user_question):
         'installment',
         'related',
     )
+    explanatory_keywords = (
+        'because',
+        'detail',
+        'details',
+        'explain',
+        'reason',
+        'summary',
+        'why',
+    )
     if any(phrase in normalized_question for phrase in direct_phrases) and any(
-        keyword in normalized_question for keyword in relationship_keywords
+        keyword in normalized_question for keyword in relationship_keywords + explanatory_keywords
+    ):
+        return True
+
+    identifier_like_reference = bool(re.search(
+        r'\b(?:ret|tp|case|account|acct|payment|pay|notice|audit|w2|1099)[-_]?[a-z0-9]*\d{2,}[a-z0-9_-]*\b',
+        normalized_question,
+    ))
+    anchored_entity_reference = any(
+        re.search(pattern, normalized_question)
+        for pattern in (
+            r'\bfor\s+(?:return|taxpayer|case|account|payment|notice|audit)\b',
+            r'\b(?:return|taxpayer|case|account|payment|notice|audit)\s+[`"\']?[a-z0-9_-]*\d{2,}[a-z0-9_-]*[`"\']?\b',
+        )
+    )
+    if anchored_entity_reference and identifier_like_reference and any(
+        keyword in normalized_question for keyword in relationship_keywords + explanatory_keywords
     ):
         return True
 
@@ -202,6 +227,44 @@ def is_tabular_entity_lookup_question(user_question):
         r'\b(show|summarize)\b.*\b(profile|related|record|records)\b.*\b(w-2|w2|1099|payment|refund|notice|audit|installment)\b',
     )
     return any(re.search(pattern, normalized_question) for pattern in entity_lookup_patterns)
+
+
+def is_tabular_distinct_value_question(user_question):
+    """Return True for unique-value questions that should start with get_distinct_values."""
+    normalized_question = re.sub(r'\s+', ' ', str(user_question or '').strip().lower())
+    if not normalized_question or is_tabular_schema_summary_question(normalized_question):
+        return False
+
+    distinct_keywords = (
+        'different',
+        'discrete',
+        'distinct',
+        'unique',
+    )
+    count_keywords = (
+        'count',
+        'counts',
+        'how many',
+        'number of',
+    )
+    target_keywords = (
+        'link',
+        'links',
+        'location',
+        'locations',
+        'sharepoint',
+        'site',
+        'sites',
+        'url',
+        'urls',
+        'value',
+        'values',
+    )
+
+    has_distinct_intent = any(keyword in normalized_question for keyword in distinct_keywords)
+    has_count_intent = any(keyword in normalized_question for keyword in count_keywords)
+    has_target = any(keyword in normalized_question for keyword in target_keywords)
+    return (has_distinct_intent or has_count_intent) and has_target
 
 
 def is_tabular_cross_sheet_bridge_question(user_question):
@@ -1219,6 +1282,45 @@ def summarize_tabular_invocation_errors(invocations):
     return unique_errors
 
 
+def summarize_tabular_discovery_invocations(invocations, max_sheet_names=6):
+    """Return compact workbook-discovery summaries for retry prompts."""
+    discovery_summaries = []
+
+    for invocation in invocations or []:
+        if getattr(invocation, 'function_name', '') != 'describe_tabular_file':
+            continue
+        if get_tabular_invocation_error_message(invocation):
+            continue
+
+        result_payload = get_tabular_invocation_result_payload(invocation) or {}
+        filename = str(result_payload.get('filename') or '').strip()
+        if not filename:
+            continue
+
+        sheet_names = result_payload.get('sheet_names') or []
+        if not isinstance(sheet_names, list):
+            sheet_names = []
+
+        relationship_hints = result_payload.get('relationship_hints') or []
+        if not isinstance(relationship_hints, list):
+            relationship_hints = []
+
+        summary_parts = [filename]
+        if result_payload.get('is_workbook'):
+            summary_parts.append(f"sheet_count={result_payload.get('sheet_count', len(sheet_names))}")
+        if sheet_names:
+            rendered_sheet_names = ', '.join(str(sheet_name) for sheet_name in sheet_names[:max_sheet_names])
+            if len(sheet_names) > max_sheet_names:
+                rendered_sheet_names += f", +{len(sheet_names) - max_sheet_names} more"
+            summary_parts.append(f"sheets={rendered_sheet_names}")
+        if relationship_hints:
+            summary_parts.append(f"relationship_hints={len(relationship_hints)}")
+
+        discovery_summaries.append('; '.join(summary_parts))
+
+    return discovery_summaries
+
+
 def filter_tabular_citation_invocations(invocations):
     """Hide discovery-only citation noise when analytical tabular calls exist."""
     if not invocations:
@@ -1642,7 +1744,8 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                                    conversation_id, gpt_model, settings,
                                    source_hint="workspace", group_id=None,
                                    public_workspace_id=None,
-                                   execution_mode='analysis'):
+                                   execution_mode='analysis',
+                                   tabular_file_contexts=None):
     """Run lightweight SK with TabularProcessingPlugin to analyze tabular data.
 
     Creates a temporary Kernel with only the TabularProcessingPlugin, uses the
@@ -1661,8 +1764,16 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
         execution_mode = execution_mode if execution_mode in {'analysis', 'schema_summary', 'entity_lookup'} else 'analysis'
         schema_summary_mode = execution_mode == 'schema_summary'
         entity_lookup_mode = execution_mode == 'entity_lookup'
+        analysis_file_contexts = normalize_tabular_file_contexts_for_analysis(
+            tabular_filenames=tabular_filenames,
+            tabular_file_contexts=tabular_file_contexts,
+            fallback_source_hint=source_hint,
+            fallback_group_id=group_id,
+            fallback_public_workspace_id=public_workspace_id,
+        )
+        analysis_filenames = [file_context['file_name'] for file_context in analysis_file_contexts]
         log_event(
-            f"[Tabular SK Analysis] Starting {execution_mode} analysis for files: {tabular_filenames}",
+            f"[Tabular SK Analysis] Starting {execution_mode} analysis for files: {analysis_filenames}",
             level=logging.INFO,
         )
 
@@ -1703,11 +1814,12 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
         kernel.add_service(chat_service)
 
         # 3. Pre-dispatch: load file schemas to eliminate discovery LLM rounds
-        source_context = f"source='{source_hint}'"
-        if group_id:
-            source_context += f", group_id='{group_id}'"
-        if public_workspace_id:
-            source_context += f", public_workspace_id='{public_workspace_id}'"
+        source_context = build_tabular_analysis_source_context(
+            analysis_file_contexts,
+            fallback_source_hint=source_hint,
+            fallback_group_id=group_id,
+            fallback_public_workspace_id=public_workspace_id,
+        )
 
         schema_parts = []
         workbook_sheet_hints = {}
@@ -1716,22 +1828,28 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
         workbook_blob_locations = {}
         retry_sheet_overrides = {}
         previous_failed_call_parameters = []  # entity lookup: concrete failed call params for retry hints
+        has_multi_sheet_workbook = False
         sheet_score_match_fn = _score_tabular_entity_sheet_match if entity_lookup_mode else _score_tabular_sheet_match
-        allowed_function_filters = {
-            'included_functions': [
-                f"tabular_processing-{function_name}"
-                for function_name in (
-                    ['describe_tabular_file']
-                    if schema_summary_mode else
-                    sorted(get_tabular_analysis_function_names())
-                )
-            ]
-        }
-        for fname in tabular_filenames:
+        for file_context in analysis_file_contexts:
+            fname = file_context['file_name']
+            file_source_hint = file_context.get('source_hint', source_hint)
+            file_group_id = file_context.get('group_id')
+            file_public_workspace_id = file_context.get('public_workspace_id')
+            schema_source_context = {'source': file_source_hint}
+            if file_group_id:
+                schema_source_context['group_id'] = file_group_id
+            if file_public_workspace_id:
+                schema_source_context['public_workspace_id'] = file_public_workspace_id
             try:
                 container, blob_path = tabular_plugin._resolve_blob_location_with_fallback(
-                    user_id, conversation_id, fname, source_hint,
-                    group_id=group_id, public_workspace_id=public_workspace_id
+                    user_id, conversation_id, fname, file_source_hint,
+                    group_id=file_group_id, public_workspace_id=file_public_workspace_id
+                )
+                tabular_plugin.remember_resolved_blob_location(
+                    file_source_hint,
+                    fname,
+                    container,
+                    blob_path,
                 )
                 schema_info = tabular_plugin._build_workbook_schema_summary(
                     container,
@@ -1742,6 +1860,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 workbook_blob_locations[fname] = (container, blob_path)
 
                 if schema_info.get('is_workbook') and schema_info.get('sheet_count', 0) > 1:
+                    has_multi_sheet_workbook = True
                     # Build a compact sheet directory so the model can pick the
                     # relevant sheet itself instead of us guessing.
                     per_sheet = schema_info.get('per_sheet_schemas', {})
@@ -1798,6 +1917,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                         })
                     directory_schema = {
                         'filename': fname,
+                        'source_context': schema_source_context,
                         'is_workbook': True,
                         'sheet_count': schema_info.get('sheet_count', 0),
                         'likely_sheet': likely_sheet,
@@ -1813,7 +1933,9 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                         level=logging.DEBUG,
                     )
                 else:
-                    schema_parts.append(json.dumps(schema_info, indent=2, default=str))
+                    schema_with_context = dict(schema_info)
+                    schema_with_context['source_context'] = schema_source_context
+                    schema_parts.append(json.dumps(schema_with_context, indent=2, default=str))
                     if schema_info.get('is_workbook'):
                         # Single-sheet workbook — set default so the model needs no sheet arg
                         single_sheet = (schema_info.get('sheet_names') or [None])[0]
@@ -1822,12 +1944,31 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     df = tabular_plugin._read_tabular_blob_to_dataframe(container, blob_path)
                     log_event(f"[Tabular SK Analysis] Pre-loaded schema for {fname} ({len(df)} rows)", level=logging.DEBUG)
             except Exception as e:
-                log_event(f"[Tabular SK Analysis] Failed to pre-load schema for {fname}: {e}", level=logging.WARNING)
-                schema_parts.append(json.dumps({"filename": fname, "error": f"Could not pre-load: {str(e)}"}))
+                log_event(
+                    f"[Tabular SK Analysis] Failed to pre-load schema for {fname} "
+                    f"(source={file_source_hint}, group_id={file_group_id}, public_workspace_id={file_public_workspace_id}): {e}",
+                    level=logging.WARNING,
+                )
+                schema_parts.append(json.dumps({
+                    "filename": fname,
+                    "source_context": schema_source_context,
+                    "error": f"Could not pre-load: {str(e)}",
+                }))
 
         schema_context = "\n".join(schema_parts)
+        allow_multi_sheet_discovery = has_multi_sheet_workbook and not schema_summary_mode
+        allowed_function_names = ['describe_tabular_file'] if schema_summary_mode else sorted(get_tabular_analysis_function_names())
+        if allow_multi_sheet_discovery:
+            allowed_function_names = ['describe_tabular_file'] + allowed_function_names
+        allowed_function_filters = {
+            'included_functions': [
+                f"tabular_processing-{function_name}"
+                for function_name in allowed_function_names
+            ]
+        }
 
-        def build_system_prompt(force_tool_use=False, tool_error_messages=None, execution_gap_messages=None):
+        def build_system_prompt(force_tool_use=False, tool_error_messages=None,
+                                execution_gap_messages=None, discovery_feedback_messages=None):
             if schema_summary_mode:
                 retry_prefix = ""
                 if force_tool_use:
@@ -1896,6 +2037,17 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     "PREVIOUS EXECUTION GAPS:\n"
                     f"{rendered_gaps}\n"
                     "Correct the analysis plan and query the missing related worksheets before answering.\n\n"
+                )
+
+            discovery_feedback = ""
+            if discovery_feedback_messages:
+                rendered_discovery_feedback = "\n".join(
+                    f"- {message}" for message in discovery_feedback_messages
+                )
+                discovery_feedback = (
+                    "WORKBOOK DISCOVERY RESULTS:\n"
+                    f"{rendered_discovery_feedback}\n"
+                    "Use these discovery results to choose the next analytical tool calls. Discovery alone does not answer the question.\n\n"
                 )
 
             missing_sheet_feedback = ""
@@ -1976,6 +2128,13 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     "These recovery hints override the original likely-sheet guess when the previous tool call failed on the wrong worksheet.\n\n"
                 )
 
+            discovery_step_feedback = ""
+            if allow_multi_sheet_discovery:
+                discovery_step_feedback = (
+                    "MULTI-SHEET DISCOVERY:\n"
+                    "If the right worksheet or columns are unclear, call describe_tabular_file without sheet_name as an exploration step, then continue with one or more analytical tool calls. You may need multiple tool rounds.\n\n"
+                )
+
             related_sheet_feedback = ""
             if workbook_related_sheet_hints:
                 rendered_related_sheet_hints = "\n".join(
@@ -2027,30 +2186,38 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     f"{entity_retry_prefix}"
                     f"{tool_error_feedback}"
                     f"{execution_gap_feedback}"
+                    f"{discovery_feedback}"
                     f"{recovery_sheet_feedback}"
                     f"{sheet_hint_feedback}"
                     f"{related_sheet_feedback}"
+                    f"{discovery_step_feedback}"
                     f"{missing_sheet_feedback}"
                     f"FILE SCHEMAS:\n"
                     f"{schema_context}\n\n"
-                    "AVAILABLE FUNCTIONS: filter_rows, query_tabular_data, lookup_value, get_distinct_values, count_rows, "
-                    "filter_rows_by_related_values, count_rows_by_related_values, aggregate_column, group_by_aggregate, and group_by_datetime_component.\n\n"
-                    "Discovery functions are not available in this analysis run because schema context is already pre-loaded.\n\n"
+                    f"AVAILABLE FUNCTIONS: {', '.join(allowed_function_names)}.\n\n"
+                    + (
+                        "Workbook discovery is available through describe_tabular_file. Discovery-only results do NOT complete the analysis. After exploration, continue with analytical functions before answering.\n\n"
+                        if allow_multi_sheet_discovery else
+                        "Discovery functions are not available in this analysis run because schema context is already pre-loaded.\n\n"
+                    )
+                    +
                     "IMPORTANT:\n"
-                    "1. If the question includes an exact identifier or exact entity name and the correct starting worksheet is unclear, begin with filter_rows or query_tabular_data without sheet_name so the plugin can perform a cross-sheet discovery search.\n"
-                    "2. After the first discovery step, pass sheet_name='<name>' on follow-up analytical calls for multi-sheet workbooks. Do not rely on a default sheet for cross-sheet entity lookups.\n"
-                    "3. Use filter_rows or query_tabular_data first when you need full matching rows. Use lookup_value only when you already know the exact worksheet and target column.\n"
-                    "4. Do not start with aggregate_column, group_by_aggregate, or group_by_datetime_component until you have located the relevant entity rows.\n"
-                    "5. When using query_tabular_data, use simple DataFrame.query() syntax with backticked column names for columns containing spaces. Avoid method calls such as .str.lower() or .astype(...).\n"
-                    "6. Then query other relevant worksheets explicitly to collect related records.\n"
-                    "7. When a retrieved row contains a secondary identifier such as ReturnID, CaseID, AccountID, PaymentID, W2ID, or Form1099ID, reuse it to query dependent worksheets.\n"
-                    "8. Do not stop after the first successful row if the question asks for related records across sheets.\n"
-                    "9. If a requested record type has no corresponding worksheet in the workbook, say that the workbook does not contain that record type.\n"
-                    "10. Clearly distinguish between no matching rows and no corresponding worksheet.\n"
-                    "11. Summarize concrete found records sheet-by-sheet using the tool results, not schema placeholders.\n"
-                    "12. For count or percentage questions involving a cohort defined on one sheet and facts on another, prefer get_distinct_values, count_rows, filter_rows_by_related_values, or count_rows_by_related_values over manually counting sampled rows.\n"
-                    "13. Use normalize_match=true when matching names, owners, assignees, engineers, or similar entity-text columns across worksheets.\n"
-                    "14. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report."
+                    "0. Use the source_context listed in FILE SCHEMAS for the matching filename when calling tabular_processing functions.\n"
+                    "1. If the right worksheet is unclear on a multi-sheet workbook, you may call describe_tabular_file without sheet_name first, then continue with analytical tool calls.\n"
+                    "2. If the question includes an exact identifier or exact entity name and the correct starting worksheet is unclear, begin with filter_rows or query_tabular_data without sheet_name so the plugin can perform a cross-sheet discovery search.\n"
+                    "3. After the first discovery step, pass sheet_name='<name>' on follow-up analytical calls for multi-sheet workbooks. Do not rely on a default sheet for cross-sheet entity lookups.\n"
+                    "4. Use filter_rows or query_tabular_data first when you need full matching rows. Use lookup_value only when you already know the exact worksheet and target column.\n"
+                    "5. Do not start with aggregate_column, group_by_aggregate, or group_by_datetime_component until you have located the relevant entity rows.\n"
+                    "6. When using query_tabular_data, use simple DataFrame.query() syntax with backticked column names for columns containing spaces. Avoid method calls such as .str.lower() or .astype(...).\n"
+                    "7. Then query other relevant worksheets explicitly to collect related records.\n"
+                    "8. When a retrieved row contains a secondary identifier such as ReturnID, CaseID, AccountID, PaymentID, W2ID, or Form1099ID, reuse it to query dependent worksheets.\n"
+                    "9. Do not stop after the first successful row if the question asks for related records across sheets.\n"
+                    "10. If a requested record type has no corresponding worksheet in the workbook, say that the workbook does not contain that record type.\n"
+                    "11. Clearly distinguish between no matching rows and no corresponding worksheet.\n"
+                    "12. Summarize concrete found records sheet-by-sheet using the tool results, not schema placeholders.\n"
+                    "13. For count or percentage questions involving a cohort defined on one sheet and facts on another, prefer get_distinct_values, count_rows, filter_rows_by_related_values, or count_rows_by_related_values over manually counting sampled rows.\n"
+                    "14. Use normalize_match=true when matching names, owners, assignees, engineers, or similar entity-text columns across worksheets.\n"
+                    "15. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report."
                 )
 
             return (
@@ -2062,39 +2229,46 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 f"{retry_prefix}"
                 f"{tool_error_feedback}"
                 f"{execution_gap_feedback}"
+                f"{discovery_feedback}"
                 f"{recovery_sheet_feedback}"
                 f"{sheet_hint_feedback}"
                 f"{related_sheet_feedback}"
                 f"{cross_sheet_bridge_feedback}"
+                f"{discovery_step_feedback}"
                 f"{missing_sheet_feedback}"
                 f"FILE SCHEMAS:\n"
                 f"{schema_context}\n\n"
-                "AVAILABLE FUNCTIONS: lookup_value, get_distinct_values, count_rows, filter_rows, query_tabular_data, "
-                "filter_rows_by_related_values, count_rows_by_related_values, aggregate_column, group_by_aggregate, and group_by_datetime_component for year/quarter/month/week/day/hour trend analysis.\n\n"
-                "Discovery functions are not available in this analysis run because schema context is already pre-loaded.\n\n"
+                f"AVAILABLE FUNCTIONS: {', '.join(allowed_function_names)} for year/quarter/month/week/day/hour trend analysis.\n\n"
+                + (
+                    "Workbook discovery is available through describe_tabular_file. Discovery-only results do NOT complete the analysis. After exploration, continue with analytical functions before answering.\n\n"
+                    if allow_multi_sheet_discovery else
+                    "Discovery functions are not available in this analysis run because schema context is already pre-loaded.\n\n"
+                )
+                +
                 "IMPORTANT:\n"
-                "1. Use the pre-loaded schema to pick the correct columns, then call the plugin functions.\n"
-                "2. For multi-sheet workbooks, review the sheet_directory to find the most relevant sheet for the question. Pass sheet_name='<name>' in every analytical tool call unless a trustworthy default sheet has already been established. If a CROSS-SHEET BRIDGE PLAN is provided, query the listed worksheets explicitly and do not rely on a default sheet.\n"
-                "3. If a previous tool error says a requested column is missing on the current sheet and suggests candidate sheets, switch to one of those candidate sheets immediately.\n"
-                "4. For account/category lookup questions at a specific period or metric, use lookup_value first. Provide lookup_column, lookup_value, and target_column.\n"
-                "5. If lookup_value is not sufficient, use filter_rows or query_tabular_data on the label column, then read the requested period column.\n"
-                "6. For deterministic how-many questions, use count_rows instead of estimating counts from partial returned rows.\n"
-                "7. For cohort, membership, ownership-share, or percentage questions where one sheet defines the group and another sheet contains the fact rows, use get_distinct_values, filter_rows_by_related_values, or count_rows_by_related_values.\n"
-                "8. When the question asks for one named member's share within that cohort, prefer count_rows_by_related_values and either read source_value_match_counts from the helper result or rerun count_rows_by_related_values with source_filter_column/source_filter_value on the reference sheet. Do not fall back to query_tabular_data or filter_rows on the fact sheet with a guessed exact text value unless the workbook already exposed that canonical target value.\n"
-                "9. Use normalize_match=true when matching names, owners, assignees, engineers, or similar entity-text columns across worksheets.\n"
-                "10. Only use aggregate_column when the user explicitly asks for a sum, average, min, max, or count across rows and count_rows is not the simpler deterministic option.\n"
-                "11. For time-based questions on datetime columns, use group_by_datetime_component.\n"
-                "12. For threshold, ranking, comparison, or correlation-like questions, first filter/query the relevant rows, then compute grouped metrics.\n"
-                "13. When the question asks for grouped results for each entity or category and a cross-sheet bridge plan or relationship hint is available, use the reference worksheet to identify the canonical entities or categories and the fact worksheet to compute the metric. Do not answer 'each X' by grouping a yes/no, boolean, or membership-flag column unless the user explicitly asked about that flag.\n"
-                "14. When the question asks for rows satisfying multiple conditions, prefer one combined query_expression using and/or instead of separate broad queries that you plan to intersect later.\n"
-                "15. Batch multiple independent function calls in a SINGLE response whenever possible.\n"
-                "16. Keep max_rows as small as possible. Only increase it when the user explicitly asked for an exhaustive row list or export; otherwise return total_matches plus representative rows.\n"
-                "17. For analytical questions, prefer deterministic counts plus lookup/filter/query/grouped computations over raw row or preview output.\n"
-                "18. For identifier-based workbook questions, locate the identifier on the correct sheet before explaining downstream calculations.\n"
-                "19. For peak, busiest, highest, or lowest questions, use grouped functions and inspect the highest_group, highest_value, lowest_group, and lowest_value summary fields.\n"
-                "20. Return only computed findings and name the strongest drivers clearly.\n"
-                "21. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report.\n"
-                "22. When using query_tabular_data, use simple DataFrame.query() syntax with backticked column names for columns containing spaces. Avoid method calls such as .str.lower(), .astype(...), or other Python expressions that DataFrame.query() may reject."
+                "1. Use the pre-loaded schema to pick the correct columns, then call the plugin functions. Use the source_context listed in FILE SCHEMAS for the matching filename.\n"
+                "2. For multi-sheet workbooks, review the sheet_directory to find the most relevant sheet for the question. If the right worksheet is still unclear, call describe_tabular_file without sheet_name, then continue with analytical calls. Pass sheet_name='<name>' in follow-up analytical tool calls unless a trustworthy default sheet has already been established or you are intentionally doing an initial cross-sheet discovery step. If a CROSS-SHEET BRIDGE PLAN is provided, query the listed worksheets explicitly and do not rely on a default sheet.\n"
+                "3. If the question includes an exact identifier and the correct starting worksheet is unclear, begin with filter_rows or query_tabular_data without sheet_name so the plugin can perform a cross-sheet discovery search.\n"
+                "4. If a previous tool error says a requested column is missing on the current sheet and suggests candidate sheets, switch to one of those candidate sheets immediately.\n"
+                "5. For account/category lookup questions at a specific period or metric, use lookup_value first. Provide lookup_column, lookup_value, and target_column.\n"
+                "6. If lookup_value is not sufficient, use filter_rows or query_tabular_data on the label column, then read the requested period column.\n"
+                "7. For deterministic how-many questions, use count_rows instead of estimating counts from partial returned rows. Use get_distinct_values when the answer depends on the unique values present in a column.\n"
+                "8. For cohort, membership, ownership-share, or percentage questions where one sheet defines the group and another sheet contains the fact rows, use get_distinct_values, filter_rows_by_related_values, or count_rows_by_related_values.\n"
+                "9. When the question asks for one named member's share within that cohort, prefer count_rows_by_related_values and either read source_value_match_counts from the helper result or rerun count_rows_by_related_values with source_filter_column/source_filter_value on the reference sheet. Do not fall back to query_tabular_data or filter_rows on the fact sheet with a guessed exact text value unless the workbook already exposed that canonical target value.\n"
+                "10. Use normalize_match=true when matching names, owners, assignees, engineers, or similar entity-text columns across worksheets.\n"
+                "11. Only use aggregate_column when the user explicitly asks for a sum, average, min, max, or count across rows and count_rows is not the simpler deterministic option.\n"
+                "12. For time-based questions on datetime columns, use group_by_datetime_component.\n"
+                "13. For threshold, ranking, comparison, or correlation-like questions, first filter/query the relevant rows, then compute grouped metrics.\n"
+                "14. When the question asks for grouped results for each entity or category and a cross-sheet bridge plan or relationship hint is available, use the reference worksheet to identify the canonical entities or categories and the fact worksheet to compute the metric. Do not answer 'each X' by grouping a yes/no, boolean, or membership-flag column unless the user explicitly asked about that flag.\n"
+                "15. When the question asks for rows satisfying multiple conditions, prefer one combined query_expression using and/or instead of separate broad queries that you plan to intersect later.\n"
+                "16. Batch multiple independent function calls in a SINGLE response whenever possible.\n"
+                "17. Keep max_rows as small as possible. Only increase it when the user explicitly asked for an exhaustive row list or export; otherwise return total_matches plus representative rows.\n"
+                "18. For analytical questions, prefer deterministic counts plus lookup/filter/query/grouped computations over raw row or preview output.\n"
+                "19. For identifier-based workbook questions, locate the identifier on the correct sheet before explaining downstream calculations.\n"
+                "20. For peak, busiest, highest, or lowest questions, use grouped functions and inspect the highest_group, highest_value, lowest_group, and lowest_value summary fields.\n"
+                "21. Return only computed findings and name the strongest drivers clearly.\n"
+                "22. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report.\n"
+                "23. When using query_tabular_data, use simple DataFrame.query() syntax with backticked column names for columns containing spaces. Avoid method calls such as .str.lower(), .astype(...), or other Python expressions that DataFrame.query() may reject."
             )
 
         baseline_invocations = plugin_logger.get_invocations_for_conversation(
@@ -2105,20 +2279,24 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
         baseline_invocation_count = len(baseline_invocations)
         previous_tool_error_messages = []
         previous_execution_gap_messages = []
+        previous_discovery_feedback_messages = []
+        analysis_requires_immediate_tool_choice = has_multi_sheet_workbook and not schema_summary_mode
 
         for attempt_number in range(1, 4):
-            force_tool_use = attempt_number > 1
+            force_tool_use = attempt_number > 1 or (attempt_number == 1 and analysis_requires_immediate_tool_choice)
             # 4. Build chat history with pre-loaded schemas
             chat_history = SKChatHistory()
             chat_history.add_system_message(build_system_prompt(
                 force_tool_use=force_tool_use,
                 tool_error_messages=previous_tool_error_messages,
                 execution_gap_messages=previous_execution_gap_messages,
+                discovery_feedback_messages=previous_discovery_feedback_messages,
             ))
 
             chat_history.add_user_message(
                 f"Analyze the tabular data to answer: {user_question}\n"
-                f"Use user_id='{user_id}', conversation_id='{conversation_id}', {source_context}."
+                f"Use user_id='{user_id}', conversation_id='{conversation_id}'.\n"
+                f"{source_context}"
             )
 
             # 5. Execute with auto function calling
@@ -2249,6 +2427,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     if successful_analytical_invocations:
                         previous_tool_error_messages = []
                         previous_failed_call_parameters = []
+                        previous_discovery_feedback_messages = []
 
                         if entity_lookup_mode:
                             selected_sheets = get_tabular_invocation_selected_sheets(successful_analytical_invocations)
@@ -2363,7 +2542,12 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                             level=logging.WARNING
                         )
                     elif discovery_invocations:
-                        previous_execution_gap_messages = []
+                        previous_discovery_feedback_messages = summarize_tabular_discovery_invocations(
+                            successful_schema_summary_invocations or discovery_invocations,
+                        )
+                        previous_execution_gap_messages = [
+                            'Previous attempt explored workbook structure but did not execute analytical functions. Continue with analytical tool calls now.'
+                        ]
                         discovery_function_names = sorted({
                             invocation.function_name for invocation in discovery_invocations
                         })
@@ -2372,13 +2556,19 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                             level=logging.WARNING
                         )
                     elif new_invocation_count > 0:
+                        previous_discovery_feedback_messages = []
                         previous_execution_gap_messages = []
                         log_event(
                             f"[Tabular SK Analysis] Attempt {attempt_number} used unsupported tool(s) without computed analysis; retrying",
                             level=logging.WARNING
                         )
                     else:
-                        previous_execution_gap_messages = []
+                        previous_discovery_feedback_messages = []
+                        previous_execution_gap_messages = (
+                            ['Previous attempt did not use any tools. Start with workbook discovery if the right worksheet is unclear, then continue with analytical tool calls.']
+                            if allow_multi_sheet_discovery else
+                            []
+                        )
                         log_event(
                             f"[Tabular SK Analysis] Attempt {attempt_number} returned narrative without tool use; retrying",
                             level=logging.WARNING
@@ -2397,6 +2587,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     )
                 elif failed_analytical_invocations:
                     previous_tool_error_messages = summarize_tabular_invocation_errors(failed_analytical_invocations)
+                    previous_discovery_feedback_messages = []
                     previous_execution_gap_messages = []
                     log_event(
                         f"[Tabular SK Analysis] Attempt {attempt_number} returned no content after tool errors; retrying",
@@ -2515,17 +2706,125 @@ def get_document_container_for_scope(document_scope):
     return cosmos_user_documents_container
 
 
-def get_selected_workspace_tabular_filenames(selected_document_ids=None, selected_document_id=None, document_scope='personal'):
-    """Resolve explicitly selected workspace documents and return tabular filenames."""
+def get_document_containers_for_scope(document_scope):
+    """Return workspace source/container pairs for the requested document scope."""
+    if document_scope == 'group':
+        return [('group', cosmos_group_documents_container)]
+    if document_scope == 'public':
+        return [('public', cosmos_public_documents_container)]
+    if document_scope == 'all':
+        return [
+            ('workspace', cosmos_user_documents_container),
+            ('group', cosmos_group_documents_container),
+            ('public', cosmos_public_documents_container),
+        ]
+    return [('workspace', cosmos_user_documents_container)]
+
+
+def build_tabular_file_context(file_name, source_hint='workspace', group_id=None, public_workspace_id=None):
+    """Build normalized source metadata for a tabular file when enough scope is known."""
+    normalized_file_name = str(file_name or '').strip()
+    if not is_tabular_filename(normalized_file_name):
+        return None
+
+    normalized_source_hint = str(source_hint or 'workspace').strip().lower()
+    if normalized_source_hint == 'personal':
+        normalized_source_hint = 'workspace'
+    if normalized_source_hint not in {'workspace', 'chat', 'group', 'public'}:
+        normalized_source_hint = 'workspace'
+
+    normalized_group_id = str(group_id or '').strip() or None
+    normalized_public_workspace_id = str(public_workspace_id or '').strip() or None
+
+    if normalized_source_hint == 'group' and not normalized_group_id:
+        normalized_source_hint = 'workspace'
+    if normalized_source_hint == 'public' and not normalized_public_workspace_id:
+        normalized_source_hint = 'workspace'
+
+    context = {
+        'file_name': normalized_file_name,
+        'source_hint': normalized_source_hint,
+    }
+    if normalized_source_hint == 'group' and normalized_group_id:
+        context['group_id'] = normalized_group_id
+    if normalized_source_hint == 'public' and normalized_public_workspace_id:
+        context['public_workspace_id'] = normalized_public_workspace_id
+    return context
+
+
+def dedupe_tabular_file_contexts(file_contexts=None):
+    """Return unique tabular file contexts while preserving the first-seen order."""
+    unique_contexts = []
+    seen_contexts = set()
+
+    for file_context in file_contexts or []:
+        if not isinstance(file_context, Mapping):
+            continue
+
+        context_key = (
+            str(file_context.get('file_name') or '').strip(),
+            str(file_context.get('source_hint') or 'workspace').strip().lower(),
+            str(file_context.get('group_id') or '').strip(),
+            str(file_context.get('public_workspace_id') or '').strip(),
+        )
+        if not context_key[0] or context_key in seen_contexts:
+            continue
+
+        seen_contexts.add(context_key)
+        unique_contexts.append(dict(file_context))
+
+    return unique_contexts
+
+
+def infer_tabular_source_context_from_document(source_doc, document_scope='personal',
+                                              active_group_id=None, active_public_workspace_id=None):
+    """Infer tabular file source metadata from a search result or citation document."""
+    if not isinstance(source_doc, Mapping):
+        return None
+
+    file_name = source_doc.get('file_name')
+    doc_group_id = str(source_doc.get('group_id') or '').strip() or None
+    doc_public_workspace_id = str(source_doc.get('public_workspace_id') or '').strip() or None
+
+    if doc_public_workspace_id:
+        return build_tabular_file_context(
+            file_name,
+            source_hint='public',
+            public_workspace_id=doc_public_workspace_id,
+        )
+    if doc_group_id:
+        return build_tabular_file_context(
+            file_name,
+            source_hint='group',
+            group_id=doc_group_id,
+        )
+    if document_scope == 'group':
+        return build_tabular_file_context(
+            file_name,
+            source_hint='group',
+            group_id=active_group_id,
+        )
+    if document_scope == 'public':
+        return build_tabular_file_context(
+            file_name,
+            source_hint='public',
+            public_workspace_id=active_public_workspace_id,
+        )
+    return build_tabular_file_context(file_name, source_hint='workspace')
+
+
+def get_selected_workspace_tabular_file_contexts(selected_document_ids=None, selected_document_id=None,
+                                                 document_scope='personal', active_group_id=None,
+                                                 active_public_workspace_id=None):
+    """Resolve explicitly selected workspace documents and return tabular source contexts."""
     selected_ids = list(selected_document_ids or [])
     if not selected_ids and selected_document_id and selected_document_id != 'all':
         selected_ids = [selected_document_id]
 
     if not selected_ids:
-        return set()
+        return []
 
-    cosmos_container = get_document_container_for_scope(document_scope)
-    tabular_filenames = set()
+    tabular_file_contexts = []
 
     for doc_id in selected_ids:
         if not doc_id or doc_id == 'all':
@@ -2533,49 +2832,129 @@ def get_selected_workspace_tabular_filenames(selected_document_ids=None, selecte
 
         try:
             doc_query = (
-                "SELECT TOP 1 c.file_name, c.title "
+                "SELECT TOP 1 c.file_name, c.title, c.group_id, c.public_workspace_id "
                 "FROM c WHERE c.id = @doc_id "
                 "ORDER BY c.version DESC"
             )
             doc_params = [{"name": "@doc_id", "value": doc_id}]
-            doc_results = list(cosmos_container.query_items(
-                query=doc_query,
-                parameters=doc_params,
-                enable_cross_partition_query=True
-            ))
 
-            if not doc_results:
-                continue
+            for source_hint, cosmos_container in get_document_containers_for_scope(document_scope):
+                doc_results = list(cosmos_container.query_items(
+                    query=doc_query,
+                    parameters=doc_params,
+                    enable_cross_partition_query=True
+                ))
 
-            file_name = doc_results[0].get('file_name') or doc_results[0].get('title')
-            if is_tabular_filename(file_name):
-                tabular_filenames.add(file_name)
+                if not doc_results:
+                    continue
+
+                doc_info = doc_results[0]
+                file_context = build_tabular_file_context(
+                    doc_info.get('file_name') or doc_info.get('title'),
+                    source_hint=source_hint,
+                    group_id=doc_info.get('group_id') or active_group_id,
+                    public_workspace_id=doc_info.get('public_workspace_id') or active_public_workspace_id,
+                )
+                if file_context:
+                    tabular_file_contexts.append(file_context)
+                break
         except Exception as e:
             log_event(
                 f"[Tabular SK Analysis] Failed to resolve selected document '{doc_id}': {e}",
                 level=logging.WARNING
             )
 
-    return tabular_filenames
+    return dedupe_tabular_file_contexts(tabular_file_contexts)
 
 
-def collect_workspace_tabular_filenames(combined_documents=None, selected_document_ids=None,
-                                        selected_document_id=None, document_scope='personal'):
-    """Collect tabular filenames from search results and explicit workspace selection."""
-    tabular_filenames = set()
+def collect_workspace_tabular_file_contexts(combined_documents=None, selected_document_ids=None,
+                                            selected_document_id=None, document_scope='personal',
+                                            active_group_id=None, active_public_workspace_id=None):
+    """Collect tabular source contexts from search results and explicit workspace selection."""
+    tabular_file_contexts = []
 
     for source_doc in combined_documents or []:
-        file_name = source_doc.get('file_name', '')
-        if is_tabular_filename(file_name):
-            tabular_filenames.add(file_name)
+        file_context = infer_tabular_source_context_from_document(
+            source_doc,
+            document_scope=document_scope,
+            active_group_id=active_group_id,
+            active_public_workspace_id=active_public_workspace_id,
+        )
+        if file_context:
+            tabular_file_contexts.append(file_context)
 
-    tabular_filenames.update(get_selected_workspace_tabular_filenames(
+    tabular_file_contexts.extend(get_selected_workspace_tabular_file_contexts(
         selected_document_ids=selected_document_ids,
         selected_document_id=selected_document_id,
         document_scope=document_scope,
+        active_group_id=active_group_id,
+        active_public_workspace_id=active_public_workspace_id,
     ))
 
-    return tabular_filenames
+    return dedupe_tabular_file_contexts(tabular_file_contexts)
+
+
+def collect_workspace_tabular_filenames(combined_documents=None, selected_document_ids=None,
+                                        selected_document_id=None, document_scope='personal',
+                                        active_group_id=None, active_public_workspace_id=None):
+    """Collect unique tabular filenames from search results and explicit workspace selection."""
+    tabular_file_contexts = collect_workspace_tabular_file_contexts(
+        combined_documents=combined_documents,
+        selected_document_ids=selected_document_ids,
+        selected_document_id=selected_document_id,
+        document_scope=document_scope,
+        active_group_id=active_group_id,
+        active_public_workspace_id=active_public_workspace_id,
+    )
+    return {file_context['file_name'] for file_context in tabular_file_contexts}
+
+
+def normalize_tabular_file_contexts_for_analysis(tabular_filenames=None, tabular_file_contexts=None,
+                                                 fallback_source_hint='workspace', fallback_group_id=None,
+                                                 fallback_public_workspace_id=None):
+    """Return per-file tabular source contexts, defaulting to a shared fallback only when needed."""
+    normalized_contexts = dedupe_tabular_file_contexts(tabular_file_contexts)
+    if normalized_contexts:
+        return normalized_contexts
+
+    fallback_contexts = []
+    for file_name in tabular_filenames or []:
+        fallback_context = build_tabular_file_context(
+            file_name,
+            source_hint=fallback_source_hint,
+            group_id=fallback_group_id,
+            public_workspace_id=fallback_public_workspace_id,
+        )
+        if fallback_context:
+            fallback_contexts.append(fallback_context)
+
+    return dedupe_tabular_file_contexts(fallback_contexts)
+
+
+def build_tabular_analysis_source_context(tabular_file_contexts=None, fallback_source_hint='workspace',
+                                          fallback_group_id=None, fallback_public_workspace_id=None):
+    """Build prompt instructions for per-file tabular source metadata."""
+    normalized_contexts = dedupe_tabular_file_contexts(tabular_file_contexts)
+    if normalized_contexts:
+        lines = [
+            "Use the following per-file source metadata on tabular_processing tool calls. "
+            "Do not substitute a different source for a listed file:",
+        ]
+        for file_context in normalized_contexts:
+            context_parts = [f"source='{file_context.get('source_hint', 'workspace')}'"]
+            if file_context.get('group_id'):
+                context_parts.append(f"group_id='{file_context['group_id']}'")
+            if file_context.get('public_workspace_id'):
+                context_parts.append(f"public_workspace_id='{file_context['public_workspace_id']}'")
+            lines.append(f"- {file_context['file_name']}: {', '.join(context_parts)}")
+        return "\n".join(lines)
+
+    fallback_parts = [f"source='{fallback_source_hint}'"]
+    if fallback_source_hint == 'group' and fallback_group_id:
+        fallback_parts.append(f"group_id='{fallback_group_id}'")
+    if fallback_source_hint == 'public' and fallback_public_workspace_id:
+        fallback_parts.append(f"public_workspace_id='{fallback_public_workspace_id}'")
+    return f"Use {', '.join(fallback_parts)} on tabular_processing tool calls."
 
 
 def determine_tabular_source_hint(document_scope, active_group_id=None, active_public_workspace_id=None):
@@ -3934,6 +4313,7 @@ def register_route_backend_chats(app):
                         chunk_id = doc.get('chunk_id', str(uuid.uuid4())) # Ensure ID exists
                         score = doc.get('score', 0.0) # Add default score
                         group_id = doc.get('group_id', None) # Add default group ID
+                        doc_public_workspace_id = doc.get('public_workspace_id', None)
                         sheet_name = doc.get('sheet_name')
                         location_label, location_value = get_citation_location(
                             file_name,
@@ -3958,6 +4338,7 @@ def register_route_backend_chats(app):
                             "chunk_id": chunk_id,
                             "score": score,
                             "group_id": group_id,
+                            "public_workspace_id": doc_public_workspace_id,
                         })
                         if classification:
                             classifications_found.add(classification)
@@ -3985,6 +4366,7 @@ def register_route_backend_chats(app):
                             "chunk_sequence": source_doc.get("chunk_sequence"), # Order within document/group
                             "score": source_doc.get("score"), # Relevance score from search
                             "group_id": source_doc.get("group_id"), # Grouping info if used
+                            "public_workspace_id": source_doc.get("public_workspace_id"),
                             "version": source_doc.get("version"), # Document version
                             "classification": source_doc.get("classification") # Document classification
                             # Add any other relevant metadata fields from source_doc here
@@ -6767,6 +7149,7 @@ def register_route_backend_chats(app):
                             chunk_id = doc.get('chunk_id', str(uuid.uuid4()))
                             score = doc.get('score', 0.0)
                             group_id = doc.get('group_id', None)
+                            doc_public_workspace_id = doc.get('public_workspace_id', None)
                             sheet_name = doc.get('sheet_name')
                             location_label, location_value = get_citation_location(
                                 file_name,
@@ -6792,6 +7175,7 @@ def register_route_backend_chats(app):
                                 "chunk_id": chunk_id,
                                 "score": score,
                                 "group_id": group_id,
+                                "public_workspace_id": doc_public_workspace_id,
                             })
                             
                             # Build citation data to match non-streaming format
@@ -6803,6 +7187,7 @@ def register_route_backend_chats(app):
                                 "chunk_sequence": chunk_sequence,
                                 "score": score,
                                 "group_id": group_id,
+                                "public_workspace_id": doc_public_workspace_id,
                                 "version": version,
                                 "classification": classification
                             }
@@ -6932,14 +7317,20 @@ def register_route_backend_chats(app):
                         # Reorder hybrid citations list in descending order based on page_number
                         hybrid_citations_list.sort(key=lambda x: x.get('page_number', 0), reverse=True)
                 
+                workspace_tabular_file_contexts = []
                 workspace_tabular_files = set()
                 if hybrid_search_enabled and is_tabular_processing_enabled(settings):
-                    workspace_tabular_files = collect_workspace_tabular_filenames(
+                    workspace_tabular_file_contexts = collect_workspace_tabular_file_contexts(
                         combined_documents=combined_documents,
                         selected_document_ids=selected_document_ids,
                         selected_document_id=selected_document_id,
                         document_scope=document_scope,
+                        active_group_id=active_group_id,
+                        active_public_workspace_id=active_public_workspace_id,
                     )
+                    workspace_tabular_files = {
+                        file_context['file_name'] for file_context in workspace_tabular_file_contexts
+                    }
 
                 if hybrid_search_enabled and workspace_tabular_files and is_tabular_processing_enabled(settings):
                     tabular_source_hint = determine_tabular_source_hint(
@@ -6956,12 +7347,14 @@ def register_route_backend_chats(app):
                     debug_print(
                         "[Streaming][Tabular SK] Starting workspace tabular analysis | "
                         f"files={sorted(workspace_tabular_files)} | source_hint={tabular_source_hint} | "
+                        f"file_contexts={workspace_tabular_file_contexts} | "
                         f"execution_mode={tabular_execution_mode} | baseline_invocations={baseline_tabular_invocation_count}"
                     )
 
                     tabular_analysis = asyncio.run(run_tabular_sk_analysis(
                         user_question=user_message,
                         tabular_filenames=workspace_tabular_files,
+                        tabular_file_contexts=workspace_tabular_file_contexts,
                         user_id=user_id,
                         conversation_id=conversation_id,
                         gpt_model=gpt_model,

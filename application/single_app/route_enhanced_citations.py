@@ -19,6 +19,49 @@ from swagger_wrapper import swagger_route, get_auth_security
 from config import CLIENTS, storage_account_user_documents_container_name, storage_account_group_documents_container_name, storage_account_public_documents_container_name, storage_account_personal_chat_container_name, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, AUDIO_EXTENSIONS, TABULAR_EXTENSIONS, cosmos_messages_container, cosmos_conversations_container
 from functions_debug import debug_print
 
+
+def _sanitize_tabular_preview_value(value):
+    """Convert pandas preview values into JSON-safe display strings."""
+    if hasattr(value, 'item') and not isinstance(value, (str, bytes)):
+        try:
+            value = value.item()
+        except (TypeError, ValueError):
+            pass
+
+    if value is None:
+        return ''
+
+    if pandas.api.types.is_scalar(value):
+        try:
+            if pandas.isna(value):
+                return ''
+        except (TypeError, ValueError):
+            pass
+
+    if isinstance(value, bytes):
+        return value.decode('utf-8', errors='replace')
+
+    if hasattr(value, 'isoformat') and not isinstance(value, str):
+        try:
+            return value.isoformat()
+        except TypeError:
+            pass
+
+    return str(value)
+
+
+def _serialize_tabular_preview_table(df_preview):
+    """Build JSON-safe tabular preview payload pieces for the browser."""
+    columns = [
+        _sanitize_tabular_preview_value(column)
+        for column in df_preview.columns.tolist()
+    ]
+    rows = [
+        [_sanitize_tabular_preview_value(cell) for cell in row]
+        for row in df_preview.itertuples(index=False, name=None)
+    ]
+    return columns, rows
+
 def register_enhanced_citations_routes(app):
     """Register enhanced citations routes"""
 
@@ -475,6 +518,7 @@ def register_enhanced_citations_routes(app):
             total_rows = len(df)
             truncated = total_rows > max_rows
             preview = df.head(max_rows)
+            columns, rows = _serialize_tabular_preview_table(preview)
 
             return jsonify({
                 "filename": file_name,
@@ -483,8 +527,8 @@ def register_enhanced_citations_routes(app):
                 "sheet_count": len(sheet_names),
                 "total_rows": total_rows if not truncated else None,
                 "total_columns": len(df.columns),
-                "columns": list(df.columns),
-                "rows": preview.values.tolist(),
+                "columns": columns,
+                "rows": rows,
                 "truncated": truncated
             })
 

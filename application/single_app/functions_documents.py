@@ -538,7 +538,7 @@ def _build_carried_forward_metadata(document_item, is_group=False):
         "abstract": document_item.get("abstract"),
         "keywords": document_item.get("keywords"),
         "publication_date": document_item.get("publication_date"),
-        "authors": document_item.get("authors"),
+        "authors": ensure_list(document_item.get("authors")),
         "document_classification": document_item.get("document_classification", "None"),
         "tags": document_item.get("tags", []),
     }
@@ -623,7 +623,7 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 'abstract': None,
                 'keywords': None,
                 'publication_date': None,
-                'authors': None,
+                'authors': [],
                 'document_classification': 'None',
                 'tags': [],
                 'shared_group_ids': [] if is_group else None,
@@ -677,7 +677,7 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 "abstract": carried_forward.get("abstract"),
                 "keywords": carried_forward.get("keywords"),
                 "publication_date": carried_forward.get("publication_date"),
-                "authors": carried_forward.get("authors"),
+                "authors": ensure_list(carried_forward.get("authors")),
                 "tags": carried_forward.get("tags", [])
             }
         elif is_group:
@@ -708,7 +708,7 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 "abstract": carried_forward.get("abstract"),
                 "keywords": carried_forward.get("keywords"),
                 "publication_date": carried_forward.get("publication_date"),
-                "authors": carried_forward.get("authors"),
+                "authors": ensure_list(carried_forward.get("authors")),
                 "tags": carried_forward.get("tags", [])
             }
         else:
@@ -741,7 +741,7 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 "abstract": carried_forward.get("abstract"),
                 "keywords": carried_forward.get("keywords"),
                 "publication_date": carried_forward.get("publication_date"),
-                "authors": carried_forward.get("authors"),
+                "authors": ensure_list(carried_forward.get("authors")),
                 "tags": carried_forward.get("tags", [])
             }
 
@@ -1991,7 +1991,7 @@ def update_document(**kwargs):
                         chunk_updates['title'] = existing_document.get('title')
                     if 'authors' in updated_fields_requiring_chunk_sync:
                          # Ensure authors is a list for the chunk metadata if needed
-                        chunk_updates['author'] = existing_document.get('authors')
+                        chunk_updates['author'] = ensure_list(existing_document.get('authors'))
                     if 'file_name' in updated_fields_requiring_chunk_sync:
                         chunk_updates['file_name'] = existing_document.get('file_name')
                     if 'document_classification' in updated_fields_requiring_chunk_sync:
@@ -2129,7 +2129,7 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
         chunk_id = f"{document_id}_{page_number}"
         chunk_keywords = []
         chunk_summary = ""
-        author = metadata.get('authors', []) if metadata else []
+        author = ensure_list(metadata.get('authors')) if metadata else []
         title = metadata.get('title', '') if metadata else ''
         document_classification = metadata.get('document_classification', 'None') if metadata else 'None'
         
@@ -2636,7 +2636,10 @@ def update_chunk_metadata(chunk_id, user_id, group_id=None, public_workspace_id=
             
         for field in updatable_fields:
             if field in kwargs:
-                chunk_item[field] = kwargs[field]
+                if field == 'author':
+                    chunk_item[field] = ensure_list(kwargs[field])
+                else:
+                    chunk_item[field] = kwargs[field]
 
         search_client.upload_documents(documents=[chunk_item])
 
@@ -3235,7 +3238,7 @@ def process_metadata_extraction_background(document_id, user_id, group_id=None, 
             "document_id": document_id,
             "user_id": user_id,
             "title": metadata.get('title'),
-            "authors": metadata.get('authors'),
+            "authors": ensure_list(metadata.get('authors')),
             "abstract": metadata.get('abstract'),
             "keywords": metadata.get('keywords'),
             "publication_date": metadata.get('publication_date'),
@@ -3759,22 +3762,33 @@ def clean_json_codeFence(response_content: str) -> str:
 
 def ensure_list(value, delimiters=r"[;,]"):
     """
-    Ensures the provided value is returned as a list of strings.
-    - If `value` is already a list, it is returned as-is.
-    - If `value` is a string, it is split on the given delimiters
-      (default: commas and semicolons).
-    - Otherwise, return an empty list.
+    Ensures the provided value is returned as a list of non-empty strings.
+    - If `value` is a list/tuple/set, items are normalized one by one.
+    - If `value` is a string, it is split on the given delimiters.
+    - If `value` is any other scalar, it is coerced to a single string item.
+    - Null and blank items are removed.
     """
-    if isinstance(value, list):
-        return value
-    elif isinstance(value, str):
-        # Split on the given delimiters (commas, semicolons, etc.)
-        items = re.split(delimiters, value)
-        # Strip whitespace and remove empty strings
-        items = [item.strip() for item in items if item.strip()]
-        return items
-    else:
+    if value is None:
         return []
+
+    if isinstance(value, str):
+        raw_items = re.split(delimiters, value)
+    elif isinstance(value, (list, tuple, set)):
+        raw_items = list(value)
+    else:
+        raw_items = [value]
+
+    items = []
+    for raw_item in raw_items:
+        if raw_item is None:
+            continue
+
+        normalized_item = raw_item if isinstance(raw_item, str) else str(raw_item)
+        normalized_item = normalized_item.strip()
+        if normalized_item:
+            items.append(normalized_item)
+
+    return items
 
 def is_effectively_empty(value):
     """

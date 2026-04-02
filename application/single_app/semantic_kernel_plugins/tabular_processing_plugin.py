@@ -110,6 +110,7 @@ class TabularProcessingPlugin:
         self._blob_data_cache = {}  # Per-instance cache: (container, blob_name) -> raw bytes
         self._workbook_metadata_cache = {}  # Per-instance cache: (container, blob_name) -> workbook metadata
         self._default_sheet_overrides = {}  # (container, blob_name) -> default sheet name
+        self._resolved_blob_location_overrides = {}  # (source, filename) -> (container, blob_name)
 
     @classmethod
     def get_discovery_function_names(cls):
@@ -129,6 +130,53 @@ class TabularProcessingPlugin:
     def set_default_sheet(self, container_name: str, blob_name: str, sheet_name: str):
         """Set the default sheet for a workbook so the model doesn't need to specify it."""
         self._default_sheet_overrides[(container_name, blob_name)] = sheet_name
+
+    def remember_resolved_blob_location(self, source: str, filename: str, container_name: str, blob_name: str):
+        """Remember a resolved blob location so later tool calls can reuse it without resupplying scope ids."""
+        normalized_filename = str(filename or '').strip()
+        if not normalized_filename:
+            return
+
+        normalized_source = str(source or '').strip().lower()
+        if normalized_source:
+            self._resolved_blob_location_overrides[(normalized_source, normalized_filename)] = (container_name, blob_name)
+
+        inferred_source = self._infer_source_from_container(container_name)
+        if inferred_source:
+            self._resolved_blob_location_overrides[(inferred_source, normalized_filename)] = (container_name, blob_name)
+
+    def _infer_source_from_container(self, container_name: str) -> Optional[str]:
+        """Infer the logical tabular source from the backing blob container name."""
+        if container_name == storage_account_user_documents_container_name:
+            return 'workspace'
+        if container_name == storage_account_personal_chat_container_name:
+            return 'chat'
+        if container_name == storage_account_group_documents_container_name:
+            return 'group'
+        if container_name == storage_account_public_documents_container_name:
+            return 'public'
+        return None
+
+    def _get_resolved_blob_location_override(self, source: str, filename: str) -> Optional[tuple]:
+        """Return a remembered blob location override when one is available for this analysis run."""
+        normalized_filename = str(filename or '').strip()
+        if not normalized_filename:
+            return None
+
+        normalized_source = str(source or '').strip().lower()
+        exact_match = self._resolved_blob_location_overrides.get((normalized_source, normalized_filename))
+        if exact_match:
+            return exact_match
+
+        filename_matches = [
+            blob_location
+            for (override_source, override_filename), blob_location in self._resolved_blob_location_overrides.items()
+            if override_filename == normalized_filename
+        ]
+        if len(filename_matches) == 1:
+            return filename_matches[0]
+
+        return None
 
     def _get_blob_service_client(self):
         """Get the blob service client from CLIENTS cache."""
@@ -214,14 +262,12 @@ class TabularProcessingPlugin:
         if not available_sheets:
             raise ValueError(f"Workbook '{blob_name}' does not contain any readable sheets.")
 
+        matched_sheet_name = self._match_workbook_sheet_name(sheet_name, available_sheets)
+        if matched_sheet_name:
+            return matched_sheet_name, workbook_metadata
+
         normalized_sheet_name = (sheet_name or '').strip()
         if normalized_sheet_name:
-            for candidate in available_sheets:
-                if candidate == normalized_sheet_name:
-                    return candidate, workbook_metadata
-            for candidate in available_sheets:
-                if candidate.lower() == normalized_sheet_name.lower():
-                    return candidate, workbook_metadata
             raise ValueError(
                 f"Sheet '{normalized_sheet_name}' was not found in workbook '{blob_name}'. "
                 f"Available sheets: {available_sheets}."
@@ -250,9 +296,9 @@ class TabularProcessingPlugin:
         override_key = (container_name, blob_name)
         if override_key in self._default_sheet_overrides:
             override_sheet = self._default_sheet_overrides[override_key]
-            for candidate in available_sheets:
-                if candidate == override_sheet or candidate.lower() == override_sheet.lower():
-                    return candidate, workbook_metadata
+            matched_override_sheet = self._match_workbook_sheet_name(override_sheet, available_sheets)
+            if matched_override_sheet:
+                return matched_override_sheet, workbook_metadata
 
         if require_explicit_sheet:
             raise ValueError(
@@ -261,6 +307,34 @@ class TabularProcessingPlugin:
             )
 
         return workbook_metadata.get('default_sheet'), workbook_metadata
+
+    def _match_workbook_sheet_name(self, requested_sheet_name: Optional[str], available_sheets: List[str]) -> Optional[str]:
+        """Match a workbook sheet name while tolerating trailing whitespace and case drift."""
+        raw_sheet_name = None if requested_sheet_name is None else str(requested_sheet_name)
+        normalized_sheet_name = (raw_sheet_name or '').strip()
+        if not normalized_sheet_name:
+            return None
+
+        for candidate in available_sheets:
+            if candidate == raw_sheet_name:
+                return candidate
+
+        for candidate in available_sheets:
+            if candidate.strip() == normalized_sheet_name:
+                return candidate
+
+        raw_sheet_name_casefold = (raw_sheet_name or '').casefold()
+        if raw_sheet_name_casefold:
+            for candidate in available_sheets:
+                if candidate.casefold() == raw_sheet_name_casefold:
+                    return candidate
+
+        normalized_sheet_name_casefold = normalized_sheet_name.casefold()
+        for candidate in available_sheets:
+            if candidate.strip().casefold() == normalized_sheet_name_casefold:
+                return candidate
+
+        return None
 
     def _filter_rows_across_sheets(
         self,
@@ -1917,6 +1991,10 @@ class TabularProcessingPlugin:
                                               group_id: str = None, public_workspace_id: str = None) -> tuple:
         """Try primary source first, then fall back to other containers if blob not found."""
         source = source.lower().strip()
+        override = self._get_resolved_blob_location_override(source, filename)
+        if override:
+            return override
+
         attempts = []
 
         # Primary attempt based on specified source

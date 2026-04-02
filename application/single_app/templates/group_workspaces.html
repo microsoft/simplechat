@@ -2977,50 +2977,46 @@ app_settings.app_title }} {% endblock %} {% block head %}
   function fetchGroupDocuments() {
     if (!groupDocumentsTableBody || !activeGroupId) return; // Need table and active group
 
-    promptGroupDeleteMode(groupSelectedDocuments.size).then((deleteMode) => {
-      if (!deleteMode) {
-        return;
-      }
+    groupDocumentsTableBody.innerHTML = `
+      <tr class="table-loading-row">
+        <td colspan="4">
+          <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
+          Loading group documents...
+        </td>
+      </tr>`;
+    if (groupDocsPaginationContainer) groupDocsPaginationContainer.innerHTML = "";
 
-      const deleteBtn = document.getElementById("group-delete-selected-btn");
-      if (deleteBtn) {
-        deleteBtn.disabled = true;
-        deleteBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Deleting...`;
-      }
-
-      Array.from(groupSelectedDocuments).forEach((docId) =>
-        groupActivePolls.delete(docId)
-      );
-
-      const deletePromises = Array.from(groupSelectedDocuments).map((docId) =>
-        requestGroupDocumentDeletion(docId, deleteMode)
-      );
-
-      Promise.allSettled(deletePromises)
-        .then((results) => {
-          const successful = results.filter((result) => result.status === "fulfilled").length;
-          const failed = results.filter((result) => result.status === "rejected").length;
-
-          if (failed > 0) {
-            alert(`Deleted ${successful} document(s). ${failed} failed to delete.`);
-          }
-
-          if (groupSelectionMode) {
-            toggleGroupSelectionMode();
-          } else {
-            groupSelectedDocuments.clear();
-            updateGroupBulkActionButtons();
-          }
-
-          fetchGroupDocuments();
-        })
-        .finally(() => {
-          if (deleteBtn) {
-            deleteBtn.disabled = false;
-            deleteBtn.innerHTML = `<i class="bi bi-trash"></i> Delete`;
-          }
-        });
+    const params = new URLSearchParams({
+      page: groupDocsCurrentPage,
+      page_size: groupDocsPageSize,
     });
+    if (groupDocsSearchTerm) {
+      params.append("search", groupDocsSearchTerm);
+    }
+    if (groupDocsClassificationFilter) {
+      params.append("classification", groupDocsClassificationFilter);
+    }
+    if (groupDocsAuthorFilter) {
+      params.append("author", groupDocsAuthorFilter);
+    }
+    if (groupDocsKeywordsFilter) {
+      params.append("keywords", groupDocsKeywordsFilter);
+    }
+    if (groupDocsAbstractFilter) {
+      params.append("abstract", groupDocsAbstractFilter);
+    }
+    if (groupDocsTagsFilter) {
+      params.append("tags", groupDocsTagsFilter);
+    }
+    if (groupDocsSortBy !== "_ts") {
+      params.append("sort_by", groupDocsSortBy);
+    }
+    if (groupDocsSortOrder !== "desc") {
+      params.append("sort_order", groupDocsSortOrder);
+    }
+
+    console.log("Fetching group documents with params:", params.toString());
+
     fetch(`/api/group_documents?${params.toString()}`) // Use group endpoint
       .then((response) =>
         response.ok
