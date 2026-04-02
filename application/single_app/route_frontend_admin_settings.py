@@ -10,6 +10,7 @@ from functions_notifications import broadcast_system_notification
 from functions_logging import *
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta, timezone
+from admin_settings_int_utils import safe_int_with_source
 
 ALLOWED_PIL_IMAGE_UPLOAD_FORMATS = ('PNG', 'JPEG')
 
@@ -260,6 +261,16 @@ def register_route_frontend_admin_settings(app):
         if 'multimodal_vision_model' not in settings:
             settings['multimodal_vision_model'] = ''
 
+        # --- Add defaults for user idle timeout ---
+        if 'enable_idle_timeout' not in settings:
+            settings['enable_idle_timeout'] = False
+        if 'idle_timeout_minutes' not in settings:
+            settings['idle_timeout_minutes'] = 30
+        if 'idle_warning_minutes' not in settings:
+            settings['idle_warning_minutes'] = 28
+        if 'idle_warning_message' not in settings:
+            settings['idle_warning_message'] = "You've been inactive for a while."
+            
         if request.method == 'GET':
             # --- Model fetching logic remains the same ---
             gpt_deployments = []
@@ -351,10 +362,64 @@ def register_route_frontend_admin_settings(app):
             form_data = request.form # Use a variable for easier access
             user_id = get_current_user_id()
 
+            def parse_admin_int(raw_value, fallback_value, field_name="unknown", hard_default=0):
+                """
+                Parse an admin form value to an integer with structured fallback diagnostics.
+
+                Args:
+                    raw_value (object): The submitted form value to parse.
+                    fallback_value (object): The fallback value to parse when input conversion fails.
+                    field_name (str): The admin settings field name being parsed.
+                    hard_default (int): Final integer default when both input and fallback are invalid.
+
+                Returns:
+                    int: A valid integer derived from input, fallback, or hard default.
+                Raises:
+                    None.
+                """
+                parsed_value, parse_source = safe_int_with_source(raw_value, fallback_value, hard_default)
+
+                if parse_source == "hard_default":
+                    log_event(
+                        "Invalid admin settings integer input and fallback detected; using hard default value.",
+                        extra={
+                            "field": field_name,
+                            "raw_value": str(raw_value),
+                            "fallback_value": str(fallback_value),
+                            "hard_default": hard_default,
+                            "user_id": user_id
+                        },
+                        level=logging.WARNING
+                    )
+                elif parse_source == "fallback":
+                    log_event(
+                        "Invalid admin settings integer input detected; using fallback value.",
+                        extra={
+                            "field": field_name,
+                            "raw_value": str(raw_value),
+                            "fallback_value": str(fallback_value),
+                            "user_id": user_id
+                        },
+                        level=logging.WARNING
+                    )
+
+                return parsed_value
+
             # --- Fetch all other form data as before ---
             app_title = form_data.get('app_title', 'AI Chat Application')
             max_file_size_mb = int(form_data.get('max_file_size_mb', 16))
             conversation_history_limit = int(form_data.get('conversation_history_limit', 10))
+            enable_idle_timeout = form_data.get('enable_idle_timeout') == 'on'
+            idle_timeout_minutes = max(10, parse_admin_int(form_data.get('idle_timeout_minutes'), settings.get('idle_timeout_minutes', 30), 'idle_timeout_minutes', 30))
+            idle_warning_minutes = max(0, parse_admin_int(form_data.get('idle_warning_minutes'), settings.get('idle_warning_minutes', 28), 'idle_warning_minutes', 28))
+            idle_warning_message = form_data.get(
+                'idle_warning_message',
+                settings.get('idle_warning_message', "You've been inactive for a while.")
+            ).strip()
+            if idle_warning_minutes > idle_timeout_minutes:
+                idle_warning_minutes = idle_timeout_minutes
+            if not idle_warning_message:
+                idle_warning_message = "You've been inactive for a while."
             # ... (fetch all other fields using form_data.get) ...
             enable_video_file_support = form_data.get('enable_video_file_support') == 'on'
             enable_audio_file_support = form_data.get('enable_audio_file_support') == 'on'
@@ -1186,6 +1251,10 @@ def register_route_frontend_admin_settings(app):
                 # Other
                 'max_file_size_mb': max_file_size_mb,
                 'conversation_history_limit': conversation_history_limit,
+                'enable_idle_timeout': enable_idle_timeout,
+                'idle_timeout_minutes': idle_timeout_minutes,
+                'idle_warning_minutes': idle_warning_minutes,
+                'idle_warning_message': idle_warning_message,
                 'default_system_prompt': form_data.get('default_system_prompt', '').strip(),
                 'access_denied_message': form_data.get('access_denied_message', settings.get('access_denied_message', '')).strip(),
 

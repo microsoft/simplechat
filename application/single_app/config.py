@@ -185,6 +185,23 @@ CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE = os.getenv("CUSTOM_REDIS_CACHE_INFR
 CUSTOM_OIDC_METADATA_URL_VALUE = os.getenv("CUSTOM_OIDC_METADATA_URL_VALUE", "")
 
 
+# Optional User Idle Timeout Configuration
+IDLE_TIMEOUT_EXEMPT_PATHS = {
+    '/login',
+    '/logout',
+    '/logout/local',
+    '/getAToken',
+    '/getATokenApi',
+    '/robots933456.txt',
+    '/favicon.ico'
+}
+
+IDLE_TIMEOUT_EXEMPT_PREFIXES = (
+    '/static/',
+    '/health',
+    '/api/health'
+)
+
 # Azure AD Configuration
 CLIENT_ID = os.getenv("CLIENT_ID")
 APP_URI = f"api://{CLIENT_ID}"
@@ -197,6 +214,11 @@ HOME_REDIRECT_URL = os.getenv("HOME_REDIRECT_URL")  # Front Door URL for home pa
 AZURE_ENVIRONMENT = os.getenv("AZURE_ENVIRONMENT", "public") # public, usgovernment, custom
 
 WORD_CHUNK_SIZE = 400
+
+DEFAULT_VIDEO_INDEXER_ARM_API_VERSION = os.getenv(
+    'VIDEO_INDEXER_ARM_API_VERSION',
+    '2024-01-01' if AZURE_ENVIRONMENT == 'usgovernment' else '2025-04-01'
+)
 
 if AZURE_ENVIRONMENT == "custom" or CUSTOM_IDENTITY_URL_VALUE or CUSTOM_GRAPH_AUTHORITY_URL_VALUE:
     AUTHORITY = f"{CUSTOM_IDENTITY_URL_VALUE.rstrip('/')}/{TENANT_ID}"
@@ -479,7 +501,7 @@ def ensure_custom_logo_file_exists(app, settings):
     """
     If custom_logo_base64 or custom_logo_dark_base64 is present in settings, ensure the appropriate
     static files exist and reflect the current base64 data. Overwrites if necessary.
-    If base64 is empty/missing, removes the corresponding file.
+    If base64 is empty/missing, preserves any existing file on disk.
     """
     # Handle light mode logo
     custom_logo_b64 = settings.get('custom_logo_base64', '')
@@ -491,13 +513,9 @@ def ensure_custom_logo_file_exists(app, settings):
     os.makedirs(images_dir, exist_ok=True)
 
     if not custom_logo_b64:
-        # No custom logo in DB; remove the static file if it exists
+        # No custom logo in DB; preserve existing file if one is already present
         if os.path.exists(logo_path):
-            try:
-                os.remove(logo_path)
-                print(f"Removed existing {logo_filename} as custom logo is disabled/empty.")
-            except OSError as ex:
-                print(f"Error removing {logo_filename}: {ex}")
+            print(f"Preserving existing {logo_filename}; no custom logo base64 value found in settings.")
     else:
         # Custom logo exists in settings, write/overwrite the file
         try:
@@ -520,13 +538,9 @@ def ensure_custom_logo_file_exists(app, settings):
     logo_dark_path = os.path.join(app.root_path, 'static', 'images', logo_dark_filename)
 
     if not custom_logo_dark_b64:
-        # No custom dark logo in DB; remove the static file if it exists
+        # No custom dark logo in DB; preserve existing file if one is already present
         if os.path.exists(logo_dark_path):
-            try:
-                os.remove(logo_dark_path)
-                print(f"Removed existing {logo_dark_filename} as custom dark logo is disabled/empty.")
-            except OSError as ex:
-                print(f"Error removing {logo_dark_filename}: {ex}")
+            print(f"Preserving existing {logo_dark_filename}; no custom dark logo base64 value found in settings.")
     else:
         # Custom dark logo exists in settings, write/overwrite the file
         try:
@@ -575,7 +589,7 @@ def ensure_custom_favicon_file_exists(app, settings):
     except (base64.binascii.Error, TypeError, OSError) as ex: # Catch specific errors
         print(f"Failed to write/overwrite {favicon_filename}: {ex}")
     except Exception as ex: # Catch any other unexpected errors
-         print(f"Unexpected error during favicon file write for {favicon_filename}: {ex}")
+        print(f"Unexpected error during favicon file write for {favicon_filename}: {ex}")
 
 def initialize_clients(settings):
     """
