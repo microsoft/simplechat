@@ -119,6 +119,15 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   **End-to-End Auditability**: Users can verify exactly which aggregations, filters, or queries were run against their data, what parameters were used, and what raw results were returned — before the LLM summarized them into the final response.
     *   (Ref: `collect_tabular_sk_citations()`, `plugin_invocation_logger.py`)
 
+*   **Assistant Citation Artifact Storage for Large Tabular Payloads**
+    *   Moved large raw tabular and tool citation payloads off the main assistant message document and into linked child artifact records so tool-heavy answers stay compact in primary chat storage.
+    *   Added helper flows in `functions_message_artifacts.py` to keep a compact citation summary on the assistant message, externalize the full raw citation payload into `assistant_artifact` records with `assistant_artifact_chunk` support for larger payloads, and rehydrate those raw payloads later for exports or deeper inspection.
+    *   Assistant messages now keep compact summaries such as tool name, reduced arguments, counts, and a few sample rows while the heavy raw citation payload is referenced through `artifact_id` and `raw_payload_externalized=True`.
+    *   Updated chat persistence to store the linked artifact records during message save, excluded those artifact records from normal chat history and conversation views, and updated export flows to stitch the preserved raw payloads back together when needed.
+    *   This reduced primary assistant message size, lowered the risk of hitting Cosmos DB per-item limits on large tabular responses, reduced heavy citation data carried through normal chat reads, and preserved the full raw evidence for export and debugging.
+    *   Additional size reductions in the same phase compacted stored citation summaries, dropped noisy tabular citation arguments such as `user_id`, `conversation_id`, and `source`, and removed the duplicate `user_message` field from assistant message documents.
+    *   (Ref: `functions_message_artifacts.py`, `route_backend_chats.py`, `route_backend_conversations.py`, `route_frontend_conversations.py`, `route_backend_conversation_export.py`, `test_assistant_citation_artifact_storage.py`, `ASSISTANT_CITATION_ARTIFACT_STORAGE_FIX.md`)
+
 *   **SK Mini-Agent Performance Optimization**
     *   Reduced typical tabular analysis time from ~74 seconds to an estimated ~30-33 seconds (55-60% reduction) through three complementary optimizations.
     *   **DataFrame Caching**: Per-request in-memory cache eliminates redundant blob downloads. Previously, each of the ~8 tool calls in a typical analysis downloaded and parsed the same file independently. Now the file is downloaded once and subsequent calls read from cache. Cache is automatically scoped to the request (new plugin instance per analysis) and garbage-collected afterward.
