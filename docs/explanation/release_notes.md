@@ -3,6 +3,15 @@
 # Feature Release
 
 This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.240.001, and the per-version entries continue immediately after it.
+### **(v0.240.014)**
+
+#### Bug Fixes
+
+*   **Dependency Pinning and Requirements Hardening**
+    *   Pinned previously floating Python package requirements to exact versions across the main app, UI test, deployer, and external app requirement files to reduce unexpected dependency drift and tighten supply-chain control.
+    *   Corrected stale external app dependency entries by replacing `dotenv` with `python-dotenv`, removing the stdlib-only `logging` package, removing an unused `Flask` requirement from the databaseseeder utility, and adding `pytest-playwright` so the UI test dependency set matches the pytest fixture usage in the test suite.
+    *   (Ref: `application/single_app/requirements.txt`, `ui_tests/requirements.txt`, `deployers/bicep/requirements.txt`, `application/external_apps/databaseseeder/requirements.txt`, `application/external_apps/bulkloader/requirements.txt`)
+
 ### **(v0.240.004)**
 
 #### New Features

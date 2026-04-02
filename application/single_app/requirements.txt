@@ -3,10 +3,10 @@ pandas==2.2.3
 azure-monitor-query==1.4.1
 Flask==2.2.5
 Flask-WTF==1.2.1
-gunicorn>=23.0.0
+gunicorn==25.0.3
 Werkzeug==3.1.5
 requests==2.32.4
-openai>=1.98.0
+openai==1.109.1
 docx2txt==0.8
 Markdown==3.3.4
 bleach==6.1.0
@@ -22,9 +22,9 @@ threadpoolctl==3.5.0
 azure-search-documents==11.5.3
 python-dotenv==0.21.0
 azure-ai-formrecognizer==3.3.3
-azure-ai-projects>=1.0.0,<2.0.0
-azure-ai-agents>=1.0.0
-pyjwt>=2.9.0
+azure-ai-projects==1.0.0
+azure-ai-agents==1.2.0b6
+pyjwt==2.12.1
 markdown2==2.5.3
 azure-mgmt-cognitiveservices==13.6.0
 azure-identity==1.23.0
@@ -43,14 +43,14 @@ xlrd==2.0.1
 pillow==12.1.1
 ffmpeg-binaries-compat==1.0.1
 ffmpeg-python==0.2.0
-semantic-kernel>=1.39.4
-protobuf>=5,<6 # support for broken SK >=1.40.0 versions, can be removed once SK releases a fixed version
-redis>=5.0,<6.0
-pyodbc>=4.0.0
-PyMySQL>=1.0.0
+semantic-kernel==1.39.4
+protobuf==6.33.5
+redis==5.3.1
+pyodbc==5.3.0
+PyMySQL==1.1.2
 azure-monitor-opentelemetry==1.6.13
 psycopg2-binary==2.9.10
-cython
+cython==3.2.4
 pyyaml==6.0.2
 aiohttp==3.13.3
 html2text==2025.4.15
