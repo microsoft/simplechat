@@ -103,6 +103,7 @@ class TabularProcessingPlugin:
     RELATIONSHIP_HINT_LIMIT = 10
     RELATIONSHIP_VALUE_SAMPLE_LIMIT = 500
     RELATIONSHIP_SHARED_VALUE_LIMIT = 5
+    SOURCE_VALUE_MATCH_COUNT_LIMIT = 100
 
     def __init__(self):
         self._df_cache = {}  # Per-instance cache: (container, blob_name, sheet_name) -> DataFrame
@@ -905,6 +906,7 @@ class TabularProcessingPlugin:
             }
 
         source_member_map = {}
+        variant_to_source_keys = {}
         for _, source_row in filtered_source_df.iterrows():
             display_value = str(source_row.get(source_value_column, '')).strip()
             value_variants = set()
@@ -931,9 +933,12 @@ class TabularProcessingPlugin:
                 {
                     'display_value': display_value or primary_key,
                     'value_variants': set(),
+                    'matched_target_row_count': 0,
                 },
             )
             existing_member['value_variants'].update(value_variants)
+            for value_variant in value_variants:
+                variant_to_source_keys.setdefault(value_variant, set()).add(primary_key)
 
         source_compare_values = set()
         for source_member in source_member_map.values():
@@ -957,18 +962,45 @@ class TabularProcessingPlugin:
             if not matched_variants:
                 continue
 
+            matched_source_keys = sorted({
+                source_key
+                for matched_variant in matched_variants
+                for source_key in variant_to_source_keys.get(matched_variant, set())
+            })
+            if not matched_source_keys:
+                continue
+
             matched_target_value_variants.update(matched_variants)
+            for source_key in matched_source_keys:
+                source_member_map[source_key]['matched_target_row_count'] += 1
+
             matched_row_payload = target_row.to_dict()
             matched_row_payload['_matched_on'] = matched_variants[:3]
+            matched_row_payload['_matched_source_values'] = [
+                source_member_map[source_key]['display_value']
+                for source_key in matched_source_keys[:3]
+            ]
             matched_target_rows.append(matched_row_payload)
 
         matched_source_values = []
         unmatched_source_values = []
         for source_member in source_member_map.values():
-            if source_member['value_variants'] & matched_target_value_variants:
+            if source_member['matched_target_row_count'] > 0:
                 matched_source_values.append(source_member['display_value'])
             else:
                 unmatched_source_values.append(source_member['display_value'])
+
+        source_value_match_counts = sorted(
+            [
+                {
+                    'source_value': source_member['display_value'],
+                    'matched_target_row_count': source_member['matched_target_row_count'],
+                }
+                for source_member in source_member_map.values()
+            ],
+            key=lambda item: (-item['matched_target_row_count'], item['source_value'].casefold())
+        )
+        source_value_match_count_limit = self.SOURCE_VALUE_MATCH_COUNT_LIMIT
 
         matched_target_row_count = len(matched_target_rows)
         return {
@@ -989,6 +1021,9 @@ class TabularProcessingPlugin:
             'matched_source_values_sample': matched_source_values[:10],
             'unmatched_source_value_count': len(unmatched_source_values),
             'unmatched_source_values_sample': unmatched_source_values[:10],
+            'source_value_match_counts_returned': min(len(source_value_match_counts), source_value_match_count_limit),
+            'source_value_match_counts_limited': len(source_value_match_counts) > source_value_match_count_limit,
+            'source_value_match_counts': source_value_match_counts[:source_value_match_count_limit],
             'target_rows_scanned': len(filtered_target_df),
             'matched_target_row_count': matched_target_row_count,
             'returned_rows': min(matched_target_row_count, max_rows),

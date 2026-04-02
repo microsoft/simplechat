@@ -327,6 +327,8 @@ def _compact_tabular_result_payload(function_name: str, payload: Any) -> Any:
         'source_cohort_size',
         'matched_source_value_count',
         'unmatched_source_value_count',
+        'source_value_match_counts_returned',
+        'source_value_match_counts_limited',
         'matched_target_row_count',
         'total_matches',
         'returned_rows',
@@ -351,6 +353,14 @@ def _compact_tabular_result_payload(function_name: str, payload: Any) -> Any:
 
     if isinstance(payload.get('details'), list):
         summary['details'] = _compact_value(payload.get('details'), depth=1)
+
+    source_value_match_counts = payload.get('source_value_match_counts')
+    if isinstance(source_value_match_counts, list) and source_value_match_counts:
+        summary['source_value_match_counts'] = [
+            _compact_value(item, depth=1)
+            for item in source_value_match_counts[:10]
+        ]
+        summary['source_value_match_counts_sample_limited'] = len(source_value_match_counts) > 10
 
     data_rows = payload.get('data')
     if isinstance(data_rows, list) and data_rows:

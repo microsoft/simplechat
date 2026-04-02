@@ -2,8 +2,8 @@
 # test_tabular_relational_analysis_helpers.py
 """
 Functional test for tabular relational analysis helpers.
-Version: 0.240.017
-Implemented in: 0.240.017
+Version: 0.240.018
+Implemented in: 0.240.018
 
 This test ensures the tabular processing plugin can infer workbook relationship
 metadata, return deterministic distinct values and row counts, and perform
@@ -243,10 +243,17 @@ def test_related_value_helpers_return_explainable_outputs():
         assert count_payload['matched_source_value_count'] == 2, count_payload
         assert count_payload['unmatched_source_value_count'] == 0, count_payload
         assert count_payload['row_count'] == 30, count_payload
+        assert count_payload['source_value_match_counts_returned'] == 2, count_payload
+        assert count_payload['source_value_match_counts_limited'] is False, count_payload
+        assert count_payload['source_value_match_counts'] == [
+            {'source_value': 'Paul Lizer', 'matched_target_row_count': 20},
+            {'source_value': 'Alicia Stone', 'matched_target_row_count': 10},
+        ], count_payload
         assert filter_payload['matched_target_row_count'] == 30, filter_payload
         assert filter_payload['returned_rows'] == 5, filter_payload
         assert filter_payload['rows_limited'] is True, filter_payload
         assert filter_payload['data'][0]['_matched_on'], filter_payload
+        assert filter_payload['data'][0]['_matched_source_values'], filter_payload
 
         print('✅ Related-value semi-join helpers passed')
         return True
@@ -271,6 +278,7 @@ def test_route_prompt_mentions_deterministic_relational_helpers():
             'related filter helper advertised': 'filter_rows_by_related_values' in route_content,
             'related count helper advertised': 'count_rows_by_related_values' in route_content,
             'cohort guidance exists': 'For cohort, membership, ownership-share, or percentage questions where one sheet defines the group and another sheet contains the fact rows' in route_content,
+            'named member share guidance exists': "When the question asks for one named member's share within that cohort" in route_content,
             'deterministic count guidance exists': 'For deterministic how-many questions, use count_rows instead of estimating counts from partial returned rows.' in route_content,
             'relationship hints exposed in schema preload': "'relationship_hints': schema_info.get('relationship_hints', [])[:5]" in route_content,
         }
