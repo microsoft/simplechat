@@ -21,6 +21,46 @@ from functions_debug import debug_print
 
 def register_enhanced_citations_routes(app):
     """Register enhanced citations routes"""
+
+    @app.route("/api/enhanced_citations/document_metadata", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_enhanced_citations")
+    def get_enhanced_citation_document_metadata():
+        """
+        Return minimal document metadata for an exact historical or current doc_id.
+        This lets the chat UI render enhanced citations even when the cited
+        document revision is not part of the currently loaded workspace list.
+        """
+        doc_id = request.args.get("doc_id")
+        if not doc_id:
+            return jsonify({"error": "doc_id is required"}), 400
+
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated"}), 401
+
+        try:
+            doc_response, status_code = get_document(user_id, doc_id)
+            if status_code != 200:
+                return doc_response, status_code
+
+            raw_doc = doc_response.get_json()
+            _, blob_path = get_document_blob_storage_info(raw_doc)
+
+            return jsonify({
+                "id": raw_doc.get("id"),
+                "document_id": raw_doc.get("id"),
+                "file_name": raw_doc.get("file_name"),
+                "version": raw_doc.get("version"),
+                "is_current_version": raw_doc.get("is_current_version"),
+                "enhanced_citations": bool(blob_path),
+            }), 200
+
+        except Exception as e:
+            debug_print(f"Error getting enhanced citation document metadata: {e}")
+            return jsonify({"error": str(e)}), 500
     
     @app.route("/api/enhanced_citations/image", methods=["GET"])
     @swagger_route(security=get_auth_security())

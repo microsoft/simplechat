@@ -34,6 +34,7 @@ const scopeSearchInput = document.getElementById("scope-search-input");
 export let personalDocs = [];
 export let groupDocs = [];
 export let publicDocs = [];
+const citationMetadataCache = new Map();
 
 // Items removed from the DOM by tag filtering (stored so they can be re-added)
 // Each entry: { element, nextSibling }
@@ -856,7 +857,44 @@ export function getDocumentMetadata(docId) {
   if (publicMatch) {
     return publicMatch;
   }
+  const cachedMatch = citationMetadataCache.get(docId);
+  if (cachedMatch) {
+    return cachedMatch;
+  }
   return null; // Not found in any list
+}
+
+export async function fetchDocumentMetadata(docId) {
+  if (!docId) {
+    return null;
+  }
+
+  const existingMetadata = getDocumentMetadata(docId);
+  if (existingMetadata) {
+    return existingMetadata;
+  }
+
+  try {
+    const response = await fetch(`/api/enhanced_citations/document_metadata?doc_id=${encodeURIComponent(docId)}`, {
+      credentials: 'same-origin',
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const metadata = await response.json();
+    if (metadata && metadata.id) {
+      citationMetadataCache.set(metadata.id, metadata);
+    }
+    if (metadata && metadata.document_id) {
+      citationMetadataCache.set(metadata.document_id, metadata);
+    }
+    return metadata;
+  } catch (error) {
+    console.warn('Error fetching citation document metadata:', error);
+    return null;
+  }
 }
 
 /* ---------------------------------------------------------------------------

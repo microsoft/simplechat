@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for citation revision lookup fix.
-Version: 0.240.024
+Version: 0.240.025
 Implemented in: 0.240.024
 
 This test ensures citation lookup resolves access by the exact document ID
@@ -155,7 +155,7 @@ def test_version_and_fix_documentation_alignment():
     version = read_config_version()
     fix_doc_content = read_file_text(FIX_DOC)
 
-    assert version == '0.240.024', version
+    assert version == '0.240.025', version
     assert 'Fixed/Implemented in version: **0.240.024**' in fix_doc_content
     assert 'exact document ID behind the citation chunk' in fix_doc_content
     assert 'application/single_app/route_backend_documents.py' in fix_doc_content
