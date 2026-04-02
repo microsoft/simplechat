@@ -12,7 +12,7 @@ import pandas
 
 from functions_authentication import login_required, user_required, get_current_user_id
 from functions_settings import get_settings, enabled_required
-from functions_documents import get_document_metadata
+from functions_documents import get_document_metadata, get_document_blob_storage_info
 from functions_group import get_user_groups
 from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
 from swagger_wrapper import swagger_route, get_auth_security
@@ -513,16 +513,20 @@ def determine_workspace_type_and_container(raw_doc):
     Determine workspace type and appropriate container based on document metadata
     """
     if raw_doc.get('public_workspace_id'):
-        return 'public', storage_account_public_documents_container_name
+        return 'public', raw_doc.get('blob_container') or storage_account_public_documents_container_name
     elif raw_doc.get('group_id'):
-        return 'group', storage_account_group_documents_container_name
+        return 'group', raw_doc.get('blob_container') or storage_account_group_documents_container_name
     else:
-        return 'personal', storage_account_user_documents_container_name
+        return 'personal', raw_doc.get('blob_container') or storage_account_user_documents_container_name
 
 def get_blob_name(raw_doc, workspace_type):
     """
     Determine the correct blob name based on workspace type
     """
+    _, blob_name = get_document_blob_storage_info(raw_doc)
+    if blob_name:
+        return blob_name
+
     if workspace_type == 'public':
         return f"{raw_doc['public_workspace_id']}/{raw_doc['file_name']}"
     elif workspace_type == 'group':

@@ -1688,6 +1688,129 @@ app_settings.app_title }} {% endblock %} {% block head %}
   const groupTagSelectionModal = new bootstrap.Modal(
     document.getElementById("groupTagSelectionModal")
   );
+  const groupDocumentDeleteModalElement = document.getElementById(
+    "groupDocumentDeleteModal"
+  );
+  const groupDocumentDeleteModal = groupDocumentDeleteModalElement
+    ? new bootstrap.Modal(groupDocumentDeleteModalElement)
+    : null;
+  const groupDocumentDeleteModalTitle = document.getElementById(
+    "groupDocumentDeleteModalLabel"
+  );
+  const groupDocumentDeleteModalBody = document.getElementById(
+    "groupDocumentDeleteModalBody"
+  );
+  const groupDeleteCurrentBtn = document.getElementById(
+    "groupDeleteCurrentBtn"
+  );
+  const groupDeleteAllBtn = document.getElementById("groupDeleteAllBtn");
+
+  function getGroupDeleteModalContent(documentCount) {
+    if (documentCount === 1) {
+      return {
+        title: "Delete Group Document",
+        body: `
+          <p class="mb-2">Choose how to delete this group document revision.</p>
+          <p class="mb-2"><strong>Delete Current Version</strong> removes the visible revision and keeps older revisions for later comparison.</p>
+          <p class="mb-0"><strong>Delete All Versions</strong> permanently removes every stored revision for this document.</p>
+        `,
+      };
+    }
+
+    return {
+      title: "Delete Selected Group Documents",
+      body: `
+        <p class="mb-2">Choose how to delete ${documentCount} selected current group document revision(s).</p>
+        <p class="mb-2"><strong>Delete Current Version</strong> removes only the visible revision for each selected document and keeps older revisions.</p>
+        <p class="mb-0"><strong>Delete All Versions</strong> permanently removes every stored revision for each selected document.</p>
+      `,
+    };
+  }
+
+  function promptGroupDeleteMode(documentCount = 1) {
+    if (
+      !groupDocumentDeleteModal ||
+      !groupDocumentDeleteModalBody ||
+      !groupDeleteCurrentBtn ||
+      !groupDeleteAllBtn
+    ) {
+      const confirmed = window.confirm(
+        documentCount === 1
+          ? "Are you sure you want to delete this group document? This action cannot be undone."
+          : `Are you sure you want to delete ${documentCount} selected document(s)? This action cannot be undone.`
+      );
+      return Promise.resolve(confirmed ? "all_versions" : null);
+    }
+
+    const modalContent = getGroupDeleteModalContent(documentCount);
+    if (groupDocumentDeleteModalTitle) {
+      groupDocumentDeleteModalTitle.textContent = modalContent.title;
+    }
+    groupDocumentDeleteModalBody.innerHTML = modalContent.body;
+
+    return new Promise((resolve) => {
+      let settled = false;
+
+      const cleanup = () => {
+        groupDocumentDeleteModalElement.removeEventListener(
+          "hidden.bs.modal",
+          handleHidden
+        );
+        groupDeleteCurrentBtn.removeEventListener("click", handleCurrentOnly);
+        groupDeleteAllBtn.removeEventListener("click", handleAllVersions);
+      };
+
+      const finalize = (value) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        resolve(value);
+      };
+
+      const handleHidden = () => finalize(null);
+      const handleCurrentOnly = () => {
+        groupDocumentDeleteModal.hide();
+        finalize("current_only");
+      };
+      const handleAllVersions = () => {
+        groupDocumentDeleteModal.hide();
+        finalize("all_versions");
+      };
+
+      groupDocumentDeleteModalElement.addEventListener(
+        "hidden.bs.modal",
+        handleHidden
+      );
+      groupDeleteCurrentBtn.addEventListener("click", handleCurrentOnly);
+      groupDeleteAllBtn.addEventListener("click", handleAllVersions);
+      groupDocumentDeleteModal.show();
+    });
+  }
+
+  async function requestGroupDocumentDeletion(documentId, deleteMode) {
+    const query = new URLSearchParams({ delete_mode: deleteMode });
+    const response = await fetch(
+      `/api/group_documents/${documentId}?${query.toString()}`,
+      { method: "DELETE" }
+    );
+
+    let responseData = {};
+    try {
+      responseData = await response.json();
+    } catch (error) {
+      responseData = {};
+    }
+
+    if (!response.ok) {
+      throw responseData.error
+        ? responseData
+        : { error: `Server responded with status ${response.status}` };
+    }
+
+    return responseData;
+  }
 
   // --- Editors ---
   const groupPromptContentEl = document.getElementById("group-prompt-content");
@@ -2129,7 +2252,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       .finally(() => {
         if (deleteBtn) {
           deleteBtn.disabled = false;
-          deleteBtn.innerHTML = `<i class="bi bi-trash"></i> Delete`;
+            deleteBtn.innerHTML = `<i class="bi bi-trash me-1"></i>Delete Selected`;
         }
       });
   }
@@ -2416,6 +2539,27 @@ app_settings.app_title }} {% endblock %} {% block head %}
               <ul class="mb-0 mt-2 small">
                 ${detailsList}
               </ul>
+            </div>
+          </div>
+
+          <div class="modal fade" id="groupDocumentDeleteModal" tabindex="-1" aria-labelledby="groupDocumentDeleteModalLabel" aria-hidden="true" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
+            <div class="modal-dialog">
+              <div class="modal-content">
+                <div class="modal-header">
+                  <h5 class="modal-title" id="groupDocumentDeleteModalLabel">Delete Group Document</h5>
+                  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="groupDocumentDeleteModalBody">
+                  <p class="mb-0">Choose how you want to delete this group document revision.</p>
+                </div>
+                <div class="modal-footer d-flex flex-wrap justify-content-between gap-2">
+                  <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                  <div class="d-flex flex-wrap gap-2">
+                    <button type="button" class="btn btn-outline-danger" id="groupDeleteCurrentBtn">Delete Current Version</button>
+                    <button type="button" class="btn btn-danger" id="groupDeleteAllBtn">Delete All Versions</button>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         `;
@@ -2833,42 +2977,50 @@ app_settings.app_title }} {% endblock %} {% block head %}
   function fetchGroupDocuments() {
     if (!groupDocumentsTableBody || !activeGroupId) return; // Need table and active group
 
-    const placeholder = document.getElementById(
-      "group-legacy-update-prompt-placeholder"
-    );
-    if (placeholder) {
-      // remove old alert div if present
-      const old = placeholder.querySelector("#group-legacy-update-alert");
-      if (old) old.remove();
-    }
+    promptGroupDeleteMode(groupSelectedDocuments.size).then((deleteMode) => {
+      if (!deleteMode) {
+        return;
+      }
 
-    // Show loading state
-    groupDocumentsTableBody.innerHTML = `<tr class="table-loading-row"><td colspan="4"><div class="spinner-border spinner-border-sm me-2" role="status"></div> Loading group documents...</td></tr>`;
-    if (groupDocsPaginationContainer)
-      groupDocsPaginationContainer.innerHTML = ""; // Clear pagination
+      const deleteBtn = document.getElementById("group-delete-selected-btn");
+      if (deleteBtn) {
+        deleteBtn.disabled = true;
+        deleteBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Deleting...`;
+      }
 
-    // Build query parameters for group documents endpoint
-    const params = new URLSearchParams({
-      page: groupDocsCurrentPage,
-      page_size: groupDocsPageSize,
-      // Crucially, the backend /api/group_documents needs to know WHICH group
-      // It gets this from the user's active group setting server-side.
-      // We add filters here:
+      Array.from(groupSelectedDocuments).forEach((docId) =>
+        groupActivePolls.delete(docId)
+      );
+
+      const deletePromises = Array.from(groupSelectedDocuments).map((docId) =>
+        requestGroupDocumentDeletion(docId, deleteMode)
+      );
+
+      Promise.allSettled(deletePromises)
+        .then((results) => {
+          const successful = results.filter((result) => result.status === "fulfilled").length;
+          const failed = results.filter((result) => result.status === "rejected").length;
+
+          if (failed > 0) {
+            alert(`Deleted ${successful} document(s). ${failed} failed to delete.`);
+          }
+
+          if (groupSelectionMode) {
+            toggleGroupSelectionMode();
+          } else {
+            groupSelectedDocuments.clear();
+            updateGroupBulkActionButtons();
+          }
+
+          fetchGroupDocuments();
+        })
+        .finally(() => {
+          if (deleteBtn) {
+            deleteBtn.disabled = false;
+            deleteBtn.innerHTML = `<i class="bi bi-trash"></i> Delete`;
+          }
+        });
     });
-    if (groupDocsSearchTerm) params.append("search", groupDocsSearchTerm);
-    if (groupDocsClassificationFilter)
-      params.append("classification", groupDocsClassificationFilter);
-    if (groupDocsAuthorFilter) params.append("author", groupDocsAuthorFilter);
-    if (groupDocsKeywordsFilter)
-      params.append("keywords", groupDocsKeywordsFilter);
-    if (groupDocsAbstractFilter)
-      params.append("abstract", groupDocsAbstractFilter);
-    if (groupDocsTagsFilter) params.append("tags", groupDocsTagsFilter);
-    if (groupDocsSortBy !== '_ts') params.append("sort_by", groupDocsSortBy);
-    if (groupDocsSortOrder !== 'desc') params.append("sort_order", groupDocsSortOrder);
-
-    console.log("Fetching group documents with params:", params.toString());
-
     fetch(`/api/group_documents?${params.toString()}`) // Use group endpoint
       .then((response) =>
         response.ok
@@ -3564,7 +3716,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
   window.onExtractGroupMetadata = onExtractGroupMetadata; // Expose globally
 
   // --- Delete Group Document ---
-  function deleteGroupDocument(documentId, event) {
+  async function deleteGroupDocument(documentId, event) {
     // Renamed function
     // Permission check should happen server-side, but can add UI check too
     if (
@@ -3573,16 +3725,17 @@ app_settings.app_title }} {% endblock %} {% block head %}
       alert("You do not have permission to delete documents in this group.");
       return;
     }
-    if (
-      !confirm(
-        "Are you sure you want to delete this group document? This action cannot be undone."
-      )
-    )
-      return;
 
-    const deleteBtn = event ? event.target.closest("button") : null;
+    const deleteMode = await promptGroupDeleteMode(1);
+    if (!deleteMode) {
+      return;
+    }
+
+    const deleteBtn = event ? event.target.closest("a, button") : null;
+    const originalDeleteBtnHtml = deleteBtn ? deleteBtn.innerHTML : null;
     if (deleteBtn) {
-      deleteBtn.disabled = true;
+      deleteBtn.classList.add("disabled");
+      deleteBtn.setAttribute("aria-disabled", "true");
       deleteBtn.innerHTML = `<span class="spinner-border spinner-border-sm"></span>`;
     }
 
@@ -3594,32 +3747,17 @@ app_settings.app_title }} {% endblock %} {% block head %}
     // Use the group DELETE endpoint. Pass group_id as query param IF backend requires it.
     // Assuming backend gets active_group_id from session/context.
     // If needed: `/api/group_documents/${documentId}?group_id=${activeGroupId}`
-    fetch(`/api/group_documents/${documentId}`, { method: "DELETE" })
-      .then((response) =>
-        response.ok
-          ? response.json()
-          : response.json().then((err) => Promise.reject(err))
-      )
+    requestGroupDocumentDeletion(documentId, deleteMode)
       .then((data) => {
         console.log("Group document deleted:", data);
-        const docRow = document.getElementById(`group-doc-row-${documentId}`);
-        const detailsRow = document.getElementById(
-          `group-details-row-${documentId}`
-        );
-        const statusRow = document.getElementById(
-          `group-status-row-${documentId}`
-        );
-        if (docRow) docRow.remove();
-        if (detailsRow) detailsRow.remove();
-        if (statusRow) statusRow.remove();
-        // Refresh to update pagination etc.
         fetchGroupDocuments();
       })
       .catch((error) => {
         alert("Error deleting document: " + (error.error || error.message));
         if (deleteBtn && document.body.contains(deleteBtn)) {
-          deleteBtn.disabled = false;
-          deleteBtn.innerHTML = '<i class="bi bi-trash-fill"></i>';
+          deleteBtn.classList.remove("disabled");
+          deleteBtn.removeAttribute("aria-disabled");
+          deleteBtn.innerHTML = originalDeleteBtnHtml;
         }
       });
   }

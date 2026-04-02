@@ -4,6 +4,17 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.240.022)**
+
+#### Bug Fixes
+
+*   **Document Revision Visibility and Storage Preservation**
+    *   Fixed same-name document uploads so new revisions now inherit the previous document's editable metadata, including classification, tags, title, abstract, keywords, publication date, authors, and sharing state.
+    *   Workspace lists and chat search now only use the current revision, while older revisions remain retained for future comparison work instead of staying active in normal workspace flows.
+    *   Document deletion now offers a choice between deleting only the current revision or deleting all stored revisions for that document family.
+    *   Blob storage now preserves older source files by keeping the active document at the existing alias path and archiving prior current revisions into a revision-family hierarchy before the alias path is overwritten.
+    *   (Ref: document revision families, current-only workspace visibility, hybrid blob alias plus archived revision storage, `functions_documents.py`, `functions_search.py`, `route_enhanced_citations.py`, workspace/group/public document flows)
+
 ### **(v0.240.016)**
 
 #### New Features

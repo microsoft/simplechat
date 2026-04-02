@@ -48,6 +48,103 @@ const publicPromptModal = new bootstrap.Modal(document.getElementById('publicPro
 const publicDocMetadataModal = new bootstrap.Modal(document.getElementById('publicDocMetadataModal'));
 const publicTagManagementModal = new bootstrap.Modal(document.getElementById('publicTagManagementModal'));
 const publicTagSelectionModal = new bootstrap.Modal(document.getElementById('publicTagSelectionModal'));
+const publicDocumentDeleteModalElement = document.getElementById('publicDocumentDeleteModal');
+const publicDocumentDeleteModal = publicDocumentDeleteModalElement ? new bootstrap.Modal(publicDocumentDeleteModalElement) : null;
+const publicDocumentDeleteModalTitle = document.getElementById('publicDocumentDeleteModalLabel');
+const publicDocumentDeleteModalBody = document.getElementById('publicDocumentDeleteModalBody');
+const publicDeleteCurrentBtn = document.getElementById('publicDeleteCurrentBtn');
+const publicDeleteAllBtn = document.getElementById('publicDeleteAllBtn');
+
+function getPublicDeleteModalContent(documentCount) {
+  if (documentCount === 1) {
+    return {
+      title: 'Delete Public Document',
+      body: `
+        <p class="mb-2">Choose how to delete this public document revision.</p>
+        <p class="mb-2"><strong>Delete Current Version</strong> removes the visible revision and keeps older revisions for future comparison.</p>
+        <p class="mb-0"><strong>Delete All Versions</strong> permanently removes every stored revision for this document.</p>
+      `,
+    };
+  }
+
+  return {
+    title: 'Delete Selected Public Documents',
+    body: `
+      <p class="mb-2">Choose how to delete ${documentCount} selected current public document revision(s).</p>
+      <p class="mb-2"><strong>Delete Current Version</strong> removes only the visible revision for each selected document and keeps older revisions.</p>
+      <p class="mb-0"><strong>Delete All Versions</strong> permanently removes every stored revision for each selected document.</p>
+    `,
+  };
+}
+
+function promptPublicDeleteMode(documentCount = 1) {
+  if (!publicDocumentDeleteModal || !publicDocumentDeleteModalBody || !publicDeleteCurrentBtn || !publicDeleteAllBtn) {
+    const confirmed = window.confirm(
+      documentCount === 1
+        ? 'Are you sure you want to delete this document? This action cannot be undone.'
+        : `Are you sure you want to delete ${documentCount} selected document(s)? This action cannot be undone.`
+    );
+    return Promise.resolve(confirmed ? 'all_versions' : null);
+  }
+
+  const modalContent = getPublicDeleteModalContent(documentCount);
+  if (publicDocumentDeleteModalTitle) {
+    publicDocumentDeleteModalTitle.textContent = modalContent.title;
+  }
+  publicDocumentDeleteModalBody.innerHTML = modalContent.body;
+
+  return new Promise((resolve) => {
+    let settled = false;
+
+    const cleanup = () => {
+      publicDocumentDeleteModalElement.removeEventListener('hidden.bs.modal', handleHidden);
+      publicDeleteCurrentBtn.removeEventListener('click', handleCurrentOnly);
+      publicDeleteAllBtn.removeEventListener('click', handleAllVersions);
+    };
+
+    const finalize = (value) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+
+    const handleHidden = () => finalize(null);
+    const handleCurrentOnly = () => {
+      publicDocumentDeleteModal.hide();
+      finalize('current_only');
+    };
+    const handleAllVersions = () => {
+      publicDocumentDeleteModal.hide();
+      finalize('all_versions');
+    };
+
+    publicDocumentDeleteModalElement.addEventListener('hidden.bs.modal', handleHidden);
+    publicDeleteCurrentBtn.addEventListener('click', handleCurrentOnly);
+    publicDeleteAllBtn.addEventListener('click', handleAllVersions);
+    publicDocumentDeleteModal.show();
+  });
+}
+
+async function requestPublicDocumentDeletion(documentId, deleteMode) {
+  const query = new URLSearchParams({ delete_mode: deleteMode });
+  const response = await fetch(`/api/public_documents/${documentId}?${query.toString()}`, { method: 'DELETE' });
+
+  let responseData = {};
+  try {
+    responseData = await response.json();
+  } catch (error) {
+    responseData = {};
+  }
+
+  if (!response.ok) {
+    throw responseData.error ? responseData : { error: `Server responded with status ${response.status}` };
+  }
+
+  return responseData;
+}
 
 // Editors
 let publicSimplemde = null;
@@ -794,7 +891,32 @@ async function onPublicUploadClick() {
     xhr.send(formData);
   });
 }
-window.deletePublicDocument=async function(id, event){ if(!confirm('Delete?')) return; try{ await fetch(`/api/public_documents/${id}`,{method:'DELETE'}); fetchPublicDocs(); }catch(e){ alert(`Error deleting: ${e.error||e.message}`);} };
+window.deletePublicDocument = async function(id, event) {
+  const deleteMode = await promptPublicDeleteMode(1);
+  if (!deleteMode) {
+    return;
+  }
+
+  const deleteTrigger = event ? event.target.closest('a, button') : null;
+  const originalDeleteTriggerHtml = deleteTrigger ? deleteTrigger.innerHTML : null;
+  if (deleteTrigger) {
+    deleteTrigger.classList.add('disabled');
+    deleteTrigger.setAttribute('aria-disabled', 'true');
+    deleteTrigger.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
+  }
+
+  try {
+    await requestPublicDocumentDeletion(id, deleteMode);
+    fetchPublicDocs();
+  } catch (e) {
+    alert(`Error deleting: ${e.error || e.message}`);
+    if (deleteTrigger && document.body.contains(deleteTrigger)) {
+      deleteTrigger.classList.remove('disabled');
+      deleteTrigger.removeAttribute('aria-disabled');
+      deleteTrigger.innerHTML = originalDeleteTriggerHtml;
+    }
+  }
+};
 
 window.searchPublicDocumentInChat = function(docId) {
   window.location.href = `/chats?search_documents=true&doc_scope=public&document_id=${docId}&workspace_id=${activePublicId}`;
@@ -854,34 +976,44 @@ function clearPublicSelection() {
 
 function deletePublicSelectedDocuments() {
   if (publicSelectedDocuments.size === 0) return;
-  if (!confirm(`Are you sure you want to delete ${publicSelectedDocuments.size} selected document(s)? This action cannot be undone.`)) return;
 
-  const deleteBtn = document.getElementById('public-delete-selected-btn');
-  if (deleteBtn) {
-    deleteBtn.disabled = true;
-    deleteBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Deleting...';
-  }
+  promptPublicDeleteMode(publicSelectedDocuments.size).then((deleteMode) => {
+    if (!deleteMode) {
+      return;
+    }
 
-  const deletePromises = Array.from(publicSelectedDocuments).map(docId =>
-    fetch(`/api/public_documents/${docId}`, { method: 'DELETE' })
-      .then(r => r.ok ? r.json() : Promise.reject(r))
-  );
+    const deleteBtn = document.getElementById('public-delete-selected-btn');
+    if (deleteBtn) {
+      deleteBtn.disabled = true;
+      deleteBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Deleting...';
+    }
 
-  Promise.allSettled(deletePromises)
-    .then(results => {
-      const successful = results.filter(r => r.status === 'fulfilled').length;
-      const failed = results.filter(r => r.status === 'rejected').length;
-      if (failed > 0) alert(`Deleted ${successful} document(s). ${failed} failed to delete.`);
-      publicSelectedDocuments.clear();
-      updatePublicBulkActionButtons();
-      fetchPublicDocs();
-    })
-    .finally(() => {
-      if (deleteBtn) {
-        deleteBtn.disabled = false;
-        deleteBtn.innerHTML = '<i class="bi bi-trash me-1"></i>Delete Selected';
-      }
-    });
+    const deletePromises = Array.from(publicSelectedDocuments).map((docId) => requestPublicDocumentDeletion(docId, deleteMode));
+
+    Promise.allSettled(deletePromises)
+      .then((results) => {
+        const successful = results.filter((result) => result.status === 'fulfilled').length;
+        const failed = results.filter((result) => result.status === 'rejected').length;
+        if (failed > 0) {
+          alert(`Deleted ${successful} document(s). ${failed} failed to delete.`);
+        }
+
+        if (publicSelectionMode) {
+          togglePublicSelectionMode();
+        } else {
+          publicSelectedDocuments.clear();
+          updatePublicBulkActionButtons();
+        }
+
+        fetchPublicDocs();
+      })
+      .finally(() => {
+        if (deleteBtn) {
+          deleteBtn.disabled = false;
+          deleteBtn.innerHTML = '<i class="bi bi-trash me-1"></i>Delete Selected';
+        }
+      });
+  });
 }
 
 function chatWithPublicSelected() {

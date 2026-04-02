@@ -120,6 +120,37 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
     elif document_id:
         document_ids = [document_id]
 
+    normalization_changed = False
+    try:
+        from functions_documents import normalize_document_revision_families
+
+        if doc_scope in ("all", "personal"):
+            normalization_changed = normalize_document_revision_families(user_id=user_id) or normalization_changed
+
+        if doc_scope in ("all", "group") and active_group_ids:
+            for current_group_id in active_group_ids:
+                normalization_changed = normalize_document_revision_families(
+                    user_id=user_id,
+                    group_id=current_group_id,
+                ) or normalization_changed
+
+        if doc_scope in ("all", "public"):
+            if doc_scope == "public" and active_public_workspace_id:
+                public_workspace_ids = [active_public_workspace_id]
+            else:
+                public_workspace_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
+
+            for workspace_id in public_workspace_ids:
+                normalization_changed = normalize_document_revision_families(
+                    user_id=user_id,
+                    public_workspace_id=workspace_id,
+                ) or normalization_changed
+    except Exception as normalization_error:
+        debug_print(
+            f"Revision normalization failed before search: {normalization_error}",
+            "SEARCH",
+        )
+
     # Build document ID filter clause
     doc_id_filter = None
     if document_ids and len(document_ids) > 0:
@@ -144,13 +175,15 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
     )
 
     # Check cache first (pass scope parameters for correct partition key)
-    cached_results = get_cached_search_results(
-        cache_key,
-        user_id,
-        doc_scope,
-        active_group_ids=active_group_ids,
-        active_public_workspace_id=active_public_workspace_id
-    )
+    cached_results = None
+    if not normalization_changed:
+        cached_results = get_cached_search_results(
+            cache_key,
+            user_id,
+            doc_scope,
+            active_group_ids=active_group_ids,
+            active_public_workspace_id=active_public_workspace_id
+        )
     if cached_results is not None:
         debug_print(
             "Returning CACHED search results",
