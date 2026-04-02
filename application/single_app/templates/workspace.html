@@ -1553,8 +1553,8 @@
   <script>
     window.enableMultiModelEndpoints = {{ 'true' if settings.enable_multi_model_endpoints else 'false' }};
     window.modelEndpointScope = 'user';
-    window.workspaceModelEndpoints = JSON.parse('{{ personal_model_endpoints|default([])|tojson|safe }}' || '[]');
-    window.globalModelEndpoints = JSON.parse('{{ global_model_endpoints|default([])|tojson|safe }}' || '[]');
+      window.workspaceModelEndpoints = {{ personal_model_endpoints|default([], true)|tojson|safe }};
+      window.globalModelEndpoints = {{ global_model_endpoints|default([], true)|tojson|safe }};
   </script>
   {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel and settings.allow_user_custom_endpoints and settings.enable_multi_model_endpoints %}
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace_model_endpoints.js') }}"></script>
@@ -1565,7 +1565,7 @@
 
   <script>
     // Pass settings/flags needed by JS
-    window.classification_categories = JSON.parse('{{ settings.document_classification_categories|tojson(indent=None)|safe }}' || '[]');
+    window.classification_categories = {{ settings.document_classification_categories|default([], true)|tojson(indent=None)|safe }};
     if (!Array.isArray(window.classification_categories)) {
         window.classification_categories = [];
     }

@@ -1475,8 +1475,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
 <script>
     window.enableMultiModelEndpoints = {{ 'true' if settings.enable_multi_model_endpoints else 'false' }};
     window.modelEndpointScope = 'group';
-    window.workspaceModelEndpoints = JSON.parse('{{ group_model_endpoints|default([])|tojson|safe }}' || '[]');
-    window.globalModelEndpoints = JSON.parse('{{ global_model_endpoints|default([])|tojson|safe }}' || '[]');
+  window.workspaceModelEndpoints = {{ group_model_endpoints|default([], true)|tojson|safe }};
+  window.globalModelEndpoints = {{ global_model_endpoints|default([], true)|tojson|safe }};
 </script>
 {% if settings.enable_semantic_kernel and settings.allow_group_custom_endpoints and settings.enable_multi_model_endpoints %}
 <script type="module" src="{{ url_for('static', filename='js/workspace/workspace_model_endpoints.js') }}"></script>
@@ -1484,7 +1484,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
 <!-- Pass backend flags to JS -->
 <script>
-  window.classification_categories = JSON.parse('{{ settings.document_classification_categories|tojson(indent=None)|safe }}' || '[]');
+  window.classification_categories = {{ settings.document_classification_categories|default([], true)|tojson(indent=None)|safe }};
     if (!Array.isArray(window.classification_categories)) {
         window.classification_categories = [];
     }

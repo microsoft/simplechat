@@ -2094,7 +2094,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 "19. For peak, busiest, highest, or lowest questions, use grouped functions and inspect the highest_group, highest_value, lowest_group, and lowest_value summary fields.\n"
                 "20. Return only computed findings and name the strongest drivers clearly.\n"
                 "21. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report.\n"
-                "21. When using query_tabular_data, use simple DataFrame.query() syntax with backticked column names for columns containing spaces. Avoid method calls such as .str.lower(), .astype(...), or other Python expressions that DataFrame.query() may reject."
+                "22. When using query_tabular_data, use simple DataFrame.query() syntax with backticked column names for columns containing spaces. Avoid method calls such as .str.lower(), .astype(...), or other Python expressions that DataFrame.query() may reject."
             )
 
         baseline_invocations = plugin_logger.get_invocations_for_conversation(
