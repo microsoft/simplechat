@@ -666,7 +666,7 @@
 <script>
   // Pass settings to JavaScript
   window.max_file_size_mb = {{ settings.max_file_size_mb | default(16) }};
-  window.classification_categories = JSON.parse('{{ settings.document_classification_categories|tojson(indent=None)|safe }}' || '[]');
+  window.classification_categories = {{ settings.document_classification_categories|default([], true)|tojson(indent=None)|safe }};
   if (!Array.isArray(window.classification_categories)) {
     window.classification_categories = [];
   }

@@ -4,6 +4,7 @@ from config import *
 from functions_authentication import *
 from functions_debug import debug_print
 from functions_chat import sort_messages_by_thread
+from functions_message_artifacts import filter_assistant_artifact_items
 from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_frontend_conversations(app):
@@ -53,6 +54,7 @@ def register_route_frontend_conversations(app):
             query=message_query,
             partition_key=conversation_id
         ))
+        messages = filter_assistant_artifact_items(messages)
         return render_template('chat.html', conversation_id=conversation_id, messages=messages)
     
     @app.route('/conversation/<conversation_id>/messages', methods=['GET'])
@@ -78,6 +80,7 @@ def register_route_frontend_conversations(app):
             query=msg_query,
             partition_key=conversation_id
         ))
+        all_items = filter_assistant_artifact_items(all_items)
 
         debug_print(f"Frontend endpoint - Query returned {len(all_items)} total items (before filtering)")
         

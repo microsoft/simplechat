@@ -1,5 +1,5 @@
 // workspace_plugins.js (refactored to use plugin_common.js and new multi-step modal)
-import { renderPluginsTable, renderPluginsGrid, ensurePluginsTableInRoot, validatePluginManifest } from '../plugin_common.js';
+import { renderPluginsTable, renderPluginsGrid, ensurePluginsTableInRoot, validatePluginManifest, getErrorMessageFromResponse } from '../plugin_common.js';
 import { showToast } from "../chat/chat-toast.js"
 import {
     setupViewToggle, switchViewContainers, openViewModal
@@ -136,9 +136,11 @@ function setupSaveHandler(plugin, modal) {
         const formData = window.pluginModalStepper.getFormData();
         
         // Validate with JSON schema
-        const valid = await validatePluginManifest(formData);
-        if (!valid) {
-          window.pluginModalStepper.showError('Validation error: Invalid action data.');
+        const validation = await validatePluginManifest(formData);
+        const validationFailed = validation === false || (validation && validation.valid === false);
+        if (validationFailed) {
+          const message = validation?.errors?.join('\n') || 'Validation error: Invalid action data.';
+          window.pluginModalStepper.showError(message);
           return;
         }
         
@@ -208,7 +210,8 @@ async function savePlugin(pluginData, existingPlugin = null) {
   });
   
   if (!saveRes.ok) {
-    throw new Error('Failed to save action');
+    const errorMessage = await getErrorMessageFromResponse(saveRes, 'Failed to save action');
+    throw new Error(errorMessage);
   }
 }
 

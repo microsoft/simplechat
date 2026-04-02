@@ -2,8 +2,8 @@
 # test_tabular_raw_tool_fallback.py
 """
 Functional test for tabular raw tool fallback summaries.
-Version: 0.239.125
-Implemented in: 0.239.125
+Version: 0.240.013
+Implemented in: 0.239.125; 0.240.013 (prompt-budgeted fallback handoff)
 
 This test ensures successful tabular tool calls are not discarded when the
 inner tabular synthesis step fails, and that the analysis prompt now prefers
@@ -22,6 +22,7 @@ sys.path.append(os.path.join(ROOT_DIR, 'application', 'single_app'))
 
 ROUTE_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'route_backend_chats.py')
 TARGET_FUNCTIONS = {
+    'build_tabular_computed_results_system_message',
     'get_tabular_invocation_result_payload',
     'get_tabular_invocation_error_message',
     'get_tabular_invocation_selected_sheet',
@@ -29,6 +30,7 @@ TARGET_FUNCTIONS = {
     'normalize_tabular_overlap_value',
     'get_tabular_overlap_identifier_column',
     'describe_tabular_invocation_conditions',
+    'compact_tabular_fallback_value',
     'get_tabular_query_overlap_summary',
     'get_tabular_invocation_compact_payload',
     'build_tabular_analysis_fallback_from_invocations',
@@ -289,11 +291,90 @@ def test_route_prompt_prefers_combined_queries_and_raw_fallback_helper():
         return False
 
 
+def test_raw_fallback_stays_within_prompt_budget_for_large_rows():
+    """Verify oversized fallback payloads are reduced to a bounded handoff."""
+    print('🔍 Testing raw fallback prompt budget...')
+
+    try:
+        helpers, _ = load_fallback_helpers()
+        build_fallback = helpers['build_tabular_analysis_fallback_from_invocations']
+
+        large_cell = 'X' * 5000
+        large_rows = {
+            'filename': 'large_workbook.xlsx',
+            'selected_sheet': 'Notices',
+            'total_matches': 12,
+            'returned_rows': 12,
+            'data': [
+                {
+                    'TaxpayerID': f'TP{index:06d}',
+                    'Narrative': large_cell,
+                    'NoticeAmount': 1000 + index,
+                }
+                for index in range(12)
+            ],
+        }
+
+        invocations = [
+            FakeInvocation(
+                'filter_rows',
+                {
+                    'filename': 'large_workbook.xlsx',
+                    'column': 'TaxpayerID',
+                    'operator': 'contains',
+                    'value': 'TP',
+                },
+                json.dumps(large_rows),
+            )
+            for _ in range(4)
+        ]
+
+        fallback_summary = build_fallback(invocations)
+
+        assert fallback_summary is not None, 'Expected raw fallback summary'
+        assert len(fallback_summary) <= 26000, len(fallback_summary)
+        assert 'RESULT COVERAGE NOTE:' in fallback_summary or 'result_summary_truncated' in fallback_summary, fallback_summary
+
+        print('✅ Raw fallback prompt budget passed')
+        return True
+
+    except Exception as exc:
+        print(f'❌ Test failed: {exc}')
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_computed_results_system_message_truncates_large_handoffs():
+    """Verify computed-results handoffs are capped before the outer model call."""
+    print('🔍 Testing computed-results handoff truncation...')
+
+    try:
+        helpers, _ = load_fallback_helpers()
+        build_system_message = helpers['build_tabular_computed_results_system_message']
+
+        message = build_system_message('the file workbook.xlsx', 'A' * 30000)
+
+        assert len(message) <= 25000, len(message)
+        assert '[Computed results handoff truncated for prompt budget.]' in message, message
+
+        print('✅ Computed-results handoff truncation passed')
+        return True
+
+    except Exception as exc:
+        print(f'❌ Test failed: {exc}')
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 if __name__ == '__main__':
     tests = [
         test_raw_fallback_builds_overlap_summary_from_successful_queries,
         test_raw_fallback_preserves_aggregate_and_group_summaries,
         test_route_prompt_prefers_combined_queries_and_raw_fallback_helper,
+        test_raw_fallback_stays_within_prompt_budget_for_large_rows,
+        test_computed_results_system_message_truncates_large_handoffs,
     ]
 
     results = []

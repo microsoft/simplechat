@@ -209,6 +209,23 @@ function getSelectionSnapshot() {
     };
 }
 
+function restoreLegacyPreferredModelSelection(preferredModelDeployment) {
+    if (!modelSelect || !preferredModelDeployment) {
+        return;
+    }
+
+    const matchingOption = Array.from(modelSelect.options).find(option => (
+        option.value === preferredModelDeployment
+            || option.dataset.deploymentName === preferredModelDeployment
+    ));
+
+    if (!matchingOption || matchingOption.disabled) {
+        return;
+    }
+
+    modelSelect.value = matchingOption.value;
+}
+
 function resolveSelectedSelectionKey(options, restoreOptions = {}) {
     const {
         currentSelection = null,
@@ -486,6 +503,7 @@ export async function populateModelDropdown(restoreOptions = {}) {
     }
 
     if (!window.appSettings?.enable_multi_model_endpoints) {
+        restoreLegacyPreferredModelSelection(restoreOptions.preferredModelDeployment || null);
         modelSelectorController?.refresh();
         return;
     }
