@@ -336,59 +336,63 @@ def set_user_plugins():
     for plugin in plugins:
         if plugin.get('name', '').lower() in global_plugin_names:
             continue  # Skip global plugins
+        plugin_to_save = dict(plugin)
         # Remove is_global if present
-        if 'is_global' in plugin:
-            del plugin['is_global']
+        if 'is_global' in plugin_to_save:
+            del plugin_to_save['is_global']
         
         # Ensure required fields have default values
-        plugin.setdefault('name', '')
-        plugin.setdefault('displayName', plugin.get('name', ''))
-        plugin.setdefault('description', '')
-        plugin.setdefault('metadata', {})
-        plugin.setdefault('additionalFields', {})
+        plugin_to_save.setdefault('name', '')
+        plugin_to_save.setdefault('displayName', plugin_to_save.get('name', ''))
+        plugin_to_save.setdefault('description', '')
+        plugin_to_save.setdefault('metadata', {})
+        plugin_to_save.setdefault('additionalFields', {})
         
-        # Remove storage-managed fields that are not part of the plugin manifest schema.
+        # Remove storage-managed fields that are not part of the plugin manifest schema,
+        # but preserve the action ID so existing records can be updated in place.
         for field in PLUGIN_STORAGE_MANAGED_FIELDS:
-            plugin.pop(field, None)
+            if field == 'id':
+                continue
+            plugin_to_save.pop(field, None)
         
         # Handle endpoint based on plugin type
-        plugin_type = plugin.get('type', '')
+        plugin_type = plugin_to_save.get('type', '')
         if plugin_type in ['sql_schema', 'sql_query']:
             # SQL plugins don't use endpoints, but schema validation requires one
             # Use a placeholder that indicates it's a SQL plugin
-            plugin.setdefault('endpoint', f'sql://{plugin_type}')
+            plugin_to_save.setdefault('endpoint', f'sql://{plugin_type}')
         elif plugin_type == 'msgraph':
             # MS Graph plugin does not require an endpoint, but schema validation requires one
             #TODO: Update to support different clouds
-            plugin.setdefault('endpoint', 'https://graph.microsoft.com')
+            plugin_to_save.setdefault('endpoint', 'https://graph.microsoft.com')
         else:
             # For other plugin types, require a real endpoint
-            plugin.setdefault('endpoint', '')
+            plugin_to_save.setdefault('endpoint', '')
         
         # Ensure auth has default structure
-        if 'auth' not in plugin:
-            plugin['auth'] = {'type': 'identity'}
-        elif not isinstance(plugin['auth'], dict):
-            plugin['auth'] = {'type': 'identity'}
-        elif 'type' not in plugin['auth']:
-            plugin['auth']['type'] = 'identity'
+        if 'auth' not in plugin_to_save:
+            plugin_to_save['auth'] = {'type': 'identity'}
+        elif not isinstance(plugin_to_save['auth'], dict):
+            plugin_to_save['auth'] = {'type': 'identity'}
+        elif 'type' not in plugin_to_save['auth']:
+            plugin_to_save['auth']['type'] = 'identity'
         
         # Auto-fill type from metadata if missing or empty
-        if not plugin.get('type'):
-            if plugin.get('metadata', {}).get('type'):
-                plugin['type'] = plugin['metadata']['type']
+        if not plugin_to_save.get('type'):
+            if plugin_to_save.get('metadata', {}).get('type'):
+                plugin_to_save['type'] = plugin_to_save['metadata']['type']
             else:
-                plugin['type'] = 'unknown'  # Default type
+                plugin_to_save['type'] = 'unknown'  # Default type
         
-        debug_print(f"Plugin build: {_redact_plugin_for_logging(plugin)}")
-        validation_error = validate_plugin(plugin)
+        debug_print(f"Plugin build: {_redact_plugin_for_logging(plugin_to_save)}")
+        validation_error = validate_plugin(plugin_to_save)
         if validation_error:
             return jsonify({'error': f'Plugin validation failed: {validation_error}'}), 400
         
-        filtered_plugins.append(plugin)
-        new_plugin_names.add(plugin['name'])
-        if plugin.get('id'):
-            new_plugin_ids.add(plugin['id'])
+        filtered_plugins.append(plugin_to_save)
+        new_plugin_names.add(plugin_to_save['name'])
+        if plugin_to_save.get('id'):
+            new_plugin_ids.add(plugin_to_save['id'])
     
     # Save each plugin to the personal_actions container
     plugins_to_delete = []
