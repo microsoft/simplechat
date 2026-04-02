@@ -3,6 +3,16 @@
 # Feature Release
 
 This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.240.001, and the per-version entries continue immediately after it.
+### **(v0.240.016)**
+
+#### Bug Fixes
+
+*   **Python Runtime Dependency Refresh and Supply-Chain Hardening**
+    *   Continued the requirements hardening work from `v0.240.014` by tightening the main application runtime to exact package pins, reducing dependency drift across local development, CI, and Azure deployments to help mitigate supply-chain exposure.
+    *   Upgraded the Flask runtime stack to `Flask==3.1.3` and `Werkzeug==3.1.6`, and updated the shared `Markup` import path to `markupsafe` so the app starts correctly with Flask 3's package boundary changes.
+    *   Refreshed key runtime dependencies including `gunicorn`, `requests`, `openai`, `Markdown`, `markdown2`, `azure-ai-projects`, `azure-ai-agents`, `pyjwt`, `pypdf`, `semantic-kernel`, `protobuf`, `redis`, `pyodbc`, `PyMySQL`, `cython`, and `aiohttp` to pick up current security, compatibility, and capability improvements while keeping builds reproducible.
+    *   (Ref: `application/single_app/requirements.txt`, `application/single_app/config.py`, `functional_tests/test_flask_markup_import_fix.py`, `docs/explanation/fixes/FLASK_31_MARKUP_IMPORT_FIX.md`)
+
 ### **(v0.240.014)**
 
 #### Bug Fixes
