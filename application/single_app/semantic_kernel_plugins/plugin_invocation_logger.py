@@ -60,6 +60,102 @@ class PluginInvocation:
         return json.dumps(self.to_dict(), default=str, indent=2)
 
 
+def _compact_plugin_log_value(value: Any, max_length: int = 160) -> Any:
+    """Return a compact logging-safe representation for structured plugin summaries."""
+    if value is None or isinstance(value, (int, float, bool)):
+        return value
+
+    if isinstance(value, str):
+        return value if len(value) <= max_length else f"{value[:max_length]}... [truncated]"
+
+    if isinstance(value, list):
+        compact_items = [_compact_plugin_log_value(item, max_length=max_length) for item in value[:5]]
+        if len(value) > 5:
+            compact_items.append({'remaining_items': len(value) - 5})
+        return compact_items
+
+    if isinstance(value, dict):
+        compact_mapping = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= 8:
+                compact_mapping['remaining_keys'] = len(value) - 8
+                break
+            compact_mapping[str(key)] = _compact_plugin_log_value(item, max_length=max_length)
+        return compact_mapping
+
+    return str(value)
+
+
+def _build_plugin_result_logging_payload(plugin_name: str, function_name: str, result: Any) -> tuple:
+    """Build preview and structured summary payloads for plugin invocation logs."""
+    result_str = str(result)
+    result_preview = result_str[:200] + "..." if len(result_str) > 200 else result_str
+    result_summary = None
+
+    if plugin_name != 'TabularProcessingPlugin' or result is None:
+        return result_preview, result_summary
+
+    try:
+        result_payload = json.loads(result) if isinstance(result, str) else result
+    except Exception:
+        return result_preview, result_summary
+
+    if not isinstance(result_payload, dict):
+        return result_preview, result_summary
+
+    summary = {}
+    key_names = (
+        'filename',
+        'selected_sheet',
+        'column',
+        'search_value',
+        'search_operator',
+        'searched_columns',
+        'matched_columns',
+        'return_columns',
+        'lookup_column',
+        'target_column',
+        'operation',
+        'filter_applied',
+        'normalize_match',
+        'extract_mode',
+        'extract_pattern',
+        'url_path_segments',
+        'distinct_count',
+        'returned_values',
+        'row_count',
+        'rows_scanned',
+        'total_matches',
+        'returned_rows',
+        'matched_cell_count',
+        'extracted_match_count',
+        'sheets_searched',
+        'sheets_matched',
+        'source_sheet',
+        'target_sheet',
+        'relationship_type',
+        'source_cohort_size',
+        'matched_target_row_count',
+        'result',
+        'error',
+    )
+    for key_name in key_names:
+        if key_name in result_payload:
+            summary[key_name] = _compact_plugin_log_value(result_payload.get(key_name))
+
+    if isinstance(result_payload.get('values'), list):
+        summary['values_sample'] = _compact_plugin_log_value(result_payload['values'][:5])
+        summary['values_sample_limited'] = len(result_payload['values']) > 5
+
+    if isinstance(result_payload.get('data'), list):
+        summary['data_sample_count'] = min(len(result_payload['data']), 5)
+
+    if summary:
+        result_summary = summary
+
+    return result_preview, result_summary
+
+
 class PluginInvocationLogger:
     """Centralized logger for all Semantic Kernel plugin invocations."""
     
@@ -127,8 +223,14 @@ class PluginInvocationLogger:
             
             if invocation.success:
                 if invocation.result:
-                    result_str = str(invocation.result)
-                    log_data["result_preview"] = result_str[:200] + "..." if len(result_str) > 200 else result_str
+                    result_preview, result_summary = _build_plugin_result_logging_payload(
+                        invocation.plugin_name,
+                        invocation.function_name,
+                        invocation.result,
+                    )
+                    log_data["result_preview"] = result_preview
+                    if result_summary:
+                        log_data["result_summary"] = result_summary
                     log_data["result_type"] = type(invocation.result).__name__
                 
                 log_event(f"Plugin function executed successfully", 
@@ -175,11 +277,17 @@ class PluginInvocationLogger:
             
             # Add sanitized result
             if invocation.result is not None:
-                result_str = str(invocation.result)
-                if len(result_str) > 500:
-                    log_data["result_preview"] = f"{result_str[:500]}... [truncated]"
+                result_preview, result_summary = _build_plugin_result_logging_payload(
+                    invocation.plugin_name,
+                    invocation.function_name,
+                    invocation.result,
+                )
+                if len(str(invocation.result)) > 500:
+                    log_data["result_preview"] = f"{result_preview[:500]}... [truncated]"
                 else:
-                    log_data["result_preview"] = result_str
+                    log_data["result_preview"] = result_preview
+                if result_summary:
+                    log_data["result_summary"] = result_summary
             
             log_event(
                 f"[Plugin Invocation] {invocation.plugin_name}.{invocation.function_name}",
@@ -487,13 +595,18 @@ def plugin_function_logger(plugin_name: str):
             )
 
         def _log_success(function_name: str, result: Any, duration_ms: float):
-            result_preview = str(result)[:200] + "..." if len(str(result)) > 200 else str(result)
+            result_preview, result_summary = _build_plugin_result_logging_payload(
+                plugin_name,
+                function_name,
+                result,
+            )
             log_event(
                 f"[Plugin Function Logger] Function completed successfully",
                 extra={
                     "plugin_name": plugin_name,
                     "function_name": function_name,
                     "result_preview": result_preview,
+                    "result_summary": result_summary,
                     "duration_ms": duration_ms,
                     "full_function_name": f"{plugin_name}.{function_name}"
                 },

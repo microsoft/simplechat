@@ -5,6 +5,7 @@ from semantic_kernel.contents.chat_history import ChatHistory
 from semantic_kernel.contents.chat_message_content import ChatMessageContent
 from semantic_kernel.connectors.ai.prompt_execution_settings import PromptExecutionSettings
 from semantic_kernel.connectors.ai.chat_completion_client_base import ChatCompletionClientBase
+from semantic_kernel.connectors.ai.open_ai.prompt_execution_settings.azure_chat_prompt_execution_settings import AzureChatPromptExecutionSettings
 from semantic_kernel_fact_memory_store import FactMemoryStore
 from semantic_kernel_loader import initialize_semantic_kernel
 from semantic_kernel_plugins.plugin_invocation_thoughts import (
@@ -365,7 +366,9 @@ def build_tabular_computed_results_system_message(source_label, tabular_analysis
         f"{rendered_analysis}\n\n"
         "These are tool-backed results derived from the full underlying tabular data, not just retrieved schema excerpts. "
         "Treat them as authoritative for row-level facts, calculations, and numeric conclusions. "
-        "Do not say that you lack direct access to the data if the answer is present in these computed results."
+        "Do not say that you lack direct access to the data if the answer is present in these computed results. "
+        "If a tool summary includes a full scalar value list, you may enumerate those values directly in the final answer. "
+        "If a tool summary includes the full matching rows from a row or text search, use the surrounding cell context in those rows when deciding which content is relevant to the user's question."
     )
 
 
@@ -837,6 +840,12 @@ def describe_tabular_invocation_conditions(invocation):
     if query_expression:
         return query_expression
 
+    search_value = str(parameters.get('search_value') or '').strip()
+    if search_value:
+        search_columns = str(parameters.get('search_columns') or '').strip() or 'ALL COLUMNS'
+        search_operator = str(parameters.get('search_operator') or 'contains').strip()
+        return f"search_value={search_value}; search_operator={search_operator}; search_columns={search_columns}"
+
     column_name = str(parameters.get('column') or '').strip()
     operator = str(parameters.get('operator') or '').strip()
     value = parameters.get('value')
@@ -847,6 +856,17 @@ def describe_tabular_invocation_conditions(invocation):
     lookup_value = parameters.get('lookup_value')
     if lookup_column:
         return f"{lookup_column} == {lookup_value}"
+
+    extract_mode = str(parameters.get('extract_mode') or '').strip()
+    if extract_mode:
+        extraction_bits = [f"extract_mode={extract_mode}"]
+        extract_pattern = str(parameters.get('extract_pattern') or '').strip()
+        url_path_segments = parameters.get('url_path_segments')
+        if extract_pattern:
+            extraction_bits.append(f"extract_pattern={extract_pattern}")
+        if url_path_segments not in (None, ''):
+            extraction_bits.append(f"url_path_segments={url_path_segments}")
+        return ', '.join(extraction_bits)
 
     return None
 
@@ -904,7 +924,7 @@ def get_tabular_query_overlap_summary(invocations, max_rows=10):
 
     for invocation in invocations or []:
         function_name = getattr(invocation, 'function_name', '')
-        if function_name not in {'query_tabular_data', 'filter_rows'}:
+        if function_name not in {'query_tabular_data', 'filter_rows', 'search_rows'}:
             continue
 
         rows = get_tabular_invocation_data_rows(invocation)
@@ -1004,6 +1024,49 @@ def get_tabular_invocation_compact_payload(invocation, max_rows=5):
             'operation': compact_tabular_fallback_value(result_payload.get('operation')),
             'result': compact_tabular_fallback_value(result_payload.get('result')),
         })
+    elif function_name == 'get_distinct_values':
+        for key_name in (
+            'column',
+            'filter_applied',
+            'normalize_match',
+            'extract_mode',
+            'extract_pattern',
+            'url_path_segments',
+            'matched_cell_count',
+            'extracted_match_count',
+            'distinct_count',
+            'returned_values',
+            'values_limited',
+        ):
+            if key_name in result_payload:
+                compact_payload[key_name] = compact_tabular_fallback_value(result_payload.get(key_name))
+
+        raw_values = result_payload.get('values')
+        if isinstance(raw_values, list):
+            compact_values = []
+            rendered_values_length = 0
+            max_values_in_payload = 200
+            max_rendered_values_chars = 14000
+
+            for raw_value in raw_values:
+                compact_value = compact_tabular_fallback_value(raw_value)
+                rendered_value = json.dumps(compact_value, default=str)
+                projected_length = rendered_values_length + len(rendered_value) + 2
+
+                if compact_values and (
+                    len(compact_values) >= max_values_in_payload
+                    or projected_length > max_rendered_values_chars
+                ):
+                    break
+
+                compact_values.append(compact_value)
+                rendered_values_length = projected_length
+
+            compact_payload['values'] = compact_values
+            compact_payload['full_values_included'] = len(compact_values) == len(raw_values)
+            if len(compact_values) != len(raw_values):
+                compact_payload['values_limited'] = True
+                compact_payload['returned_values'] = len(compact_values)
     elif function_name in {'group_by_aggregate', 'group_by_datetime_component'}:
         for key_name in (
             'group_by',
@@ -1038,18 +1101,46 @@ def get_tabular_invocation_compact_payload(invocation, max_rows=5):
                 for row in data_rows[:max_rows]
             ]
             compact_payload['sample_rows_limited'] = len(data_rows) > max_rows
-    elif function_name in {'query_tabular_data', 'filter_rows'}:
+    elif function_name in {'query_tabular_data', 'filter_rows', 'search_rows'}:
+        for key_name in ('search_value', 'search_operator', 'searched_columns', 'matched_columns', 'return_columns'):
+            if key_name in result_payload:
+                compact_payload[key_name] = compact_tabular_fallback_value(result_payload.get(key_name))
+
         for key_name in ('total_matches', 'returned_rows'):
             if key_name in result_payload:
                 compact_payload[key_name] = compact_tabular_fallback_value(result_payload.get(key_name))
 
         data_rows = get_tabular_invocation_data_rows(invocation)
         if data_rows:
+            desired_max_rows = max_rows
+            total_matches = result_payload.get('total_matches')
+            returned_rows = result_payload.get('returned_rows')
+            try:
+                total_matches = int(total_matches)
+            except (TypeError, ValueError):
+                total_matches = None
+            try:
+                returned_rows = int(returned_rows)
+            except (TypeError, ValueError):
+                returned_rows = len(data_rows)
+
+            if (
+                total_matches is not None
+                and returned_rows == total_matches
+                and total_matches <= 25
+            ):
+                desired_max_rows = max(desired_max_rows, total_matches)
+
             compact_payload['sample_rows'] = [
                 compact_tabular_fallback_value(row)
-                for row in data_rows[:max_rows]
+                for row in data_rows[:desired_max_rows]
             ]
-            compact_payload['sample_rows_limited'] = len(data_rows) > max_rows
+            compact_payload['sample_rows_limited'] = len(data_rows) > desired_max_rows
+            compact_payload['full_rows_included'] = (
+                total_matches is not None
+                and total_matches == returned_rows
+                and len(compact_payload['sample_rows']) == len(data_rows)
+            )
 
         rendered_conditions = describe_tabular_invocation_conditions(invocation)
         if rendered_conditions:
@@ -1124,6 +1215,15 @@ def build_tabular_analysis_fallback_from_invocations(invocations):
         if 'sample_rows' in shrunk_payload:
             shrunk_payload['sample_rows'] = shrunk_payload['sample_rows'][:2]
             shrunk_payload['sample_rows_limited'] = True
+            shrunk_payload['full_rows_included'] = False
+        if isinstance(shrunk_payload.get('values'), list) and len(shrunk_payload['values']) > 25:
+            shrunk_payload['values'] = shrunk_payload['values'][:25]
+            shrunk_payload['values_limited'] = True
+            shrunk_payload['full_values_included'] = False
+            shrunk_payload['returned_values'] = min(
+                int(shrunk_payload.get('returned_values') or len(shrunk_payload['values'])),
+                len(shrunk_payload['values']),
+            )
         if isinstance(shrunk_payload.get('top_results'), dict):
             shrunk_payload['top_results'] = dict(list(shrunk_payload['top_results'].items())[:3])
 
@@ -1135,6 +1235,15 @@ def build_tabular_analysis_fallback_from_invocations(invocations):
         if len(candidate_text) > (max_fallback_chars - coverage_note_reserve):
             shrunk_payload.pop('sample_rows', None)
             shrunk_payload['sample_rows_limited'] = True
+            shrunk_payload['full_rows_included'] = False
+            if isinstance(shrunk_payload.get('values'), list) and len(shrunk_payload['values']) > 10:
+                shrunk_payload['values'] = shrunk_payload['values'][:10]
+                shrunk_payload['values_limited'] = True
+                shrunk_payload['full_values_included'] = False
+                shrunk_payload['returned_values'] = min(
+                    int(shrunk_payload.get('returned_values') or len(shrunk_payload['values'])),
+                    len(shrunk_payload['values']),
+                )
             shrunk_payload['result_summary_truncated'] = True
             if isinstance(shrunk_payload.get('top_results'), dict):
                 shrunk_payload['top_results'] = dict(list(shrunk_payload['top_results'].items())[:2])
@@ -1319,6 +1428,421 @@ def summarize_tabular_discovery_invocations(invocations, max_sheet_names=6):
         discovery_summaries.append('; '.join(summary_parts))
 
     return discovery_summaries
+
+
+def extract_json_object_from_text(text):
+    """Extract the first JSON object embedded in a model response."""
+    rendered_text = str(text or '').strip()
+    if not rendered_text:
+        return None
+
+    json_decoder = json.JSONDecoder()
+    for character_index, character in enumerate(rendered_text):
+        if character != '{':
+            continue
+
+        try:
+            payload, _ = json_decoder.raw_decode(rendered_text[character_index:])
+        except Exception:
+            continue
+
+        if isinstance(payload, dict):
+            return payload
+
+    return None
+
+
+def normalize_tabular_reviewer_function_name(function_name):
+    """Normalize reviewer-selected function names to bare plugin function names."""
+    normalized_function_name = str(function_name or '').strip()
+    if not normalized_function_name:
+        return ''
+
+    normalized_function_name = normalized_function_name.replace('tabular_processing-', '')
+    if '.' in normalized_function_name:
+        normalized_function_name = normalized_function_name.split('.')[-1]
+
+    return normalized_function_name.strip()
+
+
+def parse_tabular_reviewer_plan(review_text):
+    """Parse a JSON-only LLM reviewer plan into executable call descriptors."""
+    payload = extract_json_object_from_text(review_text)
+    if not isinstance(payload, dict):
+        return []
+
+    raw_calls = payload.get('calls')
+    if not isinstance(raw_calls, list):
+        raw_call = payload.get('call')
+        raw_calls = [raw_call] if isinstance(raw_call, dict) else []
+
+    normalized_calls = []
+    for raw_call in raw_calls:
+        if not isinstance(raw_call, dict):
+            continue
+
+        function_name = normalize_tabular_reviewer_function_name(
+            raw_call.get('function') or raw_call.get('function_name')
+        )
+        arguments = raw_call.get('arguments') or raw_call.get('args') or {}
+        if not function_name or not isinstance(arguments, dict):
+            continue
+
+        normalized_calls.append({
+            'function_name': function_name,
+            'arguments': dict(arguments),
+        })
+
+    return normalized_calls
+
+
+def get_tabular_reviewer_function_manifest():
+    """Return compact analytical-function guidance for the reviewer LLM."""
+    return {
+        'lookup_value': {
+            'best_for': 'one exact row or entity and one target column value',
+            'required_arguments': ['filename', 'lookup_column', 'lookup_value', 'target_column'],
+            'optional_arguments': ['match_operator', 'normalize_match', 'sheet_name', 'sheet_index', 'max_rows'],
+        },
+        'get_distinct_values': {
+            'best_for': 'unique values, discrete counts, canonical site lists, embedded URL or regex extraction, and deterministic de-duplication after the relevant text cohort has been narrowed',
+            'required_arguments': ['filename', 'column'],
+            'optional_arguments': ['query_expression', 'filter_column', 'filter_operator', 'filter_value', 'additional_filter_column', 'additional_filter_operator', 'additional_filter_value', 'extract_mode', 'extract_pattern', 'url_path_segments', 'normalize_match', 'sheet_name', 'sheet_index', 'max_values'],
+        },
+        'count_rows': {
+            'best_for': 'deterministic how-many questions after a filter or query',
+            'required_arguments': ['filename'],
+            'optional_arguments': ['query_expression', 'filter_column', 'filter_operator', 'filter_value', 'additional_filter_column', 'additional_filter_operator', 'additional_filter_value', 'normalize_match', 'sheet_name', 'sheet_index'],
+        },
+        'search_rows': {
+            'best_for': 'searching one column, several columns, or an entire sheet/workbook for a topic, phrase, path, code, or other value when the relevant column is unclear',
+            'required_arguments': ['filename', 'search_value'],
+            'optional_arguments': ['search_columns', 'search_operator', 'return_columns', 'query_expression', 'filter_column', 'filter_operator', 'filter_value', 'additional_filter_column', 'additional_filter_operator', 'additional_filter_value', 'normalize_match', 'sheet_name', 'sheet_index', 'max_rows'],
+        },
+        'filter_rows': {
+            'best_for': 'searching a text column for matching cells while preserving full row context before a second analytical step',
+            'required_arguments': ['filename', 'column', 'operator', 'value'],
+            'optional_arguments': ['additional_filter_column', 'additional_filter_operator', 'additional_filter_value', 'normalize_match', 'sheet_name', 'sheet_index', 'max_rows'],
+        },
+        'query_tabular_data': {
+            'best_for': 'compound boolean filters expressed with pandas DataFrame.query()',
+            'required_arguments': ['filename', 'query_expression'],
+            'optional_arguments': ['sheet_name', 'sheet_index', 'max_rows'],
+        },
+        'filter_rows_by_related_values': {
+            'best_for': 'joining a cohort from one sheet to matching rows on another sheet',
+            'required_arguments': ['filename', 'source_sheet_name', 'source_value_column', 'target_sheet_name', 'target_match_column'],
+            'optional_arguments': ['source_query_expression', 'source_filter_column', 'source_filter_operator', 'source_filter_value', 'target_query_expression', 'target_filter_column', 'target_filter_operator', 'target_filter_value', 'normalize_match', 'max_rows'],
+        },
+        'count_rows_by_related_values': {
+            'best_for': 'deterministic counts for cross-sheet cohort membership or related-record questions',
+            'required_arguments': ['filename', 'source_sheet_name', 'source_value_column', 'target_sheet_name', 'target_match_column'],
+            'optional_arguments': ['source_query_expression', 'source_filter_column', 'source_filter_operator', 'source_filter_value', 'target_query_expression', 'target_filter_column', 'target_filter_operator', 'target_filter_value', 'normalize_match'],
+        },
+        'aggregate_column': {
+            'best_for': 'sum, mean, min, max, median, std, count, nunique, or value_counts on one column',
+            'required_arguments': ['filename', 'column', 'operation'],
+            'optional_arguments': ['sheet_name', 'sheet_index'],
+        },
+        'group_by_aggregate': {
+            'best_for': 'grouped metrics by category or entity',
+            'required_arguments': ['filename', 'group_by', 'aggregate_column', 'operation'],
+            'optional_arguments': ['query_expression', 'sheet_name', 'sheet_index', 'top_n'],
+        },
+        'group_by_datetime_component': {
+            'best_for': 'time-based grouped analysis by year, quarter, month, week, day, or hour',
+            'required_arguments': ['filename', 'datetime_column', 'date_component', 'aggregate_column', 'operation'],
+            'optional_arguments': ['query_expression', 'sheet_name', 'sheet_index', 'top_n'],
+        },
+    }
+
+
+def resolve_tabular_reviewer_call_arguments(raw_arguments, analysis_file_contexts,
+                                            fallback_source_hint='workspace',
+                                            fallback_group_id=None,
+                                            fallback_public_workspace_id=None):
+    """Inject filename and source context into an LLM reviewer tool plan."""
+    raw_arguments = dict(raw_arguments or {})
+    normalized_contexts = analysis_file_contexts or []
+    file_context_by_exact_name = {
+        file_context['file_name']: file_context
+        for file_context in normalized_contexts
+        if file_context.get('file_name')
+    }
+    file_context_by_lower_name = {
+        str(file_context.get('file_name') or '').strip().lower(): file_context
+        for file_context in normalized_contexts
+        if file_context.get('file_name')
+    }
+
+    requested_filename = str(raw_arguments.get('filename') or '').strip()
+    resolved_file_context = None
+    if requested_filename:
+        resolved_file_context = (
+            file_context_by_exact_name.get(requested_filename)
+            or file_context_by_lower_name.get(requested_filename.lower())
+        )
+    elif len(normalized_contexts) == 1:
+        resolved_file_context = normalized_contexts[0]
+
+    if not resolved_file_context:
+        if requested_filename:
+            return None, f"Reviewer selected unknown filename '{requested_filename}'."
+        return None, 'Reviewer did not select a filename and multiple files were available.'
+
+    normalized_arguments = dict(raw_arguments)
+    normalized_arguments['filename'] = resolved_file_context['file_name']
+    normalized_arguments['source'] = (
+        resolved_file_context.get('source_hint')
+        or fallback_source_hint
+        or normalized_arguments.get('source')
+        or 'workspace'
+    )
+
+    resolved_group_id = resolved_file_context.get('group_id') or fallback_group_id
+    resolved_public_workspace_id = (
+        resolved_file_context.get('public_workspace_id')
+        or fallback_public_workspace_id
+    )
+    if resolved_group_id:
+        normalized_arguments['group_id'] = resolved_group_id
+    if resolved_public_workspace_id:
+        normalized_arguments['public_workspace_id'] = resolved_public_workspace_id
+
+    if not str(normalized_arguments.get('sheet_name') or '').strip():
+        normalized_arguments.pop('sheet_name', None)
+    if normalized_arguments.get('sheet_index') in ('', None):
+        normalized_arguments.pop('sheet_index', None)
+
+    return normalized_arguments, None
+
+
+def normalize_tabular_reviewer_argument_value(argument_name, argument_value):
+    """Normalize scalar reviewer-planned values to plugin-friendly argument types."""
+    if argument_value is None:
+        return None
+
+    if isinstance(argument_value, bool):
+        return 'true' if argument_value else 'false'
+
+    if argument_name in {'max_rows', 'max_values', 'sheet_index', 'top_n'} and isinstance(argument_value, (int, float)):
+        return str(int(argument_value))
+
+    return argument_value
+
+
+async def maybe_recover_tabular_analysis_with_llm_reviewer(chat_service, kernel,
+                                                           tabular_plugin, plugin_logger,
+                                                           user_question, schema_context,
+                                                           source_context,
+                                                           analysis_file_contexts,
+                                                           user_id, conversation_id,
+                                                           execution_mode,
+                                                           allowed_function_names,
+                                                           workbook_sheet_hints=None,
+                                                           workbook_related_sheet_hints=None,
+                                                           workbook_cross_sheet_bridge_hints=None,
+                                                           tool_error_messages=None,
+                                                           execution_gap_messages=None,
+                                                           discovery_feedback_messages=None,
+                                                           fallback_source_hint='workspace',
+                                                           fallback_group_id=None,
+                                                           fallback_public_workspace_id=None):
+    """Use an LLM reviewer to choose analytical tool calls when the main SK loop stalls."""
+    reviewer_allowed_function_names = [
+        function_name for function_name in (allowed_function_names or [])
+        if function_name in get_tabular_analysis_function_names()
+    ]
+    if not reviewer_allowed_function_names:
+        return None
+
+    reviewer_manifest = {
+        function_name: get_tabular_reviewer_function_manifest().get(function_name, {})
+        for function_name in reviewer_allowed_function_names
+    }
+
+    reviewer_sections = [
+        f"QUESTION:\n{user_question}",
+        f"EXECUTION_MODE: {execution_mode}",
+        f"SOURCE_CONTEXT:\n{source_context}",
+        f"FILE_SCHEMAS:\n{schema_context}",
+        "FUNCTION_MANIFEST:\n" + json.dumps(reviewer_manifest, indent=2, default=str),
+    ]
+    if discovery_feedback_messages:
+        reviewer_sections.append(
+            'WORKBOOK_DISCOVERY_RESULTS:\n' + json.dumps(discovery_feedback_messages, indent=2, default=str)
+        )
+    if tool_error_messages:
+        reviewer_sections.append(
+            'PREVIOUS_TOOL_ERRORS:\n' + json.dumps(tool_error_messages, indent=2, default=str)
+        )
+    if execution_gap_messages:
+        reviewer_sections.append(
+            'PREVIOUS_EXECUTION_GAPS:\n' + json.dumps(execution_gap_messages, indent=2, default=str)
+        )
+    if workbook_sheet_hints:
+        reviewer_sections.append(
+            'LIKELY_WORKSHEET_HINTS:\n' + json.dumps(workbook_sheet_hints, indent=2, default=str)
+        )
+    if workbook_related_sheet_hints:
+        reviewer_sections.append(
+            'QUESTION_RELEVANT_WORKSHEETS:\n' + json.dumps(workbook_related_sheet_hints, indent=2, default=str)
+        )
+    if workbook_cross_sheet_bridge_hints:
+        reviewer_sections.append(
+            'CROSS_SHEET_BRIDGE_HINTS:\n' + json.dumps(workbook_cross_sheet_bridge_hints, indent=2, default=str)
+        )
+
+    review_history = ChatHistory()
+    review_history.add_system_message(
+        "You are a tabular recovery planner. A previous workbook analysis came close but did not reach computed analytical results. "
+        "Choose the next 1-3 analytical tabular calls that should be executed directly. "
+        "Return JSON only with this schema: {\"reasoning_summary\": \"...\", \"calls\": [{\"function\": \"get_distinct_values\", \"arguments\": {...}}]}. "
+        "Rules: Use only the listed analytical functions. Do not return describe_tabular_file. "
+        "Prefer the smallest number of high-confidence calls needed to compute the answer. "
+        "For deterministic how-many, discrete, unique, or canonical-list questions, prefer count_rows or get_distinct_values over sampled-row tools when possible. "
+        "When the user is asking where a topic, phrase, code, path, identifier, or other value appears and the relevant column is unclear, prefer search_rows. Omit search_columns to search all columns, and use return_columns to surface the fields most relevant to the question. "
+        "When the user wants values from a subset or pattern within one column, prefer get_distinct_values with filter_column/filter_operator/filter_value instead of an unfiltered full-column distinct-value call. "
+        "When the answer depends on two literal column conditions, prefer count_rows, get_distinct_values, or filter_rows with filter_column/filter_operator/filter_value plus additional_filter_column/additional_filter_operator/additional_filter_value instead of a broad query_expression call. "
+        "When the user is asking for URLs, sites, links, or regex-like identifiers embedded inside a text cell, prefer get_distinct_values with extract_mode='url' or extract_mode='regex' rather than counting whole-cell strings. Use url_path_segments when you need canonical higher-level URL roots. "
+        "If whether an embedded URL or identifier counts depends on surrounding text in the original cell rather than the extracted value itself, search/filter the original text column first. Prefer filter_rows for that text search when the matching row context matters, and set max_rows high enough to return the full cohort when it is modest. "
+        "Do not classify extracted URLs solely by whether the URL text itself contains the keyword when the original cell text already defines the category. "
+        "For URLs, links, paths, and literal identifiers, set normalize_match=false unless normalization is clearly necessary. "
+        "Prefer sheet_name when the correct worksheet is evident from the schemas or discovery results. "
+        "Omit sheet_name only for a deliberate cross-sheet analytical search. "
+        "Use filename exactly as listed in FILE_SCHEMAS. "
+        "Do not include user_id or conversation_id in arguments. Do not wrap the JSON in markdown fences."
+    )
+    review_history.add_user_message("\n\n".join(reviewer_sections))
+
+    reviewer_settings = AzureChatPromptExecutionSettings(service_id="tabular-analysis")
+
+    try:
+        reviewer_result = await chat_service.get_chat_message_contents(
+            review_history,
+            reviewer_settings,
+            kernel=kernel,
+        )
+    except Exception as reviewer_error:
+        log_event(
+            f"[Tabular SK Analysis] Reviewer recovery call failed: {reviewer_error}",
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        return None
+
+    reviewer_text = ''
+    if reviewer_result and reviewer_result[0].content:
+        reviewer_text = reviewer_result[0].content.strip()
+
+    reviewer_calls = parse_tabular_reviewer_plan(reviewer_text)
+    if not reviewer_calls:
+        log_event(
+            '[Tabular SK Analysis] Reviewer recovery did not return an executable analytical plan',
+            extra={'reviewer_output_preview': reviewer_text[:500]},
+            level=logging.WARNING,
+        )
+        return None
+
+    baseline_invocation_count = len(plugin_logger.get_invocations_for_conversation(
+        user_id,
+        conversation_id,
+        limit=1000,
+    ))
+    executed_function_names = []
+    reviewer_plan_errors = []
+
+    for reviewer_call in reviewer_calls[:3]:
+        function_name = reviewer_call['function_name']
+        if function_name not in reviewer_allowed_function_names:
+            reviewer_plan_errors.append(
+                f"Reviewer selected disallowed function '{function_name}'."
+            )
+            continue
+
+        call_arguments, argument_error = resolve_tabular_reviewer_call_arguments(
+            reviewer_call.get('arguments'),
+            analysis_file_contexts,
+            fallback_source_hint=fallback_source_hint,
+            fallback_group_id=fallback_group_id,
+            fallback_public_workspace_id=fallback_public_workspace_id,
+        )
+        if argument_error:
+            reviewer_plan_errors.append(argument_error)
+            continue
+
+        plugin_function = getattr(tabular_plugin, function_name, None)
+        if plugin_function is None:
+            reviewer_plan_errors.append(
+                f"Reviewer selected unavailable function '{function_name}'."
+            )
+            continue
+
+        function_signature = inspect.signature(plugin_function)
+        executable_arguments = {
+            'user_id': user_id,
+            'conversation_id': conversation_id,
+        }
+        for argument_name, argument_value in call_arguments.items():
+            if argument_name not in function_signature.parameters:
+                continue
+
+            normalized_argument_value = normalize_tabular_reviewer_argument_value(
+                argument_name,
+                argument_value,
+            )
+            if normalized_argument_value is None:
+                continue
+
+            executable_arguments[argument_name] = normalized_argument_value
+
+        try:
+            await plugin_function(**executable_arguments)
+            executed_function_names.append(function_name)
+        except Exception as execution_error:
+            reviewer_plan_errors.append(f"{function_name}: {execution_error}")
+
+    invocations_after = plugin_logger.get_invocations_for_conversation(
+        user_id,
+        conversation_id,
+        limit=1000,
+    )
+    reviewer_invocations = get_new_plugin_invocations(invocations_after, baseline_invocation_count)
+    successful_analytical_invocations, failed_analytical_invocations = split_tabular_analysis_invocations(
+        reviewer_invocations
+    )
+    fallback = build_tabular_analysis_fallback_from_invocations(successful_analytical_invocations)
+    failed_tool_error_messages = summarize_tabular_invocation_errors(failed_analytical_invocations)
+
+    if fallback:
+        log_event(
+            '[Tabular SK Analysis] Reviewer recovery produced computed analytical tool results',
+            extra={
+                'reviewer_functions': executed_function_names,
+                'successful_tool_count': len(successful_analytical_invocations),
+                'failed_tool_count': len(failed_analytical_invocations),
+            },
+            level=logging.INFO,
+        )
+        return {
+            'fallback': fallback,
+            'tool_error_messages': failed_tool_error_messages,
+            'reviewer_plan_errors': reviewer_plan_errors,
+        }
+
+    if reviewer_plan_errors or failed_tool_error_messages:
+        log_event(
+            '[Tabular SK Analysis] Reviewer recovery executed but did not produce usable analytical results',
+            extra={
+                'reviewer_functions': executed_function_names,
+                'reviewer_plan_errors': reviewer_plan_errors[:5],
+                'tool_errors': failed_tool_error_messages[:5],
+                'reviewer_output_preview': reviewer_text[:500],
+            },
+            level=logging.WARNING,
+        )
+
+    return None
 
 
 def filter_tabular_citation_invocations(invocations):
@@ -2204,9 +2728,9 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     "IMPORTANT:\n"
                     "0. Use the source_context listed in FILE SCHEMAS for the matching filename when calling tabular_processing functions.\n"
                     "1. If the right worksheet is unclear on a multi-sheet workbook, you may call describe_tabular_file without sheet_name first, then continue with analytical tool calls.\n"
-                    "2. If the question includes an exact identifier or exact entity name and the correct starting worksheet is unclear, begin with filter_rows or query_tabular_data without sheet_name so the plugin can perform a cross-sheet discovery search.\n"
+                    "2. If the question includes an exact identifier, exact entity name, or asks where a topic or value appears and the correct starting worksheet or column is unclear, begin with search_rows, filter_rows, or query_tabular_data without sheet_name so the plugin can perform a cross-sheet discovery search. Omit search_columns on search_rows to search all columns, and use return_columns to surface the fields most relevant to the lookup.\n"
                     "3. After the first discovery step, pass sheet_name='<name>' on follow-up analytical calls for multi-sheet workbooks. Do not rely on a default sheet for cross-sheet entity lookups.\n"
-                    "4. Use filter_rows or query_tabular_data first when you need full matching rows. Use lookup_value only when you already know the exact worksheet and target column.\n"
+                    "4. Use search_rows, filter_rows, or query_tabular_data first when you need full matching rows. Use lookup_value only when you already know the exact worksheet and target column.\n"
                     "5. Do not start with aggregate_column, group_by_aggregate, or group_by_datetime_component until you have located the relevant entity rows.\n"
                     "6. When using query_tabular_data, use simple DataFrame.query() syntax with backticked column names for columns containing spaces. Avoid method calls such as .str.lower() or .astype(...).\n"
                     "7. Then query other relevant worksheets explicitly to collect related records.\n"
@@ -2248,27 +2772,30 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 "IMPORTANT:\n"
                 "1. Use the pre-loaded schema to pick the correct columns, then call the plugin functions. Use the source_context listed in FILE SCHEMAS for the matching filename.\n"
                 "2. For multi-sheet workbooks, review the sheet_directory to find the most relevant sheet for the question. If the right worksheet is still unclear, call describe_tabular_file without sheet_name, then continue with analytical calls. Pass sheet_name='<name>' in follow-up analytical tool calls unless a trustworthy default sheet has already been established or you are intentionally doing an initial cross-sheet discovery step. If a CROSS-SHEET BRIDGE PLAN is provided, query the listed worksheets explicitly and do not rely on a default sheet.\n"
-                "3. If the question includes an exact identifier and the correct starting worksheet is unclear, begin with filter_rows or query_tabular_data without sheet_name so the plugin can perform a cross-sheet discovery search.\n"
+                "3. If the question includes an exact identifier or asks where a topic, phrase, path, code, or other value appears and the correct starting worksheet or column is unclear, begin with search_rows, filter_rows, or query_tabular_data without sheet_name so the plugin can perform a cross-sheet discovery search. Omit search_columns on search_rows to search all columns, and use return_columns to surface the columns most relevant to the question.\n"
                 "4. If a previous tool error says a requested column is missing on the current sheet and suggests candidate sheets, switch to one of those candidate sheets immediately.\n"
                 "5. For account/category lookup questions at a specific period or metric, use lookup_value first. Provide lookup_column, lookup_value, and target_column.\n"
-                "6. If lookup_value is not sufficient, use filter_rows or query_tabular_data on the label column, then read the requested period column.\n"
-                "7. For deterministic how-many questions, use count_rows instead of estimating counts from partial returned rows. Use get_distinct_values when the answer depends on the unique values present in a column.\n"
-                "8. For cohort, membership, ownership-share, or percentage questions where one sheet defines the group and another sheet contains the fact rows, use get_distinct_values, filter_rows_by_related_values, or count_rows_by_related_values.\n"
-                "9. When the question asks for one named member's share within that cohort, prefer count_rows_by_related_values and either read source_value_match_counts from the helper result or rerun count_rows_by_related_values with source_filter_column/source_filter_value on the reference sheet. Do not fall back to query_tabular_data or filter_rows on the fact sheet with a guessed exact text value unless the workbook already exposed that canonical target value.\n"
-                "10. Use normalize_match=true when matching names, owners, assignees, engineers, or similar entity-text columns across worksheets.\n"
-                "11. Only use aggregate_column when the user explicitly asks for a sum, average, min, max, or count across rows and count_rows is not the simpler deterministic option.\n"
-                "12. For time-based questions on datetime columns, use group_by_datetime_component.\n"
-                "13. For threshold, ranking, comparison, or correlation-like questions, first filter/query the relevant rows, then compute grouped metrics.\n"
-                "14. When the question asks for grouped results for each entity or category and a cross-sheet bridge plan or relationship hint is available, use the reference worksheet to identify the canonical entities or categories and the fact worksheet to compute the metric. Do not answer 'each X' by grouping a yes/no, boolean, or membership-flag column unless the user explicitly asked about that flag.\n"
-                "15. When the question asks for rows satisfying multiple conditions, prefer one combined query_expression using and/or instead of separate broad queries that you plan to intersect later.\n"
-                "16. Batch multiple independent function calls in a SINGLE response whenever possible.\n"
-                "17. Keep max_rows as small as possible. Only increase it when the user explicitly asked for an exhaustive row list or export; otherwise return total_matches plus representative rows.\n"
-                "18. For analytical questions, prefer deterministic counts plus lookup/filter/query/grouped computations over raw row or preview output.\n"
-                "19. For identifier-based workbook questions, locate the identifier on the correct sheet before explaining downstream calculations.\n"
-                "20. For peak, busiest, highest, or lowest questions, use grouped functions and inspect the highest_group, highest_value, lowest_group, and lowest_value summary fields.\n"
-                "21. Return only computed findings and name the strongest drivers clearly.\n"
-                "22. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report.\n"
-                "23. When using query_tabular_data, use simple DataFrame.query() syntax with backticked column names for columns containing spaces. Avoid method calls such as .str.lower(), .astype(...), or other Python expressions that DataFrame.query() may reject."
+                "6. If lookup_value is not sufficient, use search_rows, filter_rows, or query_tabular_data on the relevant label or text columns, then read the requested period or target column.\n"
+                "7. For deterministic how-many questions, use count_rows instead of estimating counts from partial returned rows. Use get_distinct_values when the answer depends on the unique values present in a column. When the cohort is defined by two literal conditions on different columns, prefer count_rows, get_distinct_values, or filter_rows with filter_column/filter_operator/filter_value plus additional_filter_column/additional_filter_operator/additional_filter_value instead of a broad query_tabular_data call.\n"
+                "8. When URLs, links, sites, or regex-like identifiers are embedded inside a text column, prefer get_distinct_values with extract_mode='url' or extract_mode='regex' after filtering the relevant cohort. Use url_path_segments when the question asks for higher-level URL roots rather than full page paths.\n"
+                "9. If whether an embedded URL, site, link, or identifier counts depends on surrounding text in the original cell rather than the extracted value itself, search/filter the original text column first. Prefer filter_rows when the matching row context matters, and return the full matching rows when the cohort is modest enough to fit comfortably.\n"
+                "10. Do not classify extracted URLs solely by whether the URL text itself contains the keyword when the original cell text already defines the category.\n"
+                "11. For cohort, membership, ownership-share, or percentage questions where one sheet defines the group and another sheet contains the fact rows, use get_distinct_values, filter_rows_by_related_values, or count_rows_by_related_values.\n"
+                "12. When the question asks for one named member's share within that cohort, prefer count_rows_by_related_values and either read source_value_match_counts from the helper result or rerun count_rows_by_related_values with source_filter_column/source_filter_value on the reference sheet. Do not fall back to query_tabular_data or filter_rows on the fact sheet with a guessed exact text value unless the workbook already exposed that canonical target value.\n"
+                "13. Use normalize_match=true when matching names, owners, assignees, engineers, or similar entity-text columns across worksheets.\n"
+                "14. Only use aggregate_column when the user explicitly asks for a sum, average, min, max, or count across rows and count_rows is not the simpler deterministic option.\n"
+                "15. For time-based questions on datetime columns, use group_by_datetime_component.\n"
+                "16. For threshold, ranking, comparison, or correlation-like questions, first filter/query the relevant rows, then compute grouped metrics.\n"
+                "17. When the question asks for grouped results for each entity or category and a cross-sheet bridge plan or relationship hint is available, use the reference worksheet to identify the canonical entities or categories and the fact worksheet to compute the metric. Do not answer 'each X' by grouping a yes/no, boolean, or membership-flag column unless the user explicitly asked about that flag.\n"
+                "18. When the question asks for rows satisfying multiple conditions, prefer one combined query_expression using and/or instead of separate broad queries that you plan to intersect later.\n"
+                "19. Batch multiple independent function calls in a SINGLE response whenever possible.\n"
+                "20. Keep max_rows as small as possible. Only increase it when the user explicitly asked for an exhaustive row list or export, or when the full matching row context is required and the cohort is modest; otherwise return total_matches plus representative rows.\n"
+                "21. For analytical questions, prefer deterministic counts plus lookup/filter/query/grouped computations over raw row or preview output.\n"
+                "22. For identifier-based workbook questions, locate the identifier on the correct sheet before explaining downstream calculations.\n"
+                "23. For peak, busiest, highest, or lowest questions, use grouped functions and inspect the highest_group, highest_value, lowest_group, and lowest_value summary fields.\n"
+                "24. Return only computed findings and name the strongest drivers clearly.\n"
+                "25. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report.\n"
+                "26. When using query_tabular_data, use simple DataFrame.query() syntax with backticked column names for columns containing spaces. Avoid method calls such as .str.lower(), .astype(...), or other Python expressions that DataFrame.query() may reject."
             )
 
         baseline_invocations = plugin_logger.get_invocations_for_conversation(
@@ -2604,6 +3131,34 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     )
 
             baseline_invocation_count = len(invocations_after)
+
+        reviewer_recovery = None
+        if has_multi_sheet_workbook and not schema_summary_mode:
+            reviewer_recovery = await maybe_recover_tabular_analysis_with_llm_reviewer(
+                chat_service=chat_service,
+                kernel=kernel,
+                tabular_plugin=tabular_plugin,
+                plugin_logger=plugin_logger,
+                user_question=user_question,
+                schema_context=schema_context,
+                source_context=source_context,
+                analysis_file_contexts=analysis_file_contexts,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                execution_mode=execution_mode,
+                allowed_function_names=allowed_function_names,
+                workbook_sheet_hints=workbook_sheet_hints,
+                workbook_related_sheet_hints=workbook_related_sheet_hints,
+                workbook_cross_sheet_bridge_hints=workbook_cross_sheet_bridge_hints,
+                tool_error_messages=previous_tool_error_messages,
+                execution_gap_messages=previous_execution_gap_messages,
+                discovery_feedback_messages=previous_discovery_feedback_messages,
+                fallback_source_hint=source_hint,
+                fallback_group_id=group_id,
+                fallback_public_workspace_id=public_workspace_id,
+            )
+            if reviewer_recovery and reviewer_recovery.get('fallback'):
+                return reviewer_recovery['fallback']
 
         log_event("[Tabular SK Analysis] Unable to obtain computed tool-backed results", level=logging.WARNING)
         return None

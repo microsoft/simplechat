@@ -16,6 +16,7 @@ import re
 import warnings
 import pandas
 from typing import Annotated, Dict, List, Optional, Set
+from urllib.parse import urlsplit, urlunsplit
 from semantic_kernel.functions import kernel_function
 from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
 from functions_appinsights import log_event
@@ -43,6 +44,7 @@ class TabularProcessingPlugin:
         'count_rows',
         'aggregate_column',
         'filter_rows',
+        'search_rows',
         'query_tabular_data',
         'filter_rows_by_related_values',
         'count_rows_by_related_values',
@@ -344,6 +346,9 @@ class TabularProcessingPlugin:
         column: str,
         operator_str: str,
         value: str,
+        additional_filter_column: Optional[str] = None,
+        additional_filter_operator: str = 'equals',
+        additional_filter_value=None,
         normalize_match: bool = False,
         max_rows: int = 100,
     ) -> Optional[str]:
@@ -376,18 +381,23 @@ class TabularProcessingPlugin:
             if column not in df.columns:
                 continue
 
-            sheets_searched.append(sheet)
             try:
-                mask = self._build_series_match_mask(
-                    df[column],
-                    operator_str,
-                    value,
+                filtered_df, applied_filters = self._apply_optional_dataframe_filters(
+                    df,
+                    filter_column=column,
+                    filter_operator=operator_str,
+                    filter_value=value,
+                    additional_filter_column=additional_filter_column,
+                    additional_filter_operator=additional_filter_operator,
+                    additional_filter_value=additional_filter_value,
                     normalize_match=normalize_match,
                 )
-            except ValueError:
+            except (KeyError, ValueError):
                 continue
 
-            sheet_matches = int(mask.sum())
+            sheets_searched.append(sheet)
+
+            sheet_matches = len(filtered_df)
             if sheet_matches == 0:
                 continue
 
@@ -395,7 +405,7 @@ class TabularProcessingPlugin:
             total_matches += sheet_matches
             remaining_capacity = max(0, max_rows - len(combined_results))
             if remaining_capacity > 0:
-                filtered = df[mask].head(remaining_capacity)
+                filtered = filtered_df.head(remaining_capacity)
                 for row in filtered.to_dict(orient='records'):
                     row['_sheet'] = sheet
                     combined_results.append(row)
@@ -416,9 +426,162 @@ class TabularProcessingPlugin:
             "selected_sheet": "ALL (cross-sheet search)",
             "sheets_searched": sheets_searched,
             "sheets_matched": sheets_matched,
+            "filter_applied": applied_filters,
             "total_matches": total_matches,
             "returned_rows": len(combined_results),
             "data": combined_results,
+        }, indent=2, default=str)
+
+    def _search_rows_across_sheets(
+        self,
+        container_name: str,
+        blob_name: str,
+        filename: str,
+        search_value: str,
+        search_columns=None,
+        search_operator: str = 'contains',
+        return_columns=None,
+        query_expression: Optional[str] = None,
+        filter_column: Optional[str] = None,
+        filter_operator: str = 'equals',
+        filter_value=None,
+        additional_filter_column: Optional[str] = None,
+        additional_filter_operator: str = 'equals',
+        additional_filter_value=None,
+        normalize_match: bool = False,
+        max_rows: int = 100,
+    ) -> Optional[str]:
+        """Search rows across worksheets when the relevant text column is unknown or broad."""
+        workbook_metadata = self._get_workbook_metadata(container_name, blob_name)
+        if not workbook_metadata.get('is_workbook'):
+            return None
+
+        available_sheets = workbook_metadata.get('sheet_names', [])
+        if len(available_sheets) <= 1:
+            return None
+
+        requested_search_columns = self._parse_optional_column_list_argument(search_columns)
+        requested_return_columns = self._parse_optional_column_list_argument(return_columns)
+        combined_results = []
+        sheets_searched = []
+        sheets_matched = []
+        total_matches = 0
+        applied_filters = []
+        searched_columns = []
+        seen_searched_columns = set()
+        matched_columns = []
+        seen_matched_columns = set()
+
+        for sheet in available_sheets:
+            df = self._read_tabular_blob_to_dataframe(
+                container_name,
+                blob_name,
+                sheet_name=sheet,
+            )
+            df = self._try_numeric_conversion(df)
+
+            try:
+                filtered_df, sheet_filters = self._apply_optional_dataframe_filters(
+                    df,
+                    query_expression=query_expression,
+                    filter_column=filter_column,
+                    filter_operator=filter_operator,
+                    filter_value=filter_value,
+                    additional_filter_column=additional_filter_column,
+                    additional_filter_operator=additional_filter_operator,
+                    additional_filter_value=additional_filter_value,
+                    normalize_match=normalize_match,
+                )
+            except KeyError:
+                continue
+            except Exception as query_error:
+                return json.dumps({
+                    'error': f"Query/filter error: {query_error}",
+                    'filename': filename,
+                    'selected_sheet': 'ALL (cross-sheet search)',
+                }, indent=2, default=str)
+
+            remaining_capacity = max(0, max_rows - len(combined_results))
+            if remaining_capacity <= 0:
+                break
+
+            try:
+                search_result = self._search_dataframe_rows(
+                    filtered_df,
+                    search_value=search_value,
+                    search_columns=requested_search_columns,
+                    search_operator=search_operator,
+                    return_columns=requested_return_columns,
+                    normalize_match=normalize_match,
+                    max_rows=remaining_capacity,
+                )
+            except KeyError:
+                continue
+            except ValueError as search_error:
+                return json.dumps({
+                    'error': str(search_error),
+                    'filename': filename,
+                    'selected_sheet': 'ALL (cross-sheet search)',
+                }, indent=2, default=str)
+
+            sheets_searched.append(sheet)
+            applied_filters = sheet_filters or applied_filters
+            for column_name in search_result['searched_columns']:
+                lowered_name = str(column_name).lower()
+                if lowered_name in seen_searched_columns:
+                    continue
+                seen_searched_columns.add(lowered_name)
+                searched_columns.append(column_name)
+
+            sheet_match_count = int(search_result['total_matches'])
+            total_matches += sheet_match_count
+            if sheet_match_count > 0:
+                sheets_matched.append(sheet)
+
+            for column_name in search_result['matched_columns']:
+                lowered_name = str(column_name).lower()
+                if lowered_name in seen_matched_columns:
+                    continue
+                seen_matched_columns.add(lowered_name)
+                matched_columns.append(column_name)
+
+            for row in search_result['data']:
+                row['_sheet'] = sheet
+                combined_results.append(row)
+
+        if not sheets_searched:
+            if requested_search_columns:
+                return json.dumps({
+                    'error': 'None of the requested search_columns were found on any worksheet during cross-sheet search.',
+                    'filename': filename,
+                    'selected_sheet': 'ALL (cross-sheet search)',
+                    'search_columns': requested_search_columns,
+                }, indent=2, default=str)
+            return None
+
+        log_event(
+            f"[TabularProcessingPlugin] Cross-sheet search_rows: "
+            f"searched {len(sheets_searched)} sheets, "
+            f"matched on {len(sheets_matched)} ({sheets_matched}), "
+            f"total_matches={total_matches}",
+            level=logging.INFO,
+        )
+
+        return json.dumps({
+            'filename': filename,
+            'selected_sheet': 'ALL (cross-sheet search)',
+            'search_value': search_value,
+            'search_operator': search_operator,
+            'searched_columns': searched_columns,
+            'matched_columns': matched_columns,
+            'return_columns': requested_return_columns,
+            'sheets_searched': sheets_searched,
+            'sheets_matched': sheets_matched,
+            'filter_applied': applied_filters,
+            'normalize_match': normalize_match,
+            'total_matches': total_matches,
+            'returned_rows': len(combined_results),
+            'data': combined_results,
         }, indent=2, default=str)
 
     def _lookup_value_across_sheets(
@@ -559,7 +722,11 @@ class TabularProcessingPlugin:
             df = self._try_numeric_conversion(df)
 
             try:
-                result_df = df.query(query_expression)
+                result_df, _ = self._apply_query_expression_with_fallback(
+                    df,
+                    query_expression=query_expression,
+                    normalize_match=False,
+                )
             except Exception as query_error:
                 query_errors.append({
                     'sheet_name': sheet,
@@ -632,6 +799,9 @@ class TabularProcessingPlugin:
         filter_column: Optional[str] = None,
         filter_operator: str = 'equals',
         filter_value=None,
+        additional_filter_column: Optional[str] = None,
+        additional_filter_operator: str = 'equals',
+        additional_filter_value=None,
         query_expression: Optional[str] = None,
         normalize_match: bool = False,
     ) -> Optional[str]:
@@ -665,6 +835,9 @@ class TabularProcessingPlugin:
                     filter_column=filter_column,
                     filter_operator=filter_operator,
                     filter_value=filter_value,
+                    additional_filter_column=additional_filter_column,
+                    additional_filter_operator=additional_filter_operator,
+                    additional_filter_value=additional_filter_value,
                     normalize_match=normalize_match,
                 )
             except KeyError:
@@ -727,6 +900,12 @@ class TabularProcessingPlugin:
         filter_column: Optional[str] = None,
         filter_operator: str = 'equals',
         filter_value=None,
+        additional_filter_column: Optional[str] = None,
+        additional_filter_operator: str = 'equals',
+        additional_filter_value=None,
+        extract_mode: Optional[str] = None,
+        extract_pattern: Optional[str] = None,
+        url_path_segments: Optional[int] = None,
         normalize_match: bool = False,
         max_values: int = 100,
     ) -> Optional[str]:
@@ -742,6 +921,8 @@ class TabularProcessingPlugin:
         sheets_searched = []
         sheets_matched = []
         distinct_display_values = {}
+        matched_cell_count = 0
+        extracted_match_count = 0
         query_errors = []
         applied_filters = []
 
@@ -761,6 +942,9 @@ class TabularProcessingPlugin:
                     filter_column=filter_column,
                     filter_operator=filter_operator,
                     filter_value=filter_value,
+                    additional_filter_column=additional_filter_column,
+                    additional_filter_operator=additional_filter_operator,
+                    additional_filter_value=additional_filter_value,
                     normalize_match=normalize_match,
                 )
             except KeyError:
@@ -775,20 +959,20 @@ class TabularProcessingPlugin:
 
             sheets_searched.append(sheet)
             applied_filters = sheet_filters or applied_filters
-            for cell_value in filtered_df[column].tolist():
-                display_value = str(cell_value).strip()
-                if not display_value:
-                    continue
-                compare_variants = self._extract_cell_value_variants(
-                    cell_value,
-                    normalize_match=normalize_match,
-                )
-                if not compare_variants:
-                    continue
-                canonical_key = sorted(compare_variants)[0]
+            sheet_distinct_values, sheet_matched_cells, sheet_extracted_matches = self._collect_distinct_display_values(
+                filtered_df[column],
+                normalize_match=normalize_match,
+                extract_mode=extract_mode,
+                extract_pattern=extract_pattern,
+                url_path_segments=url_path_segments,
+            )
+            matched_cell_count += sheet_matched_cells
+            extracted_match_count += sheet_extracted_matches
+            for canonical_key, display_value in sheet_distinct_values.items():
                 distinct_display_values.setdefault(canonical_key, display_value)
 
-            if not filtered_df.empty:
+            sheet_match_count = sheet_matched_cells if extract_mode else len(filtered_df)
+            if sheet_match_count > 0:
                 sheets_matched.append(sheet)
 
         if not sheets_searched:
@@ -815,7 +999,7 @@ class TabularProcessingPlugin:
             return None
 
         ordered_values = sorted(distinct_display_values.values(), key=lambda item: item.casefold())
-        return json.dumps({
+        response_payload = {
             'filename': filename,
             'selected_sheet': 'ALL (cross-sheet search)',
             'column': column,
@@ -827,7 +1011,16 @@ class TabularProcessingPlugin:
             'returned_values': min(len(ordered_values), int(max_values)),
             'values': ordered_values[:int(max_values)],
             'values_limited': len(ordered_values) > int(max_values),
-        }, indent=2, default=str)
+        }
+        if extract_mode:
+            response_payload.update({
+                'extract_mode': extract_mode,
+                'extract_pattern': extract_pattern if extract_mode == 'regex' else None,
+                'url_path_segments': url_path_segments if extract_mode == 'url' else None,
+                'matched_cell_count': matched_cell_count,
+                'extracted_match_count': extracted_match_count,
+            })
+        return json.dumps(response_payload, indent=2, default=str)
 
     def _evaluate_related_value_membership(
         self,
@@ -1193,6 +1386,334 @@ class TabularProcessingPlugin:
 
         return variants
 
+    def _normalize_distinct_extraction_arguments(
+        self,
+        extract_mode: Optional[str] = None,
+        extract_pattern: Optional[str] = None,
+        url_path_segments: Optional[str] = None,
+    ) -> tuple:
+        """Validate and normalize optional embedded extraction arguments."""
+        normalized_extract_mode = str(extract_mode or '').strip().lower() or None
+        if normalized_extract_mode not in {None, 'url', 'regex'}:
+            raise ValueError("Unsupported extract_mode. Use 'url' or 'regex'.")
+
+        normalized_extract_pattern = str(extract_pattern or '').strip() or None
+        if normalized_extract_mode == 'regex' and not normalized_extract_pattern:
+            raise ValueError('extract_pattern is required when extract_mode is regex.')
+        if normalized_extract_mode != 'regex':
+            normalized_extract_pattern = None
+
+        parsed_url_path_segments = None
+        if url_path_segments not in (None, ''):
+            try:
+                parsed_url_path_segments = int(url_path_segments)
+            except (TypeError, ValueError):
+                raise ValueError('url_path_segments must be an integer when provided.')
+            if parsed_url_path_segments < 0:
+                raise ValueError('url_path_segments must be zero or greater when provided.')
+
+        if normalized_extract_mode != 'url':
+            parsed_url_path_segments = None
+
+        return normalized_extract_mode, normalized_extract_pattern, parsed_url_path_segments
+
+    def _normalize_embedded_url_match(self, raw_match, url_path_segments: Optional[int] = None) -> Optional[str]:
+        """Normalize an extracted URL for stable distinct-value analysis."""
+        cleaned_match = str(raw_match or '').strip().rstrip('.,;:!?)]}\"\'')
+        if not cleaned_match:
+            return None
+
+        parsed_url = urlsplit(cleaned_match)
+        if not parsed_url.scheme or not parsed_url.netloc:
+            return cleaned_match
+
+        path_segments = [segment for segment in parsed_url.path.split('/') if segment]
+        if url_path_segments is not None:
+            path_segments = path_segments[:url_path_segments]
+
+        normalized_path = ''
+        if path_segments:
+            normalized_path = '/' + '/'.join(path_segments)
+
+        return urlunsplit((
+            parsed_url.scheme.lower(),
+            parsed_url.netloc.lower(),
+            normalized_path,
+            '',
+            '',
+        ))
+
+    def _extract_embedded_matches_from_text(
+        self,
+        value,
+        extract_mode: Optional[str] = None,
+        extract_pattern: Optional[str] = None,
+        url_path_segments: Optional[int] = None,
+    ) -> List[str]:
+        """Extract embedded URL or regex matches from a composite text cell."""
+        if value is None or (not isinstance(value, str) and pandas.isna(value)):
+            return []
+
+        rendered_text = str(value).strip()
+        if not rendered_text or not extract_mode:
+            return []
+
+        normalized_extract_mode = str(extract_mode or '').strip().lower()
+        extracted_matches = []
+
+        if normalized_extract_mode == 'url':
+            for raw_match in re.findall(r'https?://[^\s<>"\'\]\)]+', rendered_text, flags=re.IGNORECASE):
+                normalized_match = self._normalize_embedded_url_match(
+                    raw_match,
+                    url_path_segments=url_path_segments,
+                )
+                if normalized_match:
+                    extracted_matches.append(normalized_match)
+        elif normalized_extract_mode == 'regex':
+            compiled_pattern = re.compile(extract_pattern, flags=re.IGNORECASE)
+            for match in compiled_pattern.finditer(rendered_text):
+                candidate_value = None
+                if match.lastindex:
+                    for group_value in match.groups():
+                        if group_value:
+                            candidate_value = group_value
+                            break
+                if candidate_value is None:
+                    candidate_value = match.group(0)
+
+                cleaned_candidate = str(candidate_value or '').strip().rstrip('.,;:!?)]}\"\'')
+                if cleaned_candidate:
+                    extracted_matches.append(cleaned_candidate)
+        else:
+            raise ValueError("Unsupported extract_mode. Use 'url' or 'regex'.")
+
+        unique_matches = []
+        seen_matches = set()
+        for extracted_match in extracted_matches:
+            canonical_match = str(extracted_match).casefold().strip()
+            if not canonical_match or canonical_match in seen_matches:
+                continue
+            seen_matches.add(canonical_match)
+            unique_matches.append(str(extracted_match).strip())
+
+        return unique_matches
+
+    def _collect_distinct_value_candidates(
+        self,
+        value,
+        normalize_match: bool = False,
+        extract_mode: Optional[str] = None,
+        extract_pattern: Optional[str] = None,
+        url_path_segments: Optional[int] = None,
+    ) -> List[dict]:
+        """Return display/canonical pairs for raw or embedded distinct-value extraction."""
+        normalized_extract_mode = str(extract_mode or '').strip().lower() or None
+
+        if normalized_extract_mode:
+            candidates = []
+            for extracted_match in self._extract_embedded_matches_from_text(
+                value,
+                extract_mode=normalized_extract_mode,
+                extract_pattern=extract_pattern,
+                url_path_segments=url_path_segments,
+            ):
+                display_value = str(extracted_match).strip()
+                if not display_value:
+                    continue
+
+                if normalized_extract_mode == 'url':
+                    canonical_key = display_value.casefold()
+                elif normalize_match:
+                    canonical_key = self._normalize_entity_match_text(display_value)
+                else:
+                    canonical_key = display_value.casefold()
+
+                if not canonical_key:
+                    continue
+
+                candidates.append({
+                    'display_value': display_value,
+                    'canonical_key': canonical_key,
+                })
+
+            return candidates
+
+        if value is None or (not isinstance(value, str) and pandas.isna(value)):
+            return []
+
+        display_value = str(value).strip()
+        if not display_value:
+            return []
+
+        compare_variants = self._extract_cell_value_variants(
+            value,
+            normalize_match=normalize_match,
+        )
+        if not compare_variants:
+            return []
+
+        return [{
+            'display_value': display_value,
+            'canonical_key': sorted(compare_variants)[0],
+        }]
+
+    def _collect_distinct_display_values(
+        self,
+        series: pandas.Series,
+        normalize_match: bool = False,
+        extract_mode: Optional[str] = None,
+        extract_pattern: Optional[str] = None,
+        url_path_segments: Optional[int] = None,
+    ) -> tuple:
+        """Collect display values and counts for deterministic distinct-value analysis."""
+        distinct_display_values = {}
+        matched_cell_count = 0
+        extracted_match_count = 0
+
+        for cell_value in series.tolist():
+            candidates = self._collect_distinct_value_candidates(
+                cell_value,
+                normalize_match=normalize_match,
+                extract_mode=extract_mode,
+                extract_pattern=extract_pattern,
+                url_path_segments=url_path_segments,
+            )
+            if not candidates:
+                continue
+
+            matched_cell_count += 1
+            extracted_match_count += len(candidates)
+            for candidate in candidates:
+                distinct_display_values.setdefault(
+                    candidate['canonical_key'],
+                    candidate['display_value'],
+                )
+
+        return distinct_display_values, matched_cell_count, extracted_match_count
+
+    def _parse_optional_column_list_argument(self, raw_columns) -> Optional[List[str]]:
+        """Parse an optional comma-separated or JSON-array column list argument."""
+        if raw_columns is None:
+            return None
+
+        candidate_values = None
+        if isinstance(raw_columns, (list, tuple, set)):
+            candidate_values = list(raw_columns)
+        else:
+            rendered_columns = str(raw_columns).strip()
+            if not rendered_columns:
+                return None
+            if rendered_columns.casefold() in {'*', 'all', 'all_columns', 'all columns'}:
+                return None
+
+            if rendered_columns.startswith('['):
+                try:
+                    parsed_columns = json.loads(rendered_columns)
+                except Exception:
+                    parsed_columns = None
+                if isinstance(parsed_columns, list):
+                    candidate_values = parsed_columns
+
+            if candidate_values is None:
+                candidate_values = re.split(r'[,;|\n]+', rendered_columns)
+
+        normalized_columns = []
+        seen_columns = set()
+        for candidate_value in candidate_values:
+            normalized_column = str(candidate_value or '').strip()
+            if not normalized_column:
+                continue
+            lowered_column = normalized_column.casefold()
+            if lowered_column in seen_columns:
+                continue
+            seen_columns.add(lowered_column)
+            normalized_columns.append(normalized_column)
+
+        return normalized_columns or None
+
+    def _search_dataframe_rows(
+        self,
+        df: pandas.DataFrame,
+        search_value,
+        search_columns=None,
+        search_operator: str = 'contains',
+        return_columns=None,
+        normalize_match: bool = False,
+        max_rows: int = 100,
+    ) -> dict:
+        """Search one or more columns in a DataFrame and return row-context results."""
+        requested_search_columns = self._parse_optional_column_list_argument(search_columns)
+        requested_return_columns = self._parse_optional_column_list_argument(return_columns)
+
+        if requested_search_columns:
+            resolved_search_columns = [
+                column_name for column_name in requested_search_columns
+                if column_name in df.columns
+            ]
+            if not resolved_search_columns:
+                raise KeyError(requested_search_columns[0])
+        else:
+            resolved_search_columns = list(df.columns)
+
+        resolved_return_columns = [
+            column_name for column_name in (requested_return_columns or [])
+            if column_name in df.columns
+        ]
+
+        combined_mask = pandas.Series([False] * len(df), index=df.index)
+        column_masks = {}
+        for column_name in resolved_search_columns:
+            column_mask = self._build_series_match_mask(
+                df[column_name],
+                search_operator,
+                search_value,
+                normalize_match=normalize_match,
+            ).fillna(False)
+            column_masks[column_name] = column_mask
+            combined_mask = combined_mask | column_mask
+
+        matched_df = df[combined_mask]
+        matched_columns = []
+        seen_matched_columns = set()
+        result_rows = []
+
+        for row_index, row in matched_df.head(int(max_rows)).iterrows():
+            row_matched_columns = []
+            for column_name in resolved_search_columns:
+                if not bool(column_masks[column_name].loc[row_index]):
+                    continue
+                row_matched_columns.append(column_name)
+                lowered_column = column_name.casefold()
+                if lowered_column not in seen_matched_columns:
+                    seen_matched_columns.add(lowered_column)
+                    matched_columns.append(column_name)
+
+            if resolved_return_columns:
+                row_payload = {
+                    column_name: row.get(column_name)
+                    for column_name in resolved_return_columns
+                }
+            else:
+                row_payload = {
+                    str(key): value for key, value in row.to_dict().items()
+                }
+
+            row_payload['_matched_columns'] = row_matched_columns
+            row_payload['_matched_values'] = {
+                column_name: row.get(column_name)
+                for column_name in row_matched_columns
+            }
+            result_rows.append(row_payload)
+
+        return {
+            'searched_columns': resolved_search_columns,
+            'matched_columns': matched_columns,
+            'return_columns': resolved_return_columns or None,
+            'total_matches': len(matched_df),
+            'returned_rows': len(result_rows),
+            'data': result_rows,
+        }
+
     def _build_series_match_mask(
         self,
         series: pandas.Series,
@@ -1271,6 +1792,194 @@ class TabularProcessingPlugin:
 
         raise ValueError(f"Unsupported operator: {operator}")
 
+    def _normalize_pseudo_query_column_reference(self, raw_column_name: str) -> str:
+        """Normalize a reviewer-style query column reference into a DataFrame column name."""
+        normalized_column_name = str(raw_column_name or '').strip()
+        if normalized_column_name.startswith('`') and normalized_column_name.endswith('`'):
+            normalized_column_name = normalized_column_name[1:-1]
+        return normalized_column_name.strip()
+
+    def _build_pseudo_query_string_method_mask(
+        self,
+        series: pandas.Series,
+        operator: str,
+        value,
+        case_sensitive: bool = False,
+        normalize_match: bool = False,
+    ) -> pandas.Series:
+        """Build a boolean mask for reviewer-style string method clauses."""
+        if normalize_match and not case_sensitive:
+            return self._build_series_match_mask(
+                series,
+                operator,
+                value,
+                normalize_match=True,
+            )
+
+        if not case_sensitive:
+            return self._build_series_match_mask(
+                series,
+                operator,
+                value,
+                normalize_match=False,
+            )
+
+        text_series = series.astype(str)
+        value_text = str(value)
+        if operator == 'contains':
+            return text_series.str.contains(value_text, regex=False, case=True, na=False)
+        if operator == 'startswith':
+            return text_series.str.startswith(value_text, na=False)
+        if operator == 'endswith':
+            return text_series.str.endswith(value_text, na=False)
+
+        raise ValueError(f"Unsupported operator: {operator}")
+
+    def _apply_reviewer_style_query_expression(
+        self,
+        df: pandas.DataFrame,
+        query_expression: str,
+        normalize_match: bool = False,
+    ) -> Optional[pandas.DataFrame]:
+        """Apply limited reviewer-style pseudo-pandas filters when DataFrame.query syntax is invalid."""
+        rendered_query_expression = str(query_expression or '').strip()
+        if not rendered_query_expression:
+            return df
+
+        lowered_expression = rendered_query_expression.casefold()
+        if ' or ' in lowered_expression or '||' in rendered_query_expression or '|' in rendered_query_expression:
+            return None
+
+        clause_texts = [
+            clause.strip()
+            for clause in re.split(r'\s+(?i:and)\s+|&&', rendered_query_expression)
+            if clause.strip()
+        ]
+        if not clause_texts:
+            return None
+
+        notnull_pattern = re.compile(
+            r"^\s*(?P<column>`[^`]+`|[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*notnull\(\)\s*$",
+            flags=re.IGNORECASE,
+        )
+        isnull_pattern = re.compile(
+            r"^\s*(?P<column>`[^`]+`|[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*isnull\(\)\s*$",
+            flags=re.IGNORECASE,
+        )
+        string_method_pattern = re.compile(
+            r"^\s*(?P<column>`[^`]+`|[A-Za-z_][A-Za-z0-9_]*)"
+            r"(?:\s*\.\s*astype\(\s*str\s*\))?\s*\.\s*str\s*\.\s*"
+            r"(?P<method>contains|startswith|endswith)\(\s*"
+            r"(?P<quote>['\"])(?P<value>.*?)(?P=quote)(?P<args>[^)]*)\)\s*$",
+            flags=re.IGNORECASE,
+        )
+        equality_pattern = re.compile(
+            r"^\s*(?P<column>`[^`]+`|[A-Za-z_][A-Za-z0-9_]*)\s*"
+            r"(?P<operator>==|!=)\s*"
+            r"(?P<quote>['\"])(?P<value>.*?)(?P=quote)\s*$",
+            flags=re.IGNORECASE,
+        )
+
+        filtered_df = df
+        matched_any_clause = False
+
+        for clause_text in clause_texts:
+            normalized_clause_text = clause_text.strip()
+            while normalized_clause_text.startswith('(') and normalized_clause_text.endswith(')'):
+                normalized_clause_text = normalized_clause_text[1:-1].strip()
+
+            match = notnull_pattern.match(normalized_clause_text)
+            if match:
+                column_name = self._normalize_pseudo_query_column_reference(match.group('column'))
+                if column_name not in filtered_df.columns:
+                    raise KeyError(column_name)
+                filtered_df = filtered_df[filtered_df[column_name].notna()]
+                matched_any_clause = True
+                continue
+
+            match = isnull_pattern.match(normalized_clause_text)
+            if match:
+                column_name = self._normalize_pseudo_query_column_reference(match.group('column'))
+                if column_name not in filtered_df.columns:
+                    raise KeyError(column_name)
+                filtered_df = filtered_df[filtered_df[column_name].isna()]
+                matched_any_clause = True
+                continue
+
+            match = string_method_pattern.match(normalized_clause_text)
+            if match:
+                column_name = self._normalize_pseudo_query_column_reference(match.group('column'))
+                if column_name not in filtered_df.columns:
+                    raise KeyError(column_name)
+
+                method_name = str(match.group('method') or '').strip().lower()
+                operator_name = {
+                    'contains': 'contains',
+                    'startswith': 'startswith',
+                    'endswith': 'endswith',
+                }.get(method_name)
+                if not operator_name:
+                    return None
+
+                args_text = str(match.group('args') or '').replace(' ', '').casefold()
+                if 'regex=true' in args_text:
+                    return None
+                case_sensitive = 'case=true' in args_text
+
+                mask = self._build_pseudo_query_string_method_mask(
+                    filtered_df[column_name],
+                    operator_name,
+                    match.group('value'),
+                    case_sensitive=case_sensitive,
+                    normalize_match=normalize_match,
+                )
+                filtered_df = filtered_df[mask]
+                matched_any_clause = True
+                continue
+
+            match = equality_pattern.match(normalized_clause_text)
+            if match:
+                column_name = self._normalize_pseudo_query_column_reference(match.group('column'))
+                if column_name not in filtered_df.columns:
+                    raise KeyError(column_name)
+
+                operator_name = 'equals' if match.group('operator') == '==' else '!='
+                mask = self._build_series_match_mask(
+                    filtered_df[column_name],
+                    operator_name,
+                    match.group('value'),
+                    normalize_match=normalize_match,
+                )
+                filtered_df = filtered_df[mask]
+                matched_any_clause = True
+                continue
+
+            return None
+
+        return filtered_df if matched_any_clause else None
+
+    def _apply_query_expression_with_fallback(
+        self,
+        df: pandas.DataFrame,
+        query_expression: Optional[str] = None,
+        normalize_match: bool = False,
+    ) -> tuple:
+        """Apply DataFrame.query syntax first, then fall back to limited reviewer-style parsing."""
+        if not query_expression:
+            return df, False
+
+        try:
+            return df.query(query_expression), False
+        except Exception as query_error:
+            fallback_df = self._apply_reviewer_style_query_expression(
+                df,
+                query_expression,
+                normalize_match=normalize_match,
+            )
+            if fallback_df is not None:
+                return fallback_df, True
+            raise query_error
+
     def _apply_optional_dataframe_filters(
         self,
         df: pandas.DataFrame,
@@ -1278,31 +1987,67 @@ class TabularProcessingPlugin:
         filter_column: Optional[str] = None,
         filter_operator: str = 'equals',
         filter_value=None,
+        additional_filter_column: Optional[str] = None,
+        additional_filter_operator: str = 'equals',
+        additional_filter_value=None,
         normalize_match: bool = False,
     ) -> tuple:
-        """Apply optional query and single-column filters to a DataFrame."""
+        """Apply optional query and up to two single-column filters to a DataFrame."""
         filtered_df = df
         applied_filters = []
 
         if query_expression:
-            filtered_df = filtered_df.query(query_expression)
-            applied_filters.append(f"query_expression={query_expression}")
+            filtered_df, used_reviewer_style_fallback = self._apply_query_expression_with_fallback(
+                filtered_df,
+                query_expression=query_expression,
+                normalize_match=normalize_match,
+            )
+            applied_filters.append(
+                f"query_expression={query_expression}"
+                + (' [reviewer-style fallback]' if used_reviewer_style_fallback else '')
+            )
 
-        if filter_column:
-            if filter_column not in filtered_df.columns:
-                raise KeyError(filter_column)
-            if filter_value is None:
-                raise ValueError('filter_value is required when filter_column is provided.')
+        structured_filters = [
+            {
+                'column': filter_column,
+                'operator': filter_operator,
+                'value': filter_value,
+                'column_argument': 'filter_column',
+                'value_argument': 'filter_value',
+            },
+            {
+                'column': additional_filter_column,
+                'operator': additional_filter_operator,
+                'value': additional_filter_value,
+                'column_argument': 'additional_filter_column',
+                'value_argument': 'additional_filter_value',
+            },
+        ]
 
+        for filter_spec in structured_filters:
+            current_filter_column = filter_spec['column']
+            if not current_filter_column:
+                continue
+
+            if current_filter_column not in filtered_df.columns:
+                raise KeyError(current_filter_column)
+
+            current_filter_value = filter_spec['value']
+            if current_filter_value is None:
+                raise ValueError(
+                    f"{filter_spec['value_argument']} is required when {filter_spec['column_argument']} is provided."
+                )
+
+            current_filter_operator = filter_spec['operator'] or 'equals'
             mask = self._build_series_match_mask(
-                filtered_df[filter_column],
-                filter_operator,
-                filter_value,
+                filtered_df[current_filter_column],
+                current_filter_operator,
+                current_filter_value,
                 normalize_match=normalize_match,
             )
             filtered_df = filtered_df[mask]
             applied_filters.append(
-                f"{filter_column} {filter_operator or 'equals'} {filter_value}"
+                f"{current_filter_column} {current_filter_operator} {current_filter_value}"
                 + (' [normalized]' if normalize_match else '')
             )
 
@@ -2332,8 +3077,8 @@ class TabularProcessingPlugin:
 
     @kernel_function(
         description=(
-            "Return deterministic distinct values for a column, with optional query_expression or filter criteria. "
-            "Use this to build a canonical cohort from a worksheet before counting or joining related rows."
+            "Return deterministic distinct values for a column, with optional query_expression, up to two column filters, and optional embedded URL or regex extraction from composite text cells. "
+            "Use this to build a canonical cohort from a worksheet before counting or joining related rows. Narrow the original text column first when category membership depends on surrounding cell context."
         ),
         name="get_distinct_values"
     )
@@ -2348,6 +3093,12 @@ class TabularProcessingPlugin:
         filter_column: Annotated[Optional[str], "Optional column to filter on before collecting distinct values"] = None,
         filter_operator: Annotated[str, "Optional filter operator when filter_column is provided"] = "equals",
         filter_value: Annotated[Optional[str], "Optional filter value when filter_column is provided"] = None,
+        additional_filter_column: Annotated[Optional[str], "Optional second column to filter on before collecting distinct values"] = None,
+        additional_filter_operator: Annotated[str, "Optional filter operator when additional_filter_column is provided"] = "equals",
+        additional_filter_value: Annotated[Optional[str], "Optional filter value when additional_filter_column is provided"] = None,
+        extract_mode: Annotated[Optional[str], "Optional embedded extraction mode: 'url' or 'regex'"] = None,
+        extract_pattern: Annotated[Optional[str], "Optional regex pattern when extract_mode is 'regex'"] = None,
+        url_path_segments: Annotated[Optional[str], "Optional number of URL path segments to keep when extract_mode is 'url'"] = None,
         normalize_match: Annotated[str, "Whether to normalize string/entity matching and deduplication (true/false)"] = "true",
         sheet_name: Annotated[Optional[str], "Optional worksheet name for Excel files. When omitted, the plugin may perform a cross-sheet distinct-value search."] = None,
         sheet_index: Annotated[Optional[str], "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
@@ -2360,6 +3111,11 @@ class TabularProcessingPlugin:
         def _sync_work():
             try:
                 normalize_match_flag = self._parse_boolean_argument(normalize_match, default=True)
+                normalized_extract_mode, normalized_extract_pattern, parsed_url_path_segments = self._normalize_distinct_extraction_arguments(
+                    extract_mode=extract_mode,
+                    extract_pattern=extract_pattern,
+                    url_path_segments=url_path_segments,
+                )
                 container, blob_path = self._resolve_blob_location_with_fallback(
                     user_id, conversation_id, filename, source,
                     group_id=group_id, public_workspace_id=public_workspace_id
@@ -2377,6 +3133,12 @@ class TabularProcessingPlugin:
                         filter_column=filter_column,
                         filter_operator=filter_operator,
                         filter_value=filter_value,
+                        additional_filter_column=additional_filter_column,
+                        additional_filter_operator=additional_filter_operator,
+                        additional_filter_value=additional_filter_value,
+                        extract_mode=normalized_extract_mode,
+                        extract_pattern=normalized_extract_pattern,
+                        url_path_segments=parsed_url_path_segments,
                         normalize_match=normalize_match_flag,
                         max_values=int(max_values),
                     )
@@ -2406,7 +3168,10 @@ class TabularProcessingPlugin:
                             workbook_metadata,
                             selected_sheet,
                             column,
-                            related_columns=[filter_column] if filter_column else None,
+                            related_columns=[
+                                candidate_column for candidate_column in (filter_column, additional_filter_column)
+                                if candidate_column
+                            ] or None,
                             available_columns=list(df.columns),
                         )
                     )
@@ -2418,6 +3183,9 @@ class TabularProcessingPlugin:
                         filter_column=filter_column,
                         filter_operator=filter_operator,
                         filter_value=filter_value,
+                        additional_filter_column=additional_filter_column,
+                        additional_filter_operator=additional_filter_operator,
+                        additional_filter_value=additional_filter_value,
                         normalize_match=normalize_match_flag,
                     )
                 except KeyError as missing_column_error:
@@ -2430,7 +3198,10 @@ class TabularProcessingPlugin:
                             workbook_metadata,
                             selected_sheet,
                             missing_column,
-                            related_columns=[column],
+                            related_columns=[
+                                candidate_column for candidate_column in (column, filter_column, additional_filter_column)
+                                if candidate_column
+                            ],
                             available_columns=list(df.columns),
                         )
                     )
@@ -2441,23 +3212,17 @@ class TabularProcessingPlugin:
                         'selected_sheet': selected_sheet if workbook_metadata.get('is_workbook') else None,
                     })
 
-                distinct_display_values = {}
-                for cell_value in filtered_df[column].tolist():
-                    display_value = str(cell_value).strip()
-                    if not display_value:
-                        continue
-                    compare_variants = self._extract_cell_value_variants(
-                        cell_value,
-                        normalize_match=normalize_match_flag,
-                    )
-                    if not compare_variants:
-                        continue
-                    canonical_key = sorted(compare_variants)[0]
-                    distinct_display_values.setdefault(canonical_key, display_value)
+                distinct_display_values, matched_cell_count, extracted_match_count = self._collect_distinct_display_values(
+                    filtered_df[column],
+                    normalize_match=normalize_match_flag,
+                    extract_mode=normalized_extract_mode,
+                    extract_pattern=normalized_extract_pattern,
+                    url_path_segments=parsed_url_path_segments,
+                )
 
                 ordered_values = sorted(distinct_display_values.values(), key=lambda item: item.casefold())
                 limit = int(max_values)
-                return json.dumps({
+                response_payload = {
                     'filename': filename,
                     'selected_sheet': selected_sheet if workbook_metadata.get('is_workbook') else None,
                     'column': column,
@@ -2467,7 +3232,16 @@ class TabularProcessingPlugin:
                     'returned_values': min(len(ordered_values), limit),
                     'values': ordered_values[:limit],
                     'values_limited': len(ordered_values) > limit,
-                }, indent=2, default=str)
+                }
+                if normalized_extract_mode:
+                    response_payload.update({
+                        'extract_mode': normalized_extract_mode,
+                        'extract_pattern': normalized_extract_pattern if normalized_extract_mode == 'regex' else None,
+                        'url_path_segments': parsed_url_path_segments if normalized_extract_mode == 'url' else None,
+                        'matched_cell_count': matched_cell_count,
+                        'extracted_match_count': extracted_match_count,
+                    })
+                return json.dumps(response_payload, indent=2, default=str)
             except Exception as e:
                 log_event(f"[TabularProcessingPlugin] Error getting distinct values: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
@@ -2476,7 +3250,7 @@ class TabularProcessingPlugin:
 
     @kernel_function(
         description=(
-            "Return a deterministic row count after applying an optional query_expression or filter condition. "
+            "Return a deterministic row count after applying an optional query_expression and up to two filter conditions. "
             "Use this instead of estimating counts from partial returned rows when the user asks how many or what percentage."
         ),
         name="count_rows"
@@ -2491,6 +3265,9 @@ class TabularProcessingPlugin:
         filter_column: Annotated[Optional[str], "Optional column to filter on before counting rows"] = None,
         filter_operator: Annotated[str, "Optional filter operator when filter_column is provided"] = "equals",
         filter_value: Annotated[Optional[str], "Optional filter value when filter_column is provided"] = None,
+        additional_filter_column: Annotated[Optional[str], "Optional second column to filter on before counting rows"] = None,
+        additional_filter_operator: Annotated[str, "Optional filter operator when additional_filter_column is provided"] = "equals",
+        additional_filter_value: Annotated[Optional[str], "Optional filter value when additional_filter_column is provided"] = None,
         normalize_match: Annotated[str, "Whether to normalize string/entity matching for text comparisons (true/false)"] = "false",
         sheet_name: Annotated[Optional[str], "Optional worksheet name for Excel files. When omitted, the plugin may perform a cross-sheet row count."] = None,
         sheet_index: Annotated[Optional[str], "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
@@ -2517,6 +3294,9 @@ class TabularProcessingPlugin:
                         filter_column=filter_column,
                         filter_operator=filter_operator,
                         filter_value=filter_value,
+                        additional_filter_column=additional_filter_column,
+                        additional_filter_operator=additional_filter_operator,
+                        additional_filter_value=additional_filter_value,
                         query_expression=query_expression,
                         normalize_match=normalize_match_flag,
                     )
@@ -2545,6 +3325,9 @@ class TabularProcessingPlugin:
                         filter_column=filter_column,
                         filter_operator=filter_operator,
                         filter_value=filter_value,
+                        additional_filter_column=additional_filter_column,
+                        additional_filter_operator=additional_filter_operator,
+                        additional_filter_value=additional_filter_value,
                         normalize_match=normalize_match_flag,
                     )
                 except KeyError as missing_column_error:
@@ -2557,6 +3340,10 @@ class TabularProcessingPlugin:
                             workbook_metadata,
                             selected_sheet,
                             missing_column,
+                            related_columns=[
+                                candidate_column for candidate_column in (filter_column, additional_filter_column)
+                                if candidate_column
+                            ] or None,
                             available_columns=list(df.columns),
                         )
                     )
@@ -2676,7 +3463,8 @@ class TabularProcessingPlugin:
     @kernel_function(
         description=(
             "Filter rows in a tabular file based on conditions and return matching rows. "
-            "Supports operators: ==, !=, >, <, >=, <=, contains, startswith, endswith."
+            "Supports operators: ==, !=, >, <, >=, <=, contains, startswith, endswith. "
+            "A second column filter can be applied for compound text or literal matching. Use this as the text-search tool when the full cell or row context matters."
         ),
         name="filter_rows"
     )
@@ -2689,6 +3477,9 @@ class TabularProcessingPlugin:
         column: Annotated[str, "The column to filter on"],
         operator: Annotated[str, "Operator: ==, !=, >, <, >=, <=, contains, startswith, endswith"],
         value: Annotated[str, "The value to compare against"],
+        additional_filter_column: Annotated[Optional[str], "Optional second column to filter on"] = None,
+        additional_filter_operator: Annotated[str, "Optional filter operator when additional_filter_column is provided"] = "equals",
+        additional_filter_value: Annotated[Optional[str], "Optional filter value when additional_filter_column is provided"] = None,
         normalize_match: Annotated[str, "Whether to normalize string/entity matching for text comparisons (true/false)"] = "false",
         sheet_name: Annotated[Optional[str], "Optional worksheet name for Excel files. Required for analytical calls on multi-sheet workbooks unless sheet_index is provided."] = None,
         sheet_index: Annotated[Optional[str], "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
@@ -2710,7 +3501,15 @@ class TabularProcessingPlugin:
                 normalized_sheet_idx = None if sheet_index is None else str(sheet_index).strip()
                 if not normalized_sheet and normalized_sheet_idx in (None, ''):
                     cross_sheet_result = self._filter_rows_across_sheets(
-                        container, blob_path, filename, column, operator, value,
+                        container,
+                        blob_path,
+                        filename,
+                        column,
+                        operator,
+                        value,
+                        additional_filter_column=additional_filter_column,
+                        additional_filter_operator=additional_filter_operator,
+                        additional_filter_value=additional_filter_value,
                         normalize_match=normalize_match_flag,
                         max_rows=int(max_rows),
                     )
@@ -2740,33 +3539,237 @@ class TabularProcessingPlugin:
                             workbook_metadata,
                             selected_sheet,
                             column,
+                            related_columns=[additional_filter_column] if additional_filter_column else None,
                             available_columns=list(df.columns),
                         )
                     )
 
                 try:
-                    mask = self._build_series_match_mask(
-                        df[column],
-                        operator,
-                        value,
+                    filtered_df, applied_filters = self._apply_optional_dataframe_filters(
+                        df,
+                        filter_column=column,
+                        filter_operator=operator,
+                        filter_value=value,
+                        additional_filter_column=additional_filter_column,
+                        additional_filter_operator=additional_filter_operator,
+                        additional_filter_value=additional_filter_value,
                         normalize_match=normalize_match_flag,
                     )
-                except ValueError:
-                    return json.dumps({"error": f"Unsupported operator: {operator}"})
+                except KeyError as missing_column_error:
+                    missing_column = str(missing_column_error).strip("'")
+                    return json.dumps(
+                        self._build_missing_column_error_payload(
+                            container,
+                            blob_path,
+                            filename,
+                            workbook_metadata,
+                            selected_sheet,
+                            missing_column,
+                            related_columns=[candidate_column for candidate_column in (column, additional_filter_column) if candidate_column],
+                            available_columns=list(df.columns),
+                        )
+                    )
+                except ValueError as filter_error:
+                    return json.dumps({"error": str(filter_error)})
 
                 limit = int(max_rows)
-                filtered = df[mask].head(limit)
+                filtered = filtered_df.head(limit)
                 return json.dumps({
                     "filename": filename,
                     "selected_sheet": selected_sheet if workbook_metadata.get('is_workbook') else None,
+                    "filter_applied": applied_filters,
                     "normalize_match": normalize_match_flag,
-                    "total_matches": int(mask.sum()),
+                    "total_matches": len(filtered_df),
                     "returned_rows": len(filtered),
                     "data": filtered.to_dict(orient='records')
                 }, indent=2, default=str)
             except Exception as e:
                 log_event(f"[TabularProcessingPlugin] Error filtering rows: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
+        return await asyncio.to_thread(_sync_work)
+
+    @kernel_function(
+        description=(
+            "Search one or more columns, or all columns when search_columns is omitted, for a value or phrase and return matching rows with row-context metadata. "
+            "Use this when the relevant column is unclear or when you need to search an entire worksheet or workbook for a topic before deciding which returned content is relevant."
+        ),
+        name="search_rows"
+    )
+    @plugin_function_logger("TabularProcessingPlugin")
+    async def search_rows(
+        self,
+        user_id: Annotated[str, "The user ID (from Scope ID in Conversation Metadata)"],
+        conversation_id: Annotated[str, "The conversation ID (from Conversation Metadata)"],
+        filename: Annotated[str, "The filename of the tabular file"],
+        search_value: Annotated[str, "The text or value to search for"],
+        search_columns: Annotated[Optional[str], "Optional comma-separated columns to search. Omit to search all columns."] = None,
+        search_operator: Annotated[str, "Search operator: equals, contains, startswith, endswith"] = "contains",
+        return_columns: Annotated[Optional[str], "Optional comma-separated columns to include in each result row. Omit to return the full row."] = None,
+        query_expression: Annotated[Optional[str], "Optional pandas DataFrame.query() expression to apply before searching"] = None,
+        filter_column: Annotated[Optional[str], "Optional first column filter to narrow the search cohort"] = None,
+        filter_operator: Annotated[str, "Optional filter operator when filter_column is provided"] = "equals",
+        filter_value: Annotated[Optional[str], "Optional filter value when filter_column is provided"] = None,
+        additional_filter_column: Annotated[Optional[str], "Optional second column filter to narrow the search cohort"] = None,
+        additional_filter_operator: Annotated[str, "Optional filter operator when additional_filter_column is provided"] = "equals",
+        additional_filter_value: Annotated[Optional[str], "Optional filter value when additional_filter_column is provided"] = None,
+        normalize_match: Annotated[str, "Whether to normalize string/entity matching for text comparisons (true/false)"] = "false",
+        sheet_name: Annotated[Optional[str], "Optional worksheet name for Excel files. When omitted, the plugin may perform a cross-sheet search."] = None,
+        sheet_index: Annotated[Optional[str], "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
+        source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
+        max_rows: Annotated[str, "Maximum matching rows to return"] = "100",
+        group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
+        public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
+    ) -> Annotated[str, "JSON result containing matching rows, matched columns, and search metadata"]:
+        """Search rows across one or more columns while preserving row context."""
+        def _sync_work():
+            try:
+                normalize_match_flag = self._parse_boolean_argument(normalize_match, default=False)
+                parsed_search_columns = self._parse_optional_column_list_argument(search_columns)
+                parsed_return_columns = self._parse_optional_column_list_argument(return_columns)
+                container, blob_path = self._resolve_blob_location_with_fallback(
+                    user_id, conversation_id, filename, source,
+                    group_id=group_id, public_workspace_id=public_workspace_id
+                )
+
+                normalized_sheet = (sheet_name or '').strip()
+                normalized_sheet_idx = None if sheet_index is None else str(sheet_index).strip()
+                if not normalized_sheet and normalized_sheet_idx in (None, ''):
+                    cross_sheet_result = self._search_rows_across_sheets(
+                        container,
+                        blob_path,
+                        filename,
+                        search_value=search_value,
+                        search_columns=parsed_search_columns,
+                        search_operator=search_operator,
+                        return_columns=parsed_return_columns,
+                        query_expression=query_expression,
+                        filter_column=filter_column,
+                        filter_operator=filter_operator,
+                        filter_value=filter_value,
+                        additional_filter_column=additional_filter_column,
+                        additional_filter_operator=additional_filter_operator,
+                        additional_filter_value=additional_filter_value,
+                        normalize_match=normalize_match_flag,
+                        max_rows=int(max_rows),
+                    )
+                    if cross_sheet_result is not None:
+                        return cross_sheet_result
+
+                selected_sheet, workbook_metadata = self._resolve_sheet_selection(
+                    container,
+                    blob_path,
+                    sheet_name=sheet_name,
+                    sheet_index=sheet_index,
+                    require_explicit_sheet=True,
+                )
+                df = self._read_tabular_blob_to_dataframe(
+                    container,
+                    blob_path,
+                    sheet_name=selected_sheet,
+                    require_explicit_sheet=True,
+                )
+                df = self._try_numeric_conversion(df)
+
+                try:
+                    filtered_df, applied_filters = self._apply_optional_dataframe_filters(
+                        df,
+                        query_expression=query_expression,
+                        filter_column=filter_column,
+                        filter_operator=filter_operator,
+                        filter_value=filter_value,
+                        additional_filter_column=additional_filter_column,
+                        additional_filter_operator=additional_filter_operator,
+                        additional_filter_value=additional_filter_value,
+                        normalize_match=normalize_match_flag,
+                    )
+                except KeyError as missing_column_error:
+                    missing_column = str(missing_column_error).strip("'")
+                    return json.dumps(
+                        self._build_missing_column_error_payload(
+                            container,
+                            blob_path,
+                            filename,
+                            workbook_metadata,
+                            selected_sheet,
+                            missing_column,
+                            related_columns=[
+                                candidate_column
+                                for candidate_column in (
+                                    *(parsed_search_columns or []),
+                                    *(parsed_return_columns or []),
+                                    filter_column,
+                                    additional_filter_column,
+                                )
+                                if candidate_column and candidate_column != missing_column
+                            ] or None,
+                            available_columns=list(df.columns),
+                        )
+                    )
+                except Exception as query_error:
+                    return json.dumps({
+                        'error': f"Query/filter error: {query_error}",
+                        'filename': filename,
+                        'selected_sheet': selected_sheet if workbook_metadata.get('is_workbook') else None,
+                    })
+
+                try:
+                    search_result = self._search_dataframe_rows(
+                        filtered_df,
+                        search_value=search_value,
+                        search_columns=parsed_search_columns,
+                        search_operator=search_operator,
+                        return_columns=parsed_return_columns,
+                        normalize_match=normalize_match_flag,
+                        max_rows=int(max_rows),
+                    )
+                except KeyError as missing_column_error:
+                    missing_column = str(missing_column_error).strip("'")
+                    return json.dumps(
+                        self._build_missing_column_error_payload(
+                            container,
+                            blob_path,
+                            filename,
+                            workbook_metadata,
+                            selected_sheet,
+                            missing_column,
+                            related_columns=[
+                                candidate_column
+                                for candidate_column in (
+                                    *(parsed_search_columns or []),
+                                    *(parsed_return_columns or []),
+                                    filter_column,
+                                    additional_filter_column,
+                                )
+                                if candidate_column and candidate_column != missing_column
+                            ] or None,
+                            available_columns=list(df.columns),
+                        )
+                    )
+                except ValueError as search_error:
+                    return json.dumps({
+                        'error': str(search_error),
+                        'filename': filename,
+                        'selected_sheet': selected_sheet if workbook_metadata.get('is_workbook') else None,
+                    })
+
+                return json.dumps({
+                    'filename': filename,
+                    'selected_sheet': selected_sheet if workbook_metadata.get('is_workbook') else None,
+                    'search_value': search_value,
+                    'search_operator': search_operator,
+                    'searched_columns': search_result['searched_columns'],
+                    'matched_columns': search_result['matched_columns'],
+                    'return_columns': search_result['return_columns'],
+                    'filter_applied': applied_filters,
+                    'normalize_match': normalize_match_flag,
+                    'total_matches': search_result['total_matches'],
+                    'returned_rows': search_result['returned_rows'],
+                    'data': search_result['data'],
+                }, indent=2, default=str)
+            except Exception as e:
+                log_event(f"[TabularProcessingPlugin] Error searching rows: {e}", level=logging.WARNING)
+                return json.dumps({"error": str(e)})
+
         return await asyncio.to_thread(_sync_work)
 
     @kernel_function(
@@ -2823,11 +3826,17 @@ class TabularProcessingPlugin:
                 )
                 df = self._try_numeric_conversion(df)
 
-                result_df = df.query(query_expression)
+                result_df, used_reviewer_style_fallback = self._apply_query_expression_with_fallback(
+                    df,
+                    query_expression=query_expression,
+                    normalize_match=False,
+                )
                 limit = int(max_rows)
                 return json.dumps({
                     "filename": filename,
                     "selected_sheet": selected_sheet if workbook_metadata.get('is_workbook') else None,
+                    "query_expression": query_expression,
+                    "query_expression_fallback": used_reviewer_style_fallback,
                     "total_matches": len(result_df),
                     "returned_rows": min(len(result_df), limit),
                     "data": result_df.head(limit).to_dict(orient='records')
