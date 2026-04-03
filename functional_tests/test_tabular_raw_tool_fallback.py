@@ -2,8 +2,8 @@
 # test_tabular_raw_tool_fallback.py
 """
 Functional test for tabular raw tool fallback summaries.
-Version: 0.240.043
-Implemented in: 0.239.125; 0.240.013; 0.240.036; 0.240.038; 0.240.039; 0.240.040; 0.240.041; 0.240.042; 0.240.043 (prompt-budgeted fallback handoff)
+Version: 0.240.048
+Implemented in: 0.239.125; 0.240.013; 0.240.036; 0.240.038; 0.240.039; 0.240.040; 0.240.041; 0.240.042; 0.240.043; 0.240.048 (prompt-budgeted fallback handoff)
 
 This test ensures successful tabular tool calls are not discarded when the
 inner tabular synthesis step fails, and that the analysis prompt now prefers

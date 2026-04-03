@@ -2,8 +2,8 @@
 # test_tabular_relational_analysis_helpers.py
 """
 Functional test for tabular relational analysis helpers.
-Version: 0.240.043
-Implemented in: 0.240.018; 0.240.037; 0.240.038; 0.240.039; 0.240.040; 0.240.041; 0.240.042; 0.240.043
+Version: 0.240.048
+Implemented in: 0.240.018; 0.240.037; 0.240.038; 0.240.039; 0.240.040; 0.240.041; 0.240.042; 0.240.043; 0.240.048
 
 This test ensures the tabular processing plugin can infer workbook relationship
 metadata, return deterministic distinct values and row counts, and perform

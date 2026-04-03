@@ -46,7 +46,9 @@ from azure.identity import ClientSecretCredential, DefaultAzureCredential, get_b
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
 from functions_message_artifacts import (
     build_agent_citation_artifact_documents,
+    build_message_artifact_payload_map,
     filter_assistant_artifact_items,
+    hydrate_agent_citations_from_artifacts,
 )
 from functions_thoughts import ThoughtTracker
 
@@ -1682,6 +1684,64 @@ def question_requests_tabular_row_context(user_question):
     return any(keyword in normalized_question for keyword in row_context_keywords)
 
 
+def question_requests_tabular_exhaustive_results(user_question):
+    """Return True when the user explicitly asks for a full list or all matching results."""
+    normalized_question = re.sub(r'\s+', ' ', str(user_question or '').strip().lower())
+    if not normalized_question:
+        return False
+
+    explicit_phrases = (
+        'all results',
+        'all rows',
+        'all values',
+        'all of them',
+        'complete list',
+        'each one',
+        'every one',
+        'exhaustive',
+        'full list',
+        'list all',
+        'list each',
+        'list every',
+        'list them all',
+        'list them out',
+        'return all',
+        'show all',
+        'show me all',
+    )
+    if any(phrase in normalized_question for phrase in explicit_phrases):
+        return True
+
+    return (
+        'list' in normalized_question
+        and any(token in normalized_question for token in (' all ', ' them', ' out', ' each ', ' every '))
+    )
+
+
+def parse_tabular_result_count(value):
+    """Parse a numeric count from invocation metadata or payloads."""
+    try:
+        parsed_value = int(value)
+    except (TypeError, ValueError):
+        return None
+
+    return parsed_value if parsed_value >= 0 else None
+
+
+def determine_tabular_follow_up_limit(total_available, returned_count, max_cap=200):
+    """Return a larger result limit when the current tool call returned only a partial slice."""
+    total_count = parse_tabular_result_count(total_available)
+    current_count = parse_tabular_result_count(returned_count)
+    if total_count is None or current_count is None or total_count <= current_count:
+        return None
+
+    target_count = min(total_count, max_cap)
+    if target_count <= current_count:
+        return None
+
+    return str(target_count)
+
+
 def extract_tabular_high_signal_search_terms(user_question, max_terms=2):
     """Extract a short list of likely literal search terms from the user question."""
     question_text = str(user_question or '').strip()
@@ -2022,6 +2082,7 @@ def derive_tabular_follow_up_calls_from_invocations(user_question, invocations):
         return []
 
     wants_distinct_urls = is_tabular_distinct_url_question(user_question)
+    wants_exhaustive_results = question_requests_tabular_exhaustive_results(user_question)
     wants_row_context = question_requests_tabular_row_context(user_question)
     search_terms = extract_tabular_high_signal_search_terms(user_question, max_terms=4)
     primary_search_term = search_terms[0] if search_terms else None
@@ -2078,6 +2139,29 @@ def derive_tabular_follow_up_calls_from_invocations(user_question, invocations):
         elif invocation_parameters.get('sheet_index') not in (None, ''):
             scope_arguments['sheet_index'] = invocation_parameters.get('sheet_index')
 
+        if wants_exhaustive_results and function_name in {'search_rows', 'filter_rows', 'query_tabular_data'}:
+            expanded_row_limit = determine_tabular_follow_up_limit(
+                result_payload.get('total_matches'),
+                result_payload.get('returned_rows'),
+            )
+            if expanded_row_limit:
+                expanded_arguments = {
+                    argument_name: argument_value
+                    for argument_name, argument_value in invocation_parameters.items()
+                    if argument_name not in {'user_id', 'conversation_id'} and argument_value not in (None, '')
+                }
+                expanded_arguments.update(scope_arguments)
+                expanded_arguments['max_rows'] = expanded_row_limit
+
+                expanded_signature = build_tabular_follow_up_call_signature(function_name, expanded_arguments)
+                if expanded_signature not in existing_signatures:
+                    follow_up_calls.append({
+                        'function_name': function_name,
+                        'arguments': expanded_arguments,
+                        'reason': 'expand the matching row slice because the user asked for the full result list',
+                    })
+                    existing_signatures.add(expanded_signature)
+
         if function_name == 'get_distinct_values':
             target_column = str(invocation_parameters.get('column') or result_payload.get('column') or '').strip()
             if not target_column:
@@ -2092,10 +2176,28 @@ def derive_tabular_follow_up_calls_from_invocations(user_question, invocations):
                 for filter_column in current_filter_columns
                 if filter_column
             )
-            try:
-                distinct_count = int(result_payload.get('distinct_count'))
-            except (TypeError, ValueError):
-                distinct_count = None
+            distinct_count = parse_tabular_result_count(result_payload.get('distinct_count'))
+            returned_values = parse_tabular_result_count(result_payload.get('returned_values'))
+
+            if wants_exhaustive_results:
+                expanded_value_limit = determine_tabular_follow_up_limit(distinct_count, returned_values)
+                if expanded_value_limit:
+                    expanded_arguments = {
+                        argument_name: argument_value
+                        for argument_name, argument_value in invocation_parameters.items()
+                        if argument_name not in {'user_id', 'conversation_id'} and argument_value not in (None, '')
+                    }
+                    expanded_arguments.update(scope_arguments)
+                    expanded_arguments['max_values'] = expanded_value_limit
+
+                    expanded_signature = build_tabular_follow_up_call_signature('get_distinct_values', expanded_arguments)
+                    if expanded_signature not in existing_signatures:
+                        follow_up_calls.append({
+                            'function_name': 'get_distinct_values',
+                            'arguments': expanded_arguments,
+                            'reason': 'expand the returned value list because the user asked for the full result set',
+                        })
+                        existing_signatures.add(expanded_signature)
 
             needs_broad_row_context = bool(
                 wants_row_context
@@ -2256,7 +2358,16 @@ def derive_tabular_follow_up_calls_from_invocations(user_question, invocations):
             inferred_path_segments = infer_tabular_url_path_segments(user_question)
             if inferred_path_segments:
                 extraction_arguments['url_path_segments'] = inferred_path_segments
-            if invocation_parameters.get('max_rows') not in (None, ''):
+
+            expanded_value_limit = None
+            if wants_exhaustive_results:
+                expanded_value_limit = determine_tabular_follow_up_limit(
+                    result_payload.get('total_matches'),
+                    result_payload.get('returned_rows'),
+                )
+            if expanded_value_limit:
+                extraction_arguments['max_values'] = expanded_value_limit
+            elif invocation_parameters.get('max_rows') not in (None, ''):
                 extraction_arguments['max_values'] = invocation_parameters.get('max_rows')
 
             extraction_signature = build_tabular_follow_up_call_signature('get_distinct_values', extraction_arguments)
@@ -2349,7 +2460,7 @@ async def maybe_recover_tabular_analysis_with_llm_reviewer(chat_service, kernel,
         "When the user wants values from a subset or pattern within one column, prefer get_distinct_values with filter_column/filter_operator/filter_value instead of an unfiltered full-column distinct-value call. "
         "When the answer depends on two literal column conditions, prefer count_rows, get_distinct_values, or filter_rows with filter_column/filter_operator/filter_value plus additional_filter_column/additional_filter_operator/additional_filter_value instead of a broad query_expression call. "
         "When the user is asking for URLs, sites, links, or regex-like identifiers embedded inside a text cell, prefer get_distinct_values with extract_mode='url' or extract_mode='regex' rather than counting whole-cell strings. Use url_path_segments when you need canonical higher-level URL roots. "
-        "If whether an embedded URL or identifier counts depends on surrounding text in the original cell rather than the extracted value itself, search/filter the original text column first. Prefer filter_rows for that text search when the matching row context matters, and set max_rows high enough to return the full cohort when it is modest. "
+        "If whether an embedded URL or identifier counts depends on surrounding text in the original cell rather than the extracted value itself, search/filter the original text column first. Prefer filter_rows for that text search when the matching row context matters, and set max_rows high enough to return the full cohort when it is modest. If a prior tool result is limited and the user explicitly asked for the full list, rerun with a higher max_rows or max_values instead of stopping at the preview slice. "
         "Do not classify extracted URLs solely by whether the URL text itself contains the keyword when the original cell text already defines the category. "
         "For URLs, links, paths, and literal identifiers, set normalize_match=false unless normalization is clearly necessary. "
         "Prefer sheet_name when the correct worksheet is evident from the schemas or discovery results. "
@@ -3504,7 +3615,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 "17. When the question asks for grouped results for each entity or category and a cross-sheet bridge plan or relationship hint is available, use the reference worksheet to identify the canonical entities or categories and the fact worksheet to compute the metric. Do not answer 'each X' by grouping a yes/no, boolean, or membership-flag column unless the user explicitly asked about that flag.\n"
                 "18. When the question asks for rows satisfying multiple conditions, prefer one combined query_expression using and/or instead of separate broad queries that you plan to intersect later.\n"
                 "19. Batch multiple independent function calls in a SINGLE response whenever possible.\n"
-                "20. Keep max_rows as small as possible. Only increase it when the user explicitly asked for an exhaustive row list or export, or when the full matching row context is required and the cohort is modest; otherwise return total_matches plus representative rows.\n"
+                "20. Keep max_rows as small as possible. Only increase it when the user explicitly asked for an exhaustive row list or export, or when the full matching row context is required and the cohort is modest; otherwise return total_matches plus representative rows. If a prior result reports total_matches > returned_rows or distinct_count > returned_values for a full-list question, rerun with a higher max_rows or max_values before answering.\n"
                 "21. For analytical questions, prefer deterministic counts plus lookup/filter/query/grouped computations over raw row or preview output.\n"
                 "22. For identifier-based workbook questions, locate the identifier on the correct sheet before explaining downstream calculations.\n"
                 "23. For peak, busiest, highest, or lowest questions, use grouped functions and inspect the highest_group, highest_value, lowest_group, and lowest_value summary fields.\n"
@@ -4636,6 +4747,51 @@ def register_route_backend_chats(app):
                 'Connection': 'keep-alive'
             }
         )
+
+    def get_facts_for_context(scope_id, scope_type, conversation_id: str = None, agent_id: str = None):
+        if not scope_id or not scope_type:
+            return ""
+        fact_store = FactMemoryStore()
+        kwargs = dict(
+            scope_type=scope_type,
+            scope_id=scope_id,
+        )
+        if agent_id:
+            kwargs['agent_id'] = agent_id
+        if conversation_id:
+            kwargs['conversation_id'] = conversation_id
+        facts = fact_store.get_facts(**kwargs)
+        if not facts:
+            return ""
+        fact_lines = []
+        for fact in facts:
+            value = str(fact.get('value') or '').strip()
+            if value:
+                fact_lines.append(f"- {value}")
+        if not fact_lines:
+            return ""
+        fact_lines.append(f"- agent_id: {agent_id or 'None'}")
+        fact_lines.append(f"- scope_type: {scope_type}")
+        fact_lines.append(f"- scope_id: {scope_id}")
+        fact_lines.append(f"- conversation_id: {conversation_id or 'None'}")
+        return "\n".join(fact_lines)
+
+    def inject_fact_memory_context(conversation_history, scope_id, scope_type, conversation_id: str = None, agent_id: str = None):
+        facts = get_facts_for_context(
+            scope_id=scope_id,
+            scope_type=scope_type,
+            conversation_id=conversation_id,
+            agent_id=agent_id,
+        )
+        if facts:
+            conversation_history.insert(0, {
+                "role": "system",
+                "content": f"<Fact Memory>\n{facts}\n</Fact Memory>"
+            })
+        conversation_history.insert(0, {
+            "role": "system",
+            "content": f"""<Conversation Metadata>\n<Scope ID: {scope_id}>\n<Scope Type: {scope_type}>\n<Conversation ID: {conversation_id}>\n<Agent ID: {agent_id}>\n</Conversation Metadata>"""
+        })
 
     @app.route('/api/chat', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -6248,6 +6404,8 @@ def register_route_backend_chats(app):
             # ---------------------------------------------------------------------
             conversation_history_for_api = []
             summary_of_older = ""
+            history_debug_info = {}
+            final_api_source_refs = []
 
 
             try:
@@ -6257,66 +6415,18 @@ def register_route_backend_chats(app):
                 all_messages = list(cosmos_messages_container.query_items(
                     query=all_messages_query, parameters=params_all, partition_key=conversation_id, enable_cross_partition_query=True
                 ))
-                all_messages = filter_assistant_artifact_items(all_messages)
-
-                # Sort messages using threading logic
-                all_messages = sort_messages_by_thread(all_messages)
-
-                total_messages = len(all_messages)
-
-                # Determine which messages are "recent" and which are "older"
-                # `conversation_history_limit` includes the *current* user message
-                num_recent_messages = min(total_messages, conversation_history_limit)
-                num_older_messages = total_messages - num_recent_messages
-
-                recent_messages = all_messages[-num_recent_messages:] # Last N messages
-                older_messages_to_summarize = all_messages[:num_older_messages] # Messages before the recent ones
-
-                # Summarize older messages if needed and present
-                if enable_summarize_content_history_beyond_conversation_history_limit and older_messages_to_summarize:
-                    debug_print(f"Summarizing {len(older_messages_to_summarize)} older messages for conversation {conversation_id}")
-                    summary_prompt_older = (
-                        "Summarize the following conversation history concisely (around 50-100 words), "
-                        "focusing on key facts, decisions, or context that might be relevant for future turns. "
-                        "Do not add any introductory phrases like 'Here is a summary'.\n\n"
-                        "Conversation History:\n"
-                    )
-                    message_texts_older = []
-                    for msg in older_messages_to_summarize:
-                        role = msg.get('role', 'user')
-                        metadata = msg.get('metadata', {})
-                        
-                        # Check active_thread flag - skip messages with active_thread=False
-                        thread_info = metadata.get('thread_info', {})
-                        active_thread = thread_info.get('active_thread')
-                        
-                        # Exclude content when active_thread is explicitly False
-                        if active_thread is False:
-                            debug_print(f"[THREAD] Skipping inactive thread message {msg.get('id')} from summary")
-                            continue
-                        
-                        # Skip roles that shouldn't be in summary (adjust as needed)
-                        if role in ['system', 'safety', 'blocked', 'image', 'file']: continue
-                        content = msg.get('content', '')
-                        message_texts_older.append(f"{role.upper()}: {content}")
-
-                    if message_texts_older: # Only summarize if there's content to summarize
-                        summary_prompt_older += "\n".join(message_texts_older)
-                        try:
-                            # Use the already initialized client and model
-                            summary_response_older = gpt_client.chat.completions.create(
-                                model=gpt_model,
-                                messages=[{"role": "system", "content": summary_prompt_older}],
-                                max_tokens=150, # Adjust token limit for summary
-                                temperature=0.3 # Lower temp for factual summary
-                            )
-                            summary_of_older = summary_response_older.choices[0].message.content.strip()
-                            debug_print(f"Generated summary: {summary_of_older}")
-                        except Exception as e:
-                            debug_print(f"Error summarizing older conversation history: {e}")
-                            summary_of_older = "" # Failed, proceed without summary
-                    else:
-                        debug_print("No summarizable content found in older messages.")
+                history_segments = build_conversation_history_segments(
+                    all_messages=all_messages,
+                    conversation_history_limit=conversation_history_limit,
+                    enable_summarize_older_messages=enable_summarize_content_history_beyond_conversation_history_limit,
+                    gpt_client=gpt_client,
+                    gpt_model=gpt_model,
+                    user_message_id=user_message_id,
+                    fallback_user_message=user_message,
+                )
+                summary_of_older = history_segments['summary_of_older']
+                chat_tabular_files = history_segments['chat_tabular_files']
+                history_debug_info = history_segments.get('debug_info', {})
 
 
                 # Construct the final history for the API call
@@ -6326,6 +6436,7 @@ def register_route_backend_chats(app):
                         "role": "system",
                         "content": f"<Summary of previous conversation context>\n{summary_of_older}\n</Summary of previous conversation context>"
                     })
+                    final_api_source_refs.append('system:summary_of_older')
 
                 # Add augmentation system messages (search, agents) next
                 # **Important**: Decide if you want these saved. If so, you need to upsert them now.
@@ -6373,6 +6484,7 @@ def register_route_backend_chats(app):
                     }
                     cosmos_messages_container.upsert_item(system_doc)
                     conversation_history_for_api.append(aug_msg) # Add to API context
+                    final_api_source_refs.append(f"system:augmentation:{len(final_api_source_refs) + 1}")
                     # System message shares the same thread as user message, no thread update needed
 
                     # --- NEW: Save plugin output as agent citation ---
@@ -6383,141 +6495,8 @@ def register_route_backend_chats(app):
                         "timestamp": datetime.utcnow().isoformat()
                     })
 
-
-                # Add the recent messages (user, assistant, relevant system/file messages)
-                allowed_roles_in_history = ['user', 'assistant'] # Add 'system' if you PERSIST general system messages not related to augmentation
-                max_file_content_length_in_history = 50000 # Increased limit for all file content in history
-                max_tabular_content_length_in_history = 50000 # Same limit for tabular data consistency
-                chat_tabular_files = set()  # Track tabular files uploaded directly to chat
-
-                for message in recent_messages:
-                    role = message.get('role')
-                    content = message.get('content')
-                    metadata = message.get('metadata', {})
-                    
-                    # Check active_thread flag - skip messages with active_thread=False
-                    # This handles both threaded messages and legacy messages with the flag set
-                    thread_info = metadata.get('thread_info', {})
-                    active_thread = thread_info.get('active_thread')
-                    
-                    # Exclude content when active_thread is explicitly False
-                    # Include when: active_thread is True, None, or not present (legacy messages)
-                    if active_thread is False:
-                        debug_print(f"[THREAD] Skipping inactive thread message {message.get('id')} (thread_id: {thread_info.get('thread_id')}, attempt: {thread_info.get('thread_attempt')})")
-                        continue
-                    
-                    # Check if message is fully masked - skip it entirely
-                    if metadata.get('masked', False):
-                        debug_print(f"[MASK] Skipping fully masked message {message.get('id')}")
-                        continue
-                    
-                    # Check for partially masked content
-                    masked_ranges = metadata.get('masked_ranges', [])
-                    if masked_ranges and content:
-                        # Remove masked portions from content
-                        content = remove_masked_content(content, masked_ranges)
-                        debug_print(f"[MASK] Applied {len(masked_ranges)} masked ranges to message {message.get('id')}")
-
-                    if role in allowed_roles_in_history:
-                        conversation_history_for_api.append({"role": role, "content": content})
-                    elif role == 'file': # Handle file content inclusion (simplified)
-                        filename = message.get('filename', 'uploaded_file')
-                        file_content = message.get('file_content', '') # Assuming file content is stored
-                        is_table = message.get('is_table', False)
-                        file_content_source = message.get('file_content_source', '')
-
-                        # Tabular files stored in blob (enhanced citations enabled) - reference plugin
-                        if is_table and file_content_source == 'blob':
-                            chat_tabular_files.add(filename)  # Track for mini SK analysis
-                            conversation_history_for_api.append({
-                                'role': 'system',
-                                'content': f"[User uploaded a tabular data file named '{filename}'. "
-                                    f"The file is stored in blob storage and available for analysis. "
-                                    f"Use the tabular_processing plugin functions (list_tabular_files, describe_tabular_file, "
-                                    f"aggregate_column, filter_rows, query_tabular_data, group_by_aggregate, group_by_datetime_component) to analyze this data. "
-                                    f"The file source is 'chat'.]"
-                            })
-                        else:
-                            # Use higher limit for tabular data that needs complete analysis
-                            content_limit = max_tabular_content_length_in_history if is_table else max_file_content_length_in_history
-
-                            display_content = file_content[:content_limit]
-                            if len(file_content) > content_limit:
-                                display_content += "..."
-
-                            # Enhanced message for tabular data
-                            if is_table:
-                                conversation_history_for_api.append({
-                                    'role': 'system', # Represent file as system info
-                                    'content': f"[User uploaded a tabular data file named '{filename}'. This is CSV format data for analysis:\n{display_content}]\nThis is complete tabular data in CSV format. You can perform calculations, analysis, and data operations on this dataset."
-                                })
-                            else:
-                                conversation_history_for_api.append({
-                                    'role': 'system', # Represent file as system info
-                                    'content': f"[User uploaded a file named '{filename}'. Content preview:\n{display_content}]\nUse this file context if relevant."
-                                })
-                    elif role == 'image': # Handle image uploads with extracted text and vision analysis
-                        filename = message.get('filename', 'uploaded_image')
-                        is_user_upload = message.get('metadata', {}).get('is_user_upload', False)
-                        
-                        if is_user_upload:
-                            # This is a user-uploaded image with extracted text and vision analysis
-                            # IMPORTANT: Do NOT include message.get('content') as it contains base64 image data
-                            # which would consume excessive tokens. Only use extracted_text and vision_analysis.
-                            extracted_text = message.get('extracted_text', '')
-                            vision_analysis = message.get('vision_analysis', {})
-                            
-                            # Build comprehensive context from OCR and vision analysis (NO BASE64!)
-                            image_context_parts = [f"[User uploaded an image named '{filename}'.]"]
-                            
-                            if extracted_text:
-                                # Include OCR text from Document Intelligence
-                                extracted_preview = extracted_text[:max_file_content_length_in_history]
-                                if len(extracted_text) > max_file_content_length_in_history:
-                                    extracted_preview += "..."
-                                image_context_parts.append(f"\n\nExtracted Text (OCR):\n{extracted_preview}")
-                            
-                            if vision_analysis:
-                                # Include AI vision analysis
-                                image_context_parts.append("\n\nAI Vision Analysis:")
-                                
-                                if vision_analysis.get('description'):
-                                    image_context_parts.append(f"\nDescription: {vision_analysis['description']}")
-                                
-                                if vision_analysis.get('objects'):
-                                    objects_str = ', '.join(vision_analysis['objects'])
-                                    image_context_parts.append(f"\nObjects detected: {objects_str}")
-                                
-                                if vision_analysis.get('text'):
-                                    image_context_parts.append(f"\nText visible in image: {vision_analysis['text']}")
-                                
-                                if vision_analysis.get('contextual_analysis'):
-                                    image_context_parts.append(f"\nContextual analysis: {vision_analysis['contextual_analysis']}")
-                            
-                            image_context_content = ''.join(image_context_parts) + "\n\nUse this image information to answer questions about the uploaded image."
-                            
-                            # Verify we're not accidentally including base64 data
-                            if 'data:image/' in image_context_content or ';base64,' in image_context_content:
-                                debug_print(f"WARNING: Base64 image data detected in chat history for {filename}! Removing to save tokens.")
-                                # This should never happen, but safety check just in case
-                                image_context_content = f"[User uploaded an image named '{filename}' - image data excluded from chat history to conserve tokens]"
-                            
-                            debug_print(f"[IMAGE_CONTEXT] Adding user-uploaded image to history: {filename}, context length: {len(image_context_content)} chars")
-                            conversation_history_for_api.append({
-                                'role': 'system',
-                                'content': image_context_content
-                            })
-                        else:
-                            # This is a system-generated image (DALL-E, etc.)
-                            # Don't include the image data URL in history either
-                            prompt = message.get('prompt', 'User requested image generation.')
-                            debug_print(f"[IMAGE_CONTEXT] Adding system-generated image to history: {prompt[:100]}...")
-                            conversation_history_for_api.append({
-                                'role': 'system',
-                                'content': f"[Assistant generated an image based on the prompt: '{prompt}']"
-                            })
-
-                    # Ignored roles: 'safety', 'blocked', 'system' (if they are only for augmentation/summary)
+                conversation_history_for_api.extend(history_segments['history_messages'])
+                final_api_source_refs.extend(history_debug_info.get('history_message_source_refs', []))
 
                 # --- Mini SK analysis for tabular files uploaded directly to chat ---
                 if chat_tabular_files and is_tabular_processing_enabled(settings):
@@ -6565,6 +6544,7 @@ def register_route_backend_chats(app):
                                 chat_tabular_analysis,
                             )
                         })
+                        final_api_source_refs.append('system:tabular_results')
 
                         # Collect tool execution citations from SK tabular analysis
                         chat_tabular_sk_citations = collect_tabular_sk_citations(user_id, conversation_id)
@@ -6580,20 +6560,6 @@ def register_route_backend_chats(app):
                         )
                         debug_print("[Chat Tabular SK] Analysis returned None, relying on existing file context messages")
 
-                # Ensure the very last message is the current user's message (it should be if fetched correctly)
-                if not conversation_history_for_api or conversation_history_for_api[-1]['role'] != 'user':
-                    debug_print("Warning: Last message in history is not the user's current message. Appending.")
-                    # This might happen if 'recent_messages' somehow didn't include the latest user message saved in step 2
-                    # Or if the last message had an ignored role. Find the actual user message:
-                    user_msg_found = False
-                    for msg in reversed(recent_messages):
-                        if msg['role'] == 'user' and msg['id'] == user_message_id:
-                            conversation_history_for_api.append({"role": "user", "content": msg['content']})
-                            user_msg_found = True
-                            break
-                    if not user_msg_found: # Still not found? Append the original input as fallback
-                        conversation_history_for_api.append({"role": "user", "content": user_message})
-
             except Exception as e:
                 debug_print(f"Error preparing conversation history: {e}")
                 return jsonify({'error': f'Error preparing conversation history: {str(e)}'}), 500
@@ -6603,6 +6569,7 @@ def register_route_backend_chats(app):
             # 6) Final GPT Call
             # ---------------------------------------------------------------------
             default_system_prompt = settings.get('default_system_prompt', '').strip()
+            default_system_prompt_inserted = False
             # Only add if non-empty and not already present (excluding summary/augmentation system messages)
             if default_system_prompt:
                 # Find if any system message (not summary or augmentation) is present
@@ -6622,6 +6589,27 @@ def register_route_backend_chats(app):
                         "role": "system",
                         "content": default_system_prompt
                     })
+                    final_api_source_refs.insert(insert_idx, 'system:default_prompt')
+                    default_system_prompt_inserted = True
+
+            history_debug_info = enrich_history_context_debug_info(
+                history_debug_info,
+                conversation_history_for_api,
+                final_api_source_refs,
+                path_label='standard',
+                augmentation_message_count=len(system_messages_for_augmentation),
+                default_system_prompt_inserted=default_system_prompt_inserted,
+            )
+            emit_history_context_debug(history_debug_info, conversation_id)
+            thought_tracker.add_thought(
+                'history_context',
+                build_history_context_thought_content(history_debug_info),
+                build_history_context_thought_detail(history_debug_info),
+            )
+            if settings.get('enable_debug_logging', False):
+                agent_citations_list.append(
+                    build_history_context_debug_citation(history_debug_info, 'standard')
+                )
 
             # --- DRY Fallback Chain Helper ---
             def try_fallback_chain(steps):
@@ -6647,38 +6635,6 @@ def register_route_backend_chats(app):
                         continue
                 # If all fail, return default error
                 return ("Sorry, I encountered an error.", gpt_model, None, None)
-
-            # --- Inject facts as a system message at the top of conversation_history_for_api ---
-            def get_facts_for_context(scope_id, scope_type, conversation_id: str = None, agent_id: str = None):
-                settings = get_settings()
-                agents = settings.get('semantic_kernel_agents', [])
-                default_agent = next((a for a in agents if a.get('default_agent')), None)
-                agent_dict = default_agent or (agents[0] if agents else None)
-                agent_id = agent_dict.get('id') if agent_dict else None
-                if not scope_id or not scope_type:
-                    return ""
-                fact_store = FactMemoryStore()
-                kwargs = dict(
-                    scope_type=scope_type,
-                    scope_id=scope_id,
-                )
-                if agent_id:
-                    kwargs['agent_id'] = agent_id
-                if conversation_id:
-                    kwargs['conversation_id'] = conversation_id
-                facts = fact_store.get_facts(**kwargs)
-                if not facts:
-                    return ""
-                fact_lines = []
-                for fact in facts:
-                    value = fact.get('value', '')
-                    if value:
-                        fact_lines.append(f"- {value}")
-                fact_lines.append(f"- agent_id: {agent_id}")
-                fact_lines.append(f"- scope_type: {scope_type}")
-                fact_lines.append(f"- scope_id: {scope_id}")
-                fact_lines.append(f"- conversation_id: {conversation_id}")
-                return "\n".join(fact_lines)
 
             async def run_sk_call(callable_obj, *args, **kwargs):
                 log_event(
@@ -6877,19 +6833,13 @@ def register_route_backend_chats(app):
 
                 # Add additional metadata here to scope the facts to be returned
                 # Allows for additional per agent and per conversation scoping.
-                facts = get_facts_for_context(
+                inject_fact_memory_context(
+                    conversation_history=conversation_history_for_api,
                     scope_id=scope_id,
-                    scope_type=scope_type
+                    scope_type=scope_type,
+                    conversation_id=conversation_id,
+                    agent_id=agent_id,
                 )
-                if facts:
-                    conversation_history_for_api.insert(0, {
-                        "role": "system",
-                        "content": f"<Fact Memory>\n{facts}\n</Fact Memory>"
-                    })
-                conversation_history_for_api.insert(0, {
-                    "role": "system",
-                    "content": f"""<Conversation Metadata>\n<Scope ID: {scope_id}>\n<Scope Type: {scope_type}>\n<Conversation ID: {conversation_id}>\n<Agent ID: {agent_id}>\n</Conversation Metadata>"""
-                })
 
                 agent_message_history = [
                     ChatMessageContent(
@@ -7451,6 +7401,7 @@ def register_route_backend_chats(app):
                 'metadata': {
                     'user_info': user_info_for_assistant,  # Track which user created this assistant message
                     'reasoning_effort': reasoning_effort,
+                    'history_context': history_debug_info,
                     'thread_info': {
                         'thread_id': user_thread_id,  # Same thread as user message
                         'previous_thread_id': user_previous_thread_id,  # Same previous_thread_id as user message
@@ -7876,6 +7827,8 @@ def register_route_backend_chats(app):
                 # Validate chat_type
                 if chat_type not in ('user', 'group'):
                     chat_type = 'user'
+                scope_id = active_group_id if chat_type == 'group' else user_id
+                scope_type = 'group' if chat_type == 'group' else 'user'
                 
                 # Initialize variables
                 search_query = user_message
@@ -7891,6 +7844,10 @@ def register_route_backend_chats(app):
                 conversation_history_limit = math.ceil(raw_conversation_history_limit)
                 if conversation_history_limit % 2 != 0:
                     conversation_history_limit += 1
+                enable_summarize_content_history_beyond_conversation_history_limit = settings.get(
+                    'enable_summarize_content_history_beyond_conversation_history_limit',
+                    True,
+                )
                 
                 # Convert toggles
                 if isinstance(hybrid_search_enabled, str):
@@ -8723,6 +8680,8 @@ def register_route_backend_chats(app):
                 
                 # Prepare conversation history
                 conversation_history_for_api = []
+                history_debug_info = {}
+                final_api_source_refs = []
                 
                 try:
                     all_messages_query = "SELECT * FROM c WHERE c.conversation_id = @conv_id ORDER BY c.timestamp ASC"
@@ -8731,85 +8690,38 @@ def register_route_backend_chats(app):
                         query=all_messages_query, parameters=params_all, 
                         partition_key=conversation_id, enable_cross_partition_query=True
                     ))
-                    all_messages = filter_assistant_artifact_items(all_messages)
-                    
-                    # Sort messages using threading logic
-                    all_messages = sort_messages_by_thread(all_messages)
-                    
-                    total_messages = len(all_messages)
-                    num_recent_messages = min(total_messages, conversation_history_limit)
-                    recent_messages = all_messages[-num_recent_messages:]
-                    
+                    history_segments = build_conversation_history_segments(
+                        all_messages=all_messages,
+                        conversation_history_limit=conversation_history_limit,
+                        enable_summarize_older_messages=enable_summarize_content_history_beyond_conversation_history_limit,
+                        gpt_client=gpt_client,
+                        gpt_model=gpt_model,
+                        user_message_id=user_message_id,
+                        fallback_user_message=user_message,
+                    )
+                    summary_of_older = history_segments['summary_of_older']
+                    chat_tabular_files = history_segments['chat_tabular_files']
+                    history_debug_info = history_segments.get('debug_info', {})
+
+                    if summary_of_older:
+                        conversation_history_for_api.append({
+                            'role': 'system',
+                            'content': (
+                                f"<Summary of previous conversation context>\n{summary_of_older}\n"
+                                "</Summary of previous conversation context>"
+                            )
+                        })
+                        final_api_source_refs.append('system:summary_of_older')
+
                     # Add augmentation messages
                     for aug_msg in system_messages_for_augmentation:
                         conversation_history_for_api.append({
                             'role': aug_msg['role'],
                             'content': aug_msg['content']
                         })
-                    
-                    # Add recent messages (with file role handling)
-                    allowed_roles_in_history = ['user', 'assistant']
-                    max_file_content_length_in_history = 50000
-                    max_tabular_content_length_in_history = 50000
-                    chat_tabular_files = set()  # Track tabular files uploaded directly to chat
-
-                    for message in recent_messages:
-                        role = message.get('role')
-                        content = message.get('content', '')
-
-                        if role in allowed_roles_in_history:
-                            conversation_history_for_api.append({
-                                'role': role,
-                                'content': content
-                            })
-                        elif role == 'file':
-                            filename = message.get('filename', 'uploaded_file')
-                            file_content = message.get('file_content', '')
-                            is_table = message.get('is_table', False)
-                            file_content_source = message.get('file_content_source', '')
-
-                            # Tabular files stored in blob - track for mini SK analysis
-                            if is_table and file_content_source == 'blob':
-                                chat_tabular_files.add(filename)
-                                conversation_history_for_api.append({
-                                    'role': 'system',
-                                    'content': (
-                                        f"[User uploaded a tabular data file named '{filename}'. "
-                                        f"The file is stored in blob storage and available for analysis. "
-                                        f"Use the tabular_processing plugin functions (list_tabular_files, "
-                                        f"describe_tabular_file, aggregate_column, filter_rows, "
-                                        f"query_tabular_data, group_by_aggregate, group_by_datetime_component) to analyze this data. "
-                                        f"The file source is 'chat'.]"
-                                    )
-                                })
-                            else:
-                                content_limit = (
-                                    max_tabular_content_length_in_history if is_table
-                                    else max_file_content_length_in_history
-                                )
-                                display_content = file_content[:content_limit]
-                                if len(file_content) > content_limit:
-                                    display_content += "..."
-
-                                if is_table:
-                                    conversation_history_for_api.append({
-                                        'role': 'system',
-                                        'content': (
-                                            f"[User uploaded a tabular data file named '{filename}'. "
-                                            f"This is CSV format data for analysis:\n{display_content}]\n"
-                                            f"This is complete tabular data in CSV format. You can perform "
-                                            f"calculations, analysis, and data operations on this dataset."
-                                        )
-                                    })
-                                else:
-                                    conversation_history_for_api.append({
-                                        'role': 'system',
-                                        'content': (
-                                            f"[User uploaded a file named '{filename}'. "
-                                            f"Content preview:\n{display_content}]\n"
-                                            f"Use this file context if relevant."
-                                        )
-                                    })
+                        final_api_source_refs.append(f"system:augmentation:{len(final_api_source_refs) + 1}")
+                    conversation_history_for_api.extend(history_segments['history_messages'])
+                    final_api_source_refs.extend(history_debug_info.get('history_message_source_refs', []))
 
                     # --- Mini SK analysis for tabular files uploaded directly to chat ---
                     if chat_tabular_files and is_tabular_processing_enabled(settings):
@@ -8865,6 +8777,7 @@ def register_route_backend_chats(app):
                                     chat_tabular_analysis,
                                 )
                             })
+                            final_api_source_refs.append('system:tabular_results')
 
                             # Collect tool execution citations
                             chat_tabular_sk_citations = collect_tabular_sk_citations(user_id, conversation_id)
@@ -8886,18 +8799,50 @@ def register_route_backend_chats(app):
                 
                 # Add system prompt
                 default_system_prompt = settings.get('default_system_prompt', '').strip()
+                default_system_prompt_inserted = False
                 if default_system_prompt:
                     has_general_system_prompt = any(
                         msg.get('role') == 'system' and not (
+                            msg.get('content', '').startswith('<Summary of previous conversation context>') or
                             "retrieved document excerpts" in msg.get('content', '')
                         )
                         for msg in conversation_history_for_api
                     )
                     if not has_general_system_prompt:
-                        conversation_history_for_api.insert(0, {
+                        insert_idx = 0
+                        if (
+                            conversation_history_for_api
+                            and conversation_history_for_api[0].get('role') == 'system'
+                            and conversation_history_for_api[0].get('content', '').startswith(
+                                '<Summary of previous conversation context>'
+                            )
+                        ):
+                            insert_idx = 1
+                        conversation_history_for_api.insert(insert_idx, {
                             'role': 'system',
                             'content': default_system_prompt
                         })
+                        final_api_source_refs.insert(insert_idx, 'system:default_prompt')
+                        default_system_prompt_inserted = True
+
+                history_debug_info = enrich_history_context_debug_info(
+                    history_debug_info,
+                    conversation_history_for_api,
+                    final_api_source_refs,
+                    path_label='streaming',
+                    augmentation_message_count=len(system_messages_for_augmentation),
+                    default_system_prompt_inserted=default_system_prompt_inserted,
+                )
+                emit_history_context_debug(history_debug_info, conversation_id)
+                yield emit_thought(
+                    'history_context',
+                    build_history_context_thought_content(history_debug_info),
+                    build_history_context_thought_detail(history_debug_info),
+                )
+                if settings.get('enable_debug_logging', False):
+                    agent_citations_list.append(
+                        build_history_context_debug_citation(history_debug_info, 'streaming')
+                    )
                 
                 # Check if agents are enabled and should be used
                 selected_agent = None
@@ -8987,6 +8932,14 @@ def register_route_backend_chats(app):
                             debug_print(f"--- Streaming from Agent: {agent_name_used} (model: {actual_model_used}) ---")
                         else:
                             debug_print(f"[Streaming] ⚠️ No agent selected, falling back to GPT")
+
+                    inject_fact_memory_context(
+                        conversation_history=conversation_history_for_api,
+                        scope_id=scope_id,
+                        scope_type=scope_type,
+                        conversation_id=conversation_id,
+                        agent_id=getattr(selected_agent, 'id', None),
+                    )
                 
                 # Stream the response
                 accumulated_content = ""
@@ -9373,6 +9326,7 @@ def register_route_backend_chats(app):
                         'agent_name': agent_name_used if use_agent_streaming else None,
                         'metadata': {
                             'reasoning_effort': reasoning_effort,
+                            'history_context': history_debug_info,
                             'thread_info': {
                                 'thread_id': user_thread_id,
                                 'previous_thread_id': user_previous_thread_id,
@@ -9535,6 +9489,7 @@ def register_route_backend_chats(app):
                                 'incomplete': True,
                                 'error': error_msg,
                                 'reasoning_effort': reasoning_effort,
+                                'history_context': history_debug_info,
                                 'thread_info': {
                                     'thread_id': user_thread_id,
                                     'previous_thread_id': user_previous_thread_id,
@@ -9806,6 +9761,551 @@ def remove_masked_content(content, masked_ranges):
             result = result[:start] + result[end:]
     
     return result
+
+
+def _format_history_message_ref(message):
+    role = str((message or {}).get('role') or 'unknown')
+    message_id = str((message or {}).get('id') or 'unknown')
+    return f"{role}:{message_id}"
+
+
+def _capture_history_refs(refs, max_items=12):
+    ref_list = [str(ref) for ref in refs if ref]
+    if len(ref_list) <= max_items:
+        return ref_list
+    remaining = len(ref_list) - max_items
+    return ref_list[:max_items] + [f"... (+{remaining} more)"]
+
+
+def _format_history_refs_for_detail(refs):
+    if not refs:
+        return 'none'
+    return ', '.join(str(ref) for ref in refs)
+
+
+def _truncate_history_citation_text(text, max_chars=1600):
+    value = str(text or '').strip()
+    if not value:
+        return ''
+    if len(value) <= max_chars:
+        return value
+    return f"{value[:max_chars]}... [truncated {len(value) - max_chars} chars]"
+
+
+def _serialize_history_citation_value(value, max_chars=1200):
+    if value in (None, '', [], {}):
+        return ''
+
+    if isinstance(value, str):
+        serialized = value
+    else:
+        try:
+            serialized = json.dumps(value, default=str, ensure_ascii=False)
+        except Exception:
+            serialized = str(value)
+
+    compact_serialized = ' '.join(serialized.split())
+    return _truncate_history_citation_text(compact_serialized, max_chars=max_chars)
+
+
+def _build_agent_citation_history_lines(agent_citations, max_citations=4):
+    eligible_citations = []
+    for citation in agent_citations or []:
+        if isinstance(citation, dict):
+            tool_name = str(citation.get('tool_name') or citation.get('function_name') or '').strip()
+            if tool_name.startswith('[Debug]') or tool_name == 'Conversation History':
+                continue
+        eligible_citations.append(citation)
+
+    lines = []
+    for citation in eligible_citations[:max_citations]:
+        if not isinstance(citation, dict):
+            value_summary = _serialize_history_citation_value(citation, max_chars=800)
+            if value_summary:
+                lines.append(f"- Tool result: {value_summary}")
+            continue
+
+        tool_name = str(citation.get('tool_name') or citation.get('function_name') or 'Tool invocation').strip()
+        argument_summary = _serialize_history_citation_value(citation.get('function_arguments'), max_chars=350)
+        result_summary = _serialize_history_citation_value(citation.get('function_result'), max_chars=1400)
+        error_summary = ''
+        if citation.get('success') is False:
+            error_summary = _serialize_history_citation_value(citation.get('error_message'), max_chars=400)
+
+        line_parts = [tool_name]
+        if argument_summary:
+            line_parts.append(f"args={argument_summary}")
+        if result_summary:
+            line_parts.append(f"result={result_summary}")
+        if error_summary:
+            line_parts.append(f"error={error_summary}")
+        lines.append(f"- {' | '.join(line_parts)}")
+
+    remaining = len(eligible_citations) - min(len(eligible_citations), max_citations)
+    if remaining > 0:
+        lines.append(f"- ... (+{remaining} more prior tool results)")
+
+    return lines
+
+
+def _build_document_citation_history_lines(hybrid_citations, max_citations=5):
+    lines = []
+    for citation in (hybrid_citations or [])[:max_citations]:
+        if not isinstance(citation, dict):
+            continue
+
+        file_name = str(citation.get('file_name') or 'Document').strip()
+        line_parts = [file_name]
+
+        page_number = citation.get('page_number')
+        if page_number not in (None, ''):
+            line_parts.append(f"page {page_number}")
+
+        chunk_sequence = citation.get('chunk_sequence')
+        chunk_id = citation.get('chunk_id')
+        if chunk_sequence not in (None, ''):
+            line_parts.append(f"chunk {chunk_sequence}")
+        elif chunk_id not in (None, ''):
+            line_parts.append(f"chunk {chunk_id}")
+
+        classification = citation.get('classification')
+        if classification not in (None, ''):
+            line_parts.append(str(classification))
+
+        lines.append(f"- {', '.join(line_parts)}")
+
+    remaining = max(0, len(hybrid_citations or []) - min(len(hybrid_citations or []), max_citations))
+    if remaining > 0:
+        lines.append(f"- ... (+{remaining} more cited documents)")
+
+    return lines
+
+
+def _build_web_citation_history_lines(web_search_citations, max_citations=4):
+    lines = []
+    for citation in (web_search_citations or [])[:max_citations]:
+        if not isinstance(citation, dict):
+            continue
+
+        title = str(citation.get('title') or citation.get('url') or 'Web source').strip()
+        url = str(citation.get('url') or '').strip()
+        if url and url != title:
+            lines.append(f"- {title} ({url})")
+        else:
+            lines.append(f"- {title}")
+
+    remaining = max(0, len(web_search_citations or []) - min(len(web_search_citations or []), max_citations))
+    if remaining > 0:
+        lines.append(f"- ... (+{remaining} more web sources)")
+
+    return lines
+
+
+def build_assistant_history_content_with_citations(message, content):
+    base_content = str(content or '').strip()
+    citation_sections = []
+
+    agent_lines = _build_agent_citation_history_lines(message.get('agent_citations', []))
+    if agent_lines:
+        citation_sections.append("Prior tool results:\n" + "\n".join(agent_lines))
+
+    document_lines = _build_document_citation_history_lines(message.get('hybrid_citations', []))
+    if document_lines:
+        citation_sections.append("Prior cited documents:\n" + "\n".join(document_lines))
+
+    web_lines = _build_web_citation_history_lines(message.get('web_search_citations', []))
+    if web_lines:
+        citation_sections.append("Prior cited web sources:\n" + "\n".join(web_lines))
+
+    if not citation_sections:
+        return content
+
+    citation_context = (
+        "<Supporting citation context from this assistant turn>\n"
+        + "\n\n".join(citation_sections)
+        + "\n</Supporting citation context from this assistant turn>"
+    )
+    citation_context = _truncate_history_citation_text(citation_context, max_chars=3200)
+
+    if not base_content:
+        return citation_context
+
+    return f"{base_content}\n\n{citation_context}"
+
+
+def build_history_context_thought_content(history_debug_info):
+    history_debug_info = history_debug_info or {}
+    stored_total = history_debug_info.get('stored_total_messages', 0)
+    recent_count = history_debug_info.get('recent_message_count', 0)
+    final_api_count = history_debug_info.get('final_api_message_count', 0)
+    older_count = history_debug_info.get('older_message_count', 0)
+    summary_requested = history_debug_info.get('summary_requested', False)
+    summary_used = history_debug_info.get('summary_used', False)
+
+    summary_note = 'no older messages'
+    if older_count > 0:
+        if summary_used:
+            summary_note = f"summarized {history_debug_info.get('summarized_message_count', 0)} older"
+        elif summary_requested:
+            summary_note = 'older summary unavailable'
+        else:
+            summary_note = 'older summary disabled'
+
+    return (
+        f"Prepared {final_api_count} model history messages from {stored_total} stored messages "
+        f"(recent={recent_count}; {summary_note})"
+    )
+
+
+def build_history_context_thought_detail(history_debug_info):
+    history_debug_info = history_debug_info or {}
+    lines = [
+        f"path: {history_debug_info.get('path', 'unknown')}",
+        (
+            f"stored_total={history_debug_info.get('stored_total_messages', 0)}, "
+            f"history_limit={history_debug_info.get('history_limit', 0)}, "
+            f"older_count={history_debug_info.get('older_message_count', 0)}, "
+            f"recent_count={history_debug_info.get('recent_message_count', 0)}, "
+            f"summary_requested={history_debug_info.get('summary_requested', False)}, "
+            f"summary_used={history_debug_info.get('summary_used', False)}, "
+            f"augmentation_count={history_debug_info.get('augmentation_message_count', 0)}, "
+            f"default_system_prompt_inserted={history_debug_info.get('default_system_prompt_inserted', False)}"
+        ),
+        f"older_refs: {_format_history_refs_for_detail(history_debug_info.get('older_message_refs', []))}",
+        f"recent_refs: {_format_history_refs_for_detail(history_debug_info.get('selected_recent_message_refs', []))}",
+        f"summarized_refs: {_format_history_refs_for_detail(history_debug_info.get('summarized_message_refs', []))}",
+        f"skipped_inactive_refs: {_format_history_refs_for_detail(history_debug_info.get('skipped_inactive_message_refs', []))}",
+        f"skipped_masked_refs: {_format_history_refs_for_detail(history_debug_info.get('skipped_masked_message_refs', []))}",
+        f"masked_range_refs: {_format_history_refs_for_detail(history_debug_info.get('masked_range_message_refs', []))}",
+        f"history_segment_refs: {_format_history_refs_for_detail(history_debug_info.get('history_message_source_refs', []))}",
+        f"final_api_roles: {_format_history_refs_for_detail(history_debug_info.get('final_api_message_roles', []))}",
+        f"final_api_refs: {_format_history_refs_for_detail(history_debug_info.get('final_api_source_refs', []))}",
+    ]
+    return "\n".join(lines)
+
+
+def build_history_context_debug_citation(history_debug_info, path_label):
+    history_debug_info = dict(history_debug_info or {})
+    history_debug_info['path'] = path_label
+    return {
+        'tool_name': 'Conversation History',
+        'function_arguments': json.dumps({
+            'path': path_label,
+            'stored_total_messages': history_debug_info.get('stored_total_messages', 0),
+            'history_limit': history_debug_info.get('history_limit', 0),
+            'older_message_count': history_debug_info.get('older_message_count', 0),
+            'recent_message_count': history_debug_info.get('recent_message_count', 0),
+            'final_api_message_count': history_debug_info.get('final_api_message_count', 0),
+            'summary_requested': history_debug_info.get('summary_requested', False),
+            'summary_used': history_debug_info.get('summary_used', False),
+        }),
+        'function_result': build_history_context_thought_detail(history_debug_info),
+        'timestamp': datetime.utcnow().isoformat(),
+    }
+
+
+def enrich_history_context_debug_info(
+    history_debug_info,
+    conversation_history_for_api,
+    final_api_source_refs,
+    path_label,
+    augmentation_message_count=0,
+    default_system_prompt_inserted=False,
+):
+    enriched = dict(history_debug_info or {})
+    enriched['path'] = path_label
+    enriched['augmentation_message_count'] = augmentation_message_count
+    enriched['default_system_prompt_inserted'] = bool(default_system_prompt_inserted)
+    enriched['final_api_message_count'] = len(conversation_history_for_api or [])
+    enriched['final_api_message_roles'] = [
+        str((message or {}).get('role') or 'unknown')
+        for message in (conversation_history_for_api or [])
+    ]
+    enriched['final_api_source_refs'] = _capture_history_refs(final_api_source_refs, max_items=20)
+    return enriched
+
+
+def emit_history_context_debug(history_debug_info, conversation_id):
+    debug_payload = history_debug_info or {}
+    debug_print(
+        f"[History Context][{debug_payload.get('path', 'unknown')}] conversation_id={conversation_id} | "
+        f"{json.dumps(debug_payload, default=str)}"
+    )
+
+
+def build_conversation_history_segments(
+    all_messages,
+    conversation_history_limit,
+    enable_summarize_older_messages=False,
+    gpt_client=None,
+    gpt_model=None,
+    user_message_id=None,
+    fallback_user_message="",
+):
+    """Build shared conversation history segments for chat completions."""
+    conversation_history_messages = []
+    summary_of_older = ""
+    chat_tabular_files = set()
+
+    artifact_payload_map = build_message_artifact_payload_map(all_messages or [])
+    filtered_messages = filter_assistant_artifact_items(all_messages or [])
+    filtered_messages = hydrate_agent_citations_from_artifacts(filtered_messages, artifact_payload_map)
+    ordered_messages = sort_messages_by_thread(filtered_messages)
+
+    total_messages = len(ordered_messages)
+    num_recent_messages = min(total_messages, conversation_history_limit)
+    num_older_messages = total_messages - num_recent_messages
+
+    recent_messages = ordered_messages[-num_recent_messages:] if num_recent_messages else []
+    older_messages_to_summarize = ordered_messages[:num_older_messages]
+
+    summarized_message_refs = []
+    skipped_inactive_message_refs = []
+    skipped_masked_message_refs = []
+    masked_range_message_refs = []
+    history_message_source_refs = []
+    appended_fallback_user_message = False
+
+    if enable_summarize_older_messages and older_messages_to_summarize and gpt_client and gpt_model:
+        debug_print(
+            f"Summarizing {len(older_messages_to_summarize)} older messages for current conversation history"
+        )
+        summary_prompt_older = (
+            "Summarize the following conversation history concisely (around 50-100 words), "
+            "focusing on key facts, decisions, or context that might be relevant for future turns. "
+            "Do not add any introductory phrases like 'Here is a summary'.\n\n"
+            "Conversation History:\n"
+        )
+        message_texts_older = []
+        for message in older_messages_to_summarize:
+            role = message.get('role', 'user')
+            metadata = message.get('metadata', {})
+            thread_info = metadata.get('thread_info', {})
+            active_thread = thread_info.get('active_thread')
+
+            if active_thread is False:
+                debug_print(f"[THREAD] Skipping inactive thread message {message.get('id')} from summary")
+                skipped_inactive_message_refs.append(_format_history_message_ref(message))
+                continue
+
+            if role in ['system', 'safety', 'blocked', 'image', 'file']:
+                continue
+
+            content = message.get('content', '')
+            if role == 'assistant':
+                content = build_assistant_history_content_with_citations(message, content)
+            message_texts_older.append(f"{role.upper()}: {content}")
+            summarized_message_refs.append(_format_history_message_ref(message))
+
+        if message_texts_older:
+            summary_prompt_older += "\n".join(message_texts_older)
+            try:
+                summary_response_older = gpt_client.chat.completions.create(
+                    model=gpt_model,
+                    messages=[{"role": "system", "content": summary_prompt_older}],
+                    max_tokens=150,
+                    temperature=0.3,
+                )
+                summary_of_older = summary_response_older.choices[0].message.content.strip()
+                debug_print(f"Generated summary: {summary_of_older}")
+            except Exception as exc:
+                debug_print(f"Error summarizing older conversation history: {exc}")
+                summary_of_older = ""
+        else:
+            debug_print("No summarizable content found in older messages.")
+
+    allowed_roles_in_history = ['user', 'assistant']
+    max_file_content_length_in_history = 50000
+    max_tabular_content_length_in_history = 50000
+
+    for message in recent_messages:
+        role = message.get('role')
+        content = message.get('content')
+        metadata = message.get('metadata', {})
+
+        thread_info = metadata.get('thread_info', {})
+        active_thread = thread_info.get('active_thread')
+        if active_thread is False:
+            debug_print(
+                f"[THREAD] Skipping inactive thread message {message.get('id')} "
+                f"(thread_id: {thread_info.get('thread_id')}, attempt: {thread_info.get('thread_attempt')})"
+            )
+            skipped_inactive_message_refs.append(_format_history_message_ref(message))
+            continue
+
+        if metadata.get('masked', False):
+            debug_print(f"[MASK] Skipping fully masked message {message.get('id')}")
+            skipped_masked_message_refs.append(_format_history_message_ref(message))
+            continue
+
+        masked_ranges = metadata.get('masked_ranges', [])
+        if masked_ranges and content:
+            content = remove_masked_content(content, masked_ranges)
+            masked_range_message_refs.append(_format_history_message_ref(message))
+            debug_print(f"[MASK] Applied {len(masked_ranges)} masked ranges to message {message.get('id')}")
+
+        if role in allowed_roles_in_history:
+            if role == 'assistant':
+                content = build_assistant_history_content_with_citations(message, content)
+            conversation_history_messages.append({"role": role, "content": content})
+            history_message_source_refs.append(_format_history_message_ref(message))
+        elif role == 'file':
+            filename = message.get('filename', 'uploaded_file')
+            file_content = message.get('file_content', '')
+            is_table = message.get('is_table', False)
+            file_content_source = message.get('file_content_source', '')
+
+            if is_table and file_content_source == 'blob':
+                chat_tabular_files.add(filename)
+                conversation_history_messages.append({
+                    'role': 'system',
+                    'content': (
+                        f"[User uploaded a tabular data file named '{filename}'. "
+                        f"The file is stored in blob storage and available for analysis. "
+                        f"Use the tabular_processing plugin functions (list_tabular_files, describe_tabular_file, "
+                        f"aggregate_column, filter_rows, query_tabular_data, group_by_aggregate, "
+                        f"group_by_datetime_component) to analyze this data. "
+                        f"The file source is 'chat'.]"
+                    )
+                })
+            else:
+                content_limit = (
+                    max_tabular_content_length_in_history
+                    if is_table else max_file_content_length_in_history
+                )
+                display_content = file_content[:content_limit]
+                if len(file_content) > content_limit:
+                    display_content += "..."
+
+                if is_table:
+                    conversation_history_messages.append({
+                        'role': 'system',
+                        'content': (
+                            f"[User uploaded a tabular data file named '{filename}'. This is CSV format data for analysis:\n"
+                            f"{display_content}]\n"
+                            "This is complete tabular data in CSV format. You can perform calculations, analysis, and "
+                            "data operations on this dataset."
+                        )
+                    })
+                else:
+                    conversation_history_messages.append({
+                        'role': 'system',
+                        'content': (
+                            f"[User uploaded a file named '{filename}'. Content preview:\n{display_content}]\n"
+                            "Use this file context if relevant."
+                        )
+                    })
+            history_message_source_refs.append(f"system:file:{message.get('id', 'unknown')}")
+        elif role == 'image':
+            filename = message.get('filename', 'uploaded_image')
+            is_user_upload = metadata.get('is_user_upload', False)
+
+            if is_user_upload:
+                extracted_text = message.get('extracted_text', '')
+                vision_analysis = message.get('vision_analysis', {})
+                image_context_parts = [f"[User uploaded an image named '{filename}'.]"]
+
+                if extracted_text:
+                    extracted_preview = extracted_text[:max_file_content_length_in_history]
+                    if len(extracted_text) > max_file_content_length_in_history:
+                        extracted_preview += "..."
+                    image_context_parts.append(f"\n\nExtracted Text (OCR):\n{extracted_preview}")
+
+                if vision_analysis:
+                    image_context_parts.append("\n\nAI Vision Analysis:")
+                    if vision_analysis.get('description'):
+                        image_context_parts.append(f"\nDescription: {vision_analysis['description']}")
+                    if vision_analysis.get('objects'):
+                        objects_str = ', '.join(vision_analysis['objects'])
+                        image_context_parts.append(f"\nObjects detected: {objects_str}")
+                    if vision_analysis.get('text'):
+                        image_context_parts.append(f"\nText visible in image: {vision_analysis['text']}")
+                    if vision_analysis.get('contextual_analysis'):
+                        image_context_parts.append(
+                            f"\nContextual analysis: {vision_analysis['contextual_analysis']}"
+                        )
+
+                image_context_content = ''.join(image_context_parts)
+                image_context_content += "\n\nUse this image information to answer questions about the uploaded image."
+
+                if 'data:image/' in image_context_content or ';base64,' in image_context_content:
+                    debug_print(
+                        f"WARNING: Base64 image data detected in chat history for {filename}! Removing to save tokens."
+                    )
+                    image_context_content = (
+                        f"[User uploaded an image named '{filename}' - image data excluded from chat history to conserve tokens]"
+                    )
+
+                debug_print(
+                    f"[IMAGE_CONTEXT] Adding user-uploaded image to history: {filename}, "
+                    f"context length: {len(image_context_content)} chars"
+                )
+                conversation_history_messages.append({
+                    'role': 'system',
+                    'content': image_context_content,
+                })
+            else:
+                prompt = message.get('prompt', 'User requested image generation.')
+                debug_print(f"[IMAGE_CONTEXT] Adding system-generated image to history: {prompt[:100]}...")
+                conversation_history_messages.append({
+                    'role': 'system',
+                    'content': f"[Assistant generated an image based on the prompt: '{prompt}']",
+                })
+
+            history_message_source_refs.append(f"system:image:{message.get('id', 'unknown')}")
+
+    if not conversation_history_messages or conversation_history_messages[-1].get('role') != 'user':
+        debug_print("Warning: Last message in history is not the user's current message. Appending.")
+        user_msg_found = False
+        for message in reversed(recent_messages):
+            if message.get('role') != 'user':
+                continue
+            if user_message_id and message.get('id') != user_message_id:
+                continue
+            conversation_history_messages.append({
+                'role': 'user',
+                'content': message.get('content', ''),
+            })
+            history_message_source_refs.append(_format_history_message_ref(message))
+            user_msg_found = True
+            break
+
+        if not user_msg_found and fallback_user_message:
+            conversation_history_messages.append({
+                'role': 'user',
+                'content': fallback_user_message,
+            })
+            history_message_source_refs.append('user:fallback_input')
+            appended_fallback_user_message = True
+
+    debug_info = {
+        'history_limit': conversation_history_limit,
+        'summary_requested': bool(enable_summarize_older_messages),
+        'summary_used': bool(summary_of_older),
+        'stored_total_messages': total_messages,
+        'older_message_count': len(older_messages_to_summarize),
+        'recent_message_count': len(recent_messages),
+        'summarized_message_count': len(summarized_message_refs),
+        'older_message_refs': _capture_history_refs(
+            [_format_history_message_ref(message) for message in older_messages_to_summarize]
+        ),
+        'selected_recent_message_refs': _capture_history_refs(
+            [_format_history_message_ref(message) for message in recent_messages]
+        ),
+        'summarized_message_refs': _capture_history_refs(summarized_message_refs),
+        'skipped_inactive_message_refs': _capture_history_refs(skipped_inactive_message_refs),
+        'skipped_masked_message_refs': _capture_history_refs(skipped_masked_message_refs),
+        'masked_range_message_refs': _capture_history_refs(masked_range_message_refs),
+        'history_message_source_refs': _capture_history_refs(history_message_source_refs, max_items=20),
+        'appended_fallback_user_message': appended_fallback_user_message,
+    }
+
+    return {
+        'summary_of_older': summary_of_older,
+        'history_messages': conversation_history_messages,
+        'chat_tabular_files': chat_tabular_files,
+        'debug_info': debug_info,
+    }
 
 
 def _extract_web_search_citations_from_content(content: str) -> List[Dict[str, str]]:

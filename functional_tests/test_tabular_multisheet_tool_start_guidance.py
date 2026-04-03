@@ -2,8 +2,8 @@
 # test_tabular_multisheet_tool_start_guidance.py
 """
 Functional test for multi-sheet tabular discovery iteration.
-Version: 0.240.043
-Implemented in: 0.240.035; 0.240.036; 0.240.039; 0.240.040; 0.240.041; 0.240.042; 0.240.043
+Version: 0.240.049
+Implemented in: 0.240.035; 0.240.036; 0.240.039; 0.240.040; 0.240.041; 0.240.042; 0.240.043; 0.240.048; 0.240.049
 
 This test ensures multi-sheet workbook analysis can start with generic workbook
 discovery, carry discovery summaries into retries, and still require
@@ -116,11 +116,12 @@ def test_route_uses_generic_multisheet_discovery_iteration_and_version_bump():
         'analysis_requires_immediate_tool_choice = has_multi_sheet_workbook and not schema_summary_mode',
         'You are a tabular recovery planner.',
         'Choose the next 1-3 analytical tabular calls that should be executed directly.',
+        'If a prior result reports total_matches > returned_rows or distinct_count > returned_values for a full-list question, rerun with a higher max_rows or max_values before answering.',
         'maybe_recover_tabular_analysis_with_llm_reviewer(',
     ]
     missing = [snippet for snippet in required_snippets if snippet not in source]
     assert not missing, f'Missing route discovery-iteration snippets: {missing}'
-    assert read_config_version() == '0.240.043'
+    assert read_config_version() == '0.240.049'
 
     print('✅ Generic multi-sheet discovery iteration guidance passed')
     return True

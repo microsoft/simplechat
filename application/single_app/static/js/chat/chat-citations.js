@@ -10,6 +10,9 @@ import { showEnhancedCitationModal } from './chat-enhanced-citations.js';
 // ------------------
 
 const chatboxEl = document.getElementById("chatbox");
+const AGENT_CITATION_PREVIEW_ROWS = 3;
+const AGENT_CITATION_EXPANDED_ROWS = 25;
+let activeAgentCitationState = null;
 
 function escapeAttribute(value) {
   return String(value)
@@ -310,8 +313,194 @@ export function showMetadataModal(metadataType, metadataContent, fileName) {
   modal.show();
 }
 
-export function showAgentCitationModal(toolName, toolArgs, toolResult) {
-  // Create or reuse the agent citation modal
+function parseAgentCitationValue(value) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  if (typeof value === "object") {
+    return value;
+  }
+
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  const trimmedValue = value.trim();
+  if (!trimmedValue || (trimmedValue[0] !== "{" && trimmedValue[0] !== "[")) {
+    return value;
+  }
+
+  try {
+    return JSON.parse(trimmedValue);
+  } catch (error) {
+    return value;
+  }
+}
+
+function prettyPrintAgentCitationValue(value) {
+  if (value === null || value === undefined || value === "") {
+    return "No result";
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch (error) {
+    return String(value);
+  }
+}
+
+function cloneAgentCitationPayload(value) {
+  if (value === null || value === undefined) {
+    return value;
+  }
+
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (error) {
+    return value;
+  }
+}
+
+function isTabularAgentCitationResult(resultPayload) {
+  return Boolean(
+    resultPayload
+    && typeof resultPayload === "object"
+    && !Array.isArray(resultPayload)
+    && Array.isArray(resultPayload.data)
+    && (
+      Object.prototype.hasOwnProperty.call(resultPayload, "returned_rows")
+      || Object.prototype.hasOwnProperty.call(resultPayload, "total_matches")
+      || Object.prototype.hasOwnProperty.call(resultPayload, "filename")
+      || Object.prototype.hasOwnProperty.call(resultPayload, "selected_sheet")
+    )
+  );
+}
+
+function getAgentCitationRowLimit(rowMode, totalRowCount) {
+  if (rowMode === "all") {
+    return totalRowCount;
+  }
+
+  if (rowMode === "expanded25") {
+    return Math.min(totalRowCount, AGENT_CITATION_EXPANDED_ROWS);
+  }
+
+  return Math.min(totalRowCount, AGENT_CITATION_PREVIEW_ROWS);
+}
+
+function buildAgentCitationResultView(resultPayload, rowMode) {
+  if (!isTabularAgentCitationResult(resultPayload)) {
+    return {
+      resultText: prettyPrintAgentCitationValue(resultPayload),
+      summaryText: "",
+      controls: [],
+    };
+  }
+
+  const allRows = Array.isArray(resultPayload.data) ? resultPayload.data : [];
+  const totalRowCount = allRows.length;
+  const displayedRowCount = getAgentCitationRowLimit(rowMode, totalRowCount);
+  const displayedPayload = cloneAgentCitationPayload(resultPayload) || {};
+  displayedPayload.data = allRows.slice(0, displayedRowCount);
+  displayedPayload.displayed_rows = displayedRowCount;
+  displayedPayload.data_rows_limited = displayedRowCount < totalRowCount;
+
+  const summaryParts = [];
+  if (Object.prototype.hasOwnProperty.call(resultPayload, "total_matches")) {
+    summaryParts.push(`total_matches: ${resultPayload.total_matches}`);
+  }
+  if (Object.prototype.hasOwnProperty.call(resultPayload, "returned_rows")) {
+    summaryParts.push(`returned_rows: ${resultPayload.returned_rows}`);
+  }
+  summaryParts.push(`showing ${displayedRowCount} row${displayedRowCount === 1 ? "" : "s"}`);
+
+  const controls = [];
+  if (totalRowCount > AGENT_CITATION_PREVIEW_ROWS && rowMode !== "preview") {
+    controls.push({ mode: "preview", label: "Show preview" });
+  }
+  if (
+    totalRowCount > AGENT_CITATION_EXPANDED_ROWS
+    && rowMode !== "expanded25"
+  ) {
+    controls.push({ mode: "expanded25", label: "Show 25 rows" });
+  }
+  if (
+    totalRowCount > AGENT_CITATION_PREVIEW_ROWS
+    && rowMode !== "all"
+  ) {
+    controls.push({ mode: "all", label: "Show all rows" });
+  }
+
+  return {
+    resultText: JSON.stringify(displayedPayload, null, 2),
+    summaryText: summaryParts.join(" • "),
+    controls,
+  };
+}
+
+function renderAgentCitationResult(toolResultEl, toolResultSummaryEl, toolResultActionsEl) {
+  if (!toolResultEl || !toolResultSummaryEl || !toolResultActionsEl || !activeAgentCitationState) {
+    return;
+  }
+
+  const resultView = buildAgentCitationResultView(
+    activeAgentCitationState.parsedResult,
+    activeAgentCitationState.rowMode,
+  );
+
+  toolResultEl.textContent = resultView.resultText || "No result";
+  toolResultSummaryEl.textContent = resultView.summaryText || "";
+  toolResultSummaryEl.classList.toggle("d-none", !resultView.summaryText);
+
+  toolResultActionsEl.innerHTML = "";
+  toolResultActionsEl.classList.toggle("d-none", resultView.controls.length === 0);
+  resultView.controls.forEach((control) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn btn-sm btn-outline-secondary";
+    button.textContent = control.label;
+    button.setAttribute("data-row-mode", control.mode);
+    button.addEventListener("click", () => {
+      activeAgentCitationState.rowMode = control.mode;
+      renderAgentCitationResult(toolResultEl, toolResultSummaryEl, toolResultActionsEl);
+    });
+    toolResultActionsEl.appendChild(button);
+  });
+}
+
+async function fetchAgentCitationArtifact(conversationId, artifactId) {
+  if (!conversationId || !artifactId) {
+    return null;
+  }
+
+  const response = await fetch(
+    `/api/conversation/${encodeURIComponent(conversationId)}/agent-citation/${encodeURIComponent(artifactId)}`,
+    {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+    }
+  );
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    payload = null;
+  }
+
+  if (!response.ok) {
+    throw new Error(payload?.error || `Server responded with status ${response.status}`);
+  }
+
+  return payload?.citation || null;
+}
+
+export async function showAgentCitationModal(toolName, toolArgs, toolResult, options = {}) {
   let modalContainer = document.getElementById("agent-citation-modal");
   if (!modalContainer) {
     modalContainer = document.createElement("div");
@@ -344,8 +533,12 @@ export function showAgentCitationModal(toolName, toolArgs, toolResult) {
               <pre id="agent-tool-args" class="bg-light p-2 rounded" style="white-space: pre-wrap; word-wrap: break-word;"></pre>
             </div>
             <div class="mb-3">
-              <h6 class="fw-bold">Function Result:</h6>
-              <pre id="agent-tool-result" class="bg-light p-2 rounded" style="white-space: pre-wrap; word-wrap: break-word;"></pre>
+              <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                <h6 class="fw-bold mb-0">Function Result:</h6>
+                <div id="agent-tool-result-summary" class="text-muted small d-none"></div>
+              </div>
+              <div id="agent-tool-result-actions" class="d-none mt-2 d-flex flex-wrap gap-2"></div>
+              <pre id="agent-tool-result" class="bg-light p-2 rounded mt-2" style="white-space: pre-wrap; word-wrap: break-word;"></pre>
             </div>
           </div>
         </div>
@@ -354,109 +547,62 @@ export function showAgentCitationModal(toolName, toolArgs, toolResult) {
     document.body.appendChild(modalContainer);
   }
 
-  // Update the content
   const toolNameEl = document.getElementById("agent-tool-name");
   const toolArgsEl = document.getElementById("agent-tool-args");
   const toolResultEl = document.getElementById("agent-tool-result");
+  const toolResultSummaryEl = document.getElementById("agent-tool-result-summary");
+  const toolResultActionsEl = document.getElementById("agent-tool-result-actions");
   const toolSourceEl = document.getElementById("agent-tool-source");
   const toolUrlEl = document.getElementById("agent-tool-url");
   const toolUrlMetaEl = document.getElementById("agent-tool-url-meta");
 
-  if (toolNameEl) {
-    toolNameEl.textContent = toolName || "Unknown";
-  }
-  
-  let parsedArgs = null;
-  if (toolArgsEl) {
-    // Handle empty or no parameters more gracefully
-    let argsContent = "";
-    
-    try {
-      if (!toolArgs || toolArgs === "" || toolArgs === "{}") {
-        argsContent = "No parameters required";
-      } else {
-        parsedArgs = JSON.parse(toolArgs);
-        // Check if it's an empty object
-        if (typeof parsedArgs === 'object' && Object.keys(parsedArgs).length === 0) {
-          argsContent = "No parameters required";
-        } else {
-          argsContent = JSON.stringify(parsedArgs, null, 2);
-        }
-      }
-    } catch (e) {
-      // If it's not valid JSON, check if it's an object representation
-      if (toolArgs === "[object Object]" || !toolArgs || toolArgs.trim() === "") {
-        argsContent = "No parameters required";
-      } else {
-        argsContent = toolArgs;
-      }
-    }
-    
-    // Add truncation with expand/collapse if content is long
-    if (argsContent.length > 300 && argsContent !== "No parameters required") {
-      const truncatedContent = argsContent.substring(0, 300);
-      const remainingContent = argsContent.substring(300);
-      
-      toolArgsEl.innerHTML = `
-        <div class="args-content position-relative">
-          <span class="args-truncated">${escapeHtml(truncatedContent)}</span><span class="args-remaining" style="display: none;">${escapeHtml(remainingContent)}</span>
-          <button class="btn btn-link p-0 ms-2 expand-args-btn" 
-                  style="font-size: 0.75rem; text-decoration: none; vertical-align: baseline;" 
-                  onclick="toggleArgsExpansion(this)">
-            <i class="bi bi-chevron-down" style="font-size: 0.7rem;"></i>
-          </button>
-        </div>
-      `;
-    } else {
-      toolArgsEl.textContent = argsContent;
-    }
-  }
-  
-  if (toolResultEl) {
-    // Handle result formatting and truncation with expand/collapse
-    let resultContent = "";
-    let parsedResult = null;
-    
-    try {
-      if (!toolResult || toolResult === "" || toolResult === "{}") {
-        resultContent = "No result";
-      } else if (toolResult === "[object Object]") {
-        resultContent = "No result data available";
-      } else {
-        // Try to parse as JSON first
-        try {
-          parsedResult = JSON.parse(toolResult);
-          resultContent = JSON.stringify(parsedResult, null, 2);
-        } catch (parseError) {
-          // If not JSON, treat as string
-          resultContent = toolResult;
-        }
-      }
-    } catch (e) {
-      resultContent = toolResult || "No result";
-    }
+  const artifactId = options.artifactId || "";
+  const conversationId = options.conversationId
+    || window.chatConversations?.getCurrentConversationId?.()
+    || window.currentConversationId
+    || "";
+  let citationPayload = {
+    tool_name: toolName,
+    function_arguments: toolArgs,
+    function_result: toolResult,
+  };
 
+  if (artifactId && conversationId) {
+    showLoadingIndicator();
+    try {
+      const hydratedCitation = await fetchAgentCitationArtifact(conversationId, artifactId);
+      if (hydratedCitation && typeof hydratedCitation === "object") {
+        citationPayload = hydratedCitation;
+      }
+    } catch (error) {
+      console.warn("Failed to hydrate agent citation artifact, using compact payload.", error);
+    } finally {
+      hideLoadingIndicator();
+    }
+  }
+
+  const parsedArgs = parseAgentCitationValue(citationPayload.function_arguments ?? toolArgs);
+  const parsedResult = parseAgentCitationValue(citationPayload.function_result ?? toolResult);
+  activeAgentCitationState = {
+    rowMode: "preview",
+    parsedArgs,
+    parsedResult,
+  };
+
+  if (toolNameEl) {
+    toolNameEl.textContent = citationPayload.tool_name || toolName || "Unknown";
+  }
+
+  if (toolArgsEl) {
+    toolArgsEl.textContent = parsedArgs === null
+      ? "No parameters required"
+      : prettyPrintAgentCitationValue(parsedArgs);
+  }
+
+  if (toolResultEl && toolResultSummaryEl && toolResultActionsEl) {
     const citationDetails = extractAgentCitationDetails(parsedResult || parsedArgs);
     updateAgentCitationSource(toolSourceEl, toolUrlEl, toolUrlMetaEl, citationDetails);
-    
-    // Add truncation with expand/collapse if content is long
-    if (resultContent.length > 300) {
-      const truncatedContent = resultContent.substring(0, 300);
-      const remainingContent = resultContent.substring(300);
-      
-      toolResultEl.innerHTML = `
-        <div class="result-content position-relative">
-          <span class="result-truncated">${escapeHtml(truncatedContent)}</span><span class="result-remaining" style="display: none;">${escapeHtml(remainingContent)}</span>
-          <button class="btn btn-link p-0 ms-2 expand-result-btn" 
-                  style="font-size: 0.75rem; text-decoration: none; vertical-align: baseline;" 
-                  onclick="toggleResultExpansion(this)">
-            <i class="bi bi-chevron-down" style="font-size: 0.7rem;"></i>
-          </button>
-        </div>
-      `;
-    } else {
-      toolResultEl.textContent = resultContent;
-    }
+    renderAgentCitationResult(toolResultEl, toolResultSummaryEl, toolResultActionsEl);
   }
 
   const modal = new bootstrap.Modal(modalContainer);
@@ -681,6 +827,10 @@ if (chatboxEl) {
       const toolName = target.getAttribute("data-tool-name");
       const toolArgs = target.getAttribute("data-tool-args");
       const toolResult = target.getAttribute("data-tool-result");
+      const artifactId = target.getAttribute("data-artifact-id");
+      const conversationId = target.getAttribute("data-conversation-id")
+        || window.chatConversations?.getCurrentConversationId?.()
+        || window.currentConversationId;
       
       if (!toolName) {
         console.warn("Agent citation link clicked but data-tool-name is missing.");
@@ -688,7 +838,10 @@ if (chatboxEl) {
         return;
       }
       
-      showAgentCitationModal(toolName, toolArgs, toolResult);
+      void showAgentCitationModal(toolName, toolArgs, toolResult, {
+        artifactId,
+        conversationId,
+      });
       
     } else if (target && target.matches("a.file-link")) { // Keep existing file link logic
       event.preventDefault();
@@ -719,42 +872,4 @@ function escapeHtml(text) {
   div.textContent = text;
   return div.innerHTML;
 }
-
-// Global function to toggle result expansion (called from inline onclick)
-window.toggleResultExpansion = function(button) {
-  const resultContent = button.closest('.result-content');
-  const remaining = resultContent.querySelector('.result-remaining');
-  const icon = button.querySelector('i');
-  
-  if (remaining.style.display === 'none') {
-    // Expand
-    remaining.style.display = 'inline';
-    icon.className = 'bi bi-chevron-up';
-    button.title = 'Show less';
-  } else {
-    // Collapse
-    remaining.style.display = 'none';
-    icon.className = 'bi bi-chevron-down';
-    button.title = 'Show more';
-  }
-};
-
-// Global function to toggle arguments expansion (called from inline onclick)
-window.toggleArgsExpansion = function(button) {
-  const argsContent = button.closest('.args-content');
-  const remaining = argsContent.querySelector('.args-remaining');
-  const icon = button.querySelector('i');
-  
-  if (remaining.style.display === 'none') {
-    // Expand
-    remaining.style.display = 'inline';
-    icon.className = 'bi bi-chevron-up';
-    button.title = 'Show less';
-  } else {
-    // Collapse
-    remaining.style.display = 'none';
-    icon.className = 'bi bi-chevron-down';
-    button.title = 'Show more';
-  }
-};
 // ---------------------------------------
