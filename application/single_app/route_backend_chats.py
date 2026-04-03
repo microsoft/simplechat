@@ -3014,6 +3014,50 @@ def _tokenize_tabular_sheet_text(text):
     return tokens
 
 
+def _coerce_citation_sort_number(value):
+    """Return a numeric citation sort value when possible."""
+    if value in (None, '') or isinstance(value, bool):
+        return None
+
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    raw_value = str(value).strip()
+    if not raw_value:
+        return None
+
+    try:
+        return float(raw_value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_hybrid_citation_sort_key(citation):
+    """Sort numeric page citations first, then metadata-style citations safely."""
+    if not isinstance(citation, dict):
+        return (0, -1.0, -1.0, '', '')
+
+    page_number = citation.get('page_number')
+    page_value = _coerce_citation_sort_number(page_number)
+    chunk_sequence_value = _coerce_citation_sort_number(citation.get('chunk_sequence'))
+    page_label = str(page_number or '').strip().lower()
+    metadata_type = str(citation.get('metadata_type') or '').strip().lower()
+
+    if page_value is not None:
+        return (
+            2,
+            page_value,
+            chunk_sequence_value if chunk_sequence_value is not None else -1.0,
+            page_label,
+            metadata_type,
+        )
+
+    if chunk_sequence_value is not None:
+        return (1, chunk_sequence_value, -1.0, page_label, metadata_type)
+
+    return (0, -1.0, -1.0, page_label, metadata_type)
+
+
 def _extract_tabular_entity_anchor_terms(question_text):
     """Extract likely primary-entity terms from an entity lookup question."""
     normalized_question = str(question_text or '').strip().lower()
@@ -5359,6 +5403,18 @@ def register_route_backend_chats(app):
             if isinstance(image_gen_enabled, str):
                 image_gen_enabled = image_gen_enabled.lower() == 'true'
 
+            original_hybrid_search_enabled = bool(hybrid_search_enabled)
+            history_grounded_search_used = False
+            history_only_answerability = None
+            prior_grounded_document_refs = []
+            effective_document_scope = document_scope
+            effective_selected_document_ids = list(selected_document_ids or [])
+            effective_selected_document_id = selected_document_id
+            effective_active_group_ids = list(active_group_ids or [])
+            effective_active_group_id = active_group_id
+            effective_active_public_workspace_ids = list(active_public_workspace_ids or [])
+            effective_active_public_workspace_id = active_public_workspace_id
+
             # GPT & Image generation APIM or direct
             gpt_model = ""
             gpt_client = None
@@ -5991,16 +6047,127 @@ def register_route_backend_chats(app):
                     debug_print(f"[Content Safety Error] {e}")
                 except Exception as ex:
                     debug_print(f"[Content Safety] Unexpected error: {ex}")
+
+            if not original_hybrid_search_enabled:
+                prior_grounded_document_refs = _normalize_prior_grounded_document_refs(conversation_item)
+                if prior_grounded_document_refs:
+                    thought_tracker.add_thought(
+                        'history_context',
+                        'Checking whether prior conversation context already answers the question',
+                        detail=f"grounded_documents={len(prior_grounded_document_refs)}"
+                    )
+                    try:
+                        preflight_messages_query = (
+                            "SELECT * FROM c WHERE c.conversation_id = @conv_id ORDER BY c.timestamp ASC"
+                        )
+                        preflight_messages_params = [{"name": "@conv_id", "value": conversation_id}]
+                        preflight_messages = list(cosmos_messages_container.query_items(
+                            query=preflight_messages_query,
+                            parameters=preflight_messages_params,
+                            partition_key=conversation_id,
+                            enable_cross_partition_query=True,
+                        ))
+                        preflight_history_segments = build_conversation_history_segments(
+                            all_messages=preflight_messages,
+                            conversation_history_limit=conversation_history_limit,
+                            enable_summarize_older_messages=enable_summarize_content_history_beyond_conversation_history_limit,
+                            gpt_client=gpt_client,
+                            gpt_model=gpt_model,
+                            user_message_id=user_message_id,
+                            fallback_user_message=user_message,
+                        )
+                        history_only_answerability = assess_history_only_answerability(
+                            gpt_client,
+                            gpt_model,
+                            build_history_only_assessment_messages(
+                                preflight_history_segments,
+                                settings.get('default_system_prompt', '').strip(),
+                            ),
+                        )
+                    except Exception as assessment_error:
+                        debug_print(
+                            f"[History Fallback] History-only sufficiency assessment failed: {assessment_error}"
+                        )
+
+                    if history_only_answerability and history_only_answerability.get('can_answer_from_history'):
+                        thought_tracker.add_thought(
+                            'history_context',
+                            'Prior conversation context appears sufficient without new document retrieval',
+                            detail=history_only_answerability.get('reason') or None,
+                        )
+                    else:
+                        fallback_search_parameters = build_prior_grounded_document_search_parameters(
+                            prior_grounded_document_refs
+                        )
+                        if fallback_search_parameters.get('document_ids'):
+                            history_grounded_search_used = True
+                            effective_document_scope = fallback_search_parameters.get('doc_scope') or 'all'
+                            effective_selected_document_ids = list(
+                                fallback_search_parameters.get('document_ids') or []
+                            )
+                            effective_selected_document_id = (
+                                effective_selected_document_ids[0]
+                                if len(effective_selected_document_ids) == 1
+                                else None
+                            )
+                            effective_active_group_ids = list(
+                                fallback_search_parameters.get('active_group_ids') or []
+                            )
+                            effective_active_group_id = fallback_search_parameters.get('active_group_id')
+                            effective_active_public_workspace_ids = list(
+                                fallback_search_parameters.get('active_public_workspace_ids') or []
+                            )
+                            effective_active_public_workspace_id = fallback_search_parameters.get(
+                                'active_public_workspace_id'
+                            )
+
+                            rewritten_search_query = ''
+                            if history_only_answerability:
+                                rewritten_search_query = str(
+                                    history_only_answerability.get('search_query') or ''
+                                ).strip()
+                            if rewritten_search_query:
+                                search_query = rewritten_search_query
+
+                            fallback_detail_parts = [
+                                f"documents={len(effective_selected_document_ids)}",
+                                f"scope={effective_document_scope or 'all'}",
+                            ]
+                            if history_only_answerability and history_only_answerability.get('reason'):
+                                fallback_detail_parts.append(
+                                    f"reason={history_only_answerability['reason']}"
+                                )
+                            thought_tracker.add_thought(
+                                'search',
+                                'Conversation context alone was insufficient; searching previously grounded documents',
+                                detail=' | '.join(fallback_detail_parts),
+                            )
+
+                            user_metadata.setdefault('workspace_search', {})[
+                                'history_grounded_fallback'
+                            ] = {
+                                'used': True,
+                                'document_scope': effective_document_scope,
+                                'document_count': len(effective_selected_document_ids),
+                                'search_query': search_query,
+                            }
+                            user_message_doc['metadata'] = user_metadata
+                            cosmos_messages_container.upsert_item(user_message_doc)
+                else:
+                    thought_tracker.add_thought(
+                        'history_context',
+                        'No prior grounded documents were available; using conversation history only'
+                    )
         # region 4 - Augmentation
             # ---------------------------------------------------------------------
             # 4) Augmentation (Search, etc.) - Run *before* final history prep
             # ---------------------------------------------------------------------
             
             # Hybrid Search
-            if hybrid_search_enabled:
+            if hybrid_search_enabled or history_grounded_search_used:
                 
                 # Optional: Summarize recent history *for search* (uses its own limit)
-                if enable_summarize_content_history_for_search:
+                if hybrid_search_enabled and enable_summarize_content_history_for_search:
                     # Fetch last N messages for search context
                     limit_n_search = number_of_historical_messages_to_summarize * 2
                     query_search = f"SELECT TOP {limit_n_search} * FROM c WHERE c.conversation_id = @conv_id ORDER BY c.timestamp DESC"
@@ -6053,7 +6220,16 @@ def register_route_backend_chats(app):
 
 
                 # Perform the search
-                thought_tracker.add_thought('search', f"Searching {document_scope or 'personal'} workspace documents for '{(search_query or user_message)[:50]}'")
+                if history_grounded_search_used and not hybrid_search_enabled:
+                    thought_tracker.add_thought(
+                        'search',
+                        f"Searching {len(effective_selected_document_ids)} previously grounded document(s) for '{(search_query or user_message)[:50]}'"
+                    )
+                else:
+                    thought_tracker.add_thought(
+                        'search',
+                        f"Searching {effective_document_scope or 'personal'} workspace documents for '{(search_query or user_message)[:50]}'"
+                    )
                 try:
                     # Prepare search arguments
                     # Set default and maximum values for top_n
@@ -6079,25 +6255,31 @@ def register_route_backend_chats(app):
                         "query": search_query,
                         "user_id": user_id,
                         "top_n": top_n,
-                        "doc_scope": document_scope,
+                        "doc_scope": effective_document_scope,
                     }
                     
                     # Add active_group_ids when:
                     # 1. Document scope is 'group' or chat_type is 'group', OR
                     # 2. Document scope is 'all' and groups are enabled (so group search can be included)
-                    if active_group_ids and (document_scope == 'group' or document_scope == 'all' or chat_type == 'group'):
-                        search_args["active_group_ids"] = active_group_ids
+                    if effective_active_group_ids and (
+                        effective_document_scope == 'group'
+                        or effective_document_scope == 'all'
+                        or chat_type == 'group'
+                    ):
+                        search_args["active_group_ids"] = effective_active_group_ids
     
                     # Add active_public_workspace_id when:
                     # 1. Document scope is 'public' or
                     # 2. Document scope is 'all' and public workspaces are enabled
-                    if active_public_workspace_id and (document_scope == 'public' or document_scope == 'all'):
-                        search_args["active_public_workspace_id"] = active_public_workspace_id
+                    if effective_active_public_workspace_id and (
+                        effective_document_scope == 'public' or effective_document_scope == 'all'
+                    ):
+                        search_args["active_public_workspace_id"] = effective_active_public_workspace_id
                         
-                    if selected_document_ids:
-                        search_args["document_ids"] = selected_document_ids
-                    elif selected_document_id:
-                        search_args["document_id"] = selected_document_id
+                    if effective_selected_document_ids:
+                        search_args["document_ids"] = effective_selected_document_ids
+                    elif effective_selected_document_id:
+                        search_args["document_id"] = effective_selected_document_id
                     
                     # Add tags filter if provided
                     if tags_filter and isinstance(tags_filter, list) and len(tags_filter) > 0:
@@ -6131,6 +6313,13 @@ def register_route_backend_chats(app):
                         chunk_sequence = doc.get('chunk_sequence', 0) # Add default
                         page_number = doc.get('page_number') or chunk_sequence or 1 # Ensure a fallback page
                         citation_id = doc.get('id', str(uuid.uuid4())) # Ensure ID exists
+                        document_id = str(doc.get('document_id') or '').strip()
+                        if not document_id:
+                            document_id = (
+                                '_'.join(str(citation_id).split('_')[:-1])
+                                if '_' in str(citation_id)
+                                else str(citation_id)
+                            )
                         classification = doc.get('document_classification')
                         chunk_id = doc.get('chunk_id', str(uuid.uuid4())) # Ensure ID exists
                         score = doc.get('score', 0.0) # Add default score
@@ -6148,6 +6337,7 @@ def register_route_backend_chats(app):
                         retrieved_texts.append(f"{chunk_text}\n{citation}")
                         combined_documents.append({
                             "file_name": file_name, 
+                            "document_id": document_id,
                             "citation_id": citation_id, 
                             "page_number": page_number,
                             "sheet_name": sheet_name,
@@ -6182,6 +6372,7 @@ def register_route_backend_chats(app):
                         #    in the citation itself, as it can be large. The citation points *to* the chunk.
                         citation_data = {
                             "file_name": source_doc.get("file_name"),
+                            "document_id": source_doc.get("document_id"),
                             "citation_id": source_doc.get("citation_id"), # Seems like a useful identifier
                             "page_number": source_doc.get("page_number"),
                             "chunk_id": source_doc.get("chunk_id"), # Specific chunk identifier
@@ -6196,8 +6387,7 @@ def register_route_backend_chats(app):
                         # Using .get() provides None if a key is missing, preventing KeyErrors
                         hybrid_citations_list.append(citation_data)
 
-                    # Reorder hybrid citations list in descending order based on page_number
-                    hybrid_citations_list.sort(key=lambda x: x.get('page_number', 0), reverse=True)
+                    hybrid_citations_list.sort(key=_build_hybrid_citation_sort_key, reverse=True)
 
                     # --- NEW: Extract metadata (keywords/abstract) for additional citations ---
                     # Only if extract_metadata is enabled
@@ -6210,7 +6400,10 @@ def register_route_backend_chats(app):
                         for doc in search_results:
                             # Get document ID (from the chunk's document reference)
                             # AI Search chunks contain references to their parent document
-                            doc_id = doc.get('id', '').split('_')[0] if doc.get('id') else None
+                            doc_id = str(doc.get('document_id') or '').strip()
+                            if not doc_id and doc.get('id'):
+                                raw_doc_id = str(doc.get('id') or '').strip()
+                                doc_id = '_'.join(raw_doc_id.split('_')[:-1]) if '_' in raw_doc_id else raw_doc_id
 
                             # Skip if we've already processed this document
                             if not doc_id or doc_id in processed_doc_ids:
@@ -6247,6 +6440,7 @@ def register_route_backend_chats(app):
                                     
                                     keywords_citation = {
                                         "file_name": file_name,
+                                        "document_id": doc_id,
                                         "citation_id": keywords_citation_id,
                                         "page_number": "Metadata",  # Special page identifier
                                         "chunk_id": keywords_citation_id,
@@ -6280,6 +6474,7 @@ def register_route_backend_chats(app):
                                     
                                     abstract_citation = {
                                         "file_name": file_name,
+                                        "document_id": doc_id,
                                         "citation_id": abstract_citation_id,
                                         "page_number": "Metadata",  # Special page identifier
                                         "chunk_id": abstract_citation_id,
@@ -6323,6 +6518,7 @@ def register_route_backend_chats(app):
                                     
                                     vision_citation = {
                                         "file_name": file_name,
+                                        "document_id": doc_id,
                                         "citation_id": vision_citation_id,
                                         "page_number": "AI Vision",  # Special page identifier
                                         "chunk_id": vision_citation_id,
@@ -6356,18 +6552,23 @@ def register_route_backend_chats(app):
                     if list(classifications_found) != conversation_item.get('classification', []):
                         conversation_item['classification'] = list(classifications_found)
                         # No need to upsert item here, will be updated later
+                elif history_grounded_search_used:
+                    thought_tracker.add_thought(
+                        'search',
+                        'No matching excerpts were found in the previously grounded documents'
+                    )
 
             # Update message-level chat_type based on actual document usage for this message
             # This must happen after document search is completed so search_results is populated
             message_chat_type = None
-            if hybrid_search_enabled and search_results and len(search_results) > 0:
+            if (hybrid_search_enabled or history_grounded_search_used) and search_results and len(search_results) > 0:
                 # Documents were actually used for this message
-                if document_scope == 'group':
+                if effective_document_scope == 'group':
                     message_chat_type = 'group'
-                elif document_scope == 'public':
+                elif effective_document_scope == 'public':
                     message_chat_type = 'public'  
                 else:
-                        message_chat_type = 'personal_single_user'
+                    message_chat_type = 'personal_single_user'
             else:
                 # No documents used for this message - only model knowledge
                 message_chat_type = 'Model'
@@ -6375,19 +6576,22 @@ def register_route_backend_chats(app):
             # Update the message-level chat_type in user_metadata
             user_metadata['chat_context']['chat_type'] = message_chat_type
             debug_print(f"Set message-level chat_type to: {message_chat_type}")
-            debug_print(f"hybrid_search_enabled: {hybrid_search_enabled}, search_results count: {len(search_results) if search_results else 0}")
+            debug_print(
+                f"hybrid_search_enabled: {hybrid_search_enabled}, history_grounded_search_used: {history_grounded_search_used}, "
+                f"search_results count: {len(search_results) if search_results else 0}"
+            )
             
             # Add context-specific information based on message chat type
-            if message_chat_type == 'group' and active_group_id:
-                user_metadata['chat_context']['group_id'] = active_group_id
+            if message_chat_type == 'group' and effective_active_group_id:
+                user_metadata['chat_context']['group_id'] = effective_active_group_id
                 # We may have already fetched this in workspace_search section
                 if 'workspace_search' in user_metadata and user_metadata['workspace_search'].get('group_name'):
                     user_metadata['chat_context']['group_name'] = user_metadata['workspace_search']['group_name']
                     debug_print(f"Chat context - using group_name from workspace_search: {user_metadata['workspace_search']['group_name']}")
                 else:
                     try:
-                        debug_print(f"Chat context - looking up group for id: {active_group_id}")
-                        group_doc = find_group_by_id(active_group_id)
+                        debug_print(f"Chat context - looking up group for id: {effective_active_group_id}")
+                        group_doc = find_group_by_id(effective_active_group_id)
                         debug_print(f"Chat context group lookup result: {group_doc}")
                         
                         if group_doc and group_doc.get('name'):
@@ -6395,7 +6599,7 @@ def register_route_backend_chats(app):
                             user_metadata['chat_context']['group_name'] = group_title
                             debug_print(f"Chat context - set group_name to: {group_title}")
                         else:
-                            debug_print(f"Chat context - no group found or no name for id: {active_group_id}")
+                            debug_print(f"Chat context - no group found or no name for id: {effective_active_group_id}")
                             user_metadata['chat_context']['group_name'] = None
                             
                     except Exception as e:
@@ -6701,24 +6905,24 @@ def register_route_backend_chats(app):
 
             workspace_tabular_file_contexts = []
             workspace_tabular_files = set()
-            if hybrid_search_enabled and is_tabular_processing_enabled(settings):
+            if (hybrid_search_enabled or history_grounded_search_used) and is_tabular_processing_enabled(settings):
                 workspace_tabular_file_contexts = collect_workspace_tabular_file_contexts(
                     combined_documents=combined_documents,
-                    selected_document_ids=selected_document_ids,
-                    selected_document_id=selected_document_id,
-                    document_scope=document_scope,
-                    active_group_id=active_group_id,
-                    active_public_workspace_id=active_public_workspace_id,
+                    selected_document_ids=effective_selected_document_ids,
+                    selected_document_id=effective_selected_document_id,
+                    document_scope=effective_document_scope,
+                    active_group_id=effective_active_group_id,
+                    active_public_workspace_id=effective_active_public_workspace_id,
                 )
                 workspace_tabular_files = {
                     file_context['file_name'] for file_context in workspace_tabular_file_contexts
                 }
 
-            if hybrid_search_enabled and workspace_tabular_files and is_tabular_processing_enabled(settings):
+            if (hybrid_search_enabled or history_grounded_search_used) and workspace_tabular_files and is_tabular_processing_enabled(settings):
                 tabular_source_hint = determine_tabular_source_hint(
-                    document_scope,
-                    active_group_id=active_group_id,
-                    active_public_workspace_id=active_public_workspace_id,
+                    effective_document_scope,
+                    active_group_id=effective_active_group_id,
+                    active_public_workspace_id=effective_active_public_workspace_id,
                 )
                 tabular_execution_mode = get_tabular_execution_mode(user_message)
                 tabular_filenames_str = ", ".join(sorted(workspace_tabular_files))
@@ -6736,8 +6940,8 @@ def register_route_backend_chats(app):
                     gpt_model=gpt_model,
                     settings=settings,
                     source_hint=tabular_source_hint,
-                    group_id=active_group_id if tabular_source_hint == 'group' else None,
-                    public_workspace_id=active_public_workspace_id if tabular_source_hint == 'public' else None,
+                    group_id=effective_active_group_id if tabular_source_hint == 'group' else None,
+                    public_workspace_id=effective_active_public_workspace_id if tabular_source_hint == 'public' else None,
                     execution_mode=tabular_execution_mode,
                 ))
                 tabular_invocations = get_new_plugin_invocations(
@@ -6994,6 +7198,22 @@ def register_route_backend_chats(app):
                     })
                     final_api_source_refs.insert(insert_idx, 'system:default_prompt')
                     default_system_prompt_inserted = True
+
+            if not original_hybrid_search_enabled:
+                history_grounding_message = build_history_grounding_system_message()
+                insert_idx = 0
+                if (
+                    conversation_history_for_api
+                    and conversation_history_for_api[0].get('role') == 'system'
+                    and conversation_history_for_api[0].get('content', '').startswith(
+                        '<Summary of previous conversation context>'
+                    )
+                ):
+                    insert_idx = 1
+                if default_system_prompt_inserted:
+                    insert_idx += 1
+                conversation_history_for_api.insert(insert_idx, history_grounding_message)
+                final_api_source_refs.insert(insert_idx, 'system:history_grounding')
 
             history_debug_info = enrich_history_context_debug_info(
                 history_debug_info,
@@ -7796,7 +8016,7 @@ def register_route_backend_chats(app):
                 'augmented': bool(system_messages_for_augmentation),
                 'hybrid_citations': hybrid_citations_list, # <--- SIMPLIFIED: Directly use the list
                 'web_search_citations': web_search_citations_list,
-                'hybridsearch_query': search_query if hybrid_search_enabled and search_results else None, # Log query only if hybrid search ran and found results
+                'hybridsearch_query': search_query if search_results else None, # Log query when any bounded document retrieval produced results
                 'agent_citations': prepared_agent_citations,
                 'model_deployment_name': actual_model_used,
                 'agent_display_name': agent_display_name,
@@ -7830,9 +8050,9 @@ def register_route_backend_chats(app):
                     
                     # Determine workspace type based on active group/public workspace
                     workspace_type = 'personal'
-                    if active_public_workspace_id:
+                    if effective_active_public_workspace_id:
                         workspace_type = 'public'
-                    elif active_group_id:
+                    elif effective_active_group_id:
                         workspace_type = 'group'
                     
                     log_token_usage(
@@ -7845,8 +8065,8 @@ def register_route_backend_chats(app):
                         completion_tokens=token_usage_data.get('completion_tokens'),
                         conversation_id=conversation_id,
                         message_id=assistant_message_id,
-                        group_id=active_group_id,
-                        public_workspace_id=active_public_workspace_id,
+                        group_id=effective_active_group_id,
+                        public_workspace_id=effective_active_public_workspace_id,
                         additional_context={
                             'agent_name': agent_name,
                             'augmented': bool(system_messages_for_augmentation),
@@ -7888,20 +8108,20 @@ def register_route_backend_chats(app):
                     user_message=user_message,
                     conversation_id=conversation_id,
                     user_id=user_id,
-                    active_group_id=active_group_id,
-                    active_group_ids=active_group_ids,
-                    document_scope=document_scope,
-                    selected_document_id=selected_document_id,
+                    active_group_id=effective_active_group_id,
+                    active_group_ids=effective_active_group_ids,
+                    document_scope=effective_document_scope,
+                    selected_document_id=effective_selected_document_id,
                     model_deployment=actual_model_used,
-                    hybrid_search_enabled=hybrid_search_enabled,
+                    hybrid_search_enabled=hybrid_search_enabled or history_grounded_search_used,
                     image_gen_enabled=image_gen_enabled,
                     selected_documents=combined_documents if 'combined_documents' in locals() else None,
                     selected_agent=selected_agent_name,
                     selected_agent_details=user_metadata.get('agent_selection'),
                     search_results=search_results if 'search_results' in locals() else None,
                     conversation_item=conversation_item,
-                    active_public_workspace_id=active_public_workspace_id,
-                    active_public_workspace_ids=active_public_workspace_ids
+                    active_public_workspace_id=effective_active_public_workspace_id,
+                    active_public_workspace_ids=effective_active_public_workspace_ids
                 )
             except Exception as e:
                 debug_print(f"Error collecting conversation metadata: {e}")
@@ -8257,6 +8477,17 @@ def register_route_backend_chats(app):
                     hybrid_search_enabled = hybrid_search_enabled.lower() == 'true'
                 if isinstance(web_search_enabled, str):
                     web_search_enabled = web_search_enabled.lower() == 'true'
+                original_hybrid_search_enabled = bool(hybrid_search_enabled)
+                history_grounded_search_used = False
+                history_only_answerability = None
+                prior_grounded_document_refs = []
+                effective_document_scope = document_scope
+                effective_selected_document_ids = list(selected_document_ids or [])
+                effective_selected_document_id = selected_document_id
+                effective_active_group_ids = list(active_group_ids or [])
+                effective_active_group_id = active_group_id
+                effective_active_public_workspace_ids = list(active_public_workspace_ids or [])
+                effective_active_public_workspace_id = active_public_workspace_id
                 debug_print(
                     "[Streaming] Normalized toggles | "
                     f"hybrid_search={hybrid_search_enabled} | "
@@ -8721,36 +8952,162 @@ def register_route_backend_chats(app):
                     except Exception as ex:
                         debug_print(f"[Content Safety - Streaming] Unexpected error: {ex}")
 
+                if not original_hybrid_search_enabled:
+                    prior_grounded_document_refs = _normalize_prior_grounded_document_refs(conversation_item)
+                    if prior_grounded_document_refs:
+                        yield emit_thought(
+                            'history_context',
+                            'Checking whether prior conversation context already answers the question',
+                            detail=f"grounded_documents={len(prior_grounded_document_refs)}"
+                        )
+                        try:
+                            preflight_messages_query = (
+                                "SELECT * FROM c WHERE c.conversation_id = @conv_id ORDER BY c.timestamp ASC"
+                            )
+                            preflight_messages_params = [{"name": "@conv_id", "value": conversation_id}]
+                            preflight_messages = list(cosmos_messages_container.query_items(
+                                query=preflight_messages_query,
+                                parameters=preflight_messages_params,
+                                partition_key=conversation_id,
+                                enable_cross_partition_query=True,
+                            ))
+                            preflight_history_segments = build_conversation_history_segments(
+                                all_messages=preflight_messages,
+                                conversation_history_limit=conversation_history_limit,
+                                enable_summarize_older_messages=enable_summarize_content_history_beyond_conversation_history_limit,
+                                gpt_client=gpt_client,
+                                gpt_model=gpt_model,
+                                user_message_id=user_message_id,
+                                fallback_user_message=user_message,
+                            )
+                            history_only_answerability = assess_history_only_answerability(
+                                gpt_client,
+                                gpt_model,
+                                build_history_only_assessment_messages(
+                                    preflight_history_segments,
+                                    settings.get('default_system_prompt', '').strip(),
+                                ),
+                            )
+                        except Exception as assessment_error:
+                            debug_print(
+                                f"[Streaming][History Fallback] History-only sufficiency assessment failed: {assessment_error}"
+                            )
+
+                        if history_only_answerability and history_only_answerability.get('can_answer_from_history'):
+                            yield emit_thought(
+                                'history_context',
+                                'Prior conversation context appears sufficient without new document retrieval',
+                                detail=history_only_answerability.get('reason') or None,
+                            )
+                        else:
+                            fallback_search_parameters = build_prior_grounded_document_search_parameters(
+                                prior_grounded_document_refs
+                            )
+                            if fallback_search_parameters.get('document_ids'):
+                                history_grounded_search_used = True
+                                effective_document_scope = fallback_search_parameters.get('doc_scope') or 'all'
+                                effective_selected_document_ids = list(
+                                    fallback_search_parameters.get('document_ids') or []
+                                )
+                                effective_selected_document_id = (
+                                    effective_selected_document_ids[0]
+                                    if len(effective_selected_document_ids) == 1
+                                    else None
+                                )
+                                effective_active_group_ids = list(
+                                    fallback_search_parameters.get('active_group_ids') or []
+                                )
+                                effective_active_group_id = fallback_search_parameters.get('active_group_id')
+                                effective_active_public_workspace_ids = list(
+                                    fallback_search_parameters.get('active_public_workspace_ids') or []
+                                )
+                                effective_active_public_workspace_id = fallback_search_parameters.get(
+                                    'active_public_workspace_id'
+                                )
+
+                                rewritten_search_query = ''
+                                if history_only_answerability:
+                                    rewritten_search_query = str(
+                                        history_only_answerability.get('search_query') or ''
+                                    ).strip()
+                                if rewritten_search_query:
+                                    search_query = rewritten_search_query
+
+                                fallback_detail_parts = [
+                                    f"documents={len(effective_selected_document_ids)}",
+                                    f"scope={effective_document_scope or 'all'}",
+                                ]
+                                if history_only_answerability and history_only_answerability.get('reason'):
+                                    fallback_detail_parts.append(
+                                        f"reason={history_only_answerability['reason']}"
+                                    )
+                                yield emit_thought(
+                                    'search',
+                                    'Conversation context alone was insufficient; searching previously grounded documents',
+                                    detail=' | '.join(fallback_detail_parts),
+                                )
+
+                                user_metadata.setdefault('workspace_search', {})[
+                                    'history_grounded_fallback'
+                                ] = {
+                                    'used': True,
+                                    'document_scope': effective_document_scope,
+                                    'document_count': len(effective_selected_document_ids),
+                                    'search_query': search_query,
+                                }
+                                user_message_doc['metadata'] = user_metadata
+                                cosmos_messages_container.upsert_item(user_message_doc)
+                    else:
+                        yield emit_thought(
+                            'history_context',
+                            'No prior grounded documents were available; using conversation history only'
+                        )
+
                 # Hybrid search (if enabled)
                 combined_documents = []
-                if hybrid_search_enabled:
+                if hybrid_search_enabled or history_grounded_search_used:
                     debug_print(
                         "[Streaming] Starting hybrid search | "
-                        f"conversation_id={conversation_id} | doc_scope={document_scope} | "
-                        f"selected_document_ids={len(selected_document_ids)} | tags={len(tags_filter) if isinstance(tags_filter, list) else 0}"
+                        f"conversation_id={conversation_id} | doc_scope={effective_document_scope} | "
+                        f"selected_document_ids={len(effective_selected_document_ids)} | tags={len(tags_filter) if isinstance(tags_filter, list) else 0}"
                     )
-                    yield emit_thought('search', f"Searching {document_scope or 'personal'} workspace documents for '{(search_query or user_message)[:50]}'")
+                    if history_grounded_search_used and not hybrid_search_enabled:
+                        yield emit_thought(
+                            'search',
+                            f"Searching {len(effective_selected_document_ids)} previously grounded document(s) for '{(search_query or user_message)[:50]}'"
+                        )
+                    else:
+                        yield emit_thought(
+                            'search',
+                            f"Searching {effective_document_scope or 'personal'} workspace documents for '{(search_query or user_message)[:50]}'"
+                        )
                     try:
                         search_args = {
                             "query": search_query,
                             "user_id": user_id,
                             "top_n": 12,
-                            "doc_scope": document_scope,
+                            "doc_scope": effective_document_scope,
                         }
                         
-                        if active_group_ids and (document_scope == 'group' or document_scope == 'all' or chat_type == 'group'):
-                            search_args['active_group_ids'] = active_group_ids
+                        if effective_active_group_ids and (
+                            effective_document_scope == 'group'
+                            or effective_document_scope == 'all'
+                            or chat_type == 'group'
+                        ):
+                            search_args['active_group_ids'] = effective_active_group_ids
                         
                         # Add active_public_workspace_id when:
                         # 1. Document scope is 'public' or
                         # 2. Document scope is 'all' and public workspaces are enabled
-                        if active_public_workspace_id and (document_scope == 'public' or document_scope == 'all'):
-                            search_args['active_public_workspace_id'] = active_public_workspace_id
+                        if effective_active_public_workspace_id and (
+                            effective_document_scope == 'public' or effective_document_scope == 'all'
+                        ):
+                            search_args['active_public_workspace_id'] = effective_active_public_workspace_id
                         
-                        if selected_document_ids:
-                            search_args['document_ids'] = selected_document_ids
-                        elif selected_document_id:
-                            search_args['document_id'] = selected_document_id
+                        if effective_selected_document_ids:
+                            search_args['document_ids'] = effective_selected_document_ids
+                        elif effective_selected_document_id:
+                            search_args['document_id'] = effective_selected_document_id
                         
                         # Add tags filter if provided
                         if tags_filter and isinstance(tags_filter, list) and len(tags_filter) > 0:
@@ -8775,6 +9132,13 @@ def register_route_backend_chats(app):
                             chunk_sequence = doc.get('chunk_sequence', 0)
                             page_number = doc.get('page_number') or chunk_sequence or 1
                             citation_id = doc.get('id', str(uuid.uuid4()))
+                            document_id = str(doc.get('document_id') or '').strip()
+                            if not document_id:
+                                document_id = (
+                                    '_'.join(str(citation_id).split('_')[:-1])
+                                    if '_' in str(citation_id)
+                                    else str(citation_id)
+                                )
                             classification = doc.get('document_classification')
                             chunk_id = doc.get('chunk_id', str(uuid.uuid4()))
                             score = doc.get('score', 0.0)
@@ -8793,6 +9157,7 @@ def register_route_backend_chats(app):
                             
                             combined_documents.append({
                                 "file_name": file_name,
+                                "document_id": document_id,
                                 "citation_id": citation_id,
                                 "page_number": page_number,
                                 "sheet_name": sheet_name,
@@ -8811,6 +9176,7 @@ def register_route_backend_chats(app):
                             # Build citation data to match non-streaming format
                             citation_data = {
                                 "file_name": file_name,
+                                "document_id": document_id,
                                 "citation_id": citation_id,
                                 "page_number": page_number,
                                 "chunk_id": chunk_id,
@@ -8830,7 +9196,10 @@ def register_route_backend_chats(app):
                             processed_doc_ids = set()
                             
                             for doc in search_results:
-                                doc_id = doc.get('document_id') or doc.get('id')
+                                doc_id = str(doc.get('document_id') or '').strip()
+                                if not doc_id and doc.get('id'):
+                                    raw_doc_id = str(doc.get('id') or '').strip()
+                                    doc_id = '_'.join(raw_doc_id.split('_')[:-1]) if '_' in raw_doc_id else raw_doc_id
                                 if not doc_id or doc_id in processed_doc_ids:
                                     continue
                                 
@@ -8841,10 +9210,10 @@ def register_route_backend_chats(app):
                                 
                                 # Map document_scope to correct parameter names for the function
                                 metadata_params = {'user_id': user_id}
-                                if document_scope == 'group':
-                                    metadata_params['group_id'] = active_group_id
-                                elif document_scope == 'public':
-                                    metadata_params['public_workspace_id'] = active_public_workspace_id
+                                if effective_document_scope == 'group':
+                                    metadata_params['group_id'] = effective_active_group_id
+                                elif effective_document_scope == 'public':
+                                    metadata_params['public_workspace_id'] = effective_active_public_workspace_id
                                 
                                 metadata = get_document_metadata_for_citations(
                                     doc_id, 
@@ -8861,6 +9230,7 @@ def register_route_backend_chats(app):
                                         
                                         keywords_citation = {
                                             "file_name": file_name,
+                                            "document_id": doc_id,
                                             "citation_id": keywords_citation_id,
                                             "page_number": "Metadata",
                                             "chunk_id": keywords_citation_id,
@@ -8883,6 +9253,7 @@ def register_route_backend_chats(app):
                                         
                                         abstract_citation = {
                                             "file_name": file_name,
+                                            "document_id": doc_id,
                                             "citation_id": abstract_citation_id,
                                             "page_number": "Metadata",
                                             "chunk_id": abstract_citation_id,
@@ -8918,6 +9289,7 @@ def register_route_backend_chats(app):
                                         
                                         vision_citation = {
                                             "file_name": file_name,
+                                            "document_id": doc_id,
                                             "citation_id": vision_citation_id,
                                             "page_number": "AI Vision",
                                             "chunk_id": vision_citation_id,
@@ -8944,29 +9316,33 @@ def register_route_backend_chats(app):
                             'documents': combined_documents
                         })
 
-                        # Reorder hybrid citations list in descending order based on page_number
-                        hybrid_citations_list.sort(key=lambda x: x.get('page_number', 0), reverse=True)
+                        hybrid_citations_list.sort(key=_build_hybrid_citation_sort_key, reverse=True)
+                    elif history_grounded_search_used:
+                        yield emit_thought(
+                            'search',
+                            'No matching excerpts were found in the previously grounded documents'
+                        )
                 
                 workspace_tabular_file_contexts = []
                 workspace_tabular_files = set()
-                if hybrid_search_enabled and is_tabular_processing_enabled(settings):
+                if (hybrid_search_enabled or history_grounded_search_used) and is_tabular_processing_enabled(settings):
                     workspace_tabular_file_contexts = collect_workspace_tabular_file_contexts(
                         combined_documents=combined_documents,
-                        selected_document_ids=selected_document_ids,
-                        selected_document_id=selected_document_id,
-                        document_scope=document_scope,
-                        active_group_id=active_group_id,
-                        active_public_workspace_id=active_public_workspace_id,
+                        selected_document_ids=effective_selected_document_ids,
+                        selected_document_id=effective_selected_document_id,
+                        document_scope=effective_document_scope,
+                        active_group_id=effective_active_group_id,
+                        active_public_workspace_id=effective_active_public_workspace_id,
                     )
                     workspace_tabular_files = {
                         file_context['file_name'] for file_context in workspace_tabular_file_contexts
                     }
 
-                if hybrid_search_enabled and workspace_tabular_files and is_tabular_processing_enabled(settings):
+                if (hybrid_search_enabled or history_grounded_search_used) and workspace_tabular_files and is_tabular_processing_enabled(settings):
                     tabular_source_hint = determine_tabular_source_hint(
-                        document_scope,
-                        active_group_id=active_group_id,
-                        active_public_workspace_id=active_public_workspace_id,
+                        effective_document_scope,
+                        active_group_id=effective_active_group_id,
+                        active_public_workspace_id=effective_active_public_workspace_id,
                     )
                     tabular_execution_mode = get_tabular_execution_mode(user_message)
                     tabular_filenames_str = ", ".join(sorted(workspace_tabular_files))
@@ -8990,8 +9366,8 @@ def register_route_backend_chats(app):
                         gpt_model=gpt_model,
                         settings=settings,
                         source_hint=tabular_source_hint,
-                        group_id=active_group_id if tabular_source_hint == 'group' else None,
-                        public_workspace_id=active_public_workspace_id if tabular_source_hint == 'public' else None,
+                        group_id=effective_active_group_id if tabular_source_hint == 'group' else None,
+                        public_workspace_id=effective_active_public_workspace_id if tabular_source_hint == 'public' else None,
                         execution_mode=tabular_execution_mode,
                     ))
                     tabular_invocations = get_new_plugin_invocations(
@@ -9067,10 +9443,10 @@ def register_route_backend_chats(app):
 
                 # Update message chat type
                 message_chat_type = None
-                if hybrid_search_enabled and search_results and len(search_results) > 0:
-                    if document_scope == 'group':
+                if (hybrid_search_enabled or history_grounded_search_used) and search_results and len(search_results) > 0:
+                    if effective_document_scope == 'group':
                         message_chat_type = 'group'
-                    elif document_scope == 'public':
+                    elif effective_document_scope == 'public':
                         message_chat_type = 'public'
                     else:
                         message_chat_type = 'personal_single_user'
@@ -9227,6 +9603,22 @@ def register_route_backend_chats(app):
                         })
                         final_api_source_refs.insert(insert_idx, 'system:default_prompt')
                         default_system_prompt_inserted = True
+
+                if not original_hybrid_search_enabled:
+                    history_grounding_message = build_history_grounding_system_message()
+                    insert_idx = 0
+                    if (
+                        conversation_history_for_api
+                        and conversation_history_for_api[0].get('role') == 'system'
+                        and conversation_history_for_api[0].get('content', '').startswith(
+                            '<Summary of previous conversation context>'
+                        )
+                    ):
+                        insert_idx = 1
+                    if default_system_prompt_inserted:
+                        insert_idx += 1
+                    conversation_history_for_api.insert(insert_idx, history_grounding_message)
+                    final_api_source_refs.insert(insert_idx, 'system:history_grounding')
 
                 history_debug_info = enrich_history_context_debug_info(
                     history_debug_info,
@@ -9722,7 +10114,7 @@ def register_route_backend_chats(app):
                         'augmented': bool(system_messages_for_augmentation),
                         'hybrid_citations': hybrid_citations_list,
                         'web_search_citations': web_search_citations_list,
-                        'hybridsearch_query': search_query if hybrid_search_enabled and search_results else None,
+                        'hybridsearch_query': search_query if search_results else None,
                         'agent_citations': prepared_agent_citations,
                         'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
                         'agent_display_name': agent_display_name_used if use_agent_streaming else None,
@@ -9748,9 +10140,9 @@ def register_route_backend_chats(app):
                             
                             # Determine workspace type based on active group/public workspace
                             workspace_type = 'personal'
-                            if active_public_workspace_id:
+                            if effective_active_public_workspace_id:
                                 workspace_type = 'public'
-                            elif active_group_id:
+                            elif effective_active_group_id:
                                 workspace_type = 'group'
                             
                             log_token_usage(
@@ -9763,8 +10155,8 @@ def register_route_backend_chats(app):
                                 completion_tokens=token_usage_data.get('completion_tokens'),
                                 conversation_id=conversation_id,
                                 message_id=assistant_message_id,
-                                group_id=active_group_id,
-                                public_workspace_id=active_public_workspace_id,
+                                group_id=effective_active_group_id,
+                                public_workspace_id=effective_active_public_workspace_id,
                                 additional_context={
                                     'agent_name': agent_name_used if use_agent_streaming else None,
                                     'augmented': bool(system_messages_for_augmentation),
@@ -9784,20 +10176,20 @@ def register_route_backend_chats(app):
                             user_message=user_message,
                             conversation_id=conversation_id,
                             user_id=user_id,
-                            active_group_id=active_group_id,
-                            active_group_ids=active_group_ids,
-                            document_scope=document_scope,
-                            selected_document_id=selected_document_id,
+                            active_group_id=effective_active_group_id,
+                            active_group_ids=effective_active_group_ids,
+                            document_scope=effective_document_scope,
+                            selected_document_id=effective_selected_document_id,
                             model_deployment=gpt_model,
-                            hybrid_search_enabled=hybrid_search_enabled,
+                            hybrid_search_enabled=hybrid_search_enabled or history_grounded_search_used,
                             image_gen_enabled=False,
                             selected_documents=combined_documents if combined_documents else None,
                             selected_agent=agent_name_used if use_agent_streaming else None,
                             selected_agent_details=selected_agent_metadata if use_agent_streaming else None,
                             search_results=search_results if search_results else None,
                             conversation_item=conversation_item,
-                            active_public_workspace_id=active_public_workspace_id,
-                            active_public_workspace_ids=active_public_workspace_ids
+                            active_public_workspace_id=effective_active_public_workspace_id,
+                            active_public_workspace_ids=effective_active_public_workspace_ids
                         )
                     except Exception as e:
                         debug_print(f"Error collecting conversation metadata: {e}")
@@ -10427,6 +10819,219 @@ def _build_web_citation_history_lines(web_search_citations, max_citations=4):
         lines.append(f"- ... (+{remaining} more web sources)")
 
     return lines
+
+
+def _parse_json_object_from_text(text):
+    """Extract a JSON object from a plain text model response."""
+    value = str(text or '').strip()
+    if not value:
+        return None
+
+    try:
+        parsed = json.loads(value)
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        pass
+
+    start_index = value.find('{')
+    end_index = value.rfind('}')
+    if start_index == -1 or end_index == -1 or end_index <= start_index:
+        return None
+
+    try:
+        parsed = json.loads(value[start_index:end_index + 1])
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        return None
+
+
+def _normalize_prior_grounded_document_refs(conversation_item):
+    """Return the reusable grounded document set for follow-up turns with search disabled."""
+    normalized_refs = []
+    seen_refs = set()
+
+    def add_ref(raw_ref):
+        if not isinstance(raw_ref, dict):
+            return
+
+        document_id = str(raw_ref.get('document_id') or '').strip()
+        scope = str(raw_ref.get('scope') or '').strip().lower()
+        scope_id = str(
+            raw_ref.get('scope_id')
+            or raw_ref.get('group_id')
+            or raw_ref.get('public_workspace_id')
+            or raw_ref.get('user_id')
+            or ''
+        ).strip()
+        if not document_id or not scope or not scope_id:
+            return
+
+        ref_key = (scope, scope_id, document_id)
+        if ref_key in seen_refs:
+            return
+
+        seen_refs.add(ref_key)
+
+        normalized_ref = {
+            'document_id': document_id,
+            'scope': scope,
+            'scope_id': scope_id,
+            'file_name': raw_ref.get('file_name') or raw_ref.get('title'),
+            'classification': raw_ref.get('classification'),
+        }
+
+        if scope == 'group':
+            normalized_ref['group_id'] = scope_id
+        elif scope == 'public':
+            normalized_ref['public_workspace_id'] = scope_id
+        else:
+            normalized_ref['user_id'] = scope_id
+
+        normalized_refs.append(normalized_ref)
+
+    for raw_ref in (conversation_item or {}).get('last_grounded_document_refs', []) or []:
+        add_ref(raw_ref)
+
+    if normalized_refs:
+        return normalized_refs
+
+    for tag in (conversation_item or {}).get('tags', []) or []:
+        if not isinstance(tag, dict) or tag.get('category') != 'document':
+            continue
+
+        scope_info = tag.get('scope') or {}
+        add_ref({
+            'document_id': tag.get('document_id'),
+            'scope': scope_info.get('type'),
+            'scope_id': scope_info.get('id'),
+            'title': tag.get('title'),
+            'classification': tag.get('classification'),
+        })
+
+    return normalized_refs
+
+
+def build_prior_grounded_document_search_parameters(grounded_refs):
+    """Translate grounded document refs into bounded search parameters."""
+    document_ids = []
+    group_ids = []
+    public_workspace_ids = []
+    scope_types = set()
+
+    for ref in grounded_refs or []:
+        if not isinstance(ref, dict):
+            continue
+
+        document_id = str(ref.get('document_id') or '').strip()
+        if document_id and document_id not in document_ids:
+            document_ids.append(document_id)
+
+        scope = str(ref.get('scope') or '').strip().lower()
+        if not scope:
+            continue
+        scope_types.add(scope)
+
+        if scope == 'group':
+            group_id = str(ref.get('group_id') or ref.get('scope_id') or '').strip()
+            if group_id and group_id not in group_ids:
+                group_ids.append(group_id)
+        elif scope == 'public':
+            public_workspace_id = str(ref.get('public_workspace_id') or ref.get('scope_id') or '').strip()
+            if public_workspace_id and public_workspace_id not in public_workspace_ids:
+                public_workspace_ids.append(public_workspace_id)
+
+    if len(scope_types) == 1:
+        doc_scope = next(iter(scope_types))
+    else:
+        doc_scope = 'all'
+
+    return {
+        'document_ids': document_ids,
+        'doc_scope': doc_scope,
+        'active_group_ids': group_ids,
+        'active_group_id': group_ids[0] if group_ids else None,
+        'active_public_workspace_ids': public_workspace_ids,
+        'active_public_workspace_id': public_workspace_ids[0] if public_workspace_ids else None,
+        'scope_types': sorted(scope_types),
+    }
+
+
+def build_history_only_assessment_messages(history_segments, default_system_prompt=''):
+    """Construct the prompt context used to decide whether history alone is sufficient."""
+    assessment_messages = []
+    summary_of_older = str((history_segments or {}).get('summary_of_older') or '').strip()
+    if summary_of_older:
+        assessment_messages.append({
+            'role': 'system',
+            'content': (
+                f"<Summary of previous conversation context>\n{summary_of_older}\n"
+                "</Summary of previous conversation context>"
+            )
+        })
+
+    normalized_default_system_prompt = str(default_system_prompt or '').strip()
+    if normalized_default_system_prompt:
+        assessment_messages.append({
+            'role': 'system',
+            'content': normalized_default_system_prompt,
+        })
+
+    assessment_messages.extend((history_segments or {}).get('history_messages', []))
+    return assessment_messages
+
+
+def assess_history_only_answerability(gpt_client, gpt_model, conversation_history_for_api):
+    """Return whether the current question can be answered from existing conversation grounding alone."""
+    assessment_prompt = (
+        "You are evaluating whether the latest user question can be answered using only the "
+        "existing conversation context already provided. Earlier assistant turns may include "
+        "supporting citation context from previously grounded document answers.\n\n"
+        "Respond with JSON only using this schema:\n"
+        "{\"can_answer_from_history\": true|false, \"search_query\": \"...\", \"reason\": \"...\"}\n\n"
+        "Set can_answer_from_history to true only if the conversation already contains enough "
+        "grounded information to answer confidently without retrieving any new document excerpts. "
+        "If false, produce a concise standalone search_query that resolves pronouns and omitted "
+        "references from the conversation for use against the previously grounded documents. "
+        "Keep reason short."
+    )
+
+    assessment_messages = [{'role': 'system', 'content': assessment_prompt}]
+    assessment_messages.extend(conversation_history_for_api or [])
+
+    assessment_response = gpt_client.chat.completions.create(
+        model=gpt_model,
+        messages=assessment_messages,
+        max_tokens=180,
+        temperature=0,
+    )
+    response_text = str(assessment_response.choices[0].message.content or '').strip()
+    response_payload = _parse_json_object_from_text(response_text) or {}
+
+    can_answer_from_history = response_payload.get('can_answer_from_history')
+    if isinstance(can_answer_from_history, str):
+        can_answer_from_history = can_answer_from_history.strip().lower() == 'true'
+    else:
+        can_answer_from_history = bool(can_answer_from_history)
+
+    return {
+        'can_answer_from_history': can_answer_from_history,
+        'search_query': str(response_payload.get('search_query') or '').strip(),
+        'reason': str(response_payload.get('reason') or '').strip(),
+        'raw_response': response_text,
+    }
+
+
+def build_history_grounding_system_message():
+    """Instruction used when explicit workspace search is disabled for the current turn."""
+    return {
+        'role': 'system',
+        'content': (
+            "Workspace search is disabled for this turn. Answer only from the existing conversation "
+            "context and any retrieved document excerpts explicitly provided in this turn. If those "
+            "sources are insufficient, say that you do not have enough grounded information from the "
+            "prior conversation sources and ask the user to select a workspace or document."
+        ),
+    }
 
 
 def build_assistant_history_content_with_citations(message, content):
