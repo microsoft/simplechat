@@ -374,6 +374,203 @@ def build_tabular_computed_results_system_message(source_label, tabular_analysis
     )
 
 
+MULTI_FILE_TABULAR_DISTINCT_URL_EXTRACT_PATTERN = (
+    r'(?i)https?://[^\s/]+/[^\s]*?(?:sites/|sitecollection/|teams/)[^\s"\']+'
+)
+
+
+def get_multi_file_tabular_analysis_mode(user_question, execution_mode='analysis', analysis_file_contexts=None):
+    """Return a deterministic multi-file mode when the question should bypass SK planning."""
+    normalized_execution_mode = str(execution_mode or 'analysis').strip().lower()
+    normalized_contexts = dedupe_tabular_file_contexts(analysis_file_contexts)
+    if normalized_execution_mode != 'analysis' or len(normalized_contexts) <= 1:
+        return None
+
+    if is_tabular_distinct_url_question(user_question):
+        return 'distinct_url_union'
+
+    return None
+
+
+def score_tabular_distinct_url_column(column_name):
+    """Score likely URL-bearing column names for deterministic multi-file analysis."""
+    normalized_column_name = re.sub(r'\s+', ' ', str(column_name or '').strip().lower())
+    if not normalized_column_name:
+        return None
+
+    exact_priority = {
+        'location': 0,
+        'locations': 0,
+        'url': 1,
+        'urls': 1,
+        'link': 2,
+        'links': 2,
+        'site': 3,
+        'sites': 3,
+        'path': 4,
+        'paths': 4,
+        'address': 5,
+        'addresses': 5,
+    }
+    if normalized_column_name in exact_priority:
+        return exact_priority[normalized_column_name]
+
+    token_priority = {
+        'location': 0,
+        'locations': 0,
+        'url': 1,
+        'urls': 1,
+        'link': 2,
+        'links': 2,
+        'site': 3,
+        'sites': 3,
+        'sharepoint': 4,
+        'path': 5,
+        'paths': 5,
+        'address': 6,
+        'addresses': 6,
+    }
+    token_scores = [
+        token_priority[token]
+        for token in re.split(r'[^a-z0-9]+', normalized_column_name)
+        if token and token in token_priority
+    ]
+    if not token_scores:
+        return None
+
+    return min(token_scores) + 10
+
+
+def select_tabular_distinct_url_column(column_names):
+    """Return the best URL-like column from a list of schema column names."""
+    best_column_name = None
+    best_comparison_key = None
+
+    for candidate_column in column_names or []:
+        rendered_column_name = str(candidate_column or '').strip()
+        if not rendered_column_name:
+            continue
+
+        column_score = score_tabular_distinct_url_column(rendered_column_name)
+        if column_score is None:
+            continue
+
+        comparison_key = (column_score, rendered_column_name.casefold())
+        if best_comparison_key is None or comparison_key < best_comparison_key:
+            best_comparison_key = comparison_key
+            best_column_name = rendered_column_name
+
+    return best_column_name
+
+
+def select_tabular_distinct_url_sheet_and_column(schema_info):
+    """Choose the best worksheet and column for deterministic multi-file URL extraction."""
+    if not isinstance(schema_info, Mapping):
+        return None, None
+
+    per_sheet_schemas = schema_info.get('per_sheet_schemas', {})
+    if isinstance(per_sheet_schemas, Mapping) and per_sheet_schemas:
+        ranked_sheet_candidates = []
+        for raw_sheet_name, raw_sheet_schema in per_sheet_schemas.items():
+            if not isinstance(raw_sheet_schema, Mapping):
+                continue
+
+            selected_column = select_tabular_distinct_url_column(raw_sheet_schema.get('columns', []))
+            if not selected_column:
+                continue
+
+            row_count = raw_sheet_schema.get('row_count', 0)
+            try:
+                normalized_row_count = int(row_count)
+            except (TypeError, ValueError):
+                normalized_row_count = 0
+
+            ranked_sheet_candidates.append((
+                score_tabular_distinct_url_column(selected_column),
+                -normalized_row_count,
+                str(raw_sheet_name or '').casefold(),
+                str(raw_sheet_name or '').strip() or None,
+                selected_column,
+            ))
+
+        if ranked_sheet_candidates:
+            _, _, _, selected_sheet_name, selected_column_name = sorted(ranked_sheet_candidates)[0]
+            return selected_sheet_name, selected_column_name
+
+    return None, select_tabular_distinct_url_column(schema_info.get('columns', []))
+
+
+def normalize_multi_file_tabular_distinct_value(value):
+    """Normalize a distinct scalar so multi-file unions remain stable."""
+    rendered_value = str(value or '').strip()
+    if not rendered_value:
+        return None
+
+    return rendered_value.casefold()
+
+
+def build_multi_file_tabular_distinct_value_analysis(successful_results, failed_results=None):
+    """Build a deterministic combined distinct-value payload across multiple tabular files."""
+    successful_results = list(successful_results or [])
+    failed_results = list(failed_results or [])
+    if not successful_results:
+        return None
+
+    combined_values_by_key = {}
+    per_file_results = []
+    any_values_limited = False
+    files_with_matches = 0
+
+    for result_payload in successful_results:
+        file_values = []
+        for raw_value in result_payload.get('values') or []:
+            rendered_value = str(raw_value or '').strip()
+            if not rendered_value:
+                continue
+
+            file_values.append(rendered_value)
+            normalized_value_key = normalize_multi_file_tabular_distinct_value(rendered_value)
+            if normalized_value_key and normalized_value_key not in combined_values_by_key:
+                combined_values_by_key[normalized_value_key] = rendered_value
+
+        distinct_count = parse_tabular_result_count(result_payload.get('distinct_count'))
+        returned_values = parse_tabular_result_count(result_payload.get('returned_values'))
+        if distinct_count is None:
+            distinct_count = len(file_values)
+        if returned_values is None:
+            returned_values = len(file_values)
+
+        values_limited = bool(result_payload.get('values_limited', False))
+        any_values_limited = any_values_limited or values_limited
+        if returned_values > 0:
+            files_with_matches += 1
+
+        per_file_results.append({
+            'filename': result_payload.get('filename'),
+            'selected_sheet': result_payload.get('selected_sheet'),
+            'column': result_payload.get('column'),
+            'distinct_count': distinct_count,
+            'returned_values': returned_values,
+            'values_limited': values_limited,
+            'values': file_values,
+        })
+
+    combined_values = sorted(combined_values_by_key.values(), key=lambda item: item.casefold())
+    return json.dumps({
+        'analysis_type': 'multi_file_distinct_url_union',
+        'files_requested': len(successful_results) + len(failed_results),
+        'files_analyzed': len(successful_results),
+        'files_with_matches': files_with_matches,
+        'files_failed': len(failed_results),
+        'distinct_count': len(combined_values),
+        'returned_values': len(combined_values),
+        'values_limited': any_values_limited,
+        'values': combined_values,
+        'per_file_results': per_file_results,
+        'failed_files': failed_results,
+    }, indent=2, default=str)
+
+
 def get_kernel():
     return getattr(g, 'kernel', None) or getattr(builtins, 'kernel', None)
 
@@ -4347,6 +4544,205 @@ def determine_tabular_source_hint(document_scope, active_group_id=None, active_p
     return 'workspace'
 
 
+async def run_multi_file_tabular_distinct_url_analysis(user_question, analysis_file_contexts,
+                                                       user_id, conversation_id):
+    """Run deterministic per-file URL extraction and union the distinct results in Python."""
+    from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
+
+    del user_question
+    normalized_contexts = dedupe_tabular_file_contexts(analysis_file_contexts)
+    if len(normalized_contexts) <= 1:
+        return None
+
+    tabular_plugin = TabularProcessingPlugin()
+    successful_results = []
+    fatal_failures = []
+
+    for file_context in normalized_contexts:
+        filename = file_context['file_name']
+        source_hint = file_context.get('source_hint', 'workspace')
+        group_id = file_context.get('group_id')
+        public_workspace_id = file_context.get('public_workspace_id')
+
+        try:
+            container_name, blob_name = tabular_plugin._resolve_blob_location_with_fallback(
+                user_id,
+                conversation_id,
+                filename,
+                source_hint,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            )
+            tabular_plugin.remember_resolved_blob_location(
+                source_hint,
+                filename,
+                container_name,
+                blob_name,
+            )
+            schema_info = tabular_plugin._build_workbook_schema_summary(
+                container_name,
+                blob_name,
+                filename,
+                preview_rows=2,
+            )
+        except Exception as exc:
+            fatal_failures.append({
+                'filename': filename,
+                'source': source_hint,
+                'error': f'Could not load workbook schema: {exc}',
+            })
+            continue
+
+        selected_sheet, selected_column = select_tabular_distinct_url_sheet_and_column(schema_info)
+        if not selected_column:
+            fatal_failures.append({
+                'filename': filename,
+                'source': source_hint,
+                'error': 'Could not identify a URL/location-style column from workbook schema.',
+            })
+            continue
+
+        base_arguments = {
+            'user_id': user_id,
+            'conversation_id': conversation_id,
+            'filename': filename,
+            'column': selected_column,
+            'extract_mode': 'regex',
+            'extract_pattern': MULTI_FILE_TABULAR_DISTINCT_URL_EXTRACT_PATTERN,
+            'normalize_match': 'false',
+            'max_values': '10000',
+            'source': source_hint,
+        }
+        if group_id:
+            base_arguments['group_id'] = group_id
+        if public_workspace_id:
+            base_arguments['public_workspace_id'] = public_workspace_id
+
+        attempt_arguments = []
+        primary_arguments = dict(base_arguments)
+        if selected_sheet:
+            primary_arguments['sheet_name'] = selected_sheet
+        attempt_arguments.append(primary_arguments)
+
+        if (
+            selected_sheet
+            and schema_info.get('is_workbook')
+            and int(schema_info.get('sheet_count', 0) or 0) > 1
+        ):
+            attempt_arguments.append(dict(base_arguments))
+
+        best_result_payload = None
+        best_result_counts = None
+        last_error_message = None
+        for current_arguments in attempt_arguments:
+            raw_result = await tabular_plugin.get_distinct_values(**current_arguments)
+            try:
+                result_payload = json.loads(raw_result)
+            except (TypeError, ValueError):
+                last_error_message = 'get_distinct_values returned a non-JSON payload.'
+                continue
+
+            if result_payload.get('error'):
+                last_error_message = str(result_payload.get('error')).strip()
+                continue
+
+            distinct_count = parse_tabular_result_count(result_payload.get('distinct_count')) or 0
+            returned_values = parse_tabular_result_count(result_payload.get('returned_values')) or 0
+            comparison_key = (distinct_count, returned_values)
+            if best_result_counts is None or comparison_key > best_result_counts:
+                best_result_payload = result_payload
+                best_result_counts = comparison_key
+
+        if best_result_payload is None:
+            fatal_failures.append({
+                'filename': filename,
+                'source': source_hint,
+                'error': last_error_message or 'Distinct URL extraction failed for this file.',
+            })
+            continue
+
+        successful_results.append(best_result_payload)
+
+    if fatal_failures:
+        log_event(
+            '[Tabular Multi-File] Deterministic distinct URL analysis could not cover every file; falling back to SK orchestration.',
+            extra={
+                'conversation_id': conversation_id,
+                'file_count': len(normalized_contexts),
+                'fatal_failures': fatal_failures[:5],
+            },
+            level=logging.WARNING,
+        )
+        return None
+
+    combined_analysis = build_multi_file_tabular_distinct_value_analysis(successful_results)
+    if combined_analysis:
+        log_event(
+            '[Tabular Multi-File] Deterministic distinct URL analysis completed.',
+            extra={
+                'conversation_id': conversation_id,
+                'file_count': len(normalized_contexts),
+                'matched_file_count': len(successful_results),
+            },
+            level=logging.INFO,
+        )
+
+    return combined_analysis
+
+
+async def run_tabular_analysis_with_multi_file_support(user_question, tabular_filenames, user_id,
+                                                       conversation_id, gpt_model, settings,
+                                                       source_hint='workspace', group_id=None,
+                                                       public_workspace_id=None,
+                                                       execution_mode='analysis',
+                                                       tabular_file_contexts=None):
+    """Run deterministic multi-file helpers first, then fall back to the SK planner."""
+    analysis_file_contexts = normalize_tabular_file_contexts_for_analysis(
+        tabular_filenames=tabular_filenames,
+        tabular_file_contexts=tabular_file_contexts,
+        fallback_source_hint=source_hint,
+        fallback_group_id=group_id,
+        fallback_public_workspace_id=public_workspace_id,
+    )
+    multi_file_mode = get_multi_file_tabular_analysis_mode(
+        user_question,
+        execution_mode=execution_mode,
+        analysis_file_contexts=analysis_file_contexts,
+    )
+
+    if multi_file_mode == 'distinct_url_union':
+        log_event(
+            '[Tabular Multi-File] Starting deterministic distinct URL union analysis.',
+            extra={
+                'conversation_id': conversation_id,
+                'file_names': [file_context['file_name'] for file_context in analysis_file_contexts],
+            },
+            level=logging.INFO,
+        )
+        deterministic_analysis = await run_multi_file_tabular_distinct_url_analysis(
+            user_question,
+            analysis_file_contexts,
+            user_id,
+            conversation_id,
+        )
+        if deterministic_analysis:
+            return deterministic_analysis
+
+    return await run_tabular_sk_analysis(
+        user_question=user_question,
+        tabular_filenames=tabular_filenames,
+        tabular_file_contexts=analysis_file_contexts,
+        user_id=user_id,
+        conversation_id=conversation_id,
+        gpt_model=gpt_model,
+        settings=settings,
+        source_hint=source_hint,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+        execution_mode=execution_mode,
+    )
+
+
 def resolve_foundry_scope_for_auth(auth_settings, endpoint=None):
     """Resolve the correct scope for Foundry-backed inference authentication."""
     auth_settings = auth_settings or {}
@@ -6303,14 +6699,20 @@ def register_route_backend_chats(app):
                         'error': user_friendly_message
                     }), status_code
 
+            workspace_tabular_file_contexts = []
             workspace_tabular_files = set()
             if hybrid_search_enabled and is_tabular_processing_enabled(settings):
-                workspace_tabular_files = collect_workspace_tabular_filenames(
+                workspace_tabular_file_contexts = collect_workspace_tabular_file_contexts(
                     combined_documents=combined_documents,
                     selected_document_ids=selected_document_ids,
                     selected_document_id=selected_document_id,
                     document_scope=document_scope,
+                    active_group_id=active_group_id,
+                    active_public_workspace_id=active_public_workspace_id,
                 )
+                workspace_tabular_files = {
+                    file_context['file_name'] for file_context in workspace_tabular_file_contexts
+                }
 
             if hybrid_search_enabled and workspace_tabular_files and is_tabular_processing_enabled(settings):
                 tabular_source_hint = determine_tabular_source_hint(
@@ -6325,9 +6727,10 @@ def register_route_backend_chats(app):
                     plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
                 )
 
-                tabular_analysis = asyncio.run(run_tabular_sk_analysis(
+                tabular_analysis = asyncio.run(run_tabular_analysis_with_multi_file_support(
                     user_question=user_message,
                     tabular_filenames=workspace_tabular_files,
+                    tabular_file_contexts=workspace_tabular_file_contexts,
                     user_id=user_id,
                     conversation_id=conversation_id,
                     gpt_model=gpt_model,
@@ -6511,7 +6914,7 @@ def register_route_backend_chats(app):
                         plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
                     )
 
-                    chat_tabular_analysis = asyncio.run(run_tabular_sk_analysis(
+                    chat_tabular_analysis = asyncio.run(run_tabular_analysis_with_multi_file_support(
                         user_question=user_message,
                         tabular_filenames=chat_tabular_files,
                         user_id=user_id,
@@ -8578,7 +8981,7 @@ def register_route_backend_chats(app):
                         f"execution_mode={tabular_execution_mode} | baseline_invocations={baseline_tabular_invocation_count}"
                     )
 
-                    tabular_analysis = asyncio.run(run_tabular_sk_analysis(
+                    tabular_analysis = asyncio.run(run_tabular_analysis_with_multi_file_support(
                         user_question=user_message,
                         tabular_filenames=workspace_tabular_files,
                         tabular_file_contexts=workspace_tabular_file_contexts,
@@ -8741,7 +9144,7 @@ def register_route_backend_chats(app):
                             f"baseline_invocations={baseline_tabular_invocation_count}"
                         )
 
-                        chat_tabular_analysis = asyncio.run(run_tabular_sk_analysis(
+                        chat_tabular_analysis = asyncio.run(run_tabular_analysis_with_multi_file_support(
                             user_question=user_message,
                             tabular_filenames=chat_tabular_files,
                             user_id=user_id,
@@ -9809,12 +10212,133 @@ def _serialize_history_citation_value(value, max_chars=1200):
 
 
 def _build_agent_citation_history_lines(agent_citations, max_citations=4):
+    def parse_citation_payload(value):
+        if isinstance(value, str):
+            stripped_value = value.strip()
+            if stripped_value[:1] in ('{', '['):
+                try:
+                    return json.loads(stripped_value)
+                except Exception:
+                    return value
+        return value
+
+    def is_tabular_citation(citation):
+        if not isinstance(citation, dict):
+            return False
+        tool_name = str(citation.get('tool_name') or '')
+        function_name = str(citation.get('function_name') or '')
+        plugin_name = str(citation.get('plugin_name') or '')
+        return (
+            plugin_name == 'TabularProcessingPlugin'
+            or 'TabularProcessingPlugin.' in tool_name
+            or function_name in {
+                'aggregate_column',
+                'count_rows',
+                'count_rows_by_related_values',
+                'describe_tabular_file',
+                'filter_rows',
+                'filter_rows_by_related_values',
+                'get_distinct_values',
+                'group_by_aggregate',
+                'group_by_datetime_component',
+                'lookup_value',
+                'query_tabular_data',
+            }
+        )
+
+    def build_tabular_signature(citation):
+        arguments = parse_citation_payload(citation.get('function_arguments'))
+        result = parse_citation_payload(citation.get('function_result'))
+        if not isinstance(arguments, dict):
+            arguments = {}
+        if not isinstance(result, dict):
+            result = {}
+
+        tool_signature_name = str(citation.get('function_name') or citation.get('tool_name') or '').strip()
+        if ' [' in tool_signature_name:
+            tool_signature_name = tool_signature_name.split(' [', 1)[0]
+
+        signature_payload = {
+            'tool': tool_signature_name,
+            'filename': result.get('filename') or arguments.get('filename'),
+            'column': result.get('column') or arguments.get('column'),
+            'values': result.get('values'),
+            'sample_rows': result.get('sample_rows'),
+            'value': result.get('value'),
+        }
+        try:
+            return json.dumps(signature_payload, sort_keys=True, default=str)
+        except Exception:
+            return str(signature_payload)
+
+    def summarize_tabular_values(values, max_chars=2200, max_items=60):
+        if not isinstance(values, list) or not values:
+            return ''
+
+        compact_values = []
+        current_length = 0
+        for index, item in enumerate(values[:max_items]):
+            item_text = _serialize_history_citation_value(item, max_chars=300)
+            if not item_text:
+                continue
+
+            separator_length = 2 if compact_values else 0
+            if current_length + separator_length + len(item_text) > max_chars:
+                remaining = len(values) - index
+                compact_values.append(f"... (+{remaining} more values)")
+                break
+
+            compact_values.append(item_text)
+            current_length += separator_length + len(item_text)
+
+        if len(values) > max_items and (not compact_values or not str(compact_values[-1]).startswith('... (+')):
+            compact_values.append(f"... (+{len(values) - max_items} more values)")
+
+        return '; '.join(compact_values)
+
+    def build_tabular_line(citation):
+        arguments = parse_citation_payload(citation.get('function_arguments'))
+        result = parse_citation_payload(citation.get('function_result'))
+        if not isinstance(arguments, dict):
+            arguments = {}
+        if not isinstance(result, dict):
+            result = {}
+
+        tool_name = str(citation.get('tool_name') or citation.get('function_name') or 'TabularProcessingPlugin').strip()
+        filename = result.get('filename') or arguments.get('filename') or 'unknown file'
+        selected_sheet = result.get('selected_sheet') or arguments.get('sheet_name') or 'unknown sheet'
+        column = result.get('column') or arguments.get('column') or 'unknown column'
+        distinct_count = result.get('distinct_count')
+        returned_values = result.get('returned_values')
+        values_summary = summarize_tabular_values(result.get('values'))
+
+        line_parts = [
+            tool_name,
+            f"file={filename}",
+            f"sheet={selected_sheet}",
+            f"column={column}",
+        ]
+        if distinct_count not in (None, ''):
+            line_parts.append(f"distinct_count={distinct_count}")
+        if returned_values not in (None, ''):
+            line_parts.append(f"returned_values={returned_values}")
+        if values_summary:
+            line_parts.append(f"values={values_summary}")
+
+        return f"- {' | '.join(str(part) for part in line_parts if part not in (None, ''))}"
+
     eligible_citations = []
+    seen_tabular_signatures = set()
     for citation in agent_citations or []:
         if isinstance(citation, dict):
             tool_name = str(citation.get('tool_name') or citation.get('function_name') or '').strip()
             if tool_name.startswith('[Debug]') or tool_name == 'Conversation History':
                 continue
+            if is_tabular_citation(citation):
+                signature = build_tabular_signature(citation)
+                if signature in seen_tabular_signatures:
+                    continue
+                seen_tabular_signatures.add(signature)
         eligible_citations.append(citation)
 
     lines = []
@@ -9825,9 +10349,13 @@ def _build_agent_citation_history_lines(agent_citations, max_citations=4):
                 lines.append(f"- Tool result: {value_summary}")
             continue
 
+        if is_tabular_citation(citation):
+            lines.append(build_tabular_line(citation))
+            continue
+
         tool_name = str(citation.get('tool_name') or citation.get('function_name') or 'Tool invocation').strip()
         argument_summary = _serialize_history_citation_value(citation.get('function_arguments'), max_chars=350)
-        result_summary = _serialize_history_citation_value(citation.get('function_result'), max_chars=1400)
+        result_summary = _serialize_history_citation_value(citation.get('function_result'), max_chars=700)
         error_summary = ''
         if citation.get('success') is False:
             error_summary = _serialize_history_citation_value(citation.get('error_message'), max_chars=400)
@@ -9925,7 +10453,7 @@ def build_assistant_history_content_with_citations(message, content):
         + "\n\n".join(citation_sections)
         + "\n</Supporting citation context from this assistant turn>"
     )
-    citation_context = _truncate_history_citation_text(citation_context, max_chars=3200)
+    citation_context = _truncate_history_citation_text(citation_context, max_chars=5200)
 
     if not base_content:
         return citation_context

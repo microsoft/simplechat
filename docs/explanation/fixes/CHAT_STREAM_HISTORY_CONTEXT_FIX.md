@@ -1,6 +1,6 @@
-# Chat Stream History Context Fix (v0.240.048)
+# Chat Stream History Context Fix (v0.240.053)
 
-Fixed/Implemented in version: **0.240.048**
+Fixed/Implemented in version: **0.240.053**
 
 ## Header Information
 
@@ -18,7 +18,7 @@ The non-streaming path already supported older-turn summarization, masked-messag
 
 ### Version Implemented
 
-`0.240.048`
+`0.240.053`
 
 ## Technical Details
 
@@ -38,9 +38,9 @@ The non-streaming path already supported older-turn summarization, masked-messag
 - Added compact `history_context` diagnostics so the backend records which message refs were treated as older, recent, summarized, skipped, and finally sent to the model.
 - Emitted the history context into thoughts, assistant metadata, and optional debug citations so follow-up context selection is visible during troubleshooting.
 - Kept the thoughts timeline concise by showing only the short history-context summary there, while leaving the detailed refs in message metadata and optional debug citations.
-- Hydrated prior assistant citation artifacts and appended bounded citation results to assistant history turns so follow-up questions can reuse exact prior tool outputs instead of only the assistant prose.
+- Hydrated prior assistant citation artifacts and appended tabular-aware, deduplicated citation results to assistant history turns so follow-up questions can reuse exact prior tool outputs instead of only the assistant prose.
 - Updated the chat message metadata drawer to render the new history-context detail.
-- Bumped the application version to `0.240.048`.
+- Bumped the application version to `0.240.053`.
 
 ## Validation
 
@@ -50,7 +50,7 @@ The non-streaming path already supported older-turn summarization, masked-messag
 - Verified the shared history builder summarizes older turns when the recent window is smaller than the full conversation.
 - Verified masked and inactive messages are filtered before the final payload is sent to the model.
 - Verified both streaming and non-streaming routes call the shared helper.
-- Verified assistant history turns include prior citation results for follow-up prompts.
+- Verified assistant history turns include prior citation results for follow-up prompts without dropping later file results behind redundant cross-sheet duplicates.
 - Verified history-context diagnostics stay available in backend thought and metadata plumbing, while the thoughts UI remains summary-only.
 
 ### Impact Analysis
@@ -59,5 +59,5 @@ The non-streaming path already supported older-turn summarization, masked-messag
 - Short follow-up requests are less likely to anchor only on the immediately preceding answer.
 - Each assistant response now carries enough history-selection detail to confirm which message ids and roles actually reached the model.
 - The thoughts timeline stays readable instead of showing the full right-side history debug payload inline.
-- Follow-up questions can now reuse prior citation results, including exact tabular tool outputs that were only visible in the citation drawer before.
+- Follow-up questions can now reuse prior citation results, including exact tabular tool outputs that were only visible in the citation drawer before, while preserving distinct values from multiple files.
 - Future history-preparation changes now land in one place instead of drifting between two chat execution paths.

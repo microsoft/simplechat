@@ -4,6 +4,16 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.240.053)**
+
+#### Bug Fixes
+
+*   **Chat History Citation Replay Improvements**
+    *   Fixed follow-up prompts so prior assistant turns can reuse stored citation results, including tabular tool outputs, instead of relying only on the visible assistant message text.
+    *   Assistant history replay now hydrates stored citation artifacts and deduplicates repeated cross-sheet tabular calls so later file results, such as Licensing workbook values, remain available to the next turn.
+    *   History-context diagnostics remain available in message metadata and optional debug citations, while the thoughts timeline stays compact.
+    *   (Ref: `route_backend_chats.py`, `functions_message_artifacts.py`, `chat-thoughts.js`, `chat-messages.js`, `test_chat_stream_history_context_fix.py`, `CHAT_STREAM_HISTORY_CONTEXT_FIX.md`)
+
 ### **(v0.240.022)**
 
 #### Bug Fixes

@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for shared chat history context fix.
-Version: 0.240.046
-Implemented in: 0.240.046
+Version: 0.240.053
+Implemented in: 0.240.053
 
 This test ensures streaming and non-streaming chat paths share the same
 history builder so older turns can be summarized instead of being dropped
@@ -247,6 +247,26 @@ def test_history_builder_includes_prior_citation_results_for_follow_ups():
                     "success": True,
                 },
                 {
+                    "tool_name": "TabularProcessingPlugin.get_distinct_values",
+                    "function_arguments": {
+                        "filename": "CCO-Legal File Plan 2025_Final Approved.xlsx",
+                        "column": "Location",
+                    },
+                    "function_result": {
+                        "filename": "CCO-Legal File Plan 2025_Final Approved.xlsx",
+                        "selected_sheet": "ALL (cross-sheet search)",
+                        "column": "Location",
+                        "distinct_count": 3,
+                        "returned_values": 3,
+                        "values": [
+                            "http://occtreasgovprod.sharepoint.com/sites/CCO/lawnotated",
+                            "http://occtreasgovprod.sharepoint.com/sites/LCFrmwrk/Compliance%20Framework/Forms/Allltems.aspx",
+                            "http://occtreasgovprod.sharepoint.com/sites/WDLD/Site",
+                        ],
+                    },
+                    "success": True,
+                },
+                {
                     "tool_name": "TabularProcessingPlugin.get_distinct_values [Licensing]",
                     "function_arguments": {
                         "filename": "CCO-Licensing File Plan 2025_Final Approved.xlsx",
@@ -254,8 +274,28 @@ def test_history_builder_includes_prior_citation_results_for_follow_ups():
                         "column": "Location",
                     },
                     "function_result": {
-                        "distinct_count": 1,
+                        "distinct_count": 2,
                         "values": [
+                            "http://share/sites/CC/LICA/default.aspx",
+                            "https://occtreasgovprod.sharepoint.com/sites/LIC",
+                        ],
+                    },
+                    "success": True,
+                },
+                {
+                    "tool_name": "TabularProcessingPlugin.get_distinct_values",
+                    "function_arguments": {
+                        "filename": "CCO-Licensing File Plan 2025_Final Approved.xlsx",
+                        "column": "Location",
+                    },
+                    "function_result": {
+                        "filename": "CCO-Licensing File Plan 2025_Final Approved.xlsx",
+                        "selected_sheet": "ALL (cross-sheet search)",
+                        "column": "Location",
+                        "distinct_count": 2,
+                        "returned_values": 2,
+                        "values": [
+                            "http://share/sites/CC/LICA/default.aspx",
                             "https://occtreasgovprod.sharepoint.com/sites/LIC",
                         ],
                     },
@@ -285,7 +325,10 @@ def test_history_builder_includes_prior_citation_results_for_follow_ups():
     assistant_turn = result["history_messages"][1]["content"]
     assert "Supporting citation context from this assistant turn" in assistant_turn
     assert "TabularProcessingPlugin.get_distinct_values [Legal]" in assistant_turn
+    assert "http://share/sites/CC/LICA/default.aspx" in assistant_turn
     assert "https://occtreasgovprod.sharepoint.com/sites/LIC" in assistant_turn
+    assert assistant_turn.count("ALL (cross-sheet search)") == 0
+    assert assistant_turn.count("CCO-Licensing File Plan 2025_Final Approved.xlsx") == 1
 
     print("✅ Citation results are included in assistant history turns")
     return True
@@ -323,8 +366,8 @@ def test_version_and_fix_documentation_alignment():
     version = read_config_version()
     fix_doc_content = read_file_text(FIX_DOC)
 
-    assert version == "0.240.048", version
-    assert "Fixed/Implemented in version: **0.240.048**" in fix_doc_content
+    assert version == "0.240.053", version
+    assert "Fixed/Implemented in version: **0.240.053**" in fix_doc_content
     assert "build_conversation_history_segments" in fix_doc_content
     assert "history_context" in fix_doc_content
     assert "citation results" in fix_doc_content.lower()
