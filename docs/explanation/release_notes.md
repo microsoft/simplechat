@@ -6,21 +6,6 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 ### **(v0.240.053)**
 
-*   **Chat History Citation Replay Improvements**
-    *   Fixed follow-up prompts so prior assistant turns can reuse stored citation results, including tabular tool outputs, instead of relying only on the visible assistant message text.
-    *   Assistant history replay now hydrates stored citation artifacts and deduplicates repeated cross-sheet tabular calls so later file results, such as Licensing workbook values, remain available to the next turn.
-    *   History-context diagnostics remain available in message metadata and optional debug citations, while the thoughts timeline stays compact.
-    *   (Ref: `route_backend_chats.py`, `functions_message_artifacts.py`, `chat-thoughts.js`, `chat-messages.js`, `test_chat_stream_history_context_fix.py`, `CHAT_STREAM_HISTORY_CONTEXT_FIX.md`)
-
-*   **Document Revision Visibility and Storage Preservation**
-    *   Fixed same-name document uploads so new revisions now inherit the previous document's editable metadata, including classification, tags, title, abstract, keywords, publication date, authors, and sharing state.
-    *   Workspace lists and chat search now only use the current revision, while older revisions remain retained for future comparison work instead of staying active in normal workspace flows.
-    *   Document deletion now offers a choice between deleting only the current revision or deleting all stored revisions for that document family.
-    *   Blob storage now preserves older source files by keeping the active document at the existing alias path and archiving prior current revisions into a revision-family hierarchy before the alias path is overwritten.
-    *   (Ref: document revision families, current-only workspace visibility, hybrid blob alias plus archived revision storage, `functions_documents.py`, `functions_search.py`, `route_enhanced_citations.py`, workspace/group/public document flows)
-
-### **(v0.240.016)**
-
 #### New Features
 
 *   **MultiGPT Endpoint Management**
@@ -244,6 +229,19 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     
 #### Bug Fixes
 
+*   **Chat History Citation Replay Improvements**
+    *   Fixed follow-up prompts so prior assistant turns can reuse stored citation results, including tabular tool outputs, instead of relying only on the visible assistant message text.
+    *   Assistant history replay now hydrates stored citation artifacts and deduplicates repeated cross-sheet tabular calls so later file results, such as Licensing workbook values, remain available to the next turn.
+    *   History-context diagnostics remain available in message metadata and optional debug citations, while the thoughts timeline stays compact.
+    *   (Ref: `route_backend_chats.py`, `functions_message_artifacts.py`, `chat-thoughts.js`, `chat-messages.js`, `test_chat_stream_history_context_fix.py`, `CHAT_STREAM_HISTORY_CONTEXT_FIX.md`)
+
+*   **Document Revision Visibility and Storage Preservation**
+    *   Fixed same-name document uploads so new revisions now inherit the previous document's editable metadata, including classification, tags, title, abstract, keywords, publication date, authors, and sharing state.
+    *   Workspace lists and chat search now only use the current revision, while older revisions remain retained for future comparison work instead of staying active in normal workspace flows.
+    *   Document deletion now offers a choice between deleting only the current revision or deleting all stored revisions for that document family.
+    *   Blob storage now preserves older source files by keeping the active document at the existing alias path and archiving prior current revisions into a revision-family hierarchy before the alias path is overwritten.
+    *   (Ref: document revision families, current-only workspace visibility, hybrid blob alias plus archived revision storage, `functions_documents.py`, `functions_search.py`, `route_enhanced_citations.py`, workspace/group/public document flows)
+    
 *   **Python Runtime Dependency Refresh and Supply-Chain Hardening**
     *   Continued the requirements hardening work from `v0.240.014` by tightening the main application runtime to exact package pins, reducing dependency drift across local development, CI, and Azure deployments to help mitigate supply-chain exposure.
     *   Upgraded the Flask runtime stack to `Flask==3.1.3` and `Werkzeug==3.1.6`, and updated the shared `Markup` import path to `markupsafe` so the app starts correctly with Flask 3's package boundary changes.
