@@ -1631,6 +1631,650 @@ def normalize_tabular_reviewer_argument_value(argument_name, argument_value):
     return argument_value
 
 
+def is_tabular_distinct_url_question(user_question):
+    """Return True when the user is asking for unique or counted URL/site values."""
+    normalized_question = re.sub(r'\s+', ' ', str(user_question or '').strip().lower())
+    if not normalized_question:
+        return False
+
+    count_keywords = (
+        'count',
+        'counts',
+        'how many',
+        'number of',
+        'different',
+        'discrete',
+        'distinct',
+        'unique',
+    )
+    url_keywords = (
+        'http',
+        'https',
+        'link',
+        'links',
+        'sharepoint',
+        'site',
+        'sites',
+        'url',
+        'urls',
+    )
+    return any(keyword in normalized_question for keyword in count_keywords) and any(
+        keyword in normalized_question for keyword in url_keywords
+    )
+
+
+def question_requests_tabular_row_context(user_question):
+    """Return True when the user question implies a need for matching-row context."""
+    normalized_question = re.sub(r'\s+', ' ', str(user_question or '').strip().lower())
+    if not normalized_question:
+        return False
+
+    row_context_keywords = (
+        'appear',
+        'appears',
+        'appearing',
+        'find',
+        'found',
+        'search',
+        'show',
+        'where',
+    )
+    return any(keyword in normalized_question for keyword in row_context_keywords)
+
+
+def extract_tabular_high_signal_search_terms(user_question, max_terms=2):
+    """Extract a short list of likely literal search terms from the user question."""
+    question_text = str(user_question or '').strip()
+    if not question_text:
+        return []
+
+    normalized_question = re.sub(r'\s+', ' ', question_text)
+    lowercase_question = normalized_question.lower()
+    prioritized_terms = []
+    seen_terms = set()
+
+    def add_term(raw_term):
+        rendered_term = str(raw_term or '').strip()
+        if not rendered_term:
+            return
+
+        normalized_term = rendered_term.casefold()
+        if normalized_term in seen_terms:
+            return
+
+        seen_terms.add(normalized_term)
+        prioritized_terms.append(rendered_term)
+
+    for quoted_term in re.findall(r'["\']([^"\']{2,80})["\']', normalized_question):
+        add_term(quoted_term)
+
+    special_terms = (
+        ('sharepoint', 'SharePoint'),
+        ('onedrive', 'OneDrive'),
+        ('teams', 'Teams'),
+        ('ccore', 'CCORe'),
+        ('o365', 'O365'),
+    )
+    for token, rendered_term in special_terms:
+        if token in lowercase_question:
+            add_term(rendered_term)
+
+    ignored_tokens = {
+        'all',
+        'and',
+        'appear',
+        'appears',
+        'are',
+        'cell',
+        'cells',
+        'column',
+        'columns',
+        'count',
+        'counts',
+        'discrete',
+        'distinct',
+        'document',
+        'documents',
+        'does',
+        'every',
+        'file',
+        'for',
+        'from',
+        'get',
+        'how',
+        'in',
+        'is',
+        'it',
+        'link',
+        'links',
+        'location',
+        'locations',
+        'many',
+        'number',
+        'of',
+        'on',
+        'or',
+        'out',
+        'please',
+        'reason',
+        'row',
+        'rows',
+        'search',
+        'sheet',
+        'sheets',
+        'show',
+        'site',
+        'sites',
+        'that',
+        'the',
+        'them',
+        'these',
+        'they',
+        'this',
+        'to',
+        'topic',
+        'unique',
+        'url',
+        'urls',
+        'value',
+        'values',
+        'what',
+        'where',
+        'which',
+        'word',
+        'workbook',
+        'list',
+        'listed',
+        'lists',
+        'lsit',
+    }
+
+    for raw_token in re.findall(r'[A-Za-z0-9][A-Za-z0-9._\-/]{2,}', normalized_question):
+        lowercase_token = raw_token.casefold()
+        if lowercase_token in ignored_tokens:
+            continue
+        add_term(raw_token)
+        if len(prioritized_terms) >= max_terms:
+            break
+
+    return prioritized_terms[:max_terms]
+
+
+def extract_tabular_secondary_filter_terms(user_question, primary_terms=None, max_terms=3):
+    """Return likely cohort/filter terms after excluding the primary topic terms."""
+    excluded_terms = {
+        str(term or '').strip().casefold()
+        for term in (primary_terms or [])
+        if str(term or '').strip()
+    }
+    secondary_terms = []
+
+    for candidate_term in extract_tabular_high_signal_search_terms(
+        user_question,
+        max_terms=max_terms + len(excluded_terms) + 3,
+    ):
+        normalized_candidate_term = str(candidate_term or '').strip().casefold()
+        if not normalized_candidate_term or normalized_candidate_term in excluded_terms:
+            continue
+
+        secondary_terms.append(candidate_term)
+        if len(secondary_terms) >= max_terms:
+            break
+
+    return secondary_terms
+
+
+def normalize_tabular_row_text(value):
+    """Normalize a row cell value for lightweight controller-side term matching."""
+    if value is None:
+        return ''
+
+    return re.sub(r'\s+', ' ', str(value).casefold()).strip()
+
+
+def parse_tabular_column_candidates(raw_columns):
+    """Normalize column arguments from string or list form into a stable list."""
+    if isinstance(raw_columns, list):
+        candidate_columns = raw_columns
+    elif isinstance(raw_columns, str):
+        candidate_columns = raw_columns.split(',')
+    else:
+        return []
+
+    normalized_columns = []
+    seen_columns = set()
+    for candidate_column in candidate_columns:
+        normalized_column = str(candidate_column or '').strip()
+        if not normalized_column:
+            continue
+
+        lowered_column = normalized_column.casefold()
+        if lowered_column in seen_columns:
+            continue
+
+        seen_columns.add(lowered_column)
+        normalized_columns.append(normalized_column)
+
+    return normalized_columns
+
+
+def tabular_value_looks_url_like(value):
+    """Return True when a scalar cell value looks like a URL or site path."""
+    rendered_value = normalize_tabular_row_text(value)
+    if not rendered_value:
+        return False
+
+    return (
+        'http://' in rendered_value
+        or 'https://' in rendered_value
+        or 'sharepoint.com' in rendered_value
+        or '/sites/' in rendered_value
+    )
+
+
+def tabular_result_payload_contains_url_like_content(result_payload):
+    """Return True when a result payload contains URL-like strings."""
+    if not isinstance(result_payload, dict):
+        return False
+
+    candidate_values = []
+    raw_values = result_payload.get('values')
+    if isinstance(raw_values, list):
+        candidate_values.extend(raw_values[:20])
+
+    raw_rows = result_payload.get('data')
+    if isinstance(raw_rows, list):
+        for raw_row in raw_rows[:10]:
+            if not isinstance(raw_row, dict):
+                continue
+            candidate_values.extend(raw_row.values())
+
+    for candidate_value in candidate_values:
+        rendered_candidate = str(candidate_value or '').strip().lower()
+        if not rendered_candidate:
+            continue
+        if (
+            'http://' in rendered_candidate
+            or 'https://' in rendered_candidate
+            or 'sharepoint.com' in rendered_candidate
+            or '/sites/' in rendered_candidate
+        ):
+            return True
+
+    return False
+
+
+def infer_tabular_url_value_column_from_rows(rows, preferred_columns=None):
+    """Infer which returned row column contains URL-like values."""
+    preferred_columns = parse_tabular_column_candidates(preferred_columns)
+    for preferred_column in preferred_columns:
+        if any(
+            isinstance(row, dict) and tabular_value_looks_url_like(row.get(preferred_column))
+            for row in (rows or [])
+        ):
+            return preferred_column
+
+    column_scores = {}
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+
+        for column_name, cell_value in row.items():
+            normalized_column_name = str(column_name or '').strip()
+            if not normalized_column_name or normalized_column_name.startswith('_'):
+                continue
+            if not tabular_value_looks_url_like(cell_value):
+                continue
+
+            column_scores[normalized_column_name] = column_scores.get(normalized_column_name, 0) + 1
+
+    if not column_scores:
+        return None
+
+    return sorted(
+        column_scores.items(),
+        key=lambda item: (-item[1], item[0].casefold()),
+    )[0][0]
+
+
+def infer_tabular_secondary_filter_from_rows(rows, filter_terms, excluded_columns=None):
+    """Infer a likely cohort column/term pair from returned row context."""
+    normalized_excluded_columns = {
+        str(column_name or '').strip().casefold()
+        for column_name in (excluded_columns or [])
+        if str(column_name or '').strip()
+    }
+    normalized_filter_terms = [
+        str(filter_term or '').strip()
+        for filter_term in (filter_terms or [])
+        if str(filter_term or '').strip()
+    ]
+    if not normalized_filter_terms:
+        return None
+
+    candidate_scores = {}
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+
+        for column_name, cell_value in row.items():
+            normalized_column_name = str(column_name or '').strip()
+            if not normalized_column_name or normalized_column_name.startswith('_'):
+                continue
+            if normalized_column_name.casefold() in normalized_excluded_columns:
+                continue
+
+            rendered_cell_value = normalize_tabular_row_text(cell_value)
+            if not rendered_cell_value:
+                continue
+
+            for filter_term in normalized_filter_terms:
+                if str(filter_term).casefold() not in rendered_cell_value:
+                    continue
+
+                score_key = (normalized_column_name, filter_term)
+                candidate_scores[score_key] = candidate_scores.get(score_key, 0) + 1
+
+    if not candidate_scores:
+        return None
+
+    (selected_column, selected_term), match_count = sorted(
+        candidate_scores.items(),
+        key=lambda item: (-item[1], item[0][0].casefold(), item[0][1].casefold()),
+    )[0]
+    return {
+        'column': selected_column,
+        'term': selected_term,
+        'match_count': match_count,
+    }
+
+
+def infer_tabular_url_path_segments(user_question):
+    """Infer URL path truncation when the user is asking about site roots."""
+    normalized_question = re.sub(r'\s+', ' ', str(user_question or '').strip().lower())
+    if not normalized_question:
+        return None
+
+    if 'site' in normalized_question or 'sites' in normalized_question or 'sharepoint' in normalized_question:
+        return '2'
+
+    return None
+
+
+def build_tabular_follow_up_call_signature(function_name, arguments):
+    """Return a stable signature for a follow-up tool call."""
+    normalized_arguments = {}
+    for argument_name, argument_value in (arguments or {}).items():
+        if argument_value in (None, ''):
+            continue
+        normalized_arguments[str(argument_name)] = argument_value
+
+    return f"{function_name}:{json.dumps(normalized_arguments, sort_keys=True, default=str)}"
+
+
+def derive_tabular_follow_up_calls_from_invocations(user_question, invocations):
+    """Derive targeted follow-up calls when initial analytical results are only intermediate."""
+    successful_invocations = [
+        invocation for invocation in (invocations or [])
+        if not get_tabular_invocation_error_message(invocation)
+    ]
+    if not successful_invocations:
+        return []
+
+    wants_distinct_urls = is_tabular_distinct_url_question(user_question)
+    wants_row_context = question_requests_tabular_row_context(user_question)
+    search_terms = extract_tabular_high_signal_search_terms(user_question, max_terms=4)
+    primary_search_term = search_terms[0] if search_terms else None
+    secondary_filter_terms = extract_tabular_secondary_filter_terms(
+        user_question,
+        primary_terms=[primary_search_term] if primary_search_term else None,
+        max_terms=3,
+    )
+    has_row_context_tool = any(
+        getattr(invocation, 'function_name', '') in {'search_rows', 'filter_rows', 'query_tabular_data'}
+        for invocation in successful_invocations
+    )
+    has_url_extraction_tool = any(
+        getattr(invocation, 'function_name', '') == 'get_distinct_values'
+        and str(
+            ((getattr(invocation, 'parameters', {}) or {}).get('extract_mode'))
+            or ((get_tabular_invocation_result_payload(invocation) or {}).get('extract_mode'))
+            or ''
+        ).strip().lower() == 'url'
+        for invocation in successful_invocations
+    )
+
+    existing_signatures = {
+        build_tabular_follow_up_call_signature(
+            getattr(invocation, 'function_name', ''),
+            getattr(invocation, 'parameters', {}) or {},
+        )
+        for invocation in successful_invocations
+    }
+    follow_up_calls = []
+
+    for invocation in successful_invocations:
+        function_name = getattr(invocation, 'function_name', '')
+        invocation_parameters = getattr(invocation, 'parameters', {}) or {}
+        result_payload = get_tabular_invocation_result_payload(invocation) or {}
+        filename = str(invocation_parameters.get('filename') or result_payload.get('filename') or '').strip()
+        if not filename:
+            continue
+
+        scope_arguments = {
+            'filename': filename,
+            'source': invocation_parameters.get('source') or 'workspace',
+        }
+        if invocation_parameters.get('group_id'):
+            scope_arguments['group_id'] = invocation_parameters.get('group_id')
+        if invocation_parameters.get('public_workspace_id'):
+            scope_arguments['public_workspace_id'] = invocation_parameters.get('public_workspace_id')
+
+        selected_sheet = get_tabular_invocation_selected_sheet(invocation)
+        if selected_sheet and 'cross-sheet' not in selected_sheet.lower():
+            scope_arguments['sheet_name'] = selected_sheet
+        elif invocation_parameters.get('sheet_name'):
+            scope_arguments['sheet_name'] = invocation_parameters.get('sheet_name')
+        elif invocation_parameters.get('sheet_index') not in (None, ''):
+            scope_arguments['sheet_index'] = invocation_parameters.get('sheet_index')
+
+        if function_name == 'get_distinct_values':
+            target_column = str(invocation_parameters.get('column') or result_payload.get('column') or '').strip()
+            if not target_column:
+                continue
+
+            current_filter_columns = [
+                str(invocation_parameters.get('filter_column') or '').strip(),
+                str(invocation_parameters.get('additional_filter_column') or '').strip(),
+            ]
+            same_column_filter = any(
+                filter_column.casefold() == target_column.casefold()
+                for filter_column in current_filter_columns
+                if filter_column
+            )
+            try:
+                distinct_count = int(result_payload.get('distinct_count'))
+            except (TypeError, ValueError):
+                distinct_count = None
+
+            needs_broad_row_context = bool(
+                wants_row_context
+                and primary_search_term
+                and not has_row_context_tool
+                and same_column_filter
+                and secondary_filter_terms
+                and distinct_count == 0
+            )
+
+            if wants_row_context and primary_search_term and not has_row_context_tool:
+                row_search_arguments = dict(scope_arguments)
+                row_search_arguments['search_value'] = primary_search_term
+                row_search_arguments['search_columns'] = target_column
+
+                normalize_match_value = invocation_parameters.get('normalize_match')
+                if normalize_match_value not in (None, ''):
+                    row_search_arguments['normalize_match'] = normalize_match_value
+
+                if not needs_broad_row_context:
+                    for argument_name in (
+                        'query_expression',
+                        'filter_column',
+                        'filter_operator',
+                        'filter_value',
+                        'additional_filter_column',
+                        'additional_filter_operator',
+                        'additional_filter_value',
+                    ):
+                        argument_value = invocation_parameters.get(argument_name)
+                        if argument_value in (None, ''):
+                            continue
+                        row_search_arguments[argument_name] = argument_value
+
+                    return_columns = []
+                    for candidate_column in (
+                        invocation_parameters.get('filter_column'),
+                        invocation_parameters.get('additional_filter_column'),
+                        target_column,
+                    ):
+                        normalized_column = str(candidate_column or '').strip()
+                        if not normalized_column or normalized_column in return_columns:
+                            continue
+                        return_columns.append(normalized_column)
+
+                    if return_columns:
+                        row_search_arguments['return_columns'] = ','.join(return_columns)
+
+                row_search_arguments['max_rows'] = '50' if needs_broad_row_context else '25'
+
+                row_search_signature = build_tabular_follow_up_call_signature('search_rows', row_search_arguments)
+                if row_search_signature not in existing_signatures:
+                    follow_up_calls.append({
+                        'function_name': 'search_rows',
+                        'arguments': row_search_arguments,
+                        'reason': (
+                            'collect broad row context for the literal topic before inferring a cohort column'
+                            if needs_broad_row_context else
+                            'collect matching row context for the literal topic before final reasoning'
+                        ),
+                    })
+                    existing_signatures.add(row_search_signature)
+                    has_row_context_tool = True
+
+            if wants_distinct_urls and not str(invocation_parameters.get('extract_mode') or '').strip() and not has_url_extraction_tool:
+                if needs_broad_row_context:
+                    continue
+                if not tabular_result_payload_contains_url_like_content(result_payload):
+                    continue
+
+                extraction_arguments = dict(scope_arguments)
+                extraction_arguments['column'] = target_column
+                for argument_name in (
+                    'query_expression',
+                    'filter_column',
+                    'filter_operator',
+                    'filter_value',
+                    'additional_filter_column',
+                    'additional_filter_operator',
+                    'additional_filter_value',
+                    'normalize_match',
+                    'max_values',
+                ):
+                    argument_value = invocation_parameters.get(argument_name)
+                    if argument_value in (None, ''):
+                        continue
+                    extraction_arguments[argument_name] = argument_value
+
+                extraction_arguments['extract_mode'] = 'url'
+                inferred_path_segments = infer_tabular_url_path_segments(user_question)
+                if inferred_path_segments:
+                    extraction_arguments['url_path_segments'] = inferred_path_segments
+
+                extraction_signature = build_tabular_follow_up_call_signature('get_distinct_values', extraction_arguments)
+                if extraction_signature not in existing_signatures:
+                    follow_up_calls.append({
+                        'function_name': 'get_distinct_values',
+                        'arguments': extraction_arguments,
+                        'reason': 'extract canonical URL or site values from composite text cells',
+                    })
+                    existing_signatures.add(extraction_signature)
+                    has_url_extraction_tool = True
+
+        if function_name == 'search_rows' and wants_distinct_urls and not has_url_extraction_tool:
+            search_rows_result_rows = get_tabular_invocation_data_rows(invocation)
+            if not search_rows_result_rows:
+                continue
+
+            target_column = None
+            searched_columns = parse_tabular_column_candidates(
+                result_payload.get('searched_columns') or invocation_parameters.get('search_columns')
+            )
+            if len(searched_columns) == 1:
+                target_column = searched_columns[0]
+            else:
+                target_column = infer_tabular_url_value_column_from_rows(
+                    search_rows_result_rows,
+                    preferred_columns=searched_columns,
+                )
+
+            if not target_column:
+                continue
+
+            extraction_arguments = dict(scope_arguments)
+            extraction_arguments['column'] = target_column
+
+            inferred_filter = infer_tabular_secondary_filter_from_rows(
+                search_rows_result_rows,
+                secondary_filter_terms,
+                excluded_columns=[target_column],
+            )
+            if inferred_filter:
+                extraction_arguments['filter_column'] = inferred_filter['column']
+                extraction_arguments['filter_operator'] = 'contains'
+                extraction_arguments['filter_value'] = inferred_filter['term']
+            elif not secondary_filter_terms:
+                for argument_name in (
+                    'query_expression',
+                    'filter_column',
+                    'filter_operator',
+                    'filter_value',
+                    'additional_filter_column',
+                    'additional_filter_operator',
+                    'additional_filter_value',
+                ):
+                    argument_value = invocation_parameters.get(argument_name)
+                    if argument_value in (None, ''):
+                        continue
+                    extraction_arguments[argument_name] = argument_value
+            else:
+                continue
+
+            normalize_match_value = invocation_parameters.get('normalize_match')
+            if normalize_match_value not in (None, ''):
+                extraction_arguments['normalize_match'] = normalize_match_value
+
+            extraction_arguments['extract_mode'] = 'url'
+            inferred_path_segments = infer_tabular_url_path_segments(user_question)
+            if inferred_path_segments:
+                extraction_arguments['url_path_segments'] = inferred_path_segments
+            if invocation_parameters.get('max_rows') not in (None, ''):
+                extraction_arguments['max_values'] = invocation_parameters.get('max_rows')
+
+            extraction_signature = build_tabular_follow_up_call_signature('get_distinct_values', extraction_arguments)
+            if extraction_signature not in existing_signatures:
+                follow_up_calls.append({
+                    'function_name': 'get_distinct_values',
+                    'arguments': extraction_arguments,
+                    'reason': 'extract canonical URL or site values after inferring the cohort column from matching rows',
+                })
+                existing_signatures.add(extraction_signature)
+                has_url_extraction_tool = True
+
+        if len(follow_up_calls) >= 2:
+            break
+
+    return follow_up_calls[:2]
+
+
 async def maybe_recover_tabular_analysis_with_llm_reviewer(chat_service, kernel,
                                                            tabular_plugin, plugin_logger,
                                                            user_question, schema_context,
@@ -1811,6 +2455,77 @@ async def maybe_recover_tabular_analysis_with_llm_reviewer(chat_service, kernel,
     successful_analytical_invocations, failed_analytical_invocations = split_tabular_analysis_invocations(
         reviewer_invocations
     )
+    for follow_up_round in range(2):
+        follow_up_calls = derive_tabular_follow_up_calls_from_invocations(
+            user_question,
+            successful_analytical_invocations,
+        )
+        if not follow_up_calls:
+            break
+
+        auto_follow_up_names = []
+        for follow_up_call in follow_up_calls:
+            function_name = follow_up_call.get('function_name')
+            if function_name not in reviewer_allowed_function_names:
+                reviewer_plan_errors.append(
+                    f"Auto follow-up selected disallowed function '{function_name}'."
+                )
+                continue
+
+            plugin_function = getattr(tabular_plugin, function_name, None)
+            if plugin_function is None:
+                reviewer_plan_errors.append(
+                    f"Auto follow-up selected unavailable function '{function_name}'."
+                )
+                continue
+
+            function_signature = inspect.signature(plugin_function)
+            executable_arguments = {
+                'user_id': user_id,
+                'conversation_id': conversation_id,
+            }
+            for argument_name, argument_value in (follow_up_call.get('arguments') or {}).items():
+                if argument_name not in function_signature.parameters:
+                    continue
+
+                normalized_argument_value = normalize_tabular_reviewer_argument_value(
+                    argument_name,
+                    argument_value,
+                )
+                if normalized_argument_value is None:
+                    continue
+
+                executable_arguments[argument_name] = normalized_argument_value
+
+            try:
+                await plugin_function(**executable_arguments)
+                auto_follow_up_names.append(function_name)
+            except Exception as execution_error:
+                reviewer_plan_errors.append(f"{function_name}: {execution_error}")
+
+        if not auto_follow_up_names:
+            break
+
+        log_event(
+            '[Tabular SK Analysis] Reviewer recovery executed automatic analytical follow-up calls',
+            extra={
+                'follow_up_functions': auto_follow_up_names,
+                'initial_reviewer_functions': executed_function_names,
+                'follow_up_round': follow_up_round + 1,
+            },
+            level=logging.INFO,
+        )
+        executed_function_names.extend(auto_follow_up_names)
+        invocations_after = plugin_logger.get_invocations_for_conversation(
+            user_id,
+            conversation_id,
+            limit=1000,
+        )
+        reviewer_invocations = get_new_plugin_invocations(invocations_after, baseline_invocation_count)
+        successful_analytical_invocations, failed_analytical_invocations = split_tabular_analysis_invocations(
+            reviewer_invocations
+        )
+
     fallback = build_tabular_analysis_fallback_from_invocations(successful_analytical_invocations)
     failed_tool_error_messages = summarize_tabular_invocation_errors(failed_analytical_invocations)
 

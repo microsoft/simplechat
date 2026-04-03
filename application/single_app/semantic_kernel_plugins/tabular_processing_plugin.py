@@ -1879,6 +1879,12 @@ class TabularProcessingPlugin:
             r"(?P<quote>['\"])(?P<value>.*?)(?P=quote)\s*$",
             flags=re.IGNORECASE,
         )
+        null_literal_pattern = re.compile(
+            r"^\s*(?P<column>`[^`]+`|[A-Za-z_][A-Za-z0-9_]*)\s*"
+            r"(?P<operator>==|!=)\s*"
+            r"(?P<null_literal>null|none|nan)\s*$",
+            flags=re.IGNORECASE,
+        )
 
         filtered_df = df
         matched_any_clause = False
@@ -1951,6 +1957,19 @@ class TabularProcessingPlugin:
                     normalize_match=normalize_match,
                 )
                 filtered_df = filtered_df[mask]
+                matched_any_clause = True
+                continue
+
+            match = null_literal_pattern.match(normalized_clause_text)
+            if match:
+                column_name = self._normalize_pseudo_query_column_reference(match.group('column'))
+                if column_name not in filtered_df.columns:
+                    raise KeyError(column_name)
+
+                if match.group('operator') == '==':
+                    filtered_df = filtered_df[filtered_df[column_name].isna()]
+                else:
+                    filtered_df = filtered_df[filtered_df[column_name].notna()]
                 matched_any_clause = True
                 continue
 

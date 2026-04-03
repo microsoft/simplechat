@@ -2,8 +2,8 @@
 # test_tabular_relational_analysis_helpers.py
 """
 Functional test for tabular relational analysis helpers.
-Version: 0.240.041
-Implemented in: 0.240.018; 0.240.037; 0.240.038; 0.240.039; 0.240.040; 0.240.041
+Version: 0.240.043
+Implemented in: 0.240.018; 0.240.037; 0.240.038; 0.240.039; 0.240.040; 0.240.041; 0.240.042; 0.240.043
 
 This test ensures the tabular processing plugin can infer workbook relationship
 metadata, return deterministic distinct values and row counts, and perform
@@ -527,6 +527,37 @@ def test_reviewer_style_text_query_expression_rewrites_for_count_and_distinct_ca
         return False
 
 
+def test_reviewer_style_null_literal_query_expression_rewrites_for_count_calls():
+    """Verify reviewer-style null literals are rewritten instead of failing."""
+    print('🔍 Testing reviewer-style null literal query rewrite...')
+
+    try:
+        plugin = build_multi_filter_workbook_plugin()
+        count_payload = json.loads(asyncio.run(plugin.count_rows(
+            user_id='test-user',
+            conversation_id='test-conversation',
+            filename='cco_sharepoint_sites.xlsx',
+            query_expression='Location != null',
+            filter_column='Business Unit',
+            filter_operator='contains',
+            filter_value='CCO',
+            normalize_match='false',
+            source='workspace',
+        )))
+
+        assert count_payload['selected_sheet'] == 'ALL (cross-sheet search)', count_payload
+        assert count_payload['row_count'] == 5, count_payload
+        assert count_payload['filter_applied'][0].endswith('[reviewer-style fallback]'), count_payload
+
+        print('✅ Reviewer-style null literal query rewrite passed')
+        return True
+    except Exception as exc:
+        print(f'❌ Test failed: {exc}')
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def test_related_value_helpers_return_explainable_outputs():
     """Verify semi-join helpers return deterministic counts and explainable metadata."""
     print('🔍 Testing related-value semi-join helpers...')
@@ -649,6 +680,7 @@ if __name__ == '__main__':
         test_get_distinct_values_supports_regex_extraction_from_text_cells,
         test_search_rows_can_search_all_columns_and_return_target_values,
         test_reviewer_style_text_query_expression_rewrites_for_count_and_distinct_calls,
+        test_reviewer_style_null_literal_query_expression_rewrites_for_count_calls,
         test_related_value_helpers_return_explainable_outputs,
         test_route_prompt_mentions_deterministic_relational_helpers,
     ]

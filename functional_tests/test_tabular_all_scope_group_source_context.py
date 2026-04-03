@@ -2,8 +2,8 @@
 # test_tabular_all_scope_group_source_context.py
 """
 Functional test for all-scope tabular group source context handling.
-Version: 0.240.041
-Implemented in: 0.240.032; 0.240.041
+Version: 0.240.043
+Implemented in: 0.240.032; 0.240.041; 0.240.042; 0.240.043
 
 This test ensures mixed-scope workspace search keeps per-file group/public
 source metadata so tabular analysis can open group and public workbooks even
@@ -204,7 +204,7 @@ def test_route_uses_context_aware_tabular_analysis_and_version_bump():
     ]
     missing = [snippet for snippet in required_snippets if snippet not in source]
     assert not missing, f'Missing route integration snippets: {missing}'
-    assert read_config_version() == '0.240.041'
+    assert read_config_version() == '0.240.043'
 
     print('✅ Route integration and version bump passed')
     return True
