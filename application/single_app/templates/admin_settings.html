@@ -5566,31 +5566,50 @@
 
 <script>
     // Prepopulate model arrays and classification data from server
-    window.gptSelected = JSON.parse('{{ settings.gpt_model.selected|tojson()|safe }}' || '[]');
-    window.gptAll      = JSON.parse('{{ settings.gpt_model.all|tojson()|safe }}' || '[]');
+    window.gptSelected = {{ settings.gpt_model.selected|default([], true)|tojson|safe }};
+    window.gptAll      = {{ settings.gpt_model.all|default([], true)|tojson|safe }};
 
-    window.embeddingSelected = JSON.parse('{{ settings.embedding_model.selected|tojson()|safe }}' || '[]');
-    window.embeddingAll      = JSON.parse('{{ settings.embedding_model.all|tojson()|safe }}' || '[]');
+    window.embeddingSelected = {{ settings.embedding_model.selected|default([], true)|tojson|safe }};
+    window.embeddingAll      = {{ settings.embedding_model.all|default([], true)|tojson|safe }};
 
-    window.imageSelected = JSON.parse('{{ settings.image_gen_model.selected|tojson()|safe }}' || '[]');
-    window.imageAll      = JSON.parse('{{ settings.image_gen_model.all|tojson()|safe }}' || '[]');
+    window.imageSelected = {{ settings.image_gen_model.selected|default([], true)|tojson|safe }};
+    window.imageAll      = {{ settings.image_gen_model.all|default([], true)|tojson|safe }};
 
     window.enableMultiModelEndpoints = {{ 'true' if settings.enable_multi_model_endpoints else 'false' }};
-    window.modelEndpoints = JSON.parse('{{ settings.model_endpoints|tojson()|safe }}' || '[]');
-    window.defaultModelSelection = JSON.parse('{{ settings.default_model_selection|tojson()|safe }}' || '{}');
-    window.multiEndpointMigrationNotice = JSON.parse('{{ settings.multi_endpoint_migration_notice|tojson()|safe }}' || '{}');
+    window.modelEndpoints = {{ settings.model_endpoints|default([], true)|tojson|safe }};
+    window.defaultModelSelection = {{ settings.default_model_selection|default({}, true)|tojson|safe }};
+    window.multiEndpointMigrationNotice = {{ settings.multi_endpoint_migration_notice|default({}, true)|tojson|safe }};
+
+    if (!Array.isArray(window.gptSelected)) {
+        window.gptSelected = [];
+    }
+    if (!Array.isArray(window.gptAll)) {
+        window.gptAll = [];
+    }
+    if (!Array.isArray(window.embeddingSelected)) {
+        window.embeddingSelected = [];
+    }
+    if (!Array.isArray(window.embeddingAll)) {
+        window.embeddingAll = [];
+    }
+    if (!Array.isArray(window.imageSelected)) {
+        window.imageSelected = [];
+    }
+    if (!Array.isArray(window.imageAll)) {
+        window.imageAll = [];
+    }
+    if (!Array.isArray(window.modelEndpoints)) {
+        window.modelEndpoints = [];
+    }
+    if (!window.defaultModelSelection || typeof window.defaultModelSelection !== "object" || Array.isArray(window.defaultModelSelection)) {
+        window.defaultModelSelection = {};
+    }
+    if (!window.multiEndpointMigrationNotice || typeof window.multiEndpointMigrationNotice !== "object" || Array.isArray(window.multiEndpointMigrationNotice)) {
+        window.multiEndpointMigrationNotice = {};
+    }
 
     // *** NEW: Classification Data ***
-    try {
-        let categoriesStr = '{{ settings.document_classification_categories|tojson(indent=None)|safe }}';
-        if (!categoriesStr || categoriesStr.trim() === '') {
-            categoriesStr = '[]';
-        }
-        window.classificationCategories = JSON.parse(categoriesStr);
-    } catch (e) {
-        console.error("Error parsing classification categories:", e);
-        window.classificationCategories = [];
-    }
+    window.classificationCategories = {{ settings.document_classification_categories|default([], true)|tojson(indent=None)|safe }};
     // Ensure it's always an array
     if (!Array.isArray(window.classificationCategories)) {
         window.classificationCategories = [];
@@ -5598,16 +5617,7 @@
     window.enableDocumentClassification = "{{ enable_document_classification }}";
 
     // *** NEW: External Links Data ***
-    try {
-        let externalLinksStr = '{{ settings.external_links|tojson(indent=None)|safe }}';
-        if (!externalLinksStr || externalLinksStr.trim() === '') {
-            externalLinksStr = '[]';
-        }
-        window.externalLinks = JSON.parse(externalLinksStr);
-    } catch (e) {
-        console.error("Error parsing external links:", e);
-        window.externalLinks = [];
-    }
+    window.externalLinks = {{ settings.external_links|default([], true)|tojson(indent=None)|safe }};
     // Ensure it's always an array
     if (!Array.isArray(window.externalLinks)) {
         window.externalLinks = [];

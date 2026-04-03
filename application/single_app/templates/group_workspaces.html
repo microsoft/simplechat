@@ -233,14 +233,14 @@ app_settings.app_title }} {% endblock %} {% block head %}
         </button>
         <div class="dropdown-menu w-100" id="group-dropdown-menu">
           <div class="px-2 group-search-container d-none">
-            <input type="text" class="form-control form-control-sm mb-2" placeholder="Search groups..." id="group-search-input">
+            <input type="text" class="form-control form-control-sm mb-2" placeholder="Search groups..." id="group-search-input" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
           </div>
           <div class="dropdown-items-container" id="group-dropdown-items" style="max-height: 300px; overflow-y: auto;">
             <!-- Groups will be populated here -->
           </div>
         </div>
         <!-- Hidden select element for compatibility -->
-        <select class="d-none" id="group-select"></select>
+        <select class="d-none" id="group-select" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true"></select>
       </div>
     </div>
     <div class="col-sm-6">
@@ -1043,9 +1043,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
 </div>
 
 <!-- Modal for Group Prompt Create/Edit (Keep As Is) -->
-<div class="modal fade" id="groupPromptModal" tabindex="-1" aria-hidden="true">
+<div class="modal fade" id="groupPromptModal" tabindex="-1" aria-hidden="true" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
   <div class="modal-dialog modal-xl" style="max-width: 80%">
-    <form id="group-prompt-form">
+    <form id="group-prompt-form" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title" id="groupPromptModalLabel">
@@ -1068,6 +1068,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
               type="text"
               class="form-control"
               id="group-prompt-name"
+              autocomplete="off"
+              data-lpignore="true"
+              data-1p-ignore="true"
+              data-bwignore="true"
               required
             />
           </div>
@@ -1079,6 +1083,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
               class="form-control"
               id="group-prompt-content"
               name="group_prompt_content"
+              autocomplete="off"
+              data-lpignore="true"
+              data-1p-ignore="true"
+              data-bwignore="true"
               rows="10"
             ></textarea>
           </div>
@@ -1104,9 +1112,13 @@ app_settings.app_title }} {% endblock %} {% block head %}
   tabindex="-1"
   aria-labelledby="docMetadataModalLabel"
   aria-hidden="true"
+  autocomplete="off"
+  data-lpignore="true"
+  data-1p-ignore="true"
+  data-bwignore="true"
 >
   <div class="modal-dialog">
-    <form id="doc-metadata-form">
+    <form id="doc-metadata-form" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title" id="docMetadataModalLabel">
@@ -1128,7 +1140,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
             <label for="doc-classification" class="form-label"
               >Classification</label
             >
-            <select class="form-select" id="doc-classification">
+            <select class="form-select" id="doc-classification" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
               <option value="">-- Select Classification --</option>
               <option value="none">(No Classification)</option>
               {% for cat in settings.document_classification_categories %}
@@ -1140,7 +1152,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           <!-- Title -->
           <div class="mb-3">
             <label for="doc-title" class="form-label">Title</label
-            ><input type="text" class="form-control" id="doc-title" />
+            ><input type="text" class="form-control" id="doc-title" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" />
           </div>
           <!-- Abstract -->
           <div class="mb-3">
@@ -1148,6 +1160,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
             ><textarea
               class="form-control"
               id="doc-abstract"
+              autocomplete="off"
+              data-lpignore="true"
+              data-1p-ignore="true"
+              data-bwignore="true"
               rows="3"
             ></textarea>
           </div>
@@ -1155,7 +1171,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           <div class="mb-3">
             <label for="doc-keywords" class="form-label"
               >Keywords (comma separated)</label
-            ><input type="text" class="form-control" id="doc-keywords" />
+            ><input type="text" class="form-control" id="doc-keywords" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" />
           </div>
           <!-- Publication Date -->
           <div class="mb-3">
@@ -1165,6 +1181,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
               type="text"
               class="form-control"
               id="doc-publication-date"
+              autocomplete="off"
+              data-lpignore="true"
+              data-1p-ignore="true"
+              data-bwignore="true"
               placeholder="e.g. 08/2005 or YYYY-MM-DD"
             />
           </div>
@@ -1172,7 +1192,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           <div class="mb-3">
             <label for="doc-authors" class="form-label"
               >Authors (comma separated)</label
-            ><input type="text" class="form-control" id="doc-authors" />
+            ><input type="text" class="form-control" id="doc-authors" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" />
           </div>
           <!-- Tags -->
           <div class="mb-3">
@@ -1210,9 +1230,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
 {% endif %}
 
 <!-- Group Share Document Modal -->
-<div class="modal fade" id="groupShareDocumentModal" tabindex="-1" aria-hidden="true">
+<div class="modal fade" id="groupShareDocumentModal" tabindex="-1" aria-hidden="true" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
   <div class="modal-dialog">
-    <form id="groupShareDocumentForm">
+    <form id="groupShareDocumentForm" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title">Share Document with Groups</h5>
@@ -1249,6 +1269,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
               type="text"
               class="form-control"
               id="groupSearchTerm"
+              autocomplete="off"
+              data-lpignore="true"
+              data-1p-ignore="true"
+              data-bwignore="true"
               placeholder="Enter group name..."
             />
             <button
@@ -1295,7 +1319,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
   </div>
 </div>
 <!-- Bulk Tag Assignment Modal (Group) -->
-<div class="modal fade" id="groupBulkTagModal" tabindex="-1" aria-labelledby="groupBulkTagModalLabel" aria-hidden="true">
+<div class="modal fade" id="groupBulkTagModal" tabindex="-1" aria-labelledby="groupBulkTagModalLabel" aria-hidden="true" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header">
@@ -1311,7 +1335,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         </div>
         <div class="mb-3">
           <label for="group-bulk-tag-action" class="form-label fw-bold">Action</label>
-          <select class="form-select" id="group-bulk-tag-action">
+          <select class="form-select" id="group-bulk-tag-action" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
             <option value="add_tags">Add Tags (append to existing)</option>
             <option value="remove_tags">Remove Tags (remove specific tags)</option>
             <option value="set_tags">Replace All Tags (overwrite existing)</option>
@@ -1346,7 +1370,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 </div>
 
 <!-- Group Tag Management Modal -->
-<div class="modal fade" id="groupTagManagementModal" tabindex="-1" aria-labelledby="groupTagManagementModalLabel" aria-hidden="true">
+<div class="modal fade" id="groupTagManagementModal" tabindex="-1" aria-labelledby="groupTagManagementModalLabel" aria-hidden="true" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header">
@@ -1363,13 +1387,13 @@ app_settings.app_title }} {% endblock %} {% block head %}
             </button>
             <div class="row g-2">
               <div class="col-md-6">
-                <input type="text" class="form-control" id="group-new-tag-name" placeholder="Tag name (lowercase, alphanumeric)" maxlength="50">
+                <input type="text" class="form-control" id="group-new-tag-name" placeholder="Tag name (lowercase, alphanumeric)" maxlength="50" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
                 <div class="form-text">Use lowercase letters, numbers, hyphens, underscores</div>
               </div>
               <div class="col-md-4">
                 <div class="input-group">
                   <span class="input-group-text">Color</span>
-                  <input type="color" class="form-control form-control-color" id="group-new-tag-color" value="#0d6efd">
+                  <input type="color" class="form-control form-control-color" id="group-new-tag-color" value="#0d6efd" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
                 </div>
               </div>
               <div class="col-md-2">
@@ -1410,7 +1434,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 </div>
 
 <!-- Group Tag Selection Modal -->
-<div class="modal fade" id="groupTagSelectionModal" tabindex="-1" aria-labelledby="groupTagSelectionModalLabel" aria-hidden="true">
+<div class="modal fade" id="groupTagSelectionModal" tabindex="-1" aria-labelledby="groupTagSelectionModalLabel" aria-hidden="true" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
   <div class="modal-dialog">
     <div class="modal-content">
       <div class="modal-header">
@@ -1451,14 +1475,16 @@ app_settings.app_title }} {% endblock %} {% block head %}
 <script>
     window.enableMultiModelEndpoints = {{ 'true' if settings.enable_multi_model_endpoints else 'false' }};
     window.modelEndpointScope = 'group';
-    window.workspaceModelEndpoints = JSON.parse('{{ group_model_endpoints|default([])|tojson|safe }}' || '[]');
-    window.globalModelEndpoints = JSON.parse('{{ global_model_endpoints|default([])|tojson|safe }}' || '[]');
+  window.workspaceModelEndpoints = {{ group_model_endpoints|default([], true)|tojson|safe }};
+  window.globalModelEndpoints = {{ global_model_endpoints|default([], true)|tojson|safe }};
 </script>
+{% if settings.enable_semantic_kernel and settings.allow_group_custom_endpoints and settings.enable_multi_model_endpoints %}
 <script type="module" src="{{ url_for('static', filename='js/workspace/workspace_model_endpoints.js') }}"></script>
+{% endif %}
 
 <!-- Pass backend flags to JS -->
 <script>
-  window.classification_categories = JSON.parse('{{ settings.document_classification_categories|tojson(indent=None)|safe }}' || '[]');
+  window.classification_categories = {{ settings.document_classification_categories|default([], true)|tojson(indent=None)|safe }};
     if (!Array.isArray(window.classification_categories)) {
         window.classification_categories = [];
     }
@@ -1471,8 +1497,69 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
 <script>
   window.current_user_id = "{{ session.get('user', {}).get('oid', '') }}";
+
+  function applyGroupWorkspaceAutofillMetadata(root) {
+    if (!root) {
+      return;
+    }
+
+    if (!root.hasAttribute("autocomplete")) {
+      root.setAttribute("autocomplete", "off");
+    }
+
+    if (!root.hasAttribute("data-lpignore")) {
+      root.setAttribute("data-lpignore", "true");
+    }
+
+    if (!root.hasAttribute("data-1p-ignore")) {
+      root.setAttribute("data-1p-ignore", "true");
+    }
+
+    if (!root.hasAttribute("data-bwignore")) {
+      root.setAttribute("data-bwignore", "true");
+    }
+
+    root.querySelectorAll("input, select, textarea").forEach((field) => {
+      const autocompleteValue = field.getAttribute("type") === "password" ? "new-password" : "off";
+
+      if (!field.hasAttribute("autocomplete")) {
+        field.setAttribute("autocomplete", autocompleteValue);
+      }
+
+      if (!field.hasAttribute("data-lpignore")) {
+        field.setAttribute("data-lpignore", "true");
+      }
+
+      if (!field.hasAttribute("data-1p-ignore")) {
+        field.setAttribute("data-1p-ignore", "true");
+      }
+
+      if (!field.hasAttribute("data-bwignore")) {
+        field.setAttribute("data-bwignore", "true");
+      }
+    });
+  }
+
+  function setupGroupWorkspaceAutofillMetadata() {
+    [
+      document.getElementById("group-dropdown"),
+      document.getElementById("groupWorkspaceTabContent"),
+      document.getElementById("groupPromptModal"),
+      document.getElementById("docMetadataModal"),
+      document.getElementById("groupShareDocumentModal"),
+      document.getElementById("groupBulkTagModal"),
+      document.getElementById("groupTagManagementModal"),
+      document.getElementById("groupTagSelectionModal"),
+      document.getElementById("modelEndpointModal"),
+      document.getElementById("agentModal"),
+      document.getElementById("plugin-modal")
+    ].forEach(applyGroupWorkspaceAutofillMetadata);
+  }
+
   // --- Filter toggle button logic ---
   document.addEventListener("DOMContentLoaded", function() {
+    setupGroupWorkspaceAutofillMetadata();
+
     // Group Documents tab
     var docsToggleBtn = document.getElementById("group-docs-filters-toggle-btn");
     var docsCollapse = document.getElementById("group-docs-filters-collapse");

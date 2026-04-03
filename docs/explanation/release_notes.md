@@ -1,64 +1,19 @@
 <!-- BEGIN release_notes.md BLOCK -->
 
-# Feature Release
-
-### **(v0.240.004)**
-
-#### New Features
-
-*   **Microsoft Teams App Integration with SSO**
-    *   Added full Microsoft Teams application support with Single Sign-On (SSO) using the On-Behalf-Of (OBO) flow. Users embedded in Teams are automatically authenticated without a separate login.
-    *   New `/auth/teams/token-exchange` backend endpoint exchanges Teams SSO tokens for access tokens via MSAL OBO flow, with session persistence and activity logging.
-    *   New `login.html` template with Teams SDK detection, automatic SSO authentication, consent-required handling, and graceful fallback to standard Azure AD login.
-    *   Teams manifest template (`manifest.template.json`) with SSO-ready `webApplicationInfo`, static tab, and valid domain configuration.
-    *   New environment variables: `TEAMS_FRAME_ANCESTORS`, `CUSTOM_TEAMS_ORIGINS`, and `ENABLE_TEAMS_SSO` for configurable Teams SSO behaviour.
-    *   Content Security Policy `frame-ancestors` directive now dynamically includes Teams domains via `TEAMS_FRAME_ANCESTORS` setting.
-    *   Session cookies updated to `SameSite=None`, `Secure=True`, `HttpOnly=True` to support cross-origin Teams iframe embedding.
-    *   (Ref: `route_frontend_authentication.py`, `login.html`, `config.py`, `app.py`, `manifest.template.json`, Teams SSO, OBO flow)
-
-*   **Teams App Manifest and Icons**
-    *   Added Teams app package files: `manifest.template.json`, `color.png` (192×192), and `outline.png` (32×32) under `application/teams_app/`.
-    *   Template manifest includes placeholders for hostname, client ID, and Application ID URI for easy customisation per deployment.
-    *   (Ref: `application/teams_app/`, Teams app packaging)
-
-*   **Teams App Configuration Documentation**
-    *   Comprehensive how-to guide covering Azure AD app registration for Teams SSO, pre-authorised Teams client IDs, environment variables, manifest configuration, testing steps, and troubleshooting.
-    *   (Ref: `docs/how-to/teams_app.md`)
-
-#### Bug Fixes
-
-*   **Bicep ACR Suffix Hardcoded Value Fix**
-    *   Replaced hardcoded ACR cloud suffix (`'.azurecr.io'` / `'.azurecr.us'`) with the dynamic `az.environment().suffixes.acrLoginServer` built-in, improving support for sovereign and custom Azure environments.
-    *   (Ref: `deployers/bicep/main.bicep`, ACR suffix, sovereign cloud support)
-
-*   **Idle Session Timeout Feature**
-    *   Added a new idle timer that automatically clears the user session after a configurable set time and redirects to the main chat login page.
-    *   Added a frontend idle warning modal that pops up after a configurable set time, but disappears if the user moves the mouse over the chat window or interacts with the app in any way.
-    *   Default values are used if the idle logout and warning values are not set. 
-    *   Idle logout and idle warning values are validated and auto-fixed as needed.
-    *   Added a new admin switch to enable or disable idle session timeout and warning behavior.
-    *   Timeout and warning inputs are grouped under a toggleable section in General > System Settings.
-    *   (Ref: `application/single_app/templates/admin_settings.html`, `application/single_app/static/js/admin/admin_settings.js`, `application/single_app/route_frontend_admin_settings.py`, `application/single_app/functions_settings.py`, `application/single_app/app.py`, `application/single_app/templates/base.html`, `application/single_app/static/js/idle-logout-warning.js`, `application/single_app/config.py`, `functional_tests/test_idle_logout_timeout.py`, `application/single_app/route_frontend_authentication.py`)
-
-*   **Settings Default Merge Persistence Fix**
-    *   Fixed app settings merge detection in `get_settings()` where `deep_merge_dicts()` mutates the existing settings object in place, causing change detection to always evaluate as unchanged.
-    *   Updated `deep_merge_dicts()` to return a boolean `changed` flag and wired `get_settings()` to call `upsert_item()` when `settings_changed` is `True`, so missing default keys correctly trigger persistence back to Cosmos DB.
-    *   Added a functional regression test to validate the merge detection and persistence markers.
-    *   (Ref: `application/single_app/functions_settings.py`, `application/single_app/config.py`, `functional_tests/test_settings_deep_merge_persistence_fix.py`)
-    
-
 This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.240.001, and the per-version entries continue immediately after it.
 
-*   **Cross-Cloud Deployment Improvements**
-    *   Updated the Azure CLI, AZD, Bicep, and Terraform deployment paths to better align with the current SimpleChat runtime configuration and reduce post-deployment manual fixes.
-    *   Added optional Azure Video Indexer deployment support with cloud-aware defaults, including the correct endpoint and ARM API version handling for Azure Commercial, Azure Government, and registered custom clouds.
-    *   (Ref: `deployers/azure.yaml`, `deployers/azurecli/deploy-simplechat.ps1`, `deployers/bicep/main.bicep`, `deployers/bicep/modules/videoIndexer.bicep`, `deployers/terraform/main.tf`, `application/single_app/functions_settings.py`)
-    *   
+For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
-### **(v0.240.001)**
+### **(v0.240.016)**
 
 #### New Features
 
+*   **MultiGPT Endpoint Management**
+    *   Added multi-endpoint model management so admins can define multiple global model endpoints and users can add personal or group-scoped endpoints when those workspace features are enabled.
+    *   Personal Workspace and Group Workspace now surface dedicated model endpoint management cards, and agent/model selection can use combined global plus workspace endpoint lists instead of relying on a single shared deployment.
+    *   The endpoint workflow supports Azure OpenAI and Azure AI Foundry discovery flows, including model fetch/test operations and endpoint-based Foundry agent import.
+    *   (Ref: `route_backend_models.py`, `route_frontend_admin_settings.py`, `workspace_model_endpoints.js`, `admin_model_endpoints.js`, `workspace.html`, `group_workspaces.html`, `test_workspace_multi_endpoints.py`)
+    
 *   **Guided Chat Tutorial**
     *   Expanded the in-app chat tutorial into a fuller guided walkthrough of the current chat experience so new users can learn the live interface in context.
     *   The tutorial now walks through the main chat toolbar, workspace and scope controls, conversation search, advanced search, selection mode, bulk actions, export-related flows, and message-level actions such as retry, edit, feedback, thoughts, and citations.
@@ -168,6 +123,15 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
     *   **End-to-End Auditability**: Users can verify exactly which aggregations, filters, or queries were run against their data, what parameters were used, and what raw results were returned — before the LLM summarized them into the final response.
     *   (Ref: `collect_tabular_sk_citations()`, `plugin_invocation_logger.py`)
 
+*   **Assistant Citation Artifact Storage for Large Tabular Payloads**
+    *   Moved large raw tabular and tool citation payloads off the main assistant message document and into linked child artifact records so tool-heavy answers stay compact in primary chat storage.
+    *   Added helper flows in `functions_message_artifacts.py` to keep a compact citation summary on the assistant message, externalize the full raw citation payload into `assistant_artifact` records with `assistant_artifact_chunk` support for larger payloads, and rehydrate those raw payloads later for exports or deeper inspection.
+    *   Assistant messages now keep compact summaries such as tool name, reduced arguments, counts, and a few sample rows while the heavy raw citation payload is referenced through `artifact_id` and `raw_payload_externalized=True`.
+    *   Updated chat persistence to store the linked artifact records during message save, excluded those artifact records from normal chat history and conversation views, and updated export flows to stitch the preserved raw payloads back together when needed.
+    *   This reduced primary assistant message size, lowered the risk of hitting Cosmos DB per-item limits on large tabular responses, reduced heavy citation data carried through normal chat reads, and preserved the full raw evidence for export and debugging.
+    *   Additional size reductions in the same phase compacted stored citation summaries, dropped noisy tabular citation arguments such as `user_id`, `conversation_id`, and `source`, and removed the duplicate `user_message` field from assistant message documents.
+    *   (Ref: `functions_message_artifacts.py`, `route_backend_chats.py`, `route_backend_conversations.py`, `route_frontend_conversations.py`, `route_backend_conversation_export.py`, `test_assistant_citation_artifact_storage.py`, `ASSISTANT_CITATION_ARTIFACT_STORAGE_FIX.md`)
+
 *   **SK Mini-Agent Performance Optimization**
     *   Reduced typical tabular analysis time from ~74 seconds to an estimated ~30-33 seconds (55-60% reduction) through three complementary optimizations.
     *   **DataFrame Caching**: Per-request in-memory cache eliminates redundant blob downloads. Previously, each of the ~8 tool calls in a typical analysis downloaded and parsed the same file independently. Now the file is downloaded once and subsequent calls read from cache. Cache is automatically scoped to the request (new plugin instance per analysis) and garbage-collected afterward.
@@ -207,6 +171,20 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
     *   Uses `retrieve_secret_direct()` from `functions_keyvault.py` to fetch the Redis key by its Key Vault secret name. Respects `key_vault_identity` for a user-assigned managed identity on the Key Vault client.
     *   New admin setting fields: `redis_auth_type` (values: `key`, `managed_identity`, `key_vault`) and `redis_key` (used as the Key Vault secret name when `key_vault` auth type is selected).
     *   **Files Modified**: `app_settings_cache.py`, `app.py` `configure_sessions`, `route_backend_settings.py` `_test_redis_connection`, `functions_keyvault.py` `retrieve_secret_direct`
+
+*   **Cross-Cloud Deployment Improvements**
+    *   Updated the Azure CLI, AZD, Bicep, and Terraform deployment paths to better align with the current SimpleChat runtime configuration and reduce post-deployment manual fixes.
+    *   Added optional Azure Video Indexer deployment support with cloud-aware defaults, including the correct endpoint and ARM API version handling for Azure Commercial, Azure Government, and registered custom clouds.
+    *   (Ref: `deployers/azure.yaml`, `deployers/azurecli/deploy-simplechat.ps1`, `deployers/bicep/main.bicep`, `deployers/bicep/modules/videoIndexer.bicep`, `deployers/terraform/main.tf`, `application/single_app/functions_settings.py`)
+
+*   **Idle Session Timeout Feature**
+    *   Added a new idle timer that automatically clears the user session after a configurable set time and redirects to the main chat login page.
+    *   Added a frontend idle warning modal that pops up after a configurable set time, but disappears if the user moves the mouse over the chat window or interacts with the app in any way.
+    *   Default values are used if the idle logout and warning values are not set. 
+    *   Idle logout and idle warning values are validated and auto-fixed as needed.
+    *   Added a new admin switch to enable or disable idle session timeout and warning behavior.
+    *   Timeout and warning inputs are grouped under a toggleable section in General > System Settings.
+    *   (Ref: `application/single_app/templates/admin_settings.html`, `application/single_app/static/js/admin/admin_settings.js`, `application/single_app/route_frontend_admin_settings.py`, `application/single_app/functions_settings.py`, `application/single_app/app.py`, `application/single_app/templates/base.html`, `application/single_app/static/js/idle-logout-warning.js`, `application/single_app/config.py`, `functional_tests/test_idle_logout_timeout.py`, `application/single_app/route_frontend_authentication.py`)
 
 #### User Interface Enhancements
 
@@ -251,6 +229,23 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
     
 #### Bug Fixes
 
+*   **Python Runtime Dependency Refresh and Supply-Chain Hardening**
+    *   Continued the requirements hardening work from `v0.240.014` by tightening the main application runtime to exact package pins, reducing dependency drift across local development, CI, and Azure deployments to help mitigate supply-chain exposure.
+    *   Upgraded the Flask runtime stack to `Flask==3.1.3` and `Werkzeug==3.1.6`, and updated the shared `Markup` import path to `markupsafe` so the app starts correctly with Flask 3's package boundary changes.
+    *   Refreshed key runtime dependencies including `gunicorn`, `requests`, `openai`, `Markdown`, `markdown2`, `azure-ai-projects`, `azure-ai-agents`, `pyjwt`, `pypdf`, `semantic-kernel`, `protobuf`, `redis`, `pyodbc`, `PyMySQL`, `cython`, and `aiohttp` to pick up current security, compatibility, and capability improvements while keeping builds reproducible.
+    *   (Ref: `application/single_app/requirements.txt`, `application/single_app/config.py`, `functional_tests/test_flask_markup_import_fix.py`, `docs/explanation/fixes/FLASK_31_MARKUP_IMPORT_FIX.md`)
+
+*   **Dependency Pinning and Requirements Hardening**
+    *   Pinned previously floating Python package requirements to exact versions across the main app, UI test, deployer, and external app requirement files to reduce unexpected dependency drift and tighten supply-chain control.
+    *   Corrected stale external app dependency entries by replacing `dotenv` with `python-dotenv`, removing the stdlib-only `logging` package, removing an unused `Flask` requirement from the databaseseeder utility, and adding `pytest-playwright` so the UI test dependency set matches the pytest fixture usage in the test suite.
+    *   (Ref: `application/single_app/requirements.txt`, `ui_tests/requirements.txt`, `deployers/bicep/requirements.txt`, `application/external_apps/databaseseeder/requirements.txt`, `application/external_apps/bulkloader/requirements.txt`)
+
+*   **Settings Default Merge Persistence Fix**
+    *   Fixed app settings merge detection in `get_settings()` where `deep_merge_dicts()` mutates the existing settings object in place, causing change detection to always evaluate as unchanged.
+    *   Updated `deep_merge_dicts()` to return a boolean `changed` flag and wired `get_settings()` to call `upsert_item()` when `settings_changed` is `True`, so missing default keys correctly trigger persistence back to Cosmos DB.
+    *   Added a functional regression test to validate the merge detection and persistence markers.
+    *   (Ref: `application/single_app/functions_settings.py`, `application/single_app/config.py`, `functional_tests/test_settings_deep_merge_persistence_fix.py`)
+    
 *   **Pillow PSD Upload Hardening**
     *   Updated the application to use `pillow==12.1.1`, moving the app off the vulnerable Pillow range for specially crafted PSD image parsing.
     *   Hardened admin logo and favicon uploads so Pillow now only opens the PNG and JPEG formats already allowed by the route, preventing disguised PSD content from being decoded during upload processing.
@@ -313,6 +308,12 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
     *   Agent payload sanitization now strips backend-managed audit and Cosmos metadata before schema validation, while preserving server-side tracking during persistence.
     *   (Ref: `functions_agent_payload.py`, `route_backend_agents.py`, agent schema validation, functional test coverage)
 
+*   **Live Tool Invocation Thoughts During Streaming**
+    *   Updated plugin thought handling so the chat can surface an immediate `Invoking Plugin.Function` thought as soon as a tool starts, instead of waiting until the tool completes.
+    *   Streaming chat now polls pending thoughts while the response is still in flight, allowing the active status badge to switch from model-sending text to the currently executing plugin call during long-running tools such as `WaitPlugin.wait`.
+    *   Completed plugin thoughts still include the richer human-readable summaries for wait, math, and generic plugin executions, and broader plugin coverage remains enabled through auto-wrapping for manifest-loaded plugins.
+    *   (Ref: `plugin_invocation_logger.py`, `plugin_invocation_thoughts.py`, `chat-thoughts.js`, `chat-streaming.js`, `logged_plugin_loader.py`, `test_logged_core_plugins.py`)
+    
 *   **Multi-Sheet Workbook Tabular Analysis**
     *   Fixed multi-sheet Excel workbooks being analyzed from the wrong worksheet during tabular chat responses. Questions that clearly target a specific tab, such as asset values in a workbook with `Assets`, `Balance`, and `Income` sheets, no longer silently default to the first sheet.
     *   Tabular runtime analysis now requires explicit `sheet_name` or `sheet_index` selection for analytical calls on multi-sheet workbooks, and the SK mini-agent preload now includes workbook sheet inventory and per-sheet schemas so the model can choose the correct worksheet before computing results.
@@ -409,19 +410,11 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
     *   Fixed `__Secret` key suffix mismatch in additional settings schemas where `connection_string__Secret` and `password__Secret` didn't match the runtime's expected `connection_string` and `password` field names. Also removed duplicate `azuresql` enum value.
     *   (Ref: `route_backend_plugins.py`, `plugin_modal_stepper.js`, `sql_query.definition.json`, `sql_schema.definition.json`, `sql_query_plugin.additional_settings.schema.json`, `sql_schema_plugin.additional_settings.schema.json`)
 
-### **(v0.239.187)**
-
-#### Bug Fixes
-
 *   **Workspace Model Endpoint Scope Gate Enforcement**
     *   Fixed personal and group workspace model discovery and model test routes so they now enforce the same custom-endpoint feature gates as the corresponding endpoint management routes.
     *   Restored the intended endpoint modal workflow so users can still fetch and test models before saving a new personal or group endpoint when those scope features are enabled.
     *   Requests that reference a saved endpoint now resolve against the caller's authorized persisted endpoint configuration instead of allowing raw request payloads to override stored settings.
     *   (Ref: `route_backend_models.py`, `workspace_model_endpoints.js`, `test_model_endpoint_scope_gate_enforcement.py`, model endpoint scope gating)
-
-### **(v0.239.158)**
-
-#### Bug Fixes
 
 *   **Workspace Agent View Consistency**
     *   Fixed personal and group workspace agent lists so table-view actions now use the same button order, making agent management behavior more predictable across both workspaces.
@@ -429,25 +422,11 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
     *   Fixed personal workspace agent table layout so action buttons stay inside the table instead of overflowing past the Actions column.
     *   (Ref: `workspace.html`, `workspace_agents.js`, `group_agents.js`, `view-utils.js`, `test_workspace_agent_views_consistency.py`)
 
-### **(v0.239.156)**
-
-#### Bug Fixes
-
 *   **MultiGPT Endpoint Key Vault Secret Storage and Foundry Fetch Reliability**
     *   MultiGPT endpoint secrets such as API keys and service principal client secrets now move into Azure Key Vault when Key Vault secret storage is enabled, instead of remaining in saved endpoint payloads.
     *   Endpoint fetch, test, Foundry listing, and runtime execution now resolve stored secrets server-side by endpoint ID, so reopening an endpoint no longer depends on the browser still holding plaintext credentials.
     *   Fixed a follow-up regression in Foundry model discovery where sync fetch routes could fail with `'coroutine' object has no attribute 'token'` because async credentials were being reused in a synchronous token acquisition path.
     *   (Ref: `functions_keyvault.py`, `functions_settings.py`, `route_backend_models.py`, `route_frontend_admin_settings.py`, `semantic_kernel_loader.py`, `foundry_agent_runtime.py`, `admin_model_endpoints.js`, `workspace_model_endpoints.js`, `test_model_endpoints_key_vault_secret_storage.py`, `test_foundry_model_fetch_sync_credentials.py`)
-
-### **(v0.239.153)**
-
-#### Bug Fixes
-
-*   **Live Tool Invocation Thoughts During Streaming**
-    *   Updated plugin thought handling so the chat can surface an immediate `Invoking Plugin.Function` thought as soon as a tool starts, instead of waiting until the tool completes.
-    *   Streaming chat now polls pending thoughts while the response is still in flight, allowing the active status badge to switch from model-sending text to the currently executing plugin call during long-running tools such as `WaitPlugin.wait`.
-    *   Completed plugin thoughts still include the richer human-readable summaries for wait, math, and generic plugin executions, and broader plugin coverage remains enabled through auto-wrapping for manifest-loaded plugins.
-    *   (Ref: `plugin_invocation_logger.py`, `plugin_invocation_thoughts.py`, `chat-thoughts.js`, `chat-streaming.js`, `logged_plugin_loader.py`, `test_logged_core_plugins.py`)
 
 ### **(v0.239.002)**
 

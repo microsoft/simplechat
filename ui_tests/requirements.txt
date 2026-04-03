@@ -1,4 +1,5 @@
-pytest
-playwright
-azure-mgmt-playwright
-azure-identity
+pytest==9.0.2
+playwright==1.58.0
+pytest-playwright==0.7.2
+azure-mgmt-playwright==1.0.0
+azure-identity==1.23.0

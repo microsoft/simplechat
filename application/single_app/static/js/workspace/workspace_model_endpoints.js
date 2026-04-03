@@ -53,12 +53,29 @@ const modelsListEl = document.getElementById("model-endpoint-models-list");
 const addModelBtn = document.getElementById("model-endpoint-add-model-btn");
 
 const scope = window.modelEndpointScope || "user";
+const endpointsContainerId = scope === "group" ? "group-multi-endpoint-configuration" : "workspace-multi-endpoint-configuration";
+const endpointsContainer = document.getElementById(endpointsContainerId);
 const endpointsApi = scope === "group" ? "/api/group/model-endpoints" : "/api/user/model-endpoints";
 const modelsFetchApi = scope === "group" ? "/api/group/models/fetch" : "/api/user/models/fetch";
 const modelsTestApi = scope === "group" ? "/api/group/models/test-model" : "/api/user/models/test-model";
 
 let workspaceEndpoints = Array.isArray(window.workspaceModelEndpoints) ? [...window.workspaceModelEndpoints] : [];
 let modalModels = [];
+
+function hasEndpointManagementUi() {
+    return Boolean(endpointsWrapper && endpointsTbody);
+}
+
+function hideEndpointManagementUi() {
+    if (endpointsContainer) {
+        endpointsContainer.classList.add("d-none");
+    }
+}
+
+function isEndpointsFeatureDisabled(error) {
+    const message = typeof error?.message === "string" ? error.message.toLowerCase() : "";
+    return message.includes("custom endpoints") && message.includes("is disabled");
+}
 
 function generateId() {
     if (window.crypto && window.crypto.randomUUID) {
@@ -620,6 +637,10 @@ function escapeHtml(value) {
 }
 
 async function loadEndpoints() {
+    if (!hasEndpointManagementUi()) {
+        return;
+    }
+
     try {
         const response = await fetch(endpointsApi);
         const payload = await response.json().catch(() => ({}));
@@ -629,12 +650,24 @@ async function loadEndpoints() {
         workspaceEndpoints = Array.isArray(payload.endpoints) ? payload.endpoints : [];
         renderEndpoints();
     } catch (error) {
+        if (isEndpointsFeatureDisabled(error)) {
+            console.info("[WorkspaceEndpoints] Endpoint management is disabled; skipping endpoint load.");
+            workspaceEndpoints = [];
+            renderEndpoints();
+            hideEndpointManagementUi();
+            return;
+        }
+
         console.error("Failed to load endpoints", error);
         showToast(error.message || "Failed to load endpoints.", "danger");
     }
 }
 
 function initialize() {
+    if (!hasEndpointManagementUi()) {
+        return;
+    }
+
     if (enableMultiEndpointToggle) {
         enableMultiEndpointToggle.checked = Boolean(window.enableMultiModelEndpoints);
     }

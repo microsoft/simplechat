@@ -12,9 +12,10 @@ from datetime import date, datetime
 import io
 import json
 import logging
+import re
 import warnings
 import pandas
-from typing import Annotated, Optional, List
+from typing import Annotated, Dict, List, Optional, Set
 from semantic_kernel.functions import kernel_function
 from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
 from functions_appinsights import log_event
@@ -38,9 +39,13 @@ class TabularProcessingPlugin:
     )
     ANALYSIS_FUNCTION_NAMES = (
         'lookup_value',
+        'get_distinct_values',
+        'count_rows',
         'aggregate_column',
         'filter_rows',
         'query_tabular_data',
+        'filter_rows_by_related_values',
+        'count_rows_by_related_values',
         'group_by_aggregate',
         'group_by_datetime_component',
     )
@@ -73,6 +78,32 @@ class TabularProcessingPlugin:
         'November',
         'December'
     ]
+    RELATIONSHIP_COLUMN_HINT_TOKENS = {
+        'account',
+        'alias',
+        'assignee',
+        'category',
+        'customer',
+        'email',
+        'employee',
+        'engineer',
+        'group',
+        'id',
+        'manager',
+        'member',
+        'name',
+        'owner',
+        'person',
+        'resource',
+        'se',
+        'solution',
+        'team',
+        'user',
+    }
+    RELATIONSHIP_HINT_LIMIT = 10
+    RELATIONSHIP_VALUE_SAMPLE_LIMIT = 500
+    RELATIONSHIP_SHARED_VALUE_LIMIT = 5
+    SOURCE_VALUE_MATCH_COUNT_LIMIT = 100
 
     def __init__(self):
         self._df_cache = {}  # Per-instance cache: (container, blob_name, sheet_name) -> DataFrame
@@ -239,6 +270,7 @@ class TabularProcessingPlugin:
         column: str,
         operator_str: str,
         value: str,
+        normalize_match: bool = False,
         max_rows: int = 100,
     ) -> Optional[str]:
         """Search for matching rows across all sheets that contain the requested column.
@@ -271,40 +303,14 @@ class TabularProcessingPlugin:
                 continue
 
             sheets_searched.append(sheet)
-            series = df[column]
-            op = operator_str.strip().lower()
-
-            numeric_value = None
             try:
-                numeric_value = float(value)
-            except (ValueError, TypeError):
-                pass
-
-            if op in ('==', 'equals'):
-                if numeric_value is not None and pandas.api.types.is_numeric_dtype(series):
-                    mask = series == numeric_value
-                else:
-                    mask = series.astype(str).str.lower() == value.lower()
-            elif op == '!=':
-                if numeric_value is not None and pandas.api.types.is_numeric_dtype(series):
-                    mask = series != numeric_value
-                else:
-                    mask = series.astype(str).str.lower() != value.lower()
-            elif op == '>':
-                mask = series > numeric_value if numeric_value is not None else pandas.Series([False] * len(series))
-            elif op == '<':
-                mask = series < numeric_value if numeric_value is not None else pandas.Series([False] * len(series))
-            elif op == '>=':
-                mask = series >= numeric_value if numeric_value is not None else pandas.Series([False] * len(series))
-            elif op == '<=':
-                mask = series <= numeric_value if numeric_value is not None else pandas.Series([False] * len(series))
-            elif op == 'contains':
-                mask = series.astype(str).str.contains(value, case=False, na=False)
-            elif op == 'startswith':
-                mask = series.astype(str).str.lower().str.startswith(value.lower())
-            elif op == 'endswith':
-                mask = series.astype(str).str.lower().str.endswith(value.lower())
-            else:
+                mask = self._build_series_match_mask(
+                    df[column],
+                    operator_str,
+                    value,
+                    normalize_match=normalize_match,
+                )
+            except ValueError:
                 continue
 
             sheet_matches = int(mask.sum())
@@ -350,6 +356,7 @@ class TabularProcessingPlugin:
         lookup_value_str: str,
         target_column: Optional[str] = None,
         match_operator: str = "equals",
+        normalize_match: bool = False,
         max_rows: int = 25,
     ) -> Optional[str]:
         """Look up matching rows across all sheets that contain the lookup column.
@@ -384,18 +391,20 @@ class TabularProcessingPlugin:
                 continue
 
             sheets_searched.append(sheet)
-            series = df[lookup_column]
-
-            if operator in {'equals', '=='}:
-                mask = series.astype(str).str.lower() == normalized_lookup_value.lower()
-            elif operator == 'contains':
-                mask = series.astype(str).str.contains(normalized_lookup_value, case=False, na=False)
-            elif operator == 'startswith':
-                mask = series.astype(str).str.lower().str.startswith(normalized_lookup_value.lower())
-            elif operator == 'endswith':
-                mask = series.astype(str).str.lower().str.endswith(normalized_lookup_value.lower())
-            else:
-                mask = series.astype(str).str.lower() == normalized_lookup_value.lower()
+            try:
+                mask = self._build_series_match_mask(
+                    df[lookup_column],
+                    operator,
+                    normalized_lookup_value,
+                    normalize_match=normalize_match,
+                )
+            except ValueError:
+                mask = self._build_series_match_mask(
+                    df[lookup_column],
+                    'equals',
+                    normalized_lookup_value,
+                    normalize_match=normalize_match,
+                )
 
             sheet_matches = int(mask.sum())
             if sheet_matches == 0:
@@ -465,6 +474,7 @@ class TabularProcessingPlugin:
         sheets_searched = []
         sheets_matched = []
         total_matches = 0
+        query_errors = []
 
         for sheet in available_sheets:
             df = self._read_tabular_blob_to_dataframe(
@@ -476,8 +486,11 @@ class TabularProcessingPlugin:
 
             try:
                 result_df = df.query(query_expression)
-            except Exception:
-                # Query expression references columns not in this sheet — skip
+            except Exception as query_error:
+                query_errors.append({
+                    'sheet_name': sheet,
+                    'error': str(query_error),
+                })
                 continue
 
             sheets_searched.append(sheet)
@@ -494,6 +507,29 @@ class TabularProcessingPlugin:
                     combined_results.append(row)
 
         if not sheets_searched:
+            if query_errors:
+                unique_errors = []
+                seen_errors = set()
+                for query_error in query_errors:
+                    normalized_error = str(query_error.get('error') or '').strip()
+                    if not normalized_error or normalized_error in seen_errors:
+                        continue
+                    seen_errors.add(normalized_error)
+                    unique_errors.append(normalized_error)
+
+                return json.dumps({
+                    "error": (
+                        "Query error: the expression could not be evaluated on any worksheet during cross-sheet search. "
+                        "Use simple DataFrame.query() syntax with existing column names, or provide sheet_name to target a specific worksheet."
+                    ),
+                    "filename": filename,
+                    "selected_sheet": "ALL (cross-sheet search)",
+                    "query_expression": query_expression,
+                    "sheets_evaluated": [
+                        query_error['sheet_name'] for query_error in query_errors
+                    ],
+                    "details": unique_errors[:3],
+                }, indent=2, default=str)
             return None
 
         log_event(
@@ -513,6 +549,487 @@ class TabularProcessingPlugin:
             "returned_rows": len(combined_results),
             "data": combined_results,
         }, indent=2, default=str)
+
+    def _count_rows_across_sheets(
+        self,
+        container_name: str,
+        blob_name: str,
+        filename: str,
+        filter_column: Optional[str] = None,
+        filter_operator: str = 'equals',
+        filter_value=None,
+        query_expression: Optional[str] = None,
+        normalize_match: bool = False,
+    ) -> Optional[str]:
+        """Count rows across all worksheets that satisfy optional filters or queries."""
+        workbook_metadata = self._get_workbook_metadata(container_name, blob_name)
+        if not workbook_metadata.get('is_workbook'):
+            return None
+
+        available_sheets = workbook_metadata.get('sheet_names', [])
+        if len(available_sheets) <= 1:
+            return None
+
+        sheets_searched = []
+        sheets_matched = []
+        total_count = 0
+        query_errors = []
+        applied_filters = []
+
+        for sheet in available_sheets:
+            df = self._read_tabular_blob_to_dataframe(
+                container_name,
+                blob_name,
+                sheet_name=sheet,
+            )
+            df = self._try_numeric_conversion(df)
+
+            try:
+                filtered_df, sheet_filters = self._apply_optional_dataframe_filters(
+                    df,
+                    query_expression=query_expression,
+                    filter_column=filter_column,
+                    filter_operator=filter_operator,
+                    filter_value=filter_value,
+                    normalize_match=normalize_match,
+                )
+            except KeyError:
+                continue
+            except Exception as query_error:
+                if query_expression:
+                    query_errors.append({
+                        'sheet_name': sheet,
+                        'error': str(query_error),
+                    })
+                continue
+
+            sheets_searched.append(sheet)
+            applied_filters = sheet_filters or applied_filters
+            sheet_count = len(filtered_df)
+            total_count += sheet_count
+            if sheet_count > 0:
+                sheets_matched.append(sheet)
+
+        if not sheets_searched:
+            if query_errors:
+                unique_errors = []
+                seen_errors = set()
+                for query_error in query_errors:
+                    normalized_error = str(query_error.get('error') or '').strip()
+                    if not normalized_error or normalized_error in seen_errors:
+                        continue
+                    seen_errors.add(normalized_error)
+                    unique_errors.append(normalized_error)
+
+                return json.dumps({
+                    'error': (
+                        'Query error: the expression could not be evaluated on any worksheet during cross-sheet row counting. '
+                        'Use simple DataFrame.query() syntax with existing column names, or provide sheet_name to target a specific worksheet.'
+                    ),
+                    'filename': filename,
+                    'selected_sheet': 'ALL (cross-sheet search)',
+                    'query_expression': query_expression,
+                    'details': unique_errors[:3],
+                }, indent=2, default=str)
+            return None
+
+        return json.dumps({
+            'filename': filename,
+            'selected_sheet': 'ALL (cross-sheet search)',
+            'sheets_searched': sheets_searched,
+            'sheets_matched': sheets_matched,
+            'filter_applied': applied_filters,
+            'row_count': total_count,
+            'normalize_match': normalize_match,
+        }, indent=2, default=str)
+
+    def _get_distinct_values_across_sheets(
+        self,
+        container_name: str,
+        blob_name: str,
+        filename: str,
+        column: str,
+        query_expression: Optional[str] = None,
+        filter_column: Optional[str] = None,
+        filter_operator: str = 'equals',
+        filter_value=None,
+        normalize_match: bool = False,
+        max_values: int = 100,
+    ) -> Optional[str]:
+        """Return distinct values for a column across all worksheets that contain it."""
+        workbook_metadata = self._get_workbook_metadata(container_name, blob_name)
+        if not workbook_metadata.get('is_workbook'):
+            return None
+
+        available_sheets = workbook_metadata.get('sheet_names', [])
+        if len(available_sheets) <= 1:
+            return None
+
+        sheets_searched = []
+        sheets_matched = []
+        distinct_display_values = {}
+        query_errors = []
+        applied_filters = []
+
+        for sheet in available_sheets:
+            df = self._read_tabular_blob_to_dataframe(
+                container_name,
+                blob_name,
+                sheet_name=sheet,
+            )
+            if column not in df.columns:
+                continue
+
+            try:
+                filtered_df, sheet_filters = self._apply_optional_dataframe_filters(
+                    df,
+                    query_expression=query_expression,
+                    filter_column=filter_column,
+                    filter_operator=filter_operator,
+                    filter_value=filter_value,
+                    normalize_match=normalize_match,
+                )
+            except KeyError:
+                continue
+            except Exception as query_error:
+                if query_expression:
+                    query_errors.append({
+                        'sheet_name': sheet,
+                        'error': str(query_error),
+                    })
+                continue
+
+            sheets_searched.append(sheet)
+            applied_filters = sheet_filters or applied_filters
+            for cell_value in filtered_df[column].tolist():
+                display_value = str(cell_value).strip()
+                if not display_value:
+                    continue
+                compare_variants = self._extract_cell_value_variants(
+                    cell_value,
+                    normalize_match=normalize_match,
+                )
+                if not compare_variants:
+                    continue
+                canonical_key = sorted(compare_variants)[0]
+                distinct_display_values.setdefault(canonical_key, display_value)
+
+            if not filtered_df.empty:
+                sheets_matched.append(sheet)
+
+        if not sheets_searched:
+            if query_errors:
+                unique_errors = []
+                seen_errors = set()
+                for query_error in query_errors:
+                    normalized_error = str(query_error.get('error') or '').strip()
+                    if not normalized_error or normalized_error in seen_errors:
+                        continue
+                    seen_errors.add(normalized_error)
+                    unique_errors.append(normalized_error)
+
+                return json.dumps({
+                    'error': (
+                        'Query error: the expression could not be evaluated on any worksheet during cross-sheet distinct-value discovery. '
+                        'Use simple DataFrame.query() syntax with existing column names, or provide sheet_name to target a specific worksheet.'
+                    ),
+                    'filename': filename,
+                    'selected_sheet': 'ALL (cross-sheet search)',
+                    'query_expression': query_expression,
+                    'details': unique_errors[:3],
+                }, indent=2, default=str)
+            return None
+
+        ordered_values = sorted(distinct_display_values.values(), key=lambda item: item.casefold())
+        return json.dumps({
+            'filename': filename,
+            'selected_sheet': 'ALL (cross-sheet search)',
+            'column': column,
+            'sheets_searched': sheets_searched,
+            'sheets_matched': sheets_matched,
+            'filter_applied': applied_filters,
+            'normalize_match': normalize_match,
+            'distinct_count': len(ordered_values),
+            'returned_values': min(len(ordered_values), int(max_values)),
+            'values': ordered_values[:int(max_values)],
+            'values_limited': len(ordered_values) > int(max_values),
+        }, indent=2, default=str)
+
+    def _evaluate_related_value_membership(
+        self,
+        container_name: str,
+        blob_name: str,
+        filename: str,
+        source_sheet_name: str,
+        source_value_column: str,
+        target_sheet_name: str,
+        target_match_column: str,
+        source_sheet_index: Optional[str] = None,
+        target_sheet_index: Optional[str] = None,
+        source_query_expression: Optional[str] = None,
+        source_filter_column: Optional[str] = None,
+        source_filter_operator: str = 'equals',
+        source_filter_value=None,
+        target_query_expression: Optional[str] = None,
+        target_filter_column: Optional[str] = None,
+        target_filter_operator: str = 'equals',
+        target_filter_value=None,
+        source_alias_column: Optional[str] = None,
+        target_alias_column: Optional[str] = None,
+        normalize_match: bool = True,
+        max_rows: int = 100,
+    ) -> dict:
+        """Evaluate a semi-join between a source cohort and a target fact worksheet."""
+        source_sheet, workbook_metadata = self._resolve_sheet_selection(
+            container_name,
+            blob_name,
+            sheet_name=source_sheet_name,
+            sheet_index=source_sheet_index,
+            require_explicit_sheet=True,
+        )
+        target_sheet, workbook_metadata = self._resolve_sheet_selection(
+            container_name,
+            blob_name,
+            sheet_name=target_sheet_name,
+            sheet_index=target_sheet_index,
+            require_explicit_sheet=True,
+        )
+
+        source_df = self._read_tabular_blob_to_dataframe(
+            container_name,
+            blob_name,
+            sheet_name=source_sheet,
+            require_explicit_sheet=True,
+        )
+        target_df = self._read_tabular_blob_to_dataframe(
+            container_name,
+            blob_name,
+            sheet_name=target_sheet,
+            require_explicit_sheet=True,
+        )
+
+        source_df = self._try_numeric_conversion(source_df)
+        target_df = self._try_numeric_conversion(target_df)
+
+        source_required_columns = [source_value_column]
+        if source_alias_column:
+            source_required_columns.append(source_alias_column)
+        if source_filter_column:
+            source_required_columns.append(source_filter_column)
+
+        target_required_columns = [target_match_column]
+        if target_alias_column:
+            target_required_columns.append(target_alias_column)
+        if target_filter_column:
+            target_required_columns.append(target_filter_column)
+
+        for required_column in source_required_columns:
+            if required_column not in source_df.columns:
+                return self._build_missing_column_error_payload(
+                    container_name,
+                    blob_name,
+                    filename,
+                    workbook_metadata,
+                    source_sheet,
+                    required_column,
+                    related_columns=[source_value_column, source_alias_column, source_filter_column],
+                    available_columns=list(source_df.columns),
+                )
+
+        for required_column in target_required_columns:
+            if required_column not in target_df.columns:
+                return self._build_missing_column_error_payload(
+                    container_name,
+                    blob_name,
+                    filename,
+                    workbook_metadata,
+                    target_sheet,
+                    required_column,
+                    related_columns=[target_match_column, target_alias_column, target_filter_column],
+                    available_columns=list(target_df.columns),
+                )
+
+        try:
+            filtered_source_df, source_filters = self._apply_optional_dataframe_filters(
+                source_df,
+                query_expression=source_query_expression,
+                filter_column=source_filter_column,
+                filter_operator=source_filter_operator,
+                filter_value=source_filter_value,
+                normalize_match=normalize_match,
+            )
+        except KeyError as missing_source_column_error:
+            missing_source_column = str(missing_source_column_error).strip("'")
+            return self._build_missing_column_error_payload(
+                container_name,
+                blob_name,
+                filename,
+                workbook_metadata,
+                source_sheet,
+                missing_source_column,
+                related_columns=[source_value_column, source_alias_column],
+                available_columns=list(source_df.columns),
+            )
+        except Exception as source_filter_error:
+            return {
+                'error': f"Source filter/query error on sheet '{source_sheet}': {source_filter_error}",
+                'filename': filename,
+                'selected_sheet': source_sheet if workbook_metadata.get('is_workbook') else None,
+            }
+
+        try:
+            filtered_target_df, target_filters = self._apply_optional_dataframe_filters(
+                target_df,
+                query_expression=target_query_expression,
+                filter_column=target_filter_column,
+                filter_operator=target_filter_operator,
+                filter_value=target_filter_value,
+                normalize_match=normalize_match,
+            )
+        except KeyError as missing_target_column_error:
+            missing_target_column = str(missing_target_column_error).strip("'")
+            return self._build_missing_column_error_payload(
+                container_name,
+                blob_name,
+                filename,
+                workbook_metadata,
+                target_sheet,
+                missing_target_column,
+                related_columns=[target_match_column, target_alias_column],
+                available_columns=list(target_df.columns),
+            )
+        except Exception as target_filter_error:
+            return {
+                'error': f"Target filter/query error on sheet '{target_sheet}': {target_filter_error}",
+                'filename': filename,
+                'selected_sheet': target_sheet if workbook_metadata.get('is_workbook') else None,
+            }
+
+        source_member_map = {}
+        variant_to_source_keys = {}
+        for _, source_row in filtered_source_df.iterrows():
+            display_value = str(source_row.get(source_value_column, '')).strip()
+            value_variants = set()
+            for column_name in [source_value_column, source_alias_column]:
+                if not column_name:
+                    continue
+                value_variants.update(
+                    self._extract_cell_value_variants(
+                        source_row.get(column_name),
+                        normalize_match=normalize_match,
+                    )
+                )
+
+            if not value_variants:
+                continue
+
+            primary_variants = self._extract_cell_value_variants(
+                source_row.get(source_value_column),
+                normalize_match=normalize_match,
+            )
+            primary_key = sorted(primary_variants or value_variants)[0]
+            existing_member = source_member_map.setdefault(
+                primary_key,
+                {
+                    'display_value': display_value or primary_key,
+                    'value_variants': set(),
+                    'matched_target_row_count': 0,
+                },
+            )
+            existing_member['value_variants'].update(value_variants)
+            for value_variant in value_variants:
+                variant_to_source_keys.setdefault(value_variant, set()).add(primary_key)
+
+        source_compare_values = set()
+        for source_member in source_member_map.values():
+            source_compare_values.update(source_member['value_variants'])
+
+        matched_target_rows = []
+        matched_target_value_variants = set()
+        for _, target_row in filtered_target_df.iterrows():
+            target_value_variants = set()
+            for column_name in [target_match_column, target_alias_column]:
+                if not column_name:
+                    continue
+                target_value_variants.update(
+                    self._extract_cell_value_variants(
+                        target_row.get(column_name),
+                        normalize_match=normalize_match,
+                    )
+                )
+
+            matched_variants = sorted(target_value_variants & source_compare_values)
+            if not matched_variants:
+                continue
+
+            matched_source_keys = sorted({
+                source_key
+                for matched_variant in matched_variants
+                for source_key in variant_to_source_keys.get(matched_variant, set())
+            })
+            if not matched_source_keys:
+                continue
+
+            matched_target_value_variants.update(matched_variants)
+            for source_key in matched_source_keys:
+                source_member_map[source_key]['matched_target_row_count'] += 1
+
+            matched_row_payload = target_row.to_dict()
+            matched_row_payload['_matched_on'] = matched_variants[:3]
+            matched_row_payload['_matched_source_values'] = [
+                source_member_map[source_key]['display_value']
+                for source_key in matched_source_keys[:3]
+            ]
+            matched_target_rows.append(matched_row_payload)
+
+        matched_source_values = []
+        unmatched_source_values = []
+        for source_member in source_member_map.values():
+            if source_member['matched_target_row_count'] > 0:
+                matched_source_values.append(source_member['display_value'])
+            else:
+                unmatched_source_values.append(source_member['display_value'])
+
+        source_value_match_counts = sorted(
+            [
+                {
+                    'source_value': source_member['display_value'],
+                    'matched_target_row_count': source_member['matched_target_row_count'],
+                }
+                for source_member in source_member_map.values()
+            ],
+            key=lambda item: (-item['matched_target_row_count'], item['source_value'].casefold())
+        )
+        source_value_match_count_limit = self.SOURCE_VALUE_MATCH_COUNT_LIMIT
+
+        matched_target_row_count = len(matched_target_rows)
+        return {
+            'filename': filename,
+            'selected_sheet': target_sheet if workbook_metadata.get('is_workbook') else None,
+            'relationship_type': 'set_membership',
+            'source_sheet': source_sheet,
+            'source_value_column': source_value_column,
+            'source_alias_column': source_alias_column,
+            'target_sheet': target_sheet,
+            'target_match_column': target_match_column,
+            'target_alias_column': target_alias_column,
+            'normalize_match': normalize_match,
+            'source_filter_applied': source_filters,
+            'target_filter_applied': target_filters,
+            'source_cohort_size': len(source_member_map),
+            'matched_source_value_count': len(matched_source_values),
+            'matched_source_values_sample': matched_source_values[:10],
+            'unmatched_source_value_count': len(unmatched_source_values),
+            'unmatched_source_values_sample': unmatched_source_values[:10],
+            'source_value_match_counts_returned': min(len(source_value_match_counts), source_value_match_count_limit),
+            'source_value_match_counts_limited': len(source_value_match_counts) > source_value_match_count_limit,
+            'source_value_match_counts': source_value_match_counts[:source_value_match_count_limit],
+            'target_rows_scanned': len(filtered_target_df),
+            'matched_target_row_count': matched_target_row_count,
+            'returned_rows': min(matched_target_row_count, max_rows),
+            'rows_limited': matched_target_row_count > max_rows,
+            'data': matched_target_rows[:max_rows],
+        }
 
     def _format_datetime_column_label(self, value) -> str:
         """Render date-like Excel header labels into stable analysis-friendly strings."""
@@ -566,6 +1083,394 @@ class TabularProcessingPlugin:
         normalized_df.columns = normalized_columns
         return normalized_df
 
+    def _normalize_entity_match_text(self, value) -> Optional[str]:
+        """Normalize entity-style text for stable name and owner comparisons."""
+        if value is None or (not isinstance(value, str) and pandas.isna(value)):
+            return None
+
+        normalized = str(value).casefold().replace('&', ' and ')
+        normalized = re.sub(r"[`'\u2018\u2019\u201b]+", '', normalized)
+        normalized = re.sub(r'[^0-9a-z]+', ' ', normalized)
+        normalized = ' '.join(normalized.split())
+        return normalized or None
+
+    def _extract_cell_value_variants(self, value, normalize_match: bool = False) -> Set[str]:
+        """Return one or more comparable value variants from a cell, including aliases."""
+        if value is None or (not isinstance(value, str) and pandas.isna(value)):
+            return set()
+
+        raw_text = str(value).strip()
+        if not raw_text:
+            return set()
+
+        parts = [raw_text]
+        if ';' in raw_text or '|' in raw_text:
+            split_parts = re.split(r'[;|]+', raw_text)
+            parts = [part.strip() for part in split_parts if part.strip()]
+
+        variants = set()
+        for part in parts:
+            if normalize_match:
+                normalized_part = self._normalize_entity_match_text(part)
+            else:
+                normalized_part = part.casefold().strip()
+            if normalized_part:
+                variants.add(normalized_part)
+
+        return variants
+
+    def _build_series_match_mask(
+        self,
+        series: pandas.Series,
+        operator: str,
+        value,
+        normalize_match: bool = False,
+    ) -> pandas.Series:
+        """Build a boolean mask for a comparison against a DataFrame column."""
+        op = (operator or 'equals').strip().lower()
+
+        numeric_value = None
+        try:
+            numeric_value = float(value)
+        except (ValueError, TypeError):
+            numeric_value = None
+
+        if op in {'==', 'equals'}:
+            if numeric_value is not None and pandas.api.types.is_numeric_dtype(series):
+                return series == numeric_value
+            if normalize_match:
+                normalized_value = self._normalize_entity_match_text(value)
+                normalized_series = series.map(self._normalize_entity_match_text)
+                return normalized_series == normalized_value
+            return series.astype(str).str.lower() == str(value).lower()
+
+        if op == '!=':
+            if numeric_value is not None and pandas.api.types.is_numeric_dtype(series):
+                return series != numeric_value
+            if normalize_match:
+                normalized_value = self._normalize_entity_match_text(value)
+                normalized_series = series.map(self._normalize_entity_match_text)
+                return normalized_series != normalized_value
+            return series.astype(str).str.lower() != str(value).lower()
+
+        if op == '>':
+            if numeric_value is None:
+                return pandas.Series([False] * len(series), index=series.index)
+            return series > numeric_value
+
+        if op == '<':
+            if numeric_value is None:
+                return pandas.Series([False] * len(series), index=series.index)
+            return series < numeric_value
+
+        if op == '>=':
+            if numeric_value is None:
+                return pandas.Series([False] * len(series), index=series.index)
+            return series >= numeric_value
+
+        if op == '<=':
+            if numeric_value is None:
+                return pandas.Series([False] * len(series), index=series.index)
+            return series <= numeric_value
+
+        if normalize_match:
+            normalized_value = self._normalize_entity_match_text(value)
+            normalized_series = series.map(self._normalize_entity_match_text).fillna('')
+            if not normalized_value:
+                return pandas.Series([False] * len(series), index=series.index)
+
+            if op == 'contains':
+                return normalized_series.str.contains(normalized_value, regex=False, na=False)
+            if op == 'startswith':
+                return normalized_series.str.startswith(normalized_value, na=False)
+            if op == 'endswith':
+                return normalized_series.str.endswith(normalized_value, na=False)
+        else:
+            text_series = series.astype(str)
+            value_text = str(value)
+            if op == 'contains':
+                return text_series.str.contains(value_text, case=False, na=False)
+            if op == 'startswith':
+                return text_series.str.lower().str.startswith(value_text.lower())
+            if op == 'endswith':
+                return text_series.str.lower().str.endswith(value_text.lower())
+
+        raise ValueError(f"Unsupported operator: {operator}")
+
+    def _apply_optional_dataframe_filters(
+        self,
+        df: pandas.DataFrame,
+        query_expression: Optional[str] = None,
+        filter_column: Optional[str] = None,
+        filter_operator: str = 'equals',
+        filter_value=None,
+        normalize_match: bool = False,
+    ) -> tuple:
+        """Apply optional query and single-column filters to a DataFrame."""
+        filtered_df = df
+        applied_filters = []
+
+        if query_expression:
+            filtered_df = filtered_df.query(query_expression)
+            applied_filters.append(f"query_expression={query_expression}")
+
+        if filter_column:
+            if filter_column not in filtered_df.columns:
+                raise KeyError(filter_column)
+            if filter_value is None:
+                raise ValueError('filter_value is required when filter_column is provided.')
+
+            mask = self._build_series_match_mask(
+                filtered_df[filter_column],
+                filter_operator,
+                filter_value,
+                normalize_match=normalize_match,
+            )
+            filtered_df = filtered_df[mask]
+            applied_filters.append(
+                f"{filter_column} {filter_operator or 'equals'} {filter_value}"
+                + (' [normalized]' if normalize_match else '')
+            )
+
+        return filtered_df, applied_filters
+
+    def _column_name_tokens(self, column_name: str) -> List[str]:
+        """Tokenize a column label for relationship heuristics."""
+        normalized = re.sub(r'[^0-9a-z]+', ' ', str(column_name or '').casefold())
+        return [token for token in normalized.split() if token]
+
+    def _build_relationship_column_profile(self, column_name: str, series: pandas.Series) -> dict:
+        """Build a compact column profile used for workbook relationship inference."""
+        tokens = self._column_name_tokens(column_name)
+        non_null_series = series.dropna()
+        name_hint_score = sum(1 for token in tokens if token in self.RELATIONSHIP_COLUMN_HINT_TOKENS)
+        is_identifier_like = any(token == 'id' or token.endswith('id') for token in tokens)
+        is_entity_like = name_hint_score > 0 or is_identifier_like
+        distinct_count = int(non_null_series.astype(str).nunique(dropna=True)) if not non_null_series.empty else 0
+
+        normalized_values = []
+        seen_values = set()
+        for raw_value in non_null_series.astype(str):
+            normalized_value = self._normalize_entity_match_text(raw_value)
+            if not normalized_value or normalized_value in seen_values:
+                continue
+            seen_values.add(normalized_value)
+            normalized_values.append(normalized_value)
+            if len(normalized_values) >= self.RELATIONSHIP_VALUE_SAMPLE_LIMIT:
+                break
+
+        return {
+            'column_name': column_name,
+            'normalized_column_name': ' '.join(tokens),
+            'tokens': tokens,
+            'name_hint_score': name_hint_score,
+            'is_identifier_like': is_identifier_like,
+            'is_entity_like': is_entity_like,
+            'distinct_count': distinct_count,
+            'normalized_value_set': set(normalized_values),
+            'sample_distinct_count': len(normalized_values),
+            'is_numeric': pandas.api.types.is_numeric_dtype(series),
+        }
+
+    def _infer_sheet_role_hint(self, sheet_name: str, row_count: int, column_profiles: List[dict], max_row_count: int) -> dict:
+        """Infer whether a worksheet looks like a fact, dimension, or metadata table."""
+        normalized_sheet_name = str(sheet_name or '').casefold()
+        entity_profiles = [profile for profile in column_profiles if profile['is_entity_like']]
+        natural_key_profiles = [
+            profile for profile in entity_profiles
+            if profile['distinct_count'] >= max(2, row_count - 1)
+        ]
+        repeated_entity_profiles = [
+            profile for profile in entity_profiles
+            if 0 < profile['distinct_count'] < row_count
+        ]
+        join_columns = [
+            profile['column_name']
+            for profile in sorted(
+                column_profiles,
+                key=lambda item: (-item['name_hint_score'], item['distinct_count'], item['column_name'].casefold())
+            )
+            if profile['is_entity_like']
+        ][:5]
+
+        if any(token in normalized_sheet_name for token in ('meta', 'config', 'summary', 'readme', 'about')):
+            return {
+                'role': 'metadata',
+                'reason': 'sheet name suggests metadata or workbook configuration',
+                'row_count': row_count,
+                'likely_join_columns': join_columns,
+            }
+
+        if row_count >= max(25, max_row_count // 2 or 1) and repeated_entity_profiles:
+            return {
+                'role': 'fact',
+                'reason': 'larger table contains repeated entity values consistent with transactional rows',
+                'row_count': row_count,
+                'likely_join_columns': join_columns,
+            }
+
+        if natural_key_profiles and row_count <= max(200, max_row_count // 4 or 1):
+            return {
+                'role': 'dimension',
+                'reason': 'smaller table contains near-unique entity keys suitable for cohort or lookup joins',
+                'row_count': row_count,
+                'likely_join_columns': join_columns,
+            }
+
+        if row_count <= 5 and not entity_profiles and len(column_profiles) <= 6:
+            return {
+                'role': 'metadata',
+                'reason': 'very small table with limited columns',
+                'row_count': row_count,
+                'likely_join_columns': join_columns,
+            }
+
+        if join_columns and row_count <= max(200, max_row_count // 4 or 1):
+            return {
+                'role': 'dimension',
+                'reason': 'smaller table with entity-like or identifier-like columns',
+                'row_count': row_count,
+                'likely_join_columns': join_columns,
+            }
+
+        if row_count >= max(25, max_row_count // 2 or 1):
+            return {
+                'role': 'fact',
+                'reason': 'larger table likely containing repeated transactional or milestone-style rows',
+                'row_count': row_count,
+                'likely_join_columns': join_columns,
+            }
+
+        return {
+            'role': 'unknown',
+            'reason': 'insufficient evidence to confidently classify worksheet role',
+            'row_count': row_count,
+            'likely_join_columns': join_columns,
+        }
+
+    def _build_workbook_relationship_metadata(self, sheet_dataframes: Dict[str, pandas.DataFrame]) -> dict:
+        """Infer likely worksheet roles and relationship hints from workbook data."""
+        if len(sheet_dataframes) <= 1:
+            return {
+                'sheet_role_hints': {},
+                'relationship_hints': [],
+            }
+
+        max_row_count = max((len(dataframe) for dataframe in sheet_dataframes.values()), default=0)
+        column_profiles_by_sheet = {}
+        sheet_role_hints = {}
+
+        for sheet_name, dataframe in sheet_dataframes.items():
+            column_profiles = [
+                self._build_relationship_column_profile(column_name, dataframe[column_name])
+                for column_name in dataframe.columns
+            ]
+            candidate_profiles = [
+                profile for profile in column_profiles
+                if profile['is_entity_like']
+                or profile['distinct_count'] <= max(50, len(dataframe))
+            ]
+            column_profiles_by_sheet[sheet_name] = candidate_profiles[:8]
+            sheet_role_hints[sheet_name] = self._infer_sheet_role_hint(
+                sheet_name,
+                len(dataframe),
+                candidate_profiles,
+                max_row_count,
+            )
+
+        relationship_hints = []
+        sheet_names = list(sheet_dataframes.keys())
+        for left_index, left_sheet in enumerate(sheet_names):
+            for right_sheet in sheet_names[left_index + 1:]:
+                left_profiles = column_profiles_by_sheet.get(left_sheet, [])
+                right_profiles = column_profiles_by_sheet.get(right_sheet, [])
+                left_role_hint = sheet_role_hints.get(left_sheet, {})
+                right_role_hint = sheet_role_hints.get(right_sheet, {})
+
+                for left_profile in left_profiles:
+                    for right_profile in right_profiles:
+                        overlap_values = sorted(
+                            left_profile['normalized_value_set'] & right_profile['normalized_value_set']
+                        )
+                        overlap_count = len(overlap_values)
+                        token_overlap_count = len(
+                            set(left_profile['tokens']) & set(right_profile['tokens'])
+                        )
+                        exact_column_name_match = (
+                            left_profile['normalized_column_name']
+                            and left_profile['normalized_column_name'] == right_profile['normalized_column_name']
+                        )
+
+                        if overlap_count == 0:
+                            continue
+                        if overlap_count < 2 and not exact_column_name_match and token_overlap_count == 0:
+                            continue
+
+                        left_distinct = max(1, left_profile['sample_distinct_count'])
+                        right_distinct = max(1, right_profile['sample_distinct_count'])
+                        overlap_ratio_vs_smaller = round(overlap_count / min(left_distinct, right_distinct), 3)
+
+                        if left_role_hint.get('role') == 'dimension' and right_role_hint.get('role') == 'fact':
+                            reference_sheet = left_sheet
+                            reference_profile = left_profile
+                            reference_role = left_role_hint.get('role')
+                            fact_sheet = right_sheet
+                            fact_profile = right_profile
+                            fact_role = right_role_hint.get('role')
+                        elif right_role_hint.get('role') == 'dimension' and left_role_hint.get('role') == 'fact':
+                            reference_sheet = right_sheet
+                            reference_profile = right_profile
+                            reference_role = right_role_hint.get('role')
+                            fact_sheet = left_sheet
+                            fact_profile = left_profile
+                            fact_role = left_role_hint.get('role')
+                        elif len(sheet_dataframes[left_sheet]) <= len(sheet_dataframes[right_sheet]):
+                            reference_sheet = left_sheet
+                            reference_profile = left_profile
+                            reference_role = left_role_hint.get('role')
+                            fact_sheet = right_sheet
+                            fact_profile = right_profile
+                            fact_role = right_role_hint.get('role')
+                        else:
+                            reference_sheet = right_sheet
+                            reference_profile = right_profile
+                            reference_role = right_role_hint.get('role')
+                            fact_sheet = left_sheet
+                            fact_profile = left_profile
+                            fact_role = left_role_hint.get('role')
+
+                        relationship_hints.append({
+                            'reference_sheet': reference_sheet,
+                            'reference_column': reference_profile['column_name'],
+                            'reference_role': reference_role,
+                            'fact_sheet': fact_sheet,
+                            'fact_column': fact_profile['column_name'],
+                            'fact_role': fact_role,
+                            'normalized_overlap_count': overlap_count,
+                            'reference_distinct_count': reference_profile['sample_distinct_count'],
+                            'fact_distinct_count': fact_profile['sample_distinct_count'],
+                            'overlap_ratio_vs_smaller_set': overlap_ratio_vs_smaller,
+                            'exact_column_name_match': bool(exact_column_name_match),
+                            'shared_name_token_count': token_overlap_count,
+                            'sample_overlap_values': overlap_values[:self.RELATIONSHIP_SHARED_VALUE_LIMIT],
+                        })
+
+        relationship_hints.sort(
+            key=lambda item: (
+                -item['normalized_overlap_count'],
+                -item['overlap_ratio_vs_smaller_set'],
+                -int(item['exact_column_name_match']),
+                -item['shared_name_token_count'],
+                item['reference_sheet'].casefold(),
+                item['fact_sheet'].casefold(),
+            )
+        )
+
+        return {
+            'sheet_role_hints': sheet_role_hints,
+            'relationship_hints': relationship_hints[:self.RELATIONSHIP_HINT_LIMIT],
+        }
+
     def _build_sheet_schema_summary(self, df: pandas.DataFrame, sheet_name: Optional[str], preview_rows: int = 3) -> dict:
         """Build a compact schema summary for a single table or worksheet."""
         df = self._normalize_dataframe_columns(df)
@@ -595,17 +1500,21 @@ class TabularProcessingPlugin:
             return summary
 
         per_sheet_schemas = {}
+        sheet_dataframes = {}
         for workbook_sheet_name in workbook_metadata.get('sheet_names', []):
             df = self._read_tabular_blob_to_dataframe(
                 container_name,
                 blob_name,
                 sheet_name=workbook_sheet_name,
             )
+            sheet_dataframes[workbook_sheet_name] = df.copy()
             per_sheet_schemas[workbook_sheet_name] = self._build_sheet_schema_summary(
                 df,
                 workbook_sheet_name,
                 preview_rows=preview_rows,
             )
+
+        relationship_metadata = self._build_workbook_relationship_metadata(sheet_dataframes)
 
         return {
             'filename': filename,
@@ -614,6 +1523,8 @@ class TabularProcessingPlugin:
             'sheet_count': workbook_metadata.get('sheet_count', 0),
             'selected_sheet': None,
             'per_sheet_schemas': per_sheet_schemas,
+            'sheet_role_hints': relationship_metadata.get('sheet_role_hints', {}),
+            'relationship_hints': relationship_metadata.get('relationship_hints', []),
         }
 
     def _find_candidate_sheets_for_columns(
@@ -1233,6 +2144,7 @@ class TabularProcessingPlugin:
         lookup_value: Annotated[str, "The row label/category value to search for, such as Total Assets"],
         target_column: Annotated[str, "The target column containing the desired value, such as Nov-25"],
         match_operator: Annotated[str, "Match operator: equals, contains, startswith, endswith"] = "equals",
+        normalize_match: Annotated[str, "Whether to normalize string/entity matching for text comparisons (true/false)"] = "false",
         sheet_name: Annotated[Optional[str], "Optional worksheet name for Excel files. Required for analytical calls on multi-sheet workbooks unless sheet_index is provided."] = None,
         sheet_index: Annotated[Optional[str], "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
@@ -1243,6 +2155,7 @@ class TabularProcessingPlugin:
         """Look up values from a target column for matching rows."""
         def _sync_work():
             try:
+                normalize_match_flag = self._parse_boolean_argument(normalize_match, default=False)
                 container, blob_path = self._resolve_blob_location_with_fallback(
                     user_id, conversation_id, filename, source,
                     group_id=group_id, public_workspace_id=public_workspace_id
@@ -1255,6 +2168,7 @@ class TabularProcessingPlugin:
                         container, blob_path, filename,
                         lookup_column, lookup_value, target_column,
                         match_operator=match_operator,
+                        normalize_match=normalize_match_flag,
                         max_rows=int(max_rows),
                     )
                     if cross_sheet_result is not None:
@@ -1301,19 +2215,17 @@ class TabularProcessingPlugin:
                         )
                     )
 
-                series = df[lookup_column]
                 operator = (match_operator or 'equals').strip().lower()
                 normalized_lookup_value = str(lookup_value)
 
-                if operator in {'equals', '=='}:
-                    mask = series.astype(str).str.lower() == normalized_lookup_value.lower()
-                elif operator == 'contains':
-                    mask = series.astype(str).str.contains(normalized_lookup_value, case=False, na=False)
-                elif operator == 'startswith':
-                    mask = series.astype(str).str.lower().str.startswith(normalized_lookup_value.lower())
-                elif operator == 'endswith':
-                    mask = series.astype(str).str.lower().str.endswith(normalized_lookup_value.lower())
-                else:
+                try:
+                    mask = self._build_series_match_mask(
+                        df[lookup_column],
+                        operator,
+                        normalized_lookup_value,
+                        normalize_match=normalize_match_flag,
+                    )
+                except ValueError:
                     return json.dumps({"error": f"Unsupported match_operator: {match_operator}"})
 
                 limit = int(max_rows)
@@ -1325,6 +2237,7 @@ class TabularProcessingPlugin:
                     "lookup_value": lookup_value,
                     "target_column": target_column,
                     "match_operator": operator,
+                    "normalize_match": normalize_match_flag,
                     "total_matches": int(mask.sum()),
                     "returned_rows": len(matches),
                     "data": matches.to_dict(orient='records'),
@@ -1337,6 +2250,257 @@ class TabularProcessingPlugin:
             except Exception as e:
                 log_event(f"[TabularProcessingPlugin] Error looking up value: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
+        return await asyncio.to_thread(_sync_work)
+
+    @kernel_function(
+        description=(
+            "Return deterministic distinct values for a column, with optional query_expression or filter criteria. "
+            "Use this to build a canonical cohort from a worksheet before counting or joining related rows."
+        ),
+        name="get_distinct_values"
+    )
+    @plugin_function_logger("TabularProcessingPlugin")
+    async def get_distinct_values(
+        self,
+        user_id: Annotated[str, "The user ID (from Scope ID in Conversation Metadata)"],
+        conversation_id: Annotated[str, "The conversation ID (from Conversation Metadata)"],
+        filename: Annotated[str, "The filename of the tabular file"],
+        column: Annotated[str, "The column from which to return distinct values"],
+        query_expression: Annotated[Optional[str], "Optional pandas DataFrame.query() expression to apply before collecting distinct values"] = None,
+        filter_column: Annotated[Optional[str], "Optional column to filter on before collecting distinct values"] = None,
+        filter_operator: Annotated[str, "Optional filter operator when filter_column is provided"] = "equals",
+        filter_value: Annotated[Optional[str], "Optional filter value when filter_column is provided"] = None,
+        normalize_match: Annotated[str, "Whether to normalize string/entity matching and deduplication (true/false)"] = "true",
+        sheet_name: Annotated[Optional[str], "Optional worksheet name for Excel files. When omitted, the plugin may perform a cross-sheet distinct-value search."] = None,
+        sheet_index: Annotated[Optional[str], "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
+        source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
+        max_values: Annotated[str, "Maximum distinct values to return"] = "100",
+        group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
+        public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
+    ) -> Annotated[str, "JSON result containing deterministic distinct values and counts"]:
+        """Return deterministic distinct values from a worksheet or across worksheets."""
+        def _sync_work():
+            try:
+                normalize_match_flag = self._parse_boolean_argument(normalize_match, default=True)
+                container, blob_path = self._resolve_blob_location_with_fallback(
+                    user_id, conversation_id, filename, source,
+                    group_id=group_id, public_workspace_id=public_workspace_id
+                )
+
+                normalized_sheet = (sheet_name or '').strip()
+                normalized_sheet_idx = None if sheet_index is None else str(sheet_index).strip()
+                if not normalized_sheet and normalized_sheet_idx in (None, ''):
+                    cross_sheet_result = self._get_distinct_values_across_sheets(
+                        container,
+                        blob_path,
+                        filename,
+                        column,
+                        query_expression=query_expression,
+                        filter_column=filter_column,
+                        filter_operator=filter_operator,
+                        filter_value=filter_value,
+                        normalize_match=normalize_match_flag,
+                        max_values=int(max_values),
+                    )
+                    if cross_sheet_result is not None:
+                        return cross_sheet_result
+
+                selected_sheet, workbook_metadata = self._resolve_sheet_selection(
+                    container,
+                    blob_path,
+                    sheet_name=sheet_name,
+                    sheet_index=sheet_index,
+                    require_explicit_sheet=True,
+                )
+                df = self._read_tabular_blob_to_dataframe(
+                    container,
+                    blob_path,
+                    sheet_name=selected_sheet,
+                    require_explicit_sheet=True,
+                )
+
+                if column not in df.columns:
+                    return json.dumps(
+                        self._build_missing_column_error_payload(
+                            container,
+                            blob_path,
+                            filename,
+                            workbook_metadata,
+                            selected_sheet,
+                            column,
+                            related_columns=[filter_column] if filter_column else None,
+                            available_columns=list(df.columns),
+                        )
+                    )
+
+                try:
+                    filtered_df, applied_filters = self._apply_optional_dataframe_filters(
+                        df,
+                        query_expression=query_expression,
+                        filter_column=filter_column,
+                        filter_operator=filter_operator,
+                        filter_value=filter_value,
+                        normalize_match=normalize_match_flag,
+                    )
+                except KeyError as missing_column_error:
+                    missing_column = str(missing_column_error).strip("'")
+                    return json.dumps(
+                        self._build_missing_column_error_payload(
+                            container,
+                            blob_path,
+                            filename,
+                            workbook_metadata,
+                            selected_sheet,
+                            missing_column,
+                            related_columns=[column],
+                            available_columns=list(df.columns),
+                        )
+                    )
+                except Exception as query_error:
+                    return json.dumps({
+                        'error': f"Query/filter error: {query_error}",
+                        'filename': filename,
+                        'selected_sheet': selected_sheet if workbook_metadata.get('is_workbook') else None,
+                    })
+
+                distinct_display_values = {}
+                for cell_value in filtered_df[column].tolist():
+                    display_value = str(cell_value).strip()
+                    if not display_value:
+                        continue
+                    compare_variants = self._extract_cell_value_variants(
+                        cell_value,
+                        normalize_match=normalize_match_flag,
+                    )
+                    if not compare_variants:
+                        continue
+                    canonical_key = sorted(compare_variants)[0]
+                    distinct_display_values.setdefault(canonical_key, display_value)
+
+                ordered_values = sorted(distinct_display_values.values(), key=lambda item: item.casefold())
+                limit = int(max_values)
+                return json.dumps({
+                    'filename': filename,
+                    'selected_sheet': selected_sheet if workbook_metadata.get('is_workbook') else None,
+                    'column': column,
+                    'filter_applied': applied_filters,
+                    'normalize_match': normalize_match_flag,
+                    'distinct_count': len(ordered_values),
+                    'returned_values': min(len(ordered_values), limit),
+                    'values': ordered_values[:limit],
+                    'values_limited': len(ordered_values) > limit,
+                }, indent=2, default=str)
+            except Exception as e:
+                log_event(f"[TabularProcessingPlugin] Error getting distinct values: {e}", level=logging.WARNING)
+                return json.dumps({"error": str(e)})
+
+        return await asyncio.to_thread(_sync_work)
+
+    @kernel_function(
+        description=(
+            "Return a deterministic row count after applying an optional query_expression or filter condition. "
+            "Use this instead of estimating counts from partial returned rows when the user asks how many or what percentage."
+        ),
+        name="count_rows"
+    )
+    @plugin_function_logger("TabularProcessingPlugin")
+    async def count_rows(
+        self,
+        user_id: Annotated[str, "The user ID (from Scope ID in Conversation Metadata)"],
+        conversation_id: Annotated[str, "The conversation ID (from Conversation Metadata)"],
+        filename: Annotated[str, "The filename of the tabular file"],
+        query_expression: Annotated[Optional[str], "Optional pandas DataFrame.query() expression to apply before counting rows"] = None,
+        filter_column: Annotated[Optional[str], "Optional column to filter on before counting rows"] = None,
+        filter_operator: Annotated[str, "Optional filter operator when filter_column is provided"] = "equals",
+        filter_value: Annotated[Optional[str], "Optional filter value when filter_column is provided"] = None,
+        normalize_match: Annotated[str, "Whether to normalize string/entity matching for text comparisons (true/false)"] = "false",
+        sheet_name: Annotated[Optional[str], "Optional worksheet name for Excel files. When omitted, the plugin may perform a cross-sheet row count."] = None,
+        sheet_index: Annotated[Optional[str], "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
+        source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
+        group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
+        public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
+    ) -> Annotated[str, "JSON result containing a deterministic row count"]:
+        """Count rows deterministically after optional filters or queries."""
+        def _sync_work():
+            try:
+                normalize_match_flag = self._parse_boolean_argument(normalize_match, default=False)
+                container, blob_path = self._resolve_blob_location_with_fallback(
+                    user_id, conversation_id, filename, source,
+                    group_id=group_id, public_workspace_id=public_workspace_id
+                )
+
+                normalized_sheet = (sheet_name or '').strip()
+                normalized_sheet_idx = None if sheet_index is None else str(sheet_index).strip()
+                if not normalized_sheet and normalized_sheet_idx in (None, ''):
+                    cross_sheet_result = self._count_rows_across_sheets(
+                        container,
+                        blob_path,
+                        filename,
+                        filter_column=filter_column,
+                        filter_operator=filter_operator,
+                        filter_value=filter_value,
+                        query_expression=query_expression,
+                        normalize_match=normalize_match_flag,
+                    )
+                    if cross_sheet_result is not None:
+                        return cross_sheet_result
+
+                selected_sheet, workbook_metadata = self._resolve_sheet_selection(
+                    container,
+                    blob_path,
+                    sheet_name=sheet_name,
+                    sheet_index=sheet_index,
+                    require_explicit_sheet=True,
+                )
+                df = self._read_tabular_blob_to_dataframe(
+                    container,
+                    blob_path,
+                    sheet_name=selected_sheet,
+                    require_explicit_sheet=True,
+                )
+                df = self._try_numeric_conversion(df)
+
+                try:
+                    filtered_df, applied_filters = self._apply_optional_dataframe_filters(
+                        df,
+                        query_expression=query_expression,
+                        filter_column=filter_column,
+                        filter_operator=filter_operator,
+                        filter_value=filter_value,
+                        normalize_match=normalize_match_flag,
+                    )
+                except KeyError as missing_column_error:
+                    missing_column = str(missing_column_error).strip("'")
+                    return json.dumps(
+                        self._build_missing_column_error_payload(
+                            container,
+                            blob_path,
+                            filename,
+                            workbook_metadata,
+                            selected_sheet,
+                            missing_column,
+                            available_columns=list(df.columns),
+                        )
+                    )
+                except Exception as query_error:
+                    return json.dumps({
+                        'error': f"Query/filter error: {query_error}",
+                        'filename': filename,
+                        'selected_sheet': selected_sheet if workbook_metadata.get('is_workbook') else None,
+                    })
+
+                return json.dumps({
+                    'filename': filename,
+                    'selected_sheet': selected_sheet if workbook_metadata.get('is_workbook') else None,
+                    'rows_scanned': len(df),
+                    'row_count': len(filtered_df),
+                    'filter_applied': applied_filters,
+                    'normalize_match': normalize_match_flag,
+                }, indent=2, default=str)
+            except Exception as e:
+                log_event(f"[TabularProcessingPlugin] Error counting rows: {e}", level=logging.WARNING)
+                return json.dumps({"error": str(e)})
+
         return await asyncio.to_thread(_sync_work)
 
     @kernel_function(
@@ -1447,6 +2611,7 @@ class TabularProcessingPlugin:
         column: Annotated[str, "The column to filter on"],
         operator: Annotated[str, "Operator: ==, !=, >, <, >=, <=, contains, startswith, endswith"],
         value: Annotated[str, "The value to compare against"],
+        normalize_match: Annotated[str, "Whether to normalize string/entity matching for text comparisons (true/false)"] = "false",
         sheet_name: Annotated[Optional[str], "Optional worksheet name for Excel files. Required for analytical calls on multi-sheet workbooks unless sheet_index is provided."] = None,
         sheet_index: Annotated[Optional[str], "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
@@ -1457,6 +2622,7 @@ class TabularProcessingPlugin:
         """Filter rows based on a condition."""
         def _sync_work():
             try:
+                normalize_match_flag = self._parse_boolean_argument(normalize_match, default=False)
                 container, blob_path = self._resolve_blob_location_with_fallback(
                     user_id, conversation_id, filename, source,
                     group_id=group_id, public_workspace_id=public_workspace_id
@@ -1467,6 +2633,7 @@ class TabularProcessingPlugin:
                 if not normalized_sheet and normalized_sheet_idx in (None, ''):
                     cross_sheet_result = self._filter_rows_across_sheets(
                         container, blob_path, filename, column, operator, value,
+                        normalize_match=normalize_match_flag,
                         max_rows=int(max_rows),
                     )
                     if cross_sheet_result is not None:
@@ -1487,42 +2654,26 @@ class TabularProcessingPlugin:
                 df = self._try_numeric_conversion(df)
 
                 if column not in df.columns:
-                    return json.dumps({"error": f"Column '{column}' not found. Available: {list(df.columns)}"})
+                    return json.dumps(
+                        self._build_missing_column_error_payload(
+                            container,
+                            blob_path,
+                            filename,
+                            workbook_metadata,
+                            selected_sheet,
+                            column,
+                            available_columns=list(df.columns),
+                        )
+                    )
 
-                series = df[column]
-                op = operator.strip().lower()
-
-                numeric_value = None
                 try:
-                    numeric_value = float(value)
-                except (ValueError, TypeError):
-                    pass
-
-                if op == '==' or op == 'equals':
-                    if numeric_value is not None and pandas.api.types.is_numeric_dtype(series):
-                        mask = series == numeric_value
-                    else:
-                        mask = series.astype(str).str.lower() == value.lower()
-                elif op == '!=':
-                    if numeric_value is not None and pandas.api.types.is_numeric_dtype(series):
-                        mask = series != numeric_value
-                    else:
-                        mask = series.astype(str).str.lower() != value.lower()
-                elif op == '>':
-                    mask = series > numeric_value
-                elif op == '<':
-                    mask = series < numeric_value
-                elif op == '>=':
-                    mask = series >= numeric_value
-                elif op == '<=':
-                    mask = series <= numeric_value
-                elif op == 'contains':
-                    mask = series.astype(str).str.contains(value, case=False, na=False)
-                elif op == 'startswith':
-                    mask = series.astype(str).str.lower().str.startswith(value.lower())
-                elif op == 'endswith':
-                    mask = series.astype(str).str.lower().str.endswith(value.lower())
-                else:
+                    mask = self._build_series_match_mask(
+                        df[column],
+                        operator,
+                        value,
+                        normalize_match=normalize_match_flag,
+                    )
+                except ValueError:
                     return json.dumps({"error": f"Unsupported operator: {operator}"})
 
                 limit = int(max_rows)
@@ -1530,6 +2681,7 @@ class TabularProcessingPlugin:
                 return json.dumps({
                     "filename": filename,
                     "selected_sheet": selected_sheet if workbook_metadata.get('is_workbook') else None,
+                    "normalize_match": normalize_match_flag,
                     "total_matches": int(mask.sum()),
                     "returned_rows": len(filtered),
                     "data": filtered.to_dict(orient='records')
@@ -1605,6 +2757,156 @@ class TabularProcessingPlugin:
             except Exception as e:
                 log_event(f"[TabularProcessingPlugin] Error querying data: {e}", level=logging.WARNING)
                 return json.dumps({"error": f"Query error: {str(e)}. Ensure column names and values are correct."})
+        return await asyncio.to_thread(_sync_work)
+
+    @kernel_function(
+        description=(
+            "Filter rows in one worksheet where the target match column belongs to a cohort defined by values from another worksheet. "
+            "Use this for relational workbook questions such as facts owned by a cohort or records tied to a reference sheet membership list."
+        ),
+        name="filter_rows_by_related_values"
+    )
+    @plugin_function_logger("TabularProcessingPlugin")
+    async def filter_rows_by_related_values(
+        self,
+        user_id: Annotated[str, "The user ID (from Scope ID in Conversation Metadata)"],
+        conversation_id: Annotated[str, "The conversation ID (from Conversation Metadata)"],
+        filename: Annotated[str, "The filename of the tabular file"],
+        source_sheet_name: Annotated[str, "Worksheet that defines the cohort or reference values"],
+        source_value_column: Annotated[str, "Column on the source worksheet that contains the canonical cohort values"],
+        target_sheet_name: Annotated[str, "Worksheet containing the fact rows to filter"],
+        target_match_column: Annotated[str, "Column on the target worksheet that should match the source cohort values"],
+        source_query_expression: Annotated[Optional[str], "Optional pandas DataFrame.query() expression to narrow the source cohort"] = None,
+        source_filter_column: Annotated[Optional[str], "Optional source-sheet filter column"] = None,
+        source_filter_operator: Annotated[str, "Optional source-sheet filter operator"] = "equals",
+        source_filter_value: Annotated[Optional[str], "Optional source-sheet filter value"] = None,
+        target_query_expression: Annotated[Optional[str], "Optional pandas DataFrame.query() expression to narrow target rows before matching"] = None,
+        target_filter_column: Annotated[Optional[str], "Optional target-sheet filter column"] = None,
+        target_filter_operator: Annotated[str, "Optional target-sheet filter operator"] = "equals",
+        target_filter_value: Annotated[Optional[str], "Optional target-sheet filter value"] = None,
+        source_alias_column: Annotated[Optional[str], "Optional alternate or alias source column used for normalized matching"] = None,
+        target_alias_column: Annotated[Optional[str], "Optional alternate or alias target column used for normalized matching"] = None,
+        normalize_match: Annotated[str, "Whether to normalize entity-style text matching across worksheets (true/false)"] = "true",
+        source_sheet_index: Annotated[Optional[str], "Optional zero-based source worksheet index if sheet name is not used"] = None,
+        target_sheet_index: Annotated[Optional[str], "Optional zero-based target worksheet index if sheet name is not used"] = None,
+        source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
+        max_rows: Annotated[str, "Maximum related target rows to return"] = "100",
+        group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
+        public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
+    ) -> Annotated[str, "JSON result containing explainable set-membership filtering output"]:
+        """Filter target rows by membership in a source-sheet cohort."""
+        def _sync_work():
+            try:
+                normalize_match_flag = self._parse_boolean_argument(normalize_match, default=True)
+                container, blob_path = self._resolve_blob_location_with_fallback(
+                    user_id, conversation_id, filename, source,
+                    group_id=group_id, public_workspace_id=public_workspace_id
+                )
+                result_payload = self._evaluate_related_value_membership(
+                    container,
+                    blob_path,
+                    filename,
+                    source_sheet_name=source_sheet_name,
+                    source_value_column=source_value_column,
+                    target_sheet_name=target_sheet_name,
+                    target_match_column=target_match_column,
+                    source_sheet_index=source_sheet_index,
+                    target_sheet_index=target_sheet_index,
+                    source_query_expression=source_query_expression,
+                    source_filter_column=source_filter_column,
+                    source_filter_operator=source_filter_operator,
+                    source_filter_value=source_filter_value,
+                    target_query_expression=target_query_expression,
+                    target_filter_column=target_filter_column,
+                    target_filter_operator=target_filter_operator,
+                    target_filter_value=target_filter_value,
+                    source_alias_column=source_alias_column,
+                    target_alias_column=target_alias_column,
+                    normalize_match=normalize_match_flag,
+                    max_rows=int(max_rows),
+                )
+                return json.dumps(result_payload, indent=2, default=str)
+            except Exception as e:
+                log_event(f"[TabularProcessingPlugin] Error filtering rows by related values: {e}", level=logging.WARNING)
+                return json.dumps({"error": str(e)})
+
+        return await asyncio.to_thread(_sync_work)
+
+    @kernel_function(
+        description=(
+            "Count rows in one worksheet where the target match column belongs to a cohort defined by another worksheet. "
+            "Use this for deterministic numerator/denominator calculations and percentages across related sheets."
+        ),
+        name="count_rows_by_related_values"
+    )
+    @plugin_function_logger("TabularProcessingPlugin")
+    async def count_rows_by_related_values(
+        self,
+        user_id: Annotated[str, "The user ID (from Scope ID in Conversation Metadata)"],
+        conversation_id: Annotated[str, "The conversation ID (from Conversation Metadata)"],
+        filename: Annotated[str, "The filename of the tabular file"],
+        source_sheet_name: Annotated[str, "Worksheet that defines the cohort or reference values"],
+        source_value_column: Annotated[str, "Column on the source worksheet that contains the canonical cohort values"],
+        target_sheet_name: Annotated[str, "Worksheet containing the fact rows to count"],
+        target_match_column: Annotated[str, "Column on the target worksheet that should match the source cohort values"],
+        source_query_expression: Annotated[Optional[str], "Optional pandas DataFrame.query() expression to narrow the source cohort"] = None,
+        source_filter_column: Annotated[Optional[str], "Optional source-sheet filter column"] = None,
+        source_filter_operator: Annotated[str, "Optional source-sheet filter operator"] = "equals",
+        source_filter_value: Annotated[Optional[str], "Optional source-sheet filter value"] = None,
+        target_query_expression: Annotated[Optional[str], "Optional pandas DataFrame.query() expression to narrow target rows before matching"] = None,
+        target_filter_column: Annotated[Optional[str], "Optional target-sheet filter column"] = None,
+        target_filter_operator: Annotated[str, "Optional target-sheet filter operator"] = "equals",
+        target_filter_value: Annotated[Optional[str], "Optional target-sheet filter value"] = None,
+        source_alias_column: Annotated[Optional[str], "Optional alternate or alias source column used for normalized matching"] = None,
+        target_alias_column: Annotated[Optional[str], "Optional alternate or alias target column used for normalized matching"] = None,
+        normalize_match: Annotated[str, "Whether to normalize entity-style text matching across worksheets (true/false)"] = "true",
+        source_sheet_index: Annotated[Optional[str], "Optional zero-based source worksheet index if sheet name is not used"] = None,
+        target_sheet_index: Annotated[Optional[str], "Optional zero-based target worksheet index if sheet name is not used"] = None,
+        source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
+        group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
+        public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
+    ) -> Annotated[str, "JSON result containing an explainable relational row count"]:
+        """Count target rows by membership in a source-sheet cohort."""
+        def _sync_work():
+            try:
+                normalize_match_flag = self._parse_boolean_argument(normalize_match, default=True)
+                container, blob_path = self._resolve_blob_location_with_fallback(
+                    user_id, conversation_id, filename, source,
+                    group_id=group_id, public_workspace_id=public_workspace_id
+                )
+                result_payload = self._evaluate_related_value_membership(
+                    container,
+                    blob_path,
+                    filename,
+                    source_sheet_name=source_sheet_name,
+                    source_value_column=source_value_column,
+                    target_sheet_name=target_sheet_name,
+                    target_match_column=target_match_column,
+                    source_sheet_index=source_sheet_index,
+                    target_sheet_index=target_sheet_index,
+                    source_query_expression=source_query_expression,
+                    source_filter_column=source_filter_column,
+                    source_filter_operator=source_filter_operator,
+                    source_filter_value=source_filter_value,
+                    target_query_expression=target_query_expression,
+                    target_filter_column=target_filter_column,
+                    target_filter_operator=target_filter_operator,
+                    target_filter_value=target_filter_value,
+                    source_alias_column=source_alias_column,
+                    target_alias_column=target_alias_column,
+                    normalize_match=normalize_match_flag,
+                    max_rows=50,
+                )
+                if 'error' not in result_payload:
+                    result_payload['row_count'] = result_payload.get('matched_target_row_count', 0)
+                    result_payload.pop('data', None)
+                    result_payload.pop('returned_rows', None)
+                    result_payload.pop('rows_limited', None)
+                return json.dumps(result_payload, indent=2, default=str)
+            except Exception as e:
+                log_event(f"[TabularProcessingPlugin] Error counting rows by related values: {e}", level=logging.WARNING)
+                return json.dumps({"error": str(e)})
+
         return await asyncio.to_thread(_sync_work)
 
     @kernel_function(

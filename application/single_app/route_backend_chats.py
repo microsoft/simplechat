@@ -43,7 +43,65 @@ from flask import current_app
 from swagger_wrapper import swagger_route, get_auth_security
 from azure.identity import ClientSecretCredential, DefaultAzureCredential, get_bearer_token_provider
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
+from functions_message_artifacts import (
+    build_agent_citation_artifact_documents,
+    filter_assistant_artifact_items,
+)
 from functions_thoughts import ThoughtTracker
+
+
+def _strip_agent_citation_artifact_refs(agent_citations):
+    """Drop artifact references when auxiliary payload persistence fails."""
+    compact_citations = []
+    for citation in agent_citations or []:
+        if not isinstance(citation, dict):
+            compact_citations.append(citation)
+            continue
+
+        compact_citation = dict(citation)
+        compact_citation.pop('artifact_id', None)
+        compact_citation.pop('raw_payload_externalized', None)
+        compact_citations.append(compact_citation)
+
+    return compact_citations
+
+
+def persist_agent_citation_artifacts(
+    conversation_id,
+    assistant_message_id,
+    agent_citations,
+    created_timestamp,
+    user_info=None,
+):
+    """Persist raw agent citation payloads outside the primary assistant message doc."""
+    if not agent_citations:
+        return []
+
+    compact_citations, artifact_docs = build_agent_citation_artifact_documents(
+        conversation_id=conversation_id,
+        assistant_message_id=assistant_message_id,
+        agent_citations=agent_citations,
+        created_timestamp=created_timestamp,
+        user_info=user_info,
+    )
+
+    try:
+        for artifact_doc in artifact_docs:
+            cosmos_messages_container.upsert_item(artifact_doc)
+        return compact_citations
+    except Exception as exc:
+        log_event(
+            f"[Agent Citations] Failed to persist assistant artifacts: {exc}",
+            extra={
+                'conversation_id': conversation_id,
+                'assistant_message_id': assistant_message_id,
+                'artifact_count': len(artifact_docs),
+                'citation_count': len(agent_citations),
+            },
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        return _strip_agent_citation_artifact_refs(compact_citations)
 
 
 def get_tabular_discovery_function_names():
@@ -230,10 +288,18 @@ def build_search_augmentation_system_prompt(retrieved_content):
 
 def build_tabular_computed_results_system_message(source_label, tabular_analysis):
     """Build the outer-model handoff message for successful tabular analysis."""
+    rendered_analysis = str(tabular_analysis or '').strip()
+    max_handoff_chars = 24000
+    if len(rendered_analysis) > max_handoff_chars:
+        rendered_analysis = (
+            rendered_analysis[:max_handoff_chars]
+            + "\n[Computed results handoff truncated for prompt budget.]"
+        )
+
     return (
         f"The following tabular results were computed from {source_label} using "
         f"tabular_processing plugin functions:\n\n"
-        f"{tabular_analysis}\n\n"
+        f"{rendered_analysis}\n\n"
         "These are tool-backed results derived from the full underlying tabular data, not just retrieved schema excerpts. "
         "Treat them as authoritative for row-level facts, calculations, and numeric conclusions. "
         "Do not say that you lack direct access to the data if the answer is present in these computed results."
@@ -722,7 +788,50 @@ def describe_tabular_invocation_conditions(invocation):
     return None
 
 
-def get_tabular_query_overlap_summary(invocations, max_rows=25):
+def compact_tabular_fallback_value(value, depth=0, max_depth=2):
+    """Reduce large tabular fallback values to prompt-safe summaries."""
+    if value is None or isinstance(value, (int, float, bool)):
+        return value
+
+    if isinstance(value, str):
+        max_string_length = 400
+        if len(value) <= max_string_length:
+            return value
+        return f"{value[:max_string_length]}... [truncated {len(value) - max_string_length} chars]"
+
+    if depth >= max_depth:
+        if isinstance(value, dict):
+            return f"<dict with {len(value)} keys>"
+        if isinstance(value, list):
+            return f"<list with {len(value)} items>"
+        return str(value)
+
+    if isinstance(value, list):
+        compact_items = [
+            compact_tabular_fallback_value(item, depth=depth + 1, max_depth=max_depth)
+            for item in value[:5]
+        ]
+        if len(value) > 5:
+            compact_items.append({'remaining_items': len(value) - 5})
+        return compact_items
+
+    if isinstance(value, dict):
+        compact_mapping = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= 12:
+                compact_mapping['remaining_keys'] = len(value) - 12
+                break
+            compact_mapping[str(key)] = compact_tabular_fallback_value(
+                item,
+                depth=depth + 1,
+                max_depth=max_depth,
+            )
+        return compact_mapping
+
+    return str(value)
+
+
+def get_tabular_query_overlap_summary(invocations, max_rows=10):
     """Summarize overlap across successful row-returning tabular calls.
 
     This is a defensive fallback for cases where tool execution succeeded but the
@@ -786,7 +895,7 @@ def get_tabular_query_overlap_summary(invocations, max_rows=25):
             if row_key not in overlapping_keys or row_key in seen_sample_keys:
                 continue
 
-            ordered_sample_rows.append(row)
+            ordered_sample_rows.append(compact_tabular_fallback_value(row))
             seen_sample_keys.add(row_key)
             if len(ordered_sample_rows) >= max_rows:
                 break
@@ -795,7 +904,7 @@ def get_tabular_query_overlap_summary(invocations, max_rows=25):
         for grouped_item in grouped_items:
             rendered_conditions = describe_tabular_invocation_conditions(grouped_item['invocation'])
             if rendered_conditions:
-                source_queries.append(rendered_conditions)
+                source_queries.append(compact_tabular_fallback_value(rendered_conditions))
 
         overlap_summary = {
             'filename': filename or None,
@@ -813,7 +922,7 @@ def get_tabular_query_overlap_summary(invocations, max_rows=25):
     return best_summary
 
 
-def get_tabular_invocation_compact_payload(invocation, max_rows=10):
+def get_tabular_invocation_compact_payload(invocation, max_rows=5):
     """Return a compact, prompt-safe summary of a successful tabular invocation."""
     result_payload = get_tabular_invocation_result_payload(invocation)
     if not result_payload:
@@ -822,15 +931,15 @@ def get_tabular_invocation_compact_payload(invocation, max_rows=10):
     function_name = getattr(invocation, 'function_name', '')
     compact_payload = {
         'function': function_name,
-        'filename': result_payload.get('filename'),
-        'selected_sheet': result_payload.get('selected_sheet'),
+        'filename': compact_tabular_fallback_value(result_payload.get('filename')),
+        'selected_sheet': compact_tabular_fallback_value(result_payload.get('selected_sheet')),
     }
 
     if function_name == 'aggregate_column':
         compact_payload.update({
-            'column': result_payload.get('column'),
-            'operation': result_payload.get('operation'),
-            'result': result_payload.get('result'),
+            'column': compact_tabular_fallback_value(result_payload.get('column')),
+            'operation': compact_tabular_fallback_value(result_payload.get('operation')),
+            'result': compact_tabular_fallback_value(result_payload.get('result')),
         })
     elif function_name in {'group_by_aggregate', 'group_by_datetime_component'}:
         for key_name in (
@@ -846,7 +955,7 @@ def get_tabular_invocation_compact_payload(invocation, max_rows=10):
             'top_results',
         ):
             if key_name in result_payload:
-                compact_payload[key_name] = result_payload.get(key_name)
+                compact_payload[key_name] = compact_tabular_fallback_value(result_payload.get(key_name))
     elif function_name == 'lookup_value':
         for key_name in (
             'lookup_column',
@@ -857,27 +966,39 @@ def get_tabular_invocation_compact_payload(invocation, max_rows=10):
             'returned_rows',
         ):
             if key_name in result_payload:
-                compact_payload[key_name] = result_payload.get(key_name)
+                compact_payload[key_name] = compact_tabular_fallback_value(result_payload.get(key_name))
 
         data_rows = get_tabular_invocation_data_rows(invocation)
         if data_rows:
-            compact_payload['sample_rows'] = data_rows[:max_rows]
+            compact_payload['sample_rows'] = [
+                compact_tabular_fallback_value(row)
+                for row in data_rows[:max_rows]
+            ]
             compact_payload['sample_rows_limited'] = len(data_rows) > max_rows
     elif function_name in {'query_tabular_data', 'filter_rows'}:
         for key_name in ('total_matches', 'returned_rows'):
             if key_name in result_payload:
-                compact_payload[key_name] = result_payload.get(key_name)
+                compact_payload[key_name] = compact_tabular_fallback_value(result_payload.get(key_name))
 
         data_rows = get_tabular_invocation_data_rows(invocation)
         if data_rows:
-            compact_payload['sample_rows'] = data_rows[:max_rows]
+            compact_payload['sample_rows'] = [
+                compact_tabular_fallback_value(row)
+                for row in data_rows[:max_rows]
+            ]
             compact_payload['sample_rows_limited'] = len(data_rows) > max_rows
 
         rendered_conditions = describe_tabular_invocation_conditions(invocation)
         if rendered_conditions:
-            compact_payload['conditions'] = rendered_conditions
+            compact_payload['conditions'] = compact_tabular_fallback_value(rendered_conditions)
     else:
-        compact_payload.update(result_payload)
+        compact_payload.update({
+            key: compact_tabular_fallback_value(value)
+            for key, value in result_payload.items()
+        })
+
+    if '[truncated ' in json.dumps(compact_payload, default=str):
+        compact_payload['result_summary_truncated'] = True
 
     return compact_payload
 
@@ -895,32 +1016,86 @@ def build_tabular_analysis_fallback_from_invocations(invocations):
     if not successful_invocations:
         return None
 
-    overlap_summary = get_tabular_query_overlap_summary(successful_invocations)
-    compact_results = []
-    for invocation in successful_invocations[:8]:
-        compact_payload = get_tabular_invocation_compact_payload(invocation)
-        if compact_payload is None:
-            continue
-        compact_results.append(compact_payload)
-
-    if not overlap_summary and not compact_results:
-        return None
-
+    max_fallback_chars = 24000
+    coverage_note_reserve = 1200
+    overlap_summary = get_tabular_query_overlap_summary(successful_invocations, max_rows=10)
     rendered_sections = [
         "The following structured results come directly from successful tabular tool executions.",
         "Use them as computed evidence even though the inner tabular synthesis step did not complete.",
     ]
 
     if overlap_summary:
+        if overlap_summary.get('sample_rows') and len(json.dumps(overlap_summary, default=str)) > 6000:
+            overlap_summary = dict(overlap_summary)
+            overlap_summary['sample_rows'] = overlap_summary.get('sample_rows', [])[:5]
+            overlap_summary['sample_rows_limited'] = True
+
         rendered_sections.append(
             "OVERLAP SUMMARY:\n"
             f"{json.dumps(overlap_summary, indent=2, default=str)}"
         )
 
+    base_rendered_text = "\n\n".join(rendered_sections)
+    compact_results = []
+    invocation_limit = 8
+    candidate_invocations = successful_invocations[:invocation_limit]
+    for invocation in candidate_invocations:
+        compact_payload = get_tabular_invocation_compact_payload(invocation, max_rows=5)
+        if compact_payload is None:
+            continue
+
+        candidate_results = compact_results + [compact_payload]
+        candidate_section = (
+            "TOOL RESULT SUMMARIES:\n"
+            f"{json.dumps(candidate_results, indent=2, default=str)}"
+        )
+        candidate_text = base_rendered_text + ("\n\n" if base_rendered_text else "") + candidate_section
+        if len(candidate_text) <= (max_fallback_chars - coverage_note_reserve):
+            compact_results = candidate_results
+            continue
+
+        if compact_results:
+            break
+
+        shrunk_payload = dict(compact_payload)
+        if 'sample_rows' in shrunk_payload:
+            shrunk_payload['sample_rows'] = shrunk_payload['sample_rows'][:2]
+            shrunk_payload['sample_rows_limited'] = True
+        if isinstance(shrunk_payload.get('top_results'), dict):
+            shrunk_payload['top_results'] = dict(list(shrunk_payload['top_results'].items())[:3])
+
+        candidate_section = (
+            "TOOL RESULT SUMMARIES:\n"
+            f"{json.dumps([shrunk_payload], indent=2, default=str)}"
+        )
+        candidate_text = base_rendered_text + ("\n\n" if base_rendered_text else "") + candidate_section
+        if len(candidate_text) > (max_fallback_chars - coverage_note_reserve):
+            shrunk_payload.pop('sample_rows', None)
+            shrunk_payload['sample_rows_limited'] = True
+            shrunk_payload['result_summary_truncated'] = True
+            if isinstance(shrunk_payload.get('top_results'), dict):
+                shrunk_payload['top_results'] = dict(list(shrunk_payload['top_results'].items())[:2])
+
+        compact_results = [shrunk_payload]
+        break
+
+    if not overlap_summary and not compact_results:
+        return None
+
     if compact_results:
         rendered_sections.append(
             "TOOL RESULT SUMMARIES:\n"
             f"{json.dumps(compact_results, indent=2, default=str)}"
+        )
+
+    omitted_invocation_count = len(candidate_invocations) - len(compact_results)
+    if len(successful_invocations) > invocation_limit:
+        omitted_invocation_count += len(successful_invocations) - invocation_limit
+    if omitted_invocation_count > 0:
+        rendered_sections.append(
+            "RESULT COVERAGE NOTE:\n"
+            f"Included {len(compact_results)} compact tool summaries out of {len(successful_invocations)} successful tool executions to stay within the prompt budget. "
+            "Use targeted follow-up tool calls if additional raw detail is required."
         )
 
     return "\n\n".join(rendered_sections)
@@ -1190,6 +1365,80 @@ def _tokenize_tabular_sheet_text(text):
     return tokens
 
 
+def _extract_tabular_entity_anchor_terms(question_text):
+    """Extract likely primary-entity terms from an entity lookup question."""
+    normalized_question = str(question_text or '').strip().lower()
+    if not normalized_question:
+        return []
+
+    stopwords = {
+        'and',
+        'any',
+        'by',
+        'detail',
+        'details',
+        'exact',
+        'explain',
+        'find',
+        'for',
+        'from',
+        'full',
+        'get',
+        'give',
+        'lookup',
+        'me',
+        'of',
+        'or',
+        'profile',
+        'profiles',
+        'record',
+        'records',
+        'related',
+        'show',
+        'story',
+        'summaries',
+        'summarize',
+        'summary',
+        'that',
+        'the',
+        'their',
+        'this',
+        'those',
+        'these',
+        'to',
+        'up',
+        'with',
+    }
+    capture_patterns = (
+        r'\bfind\s+([^\.;:!?]+)',
+        r'\blookup\s+([^\.;:!?]+)',
+    )
+    anchor_terms = []
+    seen_anchor_terms = set()
+
+    for capture_pattern in capture_patterns:
+        match = re.search(capture_pattern, normalized_question)
+        if not match:
+            continue
+
+        captured_text = re.split(
+            r'\b(?:and|show|summarize|summary|profile|with|where|which|who|that)\b',
+            match.group(1),
+            maxsplit=1,
+        )[0]
+        for token in _tokenize_tabular_sheet_text(captured_text):
+            if token in stopwords:
+                continue
+            if any(character.isdigit() for character in token):
+                continue
+            if token in seen_anchor_terms:
+                continue
+            seen_anchor_terms.add(token)
+            anchor_terms.append(token)
+
+    return anchor_terms
+
+
 def _score_tabular_sheet_match(sheet_name, question_text, columns=None):
     """Score how strongly a worksheet name matches the user question.
 
@@ -1228,15 +1477,54 @@ def _score_tabular_sheet_match(sheet_name, question_text, columns=None):
     return score
 
 
-def _select_relevant_workbook_sheets(sheet_names, question_text, minimum_score=1, per_sheet=None):
+def _score_tabular_entity_sheet_match(sheet_name, question_text, columns=None):
+    """Score worksheets for entity lookups, prioritizing the primary entity sheet."""
+    score = _score_tabular_sheet_match(sheet_name, question_text, columns=columns)
+    anchor_terms = _extract_tabular_entity_anchor_terms(question_text)
+    if not anchor_terms:
+        return score
+
+    question_tokens = set(_tokenize_tabular_sheet_text(question_text))
+    sheet_tokens = set(_tokenize_tabular_sheet_text(sheet_name))
+    column_tokens = set()
+    for column_name in columns or []:
+        column_tokens.update(_tokenize_tabular_sheet_text(column_name))
+
+    for anchor_term in anchor_terms:
+        if anchor_term in sheet_tokens:
+            score += 12
+        elif anchor_term in column_tokens:
+            score += 4
+
+    if 'profile' in question_tokens and column_tokens.intersection({
+        'address',
+        'city',
+        'displayname',
+        'dob',
+        'email',
+        'firstname',
+        'fullname',
+        'lastname',
+        'name',
+        'phone',
+        'state',
+        'status',
+    }):
+        score += 6
+
+    return score
+
+
+def _select_relevant_workbook_sheets(sheet_names, question_text, minimum_score=1, per_sheet=None, score_match_fn=None):
     """Return all workbook sheets that appear relevant to the question."""
+    score_match_fn = score_match_fn or _score_tabular_sheet_match
     ranked_sheets = []
     for sheet_name in sheet_names or []:
         columns = None
         if per_sheet:
             sheet_info = per_sheet.get(sheet_name, {})
             columns = sheet_info.get('columns', [])
-        score = _score_tabular_sheet_match(sheet_name, question_text, columns=columns)
+        score = score_match_fn(sheet_name, question_text, columns=columns)
         if score < minimum_score:
             continue
         ranked_sheets.append((score, sheet_name))
@@ -1323,8 +1611,9 @@ def is_tabular_access_limited_analysis(analysis_text):
     return any(phrase in normalized_analysis for phrase in inaccessible_phrases)
 
 
-def _select_likely_workbook_sheet(sheet_names, question_text, per_sheet=None):
+def _select_likely_workbook_sheet(sheet_names, question_text, per_sheet=None, score_match_fn=None):
     """Return a likely sheet name when the user question strongly matches one sheet."""
+    score_match_fn = score_match_fn or _score_tabular_sheet_match
     best_sheet = None
     best_score = 0
     runner_up_score = 0
@@ -1334,7 +1623,7 @@ def _select_likely_workbook_sheet(sheet_names, question_text, per_sheet=None):
         if per_sheet:
             sheet_info = per_sheet.get(sheet_name, {})
             columns = sheet_info.get('columns', [])
-        score = _score_tabular_sheet_match(sheet_name, question_text, columns=columns)
+        score = score_match_fn(sheet_name, question_text, columns=columns)
 
         if score > best_score:
             runner_up_score = best_score
@@ -1427,6 +1716,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
         workbook_blob_locations = {}
         retry_sheet_overrides = {}
         previous_failed_call_parameters = []  # entity lookup: concrete failed call params for retry hints
+        sheet_score_match_fn = _score_tabular_entity_sheet_match if entity_lookup_mode else _score_tabular_sheet_match
         allowed_function_filters = {
             'included_functions': [
                 f"tabular_processing-{function_name}"
@@ -1459,11 +1749,13 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                         schema_info.get('sheet_names', []),
                         user_question,
                         per_sheet=per_sheet,
+                        score_match_fn=sheet_score_match_fn,
                     )
                     relevant_sheets = _select_relevant_workbook_sheets(
                         schema_info.get('sheet_names', []),
                         user_question,
                         per_sheet=per_sheet,
+                        score_match_fn=sheet_score_match_fn,
                     )
                     cross_sheet_bridge_plan = None
                     if not schema_summary_mode and not entity_lookup_mode:
@@ -1509,6 +1801,8 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                         'is_workbook': True,
                         'sheet_count': schema_info.get('sheet_count', 0),
                         'likely_sheet': likely_sheet,
+                        'sheet_role_hints': schema_info.get('sheet_role_hints', {}),
+                        'relationship_hints': schema_info.get('relationship_hints', [])[:5],
                         'sheet_directory': sheet_directory,
                     }
                     schema_parts.append(json.dumps(directory_schema, indent=2, default=str))
@@ -1739,19 +2033,24 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     f"{missing_sheet_feedback}"
                     f"FILE SCHEMAS:\n"
                     f"{schema_context}\n\n"
-                    "AVAILABLE FUNCTIONS: lookup_value, aggregate_column, filter_rows, query_tabular_data, "
-                    "group_by_aggregate, and group_by_datetime_component.\n\n"
+                    "AVAILABLE FUNCTIONS: filter_rows, query_tabular_data, lookup_value, get_distinct_values, count_rows, "
+                    "filter_rows_by_related_values, count_rows_by_related_values, aggregate_column, group_by_aggregate, and group_by_datetime_component.\n\n"
                     "Discovery functions are not available in this analysis run because schema context is already pre-loaded.\n\n"
                     "IMPORTANT:\n"
-                    "1. Pass sheet_name='<name>' on EVERY analytical call for multi-sheet workbooks. Do not rely on a default sheet for cross-sheet entity lookups.\n"
-                    "2. First retrieve the primary entity row on the most relevant worksheet.\n"
-                    "3. Then query other relevant worksheets explicitly to collect related records.\n"
-                    "4. When a retrieved row contains a secondary identifier such as ReturnID, CaseID, AccountID, PaymentID, W2ID, or Form1099ID, reuse it to query dependent worksheets.\n"
-                    "5. Do not stop after the first successful row if the question asks for related records across sheets.\n"
-                    "6. If a requested record type has no corresponding worksheet in the workbook, say that the workbook does not contain that record type.\n"
-                    "7. Clearly distinguish between no matching rows and no corresponding worksheet.\n"
-                    "8. Summarize concrete found records sheet-by-sheet using the tool results, not schema placeholders.\n"
-                    "9. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report."
+                    "1. If the question includes an exact identifier or exact entity name and the correct starting worksheet is unclear, begin with filter_rows or query_tabular_data without sheet_name so the plugin can perform a cross-sheet discovery search.\n"
+                    "2. After the first discovery step, pass sheet_name='<name>' on follow-up analytical calls for multi-sheet workbooks. Do not rely on a default sheet for cross-sheet entity lookups.\n"
+                    "3. Use filter_rows or query_tabular_data first when you need full matching rows. Use lookup_value only when you already know the exact worksheet and target column.\n"
+                    "4. Do not start with aggregate_column, group_by_aggregate, or group_by_datetime_component until you have located the relevant entity rows.\n"
+                    "5. When using query_tabular_data, use simple DataFrame.query() syntax with backticked column names for columns containing spaces. Avoid method calls such as .str.lower() or .astype(...).\n"
+                    "6. Then query other relevant worksheets explicitly to collect related records.\n"
+                    "7. When a retrieved row contains a secondary identifier such as ReturnID, CaseID, AccountID, PaymentID, W2ID, or Form1099ID, reuse it to query dependent worksheets.\n"
+                    "8. Do not stop after the first successful row if the question asks for related records across sheets.\n"
+                    "9. If a requested record type has no corresponding worksheet in the workbook, say that the workbook does not contain that record type.\n"
+                    "10. Clearly distinguish between no matching rows and no corresponding worksheet.\n"
+                    "11. Summarize concrete found records sheet-by-sheet using the tool results, not schema placeholders.\n"
+                    "12. For count or percentage questions involving a cohort defined on one sheet and facts on another, prefer get_distinct_values, count_rows, filter_rows_by_related_values, or count_rows_by_related_values over manually counting sampled rows.\n"
+                    "13. Use normalize_match=true when matching names, owners, assignees, engineers, or similar entity-text columns across worksheets.\n"
+                    "14. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report."
                 )
 
             return (
@@ -1770,8 +2069,8 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 f"{missing_sheet_feedback}"
                 f"FILE SCHEMAS:\n"
                 f"{schema_context}\n\n"
-                "AVAILABLE FUNCTIONS: lookup_value, aggregate_column, filter_rows, query_tabular_data, "
-                "group_by_aggregate, and group_by_datetime_component for year/quarter/month/week/day/hour trend analysis.\n\n"
+                "AVAILABLE FUNCTIONS: lookup_value, get_distinct_values, count_rows, filter_rows, query_tabular_data, "
+                "filter_rows_by_related_values, count_rows_by_related_values, aggregate_column, group_by_aggregate, and group_by_datetime_component for year/quarter/month/week/day/hour trend analysis.\n\n"
                 "Discovery functions are not available in this analysis run because schema context is already pre-loaded.\n\n"
                 "IMPORTANT:\n"
                 "1. Use the pre-loaded schema to pick the correct columns, then call the plugin functions.\n"
@@ -1779,18 +2078,23 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 "3. If a previous tool error says a requested column is missing on the current sheet and suggests candidate sheets, switch to one of those candidate sheets immediately.\n"
                 "4. For account/category lookup questions at a specific period or metric, use lookup_value first. Provide lookup_column, lookup_value, and target_column.\n"
                 "5. If lookup_value is not sufficient, use filter_rows or query_tabular_data on the label column, then read the requested period column.\n"
-                "6. Only use aggregate_column when the user explicitly asks for a sum, average, min, max, or count across rows.\n"
-                "7. For time-based questions on datetime columns, use group_by_datetime_component.\n"
-                "8. For threshold, ranking, comparison, or correlation-like questions, first filter/query the relevant rows, then compute grouped metrics.\n"
-                "9. When the question asks for grouped results for each entity or category and a cross-sheet bridge plan is available, use the reference worksheet to identify the canonical entities or categories and the fact worksheet to compute the metric. Do not answer 'each X' by grouping a yes/no, boolean, or membership-flag column unless the user explicitly asked about that flag.\n"
-                "10. When the question asks for rows satisfying multiple conditions, prefer one combined query_expression using and/or instead of separate broad queries that you plan to intersect later.\n"
-                "11. Batch multiple independent function calls in a SINGLE response whenever possible.\n"
-                "12. Keep max_rows as small as possible. Only increase it when the user explicitly asked for an exhaustive row list or export; otherwise return total_matches plus representative rows.\n"
-                "13. For analytical questions, prefer lookup/filter/query plus aggregate/grouped computations over raw row or preview output.\n"
-                "14. For identifier-based workbook questions, locate the identifier on the correct sheet before explaining downstream calculations.\n"
-                "15. For peak, busiest, highest, or lowest questions, use grouped functions and inspect the highest_group, highest_value, lowest_group, and lowest_value summary fields.\n"
-                "16. Return only computed findings and name the strongest drivers clearly.\n"
-                "17. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report."
+                "6. For deterministic how-many questions, use count_rows instead of estimating counts from partial returned rows.\n"
+                "7. For cohort, membership, ownership-share, or percentage questions where one sheet defines the group and another sheet contains the fact rows, use get_distinct_values, filter_rows_by_related_values, or count_rows_by_related_values.\n"
+                "8. When the question asks for one named member's share within that cohort, prefer count_rows_by_related_values and either read source_value_match_counts from the helper result or rerun count_rows_by_related_values with source_filter_column/source_filter_value on the reference sheet. Do not fall back to query_tabular_data or filter_rows on the fact sheet with a guessed exact text value unless the workbook already exposed that canonical target value.\n"
+                "9. Use normalize_match=true when matching names, owners, assignees, engineers, or similar entity-text columns across worksheets.\n"
+                "10. Only use aggregate_column when the user explicitly asks for a sum, average, min, max, or count across rows and count_rows is not the simpler deterministic option.\n"
+                "11. For time-based questions on datetime columns, use group_by_datetime_component.\n"
+                "12. For threshold, ranking, comparison, or correlation-like questions, first filter/query the relevant rows, then compute grouped metrics.\n"
+                "13. When the question asks for grouped results for each entity or category and a cross-sheet bridge plan or relationship hint is available, use the reference worksheet to identify the canonical entities or categories and the fact worksheet to compute the metric. Do not answer 'each X' by grouping a yes/no, boolean, or membership-flag column unless the user explicitly asked about that flag.\n"
+                "14. When the question asks for rows satisfying multiple conditions, prefer one combined query_expression using and/or instead of separate broad queries that you plan to intersect later.\n"
+                "15. Batch multiple independent function calls in a SINGLE response whenever possible.\n"
+                "16. Keep max_rows as small as possible. Only increase it when the user explicitly asked for an exhaustive row list or export; otherwise return total_matches plus representative rows.\n"
+                "17. For analytical questions, prefer deterministic counts plus lookup/filter/query/grouped computations over raw row or preview output.\n"
+                "18. For identifier-based workbook questions, locate the identifier on the correct sheet before explaining downstream calculations.\n"
+                "19. For peak, busiest, highest, or lowest questions, use grouped functions and inspect the highest_group, highest_value, lowest_group, and lowest_value summary fields.\n"
+                "20. Return only computed findings and name the strongest drivers clearly.\n"
+                "21. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report.\n"
+                "22. When using query_tabular_data, use simple DataFrame.query() syntax with backticked column names for columns containing spaces. Avoid method calls such as .str.lower(), .astype(...), or other Python expressions that DataFrame.query() may reject."
             )
 
         baseline_invocations = plugin_logger.get_invocations_for_conversation(
@@ -4301,6 +4605,7 @@ def register_route_backend_chats(app):
                 all_messages = list(cosmos_messages_container.query_items(
                     query=all_messages_query, parameters=params_all, partition_key=conversation_id, enable_cross_partition_query=True
                 ))
+                all_messages = filter_assistant_artifact_items(all_messages)
 
                 # Sort messages using threading logic
                 all_messages = sort_messages_by_thread(all_messages)
@@ -5468,18 +5773,26 @@ def register_route_backend_chats(app):
             
             # Assistant message should be part of the same thread as the user message
             # Only system/augmentation messages create new threads within a conversation
+            assistant_timestamp = datetime.utcnow().isoformat()
+            prepared_agent_citations = persist_agent_citation_artifacts(
+                conversation_id=conversation_id,
+                assistant_message_id=assistant_message_id,
+                agent_citations=agent_citations_list,
+                created_timestamp=assistant_timestamp,
+                user_info=user_info_for_assistant,
+            )
+
             assistant_doc = {
                 'id': assistant_message_id,
                 'conversation_id': conversation_id,
                 'role': 'assistant',
                 'content': ai_message,
-                'timestamp': datetime.utcnow().isoformat(),
+                'timestamp': assistant_timestamp,
                 'augmented': bool(system_messages_for_augmentation),
                 'hybrid_citations': hybrid_citations_list, # <--- SIMPLIFIED: Directly use the list
                 'web_search_citations': web_search_citations_list,
                 'hybridsearch_query': search_query if hybrid_search_enabled and search_results else None, # Log query only if hybrid search ran and found results
-                'agent_citations': agent_citations_list, # <--- NEW: Store agent tool invocation results
-                'user_message': user_message,
+                'agent_citations': prepared_agent_citations,
                 'model_deployment_name': actual_model_used,
                 'agent_display_name': agent_display_name,
                 'agent_name': agent_name,
@@ -5616,7 +5929,7 @@ def register_route_backend_chats(app):
                 'augmented': bool(system_messages_for_augmentation),
                 'hybrid_citations': hybrid_citations_list,
                 'web_search_citations': web_search_citations_list,
-                'agent_citations': agent_citations_list,
+                'agent_citations': prepared_agent_citations,
                 'reload_messages': reload_messages_required,
                 'kernel_fallback_notice': kernel_fallback_notice,
                 'thoughts_enabled': thought_tracker.enabled
@@ -6755,6 +7068,7 @@ def register_route_backend_chats(app):
                         query=all_messages_query, parameters=params_all, 
                         partition_key=conversation_id, enable_cross_partition_query=True
                     ))
+                    all_messages = filter_assistant_artifact_items(all_messages)
                     
                     # Sort messages using threading logic
                     all_messages = sort_messages_by_thread(all_messages)
@@ -7360,28 +7674,37 @@ def register_route_backend_chats(app):
                     # Get user thread info to maintain thread consistency
                     user_thread_id = None
                     user_previous_thread_id = None
+                    user_info_for_assistant = None
                     try:
                         user_msg = cosmos_messages_container.read_item(
                             item=user_message_id,
                             partition_key=conversation_id
                         )
+                        user_info_for_assistant = user_msg.get('metadata', {}).get('user_info')
                         user_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
                         user_previous_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
                     except Exception as e:
                         debug_print(f"Warning: Could not retrieve thread_id from user message: {e}")
-                    
+                    assistant_timestamp = datetime.utcnow().isoformat()
+                    prepared_agent_citations = persist_agent_citation_artifacts(
+                        conversation_id=conversation_id,
+                        assistant_message_id=assistant_message_id,
+                        agent_citations=agent_citations_list,
+                        created_timestamp=assistant_timestamp,
+                        user_info=user_info_for_assistant,
+                    )
+
                     assistant_doc = {
                         'id': assistant_message_id,
                         'conversation_id': conversation_id,
                         'role': 'assistant',
                         'content': accumulated_content,
-                        'timestamp': datetime.utcnow().isoformat(),
+                        'timestamp': assistant_timestamp,
                         'augmented': bool(system_messages_for_augmentation),
                         'hybrid_citations': hybrid_citations_list,
                         'web_search_citations': web_search_citations_list,
                         'hybridsearch_query': search_query if hybrid_search_enabled and search_results else None,
-                        'agent_citations': agent_citations_list,
-                        'user_message': user_message,
+                        'agent_citations': prepared_agent_citations,
                         'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
                         'agent_display_name': agent_display_name_used if use_agent_streaming else None,
                         'agent_name': agent_name_used if use_agent_streaming else None,
@@ -7500,7 +7823,7 @@ def register_route_backend_chats(app):
                         'augmented': bool(system_messages_for_augmentation),
                         'hybrid_citations': hybrid_citations_list,
                         'web_search_citations': web_search_citations_list,
-                        'agent_citations': agent_citations_list,
+                        'agent_citations': prepared_agent_citations,
                         'agent_display_name': agent_display_name_used if use_agent_streaming else None,
                         'agent_name': agent_name_used if use_agent_streaming else None,
                         'full_content': accumulated_content,
@@ -7522,19 +7845,26 @@ def register_route_backend_chats(app):
                     # Save partial response if we have content
                     if accumulated_content:
                         current_assistant_thread_id = str(uuid.uuid4())
+                        assistant_timestamp = datetime.utcnow().isoformat()
+                        prepared_agent_citations = persist_agent_citation_artifacts(
+                            conversation_id=conversation_id,
+                            assistant_message_id=assistant_message_id,
+                            agent_citations=agent_citations_list,
+                            created_timestamp=assistant_timestamp,
+                            user_info=user_info_for_assistant,
+                        )
                         
                         assistant_doc = {
                             'id': assistant_message_id,
                             'conversation_id': conversation_id,
                             'role': 'assistant',
                             'content': accumulated_content,
-                            'timestamp': datetime.utcnow().isoformat(),
+                            'timestamp': assistant_timestamp,
                             'augmented': bool(system_messages_for_augmentation),
                             'hybrid_citations': hybrid_citations_list,
                             'web_search_citations': web_search_citations_list,
                             'hybridsearch_query': search_query if hybrid_search_enabled and search_results else None,
-                            'agent_citations': agent_citations_list,
-                            'user_message': user_message,
+                            'agent_citations': prepared_agent_citations,
                             'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
                             'agent_display_name': agent_display_name_used if use_agent_streaming else None,
                             'agent_name': agent_name_used if use_agent_streaming else None,

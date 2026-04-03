@@ -2,8 +2,8 @@
 # test_tabular_multisheet_workbook_support.py
 """
 Functional test for multi-sheet workbook analytical orchestration fix.
-Version: 0.239.124
-Implemented in: 0.239.111
+Version: 0.240.009
+Implemented in: 0.240.009
 
 This test ensures that multi-sheet workbook analysis can select the likely
 worksheet, use lookup_value for row-and-column retrieval, and constrain the
@@ -230,12 +230,44 @@ def test_route_uses_analytical_filters_and_lookup_guidance():
             'analysis function filters are configured': 'included_functions' in route_content,
             'retry attempts require analytical function use': 'FunctionChoiceBehavior.Required(' in route_content,
             'likely sheet override is applied': 'tabular_plugin.set_default_sheet(container, blob_path, likely_sheet)' in route_content,
+            'query syntax guidance is present': 'Avoid method calls such as .str.lower(), .astype(...), or other Python expressions that DataFrame.query() may reject.' in route_content,
         }
 
         failed_checks = [name for name, passed in checks.items() if not passed]
         assert not failed_checks, f"Missing expected orchestration behavior: {failed_checks}"
 
         print('PASS route analytical-only orchestration text')
+        return True
+
+    except Exception as exc:
+        print(f'FAIL test: {exc}')
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_cross_sheet_query_reports_invalid_expression_directly():
+    """Verify invalid cross-sheet query expressions return a direct query error."""
+    print('Testing invalid cross-sheet query feedback...')
+
+    try:
+        plugin, _, _ = build_mock_workbook_plugin()
+        result_json = asyncio.run(plugin.query_tabular_data(
+            user_id='test-user',
+            conversation_id='test-conversation',
+            filename='Family Finances.xlsx',
+            query_expression='Nov-25.astype(float) > 0',
+            source='workspace',
+        ))
+        payload = json.loads(result_json)
+
+        assert 'error' in payload, payload
+        assert 'could not be evaluated on any worksheet during cross-sheet search' in payload['error'], payload
+        assert payload['selected_sheet'] == 'ALL (cross-sheet search)', payload
+        assert 'Specify sheet_name or sheet_index' not in payload['error'], payload
+        assert payload['query_expression'] == 'Nov-25.astype(float) > 0', payload
+
+        print('PASS invalid cross-sheet query feedback')
         return True
 
     except Exception as exc:
@@ -353,6 +385,7 @@ if __name__ == '__main__':
         test_likely_sheet_helper_handles_pluralized_question_text,
         test_route_uses_analytical_filters_and_lookup_guidance,
         test_column_based_scoring_selects_sheet_by_column_names,
+        test_cross_sheet_query_reports_invalid_expression_directly,
         test_fallback_selects_largest_sheet_when_no_column_match,
     ]
 
