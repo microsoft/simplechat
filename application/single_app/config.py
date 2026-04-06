@@ -94,32 +94,9 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.239.002"
+VERSION = "0.239.012"
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
-
-# Security Headers Configuration
-SECURITY_HEADERS = {
-    'X-Content-Type-Options': 'nosniff',
-    'X-Frame-Options': 'DENY',
-    'X-XSS-Protection': '1; mode=block',
-    'Referrer-Policy': 'strict-origin-when-cross-origin',
-    'Content-Security-Policy': (
-        "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
-        #"script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://code.jquery.com https://stackpath.bootstrapcdn.com; "
-        "style-src 'self' 'unsafe-inline'; "
-        #"style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com; "
-        "img-src 'self' data: https: blob:; "
-        "font-src 'self'; "
-        #"font-src 'self' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com; "
-        "connect-src 'self' https: wss: ws:; "
-        "media-src 'self' blob:; "
-        "object-src 'none'; "
-        "frame-ancestors 'self'; "
-        "base-uri 'self';"
-    )
-}
 
 # Security Configuration
 ENABLE_STRICT_TRANSPORT_SECURITY = os.getenv('ENABLE_HSTS', 'false').lower() == 'true'
@@ -176,13 +153,14 @@ MAX_CONTENT_LENGTH = 5000 * 1024 * 1024  # 5000 MB AKA 5 GB
 
 # Add Support for Custom Azure Environments
 CUSTOM_GRAPH_URL_VALUE = os.getenv("CUSTOM_GRAPH_URL_VALUE", "")
+CUSTOM_GRAPH_AUTHORITY_URL_VALUE = os.getenv("CUSTOM_GRAPH_AUTHORITY_URL_VALUE", "")
 CUSTOM_IDENTITY_URL_VALUE = os.getenv("CUSTOM_IDENTITY_URL_VALUE", "")
 CUSTOM_RESOURCE_MANAGER_URL_VALUE = os.getenv("CUSTOM_RESOURCE_MANAGER_URL_VALUE", "")
 CUSTOM_BLOB_STORAGE_URL_VALUE = os.getenv("CUSTOM_BLOB_STORAGE_URL_VALUE", "")
 CUSTOM_COGNITIVE_SERVICES_URL_VALUE = os.getenv("CUSTOM_COGNITIVE_SERVICES_URL_VALUE", "")
 CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE = os.getenv("CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE", "")
 CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE = os.getenv("CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE", "")
-
+CUSTOM_OIDC_METADATA_URL_VALUE = os.getenv("CUSTOM_OIDC_METADATA_URL_VALUE", "")
 
 # Azure AD Configuration
 CLIENT_ID = os.getenv("CLIENT_ID")
@@ -194,27 +172,48 @@ MICROSOFT_PROVIDER_AUTHENTICATION_SECRET = os.getenv("MICROSOFT_PROVIDER_AUTHENT
 LOGIN_REDIRECT_URL = os.getenv("LOGIN_REDIRECT_URL")
 HOME_REDIRECT_URL = os.getenv("HOME_REDIRECT_URL")  # Front Door URL for home page
 
-OIDC_METADATA_URL = f"https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration"
 AZURE_ENVIRONMENT = os.getenv("AZURE_ENVIRONMENT", "public") # public, usgovernment, custom
-
-if AZURE_ENVIRONMENT == "custom":
-    AUTHORITY = f"{CUSTOM_IDENTITY_URL_VALUE}/{TENANT_ID}"
-elif AZURE_ENVIRONMENT == "usgovernment":
-    AUTHORITY = f"https://login.microsoftonline.us/{TENANT_ID}"
-else:
-    AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
 
 WORD_CHUNK_SIZE = 400
 
-if AZURE_ENVIRONMENT == "usgovernment":
+if AZURE_ENVIRONMENT == "custom" or CUSTOM_IDENTITY_URL_VALUE or CUSTOM_GRAPH_AUTHORITY_URL_VALUE:
+    AUTHORITY = f"{CUSTOM_IDENTITY_URL_VALUE.rstrip('/')}/{TENANT_ID}"
+    base_authority = CUSTOM_GRAPH_AUTHORITY_URL_VALUE or CUSTOM_IDENTITY_URL_VALUE
+    if not base_authority:
+        base_authority = AUTHORITY.rstrip('/').removesuffix(f"/{TENANT_ID}")
+    authority = base_authority
+elif AZURE_ENVIRONMENT == "usgovernment":
+    AUTHORITY = f"https://login.microsoftonline.us/{TENANT_ID}"
+    authority = AzureAuthorityHosts.AZURE_GOVERNMENT
+else:
+    AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
+    authority = AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
+
+# Teams SSO Configuration
+ENABLE_TEAMS_SSO = os.getenv("ENABLE_TEAMS_SSO", "false").lower() == "true"
+TEAMS_FRAME_ANCESTORS = os.getenv("TEAMS_FRAME_ANCESTORS", "") # e.g. "https://teams.microsoft.com https://*.teams.microsoft.com" - should be set to Teams domains if in airgap, otherwise can be left blank to allow from any domain since we validate the origin in the frontend against allowed Teams domains
+CUSTOM_TEAMS_ORIGINS_RAW = os.getenv("CUSTOM_TEAMS_ORIGINS", "")  # JSON array of valid domains for Teams SSO if in airgap, otherwise this is pulled from Teams, e.g. ["https://teams.microsoft.com", "https://*.teams.microsoft.com"]
+CUSTOM_TEAMS_ORIGINS = json.loads(CUSTOM_TEAMS_ORIGINS_RAW) if CUSTOM_TEAMS_ORIGINS_RAW else []
+
+if AZURE_ENVIRONMENT == "custom":
+    OIDC_METADATA_URL = CUSTOM_OIDC_METADATA_URL_VALUE or f"https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration"
+    resource_manager = CUSTOM_RESOURCE_MANAGER_URL_VALUE
+    video_indexer_endpoint = os.getenv("CUSTOM_VIDEO_INDEXER_ENDPOINT", "https://api.videoindexer.ai")
+    credential_scopes=[resource_manager + "/.default"]
+    cognitive_services_scope = CUSTOM_COGNITIVE_SERVICES_URL_VALUE  
+    search_resource_manager = CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE
+    KEY_VAULT_DOMAIN = os.getenv("KEY_VAULT_DOMAIN", ".vault.azure.net")
+elif AZURE_ENVIRONMENT == "usgovernment":
     OIDC_METADATA_URL = f"https://login.microsoftonline.us/{TENANT_ID}/v2.0/.well-known/openid-configuration"
     resource_manager = "https://management.usgovcloudapi.net"
-    authority = AzureAuthorityHosts.AZURE_GOVERNMENT
     credential_scopes=[resource_manager + "/.default"]
     cognitive_services_scope = "https://cognitiveservices.azure.us/.default"
     video_indexer_endpoint = "https://api.videoindexer.ai.azure.us"
     search_resource_manager = "https://search.azure.us"
     KEY_VAULT_DOMAIN = ".vault.usgovcloudapi.net"
+    if ENABLE_TEAMS_SSO and not TEAMS_FRAME_ANCESTORS:
+        # In US Government, we need to restrict the frame ancestors to the specific Teams domains to allow the SSO flow to work, since we can't rely on the frontend to validate the origin against the public Teams domains.
+        TEAMS_FRAME_ANCESTORS = "https://teams.microsoft.us https://*.teams.microsoft.us"
 
 elif AZURE_ENVIRONMENT == "custom":
     resource_manager = CUSTOM_RESOURCE_MANAGER_URL_VALUE
@@ -224,14 +223,42 @@ elif AZURE_ENVIRONMENT == "custom":
     cognitive_services_scope = CUSTOM_COGNITIVE_SERVICES_URL_VALUE  
     search_resource_manager = CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE
     KEY_VAULT_DOMAIN = os.getenv("KEY_VAULT_DOMAIN", ".vault.azure.net")
+
 else:
     OIDC_METADATA_URL = f"https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration"
     resource_manager = "https://management.azure.com"
-    authority = AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
     credential_scopes=[resource_manager + "/.default"]
     cognitive_services_scope = "https://cognitiveservices.azure.com/.default"
     video_indexer_endpoint = "https://api.videoindexer.ai"
     KEY_VAULT_DOMAIN = ".vault.azure.net"
+    if ENABLE_TEAMS_SSO and not TEAMS_FRAME_ANCESTORS:
+        # In public cloud, we can allow from any domain since we validate the origin in the frontend against allowed Teams domains.
+        TEAMS_FRAME_ANCESTORS = "https://teams.microsoft.com https://*.teams.microsoft.com"
+
+# Security Headers Configuration
+SECURITY_HEADERS = {
+    'X-Content-Type-Options': 'nosniff',
+    'X-XSS-Protection': '1; mode=block',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'Content-Security-Policy': (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+        #"script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://code.jquery.com https://stackpath.bootstrapcdn.com; "
+        "style-src 'self' 'unsafe-inline'; "
+        #"style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com; "
+        "img-src 'self' data: https: blob:; "
+        "font-src 'self'; "
+        #"font-src 'self' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com; "
+        "connect-src 'self' https: wss: ws:; "
+        "media-src 'self' blob:; "
+        "object-src 'none'; "
+        f"frame-ancestors 'self' {TEAMS_FRAME_ANCESTORS}; "
+        "base-uri 'self';"
+    )
+}
+
+if not ENABLE_TEAMS_SSO:
+    SECURITY_HEADERS['X-Frame-Options'] = 'DENY'  # Prevent framing if Teams SSO is not enabled
 
 def get_redis_cache_infrastructure_endpoint(redis_hostname: str) -> str:
     """

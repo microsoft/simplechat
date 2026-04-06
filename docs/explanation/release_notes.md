@@ -2,6 +2,109 @@
 
 # Feature Release
 
+### **(v0.239.012)**
+
+#### New Features
+
+*   **Microsoft Teams App Integration with SSO**
+    *   Added full Microsoft Teams application support with Single Sign-On (SSO) using the On-Behalf-Of (OBO) flow. Users embedded in Teams are automatically authenticated without a separate login.
+    *   New `/auth/teams/token-exchange` backend endpoint exchanges Teams SSO tokens for access tokens via MSAL OBO flow, with session persistence and activity logging.
+    *   New `login.html` template with Teams SDK detection, automatic SSO authentication, consent-required handling, and graceful fallback to standard Azure AD login.
+    *   Teams manifest template (`manifest.template.json`) with SSO-ready `webApplicationInfo`, static tab, and valid domain configuration.
+    *   New environment variables: `TEAMS_FRAME_ANCESTORS`, `CUSTOM_TEAMS_ORIGINS`, and `ENABLE_TEAMS_SSO` for configurable Teams SSO behaviour.
+    *   Content Security Policy `frame-ancestors` directive now dynamically includes Teams domains via `TEAMS_FRAME_ANCESTORS` setting.
+    *   Session cookies updated to `SameSite=None`, `Secure=True`, `HttpOnly=True` to support cross-origin Teams iframe embedding.
+    *   (Ref: `route_frontend_authentication.py`, `login.html`, `config.py`, `app.py`, `manifest.template.json`, Teams SSO, OBO flow)
+
+*   **Teams App Manifest and Icons**
+    *   Added Teams app package files: `manifest.template.json`, `color.png` (192×192), and `outline.png` (32×32) under `application/teams_app/`.
+    *   Template manifest includes placeholders for hostname, client ID, and Application ID URI for easy customisation per deployment.
+    *   (Ref: `application/teams_app/`, Teams app packaging)
+
+*   **Teams App Configuration Documentation**
+    *   Comprehensive how-to guide covering Azure AD app registration for Teams SSO, pre-authorised Teams client IDs, environment variables, manifest configuration, testing steps, and troubleshooting.
+    *   (Ref: `docs/how-to/teams_app.md`)
+
+#### Bug Fixes
+
+*   **Bicep ACR Suffix Hardcoded Value Fix**
+    *   Replaced hardcoded ACR cloud suffix (`'.azurecr.io'` / `'.azurecr.us'`) with the dynamic `az.environment().suffixes.acrLoginServer` built-in, improving support for sovereign and custom Azure environments.
+    *   (Ref: `deployers/bicep/main.bicep`, ACR suffix, sovereign cloud support)
+
+### **(v0.239.007)**
+
+#### New Features
+
+*   **Per-Message Export**
+    *   Added export and action options to the three-dots dropdown menu on individual chat messages (both AI and user messages).
+    *   **Export to Markdown**: Downloads the message as a `.md` file with a role header. Entirely client-side.
+    *   **Export to Word**: Generates a styled `.docx` document via a new backend endpoint (`POST /api/message/export-word`). Includes Markdown-to-Word formatting (headings, bold, italic, code blocks, lists) and a citations section when present.
+    *   **Use as Prompt**: Inserts the raw message content directly into the chat input box for reuse — no clipboard, one click and it's ready to edit and send.
+    *   **Open in Email**: Opens the user's default email client with the message pre-filled in the subject and body via `mailto:`.
+    *   New options appear below a divider in the dropdown, preserving existing actions (Delete, Retry, Edit, Feedback).
+    *   (Ref: `chat-message-export.js`, `chat-messages.js`, `route_backend_conversation_export.py`, per-message export)
+
+### **(v0.239.005)**
+
+#### New Features
+
+*   **Custom Azure Environment Support in Bicep Deployment**
+    *   Added `custom` as a supported `cloudEnvironment` value alongside `public` and `usgovernment`, enabling deployment to sovereign or custom Azure environments via Bicep.
+    *   New Bicep parameters for custom environments: `customBlobStorageSuffix`, `customGraphUrl`, `customIdentityUrl`, `customResourceManagerUrl`, `customCognitiveServicesScope`, and `customSearchResourceUrl`. All of these are automatically populated from `az.environment()` defaults except `customGraphUrl`, which must be explicitly provided for custom cloud environments and can be overridden as needed.
+    *   The `cloudEnvironment` parameter now defaults intelligently based on `az.environment().name`, and legacy values (`AzureCloud`, `AzureUSGovernment`) are mapped to SimpleChat's expected values (`public`, `usgovernment`).
+    *   Custom environment app settings (`CUSTOM_GRAPH_URL_VALUE`, `CUSTOM_IDENTITY_URL_VALUE`, `CUSTOM_RESOURCE_MANAGER_URL_VALUE`, etc.) are conditionally injected only when `azurePlatform == 'custom'`.
+    *   Replaced hardcoded ACR domain logic and auth issuer URLs with dynamic `az.environment()` lookups for better cross-cloud compatibility.
+    *   Fixed trailing slash handling in `AUTHORITY` URL construction in `config.py` using `rstrip('/')`.
+    *   (Ref: `deployers/bicep/main.bicep`, `deployers/bicep/modules/appService.bicep`, `config.py`, sovereign cloud support)
+
+*   **Redis Key Vault Authentication**
+    *   Added a new `key_vault` authentication type for Redis, allowing the Redis access key to be retrieved securely from Azure Key Vault at runtime rather than stored directly in settings.
+    *   Applies across all Redis usage paths: app settings cache (`app_settings_cache.py`), session management (`app.py`), and the Redis test connection flow (`route_backend_settings.py`).
+    *   Uses `retrieve_secret_direct()` from `functions_keyvault.py` to fetch the Redis key by its Key Vault secret name. Respects `key_vault_identity` for a user-assigned managed identity on the Key Vault client.
+    *   New admin setting fields: `redis_auth_type` (values: `key`, `managed_identity`, `key_vault`) and `redis_key` (used as the Key Vault secret name when `key_vault` auth type is selected).
+    *   **Files Modified**: `app_settings_cache.py`, `app.py` `configure_sessions`, `route_backend_settings.py` `_test_redis_connection`, `functions_keyvault.py` `retrieve_secret_direct`
+
+#### Bug Fixes
+
+*   **Key Vault Bootstrap Circular Dependency Fix**
+    *   Fixed `TypeError: 'NoneType' object is not callable` crash on startup when `redis_auth_type` is set to `key_vault`. The error occurred because `retrieve_secret_direct()` called `app_settings_cache.get_settings_cache()` while `configure_app_cache()` was still initialising, leaving `get_settings_cache` as `None`.
+    *   **Root Cause**: `app_settings_cache.configure_app_cache()` calls `retrieve_secret_direct()` before `get_settings_cache` is assigned. Both `retrieve_secret_direct()` and `get_keyvault_credential()` attempted to resolve settings via the cache at call time.
+    *   **Solution**: Added an optional `settings` parameter to both `retrieve_secret_direct()` and `get_keyvault_credential()`. When `settings` is passed explicitly, the cache is bypassed entirely. `configure_app_cache()` now passes `settings=settings` to avoid touching the uninitialised cache.
+    *   **Files Modified**: `functions_keyvault.py` (`retrieve_secret_direct`, `get_keyvault_credential`), `app_settings_cache.py` (`configure_app_cache`).
+    *   (Ref: `retrieve_secret_direct`, `get_keyvault_credential`, bootstrap initialisation order, circular dependency)
+
+*   **Key Vault Logging Consistency Fix**
+    *   Replaced all remaining `print()` calls and `logging.error()` / `logging.warning()` calls throughout `functions_keyvault.py` with `log_event()` from `functions_appinsights.py`, consistent with the project logging standard.
+    *   Previously, duplicate log output appeared on startup (e.g. `[Log] ... -- None` and `[LOG] ...`) because some code paths used `print()` or the standard `logging` module alongside `log_event()`.
+    *   **Files Modified**: `functions_keyvault.py` (all helper functions: `retrieve_secret_from_key_vault`, `store_secret_in_key_vault`, `build_full_secret_name`, `keyvault_agent_save_helper`, `keyvault_plugin_save_helper`, `keyvault_plugin_get_helper`, `keyvault_plugin_delete_helper`, `keyvault_agent_delete_helper`).
+    *   (Ref: `log_event`, logging consistency, duplicate startup log output)
+
+*   **Legacy Conversation `chat_type` Default Fix**
+    *   Fixed an issue where conversation details failed to load properly for legacy conversations that were created before the `chat_type` field was introduced.
+    *   **Root Cause**: The metadata API returned `None` for `chat_type` on older conversation documents that pre-date the field, causing downstream consumers to behave incorrectly when determining conversation context.
+    *   **Solution**: Added a default value of `'personal'` to the `chat_type` field in the conversation metadata response: `conversation_item.get('chat_type', 'personal')`.
+    *   **Files Modified**: `route_backend_conversations.py`
+    *   (Ref: `get_conversation_metadata_api`, legacy conversation schema compatibility)
+
+*   **Chat Message Content Overflow / Word-Wrap Fix**
+    *   Fixed an issue where long AI responses with overflowing content (e.g. wide code blocks or tables) were not scrollable, and word-wrap was not functioning correctly within message bubbles.
+    *   **Root Cause**: `.message-content` had `overflow: visible`, which prevented the browser from applying horizontal scroll bars to overflowing child elements.
+    *   **Solution**: Changed `.message-content` to `overflow: auto`, enabling proper word-wrap behaviour and horizontal scrolling for overflowing content while preserving existing layout.
+    *   **Files Modified**: `chats.css`
+    *   (Ref: `.message-content` overflow property)
+
+*   **SimpleMDE Prompt Editor Toolbar Icons Fix**
+    *   Fixed missing/invisible toolbar icons in the SimpleMDE Markdown editor used in the New Prompt dialog, for both light and dark mode themes.
+    *   **Root Cause**: SimpleMDE uses Font Awesome icon classes (e.g. `fa-bold`) on toolbar buttons, but the app does not load Font Awesome — only Bootstrap Icons. This caused all toolbar buttons to render as blank or invisible squares.
+    *   **Solution**: Added CSS rules in `styles.css` to intercept SimpleMDE's Font Awesome class selectors and replace them with the correct Bootstrap Icons Unicode codepoints via `::before` pseudo-elements. Full dark mode styling (toolbar background, icon colours, active state, CodeMirror editor area, preview pane, and statusbar) was also added.
+    *   **Files Modified**:`styles.css`
+    *   (Ref: `.editor-toolbar`, SimpleMDE Bootstrap Icons replacement, dark mode CodeMirror overrides)
+
+*   **Docker Customization: CA Certificate and pip.conf**
+    *   Fixed Docker customization issues related to custom CA certificate handling and `pip.conf` configuration.
+    *   Ensures Python package installation works reliably in environments requiring custom certificate trust and pip configuration.
+    *   (Ref: Docker customization, CA cert setup, `pip.conf` handling)
+    
 ### **(v0.239.001)**
 
 #### New Features

@@ -20,6 +20,7 @@ if sys.platform == 'win32':
         sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'strict')
 
 import app_settings_cache
+from functions_appinsights import *
 from config import *
 from semantic_kernel import Kernel
 from semantic_kernel_loader import initialize_semantic_kernel
@@ -31,7 +32,6 @@ from functions_content import *
 from functions_documents import *
 from functions_search import *
 from functions_settings import *
-from functions_appinsights import *
 from functions_activity_logging import *
 
 import threading
@@ -100,6 +100,13 @@ app.config['SESSION_TYPE'] = SESSION_TYPE
 app.config['VERSION'] = VERSION
 app.config['SECRET_KEY'] = SECRET_KEY
 
+if ENABLE_TEAMS_SSO:
+    app.config.update(
+        SESSION_COOKIE_SECURE=True,        # required if you use SameSite=None
+        SESSION_COOKIE_SAMESITE="None",
+        SESSION_COOKIE_HTTPONLY=True,
+    )
+
 # Ensure filesystem session directory (when used) points to a writable path inside container.
 if SESSION_TYPE == 'filesystem':
     app.config['SESSION_FILE_DIR'] = SESSION_FILE_DIR if 'SESSION_FILE_DIR' in globals() else os.environ.get('SESSION_FILE_DIR', '/app/flask_session')
@@ -160,7 +167,7 @@ def configure_sessions(settings):
                 redis_client = None
                 try:
                     if redis_auth_type == 'managed_identity':
-                        print("Redis enabled using Managed Identity")
+                        log_event("Redis enabled using Managed Identity", level=logging.INFO)
                         from config import get_redis_cache_infrastructure_endpoint
                         credential = DefaultAzureCredential()
                         redis_hostname = redis_url.split('.')[0]
@@ -175,9 +182,25 @@ def configure_sessions(settings):
                             socket_connect_timeout=5,
                             socket_timeout=5
                         )
+                    elif redis_auth_type == 'key_vault':
+                        log_event("Redis enabled using Key Vault Secret", level=logging.INFO)
+                        from functions_keyvault import retrieve_secret_direct
+                        redis_key_secret_name = settings.get('redis_key', '').strip()
+                        redis_password = retrieve_secret_direct(redis_key_secret_name)
+                        if redis_password:
+                            redis_password = redis_password.strip()
+                        redis_client = Redis(
+                            host=redis_url,
+                            port=6380,
+                            db=0,
+                            password=redis_password,
+                            ssl=True,
+                            socket_connect_timeout=5,
+                            socket_timeout=5
+                        )
                     else:
                         redis_key = settings.get('redis_key', '').strip()
-                        print("Redis enabled using Access Key")
+                        log_event("Redis enabled using Access Key", level=logging.INFO)
                         redis_client = Redis(
                             host=redis_url,
                             port=6380,
@@ -190,7 +213,7 @@ def configure_sessions(settings):
                     
                     # Test the connection
                     redis_client.ping()
-                    print("✅ Redis connection successful")
+                    log_event("✅ Redis connection successful", level=logging.INFO)
                     app.config['SESSION_TYPE'] = 'redis'
                     app.config['SESSION_REDIS'] = redis_client
                     
@@ -486,6 +509,16 @@ def markdown_filter(text):
 
 # Add the filter to the Jinja environment
 app.jinja_env.filters['markdown'] = markdown_filter
+
+# Register a custom Jinja filter for nl2br (newline to <br>)
+def nl2br_filter(value):
+    """Escape HTML then convert newline characters to <br> tags."""
+    from markupsafe import escape, Markup
+    if not value:
+        return Markup('')
+    return Markup(str(escape(value)).replace('\n', '<br>\n'))
+
+app.jinja_env.filters['nl2br'] = nl2br_filter
 
 # =================== Default Routes =====================
 @app.route('/')

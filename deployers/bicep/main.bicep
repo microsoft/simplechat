@@ -6,13 +6,18 @@ targetScope = 'subscription'
 param location string
 
 @description('''The target Azure Cloud environment.
-- Accepted values are: AzureCloud, AzureUSGovernment
-- Default is AzureCloud''')
+- Accepted values are: AzureCloud, AzureUSGovernment, public, usgovernment, custom
+- Default is based on the ARM cloud name''')
 @allowed([
-  'AzureCloud'
-  'AzureUSGovernment'
+  'AzureCloud'        // public, keep allowed values for backwards compatibility
+  'AzureUSGovernment' // usgovernment
+  'public'             
+  'usgovernment'       
+  'custom'
 ])
-param cloudEnvironment string
+param cloudEnvironment string = az.environment().name == 'AzureCloud' ? 'public' : (az.environment().name == 'AzureUSGovernment' ? 'usgovernment' : 'custom')
+// SimpleChat expects public, usgovernment or custom
+var scCloudEnvironment = cloudEnvironment == 'AzureCloud' ? 'public' : (cloudEnvironment == 'AzureUSGovernment' ? 'usgovernment' : cloudEnvironment)
 
 @description('''The name of the application to be deployed.  
 - Name may only contain letters and numbers
@@ -53,6 +58,12 @@ param enterpriseAppServicePrincipalId string
 @secure()
 param enterpriseAppClientSecret string
 
+@description('''Enable Single Sign-On (SSO) for Microsoft Teams when users access the application through the Teams client.
+- If true, the application will attempt to use the Teams SSO flow for authentication when accessed from within Teams.
+- If false, the application will not attempt to use Teams SSO and will fall back to standard authentication flows.
+- Default is false''')
+param enableTeamsSso bool = false
+
 //----------------
 // configurations
 @description('''Authentication type for resources that support Managed Identity or Key authentication.
@@ -79,6 +90,20 @@ param enableDiagLogging bool
 @description('''Enable private endpoints and virtual network integration for deployed resources. 
 - Default is false''')
 param enablePrivateNetworking bool
+
+// --- Custom Azure Environment Parameters (for 'custom' azureEnvironment) ---
+@description('Custom blob storage URL suffix, e.g. blob.core.usgovcloudapi.net')
+param customBlobStorageSuffix string = 'blob.${az.environment().suffixes.storage}'
+@description('Custom Graph API URL, e.g. https://graph.microsoft.us')
+param customGraphUrl string? // az.environment().graph is legacy AD, do not use
+@description('Custom Identity URL, e.g. https://login.microsoftonline.us/')
+param customIdentityUrl string = az.environment().authentication.loginEndpoint
+@description('Custom Resource Manager URL, e.g. https://management.usgovcloudapi.net')
+param customResourceManagerUrl string = az.environment().resourceManager
+@description('Custom Cognitive Services scope ex: https://cognitiveservices.azure.com/.default')
+param customCognitiveServicesScope string = 'https://cognitiveservices.azure.com/.default'
+@description('Custom search resource URL for token audience, e.g. https://search.azure.us')
+param customSearchResourceUrl string = 'https://search.azure.com'
 
 @description('''Array of GPT model names to deploy to the OpenAI resource.''')
 param gptModels array = [
@@ -149,7 +174,7 @@ param deployVideoIndexerService bool
 var rgName = '${appName}-${environment}-rg'
 var requiredTags = { application: appName, environment: environment, 'azd-env-name': azdEnvironmentName }
 var tags = union(requiredTags, specialTags)
-var acrCloudSuffix = cloudEnvironment == 'AzureCloud' ? '.azurecr.io' : '.azurecr.us'
+var acrCloudSuffix = az.environment().suffixes.acrLoginServer
 var acrName = toLower('${appName}${environment}acr')
 var containerRegistry = '${acrName}${acrCloudSuffix}'
 var containerImageName = '${containerRegistry}/${imageName}'
@@ -424,7 +449,7 @@ module appService 'modules/appService.bicep' = {
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
     appServicePlanId: appServicePlan.outputs.appServicePlanId
     containerImageName: containerImageName
-    azurePlatform: cloudEnvironment
+    azurePlatform: scCloudEnvironment
     cosmosDbName: cosmosDB.outputs.cosmosDbName
     searchServiceName: searchService.outputs.searchServiceName
     openAiServiceName: openAI.outputs.openAIName
@@ -433,12 +458,21 @@ module appService 'modules/appService.bicep' = {
     appInsightsName: applicationInsights.outputs.appInsightsName
     enterpriseAppClientId: enterpriseAppClientId
     enterpriseAppClientSecret: enterpriseAppClientSecret
+    enableTeamsSso: enableTeamsSso
     authenticationType: authenticationType
     keyVaultUri: keyVault.outputs.keyVaultUri
 
     enablePrivateNetworking: enablePrivateNetworking
     #disable-next-line BCP318 // expect one value to be null if private networking is disabled
     appServiceSubnetId: enablePrivateNetworking? virtualNetwork.outputs.appServiceSubnetId : ''
+
+    // --- Custom Azure Environment Parameters (for 'custom' azureEnvironment) ---
+    customBlobStorageSuffix: customBlobStorageSuffix
+    customGraphUrl: customGraphUrl
+    customIdentityUrl: customIdentityUrl
+    customResourceManagerUrl: customResourceManagerUrl
+    customCognitiveServicesScope: customCognitiveServicesScope
+    customSearchResourceUrl: customSearchResourceUrl
   }
 }
 
@@ -540,7 +574,6 @@ module setPermissions 'modules/setPermissions.bicep' = if (configureApplicationP
   name: 'setPermissions'
   scope: rg
   params: {
-
     webAppName: appService.outputs.name
     authenticationType: authenticationType
     enterpriseAppServicePrincipalId: enterpriseAppServicePrincipalId
@@ -603,8 +636,6 @@ module privateNetworking 'modules/privateNetworking.bicep' = if (enablePrivateNe
 //=========================================================
 // output values
 //=========================================================
-
-
 // output values required for postprovision script in azure.yaml
 output var_acrName string = toLower('${appName}${environment}acr')
 output var_authenticationType string = toLower(authenticationType)
