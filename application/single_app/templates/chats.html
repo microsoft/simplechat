@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% set multi_endpoint_notice_data = multi_endpoint_notice|default({}) %}
 {% block title %}
     Chats - {{ app_settings.app_title }}
 {% endblock %}
@@ -290,18 +289,6 @@
                 <!-- Chat messages will be dynamically loaded here -->
             </div>
 
-            {% if multi_endpoint_notice_data.enabled %}
-            <div id="multi-endpoint-notice" class="alert alert-warning d-none mx-3 mb-0" data-message="{{ multi_endpoint_notice_data.message }}">
-                <div class="d-flex justify-content-between align-items-center">
-                    <div class="me-3">
-                        <i class="bi bi-exclamation-triangle me-2"></i>
-                        <span id="multi-endpoint-notice-text">{{ multi_endpoint_notice_data.message }}</span>
-                    </div>
-                    <button type="button" class="btn btn-sm btn-outline-dark" id="dismiss-multi-endpoint-notice">Dismiss</button>
-                </div>
-            </div>
-            {% endif %}
-
             <div class="p-3 border-top flex-shrink-0">
                 
                       <div class="chat-toolbar mb-2">
@@ -424,7 +411,9 @@
                                         data-bs-auto-close="outside"
                                         aria-expanded="false">
                                     <span class="chat-searchable-select-text text-truncate">
-                                    {% if settings.enable_gpt_apim %}
+                                    {% if enable_multi_model_endpoints and initial_chat_model_selection %}
+                                        {{ initial_chat_model_selection.display_name }}
+                                    {% elif settings.enable_gpt_apim %}
                                         {% set raw = settings.azure_apim_gpt_deployment or "" %}
                                         {% set apim_list = raw.split(',') %}
                                         {% set first_dep = apim_list[0].strip() if apim_list and apim_list[0].strip() else 'Select a Model' %}
@@ -447,7 +436,24 @@
                                 </div>
                             </div>
                             <select id="model-select" class="form-select d-none">
-                            {% if settings.enable_gpt_apim %}
+                            {% if enable_multi_model_endpoints and initial_chat_model_selection %}
+                                <option
+                                    value="{{ initial_chat_model_selection.option_value }}"
+                                    selected
+                                    data-selection-key="{{ initial_chat_model_selection.selection_key }}"
+                                    data-model-id="{{ initial_chat_model_selection.model_id }}"
+                                    data-display-name="{{ initial_chat_model_selection.display_name }}"
+                                    data-deployment-name="{{ initial_chat_model_selection.deployment_name }}"
+                                    data-endpoint-id="{{ initial_chat_model_selection.endpoint_id }}"
+                                    data-provider="{{ initial_chat_model_selection.provider }}"
+                                    data-scope-type="{{ initial_chat_model_selection.scope_type }}"
+                                    data-scope-id="{{ initial_chat_model_selection.scope_id }}"
+                                    data-scope-name="{{ initial_chat_model_selection.scope_name }}"
+                                    data-search-text="{{ initial_chat_model_selection.search_text }}"
+                                >
+                                    {{ initial_chat_model_selection.display_name }}
+                                </option>
+                            {% elif settings.enable_gpt_apim %}
                                 {# when using APIM, azure_apim_gpt_deployment may be "dep1" or "dep1,dep2,…" #}
                                 {% set raw = settings.azure_apim_gpt_deployment or "" %}
                                 {% set apim_list = raw.split(',') %}
@@ -1144,6 +1150,7 @@
     window.chatPromptOptions = {{ chat_prompt_options|default([], true)|tojson|safe }};
     window.chatAgentOptions = {{ chat_agent_options|default([], true)|tojson|safe }};
     window.chatModelOptions = {{ chat_model_options|default([], true)|tojson|safe }};
+    window.initialChatModelSelection = {{ initial_chat_model_selection|default({}, true)|tojson|safe }};
     window.enableEnhancedCitations = {{ enable_enhanced_citations|tojson }};
     window.enable_document_classification = {{ enable_document_classification|tojson }};
     window.classification_categories = {{ settings.document_classification_categories|default([], true)|tojson(indent=None)|safe }};
@@ -1166,8 +1173,6 @@
         enable_multi_model_endpoints: {{ enable_multi_model_endpoints|tojson }},
         enable_thoughts: {{ settings.enable_thoughts|tojson }}
     };
-
-    window.multiEndpointNotice = {{ multi_endpoint_notice_data|tojson|safe }};
 
     // Layout related globals (can stay here or move entirely into chat-layout.js if preferred)
     let splitInstance = null;

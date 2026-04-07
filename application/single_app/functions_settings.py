@@ -1347,6 +1347,12 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
             str(full_settings.get('support_feedback_recipient_email') or '').strip()
         )
 
+    if isinstance(sanitized.get('multi_endpoint_migration_notice'), dict):
+        sanitized['multi_endpoint_migration_notice'] = {
+            **sanitized['multi_endpoint_migration_notice'],
+            'enabled': False,
+        }
+
     return sanitized
 
 def sanitize_settings_for_logging(full_settings: dict) -> dict:

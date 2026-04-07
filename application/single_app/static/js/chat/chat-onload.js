@@ -85,20 +85,6 @@ window.addEventListener('DOMContentLoaded', async () => {
                 const preferredModelId = userSettings?.preferredModelId;
                 const preferredModelDeployment = userSettings?.preferredModelDeployment;
 
-        // Multi-endpoint migration notice
-        const notice = window.multiEndpointNotice || {};
-        const noticeEl = document.getElementById("multi-endpoint-notice");
-        const dismissBtn = document.getElementById("dismiss-multi-endpoint-notice");
-        if (notice?.enabled && noticeEl && !userSettings?.dismissedMultiEndpointNotice) {
-          noticeEl.classList.remove("d-none");
-          if (dismissBtn) {
-            dismissBtn.addEventListener("click", async () => {
-              noticeEl.classList.add("d-none");
-              await saveUserSetting({ dismissedMultiEndpointNotice: true });
-            });
-          }
-        }
-
             initializeModelSelector();
             await populateModelDropdown({
                 preferredModelId,

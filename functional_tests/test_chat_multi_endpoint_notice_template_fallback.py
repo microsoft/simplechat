@@ -1,50 +1,78 @@
 # test_chat_multi_endpoint_notice_template_fallback.py
 # test_chat_multi_endpoint_notice_template_fallback.py
 """
-Functional test for chat multi-endpoint notice template fallback.
-Version: 0.240.008
-Implemented in: 0.240.008
+Functional test for user-facing multi-endpoint migration notice suppression.
+Version: 0.240.070
+Implemented in: 0.240.070
 
-This test ensures the chats template safely defaults the multi-endpoint notice
-context, renders the notice markup only when enabled, avoids Jinja
-undefined errors when the route does not pass the notice object, and emits
-the notice bootstrap data without JSON.parse string wrapping.
+This test ensures the migrated-endpoint notice is disabled in sanitized
+settings used by user-facing routes and no longer renders on the chats page.
 """
 
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+SETTINGS_FILE = REPO_ROOT / "application" / "single_app" / "functions_settings.py"
+CHAT_ROUTE = REPO_ROOT / "application" / "single_app" / "route_frontend_chats.py"
 CHAT_TEMPLATE = REPO_ROOT / "application" / "single_app" / "templates" / "chats.html"
+CHAT_ONLOAD_FILE = REPO_ROOT / "application" / "single_app" / "static" / "js" / "chat" / "chat-onload.js"
 CONFIG_FILE = REPO_ROOT / "application" / "single_app" / "config.py"
 
 
-def test_chat_multi_endpoint_notice_template_fallback():
-    """Verify the chats template safely handles a missing notice context."""
+def test_user_sanitized_settings_disable_multi_endpoint_notice():
+    """Verify user-facing sanitized settings always suppress the migration notice."""
+    settings_content = SETTINGS_FILE.read_text(encoding="utf-8")
+
+    assert "if isinstance(sanitized.get('multi_endpoint_migration_notice'), dict):" in settings_content, (
+        "Expected sanitize_settings_for_user to override the migration notice for non-admin routes."
+    )
+    assert "'enabled': False," in settings_content, (
+        "Expected sanitized multi-endpoint migration notices to be disabled for user-facing pages."
+    )
+
+
+def test_chat_multi_endpoint_notice_ui_removed():
+    """Verify chat no longer renders or bootstraps the migration notice."""
+    route_content = CHAT_ROUTE.read_text(encoding="utf-8")
     template_content = CHAT_TEMPLATE.read_text(encoding="utf-8")
+    js_content = CHAT_ONLOAD_FILE.read_text(encoding="utf-8")
+
+    assert 'multi_endpoint_notice = public_settings.get("multi_endpoint_migration_notice", {})' not in route_content, (
+        "Expected chats route to stop loading the migration notice into the template context."
+    )
+    assert 'multi_endpoint_notice=multi_endpoint_notice,' not in route_content, (
+        "Expected chats route to stop passing the migration notice into the template."
+    )
+    assert 'multi_endpoint_notice_data' not in template_content, (
+        "Expected chats.html to remove the multi-endpoint notice bootstrap variable."
+    )
+    assert 'id="multi-endpoint-notice"' not in template_content, (
+        "Expected chats.html to remove the multi-endpoint notice banner."
+    )
+    assert 'window.multiEndpointNotice =' not in template_content, (
+        "Expected chats.html to stop bootstrapping the migration notice into JavaScript."
+    )
+    assert 'window.multiEndpointNotice' not in js_content, (
+        "Expected chat-onload.js to stop reading the migration notice bootstrap payload."
+    )
+    assert 'multi-endpoint-notice' not in js_content, (
+        "Expected chat-onload.js to remove notice DOM handling."
+    )
+    assert 'dismissedMultiEndpointNotice' not in js_content, (
+        "Expected chat-onload.js to stop persisting notice dismissal state."
+    )
+
+
+def test_config_version_bumped_for_notice_suppression():
+    """Verify config version was bumped for the user-facing notice removal."""
     config_content = CONFIG_FILE.read_text(encoding="utf-8")
 
-    assert 'VERSION = "0.240.008"' in config_content, "Expected config.py version 0.240.008"
-    assert '{% set multi_endpoint_notice_data = multi_endpoint_notice|default({}) %}' in template_content, (
-        "Expected chats.html to define a safe default for multi_endpoint_notice."
-    )
-    assert '{% if multi_endpoint_notice_data.enabled %}' in template_content, (
-        "Expected the chat multi-endpoint notice markup to be conditionally rendered."
-    )
-    assert 'id="multi-endpoint-notice"' in template_content, (
-        "Expected chats.html to keep the multi-endpoint notice container for chat-onload.js."
-    )
-    assert 'window.multiEndpointNotice = {{ multi_endpoint_notice_data|tojson|safe }};' in template_content, (
-        "Expected chats.html to serialize the safe default notice object for chat-onload.js."
-    )
-    assert 'window.multiEndpointNotice = JSON.parse(' not in template_content, (
-        "Expected chats.html to avoid JSON.parse bootstrapping for notice data."
-    )
-    assert '<!--\n            {% if multi_endpoint_notice.enabled %}' not in template_content, (
-        "Expected chats.html to remove the HTML comment wrapper around active Jinja markup."
-    )
+    assert 'VERSION = "0.240.070"' in config_content, "Expected config.py version 0.240.070"
 
 
 if __name__ == "__main__":
-    test_chat_multi_endpoint_notice_template_fallback()
-    print("✅ Chat multi-endpoint notice template fallback verified.")
+    test_user_sanitized_settings_disable_multi_endpoint_notice()
+    test_chat_multi_endpoint_notice_ui_removed()
+    test_config_version_bumped_for_notice_suppression()
+    print("✅ User-facing multi-endpoint migration notice suppression verified.")
