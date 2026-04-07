@@ -1,3 +1,4 @@
+// support_feedback.js
 import { showToast } from "../chat/chat-toast.js";
 
 
@@ -20,13 +21,18 @@ document.addEventListener('DOMContentLoaded', () => {
 async function submitSupportFeedbackForm(form) {
     const feedbackType = form.dataset.feedbackType;
     const feedbackLabel = form.dataset.feedbackLabel || 'Feedback';
-    const inputs = form.querySelectorAll('input[type="text"], input[type="email"], textarea');
-    const nameInput = inputs[0];
-    const emailInput = inputs[1];
-    const organizationInput = inputs[2];
-    const detailsInput = inputs[3];
+    const nameInput = form.querySelector('[data-feedback-field="name"]');
+    const emailInput = form.querySelector('[data-feedback-field="email"]');
+    const organizationInput = form.querySelector('[data-feedback-field="organization"]');
+    const detailsInput = form.querySelector('[data-feedback-field="details"]');
     const statusAlert = form.querySelector('.support-send-feedback-status');
     const submitButton = form.querySelector('.support-send-feedback-submit');
+
+    if (!nameInput || !emailInput || !organizationInput || !detailsInput) {
+        setStatusAlert(statusAlert, 'Unable to load the Send Feedback form fields.', 'danger');
+        showToast('Unable to load the Send Feedback form fields.', 'danger');
+        return;
+    }
 
     const reporterName = nameInput?.value.trim() || '';
     const reporterEmail = emailInput?.value.trim() || '';

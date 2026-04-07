@@ -4,6 +4,25 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.240.063)**
+
+#### New Features
+
+*   **Support Menu and User-Facing Latest Features**
+    *   Added a configurable Support menu for signed-in app users so teams can expose Latest Features and Send Feedback directly in everyday navigation.
+    *   Admins can rename the Support menu, control the internal feedback-recipient email address, and choose exactly which latest-feature cards are shared with end users from the General tab.
+    *   The user-facing Latest Features page now mirrors the available admin screenshots more closely, includes clearer guidance about why each feature matters, and adds direct links into Chat, Personal Workspace, or Support destinations where users can try the feature.
+    *   The Admin Settings Latest Features tab now also calls out the General-tab User-Facing Latest Features checklist so admins can see where feature sharing is configured.
+    *   (Ref: `support_menu_config.py`, `route_frontend_support.py`, `latest_features.html`, `support_send_feedback.html`, `admin_settings.html`, `test_support_menu_user_feature.py`, support menu configuration and user-facing latest features)
+
+#### Bug Fixes
+
+*   **Streaming Chat Post-Finalization JSON Sanitization**
+    *   Fixed a repeatable late-stream failure where assistant responses could appear nearly complete and then end with a `Stream interrupted` warning during final persistence.
+    *   Normalized non-finite numeric values from citation payloads before assistant messages, assistant artifacts, and terminal chat payloads are written, preventing Cosmos DB from rejecting invalid JSON.
+    *   This improves reliability for streaming chat, compatibility streaming, and the standard JSON response path when tool or search citations include sparse or tabular numeric values.
+    *   (Ref: `functions_message_artifacts.py`, `route_backend_chats.py`, `test_chat_post_stream_json_sanitization.py`, post-stream citation sanitization)
+
 ### **(v0.240.053)**
 
 #### New Features

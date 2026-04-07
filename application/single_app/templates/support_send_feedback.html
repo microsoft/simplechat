@@ -23,19 +23,19 @@
         <div class="support-send-feedback-form" data-feedback-type="bug_report" data-feedback-label="Bug Report">
           <div class="mb-3">
             <label for="support_feedback_bug_name" class="form-label">Name</label>
-            <input type="text" class="form-control" id="support_feedback_bug_name" name="support_feedback_bug_name" autocomplete="name" value="{{ session.get('user', {}).get('name', '') }}" required>
+            <input type="text" class="form-control" id="support_feedback_bug_name" name="support_feedback_bug_name" data-feedback-field="name" autocomplete="name" value="{{ session.get('user', {}).get('name', '') }}" required>
           </div>
           <div class="mb-3">
             <label for="support_feedback_bug_email" class="form-label">Email</label>
-            <input type="email" class="form-control" id="support_feedback_bug_email" name="support_feedback_bug_email" autocomplete="email" value="{{ session.get('user', {}).get('preferred_username', session.get('user', {}).get('email', '')) }}" required>
+            <input type="email" class="form-control" id="support_feedback_bug_email" name="support_feedback_bug_email" data-feedback-field="email" autocomplete="email" value="{{ session.get('user', {}).get('preferred_username', session.get('user', {}).get('email', '')) }}" required>
           </div>
           <div class="mb-3">
             <label for="support_feedback_bug_org" class="form-label">Organization</label>
-            <input type="text" class="form-control" id="support_feedback_bug_org" name="support_feedback_bug_org" autocomplete="organization" required>
+            <input type="text" class="form-control" id="support_feedback_bug_org" name="support_feedback_bug_org" data-feedback-field="organization" autocomplete="organization" required>
           </div>
           <div class="mb-3">
             <label for="support_feedback_bug_details" class="form-label">Bug Details</label>
-            <textarea class="form-control" id="support_feedback_bug_details" name="support_feedback_bug_details" autocomplete="off" rows="6" placeholder="Describe what happened, what you expected, and how to reproduce it." required></textarea>
+            <textarea class="form-control" id="support_feedback_bug_details" name="support_feedback_bug_details" data-feedback-field="details" autocomplete="off" rows="6" placeholder="Describe what happened, what you expected, and how to reproduce it." required></textarea>
           </div>
           <div class="alert d-none support-send-feedback-status" role="alert"></div>
           <button type="button" class="btn btn-primary support-send-feedback-submit">
@@ -52,19 +52,19 @@
         <div class="support-send-feedback-form" data-feedback-type="feature_request" data-feedback-label="Feature Request">
           <div class="mb-3">
             <label for="support_feedback_feature_name" class="form-label">Name</label>
-            <input type="text" class="form-control" id="support_feedback_feature_name" name="support_feedback_feature_name" autocomplete="name" value="{{ session.get('user', {}).get('name', '') }}" required>
+            <input type="text" class="form-control" id="support_feedback_feature_name" name="support_feedback_feature_name" data-feedback-field="name" autocomplete="name" value="{{ session.get('user', {}).get('name', '') }}" required>
           </div>
           <div class="mb-3">
             <label for="support_feedback_feature_email" class="form-label">Email</label>
-            <input type="email" class="form-control" id="support_feedback_feature_email" name="support_feedback_feature_email" autocomplete="email" value="{{ session.get('user', {}).get('preferred_username', session.get('user', {}).get('email', '')) }}" required>
+            <input type="email" class="form-control" id="support_feedback_feature_email" name="support_feedback_feature_email" data-feedback-field="email" autocomplete="email" value="{{ session.get('user', {}).get('preferred_username', session.get('user', {}).get('email', '')) }}" required>
           </div>
           <div class="mb-3">
             <label for="support_feedback_feature_org" class="form-label">Organization</label>
-            <input type="text" class="form-control" id="support_feedback_feature_org" name="support_feedback_feature_org" autocomplete="organization" required>
+            <input type="text" class="form-control" id="support_feedback_feature_org" name="support_feedback_feature_org" data-feedback-field="organization" autocomplete="organization" required>
           </div>
           <div class="mb-3">
             <label for="support_feedback_feature_details" class="form-label">Feature Request Details</label>
-            <textarea class="form-control" id="support_feedback_feature_details" name="support_feedback_feature_details" autocomplete="off" rows="6" placeholder="Describe the problem, the improvement you want, and the outcome you need." required></textarea>
+            <textarea class="form-control" id="support_feedback_feature_details" name="support_feedback_feature_details" data-feedback-field="details" autocomplete="off" rows="6" placeholder="Describe the problem, the improvement you want, and the outcome you need." required></textarea>
           </div>
           <div class="alert d-none support-send-feedback-status" role="alert"></div>
           <button type="button" class="btn btn-primary support-send-feedback-submit">
