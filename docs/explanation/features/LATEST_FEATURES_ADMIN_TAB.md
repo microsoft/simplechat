@@ -1,9 +1,9 @@
-# Latest Features Admin Tab (v0.240.060)
+# Latest Features Admin Tab (v0.240.062)
 
 ## Overview
 This feature adds a dedicated **Latest Features** tab to Admin Settings so administrators can review the most important recent capabilities in one place and decide what to communicate to users.
 
-Version Updated: 0.240.060
+Version Updated: 0.240.062
 
 ## Dependencies
 - `application/single_app/templates/admin_settings.html`
@@ -69,6 +69,7 @@ Current screenshots surfaced in the admin UI:
 - `citation_improvements_amplified_results.png`
 - `document_revision_workspace.png`
 - `document_revision_delete_compare.png`
+- `enable_support_menu_for_end_users.png`
 - `conversation_summary_card.png`
 - `pdf_export_option.png`
 - `per_message_export_menu.png`
@@ -88,6 +89,7 @@ The GPT selection, citation improvement, document revision, and Support Menu ent
 - **Citation Improvements** explains conversation history citation replay and citation amplification so admins understand why follow-up questions stay grounded even when the assistant is working from prior evidence.
 - **Document Revisioning and Management** explains that same-name uploads create versioned revision families, keep previous versions available for traceability, and carry classifications and tags forward to the newest revision.
 - **Support Menu** introduces the user-facing support surface that exposes Latest Features and Send Feedback outside the admin-only experience.
+- **User-Facing Latest Features in General Settings** gives admins a direct visual reminder that the General tab controls which latest-feature cards are shared with end users.
 
 ## Usage Instructions
 - Open **Admin Settings**.
@@ -101,13 +103,13 @@ The GPT selection, citation improvement, document revision, and Support Menu ent
 - Use the mirrored Redis cache controls when you want to review or update cache settings from the overview page without leaving Latest Features.
 - Use the deployment guidance card if you run the native Python App Service variant and need the Gunicorn startup command.
 - Use the Send Feedback card to jump directly into the admin mailto workflow for bug reports and feature requests.
-- Use the Support Menu card as a communication aid for end-user help and feedback workflows.
+- Use the Support Menu card as a communication aid for end-user help and feedback workflows, including the General-tab checklist that controls user-facing latest-feature sharing.
 
 ## Testing and Validation
 - Confirm the Latest Features tab renders in Admin Settings.
 - Confirm each card expands and collapses correctly.
 - Confirm saved screenshots render as thumbnails and open in the larger preview modal.
-- Confirm the saved screenshots render for GPT Selection, Citation Improvements, Document Revisioning, and Support Menu.
+- Confirm the saved screenshots render for GPT Selection, Citation Improvements, Document Revisioning, Support Menu, and the General-tab user-facing latest-features checklist.
 - Confirm the preview modal closes from both the close button and backdrop click.
 - Confirm mirrored settings remain synchronized with the canonical controls in the existing tabs.
 - Confirm Redis mirror controls stay synchronized with the canonical settings in the Scale tab.

@@ -2,7 +2,7 @@
 # test_admin_latest_features_tab.py
 """
 Functional test for admin Latest Features tab.
-Version: 0.240.060
+Version: 0.240.062
 Implemented in: 0.240.002
 
 This test ensures that the Admin Settings page exposes the Latest Features tab,
@@ -63,7 +63,9 @@ def test_latest_features_template_structure():
         'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/document_revision_workspace.png\') }}"',
         'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/gunicorn_startup_guidance.png\') }}"',
         'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/redis_key_vault.png\') }}"',
-        'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/support_menu_entry.png\') }}"'
+        'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/support_menu_entry.png\') }}"',
+        'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/enable_support_menu_for_end_users.png\') }}"',
+        'General Tab Feature Sharing'
     ]
 
     missing_markers = [marker for marker in required_markers if marker not in template_content]
@@ -254,7 +256,7 @@ def test_latest_features_supporting_assets():
     assert os.path.isdir(FEATURE_IMAGE_DIR), 'Missing placeholder image directory for Latest Features'
 
     doc_content = read_text(FEATURE_DOC)
-    assert 'Version Updated: 0.240.060' in doc_content, 'Feature documentation version header missing or incorrect'
+    assert 'Version Updated: 0.240.062' in doc_content, 'Feature documentation version header missing or incorrect'
 
     required_images = [
         'agent_action_grid_view.png',
@@ -265,6 +267,7 @@ def test_latest_features_supporting_assets():
         'conversation_summary_card.png',
         'document_revision_delete_compare.png',
         'document_revision_workspace.png',
+        'enable_support_menu_for_end_users.png',
         'guided_tutorials_chat.png',
         'guided_tutorials_workspace.png',
         'gunicorn_startup_guidance.png',

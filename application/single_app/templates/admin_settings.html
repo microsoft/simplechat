@@ -2673,6 +2673,7 @@
                                 <li>Admins can enable or disable the Support menu and rename it for user navigation.</li>
                                 <li>Send Feedback now routes users to an internal recipient email address defined by admins.</li>
                                 <li>The user-facing Latest Features page can be curated feature-by-feature so teams only share the items they want visible.</li>
+                                <li>The General tab now includes a dedicated User-Facing Latest Features checklist so admins can quickly confirm which announcements will be visible to end users.</li>
                             </ul>
                             <a href="#general" onclick="switchTab(event, 'general-tab')" class="btn btn-outline-primary align-self-start mb-3">
                                 <i class="bi bi-gear me-1"></i>Open General Settings
@@ -2689,6 +2690,21 @@
                                         <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/support_menu_entry.png') }}" alt="Support menu entry screenshot">
                                         <div class="latest-feature-thumbnail-body">
                                             <div class="latest-feature-thumbnail-title">Support Menu Entry</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/enable_support_menu_for_end_users.png') }}"
+                                    data-latest-feature-image-title="User-Facing Latest Features in General Settings"
+                                    data-latest-feature-image-caption="General tab Support settings showing Enable Support Menu for End Users and the User-Facing Latest Features checklist that controls what gets shared."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/enable_support_menu_for_end_users.png') }}" alt="User-facing latest features checklist in general settings screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">General Tab Feature Sharing</div>
                                             <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
                                         </div>
                                     </div>
