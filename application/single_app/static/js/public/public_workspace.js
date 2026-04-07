@@ -77,14 +77,89 @@ function getPublicDeleteModalContent(documentCount) {
   };
 }
 
+function showPublicDocumentDeleteFeedback(message, variant = 'danger') {
+  if (typeof window.showToast === 'function') {
+    window.showToast(message, variant);
+    return;
+  }
+
+  let container = document.getElementById('publicDocumentDeleteFeedbackContainer');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'publicDocumentDeleteFeedbackContainer';
+    container.className = 'toast-container position-fixed top-0 end-0 p-3';
+    document.body.appendChild(container);
+  }
+
+  if (window.bootstrap && typeof window.bootstrap.Toast === 'function') {
+    const toastElement = document.createElement('div');
+    toastElement.className = `toast align-items-center text-white bg-${variant} border-0`;
+    toastElement.setAttribute('role', 'alert');
+    toastElement.setAttribute('aria-live', 'assertive');
+    toastElement.setAttribute('aria-atomic', 'true');
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'd-flex';
+
+    const body = document.createElement('div');
+    body.className = 'toast-body';
+    body.textContent = message;
+
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.className = 'btn-close btn-close-white me-2 m-auto';
+    closeButton.setAttribute('data-bs-dismiss', 'toast');
+    closeButton.setAttribute('aria-label', 'Close');
+
+    wrapper.appendChild(body);
+    wrapper.appendChild(closeButton);
+    toastElement.appendChild(wrapper);
+    container.appendChild(toastElement);
+
+    const toast = new window.bootstrap.Toast(toastElement);
+    toast.show();
+    toastElement.addEventListener('hidden.bs.toast', () => {
+      toastElement.remove();
+    });
+    return;
+  }
+
+  const alertElement = document.createElement('div');
+  alertElement.className = `alert alert-${variant} alert-dismissible fade show mb-2`;
+  alertElement.setAttribute('role', 'alert');
+
+  const body = document.createElement('span');
+  body.textContent = message;
+
+  const closeButton = document.createElement('button');
+  closeButton.type = 'button';
+  closeButton.className = 'btn-close';
+  closeButton.setAttribute('data-bs-dismiss', 'alert');
+  closeButton.setAttribute('aria-label', 'Close');
+
+  alertElement.appendChild(body);
+  alertElement.appendChild(closeButton);
+  container.appendChild(alertElement);
+}
+
+function isPublicDocumentDeleteModalReady() {
+  return Boolean(
+    publicDocumentDeleteModal &&
+    publicDocumentDeleteModalElement &&
+    publicDocumentDeleteModalElement.isConnected &&
+    publicDocumentDeleteModalBody &&
+    publicDocumentDeleteModalBody.isConnected &&
+    publicDeleteCurrentBtn &&
+    publicDeleteCurrentBtn.isConnected &&
+    publicDeleteAllBtn &&
+    publicDeleteAllBtn.isConnected
+  );
+}
+
 function promptPublicDeleteMode(documentCount = 1) {
-  if (!publicDocumentDeleteModal || !publicDocumentDeleteModalBody || !publicDeleteCurrentBtn || !publicDeleteAllBtn) {
-    const confirmed = window.confirm(
-      documentCount === 1
-        ? 'Are you sure you want to delete this document? This action cannot be undone.'
-        : `Are you sure you want to delete ${documentCount} selected document(s)? This action cannot be undone.`
-    );
-    return Promise.resolve(confirmed ? 'all_versions' : null);
+  if (!isPublicDocumentDeleteModalReady()) {
+    showPublicDocumentDeleteFeedback('Delete confirmation dialog is unavailable. Refresh the page and try again.');
+    return Promise.resolve(null);
   }
 
   const modalContent = getPublicDeleteModalContent(documentCount);
@@ -909,7 +984,7 @@ window.deletePublicDocument = async function(id, event) {
     await requestPublicDocumentDeletion(id, deleteMode);
     fetchPublicDocs();
   } catch (e) {
-    alert(`Error deleting: ${e.error || e.message}`);
+    showPublicWorkspaceToast(`Error deleting: ${e.error || e.message}`, 'danger');
     if (deleteTrigger && document.body.contains(deleteTrigger)) {
       deleteTrigger.classList.remove('disabled');
       deleteTrigger.removeAttribute('aria-disabled');
@@ -995,7 +1070,8 @@ function deletePublicSelectedDocuments() {
         const successful = results.filter((result) => result.status === 'fulfilled').length;
         const failed = results.filter((result) => result.status === 'rejected').length;
         if (failed > 0) {
-          alert(`Deleted ${successful} document(s). ${failed} failed to delete.`);
+          const toastType = successful === 0 ? 'danger' : 'warning';
+          showPublicWorkspaceToast(`Deleted ${successful} document(s). ${failed} failed to delete.`, toastType);
         }
 
         if (publicSelectionMode) {

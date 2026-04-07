@@ -112,14 +112,89 @@ function getDocumentDeleteModalContent(documentCount) {
     };
 }
 
+function showDocumentDeleteFeedback(message, variant = "danger") {
+    if (typeof window.showToast === "function") {
+        window.showToast(message, variant);
+        return;
+    }
+
+    let container = document.getElementById("documentDeleteFeedbackContainer");
+    if (!container) {
+        container = document.createElement("div");
+        container.id = "documentDeleteFeedbackContainer";
+        container.className = "toast-container position-fixed top-0 end-0 p-3";
+        document.body.appendChild(container);
+    }
+
+    if (window.bootstrap && typeof window.bootstrap.Toast === "function") {
+        const toastElement = document.createElement("div");
+        toastElement.className = `toast align-items-center text-white bg-${variant} border-0`;
+        toastElement.setAttribute("role", "alert");
+        toastElement.setAttribute("aria-live", "assertive");
+        toastElement.setAttribute("aria-atomic", "true");
+
+        const wrapper = document.createElement("div");
+        wrapper.className = "d-flex";
+
+        const body = document.createElement("div");
+        body.className = "toast-body";
+        body.textContent = message;
+
+        const closeButton = document.createElement("button");
+        closeButton.type = "button";
+        closeButton.className = "btn-close btn-close-white me-2 m-auto";
+        closeButton.setAttribute("data-bs-dismiss", "toast");
+        closeButton.setAttribute("aria-label", "Close");
+
+        wrapper.appendChild(body);
+        wrapper.appendChild(closeButton);
+        toastElement.appendChild(wrapper);
+        container.appendChild(toastElement);
+
+        const toast = new window.bootstrap.Toast(toastElement);
+        toast.show();
+        toastElement.addEventListener("hidden.bs.toast", () => {
+            toastElement.remove();
+        });
+        return;
+    }
+
+    const alertElement = document.createElement("div");
+    alertElement.className = `alert alert-${variant} alert-dismissible fade show mb-2`;
+    alertElement.setAttribute("role", "alert");
+
+    const body = document.createElement("span");
+    body.textContent = message;
+
+    const closeButton = document.createElement("button");
+    closeButton.type = "button";
+    closeButton.className = "btn-close";
+    closeButton.setAttribute("data-bs-dismiss", "alert");
+    closeButton.setAttribute("aria-label", "Close");
+
+    alertElement.appendChild(body);
+    alertElement.appendChild(closeButton);
+    container.appendChild(alertElement);
+}
+
+function isDocumentDeleteModalReady() {
+    return Boolean(
+        documentDeleteModal &&
+        documentDeleteModalElement &&
+        documentDeleteModalElement.isConnected &&
+        documentDeleteModalBody &&
+        documentDeleteModalBody.isConnected &&
+        documentDeleteCurrentBtn &&
+        documentDeleteCurrentBtn.isConnected &&
+        documentDeleteAllBtn &&
+        documentDeleteAllBtn.isConnected
+    );
+}
+
 function promptDocumentDeleteMode(documentCount = 1) {
-    if (!documentDeleteModal || !documentDeleteModalBody || !documentDeleteCurrentBtn || !documentDeleteAllBtn) {
-        const confirmed = window.confirm(
-            documentCount === 1
-                ? "Are you sure you want to delete this document? This action cannot be undone."
-                : `Are you sure you want to delete ${documentCount} document(s)? This action cannot be undone.`
-        );
-        return Promise.resolve(confirmed ? "all_versions" : null);
+    if (!isDocumentDeleteModalReady()) {
+        showDocumentDeleteFeedback("Delete confirmation dialog is unavailable. Refresh the page and try again.");
+        return Promise.resolve(null);
     }
 
     const modalContent = getDocumentDeleteModalContent(documentCount);
