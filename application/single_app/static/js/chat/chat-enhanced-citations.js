@@ -3,7 +3,7 @@
 
 import { showToast } from "./chat-toast.js";
 import { showLoadingIndicator, hideLoadingIndicator } from "./chat-loading-indicator.js";
-import { getDocumentMetadata } from './chat-documents.js';
+import { getDocumentMetadata, fetchDocumentMetadata } from './chat-documents.js';
 
 /**
  * Determine file type from filename extension
@@ -36,9 +36,14 @@ export function getFileType(fileName) {
  * @param {string} citationId - Citation ID for fallback
  * @param {string|null} initialSheetName - Workbook sheet to open initially for tabular files
  */
-export function showEnhancedCitationModal(docId, pageNumberOrTimestamp, citationId, initialSheetName = null) {
-    // Get document metadata to determine file type
-    const docMetadata = getDocumentMetadata(docId);
+export async function showEnhancedCitationModal(docId, pageNumberOrTimestamp, citationId, initialSheetName = null) {
+    // Get document metadata to determine file type. Historical cited revisions
+    // are not in the current workspace list, so fetch on demand when needed.
+    let docMetadata = getDocumentMetadata(docId);
+    if (!docMetadata || !docMetadata.file_name) {
+        docMetadata = await fetchDocumentMetadata(docId);
+    }
+
     if (!docMetadata || !docMetadata.file_name) {
         console.warn('Document metadata not found, falling back to text citation');
         // Import fetchCitedText dynamically to avoid circular imports

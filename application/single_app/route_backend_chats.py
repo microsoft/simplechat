@@ -5,6 +5,7 @@ from semantic_kernel.contents.chat_history import ChatHistory
 from semantic_kernel.contents.chat_message_content import ChatMessageContent
 from semantic_kernel.connectors.ai.prompt_execution_settings import PromptExecutionSettings
 from semantic_kernel.connectors.ai.chat_completion_client_base import ChatCompletionClientBase
+from semantic_kernel.connectors.ai.open_ai.prompt_execution_settings.azure_chat_prompt_execution_settings import AzureChatPromptExecutionSettings
 from semantic_kernel_fact_memory_store import FactMemoryStore
 from semantic_kernel_loader import initialize_semantic_kernel
 from semantic_kernel_plugins.plugin_invocation_thoughts import (
@@ -45,7 +46,9 @@ from azure.identity import ClientSecretCredential, DefaultAzureCredential, get_b
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
 from functions_message_artifacts import (
     build_agent_citation_artifact_documents,
+    build_message_artifact_payload_map,
     filter_assistant_artifact_items,
+    hydrate_agent_citations_from_artifacts,
 )
 from functions_thoughts import ThoughtTracker
 
@@ -192,8 +195,33 @@ def is_tabular_entity_lookup_question(user_question):
         'installment',
         'related',
     )
+    explanatory_keywords = (
+        'because',
+        'detail',
+        'details',
+        'explain',
+        'reason',
+        'summary',
+        'why',
+    )
     if any(phrase in normalized_question for phrase in direct_phrases) and any(
-        keyword in normalized_question for keyword in relationship_keywords
+        keyword in normalized_question for keyword in relationship_keywords + explanatory_keywords
+    ):
+        return True
+
+    identifier_like_reference = bool(re.search(
+        r'\b(?:ret|tp|case|account|acct|payment|pay|notice|audit|w2|1099)[-_]?[a-z0-9]*\d{2,}[a-z0-9_-]*\b',
+        normalized_question,
+    ))
+    anchored_entity_reference = any(
+        re.search(pattern, normalized_question)
+        for pattern in (
+            r'\bfor\s+(?:return|taxpayer|case|account|payment|notice|audit)\b',
+            r'\b(?:return|taxpayer|case|account|payment|notice|audit)\s+[`"\']?[a-z0-9_-]*\d{2,}[a-z0-9_-]*[`"\']?\b',
+        )
+    )
+    if anchored_entity_reference and identifier_like_reference and any(
+        keyword in normalized_question for keyword in relationship_keywords + explanatory_keywords
     ):
         return True
 
@@ -202,6 +230,44 @@ def is_tabular_entity_lookup_question(user_question):
         r'\b(show|summarize)\b.*\b(profile|related|record|records)\b.*\b(w-2|w2|1099|payment|refund|notice|audit|installment)\b',
     )
     return any(re.search(pattern, normalized_question) for pattern in entity_lookup_patterns)
+
+
+def is_tabular_distinct_value_question(user_question):
+    """Return True for unique-value questions that should start with get_distinct_values."""
+    normalized_question = re.sub(r'\s+', ' ', str(user_question or '').strip().lower())
+    if not normalized_question or is_tabular_schema_summary_question(normalized_question):
+        return False
+
+    distinct_keywords = (
+        'different',
+        'discrete',
+        'distinct',
+        'unique',
+    )
+    count_keywords = (
+        'count',
+        'counts',
+        'how many',
+        'number of',
+    )
+    target_keywords = (
+        'link',
+        'links',
+        'location',
+        'locations',
+        'sharepoint',
+        'site',
+        'sites',
+        'url',
+        'urls',
+        'value',
+        'values',
+    )
+
+    has_distinct_intent = any(keyword in normalized_question for keyword in distinct_keywords)
+    has_count_intent = any(keyword in normalized_question for keyword in count_keywords)
+    has_target = any(keyword in normalized_question for keyword in target_keywords)
+    return (has_distinct_intent or has_count_intent) and has_target
 
 
 def is_tabular_cross_sheet_bridge_question(user_question):
@@ -302,8 +368,207 @@ def build_tabular_computed_results_system_message(source_label, tabular_analysis
         f"{rendered_analysis}\n\n"
         "These are tool-backed results derived from the full underlying tabular data, not just retrieved schema excerpts. "
         "Treat them as authoritative for row-level facts, calculations, and numeric conclusions. "
-        "Do not say that you lack direct access to the data if the answer is present in these computed results."
+        "Do not say that you lack direct access to the data if the answer is present in these computed results. "
+        "If a tool summary includes a full scalar value list, you may enumerate those values directly in the final answer. "
+        "If a tool summary includes the full matching rows from a row or text search, use the surrounding cell context in those rows when deciding which content is relevant to the user's question."
     )
+
+
+MULTI_FILE_TABULAR_DISTINCT_URL_EXTRACT_PATTERN = (
+    r'(?i)https?://[^\s/]+/[^\s]*?(?:sites/|sitecollection/|teams/)[^\s"\']+'
+)
+
+
+def get_multi_file_tabular_analysis_mode(user_question, execution_mode='analysis', analysis_file_contexts=None):
+    """Return a deterministic multi-file mode when the question should bypass SK planning."""
+    normalized_execution_mode = str(execution_mode or 'analysis').strip().lower()
+    normalized_contexts = dedupe_tabular_file_contexts(analysis_file_contexts)
+    if normalized_execution_mode != 'analysis' or len(normalized_contexts) <= 1:
+        return None
+
+    if is_tabular_distinct_url_question(user_question):
+        return 'distinct_url_union'
+
+    return None
+
+
+def score_tabular_distinct_url_column(column_name):
+    """Score likely URL-bearing column names for deterministic multi-file analysis."""
+    normalized_column_name = re.sub(r'\s+', ' ', str(column_name or '').strip().lower())
+    if not normalized_column_name:
+        return None
+
+    exact_priority = {
+        'location': 0,
+        'locations': 0,
+        'url': 1,
+        'urls': 1,
+        'link': 2,
+        'links': 2,
+        'site': 3,
+        'sites': 3,
+        'path': 4,
+        'paths': 4,
+        'address': 5,
+        'addresses': 5,
+    }
+    if normalized_column_name in exact_priority:
+        return exact_priority[normalized_column_name]
+
+    token_priority = {
+        'location': 0,
+        'locations': 0,
+        'url': 1,
+        'urls': 1,
+        'link': 2,
+        'links': 2,
+        'site': 3,
+        'sites': 3,
+        'sharepoint': 4,
+        'path': 5,
+        'paths': 5,
+        'address': 6,
+        'addresses': 6,
+    }
+    token_scores = [
+        token_priority[token]
+        for token in re.split(r'[^a-z0-9]+', normalized_column_name)
+        if token and token in token_priority
+    ]
+    if not token_scores:
+        return None
+
+    return min(token_scores) + 10
+
+
+def select_tabular_distinct_url_column(column_names):
+    """Return the best URL-like column from a list of schema column names."""
+    best_column_name = None
+    best_comparison_key = None
+
+    for candidate_column in column_names or []:
+        rendered_column_name = str(candidate_column or '').strip()
+        if not rendered_column_name:
+            continue
+
+        column_score = score_tabular_distinct_url_column(rendered_column_name)
+        if column_score is None:
+            continue
+
+        comparison_key = (column_score, rendered_column_name.casefold())
+        if best_comparison_key is None or comparison_key < best_comparison_key:
+            best_comparison_key = comparison_key
+            best_column_name = rendered_column_name
+
+    return best_column_name
+
+
+def select_tabular_distinct_url_sheet_and_column(schema_info):
+    """Choose the best worksheet and column for deterministic multi-file URL extraction."""
+    if not isinstance(schema_info, Mapping):
+        return None, None
+
+    per_sheet_schemas = schema_info.get('per_sheet_schemas', {})
+    if isinstance(per_sheet_schemas, Mapping) and per_sheet_schemas:
+        ranked_sheet_candidates = []
+        for raw_sheet_name, raw_sheet_schema in per_sheet_schemas.items():
+            if not isinstance(raw_sheet_schema, Mapping):
+                continue
+
+            selected_column = select_tabular_distinct_url_column(raw_sheet_schema.get('columns', []))
+            if not selected_column:
+                continue
+
+            row_count = raw_sheet_schema.get('row_count', 0)
+            try:
+                normalized_row_count = int(row_count)
+            except (TypeError, ValueError):
+                normalized_row_count = 0
+
+            ranked_sheet_candidates.append((
+                score_tabular_distinct_url_column(selected_column),
+                -normalized_row_count,
+                str(raw_sheet_name or '').casefold(),
+                str(raw_sheet_name or '').strip() or None,
+                selected_column,
+            ))
+
+        if ranked_sheet_candidates:
+            _, _, _, selected_sheet_name, selected_column_name = sorted(ranked_sheet_candidates)[0]
+            return selected_sheet_name, selected_column_name
+
+    return None, select_tabular_distinct_url_column(schema_info.get('columns', []))
+
+
+def normalize_multi_file_tabular_distinct_value(value):
+    """Normalize a distinct scalar so multi-file unions remain stable."""
+    rendered_value = str(value or '').strip()
+    if not rendered_value:
+        return None
+
+    return rendered_value.casefold()
+
+
+def build_multi_file_tabular_distinct_value_analysis(successful_results, failed_results=None):
+    """Build a deterministic combined distinct-value payload across multiple tabular files."""
+    successful_results = list(successful_results or [])
+    failed_results = list(failed_results or [])
+    if not successful_results:
+        return None
+
+    combined_values_by_key = {}
+    per_file_results = []
+    any_values_limited = False
+    files_with_matches = 0
+
+    for result_payload in successful_results:
+        file_values = []
+        for raw_value in result_payload.get('values') or []:
+            rendered_value = str(raw_value or '').strip()
+            if not rendered_value:
+                continue
+
+            file_values.append(rendered_value)
+            normalized_value_key = normalize_multi_file_tabular_distinct_value(rendered_value)
+            if normalized_value_key and normalized_value_key not in combined_values_by_key:
+                combined_values_by_key[normalized_value_key] = rendered_value
+
+        distinct_count = parse_tabular_result_count(result_payload.get('distinct_count'))
+        returned_values = parse_tabular_result_count(result_payload.get('returned_values'))
+        if distinct_count is None:
+            distinct_count = len(file_values)
+        if returned_values is None:
+            returned_values = len(file_values)
+
+        values_limited = bool(result_payload.get('values_limited', False))
+        any_values_limited = any_values_limited or values_limited
+        if returned_values > 0:
+            files_with_matches += 1
+
+        per_file_results.append({
+            'filename': result_payload.get('filename'),
+            'selected_sheet': result_payload.get('selected_sheet'),
+            'column': result_payload.get('column'),
+            'distinct_count': distinct_count,
+            'returned_values': returned_values,
+            'values_limited': values_limited,
+            'values': file_values,
+        })
+
+    combined_values = sorted(combined_values_by_key.values(), key=lambda item: item.casefold())
+    return json.dumps({
+        'analysis_type': 'multi_file_distinct_url_union',
+        'files_requested': len(successful_results) + len(failed_results),
+        'files_analyzed': len(successful_results),
+        'files_with_matches': files_with_matches,
+        'files_failed': len(failed_results),
+        'distinct_count': len(combined_values),
+        'returned_values': len(combined_values),
+        'values_limited': any_values_limited,
+        'values': combined_values,
+        'per_file_results': per_file_results,
+        'failed_files': failed_results,
+    }, indent=2, default=str)
 
 
 def get_kernel():
@@ -774,6 +1039,12 @@ def describe_tabular_invocation_conditions(invocation):
     if query_expression:
         return query_expression
 
+    search_value = str(parameters.get('search_value') or '').strip()
+    if search_value:
+        search_columns = str(parameters.get('search_columns') or '').strip() or 'ALL COLUMNS'
+        search_operator = str(parameters.get('search_operator') or 'contains').strip()
+        return f"search_value={search_value}; search_operator={search_operator}; search_columns={search_columns}"
+
     column_name = str(parameters.get('column') or '').strip()
     operator = str(parameters.get('operator') or '').strip()
     value = parameters.get('value')
@@ -784,6 +1055,17 @@ def describe_tabular_invocation_conditions(invocation):
     lookup_value = parameters.get('lookup_value')
     if lookup_column:
         return f"{lookup_column} == {lookup_value}"
+
+    extract_mode = str(parameters.get('extract_mode') or '').strip()
+    if extract_mode:
+        extraction_bits = [f"extract_mode={extract_mode}"]
+        extract_pattern = str(parameters.get('extract_pattern') or '').strip()
+        url_path_segments = parameters.get('url_path_segments')
+        if extract_pattern:
+            extraction_bits.append(f"extract_pattern={extract_pattern}")
+        if url_path_segments not in (None, ''):
+            extraction_bits.append(f"url_path_segments={url_path_segments}")
+        return ', '.join(extraction_bits)
 
     return None
 
@@ -841,7 +1123,7 @@ def get_tabular_query_overlap_summary(invocations, max_rows=10):
 
     for invocation in invocations or []:
         function_name = getattr(invocation, 'function_name', '')
-        if function_name not in {'query_tabular_data', 'filter_rows'}:
+        if function_name not in {'query_tabular_data', 'filter_rows', 'search_rows'}:
             continue
 
         rows = get_tabular_invocation_data_rows(invocation)
@@ -941,6 +1223,49 @@ def get_tabular_invocation_compact_payload(invocation, max_rows=5):
             'operation': compact_tabular_fallback_value(result_payload.get('operation')),
             'result': compact_tabular_fallback_value(result_payload.get('result')),
         })
+    elif function_name == 'get_distinct_values':
+        for key_name in (
+            'column',
+            'filter_applied',
+            'normalize_match',
+            'extract_mode',
+            'extract_pattern',
+            'url_path_segments',
+            'matched_cell_count',
+            'extracted_match_count',
+            'distinct_count',
+            'returned_values',
+            'values_limited',
+        ):
+            if key_name in result_payload:
+                compact_payload[key_name] = compact_tabular_fallback_value(result_payload.get(key_name))
+
+        raw_values = result_payload.get('values')
+        if isinstance(raw_values, list):
+            compact_values = []
+            rendered_values_length = 0
+            max_values_in_payload = 200
+            max_rendered_values_chars = 14000
+
+            for raw_value in raw_values:
+                compact_value = compact_tabular_fallback_value(raw_value)
+                rendered_value = json.dumps(compact_value, default=str)
+                projected_length = rendered_values_length + len(rendered_value) + 2
+
+                if compact_values and (
+                    len(compact_values) >= max_values_in_payload
+                    or projected_length > max_rendered_values_chars
+                ):
+                    break
+
+                compact_values.append(compact_value)
+                rendered_values_length = projected_length
+
+            compact_payload['values'] = compact_values
+            compact_payload['full_values_included'] = len(compact_values) == len(raw_values)
+            if len(compact_values) != len(raw_values):
+                compact_payload['values_limited'] = True
+                compact_payload['returned_values'] = len(compact_values)
     elif function_name in {'group_by_aggregate', 'group_by_datetime_component'}:
         for key_name in (
             'group_by',
@@ -975,18 +1300,46 @@ def get_tabular_invocation_compact_payload(invocation, max_rows=5):
                 for row in data_rows[:max_rows]
             ]
             compact_payload['sample_rows_limited'] = len(data_rows) > max_rows
-    elif function_name in {'query_tabular_data', 'filter_rows'}:
+    elif function_name in {'query_tabular_data', 'filter_rows', 'search_rows'}:
+        for key_name in ('search_value', 'search_operator', 'searched_columns', 'matched_columns', 'return_columns'):
+            if key_name in result_payload:
+                compact_payload[key_name] = compact_tabular_fallback_value(result_payload.get(key_name))
+
         for key_name in ('total_matches', 'returned_rows'):
             if key_name in result_payload:
                 compact_payload[key_name] = compact_tabular_fallback_value(result_payload.get(key_name))
 
         data_rows = get_tabular_invocation_data_rows(invocation)
         if data_rows:
+            desired_max_rows = max_rows
+            total_matches = result_payload.get('total_matches')
+            returned_rows = result_payload.get('returned_rows')
+            try:
+                total_matches = int(total_matches)
+            except (TypeError, ValueError):
+                total_matches = None
+            try:
+                returned_rows = int(returned_rows)
+            except (TypeError, ValueError):
+                returned_rows = len(data_rows)
+
+            if (
+                total_matches is not None
+                and returned_rows == total_matches
+                and total_matches <= 25
+            ):
+                desired_max_rows = max(desired_max_rows, total_matches)
+
             compact_payload['sample_rows'] = [
                 compact_tabular_fallback_value(row)
-                for row in data_rows[:max_rows]
+                for row in data_rows[:desired_max_rows]
             ]
-            compact_payload['sample_rows_limited'] = len(data_rows) > max_rows
+            compact_payload['sample_rows_limited'] = len(data_rows) > desired_max_rows
+            compact_payload['full_rows_included'] = (
+                total_matches is not None
+                and total_matches == returned_rows
+                and len(compact_payload['sample_rows']) == len(data_rows)
+            )
 
         rendered_conditions = describe_tabular_invocation_conditions(invocation)
         if rendered_conditions:
@@ -1061,6 +1414,15 @@ def build_tabular_analysis_fallback_from_invocations(invocations):
         if 'sample_rows' in shrunk_payload:
             shrunk_payload['sample_rows'] = shrunk_payload['sample_rows'][:2]
             shrunk_payload['sample_rows_limited'] = True
+            shrunk_payload['full_rows_included'] = False
+        if isinstance(shrunk_payload.get('values'), list) and len(shrunk_payload['values']) > 25:
+            shrunk_payload['values'] = shrunk_payload['values'][:25]
+            shrunk_payload['values_limited'] = True
+            shrunk_payload['full_values_included'] = False
+            shrunk_payload['returned_values'] = min(
+                int(shrunk_payload.get('returned_values') or len(shrunk_payload['values'])),
+                len(shrunk_payload['values']),
+            )
         if isinstance(shrunk_payload.get('top_results'), dict):
             shrunk_payload['top_results'] = dict(list(shrunk_payload['top_results'].items())[:3])
 
@@ -1072,6 +1434,15 @@ def build_tabular_analysis_fallback_from_invocations(invocations):
         if len(candidate_text) > (max_fallback_chars - coverage_note_reserve):
             shrunk_payload.pop('sample_rows', None)
             shrunk_payload['sample_rows_limited'] = True
+            shrunk_payload['full_rows_included'] = False
+            if isinstance(shrunk_payload.get('values'), list) and len(shrunk_payload['values']) > 10:
+                shrunk_payload['values'] = shrunk_payload['values'][:10]
+                shrunk_payload['values_limited'] = True
+                shrunk_payload['full_values_included'] = False
+                shrunk_payload['returned_values'] = min(
+                    int(shrunk_payload.get('returned_values') or len(shrunk_payload['values'])),
+                    len(shrunk_payload['values']),
+                )
             shrunk_payload['result_summary_truncated'] = True
             if isinstance(shrunk_payload.get('top_results'), dict):
                 shrunk_payload['top_results'] = dict(list(shrunk_payload['top_results'].items())[:2])
@@ -1219,6 +1590,1284 @@ def summarize_tabular_invocation_errors(invocations):
     return unique_errors
 
 
+def summarize_tabular_discovery_invocations(invocations, max_sheet_names=6):
+    """Return compact workbook-discovery summaries for retry prompts."""
+    discovery_summaries = []
+
+    for invocation in invocations or []:
+        if getattr(invocation, 'function_name', '') != 'describe_tabular_file':
+            continue
+        if get_tabular_invocation_error_message(invocation):
+            continue
+
+        result_payload = get_tabular_invocation_result_payload(invocation) or {}
+        filename = str(result_payload.get('filename') or '').strip()
+        if not filename:
+            continue
+
+        sheet_names = result_payload.get('sheet_names') or []
+        if not isinstance(sheet_names, list):
+            sheet_names = []
+
+        relationship_hints = result_payload.get('relationship_hints') or []
+        if not isinstance(relationship_hints, list):
+            relationship_hints = []
+
+        summary_parts = [filename]
+        if result_payload.get('is_workbook'):
+            summary_parts.append(f"sheet_count={result_payload.get('sheet_count', len(sheet_names))}")
+        if sheet_names:
+            rendered_sheet_names = ', '.join(str(sheet_name) for sheet_name in sheet_names[:max_sheet_names])
+            if len(sheet_names) > max_sheet_names:
+                rendered_sheet_names += f", +{len(sheet_names) - max_sheet_names} more"
+            summary_parts.append(f"sheets={rendered_sheet_names}")
+        if relationship_hints:
+            summary_parts.append(f"relationship_hints={len(relationship_hints)}")
+
+        discovery_summaries.append('; '.join(summary_parts))
+
+    return discovery_summaries
+
+
+def extract_json_object_from_text(text):
+    """Extract the first JSON object embedded in a model response."""
+    rendered_text = str(text or '').strip()
+    if not rendered_text:
+        return None
+
+    json_decoder = json.JSONDecoder()
+    for character_index, character in enumerate(rendered_text):
+        if character != '{':
+            continue
+
+        try:
+            payload, _ = json_decoder.raw_decode(rendered_text[character_index:])
+        except Exception:
+            continue
+
+        if isinstance(payload, dict):
+            return payload
+
+    return None
+
+
+def normalize_tabular_reviewer_function_name(function_name):
+    """Normalize reviewer-selected function names to bare plugin function names."""
+    normalized_function_name = str(function_name or '').strip()
+    if not normalized_function_name:
+        return ''
+
+    normalized_function_name = normalized_function_name.replace('tabular_processing-', '')
+    if '.' in normalized_function_name:
+        normalized_function_name = normalized_function_name.split('.')[-1]
+
+    return normalized_function_name.strip()
+
+
+def parse_tabular_reviewer_plan(review_text):
+    """Parse a JSON-only LLM reviewer plan into executable call descriptors."""
+    payload = extract_json_object_from_text(review_text)
+    if not isinstance(payload, dict):
+        return []
+
+    raw_calls = payload.get('calls')
+    if not isinstance(raw_calls, list):
+        raw_call = payload.get('call')
+        raw_calls = [raw_call] if isinstance(raw_call, dict) else []
+
+    normalized_calls = []
+    for raw_call in raw_calls:
+        if not isinstance(raw_call, dict):
+            continue
+
+        function_name = normalize_tabular_reviewer_function_name(
+            raw_call.get('function') or raw_call.get('function_name')
+        )
+        arguments = raw_call.get('arguments') or raw_call.get('args') or {}
+        if not function_name or not isinstance(arguments, dict):
+            continue
+
+        normalized_calls.append({
+            'function_name': function_name,
+            'arguments': dict(arguments),
+        })
+
+    return normalized_calls
+
+
+def get_tabular_reviewer_function_manifest():
+    """Return compact analytical-function guidance for the reviewer LLM."""
+    return {
+        'lookup_value': {
+            'best_for': 'one exact row or entity and one target column value',
+            'required_arguments': ['filename', 'lookup_column', 'lookup_value', 'target_column'],
+            'optional_arguments': ['match_operator', 'normalize_match', 'sheet_name', 'sheet_index', 'max_rows'],
+        },
+        'get_distinct_values': {
+            'best_for': 'unique values, discrete counts, canonical site lists, embedded URL or regex extraction, and deterministic de-duplication after the relevant text cohort has been narrowed',
+            'required_arguments': ['filename', 'column'],
+            'optional_arguments': ['query_expression', 'filter_column', 'filter_operator', 'filter_value', 'additional_filter_column', 'additional_filter_operator', 'additional_filter_value', 'extract_mode', 'extract_pattern', 'url_path_segments', 'normalize_match', 'sheet_name', 'sheet_index', 'max_values'],
+        },
+        'count_rows': {
+            'best_for': 'deterministic how-many questions after a filter or query',
+            'required_arguments': ['filename'],
+            'optional_arguments': ['query_expression', 'filter_column', 'filter_operator', 'filter_value', 'additional_filter_column', 'additional_filter_operator', 'additional_filter_value', 'normalize_match', 'sheet_name', 'sheet_index'],
+        },
+        'search_rows': {
+            'best_for': 'searching one column, several columns, or an entire sheet/workbook for a topic, phrase, path, code, or other value when the relevant column is unclear',
+            'required_arguments': ['filename', 'search_value'],
+            'optional_arguments': ['search_columns', 'search_operator', 'return_columns', 'query_expression', 'filter_column', 'filter_operator', 'filter_value', 'additional_filter_column', 'additional_filter_operator', 'additional_filter_value', 'normalize_match', 'sheet_name', 'sheet_index', 'max_rows'],
+        },
+        'filter_rows': {
+            'best_for': 'searching a text column for matching cells while preserving full row context before a second analytical step',
+            'required_arguments': ['filename', 'column', 'operator', 'value'],
+            'optional_arguments': ['additional_filter_column', 'additional_filter_operator', 'additional_filter_value', 'normalize_match', 'sheet_name', 'sheet_index', 'max_rows'],
+        },
+        'query_tabular_data': {
+            'best_for': 'compound boolean filters expressed with pandas DataFrame.query()',
+            'required_arguments': ['filename', 'query_expression'],
+            'optional_arguments': ['sheet_name', 'sheet_index', 'max_rows'],
+        },
+        'filter_rows_by_related_values': {
+            'best_for': 'joining a cohort from one sheet to matching rows on another sheet',
+            'required_arguments': ['filename', 'source_sheet_name', 'source_value_column', 'target_sheet_name', 'target_match_column'],
+            'optional_arguments': ['source_query_expression', 'source_filter_column', 'source_filter_operator', 'source_filter_value', 'target_query_expression', 'target_filter_column', 'target_filter_operator', 'target_filter_value', 'normalize_match', 'max_rows'],
+        },
+        'count_rows_by_related_values': {
+            'best_for': 'deterministic counts for cross-sheet cohort membership or related-record questions',
+            'required_arguments': ['filename', 'source_sheet_name', 'source_value_column', 'target_sheet_name', 'target_match_column'],
+            'optional_arguments': ['source_query_expression', 'source_filter_column', 'source_filter_operator', 'source_filter_value', 'target_query_expression', 'target_filter_column', 'target_filter_operator', 'target_filter_value', 'normalize_match'],
+        },
+        'aggregate_column': {
+            'best_for': 'sum, mean, min, max, median, std, count, nunique, or value_counts on one column',
+            'required_arguments': ['filename', 'column', 'operation'],
+            'optional_arguments': ['sheet_name', 'sheet_index'],
+        },
+        'group_by_aggregate': {
+            'best_for': 'grouped metrics by category or entity',
+            'required_arguments': ['filename', 'group_by', 'aggregate_column', 'operation'],
+            'optional_arguments': ['query_expression', 'sheet_name', 'sheet_index', 'top_n'],
+        },
+        'group_by_datetime_component': {
+            'best_for': 'time-based grouped analysis by year, quarter, month, week, day, or hour',
+            'required_arguments': ['filename', 'datetime_column', 'date_component', 'aggregate_column', 'operation'],
+            'optional_arguments': ['query_expression', 'sheet_name', 'sheet_index', 'top_n'],
+        },
+    }
+
+
+def resolve_tabular_reviewer_call_arguments(raw_arguments, analysis_file_contexts,
+                                            fallback_source_hint='workspace',
+                                            fallback_group_id=None,
+                                            fallback_public_workspace_id=None):
+    """Inject filename and source context into an LLM reviewer tool plan."""
+    raw_arguments = dict(raw_arguments or {})
+    normalized_contexts = analysis_file_contexts or []
+    file_context_by_exact_name = {
+        file_context['file_name']: file_context
+        for file_context in normalized_contexts
+        if file_context.get('file_name')
+    }
+    file_context_by_lower_name = {
+        str(file_context.get('file_name') or '').strip().lower(): file_context
+        for file_context in normalized_contexts
+        if file_context.get('file_name')
+    }
+
+    requested_filename = str(raw_arguments.get('filename') or '').strip()
+    resolved_file_context = None
+    if requested_filename:
+        resolved_file_context = (
+            file_context_by_exact_name.get(requested_filename)
+            or file_context_by_lower_name.get(requested_filename.lower())
+        )
+    elif len(normalized_contexts) == 1:
+        resolved_file_context = normalized_contexts[0]
+
+    if not resolved_file_context:
+        if requested_filename:
+            return None, f"Reviewer selected unknown filename '{requested_filename}'."
+        return None, 'Reviewer did not select a filename and multiple files were available.'
+
+    normalized_arguments = dict(raw_arguments)
+    normalized_arguments['filename'] = resolved_file_context['file_name']
+    normalized_arguments['source'] = (
+        resolved_file_context.get('source_hint')
+        or fallback_source_hint
+        or normalized_arguments.get('source')
+        or 'workspace'
+    )
+
+    resolved_group_id = resolved_file_context.get('group_id') or fallback_group_id
+    resolved_public_workspace_id = (
+        resolved_file_context.get('public_workspace_id')
+        or fallback_public_workspace_id
+    )
+    if resolved_group_id:
+        normalized_arguments['group_id'] = resolved_group_id
+    if resolved_public_workspace_id:
+        normalized_arguments['public_workspace_id'] = resolved_public_workspace_id
+
+    if not str(normalized_arguments.get('sheet_name') or '').strip():
+        normalized_arguments.pop('sheet_name', None)
+    if normalized_arguments.get('sheet_index') in ('', None):
+        normalized_arguments.pop('sheet_index', None)
+
+    return normalized_arguments, None
+
+
+def normalize_tabular_reviewer_argument_value(argument_name, argument_value):
+    """Normalize scalar reviewer-planned values to plugin-friendly argument types."""
+    if argument_value is None:
+        return None
+
+    if isinstance(argument_value, bool):
+        return 'true' if argument_value else 'false'
+
+    if argument_name in {'max_rows', 'max_values', 'sheet_index', 'top_n'} and isinstance(argument_value, (int, float)):
+        return str(int(argument_value))
+
+    return argument_value
+
+
+def is_tabular_distinct_url_question(user_question):
+    """Return True when the user is asking for unique or counted URL/site values."""
+    normalized_question = re.sub(r'\s+', ' ', str(user_question or '').strip().lower())
+    if not normalized_question:
+        return False
+
+    count_keywords = (
+        'count',
+        'counts',
+        'how many',
+        'number of',
+        'different',
+        'discrete',
+        'distinct',
+        'unique',
+    )
+    url_keywords = (
+        'http',
+        'https',
+        'link',
+        'links',
+        'sharepoint',
+        'site',
+        'sites',
+        'url',
+        'urls',
+    )
+    return any(keyword in normalized_question for keyword in count_keywords) and any(
+        keyword in normalized_question for keyword in url_keywords
+    )
+
+
+def question_requests_tabular_row_context(user_question):
+    """Return True when the user question implies a need for matching-row context."""
+    normalized_question = re.sub(r'\s+', ' ', str(user_question or '').strip().lower())
+    if not normalized_question:
+        return False
+
+    row_context_keywords = (
+        'appear',
+        'appears',
+        'appearing',
+        'find',
+        'found',
+        'search',
+        'show',
+        'where',
+    )
+    return any(keyword in normalized_question for keyword in row_context_keywords)
+
+
+def question_requests_tabular_exhaustive_results(user_question):
+    """Return True when the user explicitly asks for a full list or all matching results."""
+    normalized_question = re.sub(r'\s+', ' ', str(user_question or '').strip().lower())
+    if not normalized_question:
+        return False
+
+    explicit_phrases = (
+        'all results',
+        'all rows',
+        'all values',
+        'all of them',
+        'complete list',
+        'each one',
+        'every one',
+        'exhaustive',
+        'full list',
+        'list all',
+        'list each',
+        'list every',
+        'list them all',
+        'list them out',
+        'return all',
+        'show all',
+        'show me all',
+    )
+    if any(phrase in normalized_question for phrase in explicit_phrases):
+        return True
+
+    return (
+        'list' in normalized_question
+        and any(token in normalized_question for token in (' all ', ' them', ' out', ' each ', ' every '))
+    )
+
+
+def parse_tabular_result_count(value):
+    """Parse a numeric count from invocation metadata or payloads."""
+    try:
+        parsed_value = int(value)
+    except (TypeError, ValueError):
+        return None
+
+    return parsed_value if parsed_value >= 0 else None
+
+
+def determine_tabular_follow_up_limit(total_available, returned_count, max_cap=200):
+    """Return a larger result limit when the current tool call returned only a partial slice."""
+    total_count = parse_tabular_result_count(total_available)
+    current_count = parse_tabular_result_count(returned_count)
+    if total_count is None or current_count is None or total_count <= current_count:
+        return None
+
+    target_count = min(total_count, max_cap)
+    if target_count <= current_count:
+        return None
+
+    return str(target_count)
+
+
+def extract_tabular_high_signal_search_terms(user_question, max_terms=2):
+    """Extract a short list of likely literal search terms from the user question."""
+    question_text = str(user_question or '').strip()
+    if not question_text:
+        return []
+
+    normalized_question = re.sub(r'\s+', ' ', question_text)
+    lowercase_question = normalized_question.lower()
+    prioritized_terms = []
+    seen_terms = set()
+
+    def add_term(raw_term):
+        rendered_term = str(raw_term or '').strip()
+        if not rendered_term:
+            return
+
+        normalized_term = rendered_term.casefold()
+        if normalized_term in seen_terms:
+            return
+
+        seen_terms.add(normalized_term)
+        prioritized_terms.append(rendered_term)
+
+    for quoted_term in re.findall(r'["\']([^"\']{2,80})["\']', normalized_question):
+        add_term(quoted_term)
+
+    special_terms = (
+        ('sharepoint', 'SharePoint'),
+        ('onedrive', 'OneDrive'),
+        ('teams', 'Teams'),
+        ('ccore', 'CCORe'),
+        ('o365', 'O365'),
+    )
+    for token, rendered_term in special_terms:
+        if token in lowercase_question:
+            add_term(rendered_term)
+
+    ignored_tokens = {
+        'all',
+        'and',
+        'appear',
+        'appears',
+        'are',
+        'cell',
+        'cells',
+        'column',
+        'columns',
+        'count',
+        'counts',
+        'discrete',
+        'distinct',
+        'document',
+        'documents',
+        'does',
+        'every',
+        'file',
+        'for',
+        'from',
+        'get',
+        'how',
+        'in',
+        'is',
+        'it',
+        'link',
+        'links',
+        'location',
+        'locations',
+        'many',
+        'number',
+        'of',
+        'on',
+        'or',
+        'out',
+        'please',
+        'reason',
+        'row',
+        'rows',
+        'search',
+        'sheet',
+        'sheets',
+        'show',
+        'site',
+        'sites',
+        'that',
+        'the',
+        'them',
+        'these',
+        'they',
+        'this',
+        'to',
+        'topic',
+        'unique',
+        'url',
+        'urls',
+        'value',
+        'values',
+        'what',
+        'where',
+        'which',
+        'word',
+        'workbook',
+        'list',
+        'listed',
+        'lists',
+        'lsit',
+    }
+
+    for raw_token in re.findall(r'[A-Za-z0-9][A-Za-z0-9._\-/]{2,}', normalized_question):
+        lowercase_token = raw_token.casefold()
+        if lowercase_token in ignored_tokens:
+            continue
+        add_term(raw_token)
+        if len(prioritized_terms) >= max_terms:
+            break
+
+    return prioritized_terms[:max_terms]
+
+
+def extract_tabular_secondary_filter_terms(user_question, primary_terms=None, max_terms=3):
+    """Return likely cohort/filter terms after excluding the primary topic terms."""
+    excluded_terms = {
+        str(term or '').strip().casefold()
+        for term in (primary_terms or [])
+        if str(term or '').strip()
+    }
+    secondary_terms = []
+
+    for candidate_term in extract_tabular_high_signal_search_terms(
+        user_question,
+        max_terms=max_terms + len(excluded_terms) + 3,
+    ):
+        normalized_candidate_term = str(candidate_term or '').strip().casefold()
+        if not normalized_candidate_term or normalized_candidate_term in excluded_terms:
+            continue
+
+        secondary_terms.append(candidate_term)
+        if len(secondary_terms) >= max_terms:
+            break
+
+    return secondary_terms
+
+
+def normalize_tabular_row_text(value):
+    """Normalize a row cell value for lightweight controller-side term matching."""
+    if value is None:
+        return ''
+
+    return re.sub(r'\s+', ' ', str(value).casefold()).strip()
+
+
+def parse_tabular_column_candidates(raw_columns):
+    """Normalize column arguments from string or list form into a stable list."""
+    if isinstance(raw_columns, list):
+        candidate_columns = raw_columns
+    elif isinstance(raw_columns, str):
+        candidate_columns = raw_columns.split(',')
+    else:
+        return []
+
+    normalized_columns = []
+    seen_columns = set()
+    for candidate_column in candidate_columns:
+        normalized_column = str(candidate_column or '').strip()
+        if not normalized_column:
+            continue
+
+        lowered_column = normalized_column.casefold()
+        if lowered_column in seen_columns:
+            continue
+
+        seen_columns.add(lowered_column)
+        normalized_columns.append(normalized_column)
+
+    return normalized_columns
+
+
+def tabular_value_looks_url_like(value):
+    """Return True when a scalar cell value looks like a URL or site path."""
+    rendered_value = normalize_tabular_row_text(value)
+    if not rendered_value:
+        return False
+
+    return (
+        'http://' in rendered_value
+        or 'https://' in rendered_value
+        or 'sharepoint.com' in rendered_value
+        or '/sites/' in rendered_value
+    )
+
+
+def tabular_result_payload_contains_url_like_content(result_payload):
+    """Return True when a result payload contains URL-like strings."""
+    if not isinstance(result_payload, dict):
+        return False
+
+    candidate_values = []
+    raw_values = result_payload.get('values')
+    if isinstance(raw_values, list):
+        candidate_values.extend(raw_values[:20])
+
+    raw_rows = result_payload.get('data')
+    if isinstance(raw_rows, list):
+        for raw_row in raw_rows[:10]:
+            if not isinstance(raw_row, dict):
+                continue
+            candidate_values.extend(raw_row.values())
+
+    for candidate_value in candidate_values:
+        rendered_candidate = str(candidate_value or '').strip().lower()
+        if not rendered_candidate:
+            continue
+        if (
+            'http://' in rendered_candidate
+            or 'https://' in rendered_candidate
+            or 'sharepoint.com' in rendered_candidate
+            or '/sites/' in rendered_candidate
+        ):
+            return True
+
+    return False
+
+
+def infer_tabular_url_value_column_from_rows(rows, preferred_columns=None):
+    """Infer which returned row column contains URL-like values."""
+    preferred_columns = parse_tabular_column_candidates(preferred_columns)
+    for preferred_column in preferred_columns:
+        if any(
+            isinstance(row, dict) and tabular_value_looks_url_like(row.get(preferred_column))
+            for row in (rows or [])
+        ):
+            return preferred_column
+
+    column_scores = {}
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+
+        for column_name, cell_value in row.items():
+            normalized_column_name = str(column_name or '').strip()
+            if not normalized_column_name or normalized_column_name.startswith('_'):
+                continue
+            if not tabular_value_looks_url_like(cell_value):
+                continue
+
+            column_scores[normalized_column_name] = column_scores.get(normalized_column_name, 0) + 1
+
+    if not column_scores:
+        return None
+
+    return sorted(
+        column_scores.items(),
+        key=lambda item: (-item[1], item[0].casefold()),
+    )[0][0]
+
+
+def infer_tabular_secondary_filter_from_rows(rows, filter_terms, excluded_columns=None):
+    """Infer a likely cohort column/term pair from returned row context."""
+    normalized_excluded_columns = {
+        str(column_name or '').strip().casefold()
+        for column_name in (excluded_columns or [])
+        if str(column_name or '').strip()
+    }
+    normalized_filter_terms = [
+        str(filter_term or '').strip()
+        for filter_term in (filter_terms or [])
+        if str(filter_term or '').strip()
+    ]
+    if not normalized_filter_terms:
+        return None
+
+    candidate_scores = {}
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+
+        for column_name, cell_value in row.items():
+            normalized_column_name = str(column_name or '').strip()
+            if not normalized_column_name or normalized_column_name.startswith('_'):
+                continue
+            if normalized_column_name.casefold() in normalized_excluded_columns:
+                continue
+
+            rendered_cell_value = normalize_tabular_row_text(cell_value)
+            if not rendered_cell_value:
+                continue
+
+            for filter_term in normalized_filter_terms:
+                if str(filter_term).casefold() not in rendered_cell_value:
+                    continue
+
+                score_key = (normalized_column_name, filter_term)
+                candidate_scores[score_key] = candidate_scores.get(score_key, 0) + 1
+
+    if not candidate_scores:
+        return None
+
+    (selected_column, selected_term), match_count = sorted(
+        candidate_scores.items(),
+        key=lambda item: (-item[1], item[0][0].casefold(), item[0][1].casefold()),
+    )[0]
+    return {
+        'column': selected_column,
+        'term': selected_term,
+        'match_count': match_count,
+    }
+
+
+def infer_tabular_url_path_segments(user_question):
+    """Infer URL path truncation when the user is asking about site roots."""
+    normalized_question = re.sub(r'\s+', ' ', str(user_question or '').strip().lower())
+    if not normalized_question:
+        return None
+
+    if 'site' in normalized_question or 'sites' in normalized_question or 'sharepoint' in normalized_question:
+        return '2'
+
+    return None
+
+
+def build_tabular_follow_up_call_signature(function_name, arguments):
+    """Return a stable signature for a follow-up tool call."""
+    normalized_arguments = {}
+    for argument_name, argument_value in (arguments or {}).items():
+        if argument_value in (None, ''):
+            continue
+        normalized_arguments[str(argument_name)] = argument_value
+
+    return f"{function_name}:{json.dumps(normalized_arguments, sort_keys=True, default=str)}"
+
+
+def derive_tabular_follow_up_calls_from_invocations(user_question, invocations):
+    """Derive targeted follow-up calls when initial analytical results are only intermediate."""
+    successful_invocations = [
+        invocation for invocation in (invocations or [])
+        if not get_tabular_invocation_error_message(invocation)
+    ]
+    if not successful_invocations:
+        return []
+
+    wants_distinct_urls = is_tabular_distinct_url_question(user_question)
+    wants_exhaustive_results = question_requests_tabular_exhaustive_results(user_question)
+    wants_row_context = question_requests_tabular_row_context(user_question)
+    search_terms = extract_tabular_high_signal_search_terms(user_question, max_terms=4)
+    primary_search_term = search_terms[0] if search_terms else None
+    secondary_filter_terms = extract_tabular_secondary_filter_terms(
+        user_question,
+        primary_terms=[primary_search_term] if primary_search_term else None,
+        max_terms=3,
+    )
+    has_row_context_tool = any(
+        getattr(invocation, 'function_name', '') in {'search_rows', 'filter_rows', 'query_tabular_data'}
+        for invocation in successful_invocations
+    )
+    has_url_extraction_tool = any(
+        getattr(invocation, 'function_name', '') == 'get_distinct_values'
+        and str(
+            ((getattr(invocation, 'parameters', {}) or {}).get('extract_mode'))
+            or ((get_tabular_invocation_result_payload(invocation) or {}).get('extract_mode'))
+            or ''
+        ).strip().lower() == 'url'
+        for invocation in successful_invocations
+    )
+
+    existing_signatures = {
+        build_tabular_follow_up_call_signature(
+            getattr(invocation, 'function_name', ''),
+            getattr(invocation, 'parameters', {}) or {},
+        )
+        for invocation in successful_invocations
+    }
+    follow_up_calls = []
+
+    for invocation in successful_invocations:
+        function_name = getattr(invocation, 'function_name', '')
+        invocation_parameters = getattr(invocation, 'parameters', {}) or {}
+        result_payload = get_tabular_invocation_result_payload(invocation) or {}
+        filename = str(invocation_parameters.get('filename') or result_payload.get('filename') or '').strip()
+        if not filename:
+            continue
+
+        scope_arguments = {
+            'filename': filename,
+            'source': invocation_parameters.get('source') or 'workspace',
+        }
+        if invocation_parameters.get('group_id'):
+            scope_arguments['group_id'] = invocation_parameters.get('group_id')
+        if invocation_parameters.get('public_workspace_id'):
+            scope_arguments['public_workspace_id'] = invocation_parameters.get('public_workspace_id')
+
+        selected_sheet = get_tabular_invocation_selected_sheet(invocation)
+        if selected_sheet and 'cross-sheet' not in selected_sheet.lower():
+            scope_arguments['sheet_name'] = selected_sheet
+        elif invocation_parameters.get('sheet_name'):
+            scope_arguments['sheet_name'] = invocation_parameters.get('sheet_name')
+        elif invocation_parameters.get('sheet_index') not in (None, ''):
+            scope_arguments['sheet_index'] = invocation_parameters.get('sheet_index')
+
+        if wants_exhaustive_results and function_name in {'search_rows', 'filter_rows', 'query_tabular_data'}:
+            expanded_row_limit = determine_tabular_follow_up_limit(
+                result_payload.get('total_matches'),
+                result_payload.get('returned_rows'),
+            )
+            if expanded_row_limit:
+                expanded_arguments = {
+                    argument_name: argument_value
+                    for argument_name, argument_value in invocation_parameters.items()
+                    if argument_name not in {'user_id', 'conversation_id'} and argument_value not in (None, '')
+                }
+                expanded_arguments.update(scope_arguments)
+                expanded_arguments['max_rows'] = expanded_row_limit
+
+                expanded_signature = build_tabular_follow_up_call_signature(function_name, expanded_arguments)
+                if expanded_signature not in existing_signatures:
+                    follow_up_calls.append({
+                        'function_name': function_name,
+                        'arguments': expanded_arguments,
+                        'reason': 'expand the matching row slice because the user asked for the full result list',
+                    })
+                    existing_signatures.add(expanded_signature)
+
+        if function_name == 'get_distinct_values':
+            target_column = str(invocation_parameters.get('column') or result_payload.get('column') or '').strip()
+            if not target_column:
+                continue
+
+            current_filter_columns = [
+                str(invocation_parameters.get('filter_column') or '').strip(),
+                str(invocation_parameters.get('additional_filter_column') or '').strip(),
+            ]
+            same_column_filter = any(
+                filter_column.casefold() == target_column.casefold()
+                for filter_column in current_filter_columns
+                if filter_column
+            )
+            distinct_count = parse_tabular_result_count(result_payload.get('distinct_count'))
+            returned_values = parse_tabular_result_count(result_payload.get('returned_values'))
+
+            if wants_exhaustive_results:
+                expanded_value_limit = determine_tabular_follow_up_limit(distinct_count, returned_values)
+                if expanded_value_limit:
+                    expanded_arguments = {
+                        argument_name: argument_value
+                        for argument_name, argument_value in invocation_parameters.items()
+                        if argument_name not in {'user_id', 'conversation_id'} and argument_value not in (None, '')
+                    }
+                    expanded_arguments.update(scope_arguments)
+                    expanded_arguments['max_values'] = expanded_value_limit
+
+                    expanded_signature = build_tabular_follow_up_call_signature('get_distinct_values', expanded_arguments)
+                    if expanded_signature not in existing_signatures:
+                        follow_up_calls.append({
+                            'function_name': 'get_distinct_values',
+                            'arguments': expanded_arguments,
+                            'reason': 'expand the returned value list because the user asked for the full result set',
+                        })
+                        existing_signatures.add(expanded_signature)
+
+            needs_broad_row_context = bool(
+                wants_row_context
+                and primary_search_term
+                and not has_row_context_tool
+                and same_column_filter
+                and secondary_filter_terms
+                and distinct_count == 0
+            )
+
+            if wants_row_context and primary_search_term and not has_row_context_tool:
+                row_search_arguments = dict(scope_arguments)
+                row_search_arguments['search_value'] = primary_search_term
+                row_search_arguments['search_columns'] = target_column
+
+                normalize_match_value = invocation_parameters.get('normalize_match')
+                if normalize_match_value not in (None, ''):
+                    row_search_arguments['normalize_match'] = normalize_match_value
+
+                if not needs_broad_row_context:
+                    for argument_name in (
+                        'query_expression',
+                        'filter_column',
+                        'filter_operator',
+                        'filter_value',
+                        'additional_filter_column',
+                        'additional_filter_operator',
+                        'additional_filter_value',
+                    ):
+                        argument_value = invocation_parameters.get(argument_name)
+                        if argument_value in (None, ''):
+                            continue
+                        row_search_arguments[argument_name] = argument_value
+
+                    return_columns = []
+                    for candidate_column in (
+                        invocation_parameters.get('filter_column'),
+                        invocation_parameters.get('additional_filter_column'),
+                        target_column,
+                    ):
+                        normalized_column = str(candidate_column or '').strip()
+                        if not normalized_column or normalized_column in return_columns:
+                            continue
+                        return_columns.append(normalized_column)
+
+                    if return_columns:
+                        row_search_arguments['return_columns'] = ','.join(return_columns)
+
+                row_search_arguments['max_rows'] = '50' if needs_broad_row_context else '25'
+
+                row_search_signature = build_tabular_follow_up_call_signature('search_rows', row_search_arguments)
+                if row_search_signature not in existing_signatures:
+                    follow_up_calls.append({
+                        'function_name': 'search_rows',
+                        'arguments': row_search_arguments,
+                        'reason': (
+                            'collect broad row context for the literal topic before inferring a cohort column'
+                            if needs_broad_row_context else
+                            'collect matching row context for the literal topic before final reasoning'
+                        ),
+                    })
+                    existing_signatures.add(row_search_signature)
+                    has_row_context_tool = True
+
+            if wants_distinct_urls and not str(invocation_parameters.get('extract_mode') or '').strip() and not has_url_extraction_tool:
+                if needs_broad_row_context:
+                    continue
+                if not tabular_result_payload_contains_url_like_content(result_payload):
+                    continue
+
+                extraction_arguments = dict(scope_arguments)
+                extraction_arguments['column'] = target_column
+                for argument_name in (
+                    'query_expression',
+                    'filter_column',
+                    'filter_operator',
+                    'filter_value',
+                    'additional_filter_column',
+                    'additional_filter_operator',
+                    'additional_filter_value',
+                    'normalize_match',
+                    'max_values',
+                ):
+                    argument_value = invocation_parameters.get(argument_name)
+                    if argument_value in (None, ''):
+                        continue
+                    extraction_arguments[argument_name] = argument_value
+
+                extraction_arguments['extract_mode'] = 'url'
+                inferred_path_segments = infer_tabular_url_path_segments(user_question)
+                if inferred_path_segments:
+                    extraction_arguments['url_path_segments'] = inferred_path_segments
+
+                extraction_signature = build_tabular_follow_up_call_signature('get_distinct_values', extraction_arguments)
+                if extraction_signature not in existing_signatures:
+                    follow_up_calls.append({
+                        'function_name': 'get_distinct_values',
+                        'arguments': extraction_arguments,
+                        'reason': 'extract canonical URL or site values from composite text cells',
+                    })
+                    existing_signatures.add(extraction_signature)
+                    has_url_extraction_tool = True
+
+        if function_name == 'search_rows' and wants_distinct_urls and not has_url_extraction_tool:
+            search_rows_result_rows = get_tabular_invocation_data_rows(invocation)
+            if not search_rows_result_rows:
+                continue
+
+            target_column = None
+            searched_columns = parse_tabular_column_candidates(
+                result_payload.get('searched_columns') or invocation_parameters.get('search_columns')
+            )
+            if len(searched_columns) == 1:
+                target_column = searched_columns[0]
+            else:
+                target_column = infer_tabular_url_value_column_from_rows(
+                    search_rows_result_rows,
+                    preferred_columns=searched_columns,
+                )
+
+            if not target_column:
+                continue
+
+            extraction_arguments = dict(scope_arguments)
+            extraction_arguments['column'] = target_column
+
+            inferred_filter = infer_tabular_secondary_filter_from_rows(
+                search_rows_result_rows,
+                secondary_filter_terms,
+                excluded_columns=[target_column],
+            )
+            if inferred_filter:
+                extraction_arguments['filter_column'] = inferred_filter['column']
+                extraction_arguments['filter_operator'] = 'contains'
+                extraction_arguments['filter_value'] = inferred_filter['term']
+            elif not secondary_filter_terms:
+                for argument_name in (
+                    'query_expression',
+                    'filter_column',
+                    'filter_operator',
+                    'filter_value',
+                    'additional_filter_column',
+                    'additional_filter_operator',
+                    'additional_filter_value',
+                ):
+                    argument_value = invocation_parameters.get(argument_name)
+                    if argument_value in (None, ''):
+                        continue
+                    extraction_arguments[argument_name] = argument_value
+            else:
+                continue
+
+            normalize_match_value = invocation_parameters.get('normalize_match')
+            if normalize_match_value not in (None, ''):
+                extraction_arguments['normalize_match'] = normalize_match_value
+
+            extraction_arguments['extract_mode'] = 'url'
+            inferred_path_segments = infer_tabular_url_path_segments(user_question)
+            if inferred_path_segments:
+                extraction_arguments['url_path_segments'] = inferred_path_segments
+
+            expanded_value_limit = None
+            if wants_exhaustive_results:
+                expanded_value_limit = determine_tabular_follow_up_limit(
+                    result_payload.get('total_matches'),
+                    result_payload.get('returned_rows'),
+                )
+            if expanded_value_limit:
+                extraction_arguments['max_values'] = expanded_value_limit
+            elif invocation_parameters.get('max_rows') not in (None, ''):
+                extraction_arguments['max_values'] = invocation_parameters.get('max_rows')
+
+            extraction_signature = build_tabular_follow_up_call_signature('get_distinct_values', extraction_arguments)
+            if extraction_signature not in existing_signatures:
+                follow_up_calls.append({
+                    'function_name': 'get_distinct_values',
+                    'arguments': extraction_arguments,
+                    'reason': 'extract canonical URL or site values after inferring the cohort column from matching rows',
+                })
+                existing_signatures.add(extraction_signature)
+                has_url_extraction_tool = True
+
+        if len(follow_up_calls) >= 2:
+            break
+
+    return follow_up_calls[:2]
+
+
+async def maybe_recover_tabular_analysis_with_llm_reviewer(chat_service, kernel,
+                                                           tabular_plugin, plugin_logger,
+                                                           user_question, schema_context,
+                                                           source_context,
+                                                           analysis_file_contexts,
+                                                           user_id, conversation_id,
+                                                           execution_mode,
+                                                           allowed_function_names,
+                                                           workbook_sheet_hints=None,
+                                                           workbook_related_sheet_hints=None,
+                                                           workbook_cross_sheet_bridge_hints=None,
+                                                           tool_error_messages=None,
+                                                           execution_gap_messages=None,
+                                                           discovery_feedback_messages=None,
+                                                           fallback_source_hint='workspace',
+                                                           fallback_group_id=None,
+                                                           fallback_public_workspace_id=None):
+    """Use an LLM reviewer to choose analytical tool calls when the main SK loop stalls."""
+    reviewer_allowed_function_names = [
+        function_name for function_name in (allowed_function_names or [])
+        if function_name in get_tabular_analysis_function_names()
+    ]
+    if not reviewer_allowed_function_names:
+        return None
+
+    reviewer_manifest = {
+        function_name: get_tabular_reviewer_function_manifest().get(function_name, {})
+        for function_name in reviewer_allowed_function_names
+    }
+
+    reviewer_sections = [
+        f"QUESTION:\n{user_question}",
+        f"EXECUTION_MODE: {execution_mode}",
+        f"SOURCE_CONTEXT:\n{source_context}",
+        f"FILE_SCHEMAS:\n{schema_context}",
+        "FUNCTION_MANIFEST:\n" + json.dumps(reviewer_manifest, indent=2, default=str),
+    ]
+    if discovery_feedback_messages:
+        reviewer_sections.append(
+            'WORKBOOK_DISCOVERY_RESULTS:\n' + json.dumps(discovery_feedback_messages, indent=2, default=str)
+        )
+    if tool_error_messages:
+        reviewer_sections.append(
+            'PREVIOUS_TOOL_ERRORS:\n' + json.dumps(tool_error_messages, indent=2, default=str)
+        )
+    if execution_gap_messages:
+        reviewer_sections.append(
+            'PREVIOUS_EXECUTION_GAPS:\n' + json.dumps(execution_gap_messages, indent=2, default=str)
+        )
+    if workbook_sheet_hints:
+        reviewer_sections.append(
+            'LIKELY_WORKSHEET_HINTS:\n' + json.dumps(workbook_sheet_hints, indent=2, default=str)
+        )
+    if workbook_related_sheet_hints:
+        reviewer_sections.append(
+            'QUESTION_RELEVANT_WORKSHEETS:\n' + json.dumps(workbook_related_sheet_hints, indent=2, default=str)
+        )
+    if workbook_cross_sheet_bridge_hints:
+        reviewer_sections.append(
+            'CROSS_SHEET_BRIDGE_HINTS:\n' + json.dumps(workbook_cross_sheet_bridge_hints, indent=2, default=str)
+        )
+
+    review_history = ChatHistory()
+    review_history.add_system_message(
+        "You are a tabular recovery planner. A previous workbook analysis came close but did not reach computed analytical results. "
+        "Choose the next 1-3 analytical tabular calls that should be executed directly. "
+        "Return JSON only with this schema: {\"reasoning_summary\": \"...\", \"calls\": [{\"function\": \"get_distinct_values\", \"arguments\": {...}}]}. "
+        "Rules: Use only the listed analytical functions. Do not return describe_tabular_file. "
+        "Prefer the smallest number of high-confidence calls needed to compute the answer. "
+        "For deterministic how-many, discrete, unique, or canonical-list questions, prefer count_rows or get_distinct_values over sampled-row tools when possible. "
+        "When the user is asking where a topic, phrase, code, path, identifier, or other value appears and the relevant column is unclear, prefer search_rows. Omit search_columns to search all columns, and use return_columns to surface the fields most relevant to the question. "
+        "When the user wants values from a subset or pattern within one column, prefer get_distinct_values with filter_column/filter_operator/filter_value instead of an unfiltered full-column distinct-value call. "
+        "When the answer depends on two literal column conditions, prefer count_rows, get_distinct_values, or filter_rows with filter_column/filter_operator/filter_value plus additional_filter_column/additional_filter_operator/additional_filter_value instead of a broad query_expression call. "
+        "When the user is asking for URLs, sites, links, or regex-like identifiers embedded inside a text cell, prefer get_distinct_values with extract_mode='url' or extract_mode='regex' rather than counting whole-cell strings. Use url_path_segments when you need canonical higher-level URL roots. "
+        "If whether an embedded URL or identifier counts depends on surrounding text in the original cell rather than the extracted value itself, search/filter the original text column first. Prefer filter_rows for that text search when the matching row context matters, and set max_rows high enough to return the full cohort when it is modest. If a prior tool result is limited and the user explicitly asked for the full list, rerun with a higher max_rows or max_values instead of stopping at the preview slice. "
+        "Do not classify extracted URLs solely by whether the URL text itself contains the keyword when the original cell text already defines the category. "
+        "For URLs, links, paths, and literal identifiers, set normalize_match=false unless normalization is clearly necessary. "
+        "Prefer sheet_name when the correct worksheet is evident from the schemas or discovery results. "
+        "Omit sheet_name only for a deliberate cross-sheet analytical search. "
+        "Use filename exactly as listed in FILE_SCHEMAS. "
+        "Do not include user_id or conversation_id in arguments. Do not wrap the JSON in markdown fences."
+    )
+    review_history.add_user_message("\n\n".join(reviewer_sections))
+
+    reviewer_settings = AzureChatPromptExecutionSettings(service_id="tabular-analysis")
+
+    try:
+        reviewer_result = await chat_service.get_chat_message_contents(
+            review_history,
+            reviewer_settings,
+            kernel=kernel,
+        )
+    except Exception as reviewer_error:
+        log_event(
+            f"[Tabular SK Analysis] Reviewer recovery call failed: {reviewer_error}",
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        return None
+
+    reviewer_text = ''
+    if reviewer_result and reviewer_result[0].content:
+        reviewer_text = reviewer_result[0].content.strip()
+
+    reviewer_calls = parse_tabular_reviewer_plan(reviewer_text)
+    if not reviewer_calls:
+        log_event(
+            '[Tabular SK Analysis] Reviewer recovery did not return an executable analytical plan',
+            extra={'reviewer_output_preview': reviewer_text[:500]},
+            level=logging.WARNING,
+        )
+        return None
+
+    baseline_invocation_count = len(plugin_logger.get_invocations_for_conversation(
+        user_id,
+        conversation_id,
+        limit=1000,
+    ))
+    executed_function_names = []
+    reviewer_plan_errors = []
+
+    for reviewer_call in reviewer_calls[:3]:
+        function_name = reviewer_call['function_name']
+        if function_name not in reviewer_allowed_function_names:
+            reviewer_plan_errors.append(
+                f"Reviewer selected disallowed function '{function_name}'."
+            )
+            continue
+
+        call_arguments, argument_error = resolve_tabular_reviewer_call_arguments(
+            reviewer_call.get('arguments'),
+            analysis_file_contexts,
+            fallback_source_hint=fallback_source_hint,
+            fallback_group_id=fallback_group_id,
+            fallback_public_workspace_id=fallback_public_workspace_id,
+        )
+        if argument_error:
+            reviewer_plan_errors.append(argument_error)
+            continue
+
+        plugin_function = getattr(tabular_plugin, function_name, None)
+        if plugin_function is None:
+            reviewer_plan_errors.append(
+                f"Reviewer selected unavailable function '{function_name}'."
+            )
+            continue
+
+        function_signature = inspect.signature(plugin_function)
+        executable_arguments = {
+            'user_id': user_id,
+            'conversation_id': conversation_id,
+        }
+        for argument_name, argument_value in call_arguments.items():
+            if argument_name not in function_signature.parameters:
+                continue
+
+            normalized_argument_value = normalize_tabular_reviewer_argument_value(
+                argument_name,
+                argument_value,
+            )
+            if normalized_argument_value is None:
+                continue
+
+            executable_arguments[argument_name] = normalized_argument_value
+
+        try:
+            await plugin_function(**executable_arguments)
+            executed_function_names.append(function_name)
+        except Exception as execution_error:
+            reviewer_plan_errors.append(f"{function_name}: {execution_error}")
+
+    invocations_after = plugin_logger.get_invocations_for_conversation(
+        user_id,
+        conversation_id,
+        limit=1000,
+    )
+    reviewer_invocations = get_new_plugin_invocations(invocations_after, baseline_invocation_count)
+    successful_analytical_invocations, failed_analytical_invocations = split_tabular_analysis_invocations(
+        reviewer_invocations
+    )
+    for follow_up_round in range(2):
+        follow_up_calls = derive_tabular_follow_up_calls_from_invocations(
+            user_question,
+            successful_analytical_invocations,
+        )
+        if not follow_up_calls:
+            break
+
+        auto_follow_up_names = []
+        for follow_up_call in follow_up_calls:
+            function_name = follow_up_call.get('function_name')
+            if function_name not in reviewer_allowed_function_names:
+                reviewer_plan_errors.append(
+                    f"Auto follow-up selected disallowed function '{function_name}'."
+                )
+                continue
+
+            plugin_function = getattr(tabular_plugin, function_name, None)
+            if plugin_function is None:
+                reviewer_plan_errors.append(
+                    f"Auto follow-up selected unavailable function '{function_name}'."
+                )
+                continue
+
+            function_signature = inspect.signature(plugin_function)
+            executable_arguments = {
+                'user_id': user_id,
+                'conversation_id': conversation_id,
+            }
+            for argument_name, argument_value in (follow_up_call.get('arguments') or {}).items():
+                if argument_name not in function_signature.parameters:
+                    continue
+
+                normalized_argument_value = normalize_tabular_reviewer_argument_value(
+                    argument_name,
+                    argument_value,
+                )
+                if normalized_argument_value is None:
+                    continue
+
+                executable_arguments[argument_name] = normalized_argument_value
+
+            try:
+                await plugin_function(**executable_arguments)
+                auto_follow_up_names.append(function_name)
+            except Exception as execution_error:
+                reviewer_plan_errors.append(f"{function_name}: {execution_error}")
+
+        if not auto_follow_up_names:
+            break
+
+        log_event(
+            '[Tabular SK Analysis] Reviewer recovery executed automatic analytical follow-up calls',
+            extra={
+                'follow_up_functions': auto_follow_up_names,
+                'initial_reviewer_functions': executed_function_names,
+                'follow_up_round': follow_up_round + 1,
+            },
+            level=logging.INFO,
+        )
+        executed_function_names.extend(auto_follow_up_names)
+        invocations_after = plugin_logger.get_invocations_for_conversation(
+            user_id,
+            conversation_id,
+            limit=1000,
+        )
+        reviewer_invocations = get_new_plugin_invocations(invocations_after, baseline_invocation_count)
+        successful_analytical_invocations, failed_analytical_invocations = split_tabular_analysis_invocations(
+            reviewer_invocations
+        )
+
+    fallback = build_tabular_analysis_fallback_from_invocations(successful_analytical_invocations)
+    failed_tool_error_messages = summarize_tabular_invocation_errors(failed_analytical_invocations)
+
+    if fallback:
+        log_event(
+            '[Tabular SK Analysis] Reviewer recovery produced computed analytical tool results',
+            extra={
+                'reviewer_functions': executed_function_names,
+                'successful_tool_count': len(successful_analytical_invocations),
+                'failed_tool_count': len(failed_analytical_invocations),
+            },
+            level=logging.INFO,
+        )
+        return {
+            'fallback': fallback,
+            'tool_error_messages': failed_tool_error_messages,
+            'reviewer_plan_errors': reviewer_plan_errors,
+        }
+
+    if reviewer_plan_errors or failed_tool_error_messages:
+        log_event(
+            '[Tabular SK Analysis] Reviewer recovery executed but did not produce usable analytical results',
+            extra={
+                'reviewer_functions': executed_function_names,
+                'reviewer_plan_errors': reviewer_plan_errors[:5],
+                'tool_errors': failed_tool_error_messages[:5],
+                'reviewer_output_preview': reviewer_text[:500],
+            },
+            level=logging.WARNING,
+        )
+
+    return None
+
+
 def filter_tabular_citation_invocations(invocations):
     """Hide discovery-only citation noise when analytical tabular calls exist."""
     if not invocations:
@@ -1363,6 +3012,50 @@ def _tokenize_tabular_sheet_text(text):
             tokens.append(normalized_token)
 
     return tokens
+
+
+def _coerce_citation_sort_number(value):
+    """Return a numeric citation sort value when possible."""
+    if value in (None, '') or isinstance(value, bool):
+        return None
+
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    raw_value = str(value).strip()
+    if not raw_value:
+        return None
+
+    try:
+        return float(raw_value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_hybrid_citation_sort_key(citation):
+    """Sort numeric page citations first, then metadata-style citations safely."""
+    if not isinstance(citation, dict):
+        return (0, -1.0, -1.0, '', '')
+
+    page_number = citation.get('page_number')
+    page_value = _coerce_citation_sort_number(page_number)
+    chunk_sequence_value = _coerce_citation_sort_number(citation.get('chunk_sequence'))
+    page_label = str(page_number or '').strip().lower()
+    metadata_type = str(citation.get('metadata_type') or '').strip().lower()
+
+    if page_value is not None:
+        return (
+            2,
+            page_value,
+            chunk_sequence_value if chunk_sequence_value is not None else -1.0,
+            page_label,
+            metadata_type,
+        )
+
+    if chunk_sequence_value is not None:
+        return (1, chunk_sequence_value, -1.0, page_label, metadata_type)
+
+    return (0, -1.0, -1.0, page_label, metadata_type)
 
 
 def _extract_tabular_entity_anchor_terms(question_text):
@@ -1642,7 +3335,8 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                                    conversation_id, gpt_model, settings,
                                    source_hint="workspace", group_id=None,
                                    public_workspace_id=None,
-                                   execution_mode='analysis'):
+                                   execution_mode='analysis',
+                                   tabular_file_contexts=None):
     """Run lightweight SK with TabularProcessingPlugin to analyze tabular data.
 
     Creates a temporary Kernel with only the TabularProcessingPlugin, uses the
@@ -1661,8 +3355,16 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
         execution_mode = execution_mode if execution_mode in {'analysis', 'schema_summary', 'entity_lookup'} else 'analysis'
         schema_summary_mode = execution_mode == 'schema_summary'
         entity_lookup_mode = execution_mode == 'entity_lookup'
+        analysis_file_contexts = normalize_tabular_file_contexts_for_analysis(
+            tabular_filenames=tabular_filenames,
+            tabular_file_contexts=tabular_file_contexts,
+            fallback_source_hint=source_hint,
+            fallback_group_id=group_id,
+            fallback_public_workspace_id=public_workspace_id,
+        )
+        analysis_filenames = [file_context['file_name'] for file_context in analysis_file_contexts]
         log_event(
-            f"[Tabular SK Analysis] Starting {execution_mode} analysis for files: {tabular_filenames}",
+            f"[Tabular SK Analysis] Starting {execution_mode} analysis for files: {analysis_filenames}",
             level=logging.INFO,
         )
 
@@ -1703,11 +3405,12 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
         kernel.add_service(chat_service)
 
         # 3. Pre-dispatch: load file schemas to eliminate discovery LLM rounds
-        source_context = f"source='{source_hint}'"
-        if group_id:
-            source_context += f", group_id='{group_id}'"
-        if public_workspace_id:
-            source_context += f", public_workspace_id='{public_workspace_id}'"
+        source_context = build_tabular_analysis_source_context(
+            analysis_file_contexts,
+            fallback_source_hint=source_hint,
+            fallback_group_id=group_id,
+            fallback_public_workspace_id=public_workspace_id,
+        )
 
         schema_parts = []
         workbook_sheet_hints = {}
@@ -1716,22 +3419,28 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
         workbook_blob_locations = {}
         retry_sheet_overrides = {}
         previous_failed_call_parameters = []  # entity lookup: concrete failed call params for retry hints
+        has_multi_sheet_workbook = False
         sheet_score_match_fn = _score_tabular_entity_sheet_match if entity_lookup_mode else _score_tabular_sheet_match
-        allowed_function_filters = {
-            'included_functions': [
-                f"tabular_processing-{function_name}"
-                for function_name in (
-                    ['describe_tabular_file']
-                    if schema_summary_mode else
-                    sorted(get_tabular_analysis_function_names())
-                )
-            ]
-        }
-        for fname in tabular_filenames:
+        for file_context in analysis_file_contexts:
+            fname = file_context['file_name']
+            file_source_hint = file_context.get('source_hint', source_hint)
+            file_group_id = file_context.get('group_id')
+            file_public_workspace_id = file_context.get('public_workspace_id')
+            schema_source_context = {'source': file_source_hint}
+            if file_group_id:
+                schema_source_context['group_id'] = file_group_id
+            if file_public_workspace_id:
+                schema_source_context['public_workspace_id'] = file_public_workspace_id
             try:
                 container, blob_path = tabular_plugin._resolve_blob_location_with_fallback(
-                    user_id, conversation_id, fname, source_hint,
-                    group_id=group_id, public_workspace_id=public_workspace_id
+                    user_id, conversation_id, fname, file_source_hint,
+                    group_id=file_group_id, public_workspace_id=file_public_workspace_id
+                )
+                tabular_plugin.remember_resolved_blob_location(
+                    file_source_hint,
+                    fname,
+                    container,
+                    blob_path,
                 )
                 schema_info = tabular_plugin._build_workbook_schema_summary(
                     container,
@@ -1742,6 +3451,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 workbook_blob_locations[fname] = (container, blob_path)
 
                 if schema_info.get('is_workbook') and schema_info.get('sheet_count', 0) > 1:
+                    has_multi_sheet_workbook = True
                     # Build a compact sheet directory so the model can pick the
                     # relevant sheet itself instead of us guessing.
                     per_sheet = schema_info.get('per_sheet_schemas', {})
@@ -1798,6 +3508,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                         })
                     directory_schema = {
                         'filename': fname,
+                        'source_context': schema_source_context,
                         'is_workbook': True,
                         'sheet_count': schema_info.get('sheet_count', 0),
                         'likely_sheet': likely_sheet,
@@ -1813,7 +3524,9 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                         level=logging.DEBUG,
                     )
                 else:
-                    schema_parts.append(json.dumps(schema_info, indent=2, default=str))
+                    schema_with_context = dict(schema_info)
+                    schema_with_context['source_context'] = schema_source_context
+                    schema_parts.append(json.dumps(schema_with_context, indent=2, default=str))
                     if schema_info.get('is_workbook'):
                         # Single-sheet workbook — set default so the model needs no sheet arg
                         single_sheet = (schema_info.get('sheet_names') or [None])[0]
@@ -1822,12 +3535,31 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     df = tabular_plugin._read_tabular_blob_to_dataframe(container, blob_path)
                     log_event(f"[Tabular SK Analysis] Pre-loaded schema for {fname} ({len(df)} rows)", level=logging.DEBUG)
             except Exception as e:
-                log_event(f"[Tabular SK Analysis] Failed to pre-load schema for {fname}: {e}", level=logging.WARNING)
-                schema_parts.append(json.dumps({"filename": fname, "error": f"Could not pre-load: {str(e)}"}))
+                log_event(
+                    f"[Tabular SK Analysis] Failed to pre-load schema for {fname} "
+                    f"(source={file_source_hint}, group_id={file_group_id}, public_workspace_id={file_public_workspace_id}): {e}",
+                    level=logging.WARNING,
+                )
+                schema_parts.append(json.dumps({
+                    "filename": fname,
+                    "source_context": schema_source_context,
+                    "error": f"Could not pre-load: {str(e)}",
+                }))
 
         schema_context = "\n".join(schema_parts)
+        allow_multi_sheet_discovery = has_multi_sheet_workbook and not schema_summary_mode
+        allowed_function_names = ['describe_tabular_file'] if schema_summary_mode else sorted(get_tabular_analysis_function_names())
+        if allow_multi_sheet_discovery:
+            allowed_function_names = ['describe_tabular_file'] + allowed_function_names
+        allowed_function_filters = {
+            'included_functions': [
+                f"tabular_processing-{function_name}"
+                for function_name in allowed_function_names
+            ]
+        }
 
-        def build_system_prompt(force_tool_use=False, tool_error_messages=None, execution_gap_messages=None):
+        def build_system_prompt(force_tool_use=False, tool_error_messages=None,
+                                execution_gap_messages=None, discovery_feedback_messages=None):
             if schema_summary_mode:
                 retry_prefix = ""
                 if force_tool_use:
@@ -1896,6 +3628,17 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     "PREVIOUS EXECUTION GAPS:\n"
                     f"{rendered_gaps}\n"
                     "Correct the analysis plan and query the missing related worksheets before answering.\n\n"
+                )
+
+            discovery_feedback = ""
+            if discovery_feedback_messages:
+                rendered_discovery_feedback = "\n".join(
+                    f"- {message}" for message in discovery_feedback_messages
+                )
+                discovery_feedback = (
+                    "WORKBOOK DISCOVERY RESULTS:\n"
+                    f"{rendered_discovery_feedback}\n"
+                    "Use these discovery results to choose the next analytical tool calls. Discovery alone does not answer the question.\n\n"
                 )
 
             missing_sheet_feedback = ""
@@ -1976,6 +3719,13 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     "These recovery hints override the original likely-sheet guess when the previous tool call failed on the wrong worksheet.\n\n"
                 )
 
+            discovery_step_feedback = ""
+            if allow_multi_sheet_discovery:
+                discovery_step_feedback = (
+                    "MULTI-SHEET DISCOVERY:\n"
+                    "If the right worksheet or columns are unclear, call describe_tabular_file without sheet_name as an exploration step, then continue with one or more analytical tool calls. You may need multiple tool rounds.\n\n"
+                )
+
             related_sheet_feedback = ""
             if workbook_related_sheet_hints:
                 rendered_related_sheet_hints = "\n".join(
@@ -2027,30 +3777,38 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     f"{entity_retry_prefix}"
                     f"{tool_error_feedback}"
                     f"{execution_gap_feedback}"
+                    f"{discovery_feedback}"
                     f"{recovery_sheet_feedback}"
                     f"{sheet_hint_feedback}"
                     f"{related_sheet_feedback}"
+                    f"{discovery_step_feedback}"
                     f"{missing_sheet_feedback}"
                     f"FILE SCHEMAS:\n"
                     f"{schema_context}\n\n"
-                    "AVAILABLE FUNCTIONS: filter_rows, query_tabular_data, lookup_value, get_distinct_values, count_rows, "
-                    "filter_rows_by_related_values, count_rows_by_related_values, aggregate_column, group_by_aggregate, and group_by_datetime_component.\n\n"
-                    "Discovery functions are not available in this analysis run because schema context is already pre-loaded.\n\n"
+                    f"AVAILABLE FUNCTIONS: {', '.join(allowed_function_names)}.\n\n"
+                    + (
+                        "Workbook discovery is available through describe_tabular_file. Discovery-only results do NOT complete the analysis. After exploration, continue with analytical functions before answering.\n\n"
+                        if allow_multi_sheet_discovery else
+                        "Discovery functions are not available in this analysis run because schema context is already pre-loaded.\n\n"
+                    )
+                    +
                     "IMPORTANT:\n"
-                    "1. If the question includes an exact identifier or exact entity name and the correct starting worksheet is unclear, begin with filter_rows or query_tabular_data without sheet_name so the plugin can perform a cross-sheet discovery search.\n"
-                    "2. After the first discovery step, pass sheet_name='<name>' on follow-up analytical calls for multi-sheet workbooks. Do not rely on a default sheet for cross-sheet entity lookups.\n"
-                    "3. Use filter_rows or query_tabular_data first when you need full matching rows. Use lookup_value only when you already know the exact worksheet and target column.\n"
-                    "4. Do not start with aggregate_column, group_by_aggregate, or group_by_datetime_component until you have located the relevant entity rows.\n"
-                    "5. When using query_tabular_data, use simple DataFrame.query() syntax with backticked column names for columns containing spaces. Avoid method calls such as .str.lower() or .astype(...).\n"
-                    "6. Then query other relevant worksheets explicitly to collect related records.\n"
-                    "7. When a retrieved row contains a secondary identifier such as ReturnID, CaseID, AccountID, PaymentID, W2ID, or Form1099ID, reuse it to query dependent worksheets.\n"
-                    "8. Do not stop after the first successful row if the question asks for related records across sheets.\n"
-                    "9. If a requested record type has no corresponding worksheet in the workbook, say that the workbook does not contain that record type.\n"
-                    "10. Clearly distinguish between no matching rows and no corresponding worksheet.\n"
-                    "11. Summarize concrete found records sheet-by-sheet using the tool results, not schema placeholders.\n"
-                    "12. For count or percentage questions involving a cohort defined on one sheet and facts on another, prefer get_distinct_values, count_rows, filter_rows_by_related_values, or count_rows_by_related_values over manually counting sampled rows.\n"
-                    "13. Use normalize_match=true when matching names, owners, assignees, engineers, or similar entity-text columns across worksheets.\n"
-                    "14. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report."
+                    "0. Use the source_context listed in FILE SCHEMAS for the matching filename when calling tabular_processing functions.\n"
+                    "1. If the right worksheet is unclear on a multi-sheet workbook, you may call describe_tabular_file without sheet_name first, then continue with analytical tool calls.\n"
+                    "2. If the question includes an exact identifier, exact entity name, or asks where a topic or value appears and the correct starting worksheet or column is unclear, begin with search_rows, filter_rows, or query_tabular_data without sheet_name so the plugin can perform a cross-sheet discovery search. Omit search_columns on search_rows to search all columns, and use return_columns to surface the fields most relevant to the lookup.\n"
+                    "3. After the first discovery step, pass sheet_name='<name>' on follow-up analytical calls for multi-sheet workbooks. Do not rely on a default sheet for cross-sheet entity lookups.\n"
+                    "4. Use search_rows, filter_rows, or query_tabular_data first when you need full matching rows. Use lookup_value only when you already know the exact worksheet and target column.\n"
+                    "5. Do not start with aggregate_column, group_by_aggregate, or group_by_datetime_component until you have located the relevant entity rows.\n"
+                    "6. When using query_tabular_data, use simple DataFrame.query() syntax with backticked column names for columns containing spaces. Avoid method calls such as .str.lower() or .astype(...).\n"
+                    "7. Then query other relevant worksheets explicitly to collect related records.\n"
+                    "8. When a retrieved row contains a secondary identifier such as ReturnID, CaseID, AccountID, PaymentID, W2ID, or Form1099ID, reuse it to query dependent worksheets.\n"
+                    "9. Do not stop after the first successful row if the question asks for related records across sheets.\n"
+                    "10. If a requested record type has no corresponding worksheet in the workbook, say that the workbook does not contain that record type.\n"
+                    "11. Clearly distinguish between no matching rows and no corresponding worksheet.\n"
+                    "12. Summarize concrete found records sheet-by-sheet using the tool results, not schema placeholders.\n"
+                    "13. For count or percentage questions involving a cohort defined on one sheet and facts on another, prefer get_distinct_values, count_rows, filter_rows_by_related_values, or count_rows_by_related_values over manually counting sampled rows.\n"
+                    "14. Use normalize_match=true when matching names, owners, assignees, engineers, or similar entity-text columns across worksheets.\n"
+                    "15. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report."
                 )
 
             return (
@@ -2062,39 +3820,49 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 f"{retry_prefix}"
                 f"{tool_error_feedback}"
                 f"{execution_gap_feedback}"
+                f"{discovery_feedback}"
                 f"{recovery_sheet_feedback}"
                 f"{sheet_hint_feedback}"
                 f"{related_sheet_feedback}"
                 f"{cross_sheet_bridge_feedback}"
+                f"{discovery_step_feedback}"
                 f"{missing_sheet_feedback}"
                 f"FILE SCHEMAS:\n"
                 f"{schema_context}\n\n"
-                "AVAILABLE FUNCTIONS: lookup_value, get_distinct_values, count_rows, filter_rows, query_tabular_data, "
-                "filter_rows_by_related_values, count_rows_by_related_values, aggregate_column, group_by_aggregate, and group_by_datetime_component for year/quarter/month/week/day/hour trend analysis.\n\n"
-                "Discovery functions are not available in this analysis run because schema context is already pre-loaded.\n\n"
+                f"AVAILABLE FUNCTIONS: {', '.join(allowed_function_names)} for year/quarter/month/week/day/hour trend analysis.\n\n"
+                + (
+                    "Workbook discovery is available through describe_tabular_file. Discovery-only results do NOT complete the analysis. After exploration, continue with analytical functions before answering.\n\n"
+                    if allow_multi_sheet_discovery else
+                    "Discovery functions are not available in this analysis run because schema context is already pre-loaded.\n\n"
+                )
+                +
                 "IMPORTANT:\n"
-                "1. Use the pre-loaded schema to pick the correct columns, then call the plugin functions.\n"
-                "2. For multi-sheet workbooks, review the sheet_directory to find the most relevant sheet for the question. Pass sheet_name='<name>' in every analytical tool call unless a trustworthy default sheet has already been established. If a CROSS-SHEET BRIDGE PLAN is provided, query the listed worksheets explicitly and do not rely on a default sheet.\n"
-                "3. If a previous tool error says a requested column is missing on the current sheet and suggests candidate sheets, switch to one of those candidate sheets immediately.\n"
-                "4. For account/category lookup questions at a specific period or metric, use lookup_value first. Provide lookup_column, lookup_value, and target_column.\n"
-                "5. If lookup_value is not sufficient, use filter_rows or query_tabular_data on the label column, then read the requested period column.\n"
-                "6. For deterministic how-many questions, use count_rows instead of estimating counts from partial returned rows.\n"
-                "7. For cohort, membership, ownership-share, or percentage questions where one sheet defines the group and another sheet contains the fact rows, use get_distinct_values, filter_rows_by_related_values, or count_rows_by_related_values.\n"
-                "8. When the question asks for one named member's share within that cohort, prefer count_rows_by_related_values and either read source_value_match_counts from the helper result or rerun count_rows_by_related_values with source_filter_column/source_filter_value on the reference sheet. Do not fall back to query_tabular_data or filter_rows on the fact sheet with a guessed exact text value unless the workbook already exposed that canonical target value.\n"
-                "9. Use normalize_match=true when matching names, owners, assignees, engineers, or similar entity-text columns across worksheets.\n"
-                "10. Only use aggregate_column when the user explicitly asks for a sum, average, min, max, or count across rows and count_rows is not the simpler deterministic option.\n"
-                "11. For time-based questions on datetime columns, use group_by_datetime_component.\n"
-                "12. For threshold, ranking, comparison, or correlation-like questions, first filter/query the relevant rows, then compute grouped metrics.\n"
-                "13. When the question asks for grouped results for each entity or category and a cross-sheet bridge plan or relationship hint is available, use the reference worksheet to identify the canonical entities or categories and the fact worksheet to compute the metric. Do not answer 'each X' by grouping a yes/no, boolean, or membership-flag column unless the user explicitly asked about that flag.\n"
-                "14. When the question asks for rows satisfying multiple conditions, prefer one combined query_expression using and/or instead of separate broad queries that you plan to intersect later.\n"
-                "15. Batch multiple independent function calls in a SINGLE response whenever possible.\n"
-                "16. Keep max_rows as small as possible. Only increase it when the user explicitly asked for an exhaustive row list or export; otherwise return total_matches plus representative rows.\n"
-                "17. For analytical questions, prefer deterministic counts plus lookup/filter/query/grouped computations over raw row or preview output.\n"
-                "18. For identifier-based workbook questions, locate the identifier on the correct sheet before explaining downstream calculations.\n"
-                "19. For peak, busiest, highest, or lowest questions, use grouped functions and inspect the highest_group, highest_value, lowest_group, and lowest_value summary fields.\n"
-                "20. Return only computed findings and name the strongest drivers clearly.\n"
-                "21. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report.\n"
-                "22. When using query_tabular_data, use simple DataFrame.query() syntax with backticked column names for columns containing spaces. Avoid method calls such as .str.lower(), .astype(...), or other Python expressions that DataFrame.query() may reject."
+                "1. Use the pre-loaded schema to pick the correct columns, then call the plugin functions. Use the source_context listed in FILE SCHEMAS for the matching filename.\n"
+                "2. For multi-sheet workbooks, review the sheet_directory to find the most relevant sheet for the question. If the right worksheet is still unclear, call describe_tabular_file without sheet_name, then continue with analytical calls. Pass sheet_name='<name>' in follow-up analytical tool calls unless a trustworthy default sheet has already been established or you are intentionally doing an initial cross-sheet discovery step. If a CROSS-SHEET BRIDGE PLAN is provided, query the listed worksheets explicitly and do not rely on a default sheet.\n"
+                "3. If the question includes an exact identifier or asks where a topic, phrase, path, code, or other value appears and the correct starting worksheet or column is unclear, begin with search_rows, filter_rows, or query_tabular_data without sheet_name so the plugin can perform a cross-sheet discovery search. Omit search_columns on search_rows to search all columns, and use return_columns to surface the columns most relevant to the question.\n"
+                "4. If a previous tool error says a requested column is missing on the current sheet and suggests candidate sheets, switch to one of those candidate sheets immediately.\n"
+                "5. For account/category lookup questions at a specific period or metric, use lookup_value first. Provide lookup_column, lookup_value, and target_column.\n"
+                "6. If lookup_value is not sufficient, use search_rows, filter_rows, or query_tabular_data on the relevant label or text columns, then read the requested period or target column.\n"
+                "7. For deterministic how-many questions, use count_rows instead of estimating counts from partial returned rows. Use get_distinct_values when the answer depends on the unique values present in a column. When the cohort is defined by two literal conditions on different columns, prefer count_rows, get_distinct_values, or filter_rows with filter_column/filter_operator/filter_value plus additional_filter_column/additional_filter_operator/additional_filter_value instead of a broad query_tabular_data call.\n"
+                "8. When URLs, links, sites, or regex-like identifiers are embedded inside a text column, prefer get_distinct_values with extract_mode='url' or extract_mode='regex' after filtering the relevant cohort. Use url_path_segments when the question asks for higher-level URL roots rather than full page paths.\n"
+                "9. If whether an embedded URL, site, link, or identifier counts depends on surrounding text in the original cell rather than the extracted value itself, search/filter the original text column first. Prefer filter_rows when the matching row context matters, and return the full matching rows when the cohort is modest enough to fit comfortably.\n"
+                "10. Do not classify extracted URLs solely by whether the URL text itself contains the keyword when the original cell text already defines the category.\n"
+                "11. For cohort, membership, ownership-share, or percentage questions where one sheet defines the group and another sheet contains the fact rows, use get_distinct_values, filter_rows_by_related_values, or count_rows_by_related_values.\n"
+                "12. When the question asks for one named member's share within that cohort, prefer count_rows_by_related_values and either read source_value_match_counts from the helper result or rerun count_rows_by_related_values with source_filter_column/source_filter_value on the reference sheet. Do not fall back to query_tabular_data or filter_rows on the fact sheet with a guessed exact text value unless the workbook already exposed that canonical target value.\n"
+                "13. Use normalize_match=true when matching names, owners, assignees, engineers, or similar entity-text columns across worksheets.\n"
+                "14. Only use aggregate_column when the user explicitly asks for a sum, average, min, max, or count across rows and count_rows is not the simpler deterministic option.\n"
+                "15. For time-based questions on datetime columns, use group_by_datetime_component.\n"
+                "16. For threshold, ranking, comparison, or correlation-like questions, first filter/query the relevant rows, then compute grouped metrics.\n"
+                "17. When the question asks for grouped results for each entity or category and a cross-sheet bridge plan or relationship hint is available, use the reference worksheet to identify the canonical entities or categories and the fact worksheet to compute the metric. Do not answer 'each X' by grouping a yes/no, boolean, or membership-flag column unless the user explicitly asked about that flag.\n"
+                "18. When the question asks for rows satisfying multiple conditions, prefer one combined query_expression using and/or instead of separate broad queries that you plan to intersect later.\n"
+                "19. Batch multiple independent function calls in a SINGLE response whenever possible.\n"
+                "20. Keep max_rows as small as possible. Only increase it when the user explicitly asked for an exhaustive row list or export, or when the full matching row context is required and the cohort is modest; otherwise return total_matches plus representative rows. If a prior result reports total_matches > returned_rows or distinct_count > returned_values for a full-list question, rerun with a higher max_rows or max_values before answering.\n"
+                "21. For analytical questions, prefer deterministic counts plus lookup/filter/query/grouped computations over raw row or preview output.\n"
+                "22. For identifier-based workbook questions, locate the identifier on the correct sheet before explaining downstream calculations.\n"
+                "23. For peak, busiest, highest, or lowest questions, use grouped functions and inspect the highest_group, highest_value, lowest_group, and lowest_value summary fields.\n"
+                "24. Return only computed findings and name the strongest drivers clearly.\n"
+                "25. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report.\n"
+                "26. When using query_tabular_data, use simple DataFrame.query() syntax with backticked column names for columns containing spaces. Avoid method calls such as .str.lower(), .astype(...), or other Python expressions that DataFrame.query() may reject."
             )
 
         baseline_invocations = plugin_logger.get_invocations_for_conversation(
@@ -2105,20 +3873,24 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
         baseline_invocation_count = len(baseline_invocations)
         previous_tool_error_messages = []
         previous_execution_gap_messages = []
+        previous_discovery_feedback_messages = []
+        analysis_requires_immediate_tool_choice = has_multi_sheet_workbook and not schema_summary_mode
 
         for attempt_number in range(1, 4):
-            force_tool_use = attempt_number > 1
+            force_tool_use = attempt_number > 1 or (attempt_number == 1 and analysis_requires_immediate_tool_choice)
             # 4. Build chat history with pre-loaded schemas
             chat_history = SKChatHistory()
             chat_history.add_system_message(build_system_prompt(
                 force_tool_use=force_tool_use,
                 tool_error_messages=previous_tool_error_messages,
                 execution_gap_messages=previous_execution_gap_messages,
+                discovery_feedback_messages=previous_discovery_feedback_messages,
             ))
 
             chat_history.add_user_message(
                 f"Analyze the tabular data to answer: {user_question}\n"
-                f"Use user_id='{user_id}', conversation_id='{conversation_id}', {source_context}."
+                f"Use user_id='{user_id}', conversation_id='{conversation_id}'.\n"
+                f"{source_context}"
             )
 
             # 5. Execute with auto function calling
@@ -2249,6 +4021,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     if successful_analytical_invocations:
                         previous_tool_error_messages = []
                         previous_failed_call_parameters = []
+                        previous_discovery_feedback_messages = []
 
                         if entity_lookup_mode:
                             selected_sheets = get_tabular_invocation_selected_sheets(successful_analytical_invocations)
@@ -2363,7 +4136,12 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                             level=logging.WARNING
                         )
                     elif discovery_invocations:
-                        previous_execution_gap_messages = []
+                        previous_discovery_feedback_messages = summarize_tabular_discovery_invocations(
+                            successful_schema_summary_invocations or discovery_invocations,
+                        )
+                        previous_execution_gap_messages = [
+                            'Previous attempt explored workbook structure but did not execute analytical functions. Continue with analytical tool calls now.'
+                        ]
                         discovery_function_names = sorted({
                             invocation.function_name for invocation in discovery_invocations
                         })
@@ -2372,13 +4150,19 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                             level=logging.WARNING
                         )
                     elif new_invocation_count > 0:
+                        previous_discovery_feedback_messages = []
                         previous_execution_gap_messages = []
                         log_event(
                             f"[Tabular SK Analysis] Attempt {attempt_number} used unsupported tool(s) without computed analysis; retrying",
                             level=logging.WARNING
                         )
                     else:
-                        previous_execution_gap_messages = []
+                        previous_discovery_feedback_messages = []
+                        previous_execution_gap_messages = (
+                            ['Previous attempt did not use any tools. Start with workbook discovery if the right worksheet is unclear, then continue with analytical tool calls.']
+                            if allow_multi_sheet_discovery else
+                            []
+                        )
                         log_event(
                             f"[Tabular SK Analysis] Attempt {attempt_number} returned narrative without tool use; retrying",
                             level=logging.WARNING
@@ -2397,6 +4181,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     )
                 elif failed_analytical_invocations:
                     previous_tool_error_messages = summarize_tabular_invocation_errors(failed_analytical_invocations)
+                    previous_discovery_feedback_messages = []
                     previous_execution_gap_messages = []
                     log_event(
                         f"[Tabular SK Analysis] Attempt {attempt_number} returned no content after tool errors; retrying",
@@ -2413,6 +4198,34 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     )
 
             baseline_invocation_count = len(invocations_after)
+
+        reviewer_recovery = None
+        if has_multi_sheet_workbook and not schema_summary_mode:
+            reviewer_recovery = await maybe_recover_tabular_analysis_with_llm_reviewer(
+                chat_service=chat_service,
+                kernel=kernel,
+                tabular_plugin=tabular_plugin,
+                plugin_logger=plugin_logger,
+                user_question=user_question,
+                schema_context=schema_context,
+                source_context=source_context,
+                analysis_file_contexts=analysis_file_contexts,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                execution_mode=execution_mode,
+                allowed_function_names=allowed_function_names,
+                workbook_sheet_hints=workbook_sheet_hints,
+                workbook_related_sheet_hints=workbook_related_sheet_hints,
+                workbook_cross_sheet_bridge_hints=workbook_cross_sheet_bridge_hints,
+                tool_error_messages=previous_tool_error_messages,
+                execution_gap_messages=previous_execution_gap_messages,
+                discovery_feedback_messages=previous_discovery_feedback_messages,
+                fallback_source_hint=source_hint,
+                fallback_group_id=group_id,
+                fallback_public_workspace_id=public_workspace_id,
+            )
+            if reviewer_recovery and reviewer_recovery.get('fallback'):
+                return reviewer_recovery['fallback']
 
         log_event("[Tabular SK Analysis] Unable to obtain computed tool-backed results", level=logging.WARNING)
         return None
@@ -2515,17 +4328,125 @@ def get_document_container_for_scope(document_scope):
     return cosmos_user_documents_container
 
 
-def get_selected_workspace_tabular_filenames(selected_document_ids=None, selected_document_id=None, document_scope='personal'):
-    """Resolve explicitly selected workspace documents and return tabular filenames."""
+def get_document_containers_for_scope(document_scope):
+    """Return workspace source/container pairs for the requested document scope."""
+    if document_scope == 'group':
+        return [('group', cosmos_group_documents_container)]
+    if document_scope == 'public':
+        return [('public', cosmos_public_documents_container)]
+    if document_scope == 'all':
+        return [
+            ('workspace', cosmos_user_documents_container),
+            ('group', cosmos_group_documents_container),
+            ('public', cosmos_public_documents_container),
+        ]
+    return [('workspace', cosmos_user_documents_container)]
+
+
+def build_tabular_file_context(file_name, source_hint='workspace', group_id=None, public_workspace_id=None):
+    """Build normalized source metadata for a tabular file when enough scope is known."""
+    normalized_file_name = str(file_name or '').strip()
+    if not is_tabular_filename(normalized_file_name):
+        return None
+
+    normalized_source_hint = str(source_hint or 'workspace').strip().lower()
+    if normalized_source_hint == 'personal':
+        normalized_source_hint = 'workspace'
+    if normalized_source_hint not in {'workspace', 'chat', 'group', 'public'}:
+        normalized_source_hint = 'workspace'
+
+    normalized_group_id = str(group_id or '').strip() or None
+    normalized_public_workspace_id = str(public_workspace_id or '').strip() or None
+
+    if normalized_source_hint == 'group' and not normalized_group_id:
+        normalized_source_hint = 'workspace'
+    if normalized_source_hint == 'public' and not normalized_public_workspace_id:
+        normalized_source_hint = 'workspace'
+
+    context = {
+        'file_name': normalized_file_name,
+        'source_hint': normalized_source_hint,
+    }
+    if normalized_source_hint == 'group' and normalized_group_id:
+        context['group_id'] = normalized_group_id
+    if normalized_source_hint == 'public' and normalized_public_workspace_id:
+        context['public_workspace_id'] = normalized_public_workspace_id
+    return context
+
+
+def dedupe_tabular_file_contexts(file_contexts=None):
+    """Return unique tabular file contexts while preserving the first-seen order."""
+    unique_contexts = []
+    seen_contexts = set()
+
+    for file_context in file_contexts or []:
+        if not isinstance(file_context, Mapping):
+            continue
+
+        context_key = (
+            str(file_context.get('file_name') or '').strip(),
+            str(file_context.get('source_hint') or 'workspace').strip().lower(),
+            str(file_context.get('group_id') or '').strip(),
+            str(file_context.get('public_workspace_id') or '').strip(),
+        )
+        if not context_key[0] or context_key in seen_contexts:
+            continue
+
+        seen_contexts.add(context_key)
+        unique_contexts.append(dict(file_context))
+
+    return unique_contexts
+
+
+def infer_tabular_source_context_from_document(source_doc, document_scope='personal',
+                                              active_group_id=None, active_public_workspace_id=None):
+    """Infer tabular file source metadata from a search result or citation document."""
+    if not isinstance(source_doc, Mapping):
+        return None
+
+    file_name = source_doc.get('file_name')
+    doc_group_id = str(source_doc.get('group_id') or '').strip() or None
+    doc_public_workspace_id = str(source_doc.get('public_workspace_id') or '').strip() or None
+
+    if doc_public_workspace_id:
+        return build_tabular_file_context(
+            file_name,
+            source_hint='public',
+            public_workspace_id=doc_public_workspace_id,
+        )
+    if doc_group_id:
+        return build_tabular_file_context(
+            file_name,
+            source_hint='group',
+            group_id=doc_group_id,
+        )
+    if document_scope == 'group':
+        return build_tabular_file_context(
+            file_name,
+            source_hint='group',
+            group_id=active_group_id,
+        )
+    if document_scope == 'public':
+        return build_tabular_file_context(
+            file_name,
+            source_hint='public',
+            public_workspace_id=active_public_workspace_id,
+        )
+    return build_tabular_file_context(file_name, source_hint='workspace')
+
+
+def get_selected_workspace_tabular_file_contexts(selected_document_ids=None, selected_document_id=None,
+                                                 document_scope='personal', active_group_id=None,
+                                                 active_public_workspace_id=None):
+    """Resolve explicitly selected workspace documents and return tabular source contexts."""
     selected_ids = list(selected_document_ids or [])
     if not selected_ids and selected_document_id and selected_document_id != 'all':
         selected_ids = [selected_document_id]
 
     if not selected_ids:
-        return set()
+        return []
 
-    cosmos_container = get_document_container_for_scope(document_scope)
-    tabular_filenames = set()
+    tabular_file_contexts = []
 
     for doc_id in selected_ids:
         if not doc_id or doc_id == 'all':
@@ -2533,49 +4454,129 @@ def get_selected_workspace_tabular_filenames(selected_document_ids=None, selecte
 
         try:
             doc_query = (
-                "SELECT TOP 1 c.file_name, c.title "
+                "SELECT TOP 1 c.file_name, c.title, c.group_id, c.public_workspace_id "
                 "FROM c WHERE c.id = @doc_id "
                 "ORDER BY c.version DESC"
             )
             doc_params = [{"name": "@doc_id", "value": doc_id}]
-            doc_results = list(cosmos_container.query_items(
-                query=doc_query,
-                parameters=doc_params,
-                enable_cross_partition_query=True
-            ))
 
-            if not doc_results:
-                continue
+            for source_hint, cosmos_container in get_document_containers_for_scope(document_scope):
+                doc_results = list(cosmos_container.query_items(
+                    query=doc_query,
+                    parameters=doc_params,
+                    enable_cross_partition_query=True
+                ))
 
-            file_name = doc_results[0].get('file_name') or doc_results[0].get('title')
-            if is_tabular_filename(file_name):
-                tabular_filenames.add(file_name)
+                if not doc_results:
+                    continue
+
+                doc_info = doc_results[0]
+                file_context = build_tabular_file_context(
+                    doc_info.get('file_name') or doc_info.get('title'),
+                    source_hint=source_hint,
+                    group_id=doc_info.get('group_id') or active_group_id,
+                    public_workspace_id=doc_info.get('public_workspace_id') or active_public_workspace_id,
+                )
+                if file_context:
+                    tabular_file_contexts.append(file_context)
+                break
         except Exception as e:
             log_event(
                 f"[Tabular SK Analysis] Failed to resolve selected document '{doc_id}': {e}",
                 level=logging.WARNING
             )
 
-    return tabular_filenames
+    return dedupe_tabular_file_contexts(tabular_file_contexts)
 
 
-def collect_workspace_tabular_filenames(combined_documents=None, selected_document_ids=None,
-                                        selected_document_id=None, document_scope='personal'):
-    """Collect tabular filenames from search results and explicit workspace selection."""
-    tabular_filenames = set()
+def collect_workspace_tabular_file_contexts(combined_documents=None, selected_document_ids=None,
+                                            selected_document_id=None, document_scope='personal',
+                                            active_group_id=None, active_public_workspace_id=None):
+    """Collect tabular source contexts from search results and explicit workspace selection."""
+    tabular_file_contexts = []
 
     for source_doc in combined_documents or []:
-        file_name = source_doc.get('file_name', '')
-        if is_tabular_filename(file_name):
-            tabular_filenames.add(file_name)
+        file_context = infer_tabular_source_context_from_document(
+            source_doc,
+            document_scope=document_scope,
+            active_group_id=active_group_id,
+            active_public_workspace_id=active_public_workspace_id,
+        )
+        if file_context:
+            tabular_file_contexts.append(file_context)
 
-    tabular_filenames.update(get_selected_workspace_tabular_filenames(
+    tabular_file_contexts.extend(get_selected_workspace_tabular_file_contexts(
         selected_document_ids=selected_document_ids,
         selected_document_id=selected_document_id,
         document_scope=document_scope,
+        active_group_id=active_group_id,
+        active_public_workspace_id=active_public_workspace_id,
     ))
 
-    return tabular_filenames
+    return dedupe_tabular_file_contexts(tabular_file_contexts)
+
+
+def collect_workspace_tabular_filenames(combined_documents=None, selected_document_ids=None,
+                                        selected_document_id=None, document_scope='personal',
+                                        active_group_id=None, active_public_workspace_id=None):
+    """Collect unique tabular filenames from search results and explicit workspace selection."""
+    tabular_file_contexts = collect_workspace_tabular_file_contexts(
+        combined_documents=combined_documents,
+        selected_document_ids=selected_document_ids,
+        selected_document_id=selected_document_id,
+        document_scope=document_scope,
+        active_group_id=active_group_id,
+        active_public_workspace_id=active_public_workspace_id,
+    )
+    return {file_context['file_name'] for file_context in tabular_file_contexts}
+
+
+def normalize_tabular_file_contexts_for_analysis(tabular_filenames=None, tabular_file_contexts=None,
+                                                 fallback_source_hint='workspace', fallback_group_id=None,
+                                                 fallback_public_workspace_id=None):
+    """Return per-file tabular source contexts, defaulting to a shared fallback only when needed."""
+    normalized_contexts = dedupe_tabular_file_contexts(tabular_file_contexts)
+    if normalized_contexts:
+        return normalized_contexts
+
+    fallback_contexts = []
+    for file_name in tabular_filenames or []:
+        fallback_context = build_tabular_file_context(
+            file_name,
+            source_hint=fallback_source_hint,
+            group_id=fallback_group_id,
+            public_workspace_id=fallback_public_workspace_id,
+        )
+        if fallback_context:
+            fallback_contexts.append(fallback_context)
+
+    return dedupe_tabular_file_contexts(fallback_contexts)
+
+
+def build_tabular_analysis_source_context(tabular_file_contexts=None, fallback_source_hint='workspace',
+                                          fallback_group_id=None, fallback_public_workspace_id=None):
+    """Build prompt instructions for per-file tabular source metadata."""
+    normalized_contexts = dedupe_tabular_file_contexts(tabular_file_contexts)
+    if normalized_contexts:
+        lines = [
+            "Use the following per-file source metadata on tabular_processing tool calls. "
+            "Do not substitute a different source for a listed file:",
+        ]
+        for file_context in normalized_contexts:
+            context_parts = [f"source='{file_context.get('source_hint', 'workspace')}'"]
+            if file_context.get('group_id'):
+                context_parts.append(f"group_id='{file_context['group_id']}'")
+            if file_context.get('public_workspace_id'):
+                context_parts.append(f"public_workspace_id='{file_context['public_workspace_id']}'")
+            lines.append(f"- {file_context['file_name']}: {', '.join(context_parts)}")
+        return "\n".join(lines)
+
+    fallback_parts = [f"source='{fallback_source_hint}'"]
+    if fallback_source_hint == 'group' and fallback_group_id:
+        fallback_parts.append(f"group_id='{fallback_group_id}'")
+    if fallback_source_hint == 'public' and fallback_public_workspace_id:
+        fallback_parts.append(f"public_workspace_id='{fallback_public_workspace_id}'")
+    return f"Use {', '.join(fallback_parts)} on tabular_processing tool calls."
 
 
 def determine_tabular_source_hint(document_scope, active_group_id=None, active_public_workspace_id=None):
@@ -2585,6 +4586,205 @@ def determine_tabular_source_hint(document_scope, active_group_id=None, active_p
     if document_scope == 'public' and active_public_workspace_id:
         return 'public'
     return 'workspace'
+
+
+async def run_multi_file_tabular_distinct_url_analysis(user_question, analysis_file_contexts,
+                                                       user_id, conversation_id):
+    """Run deterministic per-file URL extraction and union the distinct results in Python."""
+    from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
+
+    del user_question
+    normalized_contexts = dedupe_tabular_file_contexts(analysis_file_contexts)
+    if len(normalized_contexts) <= 1:
+        return None
+
+    tabular_plugin = TabularProcessingPlugin()
+    successful_results = []
+    fatal_failures = []
+
+    for file_context in normalized_contexts:
+        filename = file_context['file_name']
+        source_hint = file_context.get('source_hint', 'workspace')
+        group_id = file_context.get('group_id')
+        public_workspace_id = file_context.get('public_workspace_id')
+
+        try:
+            container_name, blob_name = tabular_plugin._resolve_blob_location_with_fallback(
+                user_id,
+                conversation_id,
+                filename,
+                source_hint,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            )
+            tabular_plugin.remember_resolved_blob_location(
+                source_hint,
+                filename,
+                container_name,
+                blob_name,
+            )
+            schema_info = tabular_plugin._build_workbook_schema_summary(
+                container_name,
+                blob_name,
+                filename,
+                preview_rows=2,
+            )
+        except Exception as exc:
+            fatal_failures.append({
+                'filename': filename,
+                'source': source_hint,
+                'error': f'Could not load workbook schema: {exc}',
+            })
+            continue
+
+        selected_sheet, selected_column = select_tabular_distinct_url_sheet_and_column(schema_info)
+        if not selected_column:
+            fatal_failures.append({
+                'filename': filename,
+                'source': source_hint,
+                'error': 'Could not identify a URL/location-style column from workbook schema.',
+            })
+            continue
+
+        base_arguments = {
+            'user_id': user_id,
+            'conversation_id': conversation_id,
+            'filename': filename,
+            'column': selected_column,
+            'extract_mode': 'regex',
+            'extract_pattern': MULTI_FILE_TABULAR_DISTINCT_URL_EXTRACT_PATTERN,
+            'normalize_match': 'false',
+            'max_values': '10000',
+            'source': source_hint,
+        }
+        if group_id:
+            base_arguments['group_id'] = group_id
+        if public_workspace_id:
+            base_arguments['public_workspace_id'] = public_workspace_id
+
+        attempt_arguments = []
+        primary_arguments = dict(base_arguments)
+        if selected_sheet:
+            primary_arguments['sheet_name'] = selected_sheet
+        attempt_arguments.append(primary_arguments)
+
+        if (
+            selected_sheet
+            and schema_info.get('is_workbook')
+            and int(schema_info.get('sheet_count', 0) or 0) > 1
+        ):
+            attempt_arguments.append(dict(base_arguments))
+
+        best_result_payload = None
+        best_result_counts = None
+        last_error_message = None
+        for current_arguments in attempt_arguments:
+            raw_result = await tabular_plugin.get_distinct_values(**current_arguments)
+            try:
+                result_payload = json.loads(raw_result)
+            except (TypeError, ValueError):
+                last_error_message = 'get_distinct_values returned a non-JSON payload.'
+                continue
+
+            if result_payload.get('error'):
+                last_error_message = str(result_payload.get('error')).strip()
+                continue
+
+            distinct_count = parse_tabular_result_count(result_payload.get('distinct_count')) or 0
+            returned_values = parse_tabular_result_count(result_payload.get('returned_values')) or 0
+            comparison_key = (distinct_count, returned_values)
+            if best_result_counts is None or comparison_key > best_result_counts:
+                best_result_payload = result_payload
+                best_result_counts = comparison_key
+
+        if best_result_payload is None:
+            fatal_failures.append({
+                'filename': filename,
+                'source': source_hint,
+                'error': last_error_message or 'Distinct URL extraction failed for this file.',
+            })
+            continue
+
+        successful_results.append(best_result_payload)
+
+    if fatal_failures:
+        log_event(
+            '[Tabular Multi-File] Deterministic distinct URL analysis could not cover every file; falling back to SK orchestration.',
+            extra={
+                'conversation_id': conversation_id,
+                'file_count': len(normalized_contexts),
+                'fatal_failures': fatal_failures[:5],
+            },
+            level=logging.WARNING,
+        )
+        return None
+
+    combined_analysis = build_multi_file_tabular_distinct_value_analysis(successful_results)
+    if combined_analysis:
+        log_event(
+            '[Tabular Multi-File] Deterministic distinct URL analysis completed.',
+            extra={
+                'conversation_id': conversation_id,
+                'file_count': len(normalized_contexts),
+                'matched_file_count': len(successful_results),
+            },
+            level=logging.INFO,
+        )
+
+    return combined_analysis
+
+
+async def run_tabular_analysis_with_multi_file_support(user_question, tabular_filenames, user_id,
+                                                       conversation_id, gpt_model, settings,
+                                                       source_hint='workspace', group_id=None,
+                                                       public_workspace_id=None,
+                                                       execution_mode='analysis',
+                                                       tabular_file_contexts=None):
+    """Run deterministic multi-file helpers first, then fall back to the SK planner."""
+    analysis_file_contexts = normalize_tabular_file_contexts_for_analysis(
+        tabular_filenames=tabular_filenames,
+        tabular_file_contexts=tabular_file_contexts,
+        fallback_source_hint=source_hint,
+        fallback_group_id=group_id,
+        fallback_public_workspace_id=public_workspace_id,
+    )
+    multi_file_mode = get_multi_file_tabular_analysis_mode(
+        user_question,
+        execution_mode=execution_mode,
+        analysis_file_contexts=analysis_file_contexts,
+    )
+
+    if multi_file_mode == 'distinct_url_union':
+        log_event(
+            '[Tabular Multi-File] Starting deterministic distinct URL union analysis.',
+            extra={
+                'conversation_id': conversation_id,
+                'file_names': [file_context['file_name'] for file_context in analysis_file_contexts],
+            },
+            level=logging.INFO,
+        )
+        deterministic_analysis = await run_multi_file_tabular_distinct_url_analysis(
+            user_question,
+            analysis_file_contexts,
+            user_id,
+            conversation_id,
+        )
+        if deterministic_analysis:
+            return deterministic_analysis
+
+    return await run_tabular_sk_analysis(
+        user_question=user_question,
+        tabular_filenames=tabular_filenames,
+        tabular_file_contexts=analysis_file_contexts,
+        user_id=user_id,
+        conversation_id=conversation_id,
+        gpt_model=gpt_model,
+        settings=settings,
+        source_hint=source_hint,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+        execution_mode=execution_mode,
+    )
 
 
 def resolve_foundry_scope_for_auth(auth_settings, endpoint=None):
@@ -2988,6 +5188,51 @@ def register_route_backend_chats(app):
             }
         )
 
+    def get_facts_for_context(scope_id, scope_type, conversation_id: str = None, agent_id: str = None):
+        if not scope_id or not scope_type:
+            return ""
+        fact_store = FactMemoryStore()
+        kwargs = dict(
+            scope_type=scope_type,
+            scope_id=scope_id,
+        )
+        if agent_id:
+            kwargs['agent_id'] = agent_id
+        if conversation_id:
+            kwargs['conversation_id'] = conversation_id
+        facts = fact_store.get_facts(**kwargs)
+        if not facts:
+            return ""
+        fact_lines = []
+        for fact in facts:
+            value = str(fact.get('value') or '').strip()
+            if value:
+                fact_lines.append(f"- {value}")
+        if not fact_lines:
+            return ""
+        fact_lines.append(f"- agent_id: {agent_id or 'None'}")
+        fact_lines.append(f"- scope_type: {scope_type}")
+        fact_lines.append(f"- scope_id: {scope_id}")
+        fact_lines.append(f"- conversation_id: {conversation_id or 'None'}")
+        return "\n".join(fact_lines)
+
+    def inject_fact_memory_context(conversation_history, scope_id, scope_type, conversation_id: str = None, agent_id: str = None):
+        facts = get_facts_for_context(
+            scope_id=scope_id,
+            scope_type=scope_type,
+            conversation_id=conversation_id,
+            agent_id=agent_id,
+        )
+        if facts:
+            conversation_history.insert(0, {
+                "role": "system",
+                "content": f"<Fact Memory>\n{facts}\n</Fact Memory>"
+            })
+        conversation_history.insert(0, {
+            "role": "system",
+            "content": f"""<Conversation Metadata>\n<Scope ID: {scope_id}>\n<Scope Type: {scope_type}>\n<Conversation ID: {conversation_id}>\n<Agent ID: {agent_id}>\n</Conversation Metadata>"""
+        })
+
     @app.route('/api/chat', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -3157,6 +5402,18 @@ def register_route_backend_chats(app):
                 web_search_enabled = web_search_enabled.lower() == 'true'
             if isinstance(image_gen_enabled, str):
                 image_gen_enabled = image_gen_enabled.lower() == 'true'
+
+            original_hybrid_search_enabled = bool(hybrid_search_enabled)
+            history_grounded_search_used = False
+            history_only_answerability = None
+            prior_grounded_document_refs = []
+            effective_document_scope = document_scope
+            effective_selected_document_ids = list(selected_document_ids or [])
+            effective_selected_document_id = selected_document_id
+            effective_active_group_ids = list(active_group_ids or [])
+            effective_active_group_id = active_group_id
+            effective_active_public_workspace_ids = list(active_public_workspace_ids or [])
+            effective_active_public_workspace_id = active_public_workspace_id
 
             # GPT & Image generation APIM or direct
             gpt_model = ""
@@ -3790,16 +6047,127 @@ def register_route_backend_chats(app):
                     debug_print(f"[Content Safety Error] {e}")
                 except Exception as ex:
                     debug_print(f"[Content Safety] Unexpected error: {ex}")
+
+            if not original_hybrid_search_enabled:
+                prior_grounded_document_refs = _normalize_prior_grounded_document_refs(conversation_item)
+                if prior_grounded_document_refs:
+                    thought_tracker.add_thought(
+                        'history_context',
+                        'Checking whether prior conversation context already answers the question',
+                        detail=f"grounded_documents={len(prior_grounded_document_refs)}"
+                    )
+                    try:
+                        preflight_messages_query = (
+                            "SELECT * FROM c WHERE c.conversation_id = @conv_id ORDER BY c.timestamp ASC"
+                        )
+                        preflight_messages_params = [{"name": "@conv_id", "value": conversation_id}]
+                        preflight_messages = list(cosmos_messages_container.query_items(
+                            query=preflight_messages_query,
+                            parameters=preflight_messages_params,
+                            partition_key=conversation_id,
+                            enable_cross_partition_query=True,
+                        ))
+                        preflight_history_segments = build_conversation_history_segments(
+                            all_messages=preflight_messages,
+                            conversation_history_limit=conversation_history_limit,
+                            enable_summarize_older_messages=enable_summarize_content_history_beyond_conversation_history_limit,
+                            gpt_client=gpt_client,
+                            gpt_model=gpt_model,
+                            user_message_id=user_message_id,
+                            fallback_user_message=user_message,
+                        )
+                        history_only_answerability = assess_history_only_answerability(
+                            gpt_client,
+                            gpt_model,
+                            build_history_only_assessment_messages(
+                                preflight_history_segments,
+                                settings.get('default_system_prompt', '').strip(),
+                            ),
+                        )
+                    except Exception as assessment_error:
+                        debug_print(
+                            f"[History Fallback] History-only sufficiency assessment failed: {assessment_error}"
+                        )
+
+                    if history_only_answerability and history_only_answerability.get('can_answer_from_history'):
+                        thought_tracker.add_thought(
+                            'history_context',
+                            'Prior conversation context appears sufficient without new document retrieval',
+                            detail=history_only_answerability.get('reason') or None,
+                        )
+                    else:
+                        fallback_search_parameters = build_prior_grounded_document_search_parameters(
+                            prior_grounded_document_refs
+                        )
+                        if fallback_search_parameters.get('document_ids'):
+                            history_grounded_search_used = True
+                            effective_document_scope = fallback_search_parameters.get('doc_scope') or 'all'
+                            effective_selected_document_ids = list(
+                                fallback_search_parameters.get('document_ids') or []
+                            )
+                            effective_selected_document_id = (
+                                effective_selected_document_ids[0]
+                                if len(effective_selected_document_ids) == 1
+                                else None
+                            )
+                            effective_active_group_ids = list(
+                                fallback_search_parameters.get('active_group_ids') or []
+                            )
+                            effective_active_group_id = fallback_search_parameters.get('active_group_id')
+                            effective_active_public_workspace_ids = list(
+                                fallback_search_parameters.get('active_public_workspace_ids') or []
+                            )
+                            effective_active_public_workspace_id = fallback_search_parameters.get(
+                                'active_public_workspace_id'
+                            )
+
+                            rewritten_search_query = ''
+                            if history_only_answerability:
+                                rewritten_search_query = str(
+                                    history_only_answerability.get('search_query') or ''
+                                ).strip()
+                            if rewritten_search_query:
+                                search_query = rewritten_search_query
+
+                            fallback_detail_parts = [
+                                f"documents={len(effective_selected_document_ids)}",
+                                f"scope={effective_document_scope or 'all'}",
+                            ]
+                            if history_only_answerability and history_only_answerability.get('reason'):
+                                fallback_detail_parts.append(
+                                    f"reason={history_only_answerability['reason']}"
+                                )
+                            thought_tracker.add_thought(
+                                'search',
+                                'Conversation context alone was insufficient; searching previously grounded documents',
+                                detail=' | '.join(fallback_detail_parts),
+                            )
+
+                            user_metadata.setdefault('workspace_search', {})[
+                                'history_grounded_fallback'
+                            ] = {
+                                'used': True,
+                                'document_scope': effective_document_scope,
+                                'document_count': len(effective_selected_document_ids),
+                                'search_query': search_query,
+                            }
+                            user_message_doc['metadata'] = user_metadata
+                            cosmos_messages_container.upsert_item(user_message_doc)
+                else:
+                    thought_tracker.add_thought(
+                        'history_context',
+                        'No prior grounded documents were available; using conversation history only'
+                    )
         # region 4 - Augmentation
             # ---------------------------------------------------------------------
             # 4) Augmentation (Search, etc.) - Run *before* final history prep
             # ---------------------------------------------------------------------
             
             # Hybrid Search
-            if hybrid_search_enabled:
+            if hybrid_search_enabled or history_grounded_search_used:
                 
                 # Optional: Summarize recent history *for search* (uses its own limit)
-                if enable_summarize_content_history_for_search:
+                if hybrid_search_enabled and enable_summarize_content_history_for_search:
                     # Fetch last N messages for search context
                     limit_n_search = number_of_historical_messages_to_summarize * 2
                     query_search = f"SELECT TOP {limit_n_search} * FROM c WHERE c.conversation_id = @conv_id ORDER BY c.timestamp DESC"
@@ -3852,7 +6220,16 @@ def register_route_backend_chats(app):
 
 
                 # Perform the search
-                thought_tracker.add_thought('search', f"Searching {document_scope or 'personal'} workspace documents for '{(search_query or user_message)[:50]}'")
+                if history_grounded_search_used and not hybrid_search_enabled:
+                    thought_tracker.add_thought(
+                        'search',
+                        f"Searching {len(effective_selected_document_ids)} previously grounded document(s) for '{(search_query or user_message)[:50]}'"
+                    )
+                else:
+                    thought_tracker.add_thought(
+                        'search',
+                        f"Searching {effective_document_scope or 'personal'} workspace documents for '{(search_query or user_message)[:50]}'"
+                    )
                 try:
                     # Prepare search arguments
                     # Set default and maximum values for top_n
@@ -3878,25 +6255,31 @@ def register_route_backend_chats(app):
                         "query": search_query,
                         "user_id": user_id,
                         "top_n": top_n,
-                        "doc_scope": document_scope,
+                        "doc_scope": effective_document_scope,
                     }
                     
                     # Add active_group_ids when:
                     # 1. Document scope is 'group' or chat_type is 'group', OR
                     # 2. Document scope is 'all' and groups are enabled (so group search can be included)
-                    if active_group_ids and (document_scope == 'group' or document_scope == 'all' or chat_type == 'group'):
-                        search_args["active_group_ids"] = active_group_ids
+                    if effective_active_group_ids and (
+                        effective_document_scope == 'group'
+                        or effective_document_scope == 'all'
+                        or chat_type == 'group'
+                    ):
+                        search_args["active_group_ids"] = effective_active_group_ids
     
                     # Add active_public_workspace_id when:
                     # 1. Document scope is 'public' or
                     # 2. Document scope is 'all' and public workspaces are enabled
-                    if active_public_workspace_id and (document_scope == 'public' or document_scope == 'all'):
-                        search_args["active_public_workspace_id"] = active_public_workspace_id
+                    if effective_active_public_workspace_id and (
+                        effective_document_scope == 'public' or effective_document_scope == 'all'
+                    ):
+                        search_args["active_public_workspace_id"] = effective_active_public_workspace_id
                         
-                    if selected_document_ids:
-                        search_args["document_ids"] = selected_document_ids
-                    elif selected_document_id:
-                        search_args["document_id"] = selected_document_id
+                    if effective_selected_document_ids:
+                        search_args["document_ids"] = effective_selected_document_ids
+                    elif effective_selected_document_id:
+                        search_args["document_id"] = effective_selected_document_id
                     
                     # Add tags filter if provided
                     if tags_filter and isinstance(tags_filter, list) and len(tags_filter) > 0:
@@ -3930,10 +6313,18 @@ def register_route_backend_chats(app):
                         chunk_sequence = doc.get('chunk_sequence', 0) # Add default
                         page_number = doc.get('page_number') or chunk_sequence or 1 # Ensure a fallback page
                         citation_id = doc.get('id', str(uuid.uuid4())) # Ensure ID exists
+                        document_id = str(doc.get('document_id') or '').strip()
+                        if not document_id:
+                            document_id = (
+                                '_'.join(str(citation_id).split('_')[:-1])
+                                if '_' in str(citation_id)
+                                else str(citation_id)
+                            )
                         classification = doc.get('document_classification')
                         chunk_id = doc.get('chunk_id', str(uuid.uuid4())) # Ensure ID exists
                         score = doc.get('score', 0.0) # Add default score
                         group_id = doc.get('group_id', None) # Add default group ID
+                        doc_public_workspace_id = doc.get('public_workspace_id', None)
                         sheet_name = doc.get('sheet_name')
                         location_label, location_value = get_citation_location(
                             file_name,
@@ -3946,6 +6337,7 @@ def register_route_backend_chats(app):
                         retrieved_texts.append(f"{chunk_text}\n{citation}")
                         combined_documents.append({
                             "file_name": file_name, 
+                            "document_id": document_id,
                             "citation_id": citation_id, 
                             "page_number": page_number,
                             "sheet_name": sheet_name,
@@ -3958,6 +6350,7 @@ def register_route_backend_chats(app):
                             "chunk_id": chunk_id,
                             "score": score,
                             "group_id": group_id,
+                            "public_workspace_id": doc_public_workspace_id,
                         })
                         if classification:
                             classifications_found.add(classification)
@@ -3979,12 +6372,14 @@ def register_route_backend_chats(app):
                         #    in the citation itself, as it can be large. The citation points *to* the chunk.
                         citation_data = {
                             "file_name": source_doc.get("file_name"),
+                            "document_id": source_doc.get("document_id"),
                             "citation_id": source_doc.get("citation_id"), # Seems like a useful identifier
                             "page_number": source_doc.get("page_number"),
                             "chunk_id": source_doc.get("chunk_id"), # Specific chunk identifier
                             "chunk_sequence": source_doc.get("chunk_sequence"), # Order within document/group
                             "score": source_doc.get("score"), # Relevance score from search
                             "group_id": source_doc.get("group_id"), # Grouping info if used
+                            "public_workspace_id": source_doc.get("public_workspace_id"),
                             "version": source_doc.get("version"), # Document version
                             "classification": source_doc.get("classification") # Document classification
                             # Add any other relevant metadata fields from source_doc here
@@ -3992,8 +6387,7 @@ def register_route_backend_chats(app):
                         # Using .get() provides None if a key is missing, preventing KeyErrors
                         hybrid_citations_list.append(citation_data)
 
-                    # Reorder hybrid citations list in descending order based on page_number
-                    hybrid_citations_list.sort(key=lambda x: x.get('page_number', 0), reverse=True)
+                    hybrid_citations_list.sort(key=_build_hybrid_citation_sort_key, reverse=True)
 
                     # --- NEW: Extract metadata (keywords/abstract) for additional citations ---
                     # Only if extract_metadata is enabled
@@ -4006,7 +6400,10 @@ def register_route_backend_chats(app):
                         for doc in search_results:
                             # Get document ID (from the chunk's document reference)
                             # AI Search chunks contain references to their parent document
-                            doc_id = doc.get('id', '').split('_')[0] if doc.get('id') else None
+                            doc_id = str(doc.get('document_id') or '').strip()
+                            if not doc_id and doc.get('id'):
+                                raw_doc_id = str(doc.get('id') or '').strip()
+                                doc_id = '_'.join(raw_doc_id.split('_')[:-1]) if '_' in raw_doc_id else raw_doc_id
 
                             # Skip if we've already processed this document
                             if not doc_id or doc_id in processed_doc_ids:
@@ -4043,6 +6440,7 @@ def register_route_backend_chats(app):
                                     
                                     keywords_citation = {
                                         "file_name": file_name,
+                                        "document_id": doc_id,
                                         "citation_id": keywords_citation_id,
                                         "page_number": "Metadata",  # Special page identifier
                                         "chunk_id": keywords_citation_id,
@@ -4076,6 +6474,7 @@ def register_route_backend_chats(app):
                                     
                                     abstract_citation = {
                                         "file_name": file_name,
+                                        "document_id": doc_id,
                                         "citation_id": abstract_citation_id,
                                         "page_number": "Metadata",  # Special page identifier
                                         "chunk_id": abstract_citation_id,
@@ -4119,6 +6518,7 @@ def register_route_backend_chats(app):
                                     
                                     vision_citation = {
                                         "file_name": file_name,
+                                        "document_id": doc_id,
                                         "citation_id": vision_citation_id,
                                         "page_number": "AI Vision",  # Special page identifier
                                         "chunk_id": vision_citation_id,
@@ -4152,18 +6552,23 @@ def register_route_backend_chats(app):
                     if list(classifications_found) != conversation_item.get('classification', []):
                         conversation_item['classification'] = list(classifications_found)
                         # No need to upsert item here, will be updated later
+                elif history_grounded_search_used:
+                    thought_tracker.add_thought(
+                        'search',
+                        'No matching excerpts were found in the previously grounded documents'
+                    )
 
             # Update message-level chat_type based on actual document usage for this message
             # This must happen after document search is completed so search_results is populated
             message_chat_type = None
-            if hybrid_search_enabled and search_results and len(search_results) > 0:
+            if (hybrid_search_enabled or history_grounded_search_used) and search_results and len(search_results) > 0:
                 # Documents were actually used for this message
-                if document_scope == 'group':
+                if effective_document_scope == 'group':
                     message_chat_type = 'group'
-                elif document_scope == 'public':
+                elif effective_document_scope == 'public':
                     message_chat_type = 'public'  
                 else:
-                        message_chat_type = 'personal_single_user'
+                    message_chat_type = 'personal_single_user'
             else:
                 # No documents used for this message - only model knowledge
                 message_chat_type = 'Model'
@@ -4171,19 +6576,22 @@ def register_route_backend_chats(app):
             # Update the message-level chat_type in user_metadata
             user_metadata['chat_context']['chat_type'] = message_chat_type
             debug_print(f"Set message-level chat_type to: {message_chat_type}")
-            debug_print(f"hybrid_search_enabled: {hybrid_search_enabled}, search_results count: {len(search_results) if search_results else 0}")
+            debug_print(
+                f"hybrid_search_enabled: {hybrid_search_enabled}, history_grounded_search_used: {history_grounded_search_used}, "
+                f"search_results count: {len(search_results) if search_results else 0}"
+            )
             
             # Add context-specific information based on message chat type
-            if message_chat_type == 'group' and active_group_id:
-                user_metadata['chat_context']['group_id'] = active_group_id
+            if message_chat_type == 'group' and effective_active_group_id:
+                user_metadata['chat_context']['group_id'] = effective_active_group_id
                 # We may have already fetched this in workspace_search section
                 if 'workspace_search' in user_metadata and user_metadata['workspace_search'].get('group_name'):
                     user_metadata['chat_context']['group_name'] = user_metadata['workspace_search']['group_name']
                     debug_print(f"Chat context - using group_name from workspace_search: {user_metadata['workspace_search']['group_name']}")
                 else:
                     try:
-                        debug_print(f"Chat context - looking up group for id: {active_group_id}")
-                        group_doc = find_group_by_id(active_group_id)
+                        debug_print(f"Chat context - looking up group for id: {effective_active_group_id}")
+                        group_doc = find_group_by_id(effective_active_group_id)
                         debug_print(f"Chat context group lookup result: {group_doc}")
                         
                         if group_doc and group_doc.get('name'):
@@ -4191,7 +6599,7 @@ def register_route_backend_chats(app):
                             user_metadata['chat_context']['group_name'] = group_title
                             debug_print(f"Chat context - set group_name to: {group_title}")
                         else:
-                            debug_print(f"Chat context - no group found or no name for id: {active_group_id}")
+                            debug_print(f"Chat context - no group found or no name for id: {effective_active_group_id}")
                             user_metadata['chat_context']['group_name'] = None
                             
                     except Exception as e:
@@ -4495,20 +6903,26 @@ def register_route_backend_chats(app):
                         'error': user_friendly_message
                     }), status_code
 
+            workspace_tabular_file_contexts = []
             workspace_tabular_files = set()
-            if hybrid_search_enabled and is_tabular_processing_enabled(settings):
-                workspace_tabular_files = collect_workspace_tabular_filenames(
+            if (hybrid_search_enabled or history_grounded_search_used) and is_tabular_processing_enabled(settings):
+                workspace_tabular_file_contexts = collect_workspace_tabular_file_contexts(
                     combined_documents=combined_documents,
-                    selected_document_ids=selected_document_ids,
-                    selected_document_id=selected_document_id,
-                    document_scope=document_scope,
+                    selected_document_ids=effective_selected_document_ids,
+                    selected_document_id=effective_selected_document_id,
+                    document_scope=effective_document_scope,
+                    active_group_id=effective_active_group_id,
+                    active_public_workspace_id=effective_active_public_workspace_id,
                 )
+                workspace_tabular_files = {
+                    file_context['file_name'] for file_context in workspace_tabular_file_contexts
+                }
 
-            if hybrid_search_enabled and workspace_tabular_files and is_tabular_processing_enabled(settings):
+            if (hybrid_search_enabled or history_grounded_search_used) and workspace_tabular_files and is_tabular_processing_enabled(settings):
                 tabular_source_hint = determine_tabular_source_hint(
-                    document_scope,
-                    active_group_id=active_group_id,
-                    active_public_workspace_id=active_public_workspace_id,
+                    effective_document_scope,
+                    active_group_id=effective_active_group_id,
+                    active_public_workspace_id=effective_active_public_workspace_id,
                 )
                 tabular_execution_mode = get_tabular_execution_mode(user_message)
                 tabular_filenames_str = ", ".join(sorted(workspace_tabular_files))
@@ -4517,16 +6931,17 @@ def register_route_backend_chats(app):
                     plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
                 )
 
-                tabular_analysis = asyncio.run(run_tabular_sk_analysis(
+                tabular_analysis = asyncio.run(run_tabular_analysis_with_multi_file_support(
                     user_question=user_message,
                     tabular_filenames=workspace_tabular_files,
+                    tabular_file_contexts=workspace_tabular_file_contexts,
                     user_id=user_id,
                     conversation_id=conversation_id,
                     gpt_model=gpt_model,
                     settings=settings,
                     source_hint=tabular_source_hint,
-                    group_id=active_group_id if tabular_source_hint == 'group' else None,
-                    public_workspace_id=active_public_workspace_id if tabular_source_hint == 'public' else None,
+                    group_id=effective_active_group_id if tabular_source_hint == 'group' else None,
+                    public_workspace_id=effective_active_public_workspace_id if tabular_source_hint == 'public' else None,
                     execution_mode=tabular_execution_mode,
                 ))
                 tabular_invocations = get_new_plugin_invocations(
@@ -4596,6 +7011,8 @@ def register_route_backend_chats(app):
             # ---------------------------------------------------------------------
             conversation_history_for_api = []
             summary_of_older = ""
+            history_debug_info = {}
+            final_api_source_refs = []
 
 
             try:
@@ -4605,66 +7022,18 @@ def register_route_backend_chats(app):
                 all_messages = list(cosmos_messages_container.query_items(
                     query=all_messages_query, parameters=params_all, partition_key=conversation_id, enable_cross_partition_query=True
                 ))
-                all_messages = filter_assistant_artifact_items(all_messages)
-
-                # Sort messages using threading logic
-                all_messages = sort_messages_by_thread(all_messages)
-
-                total_messages = len(all_messages)
-
-                # Determine which messages are "recent" and which are "older"
-                # `conversation_history_limit` includes the *current* user message
-                num_recent_messages = min(total_messages, conversation_history_limit)
-                num_older_messages = total_messages - num_recent_messages
-
-                recent_messages = all_messages[-num_recent_messages:] # Last N messages
-                older_messages_to_summarize = all_messages[:num_older_messages] # Messages before the recent ones
-
-                # Summarize older messages if needed and present
-                if enable_summarize_content_history_beyond_conversation_history_limit and older_messages_to_summarize:
-                    debug_print(f"Summarizing {len(older_messages_to_summarize)} older messages for conversation {conversation_id}")
-                    summary_prompt_older = (
-                        "Summarize the following conversation history concisely (around 50-100 words), "
-                        "focusing on key facts, decisions, or context that might be relevant for future turns. "
-                        "Do not add any introductory phrases like 'Here is a summary'.\n\n"
-                        "Conversation History:\n"
-                    )
-                    message_texts_older = []
-                    for msg in older_messages_to_summarize:
-                        role = msg.get('role', 'user')
-                        metadata = msg.get('metadata', {})
-                        
-                        # Check active_thread flag - skip messages with active_thread=False
-                        thread_info = metadata.get('thread_info', {})
-                        active_thread = thread_info.get('active_thread')
-                        
-                        # Exclude content when active_thread is explicitly False
-                        if active_thread is False:
-                            debug_print(f"[THREAD] Skipping inactive thread message {msg.get('id')} from summary")
-                            continue
-                        
-                        # Skip roles that shouldn't be in summary (adjust as needed)
-                        if role in ['system', 'safety', 'blocked', 'image', 'file']: continue
-                        content = msg.get('content', '')
-                        message_texts_older.append(f"{role.upper()}: {content}")
-
-                    if message_texts_older: # Only summarize if there's content to summarize
-                        summary_prompt_older += "\n".join(message_texts_older)
-                        try:
-                            # Use the already initialized client and model
-                            summary_response_older = gpt_client.chat.completions.create(
-                                model=gpt_model,
-                                messages=[{"role": "system", "content": summary_prompt_older}],
-                                max_tokens=150, # Adjust token limit for summary
-                                temperature=0.3 # Lower temp for factual summary
-                            )
-                            summary_of_older = summary_response_older.choices[0].message.content.strip()
-                            debug_print(f"Generated summary: {summary_of_older}")
-                        except Exception as e:
-                            debug_print(f"Error summarizing older conversation history: {e}")
-                            summary_of_older = "" # Failed, proceed without summary
-                    else:
-                        debug_print("No summarizable content found in older messages.")
+                history_segments = build_conversation_history_segments(
+                    all_messages=all_messages,
+                    conversation_history_limit=conversation_history_limit,
+                    enable_summarize_older_messages=enable_summarize_content_history_beyond_conversation_history_limit,
+                    gpt_client=gpt_client,
+                    gpt_model=gpt_model,
+                    user_message_id=user_message_id,
+                    fallback_user_message=user_message,
+                )
+                summary_of_older = history_segments['summary_of_older']
+                chat_tabular_files = history_segments['chat_tabular_files']
+                history_debug_info = history_segments.get('debug_info', {})
 
 
                 # Construct the final history for the API call
@@ -4674,6 +7043,7 @@ def register_route_backend_chats(app):
                         "role": "system",
                         "content": f"<Summary of previous conversation context>\n{summary_of_older}\n</Summary of previous conversation context>"
                     })
+                    final_api_source_refs.append('system:summary_of_older')
 
                 # Add augmentation system messages (search, agents) next
                 # **Important**: Decide if you want these saved. If so, you need to upsert them now.
@@ -4721,6 +7091,7 @@ def register_route_backend_chats(app):
                     }
                     cosmos_messages_container.upsert_item(system_doc)
                     conversation_history_for_api.append(aug_msg) # Add to API context
+                    final_api_source_refs.append(f"system:augmentation:{len(final_api_source_refs) + 1}")
                     # System message shares the same thread as user message, no thread update needed
 
                     # --- NEW: Save plugin output as agent citation ---
@@ -4731,141 +7102,8 @@ def register_route_backend_chats(app):
                         "timestamp": datetime.utcnow().isoformat()
                     })
 
-
-                # Add the recent messages (user, assistant, relevant system/file messages)
-                allowed_roles_in_history = ['user', 'assistant'] # Add 'system' if you PERSIST general system messages not related to augmentation
-                max_file_content_length_in_history = 50000 # Increased limit for all file content in history
-                max_tabular_content_length_in_history = 50000 # Same limit for tabular data consistency
-                chat_tabular_files = set()  # Track tabular files uploaded directly to chat
-
-                for message in recent_messages:
-                    role = message.get('role')
-                    content = message.get('content')
-                    metadata = message.get('metadata', {})
-                    
-                    # Check active_thread flag - skip messages with active_thread=False
-                    # This handles both threaded messages and legacy messages with the flag set
-                    thread_info = metadata.get('thread_info', {})
-                    active_thread = thread_info.get('active_thread')
-                    
-                    # Exclude content when active_thread is explicitly False
-                    # Include when: active_thread is True, None, or not present (legacy messages)
-                    if active_thread is False:
-                        debug_print(f"[THREAD] Skipping inactive thread message {message.get('id')} (thread_id: {thread_info.get('thread_id')}, attempt: {thread_info.get('thread_attempt')})")
-                        continue
-                    
-                    # Check if message is fully masked - skip it entirely
-                    if metadata.get('masked', False):
-                        debug_print(f"[MASK] Skipping fully masked message {message.get('id')}")
-                        continue
-                    
-                    # Check for partially masked content
-                    masked_ranges = metadata.get('masked_ranges', [])
-                    if masked_ranges and content:
-                        # Remove masked portions from content
-                        content = remove_masked_content(content, masked_ranges)
-                        debug_print(f"[MASK] Applied {len(masked_ranges)} masked ranges to message {message.get('id')}")
-
-                    if role in allowed_roles_in_history:
-                        conversation_history_for_api.append({"role": role, "content": content})
-                    elif role == 'file': # Handle file content inclusion (simplified)
-                        filename = message.get('filename', 'uploaded_file')
-                        file_content = message.get('file_content', '') # Assuming file content is stored
-                        is_table = message.get('is_table', False)
-                        file_content_source = message.get('file_content_source', '')
-
-                        # Tabular files stored in blob (enhanced citations enabled) - reference plugin
-                        if is_table and file_content_source == 'blob':
-                            chat_tabular_files.add(filename)  # Track for mini SK analysis
-                            conversation_history_for_api.append({
-                                'role': 'system',
-                                'content': f"[User uploaded a tabular data file named '{filename}'. "
-                                    f"The file is stored in blob storage and available for analysis. "
-                                    f"Use the tabular_processing plugin functions (list_tabular_files, describe_tabular_file, "
-                                    f"aggregate_column, filter_rows, query_tabular_data, group_by_aggregate, group_by_datetime_component) to analyze this data. "
-                                    f"The file source is 'chat'.]"
-                            })
-                        else:
-                            # Use higher limit for tabular data that needs complete analysis
-                            content_limit = max_tabular_content_length_in_history if is_table else max_file_content_length_in_history
-
-                            display_content = file_content[:content_limit]
-                            if len(file_content) > content_limit:
-                                display_content += "..."
-
-                            # Enhanced message for tabular data
-                            if is_table:
-                                conversation_history_for_api.append({
-                                    'role': 'system', # Represent file as system info
-                                    'content': f"[User uploaded a tabular data file named '{filename}'. This is CSV format data for analysis:\n{display_content}]\nThis is complete tabular data in CSV format. You can perform calculations, analysis, and data operations on this dataset."
-                                })
-                            else:
-                                conversation_history_for_api.append({
-                                    'role': 'system', # Represent file as system info
-                                    'content': f"[User uploaded a file named '{filename}'. Content preview:\n{display_content}]\nUse this file context if relevant."
-                                })
-                    elif role == 'image': # Handle image uploads with extracted text and vision analysis
-                        filename = message.get('filename', 'uploaded_image')
-                        is_user_upload = message.get('metadata', {}).get('is_user_upload', False)
-                        
-                        if is_user_upload:
-                            # This is a user-uploaded image with extracted text and vision analysis
-                            # IMPORTANT: Do NOT include message.get('content') as it contains base64 image data
-                            # which would consume excessive tokens. Only use extracted_text and vision_analysis.
-                            extracted_text = message.get('extracted_text', '')
-                            vision_analysis = message.get('vision_analysis', {})
-                            
-                            # Build comprehensive context from OCR and vision analysis (NO BASE64!)
-                            image_context_parts = [f"[User uploaded an image named '{filename}'.]"]
-                            
-                            if extracted_text:
-                                # Include OCR text from Document Intelligence
-                                extracted_preview = extracted_text[:max_file_content_length_in_history]
-                                if len(extracted_text) > max_file_content_length_in_history:
-                                    extracted_preview += "..."
-                                image_context_parts.append(f"\n\nExtracted Text (OCR):\n{extracted_preview}")
-                            
-                            if vision_analysis:
-                                # Include AI vision analysis
-                                image_context_parts.append("\n\nAI Vision Analysis:")
-                                
-                                if vision_analysis.get('description'):
-                                    image_context_parts.append(f"\nDescription: {vision_analysis['description']}")
-                                
-                                if vision_analysis.get('objects'):
-                                    objects_str = ', '.join(vision_analysis['objects'])
-                                    image_context_parts.append(f"\nObjects detected: {objects_str}")
-                                
-                                if vision_analysis.get('text'):
-                                    image_context_parts.append(f"\nText visible in image: {vision_analysis['text']}")
-                                
-                                if vision_analysis.get('contextual_analysis'):
-                                    image_context_parts.append(f"\nContextual analysis: {vision_analysis['contextual_analysis']}")
-                            
-                            image_context_content = ''.join(image_context_parts) + "\n\nUse this image information to answer questions about the uploaded image."
-                            
-                            # Verify we're not accidentally including base64 data
-                            if 'data:image/' in image_context_content or ';base64,' in image_context_content:
-                                debug_print(f"WARNING: Base64 image data detected in chat history for {filename}! Removing to save tokens.")
-                                # This should never happen, but safety check just in case
-                                image_context_content = f"[User uploaded an image named '{filename}' - image data excluded from chat history to conserve tokens]"
-                            
-                            debug_print(f"[IMAGE_CONTEXT] Adding user-uploaded image to history: {filename}, context length: {len(image_context_content)} chars")
-                            conversation_history_for_api.append({
-                                'role': 'system',
-                                'content': image_context_content
-                            })
-                        else:
-                            # This is a system-generated image (DALL-E, etc.)
-                            # Don't include the image data URL in history either
-                            prompt = message.get('prompt', 'User requested image generation.')
-                            debug_print(f"[IMAGE_CONTEXT] Adding system-generated image to history: {prompt[:100]}...")
-                            conversation_history_for_api.append({
-                                'role': 'system',
-                                'content': f"[Assistant generated an image based on the prompt: '{prompt}']"
-                            })
-
-                    # Ignored roles: 'safety', 'blocked', 'system' (if they are only for augmentation/summary)
+                conversation_history_for_api.extend(history_segments['history_messages'])
+                final_api_source_refs.extend(history_debug_info.get('history_message_source_refs', []))
 
                 # --- Mini SK analysis for tabular files uploaded directly to chat ---
                 if chat_tabular_files and is_tabular_processing_enabled(settings):
@@ -4880,7 +7118,7 @@ def register_route_backend_chats(app):
                         plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
                     )
 
-                    chat_tabular_analysis = asyncio.run(run_tabular_sk_analysis(
+                    chat_tabular_analysis = asyncio.run(run_tabular_analysis_with_multi_file_support(
                         user_question=user_message,
                         tabular_filenames=chat_tabular_files,
                         user_id=user_id,
@@ -4913,6 +7151,7 @@ def register_route_backend_chats(app):
                                 chat_tabular_analysis,
                             )
                         })
+                        final_api_source_refs.append('system:tabular_results')
 
                         # Collect tool execution citations from SK tabular analysis
                         chat_tabular_sk_citations = collect_tabular_sk_citations(user_id, conversation_id)
@@ -4928,20 +7167,6 @@ def register_route_backend_chats(app):
                         )
                         debug_print("[Chat Tabular SK] Analysis returned None, relying on existing file context messages")
 
-                # Ensure the very last message is the current user's message (it should be if fetched correctly)
-                if not conversation_history_for_api or conversation_history_for_api[-1]['role'] != 'user':
-                    debug_print("Warning: Last message in history is not the user's current message. Appending.")
-                    # This might happen if 'recent_messages' somehow didn't include the latest user message saved in step 2
-                    # Or if the last message had an ignored role. Find the actual user message:
-                    user_msg_found = False
-                    for msg in reversed(recent_messages):
-                        if msg['role'] == 'user' and msg['id'] == user_message_id:
-                            conversation_history_for_api.append({"role": "user", "content": msg['content']})
-                            user_msg_found = True
-                            break
-                    if not user_msg_found: # Still not found? Append the original input as fallback
-                        conversation_history_for_api.append({"role": "user", "content": user_message})
-
             except Exception as e:
                 debug_print(f"Error preparing conversation history: {e}")
                 return jsonify({'error': f'Error preparing conversation history: {str(e)}'}), 500
@@ -4951,6 +7176,7 @@ def register_route_backend_chats(app):
             # 6) Final GPT Call
             # ---------------------------------------------------------------------
             default_system_prompt = settings.get('default_system_prompt', '').strip()
+            default_system_prompt_inserted = False
             # Only add if non-empty and not already present (excluding summary/augmentation system messages)
             if default_system_prompt:
                 # Find if any system message (not summary or augmentation) is present
@@ -4970,6 +7196,43 @@ def register_route_backend_chats(app):
                         "role": "system",
                         "content": default_system_prompt
                     })
+                    final_api_source_refs.insert(insert_idx, 'system:default_prompt')
+                    default_system_prompt_inserted = True
+
+            if not original_hybrid_search_enabled:
+                history_grounding_message = build_history_grounding_system_message()
+                insert_idx = 0
+                if (
+                    conversation_history_for_api
+                    and conversation_history_for_api[0].get('role') == 'system'
+                    and conversation_history_for_api[0].get('content', '').startswith(
+                        '<Summary of previous conversation context>'
+                    )
+                ):
+                    insert_idx = 1
+                if default_system_prompt_inserted:
+                    insert_idx += 1
+                conversation_history_for_api.insert(insert_idx, history_grounding_message)
+                final_api_source_refs.insert(insert_idx, 'system:history_grounding')
+
+            history_debug_info = enrich_history_context_debug_info(
+                history_debug_info,
+                conversation_history_for_api,
+                final_api_source_refs,
+                path_label='standard',
+                augmentation_message_count=len(system_messages_for_augmentation),
+                default_system_prompt_inserted=default_system_prompt_inserted,
+            )
+            emit_history_context_debug(history_debug_info, conversation_id)
+            thought_tracker.add_thought(
+                'history_context',
+                build_history_context_thought_content(history_debug_info),
+                build_history_context_thought_detail(history_debug_info),
+            )
+            if settings.get('enable_debug_logging', False):
+                agent_citations_list.append(
+                    build_history_context_debug_citation(history_debug_info, 'standard')
+                )
 
             # --- DRY Fallback Chain Helper ---
             def try_fallback_chain(steps):
@@ -4995,38 +7258,6 @@ def register_route_backend_chats(app):
                         continue
                 # If all fail, return default error
                 return ("Sorry, I encountered an error.", gpt_model, None, None)
-
-            # --- Inject facts as a system message at the top of conversation_history_for_api ---
-            def get_facts_for_context(scope_id, scope_type, conversation_id: str = None, agent_id: str = None):
-                settings = get_settings()
-                agents = settings.get('semantic_kernel_agents', [])
-                default_agent = next((a for a in agents if a.get('default_agent')), None)
-                agent_dict = default_agent or (agents[0] if agents else None)
-                agent_id = agent_dict.get('id') if agent_dict else None
-                if not scope_id or not scope_type:
-                    return ""
-                fact_store = FactMemoryStore()
-                kwargs = dict(
-                    scope_type=scope_type,
-                    scope_id=scope_id,
-                )
-                if agent_id:
-                    kwargs['agent_id'] = agent_id
-                if conversation_id:
-                    kwargs['conversation_id'] = conversation_id
-                facts = fact_store.get_facts(**kwargs)
-                if not facts:
-                    return ""
-                fact_lines = []
-                for fact in facts:
-                    value = fact.get('value', '')
-                    if value:
-                        fact_lines.append(f"- {value}")
-                fact_lines.append(f"- agent_id: {agent_id}")
-                fact_lines.append(f"- scope_type: {scope_type}")
-                fact_lines.append(f"- scope_id: {scope_id}")
-                fact_lines.append(f"- conversation_id: {conversation_id}")
-                return "\n".join(fact_lines)
 
             async def run_sk_call(callable_obj, *args, **kwargs):
                 log_event(
@@ -5225,19 +7456,13 @@ def register_route_backend_chats(app):
 
                 # Add additional metadata here to scope the facts to be returned
                 # Allows for additional per agent and per conversation scoping.
-                facts = get_facts_for_context(
+                inject_fact_memory_context(
+                    conversation_history=conversation_history_for_api,
                     scope_id=scope_id,
-                    scope_type=scope_type
+                    scope_type=scope_type,
+                    conversation_id=conversation_id,
+                    agent_id=agent_id,
                 )
-                if facts:
-                    conversation_history_for_api.insert(0, {
-                        "role": "system",
-                        "content": f"<Fact Memory>\n{facts}\n</Fact Memory>"
-                    })
-                conversation_history_for_api.insert(0, {
-                    "role": "system",
-                    "content": f"""<Conversation Metadata>\n<Scope ID: {scope_id}>\n<Scope Type: {scope_type}>\n<Conversation ID: {conversation_id}>\n<Agent ID: {agent_id}>\n</Conversation Metadata>"""
-                })
 
                 agent_message_history = [
                     ChatMessageContent(
@@ -5791,7 +8016,7 @@ def register_route_backend_chats(app):
                 'augmented': bool(system_messages_for_augmentation),
                 'hybrid_citations': hybrid_citations_list, # <--- SIMPLIFIED: Directly use the list
                 'web_search_citations': web_search_citations_list,
-                'hybridsearch_query': search_query if hybrid_search_enabled and search_results else None, # Log query only if hybrid search ran and found results
+                'hybridsearch_query': search_query if search_results else None, # Log query when any bounded document retrieval produced results
                 'agent_citations': prepared_agent_citations,
                 'model_deployment_name': actual_model_used,
                 'agent_display_name': agent_display_name,
@@ -5799,6 +8024,7 @@ def register_route_backend_chats(app):
                 'metadata': {
                     'user_info': user_info_for_assistant,  # Track which user created this assistant message
                     'reasoning_effort': reasoning_effort,
+                    'history_context': history_debug_info,
                     'thread_info': {
                         'thread_id': user_thread_id,  # Same thread as user message
                         'previous_thread_id': user_previous_thread_id,  # Same previous_thread_id as user message
@@ -5824,9 +8050,9 @@ def register_route_backend_chats(app):
                     
                     # Determine workspace type based on active group/public workspace
                     workspace_type = 'personal'
-                    if active_public_workspace_id:
+                    if effective_active_public_workspace_id:
                         workspace_type = 'public'
-                    elif active_group_id:
+                    elif effective_active_group_id:
                         workspace_type = 'group'
                     
                     log_token_usage(
@@ -5839,8 +8065,8 @@ def register_route_backend_chats(app):
                         completion_tokens=token_usage_data.get('completion_tokens'),
                         conversation_id=conversation_id,
                         message_id=assistant_message_id,
-                        group_id=active_group_id,
-                        public_workspace_id=active_public_workspace_id,
+                        group_id=effective_active_group_id,
+                        public_workspace_id=effective_active_public_workspace_id,
                         additional_context={
                             'agent_name': agent_name,
                             'augmented': bool(system_messages_for_augmentation),
@@ -5882,20 +8108,20 @@ def register_route_backend_chats(app):
                     user_message=user_message,
                     conversation_id=conversation_id,
                     user_id=user_id,
-                    active_group_id=active_group_id,
-                    active_group_ids=active_group_ids,
-                    document_scope=document_scope,
-                    selected_document_id=selected_document_id,
+                    active_group_id=effective_active_group_id,
+                    active_group_ids=effective_active_group_ids,
+                    document_scope=effective_document_scope,
+                    selected_document_id=effective_selected_document_id,
                     model_deployment=actual_model_used,
-                    hybrid_search_enabled=hybrid_search_enabled,
+                    hybrid_search_enabled=hybrid_search_enabled or history_grounded_search_used,
                     image_gen_enabled=image_gen_enabled,
                     selected_documents=combined_documents if 'combined_documents' in locals() else None,
                     selected_agent=selected_agent_name,
                     selected_agent_details=user_metadata.get('agent_selection'),
                     search_results=search_results if 'search_results' in locals() else None,
                     conversation_item=conversation_item,
-                    active_public_workspace_id=active_public_workspace_id,
-                    active_public_workspace_ids=active_public_workspace_ids
+                    active_public_workspace_id=effective_active_public_workspace_id,
+                    active_public_workspace_ids=effective_active_public_workspace_ids
                 )
             except Exception as e:
                 debug_print(f"Error collecting conversation metadata: {e}")
@@ -6224,6 +8450,8 @@ def register_route_backend_chats(app):
                 # Validate chat_type
                 if chat_type not in ('user', 'group'):
                     chat_type = 'user'
+                scope_id = active_group_id if chat_type == 'group' else user_id
+                scope_type = 'group' if chat_type == 'group' else 'user'
                 
                 # Initialize variables
                 search_query = user_message
@@ -6239,12 +8467,27 @@ def register_route_backend_chats(app):
                 conversation_history_limit = math.ceil(raw_conversation_history_limit)
                 if conversation_history_limit % 2 != 0:
                     conversation_history_limit += 1
+                enable_summarize_content_history_beyond_conversation_history_limit = settings.get(
+                    'enable_summarize_content_history_beyond_conversation_history_limit',
+                    True,
+                )
                 
                 # Convert toggles
                 if isinstance(hybrid_search_enabled, str):
                     hybrid_search_enabled = hybrid_search_enabled.lower() == 'true'
                 if isinstance(web_search_enabled, str):
                     web_search_enabled = web_search_enabled.lower() == 'true'
+                original_hybrid_search_enabled = bool(hybrid_search_enabled)
+                history_grounded_search_used = False
+                history_only_answerability = None
+                prior_grounded_document_refs = []
+                effective_document_scope = document_scope
+                effective_selected_document_ids = list(selected_document_ids or [])
+                effective_selected_document_id = selected_document_id
+                effective_active_group_ids = list(active_group_ids or [])
+                effective_active_group_id = active_group_id
+                effective_active_public_workspace_ids = list(active_public_workspace_ids or [])
+                effective_active_public_workspace_id = active_public_workspace_id
                 debug_print(
                     "[Streaming] Normalized toggles | "
                     f"hybrid_search={hybrid_search_enabled} | "
@@ -6709,36 +8952,162 @@ def register_route_backend_chats(app):
                     except Exception as ex:
                         debug_print(f"[Content Safety - Streaming] Unexpected error: {ex}")
 
+                if not original_hybrid_search_enabled:
+                    prior_grounded_document_refs = _normalize_prior_grounded_document_refs(conversation_item)
+                    if prior_grounded_document_refs:
+                        yield emit_thought(
+                            'history_context',
+                            'Checking whether prior conversation context already answers the question',
+                            detail=f"grounded_documents={len(prior_grounded_document_refs)}"
+                        )
+                        try:
+                            preflight_messages_query = (
+                                "SELECT * FROM c WHERE c.conversation_id = @conv_id ORDER BY c.timestamp ASC"
+                            )
+                            preflight_messages_params = [{"name": "@conv_id", "value": conversation_id}]
+                            preflight_messages = list(cosmos_messages_container.query_items(
+                                query=preflight_messages_query,
+                                parameters=preflight_messages_params,
+                                partition_key=conversation_id,
+                                enable_cross_partition_query=True,
+                            ))
+                            preflight_history_segments = build_conversation_history_segments(
+                                all_messages=preflight_messages,
+                                conversation_history_limit=conversation_history_limit,
+                                enable_summarize_older_messages=enable_summarize_content_history_beyond_conversation_history_limit,
+                                gpt_client=gpt_client,
+                                gpt_model=gpt_model,
+                                user_message_id=user_message_id,
+                                fallback_user_message=user_message,
+                            )
+                            history_only_answerability = assess_history_only_answerability(
+                                gpt_client,
+                                gpt_model,
+                                build_history_only_assessment_messages(
+                                    preflight_history_segments,
+                                    settings.get('default_system_prompt', '').strip(),
+                                ),
+                            )
+                        except Exception as assessment_error:
+                            debug_print(
+                                f"[Streaming][History Fallback] History-only sufficiency assessment failed: {assessment_error}"
+                            )
+
+                        if history_only_answerability and history_only_answerability.get('can_answer_from_history'):
+                            yield emit_thought(
+                                'history_context',
+                                'Prior conversation context appears sufficient without new document retrieval',
+                                detail=history_only_answerability.get('reason') or None,
+                            )
+                        else:
+                            fallback_search_parameters = build_prior_grounded_document_search_parameters(
+                                prior_grounded_document_refs
+                            )
+                            if fallback_search_parameters.get('document_ids'):
+                                history_grounded_search_used = True
+                                effective_document_scope = fallback_search_parameters.get('doc_scope') or 'all'
+                                effective_selected_document_ids = list(
+                                    fallback_search_parameters.get('document_ids') or []
+                                )
+                                effective_selected_document_id = (
+                                    effective_selected_document_ids[0]
+                                    if len(effective_selected_document_ids) == 1
+                                    else None
+                                )
+                                effective_active_group_ids = list(
+                                    fallback_search_parameters.get('active_group_ids') or []
+                                )
+                                effective_active_group_id = fallback_search_parameters.get('active_group_id')
+                                effective_active_public_workspace_ids = list(
+                                    fallback_search_parameters.get('active_public_workspace_ids') or []
+                                )
+                                effective_active_public_workspace_id = fallback_search_parameters.get(
+                                    'active_public_workspace_id'
+                                )
+
+                                rewritten_search_query = ''
+                                if history_only_answerability:
+                                    rewritten_search_query = str(
+                                        history_only_answerability.get('search_query') or ''
+                                    ).strip()
+                                if rewritten_search_query:
+                                    search_query = rewritten_search_query
+
+                                fallback_detail_parts = [
+                                    f"documents={len(effective_selected_document_ids)}",
+                                    f"scope={effective_document_scope or 'all'}",
+                                ]
+                                if history_only_answerability and history_only_answerability.get('reason'):
+                                    fallback_detail_parts.append(
+                                        f"reason={history_only_answerability['reason']}"
+                                    )
+                                yield emit_thought(
+                                    'search',
+                                    'Conversation context alone was insufficient; searching previously grounded documents',
+                                    detail=' | '.join(fallback_detail_parts),
+                                )
+
+                                user_metadata.setdefault('workspace_search', {})[
+                                    'history_grounded_fallback'
+                                ] = {
+                                    'used': True,
+                                    'document_scope': effective_document_scope,
+                                    'document_count': len(effective_selected_document_ids),
+                                    'search_query': search_query,
+                                }
+                                user_message_doc['metadata'] = user_metadata
+                                cosmos_messages_container.upsert_item(user_message_doc)
+                    else:
+                        yield emit_thought(
+                            'history_context',
+                            'No prior grounded documents were available; using conversation history only'
+                        )
+
                 # Hybrid search (if enabled)
                 combined_documents = []
-                if hybrid_search_enabled:
+                if hybrid_search_enabled or history_grounded_search_used:
                     debug_print(
                         "[Streaming] Starting hybrid search | "
-                        f"conversation_id={conversation_id} | doc_scope={document_scope} | "
-                        f"selected_document_ids={len(selected_document_ids)} | tags={len(tags_filter) if isinstance(tags_filter, list) else 0}"
+                        f"conversation_id={conversation_id} | doc_scope={effective_document_scope} | "
+                        f"selected_document_ids={len(effective_selected_document_ids)} | tags={len(tags_filter) if isinstance(tags_filter, list) else 0}"
                     )
-                    yield emit_thought('search', f"Searching {document_scope or 'personal'} workspace documents for '{(search_query or user_message)[:50]}'")
+                    if history_grounded_search_used and not hybrid_search_enabled:
+                        yield emit_thought(
+                            'search',
+                            f"Searching {len(effective_selected_document_ids)} previously grounded document(s) for '{(search_query or user_message)[:50]}'"
+                        )
+                    else:
+                        yield emit_thought(
+                            'search',
+                            f"Searching {effective_document_scope or 'personal'} workspace documents for '{(search_query or user_message)[:50]}'"
+                        )
                     try:
                         search_args = {
                             "query": search_query,
                             "user_id": user_id,
                             "top_n": 12,
-                            "doc_scope": document_scope,
+                            "doc_scope": effective_document_scope,
                         }
                         
-                        if active_group_ids and (document_scope == 'group' or document_scope == 'all' or chat_type == 'group'):
-                            search_args['active_group_ids'] = active_group_ids
+                        if effective_active_group_ids and (
+                            effective_document_scope == 'group'
+                            or effective_document_scope == 'all'
+                            or chat_type == 'group'
+                        ):
+                            search_args['active_group_ids'] = effective_active_group_ids
                         
                         # Add active_public_workspace_id when:
                         # 1. Document scope is 'public' or
                         # 2. Document scope is 'all' and public workspaces are enabled
-                        if active_public_workspace_id and (document_scope == 'public' or document_scope == 'all'):
-                            search_args['active_public_workspace_id'] = active_public_workspace_id
+                        if effective_active_public_workspace_id and (
+                            effective_document_scope == 'public' or effective_document_scope == 'all'
+                        ):
+                            search_args['active_public_workspace_id'] = effective_active_public_workspace_id
                         
-                        if selected_document_ids:
-                            search_args['document_ids'] = selected_document_ids
-                        elif selected_document_id:
-                            search_args['document_id'] = selected_document_id
+                        if effective_selected_document_ids:
+                            search_args['document_ids'] = effective_selected_document_ids
+                        elif effective_selected_document_id:
+                            search_args['document_id'] = effective_selected_document_id
                         
                         # Add tags filter if provided
                         if tags_filter and isinstance(tags_filter, list) and len(tags_filter) > 0:
@@ -6763,10 +9132,18 @@ def register_route_backend_chats(app):
                             chunk_sequence = doc.get('chunk_sequence', 0)
                             page_number = doc.get('page_number') or chunk_sequence or 1
                             citation_id = doc.get('id', str(uuid.uuid4()))
+                            document_id = str(doc.get('document_id') or '').strip()
+                            if not document_id:
+                                document_id = (
+                                    '_'.join(str(citation_id).split('_')[:-1])
+                                    if '_' in str(citation_id)
+                                    else str(citation_id)
+                                )
                             classification = doc.get('document_classification')
                             chunk_id = doc.get('chunk_id', str(uuid.uuid4()))
                             score = doc.get('score', 0.0)
                             group_id = doc.get('group_id', None)
+                            doc_public_workspace_id = doc.get('public_workspace_id', None)
                             sheet_name = doc.get('sheet_name')
                             location_label, location_value = get_citation_location(
                                 file_name,
@@ -6780,6 +9157,7 @@ def register_route_backend_chats(app):
                             
                             combined_documents.append({
                                 "file_name": file_name,
+                                "document_id": document_id,
                                 "citation_id": citation_id,
                                 "page_number": page_number,
                                 "sheet_name": sheet_name,
@@ -6792,17 +9170,20 @@ def register_route_backend_chats(app):
                                 "chunk_id": chunk_id,
                                 "score": score,
                                 "group_id": group_id,
+                                "public_workspace_id": doc_public_workspace_id,
                             })
                             
                             # Build citation data to match non-streaming format
                             citation_data = {
                                 "file_name": file_name,
+                                "document_id": document_id,
                                 "citation_id": citation_id,
                                 "page_number": page_number,
                                 "chunk_id": chunk_id,
                                 "chunk_sequence": chunk_sequence,
                                 "score": score,
                                 "group_id": group_id,
+                                "public_workspace_id": doc_public_workspace_id,
                                 "version": version,
                                 "classification": classification
                             }
@@ -6815,7 +9196,10 @@ def register_route_backend_chats(app):
                             processed_doc_ids = set()
                             
                             for doc in search_results:
-                                doc_id = doc.get('document_id') or doc.get('id')
+                                doc_id = str(doc.get('document_id') or '').strip()
+                                if not doc_id and doc.get('id'):
+                                    raw_doc_id = str(doc.get('id') or '').strip()
+                                    doc_id = '_'.join(raw_doc_id.split('_')[:-1]) if '_' in raw_doc_id else raw_doc_id
                                 if not doc_id or doc_id in processed_doc_ids:
                                     continue
                                 
@@ -6826,10 +9210,10 @@ def register_route_backend_chats(app):
                                 
                                 # Map document_scope to correct parameter names for the function
                                 metadata_params = {'user_id': user_id}
-                                if document_scope == 'group':
-                                    metadata_params['group_id'] = active_group_id
-                                elif document_scope == 'public':
-                                    metadata_params['public_workspace_id'] = active_public_workspace_id
+                                if effective_document_scope == 'group':
+                                    metadata_params['group_id'] = effective_active_group_id
+                                elif effective_document_scope == 'public':
+                                    metadata_params['public_workspace_id'] = effective_active_public_workspace_id
                                 
                                 metadata = get_document_metadata_for_citations(
                                     doc_id, 
@@ -6846,6 +9230,7 @@ def register_route_backend_chats(app):
                                         
                                         keywords_citation = {
                                             "file_name": file_name,
+                                            "document_id": doc_id,
                                             "citation_id": keywords_citation_id,
                                             "page_number": "Metadata",
                                             "chunk_id": keywords_citation_id,
@@ -6868,6 +9253,7 @@ def register_route_backend_chats(app):
                                         
                                         abstract_citation = {
                                             "file_name": file_name,
+                                            "document_id": doc_id,
                                             "citation_id": abstract_citation_id,
                                             "page_number": "Metadata",
                                             "chunk_id": abstract_citation_id,
@@ -6903,6 +9289,7 @@ def register_route_backend_chats(app):
                                         
                                         vision_citation = {
                                             "file_name": file_name,
+                                            "document_id": doc_id,
                                             "citation_id": vision_citation_id,
                                             "page_number": "AI Vision",
                                             "chunk_id": vision_citation_id,
@@ -6929,23 +9316,33 @@ def register_route_backend_chats(app):
                             'documents': combined_documents
                         })
 
-                        # Reorder hybrid citations list in descending order based on page_number
-                        hybrid_citations_list.sort(key=lambda x: x.get('page_number', 0), reverse=True)
+                        hybrid_citations_list.sort(key=_build_hybrid_citation_sort_key, reverse=True)
+                    elif history_grounded_search_used:
+                        yield emit_thought(
+                            'search',
+                            'No matching excerpts were found in the previously grounded documents'
+                        )
                 
+                workspace_tabular_file_contexts = []
                 workspace_tabular_files = set()
-                if hybrid_search_enabled and is_tabular_processing_enabled(settings):
-                    workspace_tabular_files = collect_workspace_tabular_filenames(
+                if (hybrid_search_enabled or history_grounded_search_used) and is_tabular_processing_enabled(settings):
+                    workspace_tabular_file_contexts = collect_workspace_tabular_file_contexts(
                         combined_documents=combined_documents,
-                        selected_document_ids=selected_document_ids,
-                        selected_document_id=selected_document_id,
-                        document_scope=document_scope,
+                        selected_document_ids=effective_selected_document_ids,
+                        selected_document_id=effective_selected_document_id,
+                        document_scope=effective_document_scope,
+                        active_group_id=effective_active_group_id,
+                        active_public_workspace_id=effective_active_public_workspace_id,
                     )
+                    workspace_tabular_files = {
+                        file_context['file_name'] for file_context in workspace_tabular_file_contexts
+                    }
 
-                if hybrid_search_enabled and workspace_tabular_files and is_tabular_processing_enabled(settings):
+                if (hybrid_search_enabled or history_grounded_search_used) and workspace_tabular_files and is_tabular_processing_enabled(settings):
                     tabular_source_hint = determine_tabular_source_hint(
-                        document_scope,
-                        active_group_id=active_group_id,
-                        active_public_workspace_id=active_public_workspace_id,
+                        effective_document_scope,
+                        active_group_id=effective_active_group_id,
+                        active_public_workspace_id=effective_active_public_workspace_id,
                     )
                     tabular_execution_mode = get_tabular_execution_mode(user_message)
                     tabular_filenames_str = ", ".join(sorted(workspace_tabular_files))
@@ -6956,19 +9353,21 @@ def register_route_backend_chats(app):
                     debug_print(
                         "[Streaming][Tabular SK] Starting workspace tabular analysis | "
                         f"files={sorted(workspace_tabular_files)} | source_hint={tabular_source_hint} | "
+                        f"file_contexts={workspace_tabular_file_contexts} | "
                         f"execution_mode={tabular_execution_mode} | baseline_invocations={baseline_tabular_invocation_count}"
                     )
 
-                    tabular_analysis = asyncio.run(run_tabular_sk_analysis(
+                    tabular_analysis = asyncio.run(run_tabular_analysis_with_multi_file_support(
                         user_question=user_message,
                         tabular_filenames=workspace_tabular_files,
+                        tabular_file_contexts=workspace_tabular_file_contexts,
                         user_id=user_id,
                         conversation_id=conversation_id,
                         gpt_model=gpt_model,
                         settings=settings,
                         source_hint=tabular_source_hint,
-                        group_id=active_group_id if tabular_source_hint == 'group' else None,
-                        public_workspace_id=active_public_workspace_id if tabular_source_hint == 'public' else None,
+                        group_id=effective_active_group_id if tabular_source_hint == 'group' else None,
+                        public_workspace_id=effective_active_public_workspace_id if tabular_source_hint == 'public' else None,
                         execution_mode=tabular_execution_mode,
                     ))
                     tabular_invocations = get_new_plugin_invocations(
@@ -7044,10 +9443,10 @@ def register_route_backend_chats(app):
 
                 # Update message chat type
                 message_chat_type = None
-                if hybrid_search_enabled and search_results and len(search_results) > 0:
-                    if document_scope == 'group':
+                if (hybrid_search_enabled or history_grounded_search_used) and search_results and len(search_results) > 0:
+                    if effective_document_scope == 'group':
                         message_chat_type = 'group'
-                    elif document_scope == 'public':
+                    elif effective_document_scope == 'public':
                         message_chat_type = 'public'
                     else:
                         message_chat_type = 'personal_single_user'
@@ -7060,6 +9459,8 @@ def register_route_backend_chats(app):
                 
                 # Prepare conversation history
                 conversation_history_for_api = []
+                history_debug_info = {}
+                final_api_source_refs = []
                 
                 try:
                     all_messages_query = "SELECT * FROM c WHERE c.conversation_id = @conv_id ORDER BY c.timestamp ASC"
@@ -7068,85 +9469,38 @@ def register_route_backend_chats(app):
                         query=all_messages_query, parameters=params_all, 
                         partition_key=conversation_id, enable_cross_partition_query=True
                     ))
-                    all_messages = filter_assistant_artifact_items(all_messages)
-                    
-                    # Sort messages using threading logic
-                    all_messages = sort_messages_by_thread(all_messages)
-                    
-                    total_messages = len(all_messages)
-                    num_recent_messages = min(total_messages, conversation_history_limit)
-                    recent_messages = all_messages[-num_recent_messages:]
-                    
+                    history_segments = build_conversation_history_segments(
+                        all_messages=all_messages,
+                        conversation_history_limit=conversation_history_limit,
+                        enable_summarize_older_messages=enable_summarize_content_history_beyond_conversation_history_limit,
+                        gpt_client=gpt_client,
+                        gpt_model=gpt_model,
+                        user_message_id=user_message_id,
+                        fallback_user_message=user_message,
+                    )
+                    summary_of_older = history_segments['summary_of_older']
+                    chat_tabular_files = history_segments['chat_tabular_files']
+                    history_debug_info = history_segments.get('debug_info', {})
+
+                    if summary_of_older:
+                        conversation_history_for_api.append({
+                            'role': 'system',
+                            'content': (
+                                f"<Summary of previous conversation context>\n{summary_of_older}\n"
+                                "</Summary of previous conversation context>"
+                            )
+                        })
+                        final_api_source_refs.append('system:summary_of_older')
+
                     # Add augmentation messages
                     for aug_msg in system_messages_for_augmentation:
                         conversation_history_for_api.append({
                             'role': aug_msg['role'],
                             'content': aug_msg['content']
                         })
-                    
-                    # Add recent messages (with file role handling)
-                    allowed_roles_in_history = ['user', 'assistant']
-                    max_file_content_length_in_history = 50000
-                    max_tabular_content_length_in_history = 50000
-                    chat_tabular_files = set()  # Track tabular files uploaded directly to chat
-
-                    for message in recent_messages:
-                        role = message.get('role')
-                        content = message.get('content', '')
-
-                        if role in allowed_roles_in_history:
-                            conversation_history_for_api.append({
-                                'role': role,
-                                'content': content
-                            })
-                        elif role == 'file':
-                            filename = message.get('filename', 'uploaded_file')
-                            file_content = message.get('file_content', '')
-                            is_table = message.get('is_table', False)
-                            file_content_source = message.get('file_content_source', '')
-
-                            # Tabular files stored in blob - track for mini SK analysis
-                            if is_table and file_content_source == 'blob':
-                                chat_tabular_files.add(filename)
-                                conversation_history_for_api.append({
-                                    'role': 'system',
-                                    'content': (
-                                        f"[User uploaded a tabular data file named '{filename}'. "
-                                        f"The file is stored in blob storage and available for analysis. "
-                                        f"Use the tabular_processing plugin functions (list_tabular_files, "
-                                        f"describe_tabular_file, aggregate_column, filter_rows, "
-                                        f"query_tabular_data, group_by_aggregate, group_by_datetime_component) to analyze this data. "
-                                        f"The file source is 'chat'.]"
-                                    )
-                                })
-                            else:
-                                content_limit = (
-                                    max_tabular_content_length_in_history if is_table
-                                    else max_file_content_length_in_history
-                                )
-                                display_content = file_content[:content_limit]
-                                if len(file_content) > content_limit:
-                                    display_content += "..."
-
-                                if is_table:
-                                    conversation_history_for_api.append({
-                                        'role': 'system',
-                                        'content': (
-                                            f"[User uploaded a tabular data file named '{filename}'. "
-                                            f"This is CSV format data for analysis:\n{display_content}]\n"
-                                            f"This is complete tabular data in CSV format. You can perform "
-                                            f"calculations, analysis, and data operations on this dataset."
-                                        )
-                                    })
-                                else:
-                                    conversation_history_for_api.append({
-                                        'role': 'system',
-                                        'content': (
-                                            f"[User uploaded a file named '{filename}'. "
-                                            f"Content preview:\n{display_content}]\n"
-                                            f"Use this file context if relevant."
-                                        )
-                                    })
+                        final_api_source_refs.append(f"system:augmentation:{len(final_api_source_refs) + 1}")
+                    conversation_history_for_api.extend(history_segments['history_messages'])
+                    final_api_source_refs.extend(history_debug_info.get('history_message_source_refs', []))
 
                     # --- Mini SK analysis for tabular files uploaded directly to chat ---
                     if chat_tabular_files and is_tabular_processing_enabled(settings):
@@ -7166,7 +9520,7 @@ def register_route_backend_chats(app):
                             f"baseline_invocations={baseline_tabular_invocation_count}"
                         )
 
-                        chat_tabular_analysis = asyncio.run(run_tabular_sk_analysis(
+                        chat_tabular_analysis = asyncio.run(run_tabular_analysis_with_multi_file_support(
                             user_question=user_message,
                             tabular_filenames=chat_tabular_files,
                             user_id=user_id,
@@ -7202,6 +9556,7 @@ def register_route_backend_chats(app):
                                     chat_tabular_analysis,
                                 )
                             })
+                            final_api_source_refs.append('system:tabular_results')
 
                             # Collect tool execution citations
                             chat_tabular_sk_citations = collect_tabular_sk_citations(user_id, conversation_id)
@@ -7223,18 +9578,66 @@ def register_route_backend_chats(app):
                 
                 # Add system prompt
                 default_system_prompt = settings.get('default_system_prompt', '').strip()
+                default_system_prompt_inserted = False
                 if default_system_prompt:
                     has_general_system_prompt = any(
                         msg.get('role') == 'system' and not (
+                            msg.get('content', '').startswith('<Summary of previous conversation context>') or
                             "retrieved document excerpts" in msg.get('content', '')
                         )
                         for msg in conversation_history_for_api
                     )
                     if not has_general_system_prompt:
-                        conversation_history_for_api.insert(0, {
+                        insert_idx = 0
+                        if (
+                            conversation_history_for_api
+                            and conversation_history_for_api[0].get('role') == 'system'
+                            and conversation_history_for_api[0].get('content', '').startswith(
+                                '<Summary of previous conversation context>'
+                            )
+                        ):
+                            insert_idx = 1
+                        conversation_history_for_api.insert(insert_idx, {
                             'role': 'system',
                             'content': default_system_prompt
                         })
+                        final_api_source_refs.insert(insert_idx, 'system:default_prompt')
+                        default_system_prompt_inserted = True
+
+                if not original_hybrid_search_enabled:
+                    history_grounding_message = build_history_grounding_system_message()
+                    insert_idx = 0
+                    if (
+                        conversation_history_for_api
+                        and conversation_history_for_api[0].get('role') == 'system'
+                        and conversation_history_for_api[0].get('content', '').startswith(
+                            '<Summary of previous conversation context>'
+                        )
+                    ):
+                        insert_idx = 1
+                    if default_system_prompt_inserted:
+                        insert_idx += 1
+                    conversation_history_for_api.insert(insert_idx, history_grounding_message)
+                    final_api_source_refs.insert(insert_idx, 'system:history_grounding')
+
+                history_debug_info = enrich_history_context_debug_info(
+                    history_debug_info,
+                    conversation_history_for_api,
+                    final_api_source_refs,
+                    path_label='streaming',
+                    augmentation_message_count=len(system_messages_for_augmentation),
+                    default_system_prompt_inserted=default_system_prompt_inserted,
+                )
+                emit_history_context_debug(history_debug_info, conversation_id)
+                yield emit_thought(
+                    'history_context',
+                    build_history_context_thought_content(history_debug_info),
+                    build_history_context_thought_detail(history_debug_info),
+                )
+                if settings.get('enable_debug_logging', False):
+                    agent_citations_list.append(
+                        build_history_context_debug_citation(history_debug_info, 'streaming')
+                    )
                 
                 # Check if agents are enabled and should be used
                 selected_agent = None
@@ -7324,6 +9727,14 @@ def register_route_backend_chats(app):
                             debug_print(f"--- Streaming from Agent: {agent_name_used} (model: {actual_model_used}) ---")
                         else:
                             debug_print(f"[Streaming] ⚠️ No agent selected, falling back to GPT")
+
+                    inject_fact_memory_context(
+                        conversation_history=conversation_history_for_api,
+                        scope_id=scope_id,
+                        scope_type=scope_type,
+                        conversation_id=conversation_id,
+                        agent_id=getattr(selected_agent, 'id', None),
+                    )
                 
                 # Stream the response
                 accumulated_content = ""
@@ -7703,13 +10114,14 @@ def register_route_backend_chats(app):
                         'augmented': bool(system_messages_for_augmentation),
                         'hybrid_citations': hybrid_citations_list,
                         'web_search_citations': web_search_citations_list,
-                        'hybridsearch_query': search_query if hybrid_search_enabled and search_results else None,
+                        'hybridsearch_query': search_query if search_results else None,
                         'agent_citations': prepared_agent_citations,
                         'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
                         'agent_display_name': agent_display_name_used if use_agent_streaming else None,
                         'agent_name': agent_name_used if use_agent_streaming else None,
                         'metadata': {
                             'reasoning_effort': reasoning_effort,
+                            'history_context': history_debug_info,
                             'thread_info': {
                                 'thread_id': user_thread_id,
                                 'previous_thread_id': user_previous_thread_id,
@@ -7728,9 +10140,9 @@ def register_route_backend_chats(app):
                             
                             # Determine workspace type based on active group/public workspace
                             workspace_type = 'personal'
-                            if active_public_workspace_id:
+                            if effective_active_public_workspace_id:
                                 workspace_type = 'public'
-                            elif active_group_id:
+                            elif effective_active_group_id:
                                 workspace_type = 'group'
                             
                             log_token_usage(
@@ -7743,8 +10155,8 @@ def register_route_backend_chats(app):
                                 completion_tokens=token_usage_data.get('completion_tokens'),
                                 conversation_id=conversation_id,
                                 message_id=assistant_message_id,
-                                group_id=active_group_id,
-                                public_workspace_id=active_public_workspace_id,
+                                group_id=effective_active_group_id,
+                                public_workspace_id=effective_active_public_workspace_id,
                                 additional_context={
                                     'agent_name': agent_name_used if use_agent_streaming else None,
                                     'augmented': bool(system_messages_for_augmentation),
@@ -7764,20 +10176,20 @@ def register_route_backend_chats(app):
                             user_message=user_message,
                             conversation_id=conversation_id,
                             user_id=user_id,
-                            active_group_id=active_group_id,
-                            active_group_ids=active_group_ids,
-                            document_scope=document_scope,
-                            selected_document_id=selected_document_id,
+                            active_group_id=effective_active_group_id,
+                            active_group_ids=effective_active_group_ids,
+                            document_scope=effective_document_scope,
+                            selected_document_id=effective_selected_document_id,
                             model_deployment=gpt_model,
-                            hybrid_search_enabled=hybrid_search_enabled,
+                            hybrid_search_enabled=hybrid_search_enabled or history_grounded_search_used,
                             image_gen_enabled=False,
                             selected_documents=combined_documents if combined_documents else None,
                             selected_agent=agent_name_used if use_agent_streaming else None,
                             selected_agent_details=selected_agent_metadata if use_agent_streaming else None,
                             search_results=search_results if search_results else None,
                             conversation_item=conversation_item,
-                            active_public_workspace_id=active_public_workspace_id,
-                            active_public_workspace_ids=active_public_workspace_ids
+                            active_public_workspace_id=effective_active_public_workspace_id,
+                            active_public_workspace_ids=effective_active_public_workspace_ids
                         )
                     except Exception as e:
                         debug_print(f"Error collecting conversation metadata: {e}")
@@ -7872,6 +10284,7 @@ def register_route_backend_chats(app):
                                 'incomplete': True,
                                 'error': error_msg,
                                 'reasoning_effort': reasoning_effort,
+                                'history_context': history_debug_info,
                                 'thread_info': {
                                     'thread_id': user_thread_id,
                                     'previous_thread_id': user_previous_thread_id,
@@ -8143,6 +10556,889 @@ def remove_masked_content(content, masked_ranges):
             result = result[:start] + result[end:]
     
     return result
+
+
+def _format_history_message_ref(message):
+    role = str((message or {}).get('role') or 'unknown')
+    message_id = str((message or {}).get('id') or 'unknown')
+    return f"{role}:{message_id}"
+
+
+def _capture_history_refs(refs, max_items=12):
+    ref_list = [str(ref) for ref in refs if ref]
+    if len(ref_list) <= max_items:
+        return ref_list
+    remaining = len(ref_list) - max_items
+    return ref_list[:max_items] + [f"... (+{remaining} more)"]
+
+
+def _format_history_refs_for_detail(refs):
+    if not refs:
+        return 'none'
+    return ', '.join(str(ref) for ref in refs)
+
+
+def _truncate_history_citation_text(text, max_chars=1600):
+    value = str(text or '').strip()
+    if not value:
+        return ''
+    if len(value) <= max_chars:
+        return value
+    return f"{value[:max_chars]}... [truncated {len(value) - max_chars} chars]"
+
+
+def _serialize_history_citation_value(value, max_chars=1200):
+    if value in (None, '', [], {}):
+        return ''
+
+    if isinstance(value, str):
+        serialized = value
+    else:
+        try:
+            serialized = json.dumps(value, default=str, ensure_ascii=False)
+        except Exception:
+            serialized = str(value)
+
+    compact_serialized = ' '.join(serialized.split())
+    return _truncate_history_citation_text(compact_serialized, max_chars=max_chars)
+
+
+def _build_agent_citation_history_lines(agent_citations, max_citations=4):
+    def parse_citation_payload(value):
+        if isinstance(value, str):
+            stripped_value = value.strip()
+            if stripped_value[:1] in ('{', '['):
+                try:
+                    return json.loads(stripped_value)
+                except Exception:
+                    return value
+        return value
+
+    def is_tabular_citation(citation):
+        if not isinstance(citation, dict):
+            return False
+        tool_name = str(citation.get('tool_name') or '')
+        function_name = str(citation.get('function_name') or '')
+        plugin_name = str(citation.get('plugin_name') or '')
+        return (
+            plugin_name == 'TabularProcessingPlugin'
+            or 'TabularProcessingPlugin.' in tool_name
+            or function_name in {
+                'aggregate_column',
+                'count_rows',
+                'count_rows_by_related_values',
+                'describe_tabular_file',
+                'filter_rows',
+                'filter_rows_by_related_values',
+                'get_distinct_values',
+                'group_by_aggregate',
+                'group_by_datetime_component',
+                'lookup_value',
+                'query_tabular_data',
+            }
+        )
+
+    def build_tabular_signature(citation):
+        arguments = parse_citation_payload(citation.get('function_arguments'))
+        result = parse_citation_payload(citation.get('function_result'))
+        if not isinstance(arguments, dict):
+            arguments = {}
+        if not isinstance(result, dict):
+            result = {}
+
+        tool_signature_name = str(citation.get('function_name') or citation.get('tool_name') or '').strip()
+        if ' [' in tool_signature_name:
+            tool_signature_name = tool_signature_name.split(' [', 1)[0]
+
+        signature_payload = {
+            'tool': tool_signature_name,
+            'filename': result.get('filename') or arguments.get('filename'),
+            'column': result.get('column') or arguments.get('column'),
+            'values': result.get('values'),
+            'sample_rows': result.get('sample_rows'),
+            'value': result.get('value'),
+        }
+        try:
+            return json.dumps(signature_payload, sort_keys=True, default=str)
+        except Exception:
+            return str(signature_payload)
+
+    def summarize_tabular_values(values, max_chars=2200, max_items=60):
+        if not isinstance(values, list) or not values:
+            return ''
+
+        compact_values = []
+        current_length = 0
+        for index, item in enumerate(values[:max_items]):
+            item_text = _serialize_history_citation_value(item, max_chars=300)
+            if not item_text:
+                continue
+
+            separator_length = 2 if compact_values else 0
+            if current_length + separator_length + len(item_text) > max_chars:
+                remaining = len(values) - index
+                compact_values.append(f"... (+{remaining} more values)")
+                break
+
+            compact_values.append(item_text)
+            current_length += separator_length + len(item_text)
+
+        if len(values) > max_items and (not compact_values or not str(compact_values[-1]).startswith('... (+')):
+            compact_values.append(f"... (+{len(values) - max_items} more values)")
+
+        return '; '.join(compact_values)
+
+    def build_tabular_line(citation):
+        arguments = parse_citation_payload(citation.get('function_arguments'))
+        result = parse_citation_payload(citation.get('function_result'))
+        if not isinstance(arguments, dict):
+            arguments = {}
+        if not isinstance(result, dict):
+            result = {}
+
+        tool_name = str(citation.get('tool_name') or citation.get('function_name') or 'TabularProcessingPlugin').strip()
+        filename = result.get('filename') or arguments.get('filename') or 'unknown file'
+        selected_sheet = result.get('selected_sheet') or arguments.get('sheet_name') or 'unknown sheet'
+        column = result.get('column') or arguments.get('column') or 'unknown column'
+        distinct_count = result.get('distinct_count')
+        returned_values = result.get('returned_values')
+        values_summary = summarize_tabular_values(result.get('values'))
+
+        line_parts = [
+            tool_name,
+            f"file={filename}",
+            f"sheet={selected_sheet}",
+            f"column={column}",
+        ]
+        if distinct_count not in (None, ''):
+            line_parts.append(f"distinct_count={distinct_count}")
+        if returned_values not in (None, ''):
+            line_parts.append(f"returned_values={returned_values}")
+        if values_summary:
+            line_parts.append(f"values={values_summary}")
+
+        return f"- {' | '.join(str(part) for part in line_parts if part not in (None, ''))}"
+
+    eligible_citations = []
+    seen_tabular_signatures = set()
+    for citation in agent_citations or []:
+        if isinstance(citation, dict):
+            tool_name = str(citation.get('tool_name') or citation.get('function_name') or '').strip()
+            if tool_name.startswith('[Debug]') or tool_name == 'Conversation History':
+                continue
+            if is_tabular_citation(citation):
+                signature = build_tabular_signature(citation)
+                if signature in seen_tabular_signatures:
+                    continue
+                seen_tabular_signatures.add(signature)
+        eligible_citations.append(citation)
+
+    lines = []
+    for citation in eligible_citations[:max_citations]:
+        if not isinstance(citation, dict):
+            value_summary = _serialize_history_citation_value(citation, max_chars=800)
+            if value_summary:
+                lines.append(f"- Tool result: {value_summary}")
+            continue
+
+        if is_tabular_citation(citation):
+            lines.append(build_tabular_line(citation))
+            continue
+
+        tool_name = str(citation.get('tool_name') or citation.get('function_name') or 'Tool invocation').strip()
+        argument_summary = _serialize_history_citation_value(citation.get('function_arguments'), max_chars=350)
+        result_summary = _serialize_history_citation_value(citation.get('function_result'), max_chars=700)
+        error_summary = ''
+        if citation.get('success') is False:
+            error_summary = _serialize_history_citation_value(citation.get('error_message'), max_chars=400)
+
+        line_parts = [tool_name]
+        if argument_summary:
+            line_parts.append(f"args={argument_summary}")
+        if result_summary:
+            line_parts.append(f"result={result_summary}")
+        if error_summary:
+            line_parts.append(f"error={error_summary}")
+        lines.append(f"- {' | '.join(line_parts)}")
+
+    remaining = len(eligible_citations) - min(len(eligible_citations), max_citations)
+    if remaining > 0:
+        lines.append(f"- ... (+{remaining} more prior tool results)")
+
+    return lines
+
+
+def _build_document_citation_history_lines(hybrid_citations, max_citations=5):
+    lines = []
+    for citation in (hybrid_citations or [])[:max_citations]:
+        if not isinstance(citation, dict):
+            continue
+
+        file_name = str(citation.get('file_name') or 'Document').strip()
+        line_parts = [file_name]
+
+        page_number = citation.get('page_number')
+        if page_number not in (None, ''):
+            line_parts.append(f"page {page_number}")
+
+        chunk_sequence = citation.get('chunk_sequence')
+        chunk_id = citation.get('chunk_id')
+        if chunk_sequence not in (None, ''):
+            line_parts.append(f"chunk {chunk_sequence}")
+        elif chunk_id not in (None, ''):
+            line_parts.append(f"chunk {chunk_id}")
+
+        classification = citation.get('classification')
+        if classification not in (None, ''):
+            line_parts.append(str(classification))
+
+        lines.append(f"- {', '.join(line_parts)}")
+
+    remaining = max(0, len(hybrid_citations or []) - min(len(hybrid_citations or []), max_citations))
+    if remaining > 0:
+        lines.append(f"- ... (+{remaining} more cited documents)")
+
+    return lines
+
+
+def _build_web_citation_history_lines(web_search_citations, max_citations=4):
+    lines = []
+    for citation in (web_search_citations or [])[:max_citations]:
+        if not isinstance(citation, dict):
+            continue
+
+        title = str(citation.get('title') or citation.get('url') or 'Web source').strip()
+        url = str(citation.get('url') or '').strip()
+        if url and url != title:
+            lines.append(f"- {title} ({url})")
+        else:
+            lines.append(f"- {title}")
+
+    remaining = max(0, len(web_search_citations or []) - min(len(web_search_citations or []), max_citations))
+    if remaining > 0:
+        lines.append(f"- ... (+{remaining} more web sources)")
+
+    return lines
+
+
+def _parse_json_object_from_text(text):
+    """Extract a JSON object from a plain text model response."""
+    value = str(text or '').strip()
+    if not value:
+        return None
+
+    try:
+        parsed = json.loads(value)
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        pass
+
+    start_index = value.find('{')
+    end_index = value.rfind('}')
+    if start_index == -1 or end_index == -1 or end_index <= start_index:
+        return None
+
+    try:
+        parsed = json.loads(value[start_index:end_index + 1])
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        return None
+
+
+def _normalize_prior_grounded_document_refs(conversation_item):
+    """Return the reusable grounded document set for follow-up turns with search disabled."""
+    normalized_refs = []
+    seen_refs = set()
+
+    def add_ref(raw_ref):
+        if not isinstance(raw_ref, dict):
+            return
+
+        document_id = str(raw_ref.get('document_id') or '').strip()
+        scope = str(raw_ref.get('scope') or '').strip().lower()
+        scope_id = str(
+            raw_ref.get('scope_id')
+            or raw_ref.get('group_id')
+            or raw_ref.get('public_workspace_id')
+            or raw_ref.get('user_id')
+            or ''
+        ).strip()
+        if not document_id or not scope or not scope_id:
+            return
+
+        ref_key = (scope, scope_id, document_id)
+        if ref_key in seen_refs:
+            return
+
+        seen_refs.add(ref_key)
+
+        normalized_ref = {
+            'document_id': document_id,
+            'scope': scope,
+            'scope_id': scope_id,
+            'file_name': raw_ref.get('file_name') or raw_ref.get('title'),
+            'classification': raw_ref.get('classification'),
+        }
+
+        if scope == 'group':
+            normalized_ref['group_id'] = scope_id
+        elif scope == 'public':
+            normalized_ref['public_workspace_id'] = scope_id
+        else:
+            normalized_ref['user_id'] = scope_id
+
+        normalized_refs.append(normalized_ref)
+
+    for raw_ref in (conversation_item or {}).get('last_grounded_document_refs', []) or []:
+        add_ref(raw_ref)
+
+    if normalized_refs:
+        return normalized_refs
+
+    for tag in (conversation_item or {}).get('tags', []) or []:
+        if not isinstance(tag, dict) or tag.get('category') != 'document':
+            continue
+
+        scope_info = tag.get('scope') or {}
+        add_ref({
+            'document_id': tag.get('document_id'),
+            'scope': scope_info.get('type'),
+            'scope_id': scope_info.get('id'),
+            'title': tag.get('title'),
+            'classification': tag.get('classification'),
+        })
+
+    return normalized_refs
+
+
+def build_prior_grounded_document_search_parameters(grounded_refs):
+    """Translate grounded document refs into bounded search parameters."""
+    document_ids = []
+    group_ids = []
+    public_workspace_ids = []
+    scope_types = set()
+
+    for ref in grounded_refs or []:
+        if not isinstance(ref, dict):
+            continue
+
+        document_id = str(ref.get('document_id') or '').strip()
+        if document_id and document_id not in document_ids:
+            document_ids.append(document_id)
+
+        scope = str(ref.get('scope') or '').strip().lower()
+        if not scope:
+            continue
+        scope_types.add(scope)
+
+        if scope == 'group':
+            group_id = str(ref.get('group_id') or ref.get('scope_id') or '').strip()
+            if group_id and group_id not in group_ids:
+                group_ids.append(group_id)
+        elif scope == 'public':
+            public_workspace_id = str(ref.get('public_workspace_id') or ref.get('scope_id') or '').strip()
+            if public_workspace_id and public_workspace_id not in public_workspace_ids:
+                public_workspace_ids.append(public_workspace_id)
+
+    if len(scope_types) == 1:
+        doc_scope = next(iter(scope_types))
+    else:
+        doc_scope = 'all'
+
+    return {
+        'document_ids': document_ids,
+        'doc_scope': doc_scope,
+        'active_group_ids': group_ids,
+        'active_group_id': group_ids[0] if group_ids else None,
+        'active_public_workspace_ids': public_workspace_ids,
+        'active_public_workspace_id': public_workspace_ids[0] if public_workspace_ids else None,
+        'scope_types': sorted(scope_types),
+    }
+
+
+def build_history_only_assessment_messages(history_segments, default_system_prompt=''):
+    """Construct the prompt context used to decide whether history alone is sufficient."""
+    assessment_messages = []
+    summary_of_older = str((history_segments or {}).get('summary_of_older') or '').strip()
+    if summary_of_older:
+        assessment_messages.append({
+            'role': 'system',
+            'content': (
+                f"<Summary of previous conversation context>\n{summary_of_older}\n"
+                "</Summary of previous conversation context>"
+            )
+        })
+
+    normalized_default_system_prompt = str(default_system_prompt or '').strip()
+    if normalized_default_system_prompt:
+        assessment_messages.append({
+            'role': 'system',
+            'content': normalized_default_system_prompt,
+        })
+
+    assessment_messages.extend((history_segments or {}).get('history_messages', []))
+    return assessment_messages
+
+
+def assess_history_only_answerability(gpt_client, gpt_model, conversation_history_for_api):
+    """Return whether the current question can be answered from existing conversation grounding alone."""
+    assessment_prompt = (
+        "You are evaluating whether the latest user question can be answered using only the "
+        "existing conversation context already provided. Earlier assistant turns may include "
+        "supporting citation context from previously grounded document answers.\n\n"
+        "Respond with JSON only using this schema:\n"
+        "{\"can_answer_from_history\": true|false, \"search_query\": \"...\", \"reason\": \"...\"}\n\n"
+        "Set can_answer_from_history to true only if the conversation already contains enough "
+        "grounded information to answer confidently without retrieving any new document excerpts. "
+        "If false, produce a concise standalone search_query that resolves pronouns and omitted "
+        "references from the conversation for use against the previously grounded documents. "
+        "Keep reason short."
+    )
+
+    assessment_messages = [{'role': 'system', 'content': assessment_prompt}]
+    assessment_messages.extend(conversation_history_for_api or [])
+
+    assessment_response = gpt_client.chat.completions.create(
+        model=gpt_model,
+        messages=assessment_messages,
+        max_tokens=180,
+        temperature=0,
+    )
+    response_text = str(assessment_response.choices[0].message.content or '').strip()
+    response_payload = _parse_json_object_from_text(response_text) or {}
+
+    can_answer_from_history = response_payload.get('can_answer_from_history')
+    if isinstance(can_answer_from_history, str):
+        can_answer_from_history = can_answer_from_history.strip().lower() == 'true'
+    else:
+        can_answer_from_history = bool(can_answer_from_history)
+
+    return {
+        'can_answer_from_history': can_answer_from_history,
+        'search_query': str(response_payload.get('search_query') or '').strip(),
+        'reason': str(response_payload.get('reason') or '').strip(),
+        'raw_response': response_text,
+    }
+
+
+def build_history_grounding_system_message():
+    """Instruction used when explicit workspace search is disabled for the current turn."""
+    return {
+        'role': 'system',
+        'content': (
+            "Workspace search is disabled for this turn. Answer only from the existing conversation "
+            "context and any retrieved document excerpts explicitly provided in this turn. If those "
+            "sources are insufficient, say that you do not have enough grounded information from the "
+            "prior conversation sources and ask the user to select a workspace or document."
+        ),
+    }
+
+
+def build_assistant_history_content_with_citations(message, content):
+    base_content = str(content or '').strip()
+    citation_sections = []
+
+    agent_lines = _build_agent_citation_history_lines(message.get('agent_citations', []))
+    if agent_lines:
+        citation_sections.append("Prior tool results:\n" + "\n".join(agent_lines))
+
+    document_lines = _build_document_citation_history_lines(message.get('hybrid_citations', []))
+    if document_lines:
+        citation_sections.append("Prior cited documents:\n" + "\n".join(document_lines))
+
+    web_lines = _build_web_citation_history_lines(message.get('web_search_citations', []))
+    if web_lines:
+        citation_sections.append("Prior cited web sources:\n" + "\n".join(web_lines))
+
+    if not citation_sections:
+        return content
+
+    citation_context = (
+        "<Supporting citation context from this assistant turn>\n"
+        + "\n\n".join(citation_sections)
+        + "\n</Supporting citation context from this assistant turn>"
+    )
+    citation_context = _truncate_history_citation_text(citation_context, max_chars=5200)
+
+    if not base_content:
+        return citation_context
+
+    return f"{base_content}\n\n{citation_context}"
+
+
+def build_history_context_thought_content(history_debug_info):
+    history_debug_info = history_debug_info or {}
+    stored_total = history_debug_info.get('stored_total_messages', 0)
+    recent_count = history_debug_info.get('recent_message_count', 0)
+    final_api_count = history_debug_info.get('final_api_message_count', 0)
+    older_count = history_debug_info.get('older_message_count', 0)
+    summary_requested = history_debug_info.get('summary_requested', False)
+    summary_used = history_debug_info.get('summary_used', False)
+
+    summary_note = 'no older messages'
+    if older_count > 0:
+        if summary_used:
+            summary_note = f"summarized {history_debug_info.get('summarized_message_count', 0)} older"
+        elif summary_requested:
+            summary_note = 'older summary unavailable'
+        else:
+            summary_note = 'older summary disabled'
+
+    return (
+        f"Prepared {final_api_count} model history messages from {stored_total} stored messages "
+        f"(recent={recent_count}; {summary_note})"
+    )
+
+
+def build_history_context_thought_detail(history_debug_info):
+    history_debug_info = history_debug_info or {}
+    lines = [
+        f"path: {history_debug_info.get('path', 'unknown')}",
+        (
+            f"stored_total={history_debug_info.get('stored_total_messages', 0)}, "
+            f"history_limit={history_debug_info.get('history_limit', 0)}, "
+            f"older_count={history_debug_info.get('older_message_count', 0)}, "
+            f"recent_count={history_debug_info.get('recent_message_count', 0)}, "
+            f"summary_requested={history_debug_info.get('summary_requested', False)}, "
+            f"summary_used={history_debug_info.get('summary_used', False)}, "
+            f"augmentation_count={history_debug_info.get('augmentation_message_count', 0)}, "
+            f"default_system_prompt_inserted={history_debug_info.get('default_system_prompt_inserted', False)}"
+        ),
+        f"older_refs: {_format_history_refs_for_detail(history_debug_info.get('older_message_refs', []))}",
+        f"recent_refs: {_format_history_refs_for_detail(history_debug_info.get('selected_recent_message_refs', []))}",
+        f"summarized_refs: {_format_history_refs_for_detail(history_debug_info.get('summarized_message_refs', []))}",
+        f"skipped_inactive_refs: {_format_history_refs_for_detail(history_debug_info.get('skipped_inactive_message_refs', []))}",
+        f"skipped_masked_refs: {_format_history_refs_for_detail(history_debug_info.get('skipped_masked_message_refs', []))}",
+        f"masked_range_refs: {_format_history_refs_for_detail(history_debug_info.get('masked_range_message_refs', []))}",
+        f"history_segment_refs: {_format_history_refs_for_detail(history_debug_info.get('history_message_source_refs', []))}",
+        f"final_api_roles: {_format_history_refs_for_detail(history_debug_info.get('final_api_message_roles', []))}",
+        f"final_api_refs: {_format_history_refs_for_detail(history_debug_info.get('final_api_source_refs', []))}",
+    ]
+    return "\n".join(lines)
+
+
+def build_history_context_debug_citation(history_debug_info, path_label):
+    history_debug_info = dict(history_debug_info or {})
+    history_debug_info['path'] = path_label
+    return {
+        'tool_name': 'Conversation History',
+        'function_arguments': json.dumps({
+            'path': path_label,
+            'stored_total_messages': history_debug_info.get('stored_total_messages', 0),
+            'history_limit': history_debug_info.get('history_limit', 0),
+            'older_message_count': history_debug_info.get('older_message_count', 0),
+            'recent_message_count': history_debug_info.get('recent_message_count', 0),
+            'final_api_message_count': history_debug_info.get('final_api_message_count', 0),
+            'summary_requested': history_debug_info.get('summary_requested', False),
+            'summary_used': history_debug_info.get('summary_used', False),
+        }),
+        'function_result': build_history_context_thought_detail(history_debug_info),
+        'timestamp': datetime.utcnow().isoformat(),
+    }
+
+
+def enrich_history_context_debug_info(
+    history_debug_info,
+    conversation_history_for_api,
+    final_api_source_refs,
+    path_label,
+    augmentation_message_count=0,
+    default_system_prompt_inserted=False,
+):
+    enriched = dict(history_debug_info or {})
+    enriched['path'] = path_label
+    enriched['augmentation_message_count'] = augmentation_message_count
+    enriched['default_system_prompt_inserted'] = bool(default_system_prompt_inserted)
+    enriched['final_api_message_count'] = len(conversation_history_for_api or [])
+    enriched['final_api_message_roles'] = [
+        str((message or {}).get('role') or 'unknown')
+        for message in (conversation_history_for_api or [])
+    ]
+    enriched['final_api_source_refs'] = _capture_history_refs(final_api_source_refs, max_items=20)
+    return enriched
+
+
+def emit_history_context_debug(history_debug_info, conversation_id):
+    debug_payload = history_debug_info or {}
+    debug_print(
+        f"[History Context][{debug_payload.get('path', 'unknown')}] conversation_id={conversation_id} | "
+        f"{json.dumps(debug_payload, default=str)}"
+    )
+
+
+def build_conversation_history_segments(
+    all_messages,
+    conversation_history_limit,
+    enable_summarize_older_messages=False,
+    gpt_client=None,
+    gpt_model=None,
+    user_message_id=None,
+    fallback_user_message="",
+):
+    """Build shared conversation history segments for chat completions."""
+    conversation_history_messages = []
+    summary_of_older = ""
+    chat_tabular_files = set()
+
+    artifact_payload_map = build_message_artifact_payload_map(all_messages or [])
+    filtered_messages = filter_assistant_artifact_items(all_messages or [])
+    filtered_messages = hydrate_agent_citations_from_artifacts(filtered_messages, artifact_payload_map)
+    ordered_messages = sort_messages_by_thread(filtered_messages)
+
+    total_messages = len(ordered_messages)
+    num_recent_messages = min(total_messages, conversation_history_limit)
+    num_older_messages = total_messages - num_recent_messages
+
+    recent_messages = ordered_messages[-num_recent_messages:] if num_recent_messages else []
+    older_messages_to_summarize = ordered_messages[:num_older_messages]
+
+    summarized_message_refs = []
+    skipped_inactive_message_refs = []
+    skipped_masked_message_refs = []
+    masked_range_message_refs = []
+    history_message_source_refs = []
+    appended_fallback_user_message = False
+
+    if enable_summarize_older_messages and older_messages_to_summarize and gpt_client and gpt_model:
+        debug_print(
+            f"Summarizing {len(older_messages_to_summarize)} older messages for current conversation history"
+        )
+        summary_prompt_older = (
+            "Summarize the following conversation history concisely (around 50-100 words), "
+            "focusing on key facts, decisions, or context that might be relevant for future turns. "
+            "Do not add any introductory phrases like 'Here is a summary'.\n\n"
+            "Conversation History:\n"
+        )
+        message_texts_older = []
+        for message in older_messages_to_summarize:
+            role = message.get('role', 'user')
+            metadata = message.get('metadata', {})
+            thread_info = metadata.get('thread_info', {})
+            active_thread = thread_info.get('active_thread')
+
+            if active_thread is False:
+                debug_print(f"[THREAD] Skipping inactive thread message {message.get('id')} from summary")
+                skipped_inactive_message_refs.append(_format_history_message_ref(message))
+                continue
+
+            if role in ['system', 'safety', 'blocked', 'image', 'file']:
+                continue
+
+            content = message.get('content', '')
+            if role == 'assistant':
+                content = build_assistant_history_content_with_citations(message, content)
+            message_texts_older.append(f"{role.upper()}: {content}")
+            summarized_message_refs.append(_format_history_message_ref(message))
+
+        if message_texts_older:
+            summary_prompt_older += "\n".join(message_texts_older)
+            try:
+                summary_response_older = gpt_client.chat.completions.create(
+                    model=gpt_model,
+                    messages=[{"role": "system", "content": summary_prompt_older}],
+                    max_tokens=150,
+                    temperature=0.3,
+                )
+                summary_of_older = summary_response_older.choices[0].message.content.strip()
+                debug_print(f"Generated summary: {summary_of_older}")
+            except Exception as exc:
+                debug_print(f"Error summarizing older conversation history: {exc}")
+                summary_of_older = ""
+        else:
+            debug_print("No summarizable content found in older messages.")
+
+    allowed_roles_in_history = ['user', 'assistant']
+    max_file_content_length_in_history = 50000
+    max_tabular_content_length_in_history = 50000
+
+    for message in recent_messages:
+        role = message.get('role')
+        content = message.get('content')
+        metadata = message.get('metadata', {})
+
+        thread_info = metadata.get('thread_info', {})
+        active_thread = thread_info.get('active_thread')
+        if active_thread is False:
+            debug_print(
+                f"[THREAD] Skipping inactive thread message {message.get('id')} "
+                f"(thread_id: {thread_info.get('thread_id')}, attempt: {thread_info.get('thread_attempt')})"
+            )
+            skipped_inactive_message_refs.append(_format_history_message_ref(message))
+            continue
+
+        if metadata.get('masked', False):
+            debug_print(f"[MASK] Skipping fully masked message {message.get('id')}")
+            skipped_masked_message_refs.append(_format_history_message_ref(message))
+            continue
+
+        masked_ranges = metadata.get('masked_ranges', [])
+        if masked_ranges and content:
+            content = remove_masked_content(content, masked_ranges)
+            masked_range_message_refs.append(_format_history_message_ref(message))
+            debug_print(f"[MASK] Applied {len(masked_ranges)} masked ranges to message {message.get('id')}")
+
+        if role in allowed_roles_in_history:
+            if role == 'assistant':
+                content = build_assistant_history_content_with_citations(message, content)
+            conversation_history_messages.append({"role": role, "content": content})
+            history_message_source_refs.append(_format_history_message_ref(message))
+        elif role == 'file':
+            filename = message.get('filename', 'uploaded_file')
+            file_content = message.get('file_content', '')
+            is_table = message.get('is_table', False)
+            file_content_source = message.get('file_content_source', '')
+
+            if is_table and file_content_source == 'blob':
+                chat_tabular_files.add(filename)
+                conversation_history_messages.append({
+                    'role': 'system',
+                    'content': (
+                        f"[User uploaded a tabular data file named '{filename}'. "
+                        f"The file is stored in blob storage and available for analysis. "
+                        f"Use the tabular_processing plugin functions (list_tabular_files, describe_tabular_file, "
+                        f"aggregate_column, filter_rows, query_tabular_data, group_by_aggregate, "
+                        f"group_by_datetime_component) to analyze this data. "
+                        f"The file source is 'chat'.]"
+                    )
+                })
+            else:
+                content_limit = (
+                    max_tabular_content_length_in_history
+                    if is_table else max_file_content_length_in_history
+                )
+                display_content = file_content[:content_limit]
+                if len(file_content) > content_limit:
+                    display_content += "..."
+
+                if is_table:
+                    conversation_history_messages.append({
+                        'role': 'system',
+                        'content': (
+                            f"[User uploaded a tabular data file named '{filename}'. This is CSV format data for analysis:\n"
+                            f"{display_content}]\n"
+                            "This is complete tabular data in CSV format. You can perform calculations, analysis, and "
+                            "data operations on this dataset."
+                        )
+                    })
+                else:
+                    conversation_history_messages.append({
+                        'role': 'system',
+                        'content': (
+                            f"[User uploaded a file named '{filename}'. Content preview:\n{display_content}]\n"
+                            "Use this file context if relevant."
+                        )
+                    })
+            history_message_source_refs.append(f"system:file:{message.get('id', 'unknown')}")
+        elif role == 'image':
+            filename = message.get('filename', 'uploaded_image')
+            is_user_upload = metadata.get('is_user_upload', False)
+
+            if is_user_upload:
+                extracted_text = message.get('extracted_text', '')
+                vision_analysis = message.get('vision_analysis', {})
+                image_context_parts = [f"[User uploaded an image named '{filename}'.]"]
+
+                if extracted_text:
+                    extracted_preview = extracted_text[:max_file_content_length_in_history]
+                    if len(extracted_text) > max_file_content_length_in_history:
+                        extracted_preview += "..."
+                    image_context_parts.append(f"\n\nExtracted Text (OCR):\n{extracted_preview}")
+
+                if vision_analysis:
+                    image_context_parts.append("\n\nAI Vision Analysis:")
+                    if vision_analysis.get('description'):
+                        image_context_parts.append(f"\nDescription: {vision_analysis['description']}")
+                    if vision_analysis.get('objects'):
+                        objects_str = ', '.join(vision_analysis['objects'])
+                        image_context_parts.append(f"\nObjects detected: {objects_str}")
+                    if vision_analysis.get('text'):
+                        image_context_parts.append(f"\nText visible in image: {vision_analysis['text']}")
+                    if vision_analysis.get('contextual_analysis'):
+                        image_context_parts.append(
+                            f"\nContextual analysis: {vision_analysis['contextual_analysis']}"
+                        )
+
+                image_context_content = ''.join(image_context_parts)
+                image_context_content += "\n\nUse this image information to answer questions about the uploaded image."
+
+                if 'data:image/' in image_context_content or ';base64,' in image_context_content:
+                    debug_print(
+                        f"WARNING: Base64 image data detected in chat history for {filename}! Removing to save tokens."
+                    )
+                    image_context_content = (
+                        f"[User uploaded an image named '{filename}' - image data excluded from chat history to conserve tokens]"
+                    )
+
+                debug_print(
+                    f"[IMAGE_CONTEXT] Adding user-uploaded image to history: {filename}, "
+                    f"context length: {len(image_context_content)} chars"
+                )
+                conversation_history_messages.append({
+                    'role': 'system',
+                    'content': image_context_content,
+                })
+            else:
+                prompt = message.get('prompt', 'User requested image generation.')
+                debug_print(f"[IMAGE_CONTEXT] Adding system-generated image to history: {prompt[:100]}...")
+                conversation_history_messages.append({
+                    'role': 'system',
+                    'content': f"[Assistant generated an image based on the prompt: '{prompt}']",
+                })
+
+            history_message_source_refs.append(f"system:image:{message.get('id', 'unknown')}")
+
+    if not conversation_history_messages or conversation_history_messages[-1].get('role') != 'user':
+        debug_print("Warning: Last message in history is not the user's current message. Appending.")
+        user_msg_found = False
+        for message in reversed(recent_messages):
+            if message.get('role') != 'user':
+                continue
+            if user_message_id and message.get('id') != user_message_id:
+                continue
+            conversation_history_messages.append({
+                'role': 'user',
+                'content': message.get('content', ''),
+            })
+            history_message_source_refs.append(_format_history_message_ref(message))
+            user_msg_found = True
+            break
+
+        if not user_msg_found and fallback_user_message:
+            conversation_history_messages.append({
+                'role': 'user',
+                'content': fallback_user_message,
+            })
+            history_message_source_refs.append('user:fallback_input')
+            appended_fallback_user_message = True
+
+    debug_info = {
+        'history_limit': conversation_history_limit,
+        'summary_requested': bool(enable_summarize_older_messages),
+        'summary_used': bool(summary_of_older),
+        'stored_total_messages': total_messages,
+        'older_message_count': len(older_messages_to_summarize),
+        'recent_message_count': len(recent_messages),
+        'summarized_message_count': len(summarized_message_refs),
+        'older_message_refs': _capture_history_refs(
+            [_format_history_message_ref(message) for message in older_messages_to_summarize]
+        ),
+        'selected_recent_message_refs': _capture_history_refs(
+            [_format_history_message_ref(message) for message in recent_messages]
+        ),
+        'summarized_message_refs': _capture_history_refs(summarized_message_refs),
+        'skipped_inactive_message_refs': _capture_history_refs(skipped_inactive_message_refs),
+        'skipped_masked_message_refs': _capture_history_refs(skipped_masked_message_refs),
+        'masked_range_message_refs': _capture_history_refs(masked_range_message_refs),
+        'history_message_source_refs': _capture_history_refs(history_message_source_refs, max_items=20),
+        'appended_fallback_user_message': appended_fallback_user_message,
+    }
+
+    return {
+        'summary_of_older': summary_of_older,
+        'history_messages': conversation_history_messages,
+        'chat_tabular_files': chat_tabular_files,
+        'debug_info': debug_info,
+    }
 
 
 def _extract_web_search_citations_from_content(content: str) -> List[Dict[str, str]]:

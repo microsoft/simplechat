@@ -12,15 +12,98 @@ import pandas
 
 from functions_authentication import login_required, user_required, get_current_user_id
 from functions_settings import get_settings, enabled_required
-from functions_documents import get_document_metadata
+from functions_documents import get_document_metadata, get_document_blob_storage_info
 from functions_group import get_user_groups
 from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
 from swagger_wrapper import swagger_route, get_auth_security
 from config import CLIENTS, storage_account_user_documents_container_name, storage_account_group_documents_container_name, storage_account_public_documents_container_name, storage_account_personal_chat_container_name, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, AUDIO_EXTENSIONS, TABULAR_EXTENSIONS, cosmos_messages_container, cosmos_conversations_container
 from functions_debug import debug_print
 
+
+def _sanitize_tabular_preview_value(value):
+    """Convert pandas preview values into JSON-safe display strings."""
+    if hasattr(value, 'item') and not isinstance(value, (str, bytes)):
+        try:
+            value = value.item()
+        except (TypeError, ValueError):
+            pass
+
+    if value is None:
+        return ''
+
+    if pandas.api.types.is_scalar(value):
+        try:
+            if pandas.isna(value):
+                return ''
+        except (TypeError, ValueError):
+            pass
+
+    if isinstance(value, bytes):
+        return value.decode('utf-8', errors='replace')
+
+    if hasattr(value, 'isoformat') and not isinstance(value, str):
+        try:
+            return value.isoformat()
+        except TypeError:
+            pass
+
+    return str(value)
+
+
+def _serialize_tabular_preview_table(df_preview):
+    """Build JSON-safe tabular preview payload pieces for the browser."""
+    columns = [
+        _sanitize_tabular_preview_value(column)
+        for column in df_preview.columns.tolist()
+    ]
+    rows = [
+        [_sanitize_tabular_preview_value(cell) for cell in row]
+        for row in df_preview.itertuples(index=False, name=None)
+    ]
+    return columns, rows
+
 def register_enhanced_citations_routes(app):
     """Register enhanced citations routes"""
+
+    @app.route("/api/enhanced_citations/document_metadata", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_enhanced_citations")
+    def get_enhanced_citation_document_metadata():
+        """
+        Return minimal document metadata for an exact historical or current doc_id.
+        This lets the chat UI render enhanced citations even when the cited
+        document revision is not part of the currently loaded workspace list.
+        """
+        doc_id = request.args.get("doc_id")
+        if not doc_id:
+            return jsonify({"error": "doc_id is required"}), 400
+
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated"}), 401
+
+        try:
+            doc_response, status_code = get_document(user_id, doc_id)
+            if status_code != 200:
+                return doc_response, status_code
+
+            raw_doc = doc_response.get_json()
+            _, blob_path = get_document_blob_storage_info(raw_doc)
+
+            return jsonify({
+                "id": raw_doc.get("id"),
+                "document_id": raw_doc.get("id"),
+                "file_name": raw_doc.get("file_name"),
+                "version": raw_doc.get("version"),
+                "is_current_version": raw_doc.get("is_current_version"),
+                "enhanced_citations": bool(blob_path),
+            }), 200
+
+        except Exception as e:
+            debug_print(f"Error getting enhanced citation document metadata: {e}")
+            return jsonify({"error": str(e)}), 500
     
     @app.route("/api/enhanced_citations/image", methods=["GET"])
     @swagger_route(security=get_auth_security())
@@ -435,6 +518,7 @@ def register_enhanced_citations_routes(app):
             total_rows = len(df)
             truncated = total_rows > max_rows
             preview = df.head(max_rows)
+            columns, rows = _serialize_tabular_preview_table(preview)
 
             return jsonify({
                 "filename": file_name,
@@ -443,8 +527,8 @@ def register_enhanced_citations_routes(app):
                 "sheet_count": len(sheet_names),
                 "total_rows": total_rows if not truncated else None,
                 "total_columns": len(df.columns),
-                "columns": list(df.columns),
-                "rows": preview.values.tolist(),
+                "columns": columns,
+                "rows": rows,
                 "truncated": truncated
             })
 
@@ -513,16 +597,20 @@ def determine_workspace_type_and_container(raw_doc):
     Determine workspace type and appropriate container based on document metadata
     """
     if raw_doc.get('public_workspace_id'):
-        return 'public', storage_account_public_documents_container_name
+        return 'public', raw_doc.get('blob_container') or storage_account_public_documents_container_name
     elif raw_doc.get('group_id'):
-        return 'group', storage_account_group_documents_container_name
+        return 'group', raw_doc.get('blob_container') or storage_account_group_documents_container_name
     else:
-        return 'personal', storage_account_user_documents_container_name
+        return 'personal', raw_doc.get('blob_container') or storage_account_user_documents_container_name
 
 def get_blob_name(raw_doc, workspace_type):
     """
     Determine the correct blob name based on workspace type
     """
+    _, blob_name = get_document_blob_storage_info(raw_doc)
+    if blob_name:
+        return blob_name
+
     if workspace_type == 'public':
         return f"{raw_doc['public_workspace_id']}/{raw_doc['file_name']}"
     elif workspace_type == 'group':

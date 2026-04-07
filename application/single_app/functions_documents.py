@@ -15,6 +15,540 @@ def allowed_file(filename, allowed_extensions=None):
         allowed_extensions = ALLOWED_EXTENSIONS
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in allowed_extensions
+
+
+ARCHIVED_SCOPE_PREFIX = "__archived__::"
+CURRENT_ALIAS_BLOB_PATH_MODE = "current_alias"
+ARCHIVED_REVISION_BLOB_PATH_MODE = "archived_revision"
+
+
+def _get_blob_container_name(group_id=None, public_workspace_id=None):
+    if public_workspace_id is not None:
+        return storage_account_public_documents_container_name
+    if group_id is not None:
+        return storage_account_group_documents_container_name
+    return storage_account_user_documents_container_name
+
+
+def _get_document_scope_id(document_item=None, user_id=None, group_id=None, public_workspace_id=None):
+    if public_workspace_id is None and document_item is not None:
+        public_workspace_id = document_item.get("public_workspace_id")
+    if group_id is None and document_item is not None:
+        group_id = document_item.get("group_id")
+    if user_id is None and document_item is not None:
+        user_id = document_item.get("user_id")
+
+    return public_workspace_id or group_id or user_id
+
+
+def build_current_blob_path(blob_filename, user_id=None, group_id=None, public_workspace_id=None):
+    scope_id = _get_document_scope_id(
+        user_id=user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    if not scope_id or not blob_filename:
+        return None
+
+    return f"{scope_id}/{blob_filename}"
+
+
+def build_archived_blob_path(document_item):
+    scope_id = _get_document_scope_id(document_item=document_item)
+    revision_family_id = document_item.get("revision_family_id") or document_item.get("id")
+    document_id = document_item.get("id")
+    file_name = document_item.get("file_name")
+
+    if not scope_id or not revision_family_id or not document_id or not file_name:
+        return None
+
+    return f"{scope_id}/{revision_family_id}/{document_id}/{file_name}"
+
+
+def get_document_blob_storage_info(document_item, user_id=None, group_id=None, public_workspace_id=None, prefer_archived=False):
+    if not document_item:
+        return None, None
+
+    container_name = document_item.get("blob_container") or _get_blob_container_name(
+        group_id=group_id or document_item.get("group_id"),
+        public_workspace_id=public_workspace_id or document_item.get("public_workspace_id"),
+    )
+
+    archived_blob_path = document_item.get("archived_blob_path")
+    blob_path = document_item.get("blob_path")
+
+    if prefer_archived and archived_blob_path:
+        return container_name, archived_blob_path
+
+    if blob_path:
+        return container_name, blob_path
+
+    if document_item.get("blob_path_mode") == ARCHIVED_REVISION_BLOB_PATH_MODE and archived_blob_path:
+        return container_name, archived_blob_path
+
+    return container_name, build_current_blob_path(
+        document_item.get("file_name"),
+        user_id=user_id or document_item.get("user_id"),
+        group_id=group_id or document_item.get("group_id"),
+        public_workspace_id=public_workspace_id or document_item.get("public_workspace_id"),
+    )
+
+
+def get_document_blob_delete_targets(document_item, user_id=None, group_id=None, public_workspace_id=None):
+    targets = []
+    seen = set()
+
+    container_name, primary_blob_path = get_document_blob_storage_info(
+        document_item,
+        user_id=user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+
+    for blob_path in [primary_blob_path, document_item.get("archived_blob_path")]:
+        if not container_name or not blob_path:
+            continue
+
+        key = (container_name, blob_path)
+        if key in seen:
+            continue
+
+        seen.add(key)
+        targets.append(key)
+
+    return targets
+
+
+def _get_blob_service_client():
+    blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+    if not blob_service_client:
+        raise Exception("Blob service client not available or not configured.")
+    return blob_service_client
+
+
+def _blob_exists(container_name, blob_path):
+    if not container_name or not blob_path:
+        return False
+
+    blob_service_client = _get_blob_service_client()
+    blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_path)
+    return blob_client.exists()
+
+
+def _copy_blob_to_blob(source_container_name, source_blob_path, destination_container_name, destination_blob_path, overwrite=False):
+    if not source_container_name or not source_blob_path:
+        raise ValueError("Source blob reference is required")
+    if not destination_container_name or not destination_blob_path:
+        raise ValueError("Destination blob reference is required")
+    if source_container_name == destination_container_name and source_blob_path == destination_blob_path:
+        return destination_blob_path
+
+    blob_service_client = _get_blob_service_client()
+    source_blob_client = blob_service_client.get_blob_client(container=source_container_name, blob=source_blob_path)
+    destination_blob_client = blob_service_client.get_blob_client(container=destination_container_name, blob=destination_blob_path)
+
+    if destination_blob_client.exists() and not overwrite:
+        return destination_blob_path
+    if not source_blob_client.exists():
+        raise FileNotFoundError(f"Source blob not found: {source_container_name}/{source_blob_path}")
+
+    properties = source_blob_client.get_blob_properties()
+    source_metadata = dict(properties.metadata) if properties.metadata else None
+    temp_file_path = None
+
+    try:
+        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+            temp_file_path = temp_file.name
+            download_stream = source_blob_client.download_blob()
+            for chunk in download_stream.chunks():
+                temp_file.write(chunk)
+
+        with open(temp_file_path, "rb") as temp_file_handle:
+            destination_blob_client.upload_blob(
+                temp_file_handle,
+                overwrite=overwrite,
+                metadata=source_metadata,
+            )
+    finally:
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+
+    return destination_blob_path
+
+
+def _archive_previous_document_blob(previous_document, user_id=None, group_id=None, public_workspace_id=None):
+    if not previous_document:
+        return None
+
+    container_name, current_blob_path = get_document_blob_storage_info(
+        previous_document,
+        user_id=user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    archived_blob_path = previous_document.get("archived_blob_path") or build_archived_blob_path(previous_document)
+
+    if not container_name or not archived_blob_path:
+        return None
+
+    archived_available = False
+
+    if archived_blob_path == current_blob_path:
+        archived_available = _blob_exists(container_name, archived_blob_path)
+    elif _blob_exists(container_name, archived_blob_path):
+        archived_available = True
+    elif current_blob_path and _blob_exists(container_name, current_blob_path):
+        _copy_blob_to_blob(
+            container_name,
+            current_blob_path,
+            container_name,
+            archived_blob_path,
+            overwrite=False,
+        )
+        archived_available = True
+
+    if not archived_available:
+        print(
+            f"Warning: Could not archive prior revision blob for document {previous_document.get('id')}"
+        )
+        return None
+
+    previous_document["blob_container"] = container_name
+    previous_document["blob_path"] = archived_blob_path
+    previous_document["archived_blob_path"] = archived_blob_path
+    previous_document["blob_path_mode"] = ARCHIVED_REVISION_BLOB_PATH_MODE
+    return archived_blob_path
+
+
+def _promote_document_blob_to_current_alias(promoted_document, user_id=None, group_id=None, public_workspace_id=None):
+    if not promoted_document:
+        return None
+
+    container_name = promoted_document.get("blob_container") or _get_blob_container_name(
+        group_id=group_id or promoted_document.get("group_id"),
+        public_workspace_id=public_workspace_id or promoted_document.get("public_workspace_id"),
+    )
+    current_blob_path = build_current_blob_path(
+        promoted_document.get("file_name"),
+        user_id=user_id or promoted_document.get("user_id"),
+        group_id=group_id or promoted_document.get("group_id"),
+        public_workspace_id=public_workspace_id or promoted_document.get("public_workspace_id"),
+    )
+    source_blob_path = promoted_document.get("archived_blob_path") or promoted_document.get("blob_path")
+
+    if not container_name or not current_blob_path:
+        return None
+
+    if source_blob_path and source_blob_path != current_blob_path and _blob_exists(container_name, source_blob_path):
+        _copy_blob_to_blob(
+            container_name,
+            source_blob_path,
+            container_name,
+            current_blob_path,
+            overwrite=True,
+        )
+        if not promoted_document.get("archived_blob_path"):
+            promoted_document["archived_blob_path"] = source_blob_path
+
+    promoted_document["blob_container"] = container_name
+    promoted_document["blob_path"] = current_blob_path
+    promoted_document["blob_path_mode"] = CURRENT_ALIAS_BLOB_PATH_MODE
+    return current_blob_path
+
+
+def _safe_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _get_documents_container(group_id=None, public_workspace_id=None):
+    if public_workspace_id is not None:
+        return cosmos_public_documents_container
+    if group_id is not None:
+        return cosmos_group_documents_container
+    return cosmos_user_documents_container
+
+
+def _get_search_client(group_id=None, public_workspace_id=None):
+    if public_workspace_id is not None:
+        return CLIENTS["search_client_public"]
+    if group_id is not None:
+        return CLIENTS["search_client_group"]
+    return CLIENTS["search_client_user"]
+
+
+def _get_document_family_key(document_item):
+    revision_family_id = document_item.get("revision_family_id")
+    if revision_family_id:
+        return revision_family_id
+
+    scope_value = (
+        document_item.get("public_workspace_id")
+        or document_item.get("group_id")
+        or document_item.get("user_id")
+        or "unknown"
+    )
+    file_name = document_item.get("file_name", "")
+    return f"legacy::{scope_value}::{file_name}"
+
+
+def _document_revision_sort_key(document_item):
+    return (
+        _safe_int(document_item.get("version")),
+        str(document_item.get("upload_date") or ""),
+        _safe_int(document_item.get("_ts")),
+    )
+
+
+def _choose_current_document(family_documents):
+    explicitly_current = [doc for doc in family_documents if doc.get("is_current_version") is True]
+    candidate_pool = explicitly_current if explicitly_current else family_documents
+    return max(candidate_pool, key=_document_revision_sort_key)
+
+
+def select_current_documents(documents):
+    families = {}
+
+    for document_item in documents or []:
+        family_key = _get_document_family_key(document_item)
+        families.setdefault(family_key, []).append(document_item)
+
+    current_documents = []
+    for family_documents in families.values():
+        current_documents.append(_choose_current_document(family_documents))
+
+    return current_documents
+
+
+def sort_documents(documents, sort_by="_ts", sort_order="DESC"):
+    reverse = str(sort_order).lower() != "asc"
+
+    def sort_key(document_item):
+        value = document_item.get(sort_by)
+        if sort_by == "_ts":
+            return _safe_int(value)
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value.lower()
+        if isinstance(value, (int, float)):
+            return value
+        return str(value).lower()
+
+    return sorted(documents or [], key=sort_key, reverse=reverse)
+
+
+def _query_accessible_documents(user_id, group_id=None, public_workspace_id=None):
+    cosmos_container = _get_documents_container(group_id=group_id, public_workspace_id=public_workspace_id)
+
+    if public_workspace_id is not None:
+        query = """
+            SELECT *
+            FROM c
+            WHERE c.public_workspace_id = @public_workspace_id
+        """
+        parameters = [
+            {"name": "@public_workspace_id", "value": public_workspace_id}
+        ]
+    elif group_id is not None:
+        query = """
+            SELECT *
+            FROM c
+            WHERE c.group_id = @group_id
+                OR ARRAY_CONTAINS(c.shared_group_ids, @group_id)
+                OR EXISTS(SELECT VALUE s FROM s IN c.shared_group_ids WHERE STARTSWITH(s, @group_id_prefix))
+        """
+        parameters = [
+            {"name": "@group_id", "value": group_id},
+            {"name": "@group_id_prefix", "value": f"{group_id},"}
+        ]
+    else:
+        query = """
+            SELECT *
+            FROM c
+            WHERE c.user_id = @user_id
+                OR ARRAY_CONTAINS(c.shared_user_ids, @user_id)
+                OR EXISTS(SELECT VALUE s FROM s IN c.shared_user_ids WHERE STARTSWITH(s, @user_id_prefix))
+        """
+        parameters = [
+            {"name": "@user_id", "value": user_id},
+            {"name": "@user_id_prefix", "value": f"{user_id},"}
+        ]
+
+    return list(
+        cosmos_container.query_items(
+            query=query,
+            parameters=parameters,
+            enable_cross_partition_query=True,
+        )
+    )
+
+
+def _build_archived_scope_value(scope_value):
+    return f"{ARCHIVED_SCOPE_PREFIX}{scope_value}"
+
+
+def set_document_chunk_visibility(document_item, active=True):
+    document_id = document_item.get("id")
+    group_id = document_item.get("group_id")
+    public_workspace_id = document_item.get("public_workspace_id")
+    user_id = document_item.get("user_id")
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    if not document_id:
+        return 0
+
+    search_client = _get_search_client(group_id=group_id, public_workspace_id=public_workspace_id)
+    chunk_results = list(
+        search_client.search(
+            search_text="*",
+            filter=f"document_id eq '{document_id}'",
+        )
+    )
+
+    if not chunk_results:
+        return 0
+
+    documents_to_update = []
+    for chunk_item in chunk_results:
+        if is_public_workspace:
+            chunk_item["public_workspace_id"] = public_workspace_id if active else _build_archived_scope_value(public_workspace_id)
+        elif is_group:
+            chunk_item["group_id"] = group_id if active else _build_archived_scope_value(group_id)
+            chunk_item["shared_group_ids"] = document_item.get("shared_group_ids", []) if active else []
+        else:
+            chunk_item["user_id"] = user_id if active else _build_archived_scope_value(user_id)
+            chunk_item["shared_user_ids"] = document_item.get("shared_user_ids", []) if active else []
+
+        documents_to_update.append(chunk_item)
+
+    search_client.upload_documents(documents=documents_to_update)
+    return len(documents_to_update)
+
+
+def normalize_document_revision_families(user_id, group_id=None, public_workspace_id=None, document_items=None):
+    documents = document_items if document_items is not None else _query_accessible_documents(
+        user_id=user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    cosmos_container = _get_documents_container(group_id=group_id, public_workspace_id=public_workspace_id)
+    families = {}
+    changes_made = False
+
+    for document_item in documents:
+        family_key = _get_document_family_key(document_item)
+        families.setdefault(family_key, []).append(document_item)
+
+    for family_documents in families.values():
+        if len(family_documents) <= 1:
+            continue
+
+        current_document = _choose_current_document(family_documents)
+        revision_family_id = current_document.get("revision_family_id") or current_document.get("id")
+
+        for document_item in family_documents:
+            expected_current = document_item.get("id") == current_document.get("id")
+            update_occurred = False
+
+            if document_item.get("revision_family_id") != revision_family_id:
+                document_item["revision_family_id"] = revision_family_id
+                update_occurred = True
+
+            if document_item.get("is_current_version") != expected_current:
+                document_item["is_current_version"] = expected_current
+                update_occurred = True
+
+            if expected_current:
+                if document_item.get("search_visibility_state") == "archived":
+                    set_document_chunk_visibility(document_item, active=True)
+                    document_item["search_visibility_state"] = "active"
+                    update_occurred = True
+                elif document_item.get("search_visibility_state") != "active":
+                    document_item["search_visibility_state"] = "active"
+                    update_occurred = True
+            else:
+                if document_item.get("search_visibility_state") != "archived":
+                    set_document_chunk_visibility(document_item, active=False)
+                    document_item["search_visibility_state"] = "archived"
+                    update_occurred = True
+
+            if update_occurred:
+                cosmos_container.upsert_item(document_item)
+                changes_made = True
+
+    return changes_made
+
+
+def _get_document_family_items_from_document(document_item, user_id, group_id=None, public_workspace_id=None):
+    cosmos_container = _get_documents_container(group_id=group_id, public_workspace_id=public_workspace_id)
+    file_name = document_item.get("file_name")
+
+    if public_workspace_id is not None:
+        query = """
+            SELECT *
+            FROM c
+            WHERE c.file_name = @file_name
+                AND c.public_workspace_id = @public_workspace_id
+        """
+        parameters = [
+            {"name": "@file_name", "value": file_name},
+            {"name": "@public_workspace_id", "value": public_workspace_id},
+        ]
+    elif group_id is not None:
+        owner_group_id = document_item.get("group_id") or group_id
+        query = """
+            SELECT *
+            FROM c
+            WHERE c.file_name = @file_name
+                AND c.group_id = @group_id
+        """
+        parameters = [
+            {"name": "@file_name", "value": file_name},
+            {"name": "@group_id", "value": owner_group_id},
+        ]
+    else:
+        owner_user_id = document_item.get("user_id") or user_id
+        query = """
+            SELECT *
+            FROM c
+            WHERE c.file_name = @file_name
+                AND c.user_id = @owner_user_id
+        """
+        parameters = [
+            {"name": "@file_name", "value": file_name},
+            {"name": "@owner_user_id", "value": owner_user_id},
+        ]
+
+    return list(
+        cosmos_container.query_items(
+            query=query,
+            parameters=parameters,
+            enable_cross_partition_query=True,
+        )
+    )
+
+
+def _build_carried_forward_metadata(document_item, is_group=False):
+    carried_forward = {
+        "title": document_item.get("title"),
+        "abstract": document_item.get("abstract"),
+        "keywords": document_item.get("keywords"),
+        "publication_date": document_item.get("publication_date"),
+        "authors": ensure_list(document_item.get("authors")),
+        "document_classification": document_item.get("document_classification", "None"),
+        "tags": document_item.get("tags", []),
+    }
+
+    if is_group:
+        carried_forward["shared_group_ids"] = document_item.get("shared_group_ids", [])
+    else:
+        carried_forward["shared_user_ids"] = document_item.get("shared_user_ids", [])
+
+    return carried_forward
     
 def create_document(file_name, user_id, document_id, num_file_chunks, status, group_id=None, public_workspace_id=None):
     current_time = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -64,14 +598,56 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
         ]
 
     try:
-        existing_document = list(
+        existing_documents = list(
             cosmos_container.query_items(
                 query=query,
                 parameters=parameters,
                 enable_cross_partition_query=True
             )
         )
-        version = existing_document[0]['version'] + 1 if existing_document else 1
+        existing_documents = sorted(existing_documents, key=_document_revision_sort_key, reverse=True)
+
+        latest_existing_document = existing_documents[0] if existing_documents else None
+        revision_family_id = latest_existing_document.get('revision_family_id') if latest_existing_document else None
+        revision_family_id = revision_family_id or (latest_existing_document.get('id') if latest_existing_document else document_id)
+        version = (_safe_int(latest_existing_document.get('version')) + 1) if latest_existing_document else 1
+
+        if latest_existing_document:
+            carried_forward = _build_carried_forward_metadata(
+                latest_existing_document,
+                is_group=is_group,
+            )
+        else:
+            carried_forward = {
+                'title': None,
+                'abstract': None,
+                'keywords': None,
+                'publication_date': None,
+                'authors': [],
+                'document_classification': 'None',
+                'tags': [],
+                'shared_group_ids': [] if is_group else None,
+                'shared_user_ids': [] if not is_group else None,
+            }
+
+        for existing_document in existing_documents:
+            update_existing_document = False
+
+            if existing_document.get('revision_family_id') != revision_family_id:
+                existing_document['revision_family_id'] = revision_family_id
+                update_existing_document = True
+
+            if existing_document.get('is_current_version') is not False:
+                existing_document['is_current_version'] = False
+                update_existing_document = True
+
+            if existing_document.get('search_visibility_state') != 'archived':
+                set_document_chunk_visibility(existing_document, active=False)
+                existing_document['search_visibility_state'] = 'archived'
+                update_existing_document = True
+
+            if update_existing_document:
+                cosmos_container.upsert_item(existing_document)
         
         if is_public_workspace:
             document_metadata = {
@@ -84,13 +660,25 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 "upload_date": current_time,
                 "last_updated": current_time,
                 "version": version,
+                "revision_family_id": revision_family_id,
+                "is_current_version": True,
+                "search_visibility_state": "active",
                 "status": status,
                 "percentage_complete": 0,
-                "document_classification": "None",
+                "document_classification": carried_forward.get("document_classification", "None"),
                 "type": "document_metadata",
                 "public_workspace_id": public_workspace_id,
                 "user_id": user_id,
-                "tags": []
+                "blob_container": _get_blob_container_name(public_workspace_id=public_workspace_id),
+                "blob_path": None,
+                "archived_blob_path": None,
+                "blob_path_mode": None,
+                "title": carried_forward.get("title"),
+                "abstract": carried_forward.get("abstract"),
+                "keywords": carried_forward.get("keywords"),
+                "publication_date": carried_forward.get("publication_date"),
+                "authors": ensure_list(carried_forward.get("authors")),
+                "tags": carried_forward.get("tags", [])
             }
         elif is_group:
             document_metadata = {
@@ -103,13 +691,25 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 "upload_date": current_time,
                 "last_updated": current_time,
                 "version": version,
+                "revision_family_id": revision_family_id,
+                "is_current_version": True,
+                "search_visibility_state": "active",
                 "status": status,
                 "percentage_complete": 0,
-                "document_classification": "None",
+                "document_classification": carried_forward.get("document_classification", "None"),
                 "type": "document_metadata",
                 "group_id": group_id,
-                "shared_group_ids": [],
-                "tags": []
+                "blob_container": _get_blob_container_name(group_id=group_id),
+                "blob_path": None,
+                "archived_blob_path": None,
+                "blob_path_mode": None,
+                "shared_group_ids": carried_forward.get("shared_group_ids", []),
+                "title": carried_forward.get("title"),
+                "abstract": carried_forward.get("abstract"),
+                "keywords": carried_forward.get("keywords"),
+                "publication_date": carried_forward.get("publication_date"),
+                "authors": ensure_list(carried_forward.get("authors")),
+                "tags": carried_forward.get("tags", [])
             }
         else:
             document_metadata = {
@@ -122,15 +722,27 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 "upload_date": current_time,
                 "last_updated": current_time,
                 "version": version,
+                "revision_family_id": revision_family_id,
+                "is_current_version": True,
+                "search_visibility_state": "active",
                 "status": status,
                 "percentage_complete": 0,
-                "document_classification": "None",
+                "document_classification": carried_forward.get("document_classification", "None"),
                 "type": "document_metadata",
                 "user_id": user_id,
-                "shared_user_ids": [],
+                "blob_container": _get_blob_container_name(),
+                "blob_path": None,
+                "archived_blob_path": None,
+                "blob_path_mode": None,
+                "shared_user_ids": carried_forward.get("shared_user_ids", []),
                 "embedding_tokens": 0,
                 "embedding_model_deployment_name": None,
-                "tags": []
+                "title": carried_forward.get("title"),
+                "abstract": carried_forward.get("abstract"),
+                "keywords": carried_forward.get("keywords"),
+                "publication_date": carried_forward.get("publication_date"),
+                "authors": ensure_list(carried_forward.get("authors")),
+                "tags": carried_forward.get("tags", [])
             }
 
         cosmos_container.upsert_item(document_metadata)
@@ -1379,7 +1991,7 @@ def update_document(**kwargs):
                         chunk_updates['title'] = existing_document.get('title')
                     if 'authors' in updated_fields_requiring_chunk_sync:
                          # Ensure authors is a list for the chunk metadata if needed
-                        chunk_updates['author'] = existing_document.get('authors')
+                        chunk_updates['author'] = ensure_list(existing_document.get('authors'))
                     if 'file_name' in updated_fields_requiring_chunk_sync:
                         chunk_updates['file_name'] = existing_document.get('file_name')
                     if 'document_classification' in updated_fields_requiring_chunk_sync:
@@ -1517,8 +2129,9 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
         chunk_id = f"{document_id}_{page_number}"
         chunk_keywords = []
         chunk_summary = ""
-        author = []
-        title = ""
+        author = ensure_list(metadata.get('authors')) if metadata else []
+        title = metadata.get('title', '') if metadata else ''
+        document_classification = metadata.get('document_classification', 'None') if metadata else 'None'
         
         # Check if this document has vision analysis and append it to chunk_text
         vision_analysis = metadata.get('vision_analysis')
@@ -1567,7 +2180,7 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
                 "page_number": page_number,
                 "author": author,
                 "title": title,
-                "document_classification": "None",
+                "document_classification": document_classification,
                 "document_tags": metadata.get('tags', []),
                 "chunk_sequence": page_number,  # or you can keep an incremental idx
                 "upload_date": current_time,
@@ -1589,7 +2202,7 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
                 "page_number": page_number,
                 "author": author,
                 "title": title,
-                "document_classification": "None",
+                "document_classification": document_classification,
                 "document_tags": metadata.get('tags', []),
                 "chunk_sequence": page_number,  # or you can keep an incremental idx
                 "upload_date": current_time,
@@ -1613,7 +2226,7 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
                 "page_number": page_number,
                 "author": author,
                 "title": title,
-                "document_classification": "None",
+                "document_classification": document_classification,
                 "document_tags": metadata.get('tags', []),
                 "chunk_sequence": page_number,  # or you can keep an incremental idx
                 "upload_date": current_time,
@@ -2023,7 +2636,10 @@ def update_chunk_metadata(chunk_id, user_id, group_id=None, public_workspace_id=
             
         for field in updatable_fields:
             if field in kwargs:
-                chunk_item[field] = kwargs[field]
+                if field == 'author':
+                    chunk_item[field] = ensure_list(kwargs[field])
+                else:
+                    chunk_item[field] = kwargs[field]
 
         search_client.upload_documents(documents=[chunk_item])
 
@@ -2082,62 +2698,14 @@ def chunk_pdf(input_pdf_path: str, max_pages: int = 500) -> list:
     return chunks
 
 def get_documents(user_id, group_id=None, public_workspace_id=None):
-    is_group = group_id is not None
-    is_public_workspace = public_workspace_id is not None
-
-    # Choose the correct cosmos_container and query parameters
-    if is_public_workspace:
-        cosmos_container = cosmos_public_documents_container
-    elif is_group:
-        cosmos_container = cosmos_group_documents_container
-    else:
-        cosmos_container = cosmos_user_documents_container
-
-    if is_public_workspace:
-        query = """
-            SELECT TOP 1 * 
-            FROM c
-            WHERE c.public_workspace_id = @public_workspace_id
-        """
-        parameters = [
-            {"name": "@public_workspace_id", "value": public_workspace_id}
-        ]
-    elif is_group:
-        query = """
-            SELECT *
-            FROM c
-            WHERE c.group_id = @group_id OR ARRAY_CONTAINS(c.shared_group_ids, @group_id)
-        """
-        parameters = [
-            {"name": "@group_id", "value": group_id}
-        ]
-    else:
-        query = """
-            SELECT *
-            FROM c
-            WHERE c.user_id = @user_id OR ARRAY_CONTAINS(c.shared_user_ids, @user_id)
-        """
-        parameters = [
-            {"name": "@user_id", "value": user_id}
-        ]
-    
     try:       
-        documents = list(
-            cosmos_container.query_items(
-                query=query,
-                parameters=parameters, 
-                enable_cross_partition_query=True
-            )
+        documents = _query_accessible_documents(
+            user_id=user_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
         )
-
-        latest_documents = {}
-
-        for doc in documents:
-            file_name = doc['file_name']
-            if file_name not in latest_documents or doc['version'] > latest_documents[file_name]['version']:
-                latest_documents[file_name] = doc
-                
-        return jsonify({"documents": list(latest_documents.values())}), 200
+        current_documents = sort_documents(select_current_documents(documents))
+        return jsonify({"documents": current_documents}), 200
     except Exception as e:
         return jsonify({'error': f'Error retrieving documents: {str(e)}'}), 500
 
@@ -2213,68 +2781,19 @@ def get_document(user_id, document_id, group_id=None, public_workspace_id=None):
         return jsonify({'error': f'Error retrieving document: {str(e)}'}), 500
 
 def get_latest_version(document_id, user_id, group_id=None, public_workspace_id=None):
-    is_group = group_id is not None
-    is_public_workspace = public_workspace_id is not None
-
-    # Choose the correct cosmos_container and query parameters
-    if is_public_workspace:
-        cosmos_container = cosmos_public_documents_container
-    elif is_group:
-        cosmos_container = cosmos_group_documents_container
-    else:
-        cosmos_container = cosmos_user_documents_container
-
-    if is_public_workspace:
-        query = """
-            SELECT TOP 1 * 
-            FROM c
-            WHERE c.id = @document_id 
-                AND c.public_workspace_id = @public_workspace_id
-            ORDER BY c.version DESC
-        """
-        parameters = [
-            {"name": "@document_id", "value": document_id},
-            {"name": "@public_workspace_id", "value": public_workspace_id}
-        ]
-    elif is_group:
-        query = """
-            SELECT c.version
-            FROM c
-            WHERE c.id = @document_id
-                AND (c.group_id = @group_id OR ARRAY_CONTAINS(c.shared_group_ids, @group_id))
-            ORDER BY c.version DESC
-        """
-        parameters = [
-            {"name": "@document_id", "value": document_id},
-            {"name": "@group_id", "value": group_id}
-        ]
-    else:
-        query = """
-            SELECT c.version
-            FROM c
-            WHERE c.id = @document_id
-                AND (c.user_id = @user_id OR ARRAY_CONTAINS(c.shared_user_ids, @user_id))
-            ORDER BY c.version DESC
-        """
-        parameters = [
-            {"name": "@document_id", "value": document_id},
-            {"name": "@user_id", "value": user_id}
-        ]
-
     try:
-        results = list(
-            cosmos_container.query_items(
-                query=query, 
-                parameters=parameters, 
-                enable_cross_partition_query=True
-            )
+        target_document = _get_documents_container(
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        ).read_item(item=document_id, partition_key=document_id)
+        family_documents = _get_document_family_items_from_document(
+            target_document,
+            user_id=user_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
         )
-
-        if results:
-            return results[0]['version']
-        else:
-            return None
-
+        current_document = _choose_current_document(family_documents)
+        return current_document.get('version') if current_document else None
     except Exception as e:
         return None
 
@@ -2349,51 +2868,37 @@ def get_document_version(user_id, document_id, version, group_id=None, public_wo
     except Exception as e:
         return jsonify({'error': f'Error retrieving document version: {str(e)}'}), 500
 
-def delete_from_blob_storage(document_id, user_id, file_name, group_id=None, public_workspace_id=None):
+def delete_from_blob_storage(document_item, user_id=None, group_id=None, public_workspace_id=None):
     """Delete a document from Azure Blob Storage."""
-    is_group = group_id is not None
-    is_public_workspace = public_workspace_id is not None
-    
-    if is_public_workspace:
-        storage_account_container_name = storage_account_public_documents_container_name
-    elif is_group:
-        storage_account_container_name = storage_account_group_documents_container_name
-    else:
-        storage_account_container_name = storage_account_user_documents_container_name
-    
+
     # Check if enhanced citations are enabled and blob client is available
     settings = get_settings()
     enable_enhanced_citations = settings.get("enable_enhanced_citations", False)
-    
+
     if not enable_enhanced_citations:
         return  # No need to proceed if enhanced citations are disabled
-    
+
     try:
-        # Construct the blob path using the same format as in upload_to_blob
-        blob_path = f"{group_id}/{file_name}" if is_group else f"{user_id}/{file_name}"
-        
-        # Get the blob client
         blob_service_client = CLIENTS.get("storage_account_office_docs_client")
         if not blob_service_client:
-            print(f"Warning: Enhanced citations enabled but blob service client not configured.")
+            print("Warning: Enhanced citations enabled but blob service client not configured.")
             return
-            
-        # Get container client
-        container_client = blob_service_client.get_container_client(storage_account_container_name)
-        if not container_client:
-            print(f"Warning: Could not get container client for {storage_account_container_name}")
-            return
-            
-        # Get blob client
-        blob_client = container_client.get_blob_client(blob_path)
-        
-        # Delete the blob if it exists
-        if blob_client.exists():
-            blob_client.delete_blob()
-            print(f"Successfully deleted blob at {blob_path}")
-        else:
-            print(f"No blob found at {blob_path} to delete")
-            
+
+        delete_targets = get_document_blob_delete_targets(
+            document_item,
+            user_id=user_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
+
+        for container_name, blob_path in delete_targets:
+            blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_path)
+            if blob_client.exists():
+                blob_client.delete_blob()
+                print(f"Successfully deleted blob at {container_name}/{blob_path}")
+            else:
+                print(f"No blob found at {container_name}/{blob_path} to delete")
+
     except Exception as e:
         print(f"Error deleting document from blob storage: {str(e)}")
         # Don't raise the exception, as we want the Cosmos DB deletion to proceed
@@ -2466,13 +2971,14 @@ def delete_document(user_id, document_id, group_id=None, public_workspace_id=Non
             if document_item.get('user_id') != user_id:
                 raise Exception("Unauthorized access to document - only document owner can delete")
             
-        # Get the file name from the document to use for blob deletion
-        file_name = document_item.get('file_name')
-
         # Delete from blob storage
         try:
-            if file_name:
-                delete_from_blob_storage(document_id, user_id, file_name, group_id, public_workspace_id)
+            delete_from_blob_storage(
+                document_item,
+                user_id=user_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            )
         except Exception as blob_error:
             # Log the error but continue with Cosmos DB deletion
             print(f"Error deleting from blob storage (continuing with document deletion): {str(blob_error)}")
@@ -2487,6 +2993,81 @@ def delete_document(user_id, document_id, group_id=None, public_workspace_id=Non
         raise Exception("Document not found")
     except Exception as e:
         raise
+
+
+def delete_document_revision(user_id, document_id, delete_mode="all_versions", group_id=None, public_workspace_id=None):
+    if delete_mode not in {"all_versions", "current_only"}:
+        raise ValueError("Unsupported delete mode")
+
+    cosmos_container = _get_documents_container(group_id=group_id, public_workspace_id=public_workspace_id)
+    target_document = cosmos_container.read_item(item=document_id, partition_key=document_id)
+
+    family_documents = _get_document_family_items_from_document(
+        target_document,
+        user_id=user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    current_document = _choose_current_document(family_documents)
+    target_is_current = current_document and current_document.get('id') == document_id
+
+    if delete_mode == "all_versions":
+        deleted_document_ids = []
+        for family_document in family_documents:
+            delete_document(
+                user_id=user_id,
+                document_id=family_document['id'],
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            )
+            delete_document_chunks(
+                document_id=family_document['id'],
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            )
+            deleted_document_ids.append(family_document['id'])
+
+        return {
+            'deleted_mode': 'all_versions',
+            'deleted_document_ids': deleted_document_ids,
+            'promoted_document_id': None,
+        }
+
+    delete_document(
+        user_id=user_id,
+        document_id=document_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    delete_document_chunks(
+        document_id=document_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+
+    promoted_document_id = None
+    if target_is_current:
+        remaining_documents = [doc for doc in family_documents if doc.get('id') != document_id]
+        if remaining_documents:
+            promoted_document = _choose_current_document(remaining_documents)
+            promoted_document['revision_family_id'] = target_document.get('revision_family_id') or promoted_document.get('revision_family_id') or promoted_document.get('id')
+            promoted_document['is_current_version'] = True
+            promoted_document['search_visibility_state'] = 'active'
+            _promote_document_blob_to_current_alias(
+                promoted_document,
+                user_id=user_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            )
+            set_document_chunk_visibility(promoted_document, active=True)
+            cosmos_container.upsert_item(promoted_document)
+            promoted_document_id = promoted_document.get('id')
+
+    return {
+        'deleted_mode': 'current_only',
+        'deleted_document_ids': [document_id],
+        'promoted_document_id': promoted_document_id,
+    }
 
 def delete_document_chunks(document_id, group_id=None, public_workspace_id=None):
     """Delete document chunks from Azure Cognitive Search index."""
@@ -2533,66 +3114,26 @@ def delete_document_version_chunks(document_id, version, group_id=None, public_w
     )
 
 def get_document_versions(user_id, document_id, group_id=None, public_workspace_id=None):
-    """ Get all versions of a document for a user."""
-    is_group = group_id is not None
-    is_public_workspace = public_workspace_id is not None
-
-    if is_public_workspace:
-        cosmos_container = cosmos_public_documents_container
-    elif is_group:
-        cosmos_container = cosmos_group_documents_container
-    else:
-        cosmos_container = cosmos_user_documents_container
-
-    if is_public_workspace:
-        query = """
-            SELECT c.id, c.file_name, c.version, c.upload_date
-            FROM c
-            WHERE c.id = @document_id 
-                AND c.public_workspace_id = @public_workspace_id
-            ORDER BY c.version DESC
-        """
-        parameters = [
-            {"name": "@document_id", "value": document_id},
-            {"name": "@public_workspace_id", "value": public_workspace_id}
-        ]
-    elif is_group:
-        query = """
-            SELECT c.id, c.file_name, c.version, c.upload_date
-            FROM c
-            WHERE c.id = @document_id
-                AND (c.group_id = @group_id OR ARRAY_CONTAINS(c.shared_group_ids, @group_id))
-            ORDER BY c.version DESC
-        """
-        parameters = [
-            {"name": "@document_id", "value": document_id},
-            {"name": "@group_id", "value": group_id}
-        ]
-    else:
-        query = """
-            SELECT c.id, c.file_name, c.version, c.upload_date
-            FROM c
-            WHERE c.id = @document_id
-                AND (c.user_id = @user_id OR ARRAY_CONTAINS(c.shared_user_ids, @user_id))
-            ORDER BY c.version DESC
-        """
-        parameters = [
-            {"name": "@document_id", "value": document_id},
-            {"name": "@user_id", "value": user_id}
-        ]
-
     try:
-        versions_results = list(
-            cosmos_container.query_items(
-                query=query, 
-                parameters=parameters, 
-                enable_cross_partition_query=True
-            )
+        cosmos_container = _get_documents_container(group_id=group_id, public_workspace_id=public_workspace_id)
+        target_document = cosmos_container.read_item(item=document_id, partition_key=document_id)
+        family_documents = _get_document_family_items_from_document(
+            target_document,
+            user_id=user_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
         )
-
-        if not versions_results:
-            return []
-        return versions_results
+        sorted_family = sorted(family_documents, key=_document_revision_sort_key, reverse=True)
+        return [
+            {
+                'id': doc.get('id'),
+                'file_name': doc.get('file_name'),
+                'version': doc.get('version'),
+                'upload_date': doc.get('upload_date'),
+                'is_current_version': doc.get('id') == _choose_current_document(family_documents).get('id'),
+            }
+            for doc in sorted_family
+        ]
 
     except Exception as e:
         return []
@@ -2697,7 +3238,7 @@ def process_metadata_extraction_background(document_id, user_id, group_id=None, 
             "document_id": document_id,
             "user_id": user_id,
             "title": metadata.get('title'),
-            "authors": metadata.get('authors'),
+            "authors": ensure_list(metadata.get('authors')),
             "abstract": metadata.get('abstract'),
             "keywords": metadata.get('keywords'),
             "publication_date": metadata.get('publication_date'),
@@ -3221,22 +3762,33 @@ def clean_json_codeFence(response_content: str) -> str:
 
 def ensure_list(value, delimiters=r"[;,]"):
     """
-    Ensures the provided value is returned as a list of strings.
-    - If `value` is already a list, it is returned as-is.
-    - If `value` is a string, it is split on the given delimiters
-      (default: commas and semicolons).
-    - Otherwise, return an empty list.
+    Ensures the provided value is returned as a list of non-empty strings.
+    - If `value` is a list/tuple/set, items are normalized one by one.
+    - If `value` is a string, it is split on the given delimiters.
+    - If `value` is any other scalar, it is coerced to a single string item.
+    - Null and blank items are removed.
     """
-    if isinstance(value, list):
-        return value
-    elif isinstance(value, str):
-        # Split on the given delimiters (commas, semicolons, etc.)
-        items = re.split(delimiters, value)
-        # Strip whitespace and remove empty strings
-        items = [item.strip() for item in items if item.strip()]
-        return items
-    else:
+    if value is None:
         return []
+
+    if isinstance(value, str):
+        raw_items = re.split(delimiters, value)
+    elif isinstance(value, (list, tuple, set)):
+        raw_items = list(value)
+    else:
+        raw_items = [value]
+
+    items = []
+    for raw_item in raw_items:
+        if raw_item is None:
+            continue
+
+        normalized_item = raw_item if isinstance(raw_item, str) else str(raw_item)
+        normalized_item = normalized_item.strip()
+        if normalized_item:
+            items.append(normalized_item)
+
+    return items
 
 def is_effectively_empty(value):
     """
@@ -3548,27 +4100,42 @@ Format your response as JSON with these keys:
 def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_callback, group_id=None, public_workspace_id=None):
     """Uploads the file to Azure Blob Storage."""
 
-    is_group = group_id is not None
-    is_public_workspace = public_workspace_id is not None
-    
-    if is_public_workspace:
-        storage_account_container_name = storage_account_public_documents_container_name
-    elif is_group:
-        storage_account_container_name = storage_account_group_documents_container_name
-    else:
-        storage_account_container_name = storage_account_user_documents_container_name
-
     try:
-        if is_public_workspace:
-            blob_path = f"{public_workspace_id}/{blob_filename}"
-        elif is_group:
-            blob_path = f"{group_id}/{blob_filename}"
-        else:
-            blob_path = f"{user_id}/{blob_filename}"
+        cosmos_container = _get_documents_container(group_id=group_id, public_workspace_id=public_workspace_id)
+        current_document = cosmos_container.read_item(item=document_id, partition_key=document_id)
+        storage_account_container_name = current_document.get("blob_container") or _get_blob_container_name(
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
+        blob_path = build_current_blob_path(
+            blob_filename,
+            user_id=user_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
 
-        blob_service_client = CLIENTS.get("storage_account_office_docs_client")
-        if not blob_service_client:
-            raise Exception("Blob service client not available or not configured.")
+        previous_family_documents = [
+            family_document
+            for family_document in _get_document_family_items_from_document(
+                current_document,
+                user_id=user_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            )
+            if family_document.get("id") != document_id
+        ]
+        previous_document = max(previous_family_documents, key=_document_revision_sort_key) if previous_family_documents else None
+        if previous_document:
+            archived_blob_path = _archive_previous_document_blob(
+                previous_document,
+                user_id=user_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            )
+            if archived_blob_path:
+                cosmos_container.upsert_item(previous_document)
+
+        blob_service_client = _get_blob_service_client()
 
         blob_client = blob_service_client.get_blob_client(
             container=storage_account_container_name,
@@ -3577,8 +4144,8 @@ def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_c
 
         metadata = {
             "document_id": str(document_id),
-            "group_id": str(group_id) if is_group else None,
-            "user_id": str(user_id) if not is_group else None
+            "group_id": str(group_id) if group_id is not None else None,
+            "user_id": str(user_id) if group_id is None else None
         }
 
         metadata = {k: v for k, v in metadata.items() if v is not None}
@@ -3587,6 +4154,13 @@ def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_c
 
         with open(temp_file_path, "rb") as f:
             blob_client.upload_blob(f, overwrite=True, metadata=metadata)
+
+        current_document["blob_container"] = storage_account_container_name
+        current_document["blob_path"] = blob_path
+        current_document["blob_path_mode"] = CURRENT_ALIAS_BLOB_PATH_MODE
+        if current_document.get("archived_blob_path") is None:
+            current_document["archived_blob_path"] = None
+        cosmos_container.upsert_item(current_document)
 
         print(f"Successfully uploaded {blob_filename} to blob storage at {blob_path}")
         return blob_path
@@ -4809,6 +5383,173 @@ def process_json(document_id, user_id, temp_file_path, original_filename, enable
     # Return the count of chunks actually saved
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
+TABULAR_SCHEMA_SUMMARY_MAX_SHEETS = 8
+TABULAR_SCHEMA_SUMMARY_MAX_COLUMNS = 12
+TABULAR_SCHEMA_SUMMARY_MAX_PREVIEW_ROWS = 3
+TABULAR_SCHEMA_SUMMARY_MAX_CELL_CHARS = 60
+
+
+def _compact_tabular_schema_value(value, max_chars=TABULAR_SCHEMA_SUMMARY_MAX_CELL_CHARS):
+    text = "" if value is None else str(value)
+    text = " ".join(text.split())
+
+    if len(text) <= max_chars:
+        return text
+
+    return f"{text[:max_chars - 3]}..."
+
+
+def _compact_tabular_columns(columns, max_columns=TABULAR_SCHEMA_SUMMARY_MAX_COLUMNS):
+    normalized_columns = [
+        _compact_tabular_schema_value(column, max_chars=80) or "(blank)"
+        for column in columns
+    ]
+    visible_columns = normalized_columns[:max_columns]
+    omitted_count = max(len(normalized_columns) - max_columns, 0)
+
+    if omitted_count:
+        visible_columns.append(f"... +{omitted_count} more columns")
+
+    return visible_columns
+
+
+def _build_compact_tabular_preview(df_preview):
+    if df_preview is None or df_preview.empty:
+        return "[No preview rows available]"
+
+    preview_df = df_preview.iloc[
+        :TABULAR_SCHEMA_SUMMARY_MAX_PREVIEW_ROWS,
+        :TABULAR_SCHEMA_SUMMARY_MAX_COLUMNS,
+    ].copy()
+    preview_df.columns = [
+        _compact_tabular_schema_value(column, max_chars=80) or "(blank)"
+        for column in preview_df.columns
+    ]
+
+    for column in preview_df.columns:
+        preview_df[column] = preview_df[column].map(
+            lambda value: _compact_tabular_schema_value(value)
+        )
+
+    preview_text = preview_df.to_string(index=False)
+    omitted_column_count = max(len(df_preview.columns) - TABULAR_SCHEMA_SUMMARY_MAX_COLUMNS, 0)
+    if omitted_column_count:
+        preview_text += (
+            f"\n[Preview truncated to the first {TABULAR_SCHEMA_SUMMARY_MAX_COLUMNS} columns; "
+            f"{omitted_column_count} additional columns omitted.]"
+        )
+
+    return preview_text
+
+
+def _build_minimal_tabular_summary(temp_file_path, original_filename, file_ext):
+    plugin_note = "This file is stored in blob storage for detailed analysis via the Tabular Processing plugin."
+
+    if file_ext == '.csv':
+        column_summary = "Column discovery unavailable"
+        try:
+            header_df = pandas.read_csv(temp_file_path, keep_default_na=False, dtype=str, nrows=0)
+            compact_columns = _compact_tabular_columns(header_df.columns.tolist())
+            if compact_columns:
+                column_summary = ", ".join(compact_columns)
+        except Exception:
+            pass
+
+        return (
+            f"Tabular data file: {original_filename}\n"
+            f"Columns: {column_summary}\n"
+            f"{plugin_note}"
+        )
+
+    if file_ext in ('.xlsx', '.xls', '.xlsm'):
+        sheet_summary = "Sheet discovery unavailable"
+        try:
+            engine = 'openpyxl' if file_ext in ('.xlsx', '.xlsm') else 'xlrd'
+            excel_file = pandas.ExcelFile(temp_file_path, engine=engine)
+            visible_sheets = [
+                _compact_tabular_schema_value(sheet_name, max_chars=80)
+                for sheet_name in excel_file.sheet_names[:TABULAR_SCHEMA_SUMMARY_MAX_SHEETS]
+            ]
+            omitted_sheet_count = max(len(excel_file.sheet_names) - TABULAR_SCHEMA_SUMMARY_MAX_SHEETS, 0)
+
+            if visible_sheets:
+                sheet_summary = ", ".join(visible_sheets)
+                if omitted_sheet_count:
+                    sheet_summary += f", ... +{omitted_sheet_count} more sheets"
+        except Exception:
+            pass
+
+        return (
+            f"Tabular workbook: {original_filename}\n"
+            f"Sheets: {sheet_summary}\n"
+            f"{plugin_note}"
+        )
+
+    return (
+        f"Tabular file: {original_filename}\n"
+        f"{plugin_note}"
+    )
+
+
+def _build_tabular_schema_summary(temp_file_path, original_filename, file_ext):
+    plugin_note = "This file is available for detailed analysis via the Tabular Processing plugin."
+
+    if file_ext == '.csv':
+        df_preview = pandas.read_csv(
+            temp_file_path,
+            keep_default_na=False,
+            dtype=str,
+            nrows=TABULAR_SCHEMA_SUMMARY_MAX_PREVIEW_ROWS,
+        )
+        compact_columns = _compact_tabular_columns(df_preview.columns.tolist())
+        preview_rows = _build_compact_tabular_preview(df_preview)
+
+        return (
+            f"Tabular data file: {original_filename}\n"
+            f"Columns ({len(df_preview.columns)}): {', '.join(compact_columns) if compact_columns else 'None'}\n"
+            f"Preview (first {min(len(df_preview), TABULAR_SCHEMA_SUMMARY_MAX_PREVIEW_ROWS)} rows):\n{preview_rows}\n\n"
+            f"{plugin_note}"
+        )
+
+    if file_ext in ('.xlsx', '.xls', '.xlsm'):
+        engine = 'openpyxl' if file_ext in ('.xlsx', '.xlsm') else 'xlrd'
+        excel_file = pandas.ExcelFile(temp_file_path, engine=engine)
+        visible_sheet_names = excel_file.sheet_names[:TABULAR_SCHEMA_SUMMARY_MAX_SHEETS]
+        omitted_sheet_count = max(len(excel_file.sheet_names) - TABULAR_SCHEMA_SUMMARY_MAX_SHEETS, 0)
+        workbook_sections = []
+
+        for sheet_name in visible_sheet_names:
+            df_preview = excel_file.parse(
+                sheet_name,
+                keep_default_na=False,
+                dtype=str,
+                nrows=TABULAR_SCHEMA_SUMMARY_MAX_PREVIEW_ROWS,
+            )
+            compact_columns = _compact_tabular_columns(df_preview.columns.tolist())
+            preview_rows = _build_compact_tabular_preview(df_preview)
+            workbook_sections.append(
+                f"Sheet: {_compact_tabular_schema_value(sheet_name, max_chars=80)}\n"
+                f"Columns ({len(df_preview.columns)}): {', '.join(compact_columns) if compact_columns else 'None'}\n"
+                f"Preview (first {min(len(df_preview), TABULAR_SCHEMA_SUMMARY_MAX_PREVIEW_ROWS)} rows):\n{preview_rows}"
+            )
+
+        sheet_summary = ", ".join(
+            _compact_tabular_schema_value(sheet_name, max_chars=80)
+            for sheet_name in visible_sheet_names
+        )
+        if omitted_sheet_count:
+            sheet_summary += f", ... +{omitted_sheet_count} more sheets"
+
+        return (
+            f"Tabular workbook: {original_filename}\n"
+            f"Sheets ({len(excel_file.sheet_names)}): {sheet_summary if sheet_summary else 'None'}\n\n"
+            + "\n\n".join(workbook_sections)
+            + f"\n\n{plugin_note}"
+        )
+
+    raise ValueError(f"Unsupported tabular file type: {file_ext}")
+
+
 def process_single_tabular_sheet(df, document_id, user_id, file_name, update_callback, group_id=None, public_workspace_id=None):
     """Chunks a pandas DataFrame from a CSV or Excel sheet."""
     is_group = group_id is not None
@@ -4924,78 +5665,74 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
     # When enhanced citations is on, index a single schema summary chunk
     # instead of row-by-row chunking. The tabular processing plugin handles analysis.
     if enable_enhanced_citations:
+        save_args = {
+            "page_number": 1,
+            "file_name": original_filename,
+            "user_id": user_id,
+            "document_id": document_id,
+        }
+        if is_public_workspace:
+            save_args["public_workspace_id"] = public_workspace_id
+        elif is_group:
+            save_args["group_id"] = group_id
+
         try:
-            if file_ext == '.csv':
-                df_preview = pandas.read_csv(temp_file_path, keep_default_na=False, dtype=str, nrows=5)
-                full_df = pandas.read_csv(temp_file_path, keep_default_na=False, dtype=str)
-                row_count = len(full_df)
-                columns = [str(column) for column in df_preview.columns]
-                preview_rows = df_preview.head(5).to_string(index=False)
-
-                schema_summary = (
-                    f"Tabular data file: {original_filename}\n"
-                    f"Columns ({len(columns)}): {', '.join(columns)}\n"
-                    f"Total rows: {row_count}\n"
-                    f"Preview (first 5 rows):\n{preview_rows}\n\n"
-                    f"This file is available for detailed analysis via the Tabular Processing plugin."
-                )
-            elif file_ext in ('.xlsx', '.xls', '.xlsm'):
-                engine = 'openpyxl' if file_ext in ('.xlsx', '.xlsm') else 'xlrd'
-                excel_file = pandas.ExcelFile(temp_file_path, engine=engine)
-                workbook_sections = []
-
-                for sheet_name in excel_file.sheet_names:
-                    df_preview = excel_file.parse(sheet_name, keep_default_na=False, dtype=str, nrows=3)
-                    full_df = excel_file.parse(sheet_name, keep_default_na=False, dtype=str)
-                    columns = [str(column) for column in df_preview.columns]
-                    preview_rows = df_preview.head(3).to_string(index=False)
-                    workbook_sections.append(
-                        f"Sheet: {sheet_name}\n"
-                        f"Columns ({len(columns)}): {', '.join(columns)}\n"
-                        f"Total rows: {len(full_df)}\n"
-                        f"Preview (first 3 rows):\n{preview_rows}"
-                    )
-
-                schema_summary = (
-                    f"Tabular workbook: {original_filename}\n"
-                    f"Sheets ({len(excel_file.sheet_names)}): {', '.join(excel_file.sheet_names)}\n\n"
-                    + "\n\n".join(workbook_sections)
-                    + "\n\nThis workbook is available for detailed analysis via the Tabular Processing plugin."
-                )
-            else:
-                raise ValueError(f"Unsupported tabular file type: {file_ext}")
-
+            schema_summary = _build_tabular_schema_summary(
+                temp_file_path,
+                original_filename,
+                file_ext,
+            )
             update_callback(number_of_pages=1, status=f"Indexing schema summary for {original_filename}...")
+        except Exception as schema_error:
+            log_event(
+                f"[process_tabular] Error building bounded schema summary for {original_filename}; using compact fallback summary: {schema_error}",
+                level=logging.WARNING,
+            )
+            schema_summary = _build_minimal_tabular_summary(
+                temp_file_path,
+                original_filename,
+                file_ext,
+            )
+            update_callback(number_of_pages=1, status=f"Indexing compact schema summary for {original_filename}...")
 
-            save_args = {
-                "page_text_content": schema_summary,
-                "page_number": 1,
-                "file_name": original_filename,
-                "user_id": user_id,
-                "document_id": document_id
-            }
-            if is_public_workspace:
-                save_args["public_workspace_id"] = public_workspace_id
-            elif is_group:
-                save_args["group_id"] = group_id
-
+        try:
+            save_args["page_text_content"] = schema_summary
             token_usage = save_chunks(**save_args)
-            total_chunks_saved = 1
-            if token_usage:
-                total_embedding_tokens = token_usage.get('total_tokens', 0)
-                embedding_model_name = token_usage.get('model_deployment_name')
+        except Exception as schema_index_error:
+            minimal_summary = _build_minimal_tabular_summary(
+                temp_file_path,
+                original_filename,
+                file_ext,
+            )
 
-            # Don't return here — fall through to metadata extraction below
-        except Exception as e:
-            log_event(f"[process_tabular] Error creating schema summary, falling back to row-by-row: {e}", level=logging.WARNING)
-            # Fall through to existing row-by-row processing
+            if minimal_summary == schema_summary:
+                raise Exception(
+                    f"Failed indexing enhanced tabular schema summary for {original_filename}: {schema_index_error}"
+                ) from schema_index_error
 
-    # Only do row-by-row chunking if schema-only didn't produce chunks
-    if total_chunks_saved == 0:
+            log_event(
+                f"[process_tabular] Retrying compact schema summary for {original_filename} after schema summary indexing error: {schema_index_error}",
+                level=logging.WARNING,
+            )
+            update_callback(number_of_pages=1, status=f"Retrying compact schema summary for {original_filename}...")
+
+            try:
+                save_args["page_text_content"] = minimal_summary
+                token_usage = save_chunks(**save_args)
+            except Exception as minimal_summary_error:
+                raise Exception(
+                    f"Failed indexing enhanced tabular summary for {original_filename}: {minimal_summary_error}"
+                ) from minimal_summary_error
+
+        total_chunks_saved = 1
+        if token_usage:
+            total_embedding_tokens = token_usage.get('total_tokens', 0)
+            embedding_model_name = token_usage.get('model_deployment_name')
+
+    # Only do row-by-row chunking when enhanced citations is disabled.
+    if total_chunks_saved == 0 and not enable_enhanced_citations:
         try:
             if file_ext == '.csv':
-                # Process CSV
-                # Read CSV, attempt to infer header, keep data as string initially
                 df = pandas.read_csv(
                     temp_file_path,
                     keep_default_na=False,
@@ -5025,7 +5762,6 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
                     total_chunks_saved = result
 
             elif file_ext in ('.xlsx', '.xls', '.xlsm'):
-                # Process Excel (potentially multiple sheets)
                 excel_file = pandas.ExcelFile(
                     temp_file_path,
                     engine='openpyxl' if file_ext in ('.xlsx', '.xlsm') else 'xlrd'
@@ -5036,11 +5772,7 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
                 accumulated_total_chunks = 0
                 for sheet_name in sheet_names:
                     update_callback(status=f"Processing sheet '{sheet_name}'...")
-                    # Read specific sheet, get values (not formulas), keep data as string
-                    # Note: pandas typically reads values, not formulas by default.
                     df = excel_file.parse(sheet_name, keep_default_na=False, dtype=str)
-
-                    # Create effective filename for this sheet
                     effective_filename = f"{base_name}-{sheet_name}{ext}" if len(sheet_names) > 1 else original_filename
 
                     args = {
@@ -5066,7 +5798,7 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
                     else:
                         accumulated_total_chunks += result
 
-                total_chunks_saved = accumulated_total_chunks # Total across all sheets
+                total_chunks_saved = accumulated_total_chunks
 
         except pandas.errors.EmptyDataError:
             log_event(f"[process_tabular] Warning: Tabular file or sheet is empty: {original_filename}", level=logging.WARNING)
@@ -5074,7 +5806,6 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
         except Exception as e:
             raise Exception(f"Failed processing Tabular file {original_filename}: {e}")
 
-    # Extract metadata if enabled and chunks were processed
     settings = get_settings()
     enable_extract_meta_data = settings.get('enable_extract_meta_data', False)
     if enable_extract_meta_data and total_chunks_saved > 0:
@@ -5091,7 +5822,7 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
                 args["group_id"] = group_id
 
             document_metadata = extract_document_metadata(**args)
-            
+
             if document_metadata:
                 update_fields = {k: v for k, v in document_metadata.items() if v is not None and v != ""}
                 if update_fields:
@@ -5102,7 +5833,7 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
         except Exception as e:
             print(f"Warning: Error extracting final metadata for Tabular document {document_id}: {str(e)}")
             update_callback(status=f"Processing complete (metadata extraction warning)")
-            
+
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
 def process_di_document(document_id, user_id, temp_file_path, original_filename, file_ext, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
@@ -6775,10 +7506,10 @@ def get_workspace_tags(user_id, group_id=None, public_workspace_id=None):
         workspace_type = 'personal'
     
     try:
-        # Query all documents with tags
+        # Query documents with enough metadata to collapse revisions to the current version.
         if is_public_workspace:
             query = """
-                SELECT c.tags
+                SELECT c.id, c.file_name, c.version, c._ts, c.upload_date, c.tags, c.revision_family_id, c.is_current_version
                 FROM c
                 WHERE c.public_workspace_id = @partition_key
                     AND IS_DEFINED(c.tags)
@@ -6786,7 +7517,7 @@ def get_workspace_tags(user_id, group_id=None, public_workspace_id=None):
             """
         elif is_group:
             query = """
-                SELECT c.tags
+                SELECT c.id, c.file_name, c.version, c._ts, c.upload_date, c.tags, c.revision_family_id, c.is_current_version, c.group_id
                 FROM c
                 WHERE c.group_id = @partition_key
                     AND IS_DEFINED(c.tags)
@@ -6794,7 +7525,7 @@ def get_workspace_tags(user_id, group_id=None, public_workspace_id=None):
             """
         else:
             query = """
-                SELECT c.tags
+                SELECT c.id, c.file_name, c.version, c._ts, c.upload_date, c.tags, c.revision_family_id, c.is_current_version, c.user_id
                 FROM c
                 WHERE c.user_id = @partition_key
                     AND IS_DEFINED(c.tags)
@@ -6811,7 +7542,9 @@ def get_workspace_tags(user_id, group_id=None, public_workspace_id=None):
             )
         )
         
-        # Count tag occurrences
+        documents = select_current_documents(documents)
+
+        # Count tag occurrences on current revisions only.
         tag_counts = {}
         for doc in documents:
             for tag in doc.get('tags', []):
@@ -6990,21 +7723,15 @@ def propagate_tags_to_blob_metadata(document_id, tags, user_id, group_id=None, p
             cosmos_container = cosmos_user_documents_container
 
         doc_item = cosmos_container.read_item(document_id, partition_key=document_id)
-        file_name = doc_item.get('file_name')
-        if not file_name:
-            print(f"Warning: No file_name found for document {document_id}, skipping blob metadata update")
+        storage_account_container_name, blob_path = get_document_blob_storage_info(
+            doc_item,
+            user_id=user_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
+        if not blob_path:
+            print(f"Warning: No blob path found for document {document_id}, skipping blob metadata update")
             return
-
-        # Determine container and blob path
-        if is_public_workspace:
-            storage_account_container_name = storage_account_public_documents_container_name
-            blob_path = f"{public_workspace_id}/{file_name}"
-        elif is_group:
-            storage_account_container_name = storage_account_group_documents_container_name
-            blob_path = f"{group_id}/{file_name}"
-        else:
-            storage_account_container_name = storage_account_user_documents_container_name
-            blob_path = f"{user_id}/{file_name}"
 
         blob_service_client = CLIENTS.get("storage_account_office_docs_client")
         if not blob_service_client:
