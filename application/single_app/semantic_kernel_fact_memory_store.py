@@ -17,6 +17,13 @@ class FactMemoryStore:
     def get_partition_key(self, scope_id):
         return f"{scope_id}"
 
+    def get_fact_item(self, scope_id, fact_id):
+        partition_key = self.get_partition_key(scope_id)
+        try:
+            return self.container.read_item(item=fact_id, partition_key=partition_key)
+        except exceptions.CosmosResourceNotFoundError:
+            return None
+
     def set_fact(self, scope_type, scope_id, value, conversation_id=None, agent_id=None):
         now = datetime.now(timezone.utc).isoformat()
         doc_id = str(uuid.uuid4())
@@ -35,12 +42,10 @@ class FactMemoryStore:
 
 
     def get_fact(self, scope_id, fact_id):
-        partition_key = self.get_partition_key(scope_id)
-        try:
-            item = self.container.read_item(item=fact_id, scope_id=partition_key)
-            return item.get("value")
-        except exceptions.CosmosResourceNotFoundError:
+        item = self.get_fact_item(scope_id, fact_id)
+        if item is None:
             return None
+        return item.get("value")
 
 
     def get_facts(self, scope_type, scope_id, conversation_id=None, agent_id=None):
@@ -59,6 +64,29 @@ class FactMemoryStore:
             params.append({"name": "@conversation_id", "value": conversation_id})
         items = list(self.container.query_items(query=query, parameters=params, partition_key=partition_key))
         return items
+
+    def list_facts(self, scope_type, scope_id, conversation_id=None, agent_id=None):
+        items = self.get_facts(
+            scope_type=scope_type,
+            scope_id=scope_id,
+            conversation_id=conversation_id,
+            agent_id=agent_id,
+        )
+        return sorted(
+            items,
+            key=lambda item: item.get("updated_at") or item.get("created_at") or "",
+            reverse=True,
+        )
+
+    def update_fact(self, scope_id, fact_id, value):
+        item = self.get_fact_item(scope_id, fact_id)
+        if item is None:
+            return None
+
+        item["value"] = value
+        item["updated_at"] = datetime.now(timezone.utc).isoformat()
+        self.container.upsert_item(item)
+        return item
 
     def delete_fact(self, scope_id, fact_id):
         partition_key = self.get_partition_key(scope_id)

@@ -108,6 +108,141 @@ def persist_agent_citation_artifacts(
         return _strip_agent_citation_artifact_refs(compact_citations)
 
 
+def _load_user_message_response_context(
+    conversation_id,
+    user_message_id,
+    fallback_thread_id=None,
+    fallback_previous_thread_id=None,
+):
+    """Return user/thread metadata for assistant-style responses."""
+    response_context = {
+        'user_info': None,
+        'thread_id': fallback_thread_id,
+        'previous_thread_id': fallback_previous_thread_id,
+    }
+
+    try:
+        user_message_doc = cosmos_messages_container.read_item(
+            item=user_message_id,
+            partition_key=conversation_id,
+        )
+        metadata = user_message_doc.get('metadata') or {}
+        thread_info = metadata.get('thread_info') or {}
+
+        response_context['user_info'] = metadata.get('user_info')
+        response_context['thread_id'] = thread_info.get('thread_id') or fallback_thread_id
+
+        if 'previous_thread_id' in thread_info:
+            response_context['previous_thread_id'] = thread_info.get('previous_thread_id')
+    except Exception as exc:
+        debug_print(
+            f"[Threading] Could not load response context for user message {user_message_id}: {exc}"
+        )
+
+    return response_context
+
+
+def _build_safety_message_doc(
+    conversation_id,
+    message_id,
+    content,
+    response_context,
+    thread_attempt,
+):
+    """Build a persisted safety message aligned with the active conversation thread."""
+    return make_json_serializable({
+        'id': message_id,
+        'conversation_id': conversation_id,
+        'role': 'safety',
+        'content': content,
+        'timestamp': datetime.utcnow().isoformat(),
+        'model_deployment_name': None,
+        'metadata': {
+            'user_info': response_context.get('user_info'),
+            'thread_info': {
+                'thread_id': response_context.get('thread_id'),
+                'previous_thread_id': response_context.get('previous_thread_id'),
+                'active_thread': True,
+                'thread_attempt': thread_attempt,
+            },
+        },
+    })
+
+
+def _build_fact_memory_context_lines(
+    scope_id,
+    scope_type,
+    conversation_id=None,
+    agent_id=None,
+):
+    """Build a flat fact-memory context block for the current scope."""
+    if not scope_id or not scope_type:
+        return ""
+
+    fact_store = FactMemoryStore()
+    query_kwargs = {
+        'scope_type': scope_type,
+        'scope_id': scope_id,
+    }
+    if agent_id:
+        query_kwargs['agent_id'] = agent_id
+    if conversation_id:
+        query_kwargs['conversation_id'] = conversation_id
+
+    facts = fact_store.get_facts(**query_kwargs)
+    if not facts:
+        return ""
+
+    fact_lines = []
+    for fact in facts:
+        value = str(fact.get('value') or '').strip()
+        if value:
+            fact_lines.append(f"- {value}")
+
+    if not fact_lines:
+        return ""
+
+    fact_lines.append(f"- agent_id: {agent_id or 'None'}")
+    fact_lines.append(f"- scope_type: {scope_type}")
+    fact_lines.append(f"- scope_id: {scope_id}")
+    fact_lines.append(f"- conversation_id: {conversation_id or 'None'}")
+    return "\n".join(fact_lines)
+
+
+def build_tabular_fact_memory_messages(
+    scope_id,
+    scope_type,
+    conversation_id=None,
+    agent_id=None,
+    enabled=True,
+):
+    """Return system-message payloads that expose fact memory to mini SK analysis."""
+    if not enabled:
+        return []
+
+    messages = [{
+        'role': 'system',
+        'content': (
+            f"<Conversation Metadata>\n<Scope ID: {scope_id}>\n<Scope Type: {scope_type}>\n"
+            f"<Conversation ID: {conversation_id}>\n<Agent ID: {agent_id}>\n</Conversation Metadata>"
+        )
+    }]
+
+    facts = _build_fact_memory_context_lines(
+        scope_id=scope_id,
+        scope_type=scope_type,
+        conversation_id=conversation_id,
+        agent_id=agent_id,
+    )
+    if facts:
+        messages.append({
+            'role': 'system',
+            'content': f"<Fact Memory>\n{facts}\n</Fact Memory>"
+        })
+
+    return messages
+
+
 def get_tabular_discovery_function_names():
     """Return discovery-oriented tabular function names from the plugin."""
     from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
@@ -3349,6 +3484,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
     from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
     from semantic_kernel.connectors.ai.open_ai.prompt_execution_settings.azure_chat_prompt_execution_settings import AzureChatPromptExecutionSettings
     from semantic_kernel.contents.chat_history import ChatHistory as SKChatHistory
+    from semantic_kernel_plugins.fact_memory_plugin import FactMemoryPlugin
     from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
 
     try:
@@ -3356,6 +3492,9 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
         execution_mode = execution_mode if execution_mode in {'analysis', 'schema_summary', 'entity_lookup'} else 'analysis'
         schema_summary_mode = execution_mode == 'schema_summary'
         entity_lookup_mode = execution_mode == 'entity_lookup'
+        fact_memory_enabled = bool(settings.get('enable_fact_memory_plugin', False))
+        fact_memory_scope_id = group_id or user_id
+        fact_memory_scope_type = 'group' if group_id else 'user'
         analysis_file_contexts = normalize_tabular_file_contexts_for_analysis(
             tabular_filenames=tabular_filenames,
             tabular_file_contexts=tabular_file_contexts,
@@ -3373,6 +3512,8 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
         kernel = SKKernel()
         tabular_plugin = TabularProcessingPlugin()
         kernel.add_plugin(tabular_plugin, plugin_name="tabular_processing")
+        if fact_memory_enabled:
+            kernel.add_plugin(FactMemoryPlugin(), plugin_name="fact_memory")
 
         # 2. Create chat service using same config as main chat
         enable_gpt_apim = settings.get('enable_gpt_apim', False)
@@ -3887,6 +4028,14 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 execution_gap_messages=previous_execution_gap_messages,
                 discovery_feedback_messages=previous_discovery_feedback_messages,
             ))
+            for system_message in build_tabular_fact_memory_messages(
+                scope_id=fact_memory_scope_id,
+                scope_type=fact_memory_scope_type,
+                conversation_id=conversation_id,
+                agent_id=None,
+                enabled=fact_memory_enabled,
+            ):
+                chat_history.add_system_message(system_message['content'])
 
             chat_history.add_user_message(
                 f"Analyze the tabular data to answer: {user_question}\n"
@@ -5177,8 +5326,8 @@ def register_route_backend_chats(app):
             }
         )
 
-    def get_facts_for_context(scope_id, scope_type, conversation_id: str = None, agent_id: str = None):
-        if not scope_id or not scope_type:
+    def get_facts_for_context(scope_id, scope_type, conversation_id: str = None, agent_id: str = None, enabled: bool = True):
+        if not enabled or not scope_id or not scope_type:
             return ""
         fact_store = FactMemoryStore()
         kwargs = dict(
@@ -5205,12 +5354,15 @@ def register_route_backend_chats(app):
         fact_lines.append(f"- conversation_id: {conversation_id or 'None'}")
         return "\n".join(fact_lines)
 
-    def inject_fact_memory_context(conversation_history, scope_id, scope_type, conversation_id: str = None, agent_id: str = None):
+    def inject_fact_memory_context(conversation_history, scope_id, scope_type, conversation_id: str = None, agent_id: str = None, enabled: bool = True):
+        if not enabled:
+            return
         facts = get_facts_for_context(
             scope_id=scope_id,
             scope_type=scope_type,
             conversation_id=conversation_id,
             agent_id=agent_id,
+            enabled=enabled,
         )
         if facts:
             conversation_history.insert(0, {
@@ -5928,6 +6080,16 @@ def register_route_backend_chats(app):
                     thread_id=current_user_thread_id,
                     user_id=user_id
                 )
+                assistant_thread_attempt = retry_thread_attempt if is_retry else 1
+                response_message_context = _load_user_message_response_context(
+                    conversation_id=conversation_id,
+                    user_message_id=user_message_id,
+                    fallback_thread_id=current_user_thread_id,
+                    fallback_previous_thread_id=previous_thread_id,
+                )
+                user_info_for_assistant = response_message_context.get('user_info')
+                user_thread_id = response_message_context.get('thread_id')
+                user_previous_thread_id = response_message_context.get('previous_thread_id')
 
         # region 3 - Content Safety
             # ---------------------------------------------------------------------
@@ -5982,7 +6144,14 @@ def register_route_backend_chats(app):
                             'blocklist_matches': blocklist_matches,
                             'timestamp': datetime.utcnow().isoformat(),
                             'reason': "; ".join(block_reasons),
-                            'metadata': {}
+                            'metadata': {
+                                'message_id': assistant_message_id,
+                                'thread_info': {
+                                    'thread_id': response_message_context.get('thread_id'),
+                                    'previous_thread_id': response_message_context.get('previous_thread_id'),
+                                    'thread_attempt': assistant_thread_attempt,
+                                },
+                            }
                         }
                         cosmos_safety_container.upsert_item(safety_item)
 
@@ -6004,17 +6173,13 @@ def register_route_backend_chats(app):
                             )
 
                         # Insert a special "role": "safety" or "blocked"
-                        safety_message_id = f"{conversation_id}_safety_{int(time.time())}_{random.randint(1000,9999)}"
-
-                        safety_doc = {
-                            'id': safety_message_id,
-                            'conversation_id': conversation_id,
-                            'role': 'safety',
-                            'content': blocked_msg_content.strip(),
-                            'timestamp': datetime.utcnow().isoformat(),
-                            'model_deployment_name': None,
-                            'metadata': {},  # No metadata needed for safety messages
-                        }
+                        safety_doc = _build_safety_message_doc(
+                            conversation_id=conversation_id,
+                            message_id=assistant_message_id,
+                            content=blocked_msg_content.strip(),
+                            response_context=response_message_context,
+                            thread_attempt=assistant_thread_attempt,
+                        )
                         cosmos_messages_container.upsert_item(safety_doc)
 
                         # Update conversation's last_updated
@@ -6025,11 +6190,12 @@ def register_route_backend_chats(app):
                         return jsonify({
                             'reply': blocked_msg_content.strip(),
                             'blocked': True,
+                            'role': 'safety',
                             'triggered_categories': triggered_categories,
                             'blocklist_matches': blocklist_matches,
                             'conversation_id': conversation_id,
                             'conversation_title': conversation_item['title'],
-                            'message_id': safety_message_id
+                            'message_id': assistant_message_id
                         }), 200
 
                 except HttpResponseError as e:
@@ -7445,12 +7611,14 @@ def register_route_backend_chats(app):
 
                 # Add additional metadata here to scope the facts to be returned
                 # Allows for additional per agent and per conversation scoping.
+                fact_memory_enabled = bool(settings.get('enable_fact_memory_plugin', False))
                 inject_fact_memory_context(
                     conversation_history=conversation_history_for_api,
                     scope_id=scope_id,
                     scope_type=scope_type,
                     conversation_id=conversation_id,
                     agent_id=agent_id,
+                    enabled=fact_memory_enabled,
                 )
 
                 agent_message_history = [
@@ -7956,20 +8124,9 @@ def register_route_backend_chats(app):
             
             # assistant_message_id was generated earlier for thought tracking
 
-            # Get user_info and thread_id from the user message for ownership tracking and threading
-            user_info_for_assistant = None
-            user_thread_id = None
-            user_previous_thread_id = None
-            try:
-                user_msg = cosmos_messages_container.read_item(
-                    item=user_message_id,
-                    partition_key=conversation_id
-                )
-                user_info_for_assistant = user_msg.get('metadata', {}).get('user_info')
-                user_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
-                user_previous_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
-            except Exception as e:
-                debug_print(f"Warning: Could not retrieve user_info from user message: {e}")
+            user_info_for_assistant = response_message_context.get('user_info')
+            user_thread_id = response_message_context.get('thread_id')
+            user_previous_thread_id = response_message_context.get('previous_thread_id')
             
             # Assistant message should be part of the same thread as the user message
             # Only system/augmentation messages create new threads within a conversation
@@ -8004,7 +8161,7 @@ def register_route_backend_chats(app):
                         'thread_id': user_thread_id,  # Same thread as user message
                         'previous_thread_id': user_previous_thread_id,  # Same previous_thread_id as user message
                         'active_thread': True,
-                        'thread_attempt': retry_thread_attempt if is_retry else 1
+                        'thread_attempt': assistant_thread_attempt
                     },
                     'token_usage': token_usage_data  # Store token usage information
                 } # Used by SK and reasoning effort
@@ -8013,7 +8170,7 @@ def register_route_backend_chats(app):
             debug_print(f"🔍 Chat API - Creating assistant message with thread_info:")
             debug_print(f"    thread_id: {user_thread_id}")
             debug_print(f"    previous_thread_id: {user_previous_thread_id}")
-            debug_print(f"    attempt: {retry_thread_attempt if is_retry else 1}")
+            debug_print(f"    attempt: {assistant_thread_attempt}")
             debug_print(f"    is_retry: {is_retry}")
             
             cosmos_messages_container.upsert_item(assistant_doc)
@@ -8806,6 +8963,16 @@ def register_route_backend_chats(app):
                     thread_id=current_user_thread_id,
                     user_id=user_id
                 )
+                assistant_thread_attempt = retry_thread_attempt if is_retry else 1
+                response_message_context = _load_user_message_response_context(
+                    conversation_id=conversation_id,
+                    user_message_id=user_message_id,
+                    fallback_thread_id=current_user_thread_id,
+                    fallback_previous_thread_id=previous_thread_id,
+                )
+                user_info_for_assistant = response_message_context.get('user_info')
+                user_thread_id = response_message_context.get('thread_id')
+                user_previous_thread_id = response_message_context.get('previous_thread_id')
 
                 def serialize_thought_event(step_type, content, step_index, message_id=None):
                     return f"data: {json.dumps({'type': 'thought', 'message_id': message_id or assistant_message_id, 'step_index': step_index, 'step_type': step_type, 'content': content})}\n\n"
@@ -8880,7 +9047,14 @@ def register_route_backend_chats(app):
                                 'blocklist_matches': blocklist_matches,
                                 'timestamp': datetime.utcnow().isoformat(),
                                 'reason': "; ".join(block_reasons),
-                                'metadata': {}
+                                'metadata': {
+                                    'message_id': assistant_message_id,
+                                    'thread_info': {
+                                        'thread_id': response_message_context.get('thread_id'),
+                                        'previous_thread_id': response_message_context.get('previous_thread_id'),
+                                        'thread_attempt': assistant_thread_attempt,
+                                    },
+                                }
                             }
                             cosmos_safety_container.upsert_item(safety_item)
 
@@ -8902,24 +9076,36 @@ def register_route_backend_chats(app):
                                 )
 
                             # Insert safety message
-                            safety_message_id = f"{conversation_id}_safety_{int(time.time())}_{random.randint(1000,9999)}"
-                            safety_doc = {
-                                'id': safety_message_id,
-                                'conversation_id': conversation_id,
-                                'role': 'safety',
-                                'content': blocked_msg_content.strip(),
-                                'timestamp': datetime.utcnow().isoformat(),
-                                'model_deployment_name': None,
-                                'metadata': {},
-                            }
+                            safety_doc = _build_safety_message_doc(
+                                conversation_id=conversation_id,
+                                message_id=assistant_message_id,
+                                content=blocked_msg_content.strip(),
+                                response_context=response_message_context,
+                                thread_attempt=assistant_thread_attempt,
+                            )
                             cosmos_messages_container.upsert_item(safety_doc)
 
                             conversation_item['last_updated'] = datetime.utcnow().isoformat()
                             cosmos_conversations_container.upsert_item(conversation_item)
 
-                            # Stream the blocked response and stop
-                            yield f"data: {json.dumps({'content': blocked_msg_content.strip(), 'blocked': True})}\n\n"
-                            yield "data: [DONE]\n\n"
+                            final_data = make_json_serializable({
+                                'content': blocked_msg_content.strip(),
+                                'full_content': blocked_msg_content.strip(),
+                                'blocked': True,
+                                'role': 'safety',
+                                'done': True,
+                                'conversation_id': conversation_id,
+                                'conversation_title': conversation_item.get('title'),
+                                'message_id': assistant_message_id,
+                                'user_message_id': user_message_id,
+                                'augmented': False,
+                                'hybrid_citations': [],
+                                'web_search_citations': [],
+                                'agent_citations': [],
+                                'model_deployment_name': None,
+                                'thoughts_enabled': thought_tracker.enabled,
+                            })
+                            yield f"data: {json.dumps(final_data)}\n\n"
                             return
 
                     except HttpResponseError as e:
@@ -9703,12 +9889,14 @@ def register_route_backend_chats(app):
                         else:
                             debug_print(f"[Streaming] ⚠️ No agent selected, falling back to GPT")
 
+                    fact_memory_enabled = bool(settings.get('enable_fact_memory_plugin', False))
                     inject_fact_memory_context(
                         conversation_history=conversation_history_for_api,
                         scope_id=scope_id,
                         scope_type=scope_type,
                         conversation_id=conversation_id,
                         agent_id=getattr(selected_agent, 'id', None),
+                        enabled=fact_memory_enabled,
                     )
                 
                 # Stream the response
@@ -10044,20 +10232,9 @@ def register_route_backend_chats(app):
                         yield emit_thought('generation', f"'{gpt_model}' responded ({gpt_stream_total_duration_s}s from initial message)")
                     
                     # Stream complete - save message and send final metadata
-                    # Get user thread info to maintain thread consistency
-                    user_thread_id = None
-                    user_previous_thread_id = None
-                    user_info_for_assistant = None
-                    try:
-                        user_msg = cosmos_messages_container.read_item(
-                            item=user_message_id,
-                            partition_key=conversation_id
-                        )
-                        user_info_for_assistant = user_msg.get('metadata', {}).get('user_info')
-                        user_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
-                        user_previous_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
-                    except Exception as e:
-                        debug_print(f"Warning: Could not retrieve thread_id from user message: {e}")
+                    user_info_for_assistant = response_message_context.get('user_info')
+                    user_thread_id = response_message_context.get('thread_id')
+                    user_previous_thread_id = response_message_context.get('previous_thread_id')
                     assistant_timestamp = datetime.utcnow().isoformat()
                     prepared_agent_citations = persist_agent_citation_artifacts(
                         conversation_id=conversation_id,
@@ -10088,7 +10265,7 @@ def register_route_backend_chats(app):
                                 'thread_id': user_thread_id,
                                 'previous_thread_id': user_previous_thread_id,
                                 'active_thread': True,
-                                'thread_attempt': 1
+                                'thread_attempt': assistant_thread_attempt
                             },
                             'token_usage': token_usage_data if token_usage_data else None  # Store token usage from stream
                         }

@@ -1,7 +1,11 @@
 # route_frontend_profile.py
 
 from config import *
+from functions_appinsights import log_event
 from functions_authentication import *
+from functions_debug import debug_print
+from functions_settings import get_settings, get_user_settings, update_user_settings
+from semantic_kernel_fact_memory_store import FactMemoryStore
 from swagger_wrapper import swagger_route, get_auth_security
 import traceback
 
@@ -12,6 +16,28 @@ def register_route_frontend_profile(app):
     def profile():
         user = session.get('user')
         return render_template('profile.html', user=user)
+
+    def serialize_fact_memory_item(fact_item):
+        return {
+            'id': fact_item.get('id'),
+            'value': str(fact_item.get('value') or ''),
+            'agent_id': fact_item.get('agent_id'),
+            'conversation_id': fact_item.get('conversation_id'),
+            'scope_type': fact_item.get('scope_type'),
+            'scope_id': fact_item.get('scope_id'),
+            'created_at': fact_item.get('created_at'),
+            'updated_at': fact_item.get('updated_at') or fact_item.get('created_at'),
+        }
+
+    def get_profile_fact_memory_payload(user_id):
+        settings = get_settings()
+        fact_store = FactMemoryStore()
+        facts = fact_store.list_facts(scope_type='user', scope_id=user_id)
+        return {
+            'success': True,
+            'enabled': bool(settings.get('enable_fact_memory_plugin', False)),
+            'facts': [serialize_fact_memory_item(fact) for fact in facts],
+        }
     
     @app.route('/api/profile/image/refresh', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -290,7 +316,6 @@ def register_route_frontend_profile(app):
             tokens_data = [{"date": date, "tokens": tokens_by_date.get(date, 0)} for date in date_range]
             
             # Get storage metrics from user settings
-            from functions_settings import get_user_settings
             user_settings = get_user_settings(user_id)
             metrics = user_settings.get('settings', {}).get('metrics', {})
             document_metrics = metrics.get('document_metrics', {})
@@ -324,8 +349,6 @@ def register_route_frontend_profile(app):
         Get current user's settings including cached metrics.
         """
         try:
-            from functions_settings import get_user_settings
-            
             user_id = get_current_user_id()
             if not user_id:
                 return jsonify({"error": "Unable to identify user"}), 401
@@ -360,3 +383,144 @@ def register_route_frontend_profile(app):
             log_event(f"Error fetching user settings: {str(e)}", level=logging.ERROR)
             traceback.print_exc()
             return jsonify({"error": "Failed to fetch user settings"}), 500
+
+    @app.route('/api/profile/fact-memory', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def get_profile_fact_memory():
+        """Return the current user's fact-memory entries for profile recall."""
+        user_id = None
+        try:
+            user_id = get_current_user_id()
+            if not user_id:
+                return jsonify({'error': 'Unable to identify user'}), 401
+
+            return jsonify(get_profile_fact_memory_payload(user_id)), 200
+        except Exception as exc:
+            debug_print(f"[ProfileFactMemory] Failed to fetch fact memory for user {user_id}: {exc}")
+            log_event(
+                f"[ProfileFactMemory] Failed to fetch fact memory: {exc}",
+                extra={'user_id': user_id},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to fetch fact memory'}), 500
+
+    @app.route('/api/profile/fact-memory', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def create_profile_fact_memory():
+        """Create a user-scoped fact-memory entry from the profile page."""
+        user_id = None
+        try:
+            user_id = get_current_user_id()
+            if not user_id:
+                return jsonify({'error': 'Unable to identify user'}), 401
+
+            data = request.get_json(silent=True) or {}
+            value = str(data.get('value') or '').strip()
+            if not value:
+                return jsonify({'error': 'Memory value is required'}), 400
+
+            fact_store = FactMemoryStore()
+            fact_item = fact_store.set_fact(
+                scope_type='user',
+                scope_id=user_id,
+                value=value,
+                conversation_id=None,
+                agent_id=None,
+            )
+            log_event(
+                '[ProfileFactMemory] Created fact memory entry',
+                extra={'user_id': user_id, 'fact_id': fact_item.get('id')},
+                level=logging.INFO,
+            )
+            return jsonify({
+                'success': True,
+                'fact': serialize_fact_memory_item(fact_item),
+            }), 201
+        except Exception as exc:
+            debug_print(f"[ProfileFactMemory] Failed to create fact memory for user {user_id}: {exc}")
+            log_event(
+                f"[ProfileFactMemory] Failed to create fact memory: {exc}",
+                extra={'user_id': user_id},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to create fact memory'}), 500
+
+    @app.route('/api/profile/fact-memory/<fact_id>', methods=['PUT'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def update_profile_fact_memory(fact_id):
+        """Update an existing user-scoped fact-memory entry."""
+        user_id = None
+        try:
+            user_id = get_current_user_id()
+            if not user_id:
+                return jsonify({'error': 'Unable to identify user'}), 401
+
+            data = request.get_json(silent=True) or {}
+            value = str(data.get('value') or '').strip()
+            if not value:
+                return jsonify({'error': 'Memory value is required'}), 400
+
+            fact_store = FactMemoryStore()
+            updated_fact = fact_store.update_fact(user_id, fact_id, value)
+            if updated_fact is None:
+                return jsonify({'error': 'Fact memory entry not found'}), 404
+
+            log_event(
+                '[ProfileFactMemory] Updated fact memory entry',
+                extra={'user_id': user_id, 'fact_id': fact_id},
+                level=logging.INFO,
+            )
+            return jsonify({
+                'success': True,
+                'fact': serialize_fact_memory_item(updated_fact),
+            }), 200
+        except Exception as exc:
+            debug_print(f"[ProfileFactMemory] Failed to update fact memory {fact_id} for user {user_id}: {exc}")
+            log_event(
+                f"[ProfileFactMemory] Failed to update fact memory: {exc}",
+                extra={'user_id': user_id, 'fact_id': fact_id},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to update fact memory'}), 500
+
+    @app.route('/api/profile/fact-memory/<fact_id>', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def delete_profile_fact_memory(fact_id):
+        """Delete an existing user-scoped fact-memory entry."""
+        user_id = None
+        try:
+            user_id = get_current_user_id()
+            if not user_id:
+                return jsonify({'error': 'Unable to identify user'}), 401
+
+            fact_store = FactMemoryStore()
+            deleted = fact_store.delete_fact(user_id, fact_id)
+            if not deleted:
+                return jsonify({'error': 'Fact memory entry not found'}), 404
+
+            log_event(
+                '[ProfileFactMemory] Deleted fact memory entry',
+                extra={'user_id': user_id, 'fact_id': fact_id},
+                level=logging.INFO,
+            )
+            return jsonify({'success': True}), 200
+        except Exception as exc:
+            debug_print(f"[ProfileFactMemory] Failed to delete fact memory {fact_id} for user {user_id}: {exc}")
+            log_event(
+                f"[ProfileFactMemory] Failed to delete fact memory: {exc}",
+                extra={'user_id': user_id, 'fact_id': fact_id},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to delete fact memory'}), 500

@@ -1,3 +1,4 @@
+# fact_memory_plugin.py
 """
 FactMemoryPlugin for Semantic Kernel: provides write/update/delete operations for fact memory.
 - Uses FactMemoryStore for persistence.
@@ -44,6 +45,21 @@ class FactMemoryPlugin:
             conversation_id=conversation_id,
             agent_id=agent_id
         )
+
+    @kernel_function(
+        description="Update an existing fact by its unique id.",
+        name="update_fact"
+    )
+    def update_fact(self, scope_id: str, fact_id: str, value: str) -> dict:
+        """
+        Update a fact value by its unique id and scope_id partition key.
+        """
+        updated_fact = self.store.update_fact(
+            scope_id=scope_id,
+            fact_id=fact_id,
+            value=value,
+        )
+        return updated_fact or {}
 
     @kernel_function(
         description="Delete a fact by its unique id.",
