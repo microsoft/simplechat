@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+
+{% block title %}
+  Send Feedback - {{ app_settings.app_title }}
+{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+  <div class="mb-4" id="support-send-feedback-pane" data-app-version="{{ config['VERSION'] }}">
+    <h2 class="mb-1">Send Feedback</h2>
+    <p class="text-muted mb-0">Prepare a support email for your SimpleChat administrators. This opens a text-only draft in your local mail client.</p>
+  </div>
+
+  <div class="alert alert-warning" role="alert" id="support-send-feedback-overview-card">
+    Use these forms for either a bug report or a feature request. The draft opens in your local email application so you can review it before sending.
+  </div>
+
+  <div class="row g-4">
+    <div class="col-lg-6">
+      <div class="card p-4 h-100" id="support-send-feedback-bug-card">
+        <h4 class="mb-2"><i class="bi bi-bug me-2"></i>Bug Report</h4>
+        <p class="text-muted">Share what happened, what you expected, and how your admins can reproduce the problem.</p>
+        <div class="support-send-feedback-form" data-feedback-type="bug_report" data-feedback-label="Bug Report">
+          <div class="mb-3">
+            <label for="support_feedback_bug_name" class="form-label">Name</label>
+            <input type="text" class="form-control" id="support_feedback_bug_name" name="support_feedback_bug_name" autocomplete="name" value="{{ session.get('user', {}).get('name', '') }}" required>
+          </div>
+          <div class="mb-3">
+            <label for="support_feedback_bug_email" class="form-label">Email</label>
+            <input type="email" class="form-control" id="support_feedback_bug_email" name="support_feedback_bug_email" autocomplete="email" value="{{ session.get('user', {}).get('preferred_username', session.get('user', {}).get('email', '')) }}" required>
+          </div>
+          <div class="mb-3">
+            <label for="support_feedback_bug_org" class="form-label">Organization</label>
+            <input type="text" class="form-control" id="support_feedback_bug_org" name="support_feedback_bug_org" autocomplete="organization" required>
+          </div>
+          <div class="mb-3">
+            <label for="support_feedback_bug_details" class="form-label">Bug Details</label>
+            <textarea class="form-control" id="support_feedback_bug_details" name="support_feedback_bug_details" autocomplete="off" rows="6" placeholder="Describe what happened, what you expected, and how to reproduce it." required></textarea>
+          </div>
+          <div class="alert d-none support-send-feedback-status" role="alert"></div>
+          <button type="button" class="btn btn-primary support-send-feedback-submit">
+            <i class="bi bi-envelope-paper me-1"></i>Open Bug Report Draft
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-6">
+      <div class="card p-4 h-100" id="support-send-feedback-feature-card">
+        <h4 class="mb-2"><i class="bi bi-lightbulb me-2"></i>Feature Request</h4>
+        <p class="text-muted">Describe the improvement you want, why it matters, and the outcome you need.</p>
+        <div class="support-send-feedback-form" data-feedback-type="feature_request" data-feedback-label="Feature Request">
+          <div class="mb-3">
+            <label for="support_feedback_feature_name" class="form-label">Name</label>
+            <input type="text" class="form-control" id="support_feedback_feature_name" name="support_feedback_feature_name" autocomplete="name" value="{{ session.get('user', {}).get('name', '') }}" required>
+          </div>
+          <div class="mb-3">
+            <label for="support_feedback_feature_email" class="form-label">Email</label>
+            <input type="email" class="form-control" id="support_feedback_feature_email" name="support_feedback_feature_email" autocomplete="email" value="{{ session.get('user', {}).get('preferred_username', session.get('user', {}).get('email', '')) }}" required>
+          </div>
+          <div class="mb-3">
+            <label for="support_feedback_feature_org" class="form-label">Organization</label>
+            <input type="text" class="form-control" id="support_feedback_feature_org" name="support_feedback_feature_org" autocomplete="organization" required>
+          </div>
+          <div class="mb-3">
+            <label for="support_feedback_feature_details" class="form-label">Feature Request Details</label>
+            <textarea class="form-control" id="support_feedback_feature_details" name="support_feedback_feature_details" autocomplete="off" rows="6" placeholder="Describe the problem, the improvement you want, and the outcome you need." required></textarea>
+          </div>
+          <div class="alert d-none support-send-feedback-status" role="alert"></div>
+          <button type="button" class="btn btn-primary support-send-feedback-submit">
+            <i class="bi bi-envelope-paper me-1"></i>Open Feature Request Draft
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="{{ url_for('static', filename='js/support/support_feedback.js') }}"></script>
+{% endblock %}

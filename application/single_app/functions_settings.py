@@ -5,6 +5,11 @@ from functions_appinsights import log_event
 import app_settings_cache
 import inspect
 import copy
+from support_menu_config import (
+    get_default_support_latest_features_visibility,
+    has_visible_support_latest_features,
+    normalize_support_latest_features_visibility,
+)
 
 
 def is_tabular_processing_enabled(settings):
@@ -206,6 +211,14 @@ def get_settings(use_cosmos=False, include_source=False):
             {"label": "Acceptable Use Policy", "url": "https://example.com/policy"},
             {"label": "Prompt Ideas", "url": "https://example.com/prompts"}
         ],
+
+        # Support Menu
+        'enable_support_menu': False,
+        'support_menu_name': 'Support',
+        'enable_support_send_feedback': True,
+        'support_feedback_recipient_email': '',
+        'enable_support_latest_features': True,
+        'support_latest_features_visibility': get_default_support_latest_features_visibility(),
 
         # Enhanced Citations
         'enable_enhanced_citations': False,
@@ -1295,6 +1308,8 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
     sanitized = {}
 
     for k, v in full_settings.items():
+        if k == 'support_feedback_recipient_email':
+            continue
         if any(term in k.lower() for term in sensitive_terms):
             continue
         if k in ('model_endpoints', 'personal_model_endpoints') and isinstance(v, list):
@@ -1318,6 +1333,15 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
         sanitized['custom_logo_dark_base64'] = bool(full_settings.get('custom_logo_dark_base64'))
     if 'custom_favicon_base64' in full_settings:
         sanitized['custom_favicon_base64'] = bool(full_settings.get('custom_favicon_base64'))
+
+    if 'support_latest_features_visibility' in full_settings or 'enable_support_latest_features' in full_settings:
+        sanitized['support_latest_features_visibility'] = normalize_support_latest_features_visibility(
+            full_settings.get('support_latest_features_visibility', {})
+        )
+        sanitized['support_latest_features_has_visible_items'] = has_visible_support_latest_features(full_settings)
+        sanitized['support_feedback_recipient_configured'] = bool(
+            str(full_settings.get('support_feedback_recipient_email') or '').strip()
+        )
 
     return sanitized
 

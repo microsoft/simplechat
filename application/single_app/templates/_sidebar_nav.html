@@ -168,6 +168,42 @@
     </div>
     {% endif %}
 
+    <!-- Support Menu Section - Only show when a signed-in app user can access at least one support destination -->
+    {% set support_menu_role_allowed = session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
+    {% if support_menu_role_allowed and app_settings.enable_support_menu %}
+    {% set show_support_latest_features = app_settings.enable_support_latest_features and app_settings.support_latest_features_has_visible_items %}
+    {% set show_support_send_feedback = app_settings.enable_support_send_feedback and app_settings.support_feedback_recipient_configured %}
+    {% if show_support_latest_features or show_support_send_feedback %}
+    <div class="overflow-auto">
+      <div id="support-menu-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;">
+        <span class="nav-text">{{ app_settings.support_menu_name or 'Support' }}</span>
+        <i id="support-menu-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;"></i>
+      </div>
+      <div id="support-menu-links-section">
+        <ul class="nav flex-column mb-2">
+          {% if show_support_latest_features %}
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center" href="{{ url_for('support_latest_features') }}">
+              <i class="bi bi-lightning-charge me-2" style="font-size: 0.8em;"></i>
+              <span class="nav-text">Latest Features</span>
+              <span class="badge bg-warning text-dark text-uppercase ms-2">New</span>
+            </a>
+          </li>
+          {% endif %}
+          {% if show_support_send_feedback %}
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center" href="{{ url_for('support_send_feedback') }}">
+              <i class="bi bi-envelope-paper me-2" style="font-size: 0.8em;"></i>
+              <span class="nav-text">Send Feedback</span>
+            </a>
+          </li>
+          {% endif %}
+        </ul>
+      </div>
+    </div>
+    {% endif %}
+    {% endif %}
+
     <!-- External Links Section - Only show when logged in and enabled -->
     {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) and app_settings.enable_external_links and app_settings.external_links %}
     <div class="overflow-auto">
@@ -301,7 +337,7 @@
               </li>
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="latest-features" data-section="latest-features-support-menu-card">
-                  <i class="bi bi-life-preserver me-2" style="font-size: 0.8em;"></i><span class="nav-text">Support Menu Preview</span>
+                  <i class="bi bi-life-preserver me-2" style="font-size: 0.8em;"></i><span class="nav-text">Support Menu</span>
                 </a>
               </li>
             </ul>
@@ -329,6 +365,11 @@
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="general" data-section="classification-banner-section">
                   <i class="bi bi-shield-exclamation me-2" style="font-size: 0.8em;"></i><span class="nav-text">Classification Banner</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="general" data-section="support-menu-section">
+                  <i class="bi bi-life-preserver me-2" style="font-size: 0.8em;"></i><span class="nav-text">Support</span>
                 </a>
               </li>
               <li class="nav-item">
@@ -884,6 +925,19 @@
           externalLinksCollapsed = !externalLinksCollapsed;
           externalLinksSection.style.display = externalLinksCollapsed ? 'none' : '';
           externalLinksCaret.style.transform = externalLinksCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
+        });
+      }
+
+      // Collapsible Support Menu Section
+      var supportMenuToggle = document.getElementById('support-menu-toggle');
+      var supportMenuSection = document.getElementById('support-menu-links-section');
+      var supportMenuCaret = document.getElementById('support-menu-caret');
+      var supportMenuCollapsed = false;
+      if (supportMenuToggle && supportMenuSection && supportMenuCaret) {
+        supportMenuToggle.addEventListener('click', function() {
+          supportMenuCollapsed = !supportMenuCollapsed;
+          supportMenuSection.style.display = supportMenuCollapsed ? 'none' : '';
+          supportMenuCaret.style.transform = supportMenuCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
         });
       }
     });

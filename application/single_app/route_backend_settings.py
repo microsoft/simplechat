@@ -7,6 +7,7 @@ from functions_settings import *
 from functions_activity_logging import (
     log_admin_feedback_email_submission,
     log_admin_release_notifications_registration,
+    log_user_support_feedback_email_submission,
 )
 from functions_appinsights import log_event
 from azure.identity import DefaultAzureCredential
@@ -493,6 +494,81 @@ def register_route_backend_settings(app):
                     'user_id': user_id,
                     'activity_type': 'admin_feedback_email_submission',
                     'route': 'send_feedback_email',
+                    'feedback_type': feedback_type,
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True
+            )
+            return jsonify({'error': 'Failed to prepare feedback email'}), 500
+
+    @app.route('/api/support/send_feedback_email', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_support_menu")
+    def send_support_feedback_email():
+        """Log a support feedback draft request before the client opens mailto."""
+        user_id = get_current_user_id() or 'unknown'
+        feedback_type = ''
+        try:
+            user = session.get('user', {})
+            roles = user.get('roles', []) if isinstance(user.get('roles', []), list) else []
+            if 'Admin' not in roles and 'User' not in roles:
+                return jsonify({'error': 'Support menu is available to signed-in app users only'}), 403
+
+            settings = get_settings()
+            if not settings.get('enable_support_send_feedback', True):
+                return jsonify({'error': 'Send Feedback is disabled'}), 400
+
+            recipient_email = (settings.get('support_feedback_recipient_email') or '').strip()
+            if not recipient_email or '@' not in recipient_email:
+                return jsonify({'error': 'Support feedback recipient email is not configured'}), 400
+
+            data = request.get_json(force=True)
+
+            feedback_type = (data.get('feedbackType') or '').strip()
+            reporter_name = (data.get('reporterName') or '').strip()
+            reporter_email = (data.get('reporterEmail') or '').strip()
+            organization = (data.get('organization') or '').strip()
+            details = (data.get('details') or '').strip()
+            if feedback_type not in ['bug_report', 'feature_request']:
+                return jsonify({'error': 'Invalid feedback type'}), 400
+
+            if not reporter_name or not reporter_email or not organization or not details:
+                return jsonify({'error': 'Name, email, organization, and details are required'}), 400
+
+            if '@' not in reporter_email:
+                return jsonify({'error': 'Reporter email must be a valid email address'}), 400
+
+            user_email = user.get('preferred_username', user.get('email', reporter_email))
+            feedback_label = 'Bug Report' if feedback_type == 'bug_report' else 'Feature Request'
+            subject_line = f'[SimpleChat User Support] {feedback_label} - {organization}'
+
+            log_user_support_feedback_email_submission(
+                user_id=user_id,
+                user_email=user_email,
+                feedback_type=feedback_type,
+                reporter_name=reporter_name,
+                reporter_email=reporter_email,
+                organization=organization,
+                details=details,
+                recipient_email=recipient_email,
+            )
+
+            return jsonify({
+                'success': True,
+                'recipientEmail': recipient_email,
+                'subjectLine': subject_line,
+                'feedbackLabel': feedback_label
+            }), 200
+
+        except Exception:
+            log_event(
+                '[Support Feedback] Failed to prepare feedback email',
+                extra={
+                    'user_id': user_id,
+                    'activity_type': 'user_support_feedback_email_submission',
+                    'route': 'send_support_feedback_email',
                     'feedback_type': feedback_type,
                 },
                 level=logging.ERROR,

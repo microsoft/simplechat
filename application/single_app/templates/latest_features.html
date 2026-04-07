@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% block title %}
+  Latest Features - {{ app_settings.app_title }}
+{% endblock %}
+
+{% block head %}
+<style>
+  .support-feature-card {
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 1rem;
+  }
+
+  .support-feature-media {
+    width: 240px;
+    max-width: 100%;
+    border-radius: 0.85rem;
+    object-fit: cover;
+    background: linear-gradient(135deg, #f8f9fa, #eef2f7);
+    border: 1px solid rgba(0, 0, 0, 0.06);
+  }
+
+  .support-feature-icon {
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 0.75rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #fff3cd;
+    color: #8a5a00;
+    flex-shrink: 0;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+  <div class="d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-3 mb-4">
+    <div>
+      <h2 class="mb-1">Latest Features</h2>
+      <p class="text-muted mb-0">A curated view of recent updates your admins have chosen to share with end users.</p>
+    </div>
+    <span class="badge bg-warning text-dark text-uppercase align-self-start align-self-lg-center">New</span>
+  </div>
+
+  {% if support_latest_features %}
+  <div class="row g-3">
+    {% for feature in support_latest_features %}
+    <div class="col-12">
+      <div class="card support-feature-card shadow-sm h-100">
+        <div class="card-body p-4">
+          <div class="d-flex flex-column flex-xl-row gap-4 align-items-start">
+            {% if feature.image %}
+            <img class="support-feature-media" src="{{ url_for('static', filename=feature.image) }}" alt="{{ feature.image_alt }}">
+            {% endif %}
+            <div class="flex-grow-1">
+              <div class="d-flex align-items-center gap-3 mb-3">
+                <span class="support-feature-icon">
+                  <i class="bi {{ feature.icon }}"></i>
+                </span>
+                <div>
+                  <h4 class="mb-1">{{ feature.title }}</h4>
+                  <p class="text-muted mb-0">{{ feature.summary }}</p>
+                </div>
+              </div>
+              <p class="mb-0">{{ feature.details }}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="alert alert-info" role="alert">
+    Your admins have not shared any Latest Features announcements right now.
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

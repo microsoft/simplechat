@@ -1631,6 +1631,74 @@
                     </div>
                 </div>
 
+                <div class="card p-3 mb-3" id="support-menu-section">
+                    <h5>
+                        <i class="bi bi-life-preserver me-2"></i>Support
+                    </h5>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="enable_support_menu" name="enable_support_menu"
+                            {% if settings.enable_support_menu %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_support_menu">
+                            Enable Support Menu for End Users
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Display a Support menu in navigation for signed-in users with the User role."></i>
+                    </div>
+                    <p class="text-muted small">When enabled, users can access Support destinations like Send Feedback and Latest Features directly from navigation.</p>
+
+                    <div id="support_menu_settings" {% if not settings.enable_support_menu %}style="display: none;"{% endif %}>
+                        <div class="mb-3">
+                            <label for="support_menu_name" class="form-label">Menu Name</label>
+                            <input type="text" class="form-control" id="support_menu_name" name="support_menu_name"
+                                   value="{{ settings.support_menu_name or 'Support' }}" placeholder="Support">
+                            <small class="form-text text-muted">This name will appear in user navigation as the Support menu title.</small>
+                        </div>
+
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" id="enable_support_send_feedback" name="enable_support_send_feedback"
+                                {% if settings.enable_support_send_feedback %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="enable_support_send_feedback">
+                                Enable Send Feedback Destination
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to prepare support feedback emails that route to your internal recipient."></i>
+                        </div>
+
+                        <div class="mb-3" id="support_feedback_recipient_group" {% if not settings.enable_support_send_feedback %}style="display: none;"{% endif %}>
+                            <label for="support_feedback_recipient_email" class="form-label">Support Recipient Email</label>
+                            <input type="email" class="form-control" id="support_feedback_recipient_email" name="support_feedback_recipient_email"
+                                   value="{{ settings.support_feedback_recipient_email or '' }}" placeholder="support@contoso.com">
+                            <small class="form-text text-muted">User Send Feedback drafts will be addressed to this internal email address.</small>
+                        </div>
+
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" id="enable_support_latest_features" name="enable_support_latest_features"
+                                {% if settings.enable_support_latest_features %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="enable_support_latest_features">
+                                Enable Latest Features Destination
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Show a user-facing Latest Features page from the Support menu."></i>
+                        </div>
+
+                        <div id="support_latest_features_settings" {% if not settings.enable_support_latest_features %}style="display: none;"{% endif %}>
+                            <h6 class="mt-3">User-Facing Latest Features</h6>
+                            <p class="text-muted small">Choose which recent features are shared on the user Latest Features page.</p>
+                            <div class="row g-2">
+                                {% for feature in support_latest_feature_catalog %}
+                                <div class="col-md-6">
+                                    <div class="form-check border rounded p-3 h-100">
+                                        <input class="form-check-input" type="checkbox" id="support_latest_feature_{{ feature.id }}" name="support_latest_feature_{{ feature.id }}"
+                                            {% if settings.support_latest_features_visibility.get(feature.id, true) %}checked{% endif %}>
+                                        <label class="form-check-label ms-2" for="support_latest_feature_{{ feature.id }}">
+                                            <span class="fw-semibold d-block">{{ feature.title }}</span>
+                                            <span class="text-muted small">{{ feature.summary }}</span>
+                                        </label>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="card p-3 mb-3" id="external-links-section">
                     <h5>
                         <i class="bi bi-box-arrow-up-right me-2"></i>External Links
@@ -2588,9 +2656,9 @@
                     <div class="latest-feature-header">
                         <div class="latest-feature-copy">
                             <h5 class="mb-1">
-                                <i class="bi bi-life-preserver me-2"></i>Support Menu Preview
+                                <i class="bi bi-life-preserver me-2"></i>Support Menu
                             </h5>
-                            <p class="text-muted mb-0">A planned user-facing Support Menu will bring key help and feedback workflows out of admin-only surfaces and into the everyday user experience.</p>
+                            <p class="text-muted mb-0">Support can now expose user-facing Latest Features and Send Feedback workflows directly in everyday navigation.</p>
                         </div>
                         <a href="#latestFeaturesSupportMenu" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesSupportMenu">
                             Show Details
@@ -2598,14 +2666,17 @@
                     </div>
                     <div class="collapse mt-3" id="latestFeaturesSupportMenu">
                         <div class="card card-body">
-                            <div class="alert alert-info mb-3" role="alert">
-                                Preview content only: this card is describing the planned Support Menu experience for non-admin users.
+                            <div class="alert alert-success mb-3" role="alert">
+                                Support is now configurable from the General tab so admins can choose exactly what users see.
                             </div>
                             <ul class="mb-3">
-                                <li>The Support Menu will include a Latest Features page tailored for regular users instead of the admin-only overview.</li>
-                                <li>It will also include Send Feedback so users can send feedback directly to their SimpleChat admins.</li>
-                                <li>This gives teams a clearer, user-friendly place for feature discovery, help navigation, and routine feedback submission.</li>
+                                <li>Admins can enable or disable the Support menu and rename it for user navigation.</li>
+                                <li>Send Feedback now routes users to an internal recipient email address defined by admins.</li>
+                                <li>The user-facing Latest Features page can be curated feature-by-feature so teams only share the items they want visible.</li>
                             </ul>
+                            <a href="#general" onclick="switchTab(event, 'general-tab')" class="btn btn-outline-primary align-self-start mb-3">
+                                <i class="bi bi-gear me-1"></i>Open General Settings
+                            </a>
                             <div class="latest-feature-gallery">
                                 <button
                                     type="button"
