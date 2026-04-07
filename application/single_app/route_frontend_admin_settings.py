@@ -11,6 +11,11 @@ from functions_logging import *
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta, timezone
 from admin_settings_int_utils import safe_int_with_source
+from support_menu_config import (
+    get_support_latest_feature_catalog,
+    has_visible_support_latest_features,
+    normalize_support_latest_features_visibility,
+)
 
 ALLOWED_PIL_IMAGE_UPLOAD_FORMATS = ('PNG', 'JPEG')
 
@@ -111,6 +116,23 @@ def register_route_frontend_admin_settings(app):
                 {"label": "Acceptable Use Policy", "url": "https://example.com/policy"},
                 {"label": "Prompt Ideas", "url": "https://example.com/prompts"}
             ]
+        if 'enable_support_menu' not in settings:
+            settings['enable_support_menu'] = False
+        if 'support_menu_name' not in settings:
+            settings['support_menu_name'] = 'Support'
+        if 'enable_support_send_feedback' not in settings:
+            settings['enable_support_send_feedback'] = True
+        if 'support_feedback_recipient_email' not in settings:
+            settings['support_feedback_recipient_email'] = ''
+        if 'enable_support_latest_features' not in settings:
+            settings['enable_support_latest_features'] = True
+        settings['support_latest_features_visibility'] = normalize_support_latest_features_visibility(
+            settings.get('support_latest_features_visibility', {})
+        )
+        settings['support_latest_features_has_visible_items'] = has_visible_support_latest_features(settings)
+        settings['support_feedback_recipient_configured'] = bool(
+            str(settings.get('support_feedback_recipient_email') or '').strip()
+        )
 
         # --- End Refined Default Checks ---
 
@@ -348,6 +370,7 @@ def register_route_frontend_admin_settings(app):
                 update_available=update_available,
                 latest_version=latest_version,
                 download_url=download_url,
+                support_latest_feature_catalog=get_support_latest_feature_catalog(),
                 chunk_size_defaults=get_chunk_size_defaults(),
                 chunk_size_settings=settings.get('chunk_size', {}),
                 chunk_size_cap=get_chunk_size_cap(settings),
@@ -529,6 +552,30 @@ def register_route_frontend_admin_settings(app):
                 flash(f'Error processing external links: {e}. Changes for external links not saved.', 'danger')
                 # Keep existing external links from the database instead of overwriting with bad data
                 parsed_external_links = settings.get('external_links', []) # Fallback to existing
+
+            enable_support_menu = form_data.get('enable_support_menu') == 'on'
+            support_menu_name = form_data.get('support_menu_name', 'Support').strip()
+            if not support_menu_name:
+                support_menu_name = 'Support'
+
+            enable_support_send_feedback = form_data.get('enable_support_send_feedback') == 'on'
+            support_feedback_recipient_email = form_data.get('support_feedback_recipient_email', '').strip()
+            if enable_support_send_feedback and not support_feedback_recipient_email:
+                flash('Support Send Feedback requires a recipient email. The Send Feedback entry was disabled.', 'warning')
+                enable_support_send_feedback = False
+            elif support_feedback_recipient_email and '@' not in support_feedback_recipient_email:
+                flash('Support feedback recipient email must be a valid email address. The Send Feedback entry was disabled.', 'warning')
+                support_feedback_recipient_email = ''
+                enable_support_send_feedback = False
+
+            enable_support_latest_features = form_data.get('enable_support_latest_features') == 'on'
+            support_latest_features_visibility = {}
+            for feature in get_support_latest_feature_catalog():
+                field_name = f"support_latest_feature_{feature['id']}"
+                support_latest_features_visibility[feature['id']] = form_data.get(field_name) == 'on'
+            support_latest_features_visibility = normalize_support_latest_features_visibility(
+                support_latest_features_visibility
+            )
 
             # Enhanced Citations...
             enable_enhanced_citations = form_data.get('enable_enhanced_citations') == 'on'
@@ -1161,6 +1208,14 @@ def register_route_frontend_admin_settings(app):
                 'external_links_menu_name': external_links_menu_name,
                 'external_links_force_menu': external_links_force_menu,
                 'external_links': parsed_external_links, # Store the PARSED LIST
+
+                # *** Support Menu ***
+                'enable_support_menu': enable_support_menu,
+                'support_menu_name': support_menu_name,
+                'enable_support_send_feedback': enable_support_send_feedback,
+                'support_feedback_recipient_email': support_feedback_recipient_email,
+                'enable_support_latest_features': enable_support_latest_features,
+                'support_latest_features_visibility': support_latest_features_visibility,
 
                 # Enhanced Citations
                 'enable_enhanced_citations': enable_enhanced_citations,

@@ -1631,6 +1631,74 @@
                     </div>
                 </div>
 
+                <div class="card p-3 mb-3" id="support-menu-section">
+                    <h5>
+                        <i class="bi bi-life-preserver me-2"></i>Support
+                    </h5>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="enable_support_menu" name="enable_support_menu"
+                            {% if settings.enable_support_menu %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_support_menu">
+                            Enable Support Menu for End Users
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Display a Support menu in navigation for signed-in users with the User role."></i>
+                    </div>
+                    <p class="text-muted small">When enabled, users can access Support destinations like Send Feedback and Latest Features directly from navigation.</p>
+
+                    <div id="support_menu_settings" {% if not settings.enable_support_menu %}style="display: none;"{% endif %}>
+                        <div class="mb-3">
+                            <label for="support_menu_name" class="form-label">Menu Name</label>
+                            <input type="text" class="form-control" id="support_menu_name" name="support_menu_name"
+                                   value="{{ settings.support_menu_name or 'Support' }}" placeholder="Support">
+                            <small class="form-text text-muted">This name will appear in user navigation as the Support menu title.</small>
+                        </div>
+
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" id="enable_support_send_feedback" name="enable_support_send_feedback"
+                                {% if settings.enable_support_send_feedback %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="enable_support_send_feedback">
+                                Enable Send Feedback Destination
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to prepare support feedback emails that route to your internal recipient."></i>
+                        </div>
+
+                        <div class="mb-3" id="support_feedback_recipient_group" {% if not settings.enable_support_send_feedback %}style="display: none;"{% endif %}>
+                            <label for="support_feedback_recipient_email" class="form-label">Support Recipient Email</label>
+                            <input type="email" class="form-control" id="support_feedback_recipient_email" name="support_feedback_recipient_email"
+                                   value="{{ settings.support_feedback_recipient_email or '' }}" placeholder="support@contoso.com">
+                            <small class="form-text text-muted">User Send Feedback drafts will be addressed to this internal email address.</small>
+                        </div>
+
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" id="enable_support_latest_features" name="enable_support_latest_features"
+                                {% if settings.enable_support_latest_features %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="enable_support_latest_features">
+                                Enable Latest Features Destination
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Show a user-facing Latest Features page from the Support menu."></i>
+                        </div>
+
+                        <div id="support_latest_features_settings" {% if not settings.enable_support_latest_features %}style="display: none;"{% endif %}>
+                            <h6 class="mt-3">User-Facing Latest Features</h6>
+                            <p class="text-muted small">Choose which recent features are shared on the user Latest Features page.</p>
+                            <div class="row g-2">
+                                {% for feature in support_latest_feature_catalog %}
+                                <div class="col-md-6">
+                                    <div class="form-check border rounded p-3 h-100">
+                                        <input class="form-check-input" type="checkbox" id="support_latest_feature_{{ feature.id }}" name="support_latest_feature_{{ feature.id }}"
+                                            {% if settings.support_latest_features_visibility.get(feature.id, true) %}checked{% endif %}>
+                                        <label class="form-check-label ms-2" for="support_latest_feature_{{ feature.id }}">
+                                            <span class="fw-semibold d-block">{{ feature.title }}</span>
+                                            <span class="text-muted small">{{ feature.summary }}</span>
+                                        </label>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="card p-3 mb-3" id="external-links-section">
                     <h5>
                         <i class="bi bi-box-arrow-up-right me-2"></i>External Links
@@ -1936,6 +2004,65 @@
                     </div>
                 </div>
 
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-model-selection-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-cpu me-2"></i>Multi-Endpoint GPT Selection
+                            </h5>
+                            <p class="text-muted mb-0">Admins can now expose multiple GPT choices across Azure OpenAI and Azure AI Foundry, then set a default fallback model for chat, agents, and background operations.</p>
+                        </div>
+                        <a href="#latestFeaturesModelSelection" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesModelSelection">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesModelSelection">
+                        <div class="card card-body">
+                            <p class="mb-2">This is the high-value admin control for teams that want broader GPT choice without locking every workflow to a single deployment.</p>
+                            <ul class="mb-3">
+                                <li>Configure multiple model endpoints and choose which GPT deployments are available to users.</li>
+                                <li>Let users switch models in chat when they need a different balance of speed, cost, or capability.</li>
+                                <li>Set a default fallback model so summarization, agent requests, and other background flows still resolve a usable GPT when an explicit selection is missing.</li>
+                            </ul>
+                            <div class="alert alert-secondary mb-3" role="alert">
+                                Review endpoint and fallback configuration in the <a href="#ai-models" onclick="switchTab(event, 'ai-models-tab')">AI Models</a> tab.
+                            </div>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/model_selection_multi_endpoint_admin.png') }}"
+                                    data-latest-feature-image-title="Admin Multi-Endpoint Model Management"
+                                    data-latest-feature-image-caption="Admin endpoint table showing Azure OpenAI and Foundry model endpoints with configured GPT choices."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/model_selection_multi_endpoint_admin.png') }}" alt="Admin multi-endpoint model management screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Admin Endpoint Table</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/model_selection_chat_selector.png') }}"
+                                    data-latest-feature-image-title="User Chat Model Selector"
+                                    data-latest-feature-image-caption="Chat composer showing the expanded GPT selector with multiple available choices."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/model_selection_chat_selector.png') }}" alt="User chat model selector screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Chat Model Selector</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="card p-3 mb-3 latest-feature-card" id="latest-features-tabular-card">
                     <div class="latest-feature-header">
                         <div class="latest-feature-copy">
@@ -2061,6 +2188,122 @@
                                         <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/tabular_analysis_enhanced_citations.png') }}" alt="Tabular analysis enhanced citations screenshot">
                                         <div class="latest-feature-thumbnail-body">
                                             <div class="latest-feature-thumbnail-title">Tabular Analysis Preview</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-citation-improvements-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-journal-text me-2"></i>Citation Improvements
+                            </h5>
+                            <p class="text-muted mb-0">Conversation history citation replay and citation amplification keep more grounded evidence available across follow-up turns without making the chat history unwieldy.</p>
+                        </div>
+                        <a href="#latestFeaturesCitationImprovements" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesCitationImprovements">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesCitationImprovements">
+                        <div class="card card-body">
+                            <p class="mb-2">These improvements make follow-up questions more reliable because the system can reuse prior grounded evidence instead of relying only on the assistant's last prose response.</p>
+                            <ul class="mb-3">
+                                <li>Conversation history citations carry forward prior citation summaries so later prompts can reuse earlier grounded results.</li>
+                                <li>Citation amplification keeps richer supporting payloads available for inspection and export while keeping prompt history compact.</li>
+                                <li>This is especially useful for larger or tabular outputs where users often ask multiple follow-up questions against the same evidence chain.</li>
+                            </ul>
+                            <div class="alert alert-secondary mb-3" role="alert">
+                                These improvements complement the <a href="#citation" onclick="switchTab(event, 'citation-tab')">Citations</a> configuration and the enhanced-citation storage flow.
+                            </div>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/citation_improvements_history_replay.png') }}"
+                                    data-latest-feature-image-title="Conversation History Citation Replay"
+                                    data-latest-feature-image-caption="Follow-up chat where prior citation summaries are replayed into the next turn's reasoning context."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/citation_improvements_history_replay.png') }}" alt="Conversation history citation replay screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">History Citation Replay</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/citation_improvements_amplified_results.png') }}"
+                                    data-latest-feature-image-title="Citation Amplification Details"
+                                    data-latest-feature-image-caption="Expanded citation detail showing amplified supporting evidence and fuller artifact-backed results."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/citation_improvements_amplified_results.png') }}" alt="Citation amplification details screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Amplified Citation Detail</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-document-versioning-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-files me-2"></i>Document Revisioning and Management
+                            </h5>
+                            <p class="text-muted mb-0">Uploading a document with the same name now creates a new revision instead of overwriting the previous file, while older versions remain available for traceability and later analysis.</p>
+                        </div>
+                        <a href="#latestFeaturesDocumentVersioning" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesDocumentVersioning">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesDocumentVersioning">
+                        <div class="card card-body">
+                            <p class="mb-2">This improves both document management and citation integrity for long-lived conversations that span multiple document updates.</p>
+                            <ul class="mb-3">
+                                <li>Same-name uploads create a revision family with an incremented current version instead of destroying prior history.</li>
+                                <li>Previous versions are retained for analysis or comparison, while workspace and search views focus on the current revision by default.</li>
+                                <li>Older conversations can still resolve citations against the correct historical document version.</li>
+                                <li>Updated revisions inherit document classifications and tags so admins do not have to reapply metadata after every refresh.</li>
+                            </ul>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/document_revision_workspace.png') }}"
+                                    data-latest-feature-image-title="Current Revision in Workspace"
+                                    data-latest-feature-image-caption="Workspace document list showing the current revision state for same-name uploads."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/document_revision_workspace.png') }}" alt="Document revision workspace screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Current Revision View</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/document_revision_delete_compare.png') }}"
+                                    data-latest-feature-image-title="Revision Actions and Comparison"
+                                    data-latest-feature-image-caption="Version-aware actions such as comparison, analysis of previous revisions, or current-versus-all-versions deletion choices."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/document_revision_delete_compare.png') }}" alt="Document revision actions screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Revision Actions</div>
                                             <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
                                         </div>
                                     </div>
@@ -2405,6 +2648,68 @@
                             <a href="#send-feedback" onclick="switchTab(event, 'send-feedback-tab')" class="btn btn-outline-primary align-self-start">
                                 <i class="bi bi-envelope-paper me-1"></i>Open Send Feedback
                             </a>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-support-menu-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-life-preserver me-2"></i>Support Menu
+                            </h5>
+                            <p class="text-muted mb-0">Support can now expose user-facing Latest Features and Send Feedback workflows directly in everyday navigation.</p>
+                        </div>
+                        <a href="#latestFeaturesSupportMenu" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesSupportMenu">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesSupportMenu">
+                        <div class="card card-body">
+                            <div class="alert alert-success mb-3" role="alert">
+                                Support is now configurable from the General tab so admins can choose exactly what users see.
+                            </div>
+                            <ul class="mb-3">
+                                <li>Admins can enable or disable the Support menu and rename it for user navigation.</li>
+                                <li>Send Feedback now routes users to an internal recipient email address defined by admins.</li>
+                                <li>The user-facing Latest Features page can be curated feature-by-feature so teams only share the items they want visible.</li>
+                                <li>The General tab now includes a dedicated User-Facing Latest Features checklist so admins can quickly confirm which announcements will be visible to end users.</li>
+                            </ul>
+                            <a href="#general" onclick="switchTab(event, 'general-tab')" class="btn btn-outline-primary align-self-start mb-3">
+                                <i class="bi bi-gear me-1"></i>Open General Settings
+                            </a>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/support_menu_entry.png') }}"
+                                    data-latest-feature-image-title="User Support Menu Entry"
+                                    data-latest-feature-image-caption="User-facing Support menu entry exposing Latest Features and Send Feedback."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/support_menu_entry.png') }}" alt="Support menu entry screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Support Menu Entry</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/enable_support_menu_for_end_users.png') }}"
+                                    data-latest-feature-image-title="User-Facing Latest Features in General Settings"
+                                    data-latest-feature-image-caption="General tab Support settings showing Enable Support Menu for End Users and the User-Facing Latest Features checklist that controls what gets shared."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/enable_support_menu_for_end_users.png') }}" alt="User-facing latest features checklist in general settings screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">General Tab Feature Sharing</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>

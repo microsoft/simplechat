@@ -42,6 +42,13 @@ const externalLinksTbody = document.getElementById('external-links-tbody');
 const addExternalLinkBtn = document.getElementById('add-external-link-btn');
 const externalLinksJsonInput = document.getElementById('external_links_json');
 
+const enableSupportMenuToggle = document.getElementById('enable_support_menu');
+const supportMenuSettingsDiv = document.getElementById('support_menu_settings');
+const enableSupportSendFeedbackToggle = document.getElementById('enable_support_send_feedback');
+const supportFeedbackRecipientGroup = document.getElementById('support_feedback_recipient_group');
+const enableSupportLatestFeaturesToggle = document.getElementById('enable_support_latest_features');
+const supportLatestFeaturesSettingsDiv = document.getElementById('support_latest_features_settings');
+
 const adminForm = document.getElementById('admin-settings-form');
 const saveButton = document.getElementById('floating-save-btn') || (adminForm ? adminForm.querySelector('button[type="submit"]') : null);
 const enableGroupWorkspacesToggle = document.getElementById('enable_group_workspaces');
@@ -115,6 +122,9 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // --- NEW: External Links Setup ---
     setupExternalLinks(); // Initialize external links section
+
+    // --- NEW: Support Menu Setup ---
+    setupSupportMenuSettings();
 
     // --- NEW: Chunk size controls ---
     setupChunkSizeControls();
@@ -933,6 +943,50 @@ function updateClassificationJsonInput() {
         }
     }
     return "[]";
+}
+
+function setupSupportMenuSettings() {
+    if (enableSupportMenuToggle) {
+        enableSupportMenuToggle.addEventListener('change', toggleSupportMenuSettingsVisibility);
+    }
+
+    if (enableSupportSendFeedbackToggle) {
+        enableSupportSendFeedbackToggle.addEventListener('change', toggleSupportFeedbackRecipientVisibility);
+    }
+
+    if (enableSupportLatestFeaturesToggle) {
+        enableSupportLatestFeaturesToggle.addEventListener('change', toggleSupportLatestFeaturesVisibility);
+    }
+
+    toggleSupportMenuSettingsVisibility();
+}
+
+
+function toggleSupportMenuSettingsVisibility() {
+    if (supportMenuSettingsDiv && enableSupportMenuToggle) {
+        supportMenuSettingsDiv.style.display = enableSupportMenuToggle.checked ? 'block' : 'none';
+    }
+
+    toggleSupportFeedbackRecipientVisibility();
+    toggleSupportLatestFeaturesVisibility();
+}
+
+
+function toggleSupportFeedbackRecipientVisibility() {
+    if (supportFeedbackRecipientGroup && enableSupportMenuToggle && enableSupportSendFeedbackToggle) {
+        supportFeedbackRecipientGroup.style.display = (
+            enableSupportMenuToggle.checked && enableSupportSendFeedbackToggle.checked
+        ) ? 'block' : 'none';
+    }
+}
+
+
+function toggleSupportLatestFeaturesVisibility() {
+    if (supportLatestFeaturesSettingsDiv && enableSupportMenuToggle && enableSupportLatestFeaturesToggle) {
+        supportLatestFeaturesSettingsDiv.style.display = (
+            enableSupportMenuToggle.checked && enableSupportLatestFeaturesToggle.checked
+        ) ? 'block' : 'none';
+    }
 }
 
 // --- *** NEW: External Links Functions *** ---
@@ -3311,6 +3365,11 @@ function setStatusAlert(statusAlert, message, variant) {
     statusAlert.className = `alert alert-${variant} admin-send-feedback-status`;
     statusAlert.textContent = message;
     statusAlert.classList.remove('d-none');
+}
+
+
+function updateSendFeedbackStatus(statusAlert, message, variant) {
+    setStatusAlert(statusAlert, message, variant);
 }
 
 

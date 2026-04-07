@@ -49,6 +49,7 @@ from functions_message_artifacts import (
     build_message_artifact_payload_map,
     filter_assistant_artifact_items,
     hydrate_agent_citations_from_artifacts,
+    make_json_serializable,
 )
 from functions_thoughts import ThoughtTracker
 
@@ -4245,18 +4246,6 @@ def collect_tabular_sk_citations(user_id, conversation_id):
     if not plugin_invocations:
         return []
 
-    def make_json_serializable(obj):
-        if obj is None:
-            return None
-        elif isinstance(obj, (str, int, float, bool)):
-            return obj
-        elif isinstance(obj, dict):
-            return {str(k): make_json_serializable(v) for k, v in obj.items()}
-        elif isinstance(obj, (list, tuple)):
-            return [make_json_serializable(item) for item in obj]
-        else:
-            return str(obj)
-
     citations = []
     for inv in plugin_invocations:
         timestamp_str = None
@@ -7556,19 +7545,6 @@ def register_route_backend_chats(app):
                                 else:
                                     timestamp_str = str(inv.timestamp)
                             
-                            # Ensure all values are JSON serializable
-                            def make_json_serializable(obj):
-                                if obj is None:
-                                    return None
-                                elif isinstance(obj, (str, int, float, bool)):
-                                    return obj
-                                elif isinstance(obj, dict):
-                                    return {str(k): make_json_serializable(v) for k, v in obj.items()}
-                                elif isinstance(obj, (list, tuple)):
-                                    return [make_json_serializable(item) for item in obj]
-                                else:
-                                    return str(obj)
-                            
                             citation = {
                                 'tool_name': f"{inv.plugin_name}.{inv.function_name}",
                                 'function_name': inv.function_name,
@@ -7677,9 +7653,8 @@ def register_route_backend_chats(app):
                                         f"Agent retrieved citation from Azure AI Foundry"
                                     )
                                 for citation in foundry_citations:
-                                    try:
-                                        serializable = json.loads(json.dumps(citation, default=str))
-                                    except (TypeError, ValueError):
+                                    serializable = make_json_serializable(citation)
+                                    if not isinstance(serializable, dict):
                                         serializable = {'value': str(citation)}
                                     agent_citations_list.append({
                                         'tool_name': agent_used,
@@ -8007,7 +7982,7 @@ def register_route_backend_chats(app):
                 user_info=user_info_for_assistant,
             )
 
-            assistant_doc = {
+            assistant_doc = make_json_serializable({
                 'id': assistant_message_id,
                 'conversation_id': conversation_id,
                 'role': 'assistant',
@@ -8033,7 +8008,7 @@ def register_route_backend_chats(app):
                     },
                     'token_usage': token_usage_data  # Store token usage information
                 } # Used by SK and reasoning effort
-            }
+            })
             
             debug_print(f"🔍 Chat API - Creating assistant message with thread_info:")
             debug_print(f"    thread_id: {user_thread_id}")
@@ -8137,7 +8112,7 @@ def register_route_backend_chats(app):
             enable_redis_for_kernel = False
             if enable_semantic_kernel and per_user_semantic_kernel and redis_client and enable_redis_for_kernel:
                 save_user_kernel(user_id, g.kernel, g.kernel_agents, redis_client)
-            return jsonify({
+            return jsonify(make_json_serializable({
                 'reply': ai_message, # Send the AI's response (or the error message) back
                 'conversation_id': conversation_id,
                 'conversation_title': conversation_item['title'], # Send updated title
@@ -8159,7 +8134,7 @@ def register_route_backend_chats(app):
                 'reload_messages': reload_messages_required,
                 'kernel_fallback_notice': kernel_fallback_notice,
                 'thoughts_enabled': thought_tracker.enabled
-            }), 200
+            })), 200
         
         except Exception as e:
             import traceback
@@ -8235,7 +8210,7 @@ def register_route_backend_chats(app):
 
         def normalize_legacy_chat_payload(payload):
             """Convert the legacy JSON response shape into the streaming terminal payload."""
-            return {
+            return make_json_serializable({
                 'done': True,
                 'conversation_id': payload.get('conversation_id'),
                 'conversation_title': payload.get('conversation_title'),
@@ -8255,7 +8230,7 @@ def register_route_backend_chats(app):
                 'kernel_fallback_notice': payload.get('kernel_fallback_notice'),
                 'thoughts_enabled': payload.get('thoughts_enabled', False),
                 'blocked': payload.get('blocked', False),
-            }
+            })
 
         def generate_compatibility_response():
             """Bridge legacy JSON chat handling into a terminal SSE event for parity cases."""
@@ -9974,18 +9949,6 @@ def register_route_backend_chats(app):
                                 else:
                                     timestamp_str = str(inv.timestamp)
                             
-                            def make_json_serializable(obj):
-                                if obj is None:
-                                    return None
-                                elif isinstance(obj, (str, int, float, bool)):
-                                    return obj
-                                elif isinstance(obj, dict):
-                                    return {str(k): make_json_serializable(v) for k, v in obj.items()}
-                                elif isinstance(obj, (list, tuple)):
-                                    return [make_json_serializable(item) for item in obj]
-                                else:
-                                    return str(obj)
-                            
                             citation = {
                                 'tool_name': f"{inv.plugin_name}.{inv.function_name}",
                                 'function_name': inv.function_name,
@@ -10006,9 +9969,8 @@ def register_route_backend_chats(app):
                             foundry_label = agent_name_used or ('New Foundry Application' if stream_selected_agent_type == 'new_foundry' else 'Azure AI Foundry Agent')
                             for citation in foundry_citations:
                                 yield emit_thought('agent_tool_call', 'Agent retrieved citation from Azure AI Foundry')
-                                try:
-                                    serializable = json.loads(json.dumps(citation, default=str))
-                                except (TypeError, ValueError):
+                                serializable = make_json_serializable(citation)
+                                if not isinstance(serializable, dict):
                                     serializable = {'value': str(citation)}
                                 agent_citations_list.append({
                                     'tool_name': foundry_label,
@@ -10105,7 +10067,7 @@ def register_route_backend_chats(app):
                         user_info=user_info_for_assistant,
                     )
 
-                    assistant_doc = {
+                    assistant_doc = make_json_serializable({
                         'id': assistant_message_id,
                         'conversation_id': conversation_id,
                         'role': 'assistant',
@@ -10130,7 +10092,7 @@ def register_route_backend_chats(app):
                             },
                             'token_usage': token_usage_data if token_usage_data else None  # Store token usage from stream
                         }
-                    }
+                    })
                     cosmos_messages_container.upsert_item(assistant_doc)
                     
                     # Log chat token usage to activity_logs for easy reporting
@@ -10220,7 +10182,7 @@ def register_route_backend_chats(app):
                     cosmos_conversations_container.upsert_item(conversation_item)
                     
                     # Send final message with metadata
-                    final_data = {
+                    final_data = make_json_serializable({
                         'done': True,
                         'conversation_id': conversation_id,
                         'conversation_title': conversation_item['title'],
@@ -10240,7 +10202,7 @@ def register_route_backend_chats(app):
                         'agent_name': agent_name_used if use_agent_streaming else None,
                         'full_content': accumulated_content,
                         'thoughts_enabled': thought_tracker.enabled
-                    }
+                    })
                     debug_print(
                         "[Streaming] Finalizing stream response | "
                         f"conversation_id={conversation_id} | message_id={assistant_message_id} | "
@@ -10266,7 +10228,7 @@ def register_route_backend_chats(app):
                             user_info=user_info_for_assistant,
                         )
                         
-                        assistant_doc = {
+                        assistant_doc = make_json_serializable({
                             'id': assistant_message_id,
                             'conversation_id': conversation_id,
                             'role': 'assistant',
@@ -10292,7 +10254,7 @@ def register_route_backend_chats(app):
                                     'thread_attempt': 1
                                 }
                             }
-                        }
+                        })
                         try:
                             cosmos_messages_container.upsert_item(assistant_doc)
                         except Exception as ex:
@@ -11772,9 +11734,8 @@ def perform_web_search(
     if citations:
         for i, citation in enumerate(citations):
             debug_print(f"[WebSearch] Processing citation {i}: {json.dumps(citation, default=str)[:200]}...")
-            try:
-                serializable = json.loads(json.dumps(citation, default=str))
-            except (TypeError, ValueError):
+            serializable = make_json_serializable(citation)
+            if not isinstance(serializable, dict):
                 serializable = {"value": str(citation)}
             citation_title = serializable.get("title") or serializable.get("url") or "Web search source"
             debug_print(f"[WebSearch] Adding agent citation with title: {citation_title}")

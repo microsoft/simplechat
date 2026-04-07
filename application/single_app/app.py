@@ -50,6 +50,7 @@ from route_frontend_group_workspaces import *
 from route_frontend_public_workspaces import *
 from route_frontend_safety import *
 from route_frontend_feedback import *
+from route_frontend_support import *
 from route_frontend_notifications import *
 
 from route_backend_chats import *
@@ -862,6 +863,9 @@ register_route_frontend_safety(app)
 
 # ------------------- Feedback Routes -------------------
 register_route_frontend_feedback(app)
+
+# ------------------- Support Routes --------------------
+register_route_frontend_support(app)
 
 # ------------------- Notifications Routes --------------
 register_route_frontend_notifications(app)
