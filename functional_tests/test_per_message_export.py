@@ -2,11 +2,12 @@
 # test_per_message_export.py
 """
 Functional tests for the per-message export feature and Word route regression fix.
-Version: 0.239.128
-Implemented in: 0.239.128
+Version: 0.240.076
+Implemented in: 0.240.076
 
 Covers:
  - Happy path: Word document built successfully from a valid message.
+ - Word-native formatting: markdown content is converted into DOCX headings, lists, tables, and styled runs.
  - Markdown export logic: correct header, timestamp and content rendered.
  - Route regression: backend source defines POST /api/message/export-word.
  - Auth failure: unauthenticated caller receives 401.
@@ -14,9 +15,10 @@ Covers:
 """
 
 import ast
-import sys
-import os
 import io
+import os
+import sys
+from typing import Any, Dict, Optional
 
 sys.path.insert(
     0,
@@ -79,6 +81,68 @@ def _build_markdown_export(role, content, sender, timestamp):
     lines.append(content)
     lines.append('')
     return '\n'.join(lines)
+
+
+def _load_word_formatter_helpers():
+    """Load the real DOCX formatter helpers from the export route source."""
+    try:
+        import markdown2
+        from bs4 import BeautifulSoup, NavigableString, Tag
+        from docx import Document as DocxDocument
+        from docx.shared import Inches, Pt
+    except ImportError as exc:
+        return None, exc
+
+    route_file = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        '..',
+        'application',
+        'single_app',
+        'route_backend_conversation_export.py'
+    )
+
+    with open(route_file, 'r', encoding='utf-8') as handle:
+        source = handle.read()
+
+    tree = ast.parse(source)
+    helper_names = {
+        '_add_markdown_content_to_doc',
+        '_append_html_block_to_doc',
+        '_append_list_items_to_doc',
+        '_add_code_block_to_doc',
+        '_add_html_table_to_doc',
+        '_populate_table_cell',
+        '_append_inline_html_runs',
+        '_apply_run_formatting',
+    }
+    selected_nodes = [
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in helper_names
+    ]
+
+    loaded_names = {node.name for node in selected_nodes}
+    missing_names = helper_names - loaded_names
+    assert not missing_names, f"Missing formatter helpers in route file: {sorted(missing_names)}"
+
+    module = ast.Module(body=selected_nodes, type_ignores=[])
+    ast.fix_missing_locations(module)
+
+    namespace = {
+        'Any': Any,
+        'Dict': Dict,
+        'Optional': Optional,
+        'markdown2': markdown2,
+        'BeautifulSoup': BeautifulSoup,
+        'NavigableString': NavigableString,
+        'Tag': Tag,
+        'DocxDocument': DocxDocument,
+        'Inches': Inches,
+        'Pt': Pt,
+        'DOCX_MARKDOWN_EXTRAS': ['fenced-code-blocks', 'tables', 'break-on-newline', 'cuddled-lists', 'strike'],
+    }
+
+    exec(compile(module, route_file, 'exec'), namespace)
+    return namespace, None
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +224,74 @@ def test_happy_path_word_export():
     assert 'Message Export' in headings, "Document should have 'Message Export' heading"
 
     print("✅ test_happy_path_word_export passed!")
+    return True
+
+
+def test_word_export_uses_word_formatting():
+    """Word export should convert markdown into DOCX-native structures."""
+    print("🔍 Testing Word export uses Word-native formatting...")
+
+    helpers, import_error = _load_word_formatter_helpers()
+    if import_error is not None:
+        print(f"  ⚠️  Required formatter dependency missing, skipping check: {import_error}")
+        print("✅ test_word_export_uses_word_formatting skipped (dependency missing)")
+        return True
+
+    from docx import Document as DocxDocument
+
+    content = (
+        "# Summary\n\n"
+        "Paragraph with **bold** text, *italic* text, and `code`.\n\n"
+        "- First item\n"
+        "- Second item\n\n"
+        "| Name | Value |\n"
+        "| --- | --- |\n"
+        "| Alpha | 42 |\n\n"
+        "```python\n"
+        "print('hello')\n"
+        "```"
+    )
+
+    doc = DocxDocument()
+    helpers['_add_markdown_content_to_doc'](doc, content)
+
+    non_empty_paragraphs = [paragraph for paragraph in doc.paragraphs if paragraph.text.strip()]
+    paragraph_texts = [paragraph.text.strip() for paragraph in non_empty_paragraphs]
+
+    heading = next((paragraph for paragraph in non_empty_paragraphs if paragraph.text.strip() == 'Summary'), None)
+    assert heading is not None, 'Expected a heading paragraph for the markdown heading'
+    assert heading.style.name.startswith('Heading'), f"Expected heading style, found {heading.style.name}"
+
+    body_paragraph = next((paragraph for paragraph in non_empty_paragraphs if 'Paragraph with' in paragraph.text), None)
+    assert body_paragraph is not None, 'Expected the markdown body paragraph to be rendered'
+    assert any('bold' in run.text and run.bold for run in body_paragraph.runs), 'Expected bold text to use a bold run'
+    assert any('italic' in run.text and run.italic for run in body_paragraph.runs), 'Expected italic text to use an italic run'
+    assert any('code' in run.text and run.font.name == 'Consolas' for run in body_paragraph.runs), 'Expected inline code to use a code font'
+
+    bullet_paragraphs = [
+        paragraph for paragraph in non_empty_paragraphs
+        if paragraph.text.strip() in {'First item', 'Second item'}
+    ]
+    assert len(bullet_paragraphs) == 2, 'Expected both markdown bullets to be rendered as list items'
+    assert all(paragraph.style.name == 'List Bullet' for paragraph in bullet_paragraphs), 'Expected markdown bullets to use the Word bullet list style'
+
+    assert len(doc.tables) == 1, 'Expected markdown table syntax to render as a DOCX table'
+    table = doc.tables[0]
+    assert table.cell(0, 0).text.strip() == 'Name', 'Expected first table header cell to contain Name'
+    assert table.cell(0, 1).text.strip() == 'Value', 'Expected second table header cell to contain Value'
+    assert table.cell(1, 0).text.strip() == 'Alpha', 'Expected table data to populate DOCX cells'
+    assert table.cell(1, 1).text.strip() == '42', 'Expected table data value to populate DOCX cells'
+
+    code_paragraph = next((paragraph for paragraph in non_empty_paragraphs if "print('hello')" in paragraph.text), None)
+    assert code_paragraph is not None, 'Expected fenced code block to render as a paragraph'
+    assert any("print('hello')" in run.text and run.font.name == 'Consolas' for run in code_paragraph.runs), 'Expected fenced code block to use a code font'
+
+    combined_text = '\n'.join(paragraph_texts)
+    assert '**bold**' not in combined_text, 'Raw bold markdown should not remain in the exported DOCX text'
+    assert '*italic*' not in combined_text, 'Raw italic markdown should not remain in the exported DOCX text'
+    assert '```python' not in combined_text, 'Raw fenced code markdown should not remain in the exported DOCX text'
+
+    print("✅ test_word_export_uses_word_formatting passed!")
     return True
 
 
@@ -354,6 +486,7 @@ def test_markdown_export_no_timestamp():
 if __name__ == "__main__":
     tests = [
         test_happy_path_word_export,
+        test_word_export_uses_word_formatting,
         test_happy_path_markdown_export,
         test_export_word_route_definition_present,
         test_auth_failure_unauthenticated,

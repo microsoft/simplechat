@@ -11,6 +11,7 @@ from datetime import datetime
 from html import escape as _escape_html
 from typing import Any, Dict, List, Optional
 
+from bs4 import BeautifulSoup, NavigableString, Tag
 from config import *
 from flask import jsonify, make_response, request
 from functions_appinsights import log_event
@@ -27,11 +28,12 @@ from functions_settings import *
 from functions_thoughts import get_thoughts_for_conversation
 from swagger_wrapper import swagger_route, get_auth_security
 from docx import Document as DocxDocument
-from docx.shared import Pt
+from docx.shared import Inches, Pt
 
 
 TRANSCRIPT_ROLES = {'user', 'assistant'}
 SUMMARY_SOURCE_CHAR_LIMIT = 60000
+DOCX_MARKDOWN_EXTRAS = ['fenced-code-blocks', 'tables', 'break-on-newline', 'cuddled-lists', 'strike']
 
 
 def register_route_backend_conversation_export(app):
@@ -1322,69 +1324,228 @@ def _build_message_citation_labels(message: Dict[str, Any]) -> List[str]:
 
 
 def _add_markdown_content_to_doc(doc: DocxDocument, content: str):
-    lines = content.split('\n')
-    index = 0
+    html = markdown2.markdown(content, extras=DOCX_MARKDOWN_EXTRAS)
+    soup = BeautifulSoup(f'<div>{html}</div>', 'html.parser')
+    root = soup.div if soup.div else soup
+    rendered_blocks = False
 
-    while index < len(lines):
-        line = lines[index]
-
-        heading_match = re.match(r'^(#{1,6})\s+(.*)', line)
-        if heading_match:
-            level = min(len(heading_match.group(1)), 4)
-            doc.add_heading(heading_match.group(2).strip(), level=level)
-            index += 1
+    for child in root.children:
+        if isinstance(child, NavigableString):
+            text = str(child).strip()
+            if not text:
+                continue
+            paragraph = doc.add_paragraph()
+            paragraph.add_run(text)
+            rendered_blocks = True
             continue
 
-        if line.strip().startswith('```'):
-            code_lines = []
-            index += 1
-            while index < len(lines) and not lines[index].strip().startswith('```'):
-                code_lines.append(lines[index])
-                index += 1
-            index += 1
-            code_paragraph = doc.add_paragraph()
-            code_run = code_paragraph.add_run('\n'.join(code_lines))
-            code_run.font.name = 'Consolas'
-            code_run.font.size = Pt(9)
+        if not isinstance(child, Tag):
             continue
 
-        unordered_list_match = re.match(r'^(\s*)[*\-+]\s+(.*)', line)
-        if unordered_list_match:
-            doc.add_paragraph(unordered_list_match.group(2).strip(), style='List Bullet')
-            index += 1
-            continue
+        _append_html_block_to_doc(doc, child)
+        rendered_blocks = True
 
-        ordered_list_match = re.match(r'^(\s*)\d+[.)]\s+(.*)', line)
-        if ordered_list_match:
-            doc.add_paragraph(ordered_list_match.group(2).strip(), style='List Number')
-            index += 1
-            continue
+    if not rendered_blocks and content.strip():
+        doc.add_paragraph(content.strip())
 
-        if not line.strip():
-            index += 1
-            continue
 
+def _append_html_block_to_doc(doc: DocxDocument, node: Tag, list_level: int = 0):
+    tag_name = node.name.lower()
+
+    if tag_name in {'h1', 'h2', 'h3', 'h4', 'h5', 'h6'}:
+        paragraph = doc.add_heading('', level=min(int(tag_name[1]), 4))
+        _append_inline_html_runs(paragraph, node)
+        return
+
+    if tag_name == 'p':
         paragraph = doc.add_paragraph()
-        _add_inline_markdown_runs(paragraph, line)
-        index += 1
+        _append_inline_html_runs(paragraph, node)
+        return
+
+    if tag_name in {'ul', 'ol'}:
+        _append_list_items_to_doc(doc, node, ordered=(tag_name == 'ol'), level=list_level)
+        return
+
+    if tag_name == 'pre':
+        _add_code_block_to_doc(doc, node)
+        return
+
+    if tag_name == 'blockquote':
+        paragraph = doc.add_paragraph()
+        paragraph.paragraph_format.left_indent = Inches(0.3)
+        _append_inline_html_runs(paragraph, node, {'italic': True})
+        return
+
+    if tag_name == 'table':
+        _add_html_table_to_doc(doc, node)
+        return
+
+    if tag_name == 'hr':
+        doc.add_paragraph('')
+        return
+
+    if tag_name in {'div', 'section', 'article'}:
+        for child in node.children:
+            if isinstance(child, NavigableString):
+                text = str(child).strip()
+                if not text:
+                    continue
+                paragraph = doc.add_paragraph()
+                paragraph.add_run(text)
+                continue
+
+            if isinstance(child, Tag):
+                _append_html_block_to_doc(doc, child, list_level=list_level)
+        return
+
+    paragraph = doc.add_paragraph()
+    _append_inline_html_runs(paragraph, node)
 
 
-def _add_inline_markdown_runs(paragraph, text: str):
-    parts = re.compile(r'(\*\*.*?\*\*|\*.*?\*|`[^`]+`)').split(text)
+def _append_list_items_to_doc(doc: DocxDocument, list_node: Tag, ordered: bool, level: int = 0):
+    style_name = 'List Number' if ordered else 'List Bullet'
 
-    for part in parts:
-        if part.startswith('**') and part.endswith('**'):
-            run = paragraph.add_run(part[2:-2])
-            run.bold = True
-        elif part.startswith('*') and part.endswith('*') and len(part) > 2:
-            run = paragraph.add_run(part[1:-1])
-            run.italic = True
-        elif part.startswith('`') and part.endswith('`'):
-            run = paragraph.add_run(part[1:-1])
-            run.font.name = 'Consolas'
-            run.font.size = Pt(9)
-        elif part:
-            paragraph.add_run(part)
+    for item in list_node.find_all('li', recursive=False):
+        paragraph = doc.add_paragraph(style=style_name)
+        if level:
+            paragraph.paragraph_format.left_indent = Inches(0.25 * level)
+
+        rendered_inline = False
+        for child in item.children:
+            if isinstance(child, Tag) and child.name.lower() in {'ul', 'ol'}:
+                continue
+            if isinstance(child, NavigableString) and not str(child).strip():
+                continue
+
+            _append_inline_html_runs(paragraph, child)
+            rendered_inline = True
+
+        if not rendered_inline:
+            text = item.get_text(' ', strip=True)
+            if text:
+                paragraph.add_run(text)
+
+        for nested_list in item.find_all(['ul', 'ol'], recursive=False):
+            _append_list_items_to_doc(
+                doc,
+                nested_list,
+                ordered=(nested_list.name.lower() == 'ol'),
+                level=level + 1
+            )
+
+
+def _add_code_block_to_doc(doc: DocxDocument, node: Tag):
+    code_text = node.get_text('\n').strip('\n')
+    if not code_text:
+        return
+
+    paragraph = doc.add_paragraph()
+    paragraph.paragraph_format.left_indent = Inches(0.25)
+    paragraph.paragraph_format.space_before = Pt(6)
+    paragraph.paragraph_format.space_after = Pt(6)
+    run = paragraph.add_run(code_text)
+    run.font.name = 'Consolas'
+    run.font.size = Pt(9)
+
+
+def _add_html_table_to_doc(doc: DocxDocument, table_node: Tag):
+    rows = table_node.find_all('tr')
+    if not rows:
+        return
+
+    column_count = max(
+        len(row.find_all(['th', 'td'], recursive=False))
+        for row in rows
+    )
+    if column_count == 0:
+        return
+
+    table = doc.add_table(rows=len(rows), cols=column_count)
+    table.style = 'Table Grid'
+
+    for row_index, row in enumerate(rows):
+        cells = row.find_all(['th', 'td'], recursive=False)
+        for column_index in range(column_count):
+            cell = table.cell(row_index, column_index)
+            cell.text = ''
+
+            if column_index >= len(cells):
+                continue
+
+            _populate_table_cell(
+                cell,
+                cells[column_index],
+                is_header=(cells[column_index].name.lower() == 'th')
+            )
+
+
+def _populate_table_cell(cell, node: Tag, is_header: bool = False):
+    paragraph = cell.paragraphs[0]
+    _append_inline_html_runs(paragraph, node, {'bold': is_header})
+
+
+def _append_inline_html_runs(paragraph, node: Any, formatting: Optional[Dict[str, bool]] = None):
+    if formatting is None:
+        formatting = {}
+
+    if isinstance(node, NavigableString):
+        text = str(node)
+        if not text:
+            return
+
+        run = paragraph.add_run(text)
+        _apply_run_formatting(run, formatting)
+        return
+
+    if not isinstance(node, Tag):
+        return
+
+    tag_name = node.name.lower()
+    if tag_name == 'br':
+        paragraph.add_run().add_break()
+        return
+
+    if tag_name == 'img':
+        alt_text = node.get('alt') or 'Image'
+        run = paragraph.add_run(f'[{alt_text}]')
+        _apply_run_formatting(run, formatting)
+        return
+
+    next_formatting = dict(formatting)
+    if tag_name in {'strong', 'b'}:
+        next_formatting['bold'] = True
+    elif tag_name in {'em', 'i'}:
+        next_formatting['italic'] = True
+    elif tag_name in {'s', 'strike', 'del'}:
+        next_formatting['strike'] = True
+    elif tag_name == 'code':
+        next_formatting['code'] = True
+    elif tag_name == 'a':
+        next_formatting['underline'] = True
+
+    for child in node.children:
+        _append_inline_html_runs(paragraph, child, next_formatting)
+
+    if tag_name == 'a':
+        href = str(node.get('href') or '').strip()
+        label = node.get_text(' ', strip=True)
+        if href and href != label:
+            suffix_run = paragraph.add_run(f' ({href})')
+            _apply_run_formatting(suffix_run, formatting)
+
+
+def _apply_run_formatting(run, formatting: Dict[str, bool]):
+    if formatting.get('bold'):
+        run.bold = True
+    if formatting.get('italic'):
+        run.italic = True
+    if formatting.get('underline'):
+        run.underline = True
+    if formatting.get('strike'):
+        run.font.strike = True
+    if formatting.get('code'):
+        run.font.name = 'Consolas'
+        run.font.size = Pt(9)
 
 
 # ---------------------------------------------------------------------------
