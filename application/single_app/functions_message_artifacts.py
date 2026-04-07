@@ -2,6 +2,8 @@
 """Helpers for storing large assistant-side payloads outside primary chat items."""
 
 import json
+import math
+import numbers
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -33,13 +35,50 @@ def filter_assistant_artifact_items(items: List[Dict[str, Any]]) -> List[Dict[st
     return [item for item in items or [] if not is_assistant_artifact_role(item.get('role'))]
 
 
+def _normalize_json_scalar(value: Any) -> Any:
+    """Normalize scalar values into JSON-safe primitives."""
+    if hasattr(value, 'item') and not isinstance(value, (str, bytes)):
+        try:
+            value = value.item()
+        except (TypeError, ValueError):
+            pass
+
+    if value is None:
+        return None
+
+    if isinstance(value, bytes):
+        return value.decode('utf-8', errors='replace')
+
+    if isinstance(value, bool):
+        return value
+
+    if isinstance(value, numbers.Integral):
+        return int(value)
+
+    if isinstance(value, numbers.Real):
+        numeric_value = float(value)
+        if not math.isfinite(numeric_value):
+            return None
+        return numeric_value
+
+    if hasattr(value, 'isoformat') and not isinstance(value, str):
+        try:
+            return value.isoformat()
+        except TypeError:
+            pass
+
+    return value
+
+
 def make_json_serializable(value: Any) -> Any:
     """Convert nested values into JSON-serializable structures."""
+    value = _normalize_json_scalar(value)
+
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     if isinstance(value, dict):
         return {str(key): make_json_serializable(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, (list, tuple, set)):
         return [make_json_serializable(item) for item in value]
     return str(value)
 
@@ -212,7 +251,7 @@ def _build_artifact_documents(
     user_info: Optional[Dict[str, Any]] = None,
     citation: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
-    serialized_payload = json.dumps(payload, default=str)
+    serialized_payload = json.dumps(make_json_serializable(payload), default=str, allow_nan=False)
     chunks = [
         serialized_payload[index:index + ASSISTANT_ARTIFACT_CHUNK_SIZE]
         for index in range(0, len(serialized_payload), ASSISTANT_ARTIFACT_CHUNK_SIZE)
@@ -374,6 +413,8 @@ def _compact_tabular_result_payload(function_name: str, payload: Any) -> Any:
 
 
 def _compact_value(value: Any, depth: int = 0) -> Any:
+    value = _normalize_json_scalar(value)
+
     if value is None or isinstance(value, (int, float, bool)):
         return value
 
