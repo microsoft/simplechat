@@ -2,7 +2,7 @@
 # test_admin_latest_features_tab.py
 """
 Functional test for admin Latest Features tab.
-Version: 0.240.062
+Version: 0.240.067
 Implemented in: 0.240.002
 
 This test ensures that the Admin Settings page exposes the Latest Features tab,
@@ -40,6 +40,7 @@ def test_latest_features_template_structure():
         'id="latest-features-tab"',
         'data-bs-target="#latest-features"',
         'id="latest-features"',
+        'id="latest-features-release-notifications-card"',
         'id="latest-features-guided-tutorials-card"',
         'id="latest-features-background-chat-card"',
         'id="latest-features-model-selection-card"',
@@ -73,6 +74,7 @@ def test_latest_features_template_structure():
         raise AssertionError(f'Missing Latest Features template markers: {missing_markers}')
 
     assert template_content.count('id="latest-features" role="tabpanel"') == 1, 'Latest Features tab pane should appear exactly once'
+    assert template_content.index('id="latest-features-release-notifications-card"') < template_content.index('id="latest-features-deployment-card"'), 'Release notifications explainer should stay at the top of the Latest Features list'
 
     print('✅ Latest Features tab structure is present')
     return True
@@ -191,6 +193,7 @@ def test_latest_features_sidebar_navigation():
     required_markers = [
         'data-tab="latest-features"',
         'id="latest-features-submenu"',
+        'data-section="latest-features-release-notifications-card"',
         'data-section="latest-features-guided-tutorials-card"',
         'data-section="latest-features-model-selection-card"',
         'data-section="latest-features-tabular-card"',
@@ -207,6 +210,7 @@ def test_latest_features_sidebar_navigation():
 
     latest_features_index = sidebar_content.index('data-tab="latest-features"')
     general_index = sidebar_content.index('data-tab="general"')
+    assert sidebar_content.index('data-section="latest-features-release-notifications-card"') < sidebar_content.index('data-section="latest-features-guided-tutorials-card"'), 'Release notifications explainer should stay first in the Latest Features submenu'
     assert latest_features_index < general_index, 'Latest Features should appear before General in the admin sidebar'
     assert '<span class="badge bg-warning text-dark text-uppercase ms-2">New</span>' in sidebar_content, 'Sidebar Latest Features item should include a New badge'
 
@@ -256,7 +260,7 @@ def test_latest_features_supporting_assets():
     assert os.path.isdir(FEATURE_IMAGE_DIR), 'Missing placeholder image directory for Latest Features'
 
     doc_content = read_text(FEATURE_DOC)
-    assert 'Version Updated: 0.240.062' in doc_content, 'Feature documentation version header missing or incorrect'
+    assert 'Version Updated: 0.240.067' in doc_content, 'Feature documentation version header missing or incorrect'
 
     required_images = [
         'agent_action_grid_view.png',

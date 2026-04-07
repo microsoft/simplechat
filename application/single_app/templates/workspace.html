@@ -1504,6 +1504,7 @@
   </div>
 </div>
 
+{% if user_settings.get('settings', {}).get('showTutorialButtons', True) %}
 <div id="workspace-tutorial-launch" class="position-fixed top-0 end-0 p-3 is-ready">
   <button
       id="workspace-tutorial-btn"
@@ -1521,6 +1522,7 @@
       <span class="tutorial-btn-label">Workspace Tutorial</span>
   </button>
 </div>
+{% endif %}
 <div class="modal fade" id="documentDeleteModal" tabindex="-1" aria-labelledby="documentDeleteModalLabel" aria-hidden="true" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
   <div class="modal-dialog">
     <div class="modal-content">

@@ -1041,6 +1041,9 @@ def get_user_settings(user_id):
 
         if 'personal_model_endpoints' not in doc['settings']:
             doc['settings']['personal_model_endpoints'] = []
+        if 'showTutorialButtons' not in doc['settings']:
+            doc['settings']['showTutorialButtons'] = True
+            updated = True
         
         # Try to update email/display_name if missing and available in session
         user = session.get("user", {})
@@ -1082,6 +1085,7 @@ def get_user_settings(user_id):
         display_name = user.get("name")
         doc = {"id": user_id, "settings": {}}
         doc["settings"]["personal_model_endpoints"] = []
+        doc["settings"]["showTutorialButtons"] = True
         if email:
             doc["email"] = email
         if display_name:

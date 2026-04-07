@@ -9,12 +9,13 @@ _SUPPORT_LATEST_FEATURE_CATALOG = [
         'id': 'guided_tutorials',
         'title': 'Guided Tutorials',
         'icon': 'bi-signpost-split',
-        'summary': 'Step-by-step walkthroughs help users discover core chat, workspace, and onboarding flows faster.',
-        'details': 'Guided Tutorials add in-product walkthroughs so you can learn the interface in context instead of hunting through menus first.',
-        'why': 'This matters because the fastest way to learn a new workflow is usually inside the workflow itself, with the right controls highlighted as you go.',
+        'summary': 'Step-by-step walkthroughs help users discover core chat, workspace, and onboarding flows faster, and each user can now hide the launchers when they no longer need them.',
+        'details': 'Guided Tutorials add in-product walkthroughs so you can learn the interface in context instead of hunting through menus first. Tutorial launchers are shown by default and can be hidden or restored later from your profile page.',
+        'why': 'This matters because the fastest way to learn a new workflow is usually inside the workflow itself, with the right controls highlighted as you go, while still letting each user hide the launcher once they are comfortable with the app.',
         'guidance': [
             'Start with the Chat Tutorial to learn message tools, uploads, prompts, and follow-up workflows.',
             'If Personal Workspace is enabled for your environment, open the Workspace Tutorial to learn uploads, filters, tags, prompts, agents, and actions.',
+            'Tutorial buttons are visible by default. If you prefer a cleaner interface, open your profile page and hide them for your own account.',
         ],
         'actions': [
             {
@@ -31,6 +32,13 @@ _SUPPORT_LATEST_FEATURE_CATALOG = [
                 'fragment': 'workspace-tutorial-launch',
                 'icon': 'bi-folder2-open',
                 'requires_settings': ['enable_user_workspace'],
+            },
+            {
+                'label': 'Manage Tutorial Visibility',
+                'description': 'Open your profile page to show or hide the tutorial launch buttons for your account.',
+                'endpoint': 'profile',
+                'fragment': 'tutorial-preferences',
+                'icon': 'bi-person-gear',
             },
         ],
         'image': 'images/features/guided_tutorials_chat.png',
@@ -550,7 +558,10 @@ def get_support_latest_feature_catalog():
 
 def get_default_support_latest_features_visibility():
     """Return default visibility for each user-facing latest feature."""
-    return {item['id']: True for item in _SUPPORT_LATEST_FEATURE_CATALOG}
+    defaults = {item['id']: True for item in _SUPPORT_LATEST_FEATURE_CATALOG}
+    defaults['deployment'] = False
+    defaults['redis_key_vault'] = False
+    return defaults
 
 
 def normalize_support_latest_features_visibility(raw_visibility):

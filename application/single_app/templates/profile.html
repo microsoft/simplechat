@@ -134,6 +134,22 @@
     .spinning {
         animation: spin 1s linear infinite;
     }
+
+    .preference-card-icon {
+        align-items: center;
+        background: linear-gradient(135deg, rgba(13, 110, 253, 0.12), rgba(13, 202, 240, 0.18));
+        border-radius: 14px;
+        color: var(--bs-primary);
+        display: inline-flex;
+        font-size: 1.25rem;
+        height: 52px;
+        justify-content: center;
+        width: 52px;
+    }
+
+    .preference-status {
+        min-height: 1.5rem;
+    }
     
     @keyframes spin {
         0% { transform: rotate(0deg); }
@@ -294,6 +310,50 @@
                 </div>
             </div>
         </div>
+    </div>
+
+    <div class="section-card" id="tutorial-preferences">
+        <div class="d-flex flex-column flex-lg-row align-items-lg-start justify-content-between gap-3">
+            <div class="d-flex gap-3 align-items-start">
+                <span class="preference-card-icon">
+                    <i class="bi bi-signpost-split"></i>
+                </span>
+                <div>
+                    <h5 class="mb-2"><i class="bi bi-sliders me-2"></i>Tutorial Preferences</h5>
+                    <p class="text-muted mb-2">Control whether the floating guided tutorial buttons appear on Chat and Personal Workspace for your account.</p>
+                    <p class="small text-muted mb-0">These launchers are shown by default. You can hide them now and turn them back on later from this page.</p>
+                </div>
+            </div>
+            {% if app_settings.enable_support_menu and app_settings.enable_support_latest_features and app_settings.support_latest_features_has_visible_items %}
+            <a class="btn btn-outline-primary btn-sm" href="{{ url_for('support_latest_features') }}#guided_tutorials">
+                <i class="bi bi-stars me-1"></i>View Latest Feature Notes
+            </a>
+            {% endif %}
+        </div>
+
+        <div class="row g-3 align-items-center mt-1">
+            <div class="col-lg-8">
+                <div class="form-check form-switch mt-3">
+                    <input
+                        class="form-check-input"
+                        type="checkbox"
+                        id="show-tutorial-buttons-toggle"
+                        {% if user_settings.get('settings', {}).get('showTutorialButtons', True) %}checked{% endif %}
+                    />
+                    <label class="form-check-label fw-semibold" for="show-tutorial-buttons-toggle">
+                        Show tutorial buttons on Chat and Personal Workspace
+                    </label>
+                    <small class="d-block text-muted mt-1">Turn this off if you already know the interface and want to remove the floating walkthrough launchers.</small>
+                </div>
+            </div>
+            <div class="col-lg-4 text-lg-end">
+                <button type="button" class="btn btn-primary" id="save-tutorial-preferences-btn" onclick="saveTutorialPreferences()">
+                    <i class="bi bi-save me-1"></i>Save Tutorial Preference
+                </button>
+            </div>
+        </div>
+
+        <div id="tutorial-preference-status" class="preference-status small mt-3 text-muted"></div>
     </div>
 
     <!-- Retention Policy Settings -->
@@ -675,6 +735,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     loadRetentionSettings();
+    loadTutorialPreferences();
     loadMicrophoneSettings();
     loadUserMetrics();
     initializeCharts();
@@ -735,6 +796,89 @@ function loadUserMetrics() {
         })
         .catch(error => {
             console.error('Error loading user metrics:', error);
+        });
+}
+
+function updateTutorialPreferenceStatus(message, type = 'muted') {
+    const statusElement = document.getElementById('tutorial-preference-status');
+    if (!statusElement) {
+        return;
+    }
+
+    const classMap = {
+        muted: 'text-muted',
+        info: 'text-info',
+        success: 'text-success',
+        danger: 'text-danger'
+    };
+
+    statusElement.textContent = message || '';
+    statusElement.className = `preference-status small mt-3 ${classMap[type] || classMap.muted}`;
+}
+
+function loadTutorialPreferences() {
+    const toggle = document.getElementById('show-tutorial-buttons-toggle');
+    if (!toggle) {
+        return;
+    }
+
+    fetch('/api/user/settings')
+        .then(response => response.json())
+        .then(data => {
+            toggle.checked = data.settings?.showTutorialButtons !== false;
+            updateTutorialPreferenceStatus('Tutorial launchers are shown by default until you change this setting.');
+        })
+        .catch(error => {
+            console.error('Error loading tutorial preferences:', error);
+            updateTutorialPreferenceStatus('Unable to refresh tutorial preference from the server. The current page state is still shown.', 'danger');
+        });
+}
+
+function saveTutorialPreferences() {
+    const toggle = document.getElementById('show-tutorial-buttons-toggle');
+    const button = document.getElementById('save-tutorial-preferences-btn');
+    if (!toggle || !button) {
+        return;
+    }
+
+    const originalHtml = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Saving...';
+    updateTutorialPreferenceStatus('Saving your tutorial preference...', 'info');
+
+    fetch('/api/user/settings', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            settings: {
+                showTutorialButtons: toggle.checked
+            }
+        })
+    })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Failed to save tutorial preference');
+            }
+
+            return response.json();
+        })
+        .then(() => {
+            const message = toggle.checked
+                ? 'Tutorial buttons will stay visible on Chat and Personal Workspace.'
+                : 'Tutorial buttons are now hidden for your account. You can turn them back on here any time.';
+
+            updateTutorialPreferenceStatus(message, 'success');
+            showToastMessage('Tutorial preference saved successfully', 'success');
+        })
+        .catch(error => {
+            console.error('Error saving tutorial preference:', error);
+            updateTutorialPreferenceStatus('Failed to save tutorial preference. Please try again.', 'danger');
+        })
+        .finally(() => {
+            button.disabled = false;
+            button.innerHTML = originalHtml;
         });
 }
 

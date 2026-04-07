@@ -1051,6 +1051,7 @@
     </div>
 </div>
 
+{% if user_settings.get('settings', {}).get('showTutorialButtons', True) %}
 <!-- Chat Tutorial Launch Button -->
 <div id="chat-tutorial-launch" class="position-fixed top-0 end-0 p-3">
     <button
@@ -1069,6 +1070,7 @@
         <span class="tutorial-btn-label">Chat Tutorial</span>
     </button>
 </div>
+{% endif %}
 <!-- Export Wizard Modal -->
 <div class="modal fade" id="export-wizard-modal" tabindex="-1" aria-labelledby="export-wizard-modal-label" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-centered">

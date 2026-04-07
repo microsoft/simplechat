@@ -1,7 +1,7 @@
 # test_single_app_template_json_bootstrap_render.py
 """
 UI test for single_app template JSON bootstrap rendering.
-Version: 0.240.057
+Version: 0.240.067
 Implemented in: 0.240.020
 
 This test ensures the affected single_app pages load without browser-side
@@ -134,6 +134,7 @@ def test_admin_settings_page_bootstrap_cleanly(playwright):
             "#adminSettingsTabContent",
             expected_selectors=[
                 "#latest-features",
+                "#latest-features-release-notifications-card",
                 "#latest-features-model-selection-card",
                 "#latest-features-citation-improvements-card",
                 "#latest-features-document-versioning-card",

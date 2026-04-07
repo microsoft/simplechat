@@ -1,9 +1,9 @@
-# Latest Features Admin Tab (v0.240.062)
+# Latest Features Admin Tab (v0.240.067)
 
 ## Overview
 This feature adds a dedicated **Latest Features** tab to Admin Settings so administrators can review the most important recent capabilities in one place and decide what to communicate to users.
 
-Version Updated: 0.240.062
+Version Updated: 0.240.067
 
 ## Dependencies
 - `application/single_app/templates/admin_settings.html`
@@ -22,6 +22,7 @@ Version Updated: 0.240.062
 
 ### Feature Grouping
 The tab groups recent functionality into broader themes instead of listing every release note entry separately:
+- Release Notifications Registration
 - Guided Tutorials
 - Background Chat Completion
 - Multi-Endpoint GPT Selection
@@ -84,7 +85,10 @@ Each screenshot now renders as a thumbnail in the Latest Features tab. Clicking 
 
 The GPT selection, citation improvement, document revision, and Support Menu entries now use saved PNG screenshots so the admin preview matches the user-facing feature surfaces more closely.
 
+The release notifications registration explainer is intentionally text-only. It points admins to a live control that already exists at the top of Admin Settings, so no duplicate screenshot is needed.
+
 ### New Feature Coverage
+- **Release Notifications Registration** explains the Registered or Unregistered badge beside the version number, clarifies that it is admin-only, and tells admins that clicking it opens the modal used to register this environment for release updates.
 - **Multi-Endpoint GPT Selection** highlights the admin workflow for enabling multiple model endpoints, surfacing different GPT choices, and configuring the default fallback model used when a request does not provide an explicit selection.
 - **Citation Improvements** explains conversation history citation replay and citation amplification so admins understand why follow-up questions stay grounded even when the assistant is working from prior evidence.
 - **Document Revisioning and Management** explains that same-name uploads create versioned revision families, keep previous versions available for traceability, and carry classifications and tags forward to the newest revision.
@@ -96,6 +100,7 @@ The GPT selection, citation improvement, document revision, and Support Menu ent
 - Select **Latest Features**.
 - Expand any card to review the feature summary and the saved screenshots.
 - Click any screenshot thumbnail to open a larger preview modal.
+- Use the Release Notifications Registration card to explain what the Registered or Unregistered badge means and where admins can update that status.
 - Use the mirrored toggles when you want to enable Processing Thoughts or Enhanced Citations directly from the overview page.
 - Use the GPT Selection card to direct admins to the AI Models tab when they need to review endpoint availability or the default fallback model.
 - Use the Citation Improvements card to explain how grounded evidence is preserved across follow-up turns.
@@ -108,6 +113,7 @@ The GPT selection, citation improvement, document revision, and Support Menu ent
 ## Testing and Validation
 - Confirm the Latest Features tab renders in Admin Settings.
 - Confirm each card expands and collapses correctly.
+- Confirm the admin-only Release Notifications Registration card renders first and does not depend on a screenshot asset.
 - Confirm saved screenshots render as thumbnails and open in the larger preview modal.
 - Confirm the saved screenshots render for GPT Selection, Citation Improvements, Document Revisioning, Support Menu, and the General-tab user-facing latest-features checklist.
 - Confirm the preview modal closes from both the close button and backdrop click.
