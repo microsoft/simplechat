@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-Functional test for support menu sidebar visibility and access behavior.
-Version: 0.240.058
-Implemented in: 0.240.058
+Functional test for support menu sidebar visibility, access behavior, and
+latest-feature image preview support.
+Version: 0.240.061
+Implemented in: 0.240.061
 
 This test ensures the Support menu renders for signed-in app users when enabled,
-the sidebar and top-nav templates expose the expected links, and the support
-routes remain wired correctly.
+the sidebar and top-nav templates expose the expected links, and the user-facing
+Latest Features page supports clickable image previews, richer guidance, action
+links, and feature parity with the admin latest-features catalog.
 """
 
 import os
@@ -29,6 +31,7 @@ TOP_NAV_TEMPLATE = os.path.join(REPO_ROOT, 'application', 'single_app', 'templat
 LATEST_FEATURES_TEMPLATE = os.path.join(REPO_ROOT, 'application', 'single_app', 'templates', 'latest_features.html')
 SUPPORT_FEEDBACK_TEMPLATE = os.path.join(REPO_ROOT, 'application', 'single_app', 'templates', 'support_send_feedback.html')
 ADMIN_JS = os.path.join(REPO_ROOT, 'application', 'single_app', 'static', 'js', 'admin', 'admin_settings.js')
+LATEST_FEATURES_JS = os.path.join(REPO_ROOT, 'application', 'single_app', 'static', 'js', 'support', 'latest_features.js')
 SUPPORT_JS = os.path.join(REPO_ROOT, 'application', 'single_app', 'static', 'js', 'support', 'support_feedback.js')
 
 
@@ -82,7 +85,31 @@ def test_support_menu_settings_defaults_and_persistence():
         "'id': 'ai_transparency'",
         "'id': 'deployment'",
         "'id': 'redis_key_vault'",
+        "'id': 'send_feedback'",
+        "'id': 'support_menu'",
+        "'path': 'images/features/guided_tutorials_workspace.png'",
+        "'path': 'images/features/background_completion_notifications-02.png'",
+        "'path': 'images/features/model_selection_multi_endpoint_admin.png'",
+        "'path': 'images/features/model_selection_chat_selector.png'",
+        "'path': 'images/features/tabular_analysis_enhanced_citations.png'",
+        "'path': 'images/features/citation_improvements_history_replay.png'",
+        "'path': 'images/features/citation_improvements_amplified_results.png'",
+        "'path': 'images/features/document_revision_workspace.png'",
+        "'path': 'images/features/document_revision_delete_compare.png'",
+        "'path': 'images/features/conversation_summary_card.png'",
+        "'path': 'images/features/pdf_export_option.png'",
+        "'path': 'images/features/per_message_export_menu.png'",
+        "'path': 'images/features/agent_action_grid_view.png'",
+        "'path': 'images/features/sql_test_connection.png'",
+        "'path': 'images/features/thoughts_visibility.png'",
+        "'path': 'images/features/support_menu_entry.png'",
+        "'why': 'This matters because the fastest way to learn a new workflow is usually inside the workflow itself, with the right controls highlighted as you go.'",
+        "'endpoint': 'chats'",
+        "'fragment': 'workspace-tutorial-launch'",
+        "'fragment': 'upload-area'",
+        "'requires_settings': ['enable_user_workspace']",
         'def get_visible_support_latest_features(settings):',
+        'def _normalize_feature_media(feature):',
     ]
     missing_config = [marker for marker in config_markers if marker not in config_content]
     assert not missing_config, f'Missing support feature catalog markers: {missing_config}'
@@ -189,6 +216,7 @@ def test_support_menu_feedback_backend_and_templates():
     logging_content = read_text(ACTIVITY_LOGGING)
     latest_features_content = read_text(LATEST_FEATURES_TEMPLATE)
     support_feedback_content = read_text(SUPPORT_FEEDBACK_TEMPLATE)
+    latest_features_js_content = read_text(LATEST_FEATURES_JS)
     support_js_content = read_text(SUPPORT_JS)
 
     backend_markers = [
@@ -213,10 +241,39 @@ def test_support_menu_feedback_backend_and_templates():
         'A curated view of recent updates your admins have chosen to share with end users.',
         '{% if support_latest_features %}',
         'support-feature-card',
+        'support-feature-gallery',
+        'support-feature-thumbnail-trigger',
+        'support-feature-thumbnail-title',
+        'support-feature-callout',
+        'support-feature-guidance-list',
+        'support-feature-action-grid',
+        'support-feature-action-card',
+        'support-feature-action-label',
+        'data-latest-feature-image-src=',
+        '{% if feature.images %}',
+        '{{ image.label }}',
+        '{{ feature.why }}',
+        '{% if feature.guidance %}',
+        '{% if feature.actions %}',
+        'Why It Matters',
+        'How To Try It',
+        'Open The Right Page',
+        "url_for(action.endpoint)",
+        'latestFeatureImageModal',
+        'latestFeatureImageModalImage',
         '{{ feature.title }}',
     ]
     missing_latest = [marker for marker in latest_features_markers if marker not in latest_features_content]
     assert not missing_latest, f'Missing latest features template markers: {missing_latest}'
+
+    latest_features_js_markers = [
+        'function setupLatestFeatureImageModal() {',
+        "document.getElementById('latestFeatureImageModal')",
+        "document.querySelectorAll('[data-latest-feature-image-src]')",
+        'imageModal.show();',
+    ]
+    missing_latest_features_js = [marker for marker in latest_features_js_markers if marker not in latest_features_js_content]
+    assert not missing_latest_features_js, f'Missing latest features JavaScript markers: {missing_latest_features_js}'
 
     support_feedback_markers = [
         'id="support-send-feedback-pane"',
