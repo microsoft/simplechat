@@ -34,6 +34,8 @@ from docx.shared import Inches, Pt
 TRANSCRIPT_ROLES = {'user', 'assistant'}
 SUMMARY_SOURCE_CHAR_LIMIT = 60000
 DOCX_MARKDOWN_EXTRAS = ['fenced-code-blocks', 'tables', 'break-on-newline', 'cuddled-lists', 'strike']
+EMAIL_SUBJECT_CHAR_LIMIT = 120
+EMAIL_SUBJECT_SOURCE_CHAR_LIMIT = 12000
 
 
 def register_route_backend_conversation_export(app):
@@ -159,55 +161,11 @@ def register_route_backend_conversation_export(app):
             return jsonify({'error': 'message_id and conversation_id are required'}), 400
 
         try:
-            try:
-                conversation = cosmos_conversations_container.read_item(
-                    item=conversation_id,
-                    partition_key=conversation_id
-                )
-            except Exception:
-                return jsonify({'error': 'Conversation not found'}), 404
-
-            if conversation.get('user_id') != user_id:
-                return jsonify({'error': 'Access denied'}), 403
-
-            try:
-                message = cosmos_messages_container.read_item(
-                    item=message_id,
-                    partition_key=conversation_id
-                )
-            except Exception:
-                message_query = """
-                    SELECT * FROM c
-                    WHERE c.id = @message_id AND c.conversation_id = @conversation_id
-                """
-                message_results = list(cosmos_messages_container.query_items(
-                    query=message_query,
-                    parameters=[
-                        {'name': '@message_id', 'value': message_id},
-                        {'name': '@conversation_id', 'value': conversation_id}
-                    ],
-                    enable_cross_partition_query=True
-                ))
-                if not message_results:
-                    return jsonify({'error': 'Message not found'}), 404
-                message = message_results[0]
-
-            if message.get('conversation_id') != conversation_id:
-                return jsonify({'error': 'Message not found'}), 404
-
-            if isinstance(message.get('agent_citations'), list) and any(
-                isinstance(citation, dict) and citation.get('artifact_id')
-                for citation in message.get('agent_citations', [])
-            ):
-                conversation_messages = list(cosmos_messages_container.query_items(
-                    query="SELECT * FROM c WHERE c.conversation_id = @conversation_id",
-                    parameters=[{'name': '@conversation_id', 'value': conversation_id}],
-                    partition_key=conversation_id,
-                ))
-                artifact_payload_map = build_message_artifact_payload_map(conversation_messages)
-                hydrated_messages = hydrate_agent_citations_from_artifacts([message], artifact_payload_map)
-                if hydrated_messages:
-                    message = hydrated_messages[0]
+            message = _load_export_message_for_user(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                message_id=message_id
+            )
 
             document_bytes = _message_to_docx_bytes(message)
             timestamp_str = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
@@ -220,10 +178,67 @@ def register_route_backend_conversation_export(app):
             response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
             return response
 
+        except LookupError as exc:
+            return jsonify({'error': str(exc)}), 404
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+
         except Exception as exc:
             debug_print(f"Message export error: {str(exc)}")
             log_event(f"Message export failed: {exc}", level="WARNING")
             return jsonify({'error': 'Export failed due to a server error. Please try again later.'}), 500
+
+    @app.route('/api/message/export-email-draft', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def api_export_message_email_draft():
+        """
+        Build a mailto-ready email draft for a single message.
+
+        Request body:
+            message_id (str): ID of the message to export.
+            conversation_id (str): ID of the conversation the message belongs to.
+            summary_model_deployment (str): Optional model deployment for subject generation.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({'error': 'Request body is required'}), 400
+
+        message_id = str(data.get('message_id', '') or '').strip()
+        conversation_id = str(data.get('conversation_id', '') or '').strip()
+        summary_model_deployment = str(data.get('summary_model_deployment', '') or '').strip()
+
+        if not message_id or not conversation_id:
+            return jsonify({'error': 'message_id and conversation_id are required'}), 400
+
+        try:
+            settings = get_settings()
+            message = _load_export_message_for_user(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                message_id=message_id
+            )
+            draft_payload = _message_to_email_draft_payload(
+                message=message,
+                settings=settings,
+                summary_model_deployment=summary_model_deployment
+            )
+            return jsonify(draft_payload), 200
+
+        except LookupError as exc:
+            return jsonify({'error': str(exc)}), 404
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+
+        except Exception as exc:
+            debug_print(f"Message email draft export error: {str(exc)}")
+            log_event(f"Message email draft export failed: {exc}", level="WARNING")
+            return jsonify({'error': 'Email draft export failed due to a server error. Please try again later.'}), 500
 
 
 def _build_export_entry(
@@ -1267,6 +1282,60 @@ def _safe_filename(title: str) -> str:
     return safe or 'Untitled'
 
 
+def _load_export_message_for_user(user_id: str, conversation_id: str, message_id: str) -> Dict[str, Any]:
+    try:
+        conversation = cosmos_conversations_container.read_item(
+            item=conversation_id,
+            partition_key=conversation_id
+        )
+    except Exception as exc:
+        raise LookupError('Conversation not found') from exc
+
+    if conversation.get('user_id') != user_id:
+        raise PermissionError('Access denied')
+
+    try:
+        message = cosmos_messages_container.read_item(
+            item=message_id,
+            partition_key=conversation_id
+        )
+    except Exception:
+        message_query = """
+            SELECT * FROM c
+            WHERE c.id = @message_id AND c.conversation_id = @conversation_id
+        """
+        message_results = list(cosmos_messages_container.query_items(
+            query=message_query,
+            parameters=[
+                {'name': '@message_id', 'value': message_id},
+                {'name': '@conversation_id', 'value': conversation_id}
+            ],
+            enable_cross_partition_query=True
+        ))
+        if not message_results:
+            raise LookupError('Message not found')
+        message = message_results[0]
+
+    if message.get('conversation_id') != conversation_id:
+        raise LookupError('Message not found')
+
+    if isinstance(message.get('agent_citations'), list) and any(
+        isinstance(citation, dict) and citation.get('artifact_id')
+        for citation in message.get('agent_citations', [])
+    ):
+        conversation_messages = list(cosmos_messages_container.query_items(
+            query="SELECT * FROM c WHERE c.conversation_id = @conversation_id",
+            parameters=[{'name': '@conversation_id', 'value': conversation_id}],
+            partition_key=conversation_id,
+        ))
+        artifact_payload_map = build_message_artifact_payload_map(conversation_messages)
+        hydrated_messages = hydrate_agent_citations_from_artifacts([message], artifact_payload_map)
+        if hydrated_messages:
+            message = hydrated_messages[0]
+
+    return message
+
+
 def _message_to_docx_bytes(message: Dict[str, Any]) -> bytes:
     doc = DocxDocument()
     doc.add_heading('Message Export', level=1)
@@ -1298,6 +1367,441 @@ def _message_to_docx_bytes(message: Dict[str, Any]) -> bytes:
     doc.save(buffer)
     buffer.seek(0)
     return buffer.read()
+
+
+def _message_to_email_draft_payload(
+    message: Dict[str, Any],
+    settings: Dict[str, Any],
+    summary_model_deployment: str = ''
+) -> Dict[str, Any]:
+    role_label = _role_to_label(message.get('role', 'unknown'))
+    timestamp = str(message.get('timestamp', '') or '').strip()
+    content = _normalize_content(message.get('content', ''))
+    subject_payload = _build_message_email_subject(
+        content=content,
+        settings=settings,
+        requested_model=summary_model_deployment
+    )
+    body_content = _strip_explicit_message_email_subject(content)
+
+    body_lines = [
+        'Message Export',
+        '==============',
+        '',
+        f'Role: {role_label}'
+    ]
+    if timestamp:
+        body_lines.append(f'Timestamp: {timestamp}')
+    body_lines.append('')
+
+    if body_content.strip():
+        body_lines.extend(_render_markdown_to_email_lines(body_content))
+    else:
+        body_lines.append('No content recorded.')
+
+    citation_labels = _build_message_citation_labels(message)
+    if citation_labels:
+        if body_lines and body_lines[-1] != '':
+            body_lines.append('')
+        body_lines.append('Citations')
+        body_lines.append('---------')
+        for citation_label in citation_labels:
+            body_lines.append(f'- {citation_label}')
+
+    body = _finalize_email_body_text(body_lines)
+    return {
+        'subject': subject_payload['subject'],
+        'subject_source': subject_payload['source'],
+        'body': body
+    }
+
+
+def _render_markdown_to_email_lines(content: str) -> List[str]:
+    html = markdown2.markdown(content, extras=DOCX_MARKDOWN_EXTRAS)
+    soup = BeautifulSoup(f'<div>{html}</div>', 'html.parser')
+    root = soup.div if soup.div else soup
+    lines: List[str] = []
+
+    for child in root.children:
+        if isinstance(child, NavigableString):
+            text = str(child).strip()
+            if text:
+                lines.append(text)
+                lines.append('')
+            continue
+
+        if isinstance(child, Tag):
+            _append_html_block_to_email_lines(lines, child)
+
+    return lines
+
+
+def _append_html_block_to_email_lines(lines: List[str], node: Tag, list_level: int = 0):
+    tag_name = node.name.lower()
+
+    if tag_name in {'h1', 'h2', 'h3', 'h4', 'h5', 'h6'}:
+        heading_text = _extract_email_inline_text(node).strip()
+        if heading_text:
+            underline_char = '=' if tag_name in {'h1', 'h2'} else '-'
+            lines.append(heading_text)
+            lines.append(underline_char * min(len(heading_text), 80))
+            lines.append('')
+        return
+
+    if tag_name == 'p':
+        paragraph_text = _extract_email_inline_text(node).strip()
+        if paragraph_text:
+            lines.extend(paragraph_text.splitlines())
+            lines.append('')
+        return
+
+    if tag_name in {'ul', 'ol'}:
+        _append_html_list_to_email_lines(lines, node, ordered=(tag_name == 'ol'), level=list_level)
+        lines.append('')
+        return
+
+    if tag_name == 'pre':
+        code_text = node.get_text().rstrip('\n')
+        if code_text:
+            for code_line in code_text.splitlines():
+                lines.append(f'    {code_line.rstrip()}')
+            lines.append('')
+        return
+
+    if tag_name == 'blockquote':
+        quote_text = _extract_email_inline_text(node).strip()
+        if quote_text:
+            for quote_line in quote_text.splitlines():
+                lines.append(f'    {quote_line}')
+            lines.append('')
+        return
+
+    if tag_name == 'table':
+        _append_html_table_to_email_lines(lines, node)
+        lines.append('')
+        return
+
+    if tag_name == 'hr':
+        lines.append('-' * 40)
+        lines.append('')
+        return
+
+    if tag_name in {'div', 'section', 'article'}:
+        for child in node.children:
+            if isinstance(child, NavigableString):
+                text = str(child).strip()
+                if text:
+                    lines.append(text)
+                    lines.append('')
+                continue
+
+            if isinstance(child, Tag):
+                _append_html_block_to_email_lines(lines, child, list_level=list_level)
+        return
+
+    fallback_text = _extract_email_inline_text(node).strip()
+    if fallback_text:
+        lines.extend(fallback_text.splitlines())
+        lines.append('')
+
+
+def _append_html_list_to_email_lines(lines: List[str], list_node: Tag, ordered: bool, level: int = 0):
+    item_number = 1
+    indent = '  ' * level
+
+    for item in list_node.find_all('li', recursive=False):
+        prefix = f'{item_number}. ' if ordered else '- '
+        item_parts = []
+
+        for child in item.children:
+            if isinstance(child, Tag) and child.name.lower() in {'ul', 'ol'}:
+                continue
+            item_parts.append(_extract_email_inline_text(child))
+
+        item_text = ''.join(item_parts).strip()
+        if item_text:
+            lines.append(f'{indent}{prefix}{item_text}')
+        else:
+            lines.append(f'{indent}{prefix}'.rstrip())
+
+        for nested_list in item.find_all(['ul', 'ol'], recursive=False):
+            _append_html_list_to_email_lines(
+                lines,
+                nested_list,
+                ordered=(nested_list.name.lower() == 'ol'),
+                level=level + 1
+            )
+
+        if ordered:
+            item_number += 1
+
+
+def _append_html_table_to_email_lines(lines: List[str], table_node: Tag):
+    rows = table_node.find_all('tr')
+    if not rows:
+        return
+
+    parsed_rows = []
+    header_present = False
+    for row_index, row in enumerate(rows):
+        cells = row.find_all(['th', 'td'], recursive=False)
+        if not cells:
+            continue
+        if row_index == 0 and all(cell.name.lower() == 'th' for cell in cells):
+            header_present = True
+        parsed_rows.append([
+            re.sub(r'\s+', ' ', _extract_email_inline_text(cell)).strip()
+            for cell in cells
+        ])
+
+    if not parsed_rows:
+        return
+
+    column_count = max(len(row) for row in parsed_rows)
+    normalized_rows = [row + [''] * (column_count - len(row)) for row in parsed_rows]
+    column_widths = [
+        max(len(row[column_index]) for row in normalized_rows)
+        for column_index in range(column_count)
+    ]
+
+    def format_row(row_values: List[str]) -> str:
+        padded_cells = [
+            row_values[column_index].ljust(column_widths[column_index])
+            for column_index in range(column_count)
+        ]
+        return '  '.join(padded_cells).rstrip()
+
+    lines.append(format_row(normalized_rows[0]))
+    if header_present:
+        separator = '  '.join(
+            '-' * max(column_widths[column_index], 3)
+            for column_index in range(column_count)
+        )
+        lines.append(separator)
+        data_rows = normalized_rows[1:]
+    else:
+        data_rows = normalized_rows[1:]
+
+    for row_values in data_rows:
+        lines.append(format_row(row_values))
+
+
+def _extract_email_inline_text(node: Any) -> str:
+    if isinstance(node, NavigableString):
+        return str(node)
+
+    if not isinstance(node, Tag):
+        return ''
+
+    tag_name = node.name.lower()
+    if tag_name == 'br':
+        return '\n'
+    if tag_name == 'img':
+        return f"[{node.get('alt') or 'Image'}]"
+    if tag_name == 'a':
+        label = ''.join(_extract_email_inline_text(child) for child in node.children).strip()
+        href = str(node.get('href') or '').strip()
+        if href and href != label:
+            if label:
+                return f'{label} ({href})'
+            return href
+        return label
+
+    return ''.join(_extract_email_inline_text(child) for child in node.children)
+
+
+def _finalize_email_body_text(lines: List[str]) -> str:
+    normalized_lines: List[str] = []
+
+    for raw_line in lines:
+        line = str(raw_line or '').rstrip()
+        if not line:
+            if normalized_lines and normalized_lines[-1] != '':
+                normalized_lines.append('')
+            continue
+        normalized_lines.append(line)
+
+    while normalized_lines and normalized_lines[-1] == '':
+        normalized_lines.pop()
+
+    return '\n'.join(normalized_lines)
+
+
+def _build_message_email_subject(
+    content: str,
+    settings: Dict[str, Any],
+    requested_model: str = ''
+) -> Dict[str, str]:
+    explicit_subject = _extract_message_email_subject(content)
+    if explicit_subject:
+        return {
+            'subject': explicit_subject,
+            'source': 'message'
+        }
+
+    generated_subject = _generate_message_email_subject_with_model(
+        content=content,
+        settings=settings,
+        requested_model=requested_model
+    )
+    if generated_subject:
+        return {
+            'subject': generated_subject,
+            'source': 'model'
+        }
+
+    return {
+        'subject': _fallback_message_email_subject(content),
+        'source': 'fallback'
+    }
+
+
+def _extract_message_email_subject(content: str) -> Optional[str]:
+    if not content:
+        return None
+
+    lines = content.splitlines()
+    explicit_patterns = [
+        re.compile(r'^\s*(?:\*\*|__)?(?:email\s+)?subject(?:\*\*|__)?\s*:\s*(.+?)\s*$', re.IGNORECASE),
+        re.compile(r'^\s*(?:\*\*|__)?title(?:\*\*|__)?\s*:\s*(.+?)\s*$', re.IGNORECASE),
+    ]
+
+    for line in lines:
+        stripped_line = line.strip()
+        if not stripped_line:
+            continue
+        for pattern in explicit_patterns:
+            match = pattern.match(stripped_line)
+            if not match:
+                continue
+            cleaned_subject = _clean_email_subject(match.group(1))
+            if cleaned_subject:
+                return cleaned_subject
+
+    for line in lines:
+        stripped_line = line.strip()
+        if not stripped_line:
+            continue
+
+        heading_match = re.match(r'^#{1,6}\s+(.+)$', stripped_line)
+        if heading_match:
+            cleaned_subject = _clean_email_subject(heading_match.group(1))
+            if cleaned_subject:
+                return cleaned_subject
+        break
+
+    return None
+
+
+def _strip_explicit_message_email_subject(content: str) -> str:
+    if not content:
+        return ''
+
+    lines = content.splitlines()
+    explicit_patterns = [
+        re.compile(r'^\s*(?:\*\*|__)?(?:email\s+)?subject(?:\*\*|__)?\s*:\s*(.+?)\s*$', re.IGNORECASE),
+        re.compile(r'^\s*(?:\*\*|__)?title(?:\*\*|__)?\s*:\s*(.+?)\s*$', re.IGNORECASE),
+    ]
+
+    first_non_empty_index = None
+    for index, line in enumerate(lines):
+        if line.strip():
+            first_non_empty_index = index
+            break
+
+    if first_non_empty_index is None:
+        return ''
+
+    first_line = lines[first_non_empty_index].strip()
+    if not any(pattern.match(first_line) for pattern in explicit_patterns):
+        return content
+
+    remaining_lines = lines[:first_non_empty_index] + lines[first_non_empty_index + 1:]
+    while remaining_lines and not remaining_lines[0].strip():
+        remaining_lines.pop(0)
+    return '\n'.join(remaining_lines)
+
+
+def _clean_email_subject(subject: str) -> str:
+    cleaned_subject = re.sub(r'[`*_~]+', '', str(subject or ''))
+    cleaned_subject = re.sub(r'\s+', ' ', cleaned_subject).strip()
+    cleaned_subject = cleaned_subject.strip('"\'')
+    cleaned_subject = cleaned_subject.rstrip(' .:;-')
+    if len(cleaned_subject) > EMAIL_SUBJECT_CHAR_LIMIT:
+        cleaned_subject = cleaned_subject[:EMAIL_SUBJECT_CHAR_LIMIT].rstrip(' .:;-')
+    return cleaned_subject
+
+
+def _generate_message_email_subject_with_model(
+    content: str,
+    settings: Dict[str, Any],
+    requested_model: str = ''
+) -> Optional[str]:
+    subject_source = str(content or '').strip()
+    if not subject_source:
+        return None
+
+    truncated_source = subject_source[:EMAIL_SUBJECT_SOURCE_CHAR_LIMIT]
+
+    try:
+        gpt_client, gpt_model = _initialize_gpt_client(settings, requested_model)
+        model_lower = gpt_model.lower()
+        is_reasoning_model = (
+            'o1' in model_lower or 'o3' in model_lower or 'gpt-5' in model_lower
+        )
+        instruction_role = 'developer' if is_reasoning_model else 'system'
+        subject_prompt = (
+            'You are generating an email subject line for a mailto draft from a single chat message. '
+            'If the message already contains a subject or clear title, reuse it in cleaned form. '
+            'Otherwise, write a concise and specific subject line. '
+            'Return plain text only with no quotes, no markdown, and no more than 10 words.'
+        )
+
+        subject_response = gpt_client.chat.completions.create(
+            model=gpt_model,
+            messages=[
+                {
+                    'role': instruction_role,
+                    'content': subject_prompt
+                },
+                {
+                    'role': 'user',
+                    'content': truncated_source
+                }
+            ]
+        )
+        raw_subject = (
+            (subject_response.choices[0].message.content or '').strip()
+            if subject_response.choices else ''
+        )
+        cleaned_subject = _clean_email_subject(raw_subject)
+        if cleaned_subject:
+            return cleaned_subject
+    except Exception as exc:
+        debug_print(f'Message email subject generation failed: {exc}')
+        log_event(
+            'Message email subject generation failed',
+            extra={
+                'requested_model': requested_model or None,
+                'content_length': len(subject_source)
+            },
+            level='WARNING'
+        )
+
+    return None
+
+
+def _fallback_message_email_subject(content: str) -> str:
+    extracted_subject = _extract_message_email_subject(content)
+    if extracted_subject:
+        return extracted_subject
+
+    for line in str(content or '').splitlines():
+        cleaned_subject = _clean_email_subject(line)
+        if cleaned_subject:
+            return cleaned_subject
+
+    return 'Shared chat message'
 
 
 def _build_message_citation_labels(message: Dict[str, Any]) -> List[str]:
@@ -1435,7 +1939,7 @@ def _append_list_items_to_doc(doc: DocxDocument, list_node: Tag, ordered: bool, 
 
 
 def _add_code_block_to_doc(doc: DocxDocument, node: Tag):
-    code_text = node.get_text('\n').strip('\n')
+    code_text = node.get_text().rstrip('\n')
     if not code_text:
         return
 

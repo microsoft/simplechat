@@ -4,7 +4,7 @@
 The Per-Message Export feature adds export and action options directly to the three-dots dropdown menu on individual chat messages. Users can export a single message to Markdown or Word, insert it into the chat prompt, or open it in their default email client — all without leaving the chat interface.
 
 **Version Implemented:** 0.239.005–0.239.007
-**Latest Word formatting update:** 0.240.076
+**Latest export formatting update:** 0.240.078
 
 ## Dependencies
 - Flask (backend route for Word export)
@@ -61,10 +61,10 @@ The server verifies user ownership of the conversation, fetches the specific mes
 ### Open in Email
 - **Location:** Three-dots dropdown → "Open in Email"
 - **Icon:** `bi-envelope`
-- **Behavior:** Entirely client-side. Opens the user's default email client via a `mailto:` link with:
-  - **Subject:** "Chat message from [sender name]"
-  - **Body:** The full message content
-- Uses `encodeURIComponent` for safe URL encoding of the content.
+- **Behavior:** Requests a backend-generated mailto draft, then opens the user's default email client via a `mailto:` link with:
+  - **Subject:** An explicit subject from the message when present, otherwise a generated subject from the same GPT initialization path used by conversation summary generation
+  - **Body:** Word-style plain text derived from the message markdown so headings, lists, tables, code blocks, and citations are no longer pasted as raw markdown
+- Uses `encodeURIComponent` for safe URL encoding of the subject and body.
 
 ## Dropdown Menu Structure
 
@@ -112,6 +112,7 @@ Both AI and user messages now have export options below a divider:
 ### Known Limitations
 - Word export requires a round-trip to the backend; offline use is not supported for Word format
 - `mailto:` URL length is limited by the email client/OS; very long messages may be truncated
+- `mailto:` does not guarantee rich HTML or RTF composition, so the email body preserves Word-like structure in plain text rather than forcing true rich-text formatting
 - Markdown export for user messages uses `innerText` rather than original markdown source
 
 ## Cross-References
