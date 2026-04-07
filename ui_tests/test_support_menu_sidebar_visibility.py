@@ -1,7 +1,7 @@
 # test_support_menu_sidebar_visibility.py
 """
 UI test for support menu sidebar visibility.
-Version: 0.240.058
+Version: 0.240.069
 Implemented in: 0.240.058
 
 This test ensures that when the Support menu is enabled in Admin Settings and the
@@ -60,9 +60,17 @@ def test_admin_settings_support_sidebar_visible_when_enabled(playwright):
         latest_features_toggle = page.locator("#enable_support_latest_features")
         send_feedback_toggle = page.locator("#enable_support_send_feedback")
         recipient_field = page.locator("#support_feedback_recipient_email")
+        feature_visibility_note = page.get_by_text(
+            "Deployment and Redis start unchecked because they are mainly admin-facing rollout and infrastructure topics."
+        )
 
         if not support_toggle.is_checked():
             pytest.skip("Support menu is disabled in this environment.")
+
+        if not latest_features_toggle.is_checked():
+            latest_features_toggle.check()
+
+        expect(feature_visibility_note).to_be_visible()
 
         latest_features_enabled = latest_features_toggle.is_checked()
         send_feedback_enabled = send_feedback_toggle.is_checked() and recipient_field.input_value().strip() != ""
