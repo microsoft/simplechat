@@ -1452,7 +1452,8 @@ a.citation-link:hover {
 .message-content {
   display: flex;
   align-items: flex-end;
-  overflow: auto; /* Make message content scrollable when it overflows while minimizing effects elsewhere. */
+  overflow: visible; /* Keep scrolling on the conversation pane; nested message scrollbars cause width jitter during TTS highlighting. */
+  min-width: 0;
 }
 
 .message-content.flex-row-reverse {
@@ -2063,15 +2064,14 @@ mark.search-highlight {
 /* Word-by-word highlighting for TTS */
 .tts-word {
     display: inline;
-    transition: background-color 0.2s ease, color 0.2s ease;
+    transition: background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .tts-word.tts-current-word {
-    background-color: rgba(var(--bs-primary-rgb), 0.3);
+    background-color: rgba(var(--bs-primary-rgb), 0.18);
     color: var(--bs-primary);
-    font-weight: 500;
     border-radius: 2px;
-    padding: 0 2px;
+    box-shadow: inset 0 -0.2em 0 rgba(var(--bs-primary-rgb), 0.22);
 }
 
 @keyframes tts-avatar-pulse {
