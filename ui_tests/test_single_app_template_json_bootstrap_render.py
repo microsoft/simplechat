@@ -1,7 +1,7 @@
 # test_single_app_template_json_bootstrap_render.py
 """
 UI test for single_app template JSON bootstrap rendering.
-Version: 0.240.020
+Version: 0.240.057
 Implemented in: 0.240.020
 
 This test ensures the affected single_app pages load without browser-side
@@ -54,7 +54,7 @@ def _assert_no_bootstrap_errors(page_errors, console_errors, page_path):
     )
 
 
-def _load_and_check_page(context, page_path, ready_selector):
+def _load_and_check_page(context, page_path, ready_selector, expected_selectors=None):
     page = context.new_page()
     page_errors = []
     console_errors = []
@@ -79,6 +79,8 @@ def _load_and_check_page(context, page_path, ready_selector):
     assert response.ok, f"Expected {page_path} to load successfully, got HTTP {response.status}."
     expect(page.locator(ready_selector)).to_be_visible()
     page.wait_for_load_state("networkidle")
+    for selector in expected_selectors or []:
+        expect(page.locator(selector)).to_be_visible()
     _assert_no_bootstrap_errors(page_errors, console_errors, page_path)
     page.close()
     return True
@@ -126,7 +128,18 @@ def test_admin_settings_page_bootstrap_cleanly(playwright):
     )
 
     try:
-        loaded = _load_and_check_page(context, "/admin/settings", "#adminSettingsTabContent")
+        loaded = _load_and_check_page(
+            context,
+            "/admin/settings",
+            "#adminSettingsTabContent",
+            expected_selectors=[
+                "#latest-features",
+                "#latest-features-model-selection-card",
+                "#latest-features-citation-improvements-card",
+                "#latest-features-document-versioning-card",
+                "#latest-features-support-menu-card",
+            ],
+        )
         if not loaded:
             pytest.skip("Admin settings page was not available for the configured admin session.")
     finally:

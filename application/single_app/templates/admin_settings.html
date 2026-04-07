@@ -1936,6 +1936,65 @@
                     </div>
                 </div>
 
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-model-selection-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-cpu me-2"></i>Multi-Endpoint GPT Selection
+                            </h5>
+                            <p class="text-muted mb-0">Admins can now expose multiple GPT choices across Azure OpenAI and Azure AI Foundry, then set a default fallback model for chat, agents, and background operations.</p>
+                        </div>
+                        <a href="#latestFeaturesModelSelection" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesModelSelection">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesModelSelection">
+                        <div class="card card-body">
+                            <p class="mb-2">This is the high-value admin control for teams that want broader GPT choice without locking every workflow to a single deployment.</p>
+                            <ul class="mb-3">
+                                <li>Configure multiple model endpoints and choose which GPT deployments are available to users.</li>
+                                <li>Let users switch models in chat when they need a different balance of speed, cost, or capability.</li>
+                                <li>Set a default fallback model so summarization, agent requests, and other background flows still resolve a usable GPT when an explicit selection is missing.</li>
+                            </ul>
+                            <div class="alert alert-secondary mb-3" role="alert">
+                                Review endpoint and fallback configuration in the <a href="#ai-models" onclick="switchTab(event, 'ai-models-tab')">AI Models</a> tab.
+                            </div>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/model_selection_multi_endpoint_admin_placeholder.svg') }}"
+                                    data-latest-feature-image-title="Admin Multi-Endpoint Model Management"
+                                    data-latest-feature-image-caption="Placeholder for the admin endpoint table showing Azure OpenAI and Foundry endpoints with selected GPT models."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/model_selection_multi_endpoint_admin_placeholder.svg') }}" alt="Admin multi-endpoint model management placeholder screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Admin Endpoint Table</div>
+                                            <div class="latest-feature-thumbnail-meta">Placeholder to replace later</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/model_selection_chat_selector_placeholder.svg') }}"
+                                    data-latest-feature-image-title="User Chat Model Selector"
+                                    data-latest-feature-image-caption="Placeholder for the chat composer showing the expanded GPT selector with multiple available choices."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/model_selection_chat_selector_placeholder.svg') }}" alt="User chat model selector placeholder screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Chat Model Selector</div>
+                                            <div class="latest-feature-thumbnail-meta">Placeholder to replace later</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="card p-3 mb-3 latest-feature-card" id="latest-features-tabular-card">
                     <div class="latest-feature-header">
                         <div class="latest-feature-copy">
@@ -2062,6 +2121,122 @@
                                         <div class="latest-feature-thumbnail-body">
                                             <div class="latest-feature-thumbnail-title">Tabular Analysis Preview</div>
                                             <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-citation-improvements-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-journal-text me-2"></i>Citation Improvements
+                            </h5>
+                            <p class="text-muted mb-0">Conversation history citation replay and citation amplification keep more grounded evidence available across follow-up turns without making the chat history unwieldy.</p>
+                        </div>
+                        <a href="#latestFeaturesCitationImprovements" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesCitationImprovements">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesCitationImprovements">
+                        <div class="card card-body">
+                            <p class="mb-2">These improvements make follow-up questions more reliable because the system can reuse prior grounded evidence instead of relying only on the assistant's last prose response.</p>
+                            <ul class="mb-3">
+                                <li>Conversation history citations carry forward prior citation summaries so later prompts can reuse earlier grounded results.</li>
+                                <li>Citation amplification keeps richer supporting payloads available for inspection and export while keeping prompt history compact.</li>
+                                <li>This is especially useful for larger or tabular outputs where users often ask multiple follow-up questions against the same evidence chain.</li>
+                            </ul>
+                            <div class="alert alert-secondary mb-3" role="alert">
+                                These improvements complement the <a href="#citation" onclick="switchTab(event, 'citation-tab')">Citations</a> configuration and the enhanced-citation storage flow.
+                            </div>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/citation_improvements_history_replay_placeholder.svg') }}"
+                                    data-latest-feature-image-title="Conversation History Citation Replay"
+                                    data-latest-feature-image-caption="Placeholder for a follow-up chat where prior citation summaries are replayed into the next turn's reasoning context."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/citation_improvements_history_replay_placeholder.svg') }}" alt="Conversation history citation replay placeholder screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">History Citation Replay</div>
+                                            <div class="latest-feature-thumbnail-meta">Placeholder to replace later</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/citation_improvements_amplified_results_placeholder.svg') }}"
+                                    data-latest-feature-image-title="Citation Amplification Details"
+                                    data-latest-feature-image-caption="Placeholder for expanded citation detail showing amplified supporting evidence or fuller artifact-backed results."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/citation_improvements_amplified_results_placeholder.svg') }}" alt="Citation amplification placeholder screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Amplified Citation Detail</div>
+                                            <div class="latest-feature-thumbnail-meta">Placeholder to replace later</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-document-versioning-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-files me-2"></i>Document Revisioning and Management
+                            </h5>
+                            <p class="text-muted mb-0">Uploading a document with the same name now creates a new revision instead of overwriting the previous file, while older versions remain available for traceability and later analysis.</p>
+                        </div>
+                        <a href="#latestFeaturesDocumentVersioning" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesDocumentVersioning">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesDocumentVersioning">
+                        <div class="card card-body">
+                            <p class="mb-2">This improves both document management and citation integrity for long-lived conversations that span multiple document updates.</p>
+                            <ul class="mb-3">
+                                <li>Same-name uploads create a revision family with an incremented current version instead of destroying prior history.</li>
+                                <li>Previous versions are retained for analysis or comparison, while workspace and search views focus on the current revision by default.</li>
+                                <li>Older conversations can still resolve citations against the correct historical document version.</li>
+                                <li>Updated revisions inherit document classifications and tags so admins do not have to reapply metadata after every refresh.</li>
+                            </ul>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/document_revision_workspace_placeholder.svg') }}"
+                                    data-latest-feature-image-title="Current Revision in Workspace"
+                                    data-latest-feature-image-caption="Placeholder for the workspace document list showing the current revision state for same-name uploads."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/document_revision_workspace_placeholder.svg') }}" alt="Document revision workspace placeholder screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Current Revision View</div>
+                                            <div class="latest-feature-thumbnail-meta">Placeholder to replace later</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/document_revision_delete_compare_placeholder.svg') }}"
+                                    data-latest-feature-image-title="Revision Actions and Comparison"
+                                    data-latest-feature-image-caption="Placeholder for version-aware actions such as comparison, analysis of previous revisions, or current-versus-all-versions deletion choices."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/document_revision_delete_compare_placeholder.svg') }}" alt="Document revision actions placeholder screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Revision Actions</div>
+                                            <div class="latest-feature-thumbnail-meta">Placeholder to replace later</div>
                                         </div>
                                     </div>
                                 </button>
@@ -2405,6 +2580,64 @@
                             <a href="#send-feedback" onclick="switchTab(event, 'send-feedback-tab')" class="btn btn-outline-primary align-self-start">
                                 <i class="bi bi-envelope-paper me-1"></i>Open Send Feedback
                             </a>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-support-menu-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-life-preserver me-2"></i>Support Menu Preview
+                            </h5>
+                            <p class="text-muted mb-0">A planned user-facing Support Menu will bring key help and feedback workflows out of admin-only surfaces and into the everyday user experience.</p>
+                        </div>
+                        <a href="#latestFeaturesSupportMenu" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesSupportMenu">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesSupportMenu">
+                        <div class="card card-body">
+                            <div class="alert alert-info mb-3" role="alert">
+                                Preview content only: this card is describing the planned Support Menu experience for non-admin users.
+                            </div>
+                            <ul class="mb-3">
+                                <li>The Support Menu will include a Latest Features page tailored for regular users instead of the admin-only overview.</li>
+                                <li>It will also include Send Feedback so users can send feedback directly to their SimpleChat admins.</li>
+                                <li>This gives teams a clearer, user-friendly place for feature discovery, help navigation, and routine feedback submission.</li>
+                            </ul>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/support_menu_entry_placeholder.svg') }}"
+                                    data-latest-feature-image-title="User Support Menu Entry"
+                                    data-latest-feature-image-caption="Placeholder for the user-facing Support Menu entry exposing Latest Features and Send Feedback."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/support_menu_entry_placeholder.svg') }}" alt="Support menu entry placeholder screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Support Menu Entry</div>
+                                            <div class="latest-feature-thumbnail-meta">Placeholder to replace later</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/support_menu_feedback_placeholder.svg') }}"
+                                    data-latest-feature-image-title="User Support Menu Feedback Workflow"
+                                    data-latest-feature-image-caption="Placeholder for the user feedback workflow that routes messages to SimpleChat admins."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/support_menu_feedback_placeholder.svg') }}" alt="Support menu feedback placeholder screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">User Feedback Workflow</div>
+                                            <div class="latest-feature-thumbnail-meta">Placeholder to replace later</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>

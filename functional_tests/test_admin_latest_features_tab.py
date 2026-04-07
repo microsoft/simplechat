@@ -2,7 +2,7 @@
 # test_admin_latest_features_tab.py
 """
 Functional test for admin Latest Features tab.
-Version: 0.240.003
+Version: 0.240.057
 Implemented in: 0.240.002
 
 This test ensures that the Admin Settings page exposes the Latest Features tab,
@@ -42,20 +42,28 @@ def test_latest_features_template_structure():
         'id="latest-features"',
         'id="latest-features-guided-tutorials-card"',
         'id="latest-features-background-chat-card"',
+        'id="latest-features-model-selection-card"',
         'id="latest-features-tabular-card"',
+        'id="latest-features-citation-improvements-card"',
+        'id="latest-features-document-versioning-card"',
         'id="latest-features-export-card"',
         'id="latest-features-agent-ops-card"',
         'id="latest-features-thoughts-card"',
         'id="latest-features-deployment-card"',
         'id="latest-features-redis-card"',
         'id="latest-features-send-feedback-card"',
+        'id="latest-features-support-menu-card"',
         'id="latestFeatureImageModal"',
         'class="latest-feature-image-frame"',
         'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/guided_tutorials_chat.png\') }}"',
         'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/background_completion_notifications-01.png\') }}"',
         'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/background_completion_notifications-02.png\') }}"',
+        'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/model_selection_multi_endpoint_admin_placeholder.svg\') }}"',
+        'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/citation_improvements_history_replay_placeholder.svg\') }}"',
+        'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/document_revision_workspace_placeholder.svg\') }}"',
         'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/gunicorn_startup_guidance.png\') }}"',
-        'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/redis_key_vault.png\') }}"'
+        'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/redis_key_vault.png\') }}"',
+        'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/support_menu_entry_placeholder.svg\') }}"'
     ]
 
     missing_markers = [marker for marker in required_markers if marker not in template_content]
@@ -182,9 +190,13 @@ def test_latest_features_sidebar_navigation():
         'data-tab="latest-features"',
         'id="latest-features-submenu"',
         'data-section="latest-features-guided-tutorials-card"',
+        'data-section="latest-features-model-selection-card"',
         'data-section="latest-features-tabular-card"',
+        'data-section="latest-features-citation-improvements-card"',
+        'data-section="latest-features-document-versioning-card"',
         'data-section="latest-features-thoughts-card"',
-        'data-section="latest-features-deployment-card"'
+        'data-section="latest-features-deployment-card"',
+        'data-section="latest-features-support-menu-card"'
     ]
 
     missing_markers = [marker for marker in required_markers if marker not in sidebar_content]
@@ -242,20 +254,28 @@ def test_latest_features_supporting_assets():
     assert os.path.isdir(FEATURE_IMAGE_DIR), 'Missing placeholder image directory for Latest Features'
 
     doc_content = read_text(FEATURE_DOC)
-    assert 'Version Updated: 0.240.003' in doc_content, 'Feature documentation version header missing or incorrect'
+    assert 'Version Updated: 0.240.057' in doc_content, 'Feature documentation version header missing or incorrect'
 
     required_images = [
         'agent_action_grid_view.png',
         'background_completion_notifications-01.png',
         'background_completion_notifications-02.png',
+        'citation_improvements_amplified_results_placeholder.svg',
+        'citation_improvements_history_replay_placeholder.svg',
         'conversation_summary_card.png',
+        'document_revision_delete_compare_placeholder.svg',
+        'document_revision_workspace_placeholder.svg',
         'guided_tutorials_chat.png',
         'guided_tutorials_workspace.png',
         'gunicorn_startup_guidance.png',
+        'model_selection_chat_selector_placeholder.svg',
+        'model_selection_multi_endpoint_admin_placeholder.svg',
         'pdf_export_option.png',
         'per_message_export_menu.png',
         'redis_key_vault.png',
         'sql_test_connection.png',
+        'support_menu_entry_placeholder.svg',
+        'support_menu_feedback_placeholder.svg',
         'tabular_analysis_enhanced_citations.png',
         'thoughts_visibility.png'
     ]
