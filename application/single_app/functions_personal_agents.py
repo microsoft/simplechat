@@ -106,7 +106,7 @@ def get_personal_agent(user_id, agent_id):
         debug_print(f"Error fetching agent {agent_id} for user {user_id}: {e}")
         return None
 
-def save_personal_agent(user_id, agent_data):
+def save_personal_agent(user_id, agent_data, actor_user_id=None):
     """
     Save or update a personal agent.
     
@@ -118,6 +118,7 @@ def save_personal_agent(user_id, agent_data):
         dict: Saved agent data with ID
     """
     try:
+        modifying_user_id = actor_user_id or user_id
         cleaned_agent = sanitize_agent_payload(agent_data)
         for field in ['name', 'display_name', 'description', 'instructions']:
             cleaned_agent.setdefault(field, '')
@@ -159,7 +160,7 @@ def save_personal_agent(user_id, agent_data):
             # New agent
             cleaned_agent['created_by'] = user_id
             cleaned_agent['created_at'] = now
-        cleaned_agent['modified_by'] = user_id
+        cleaned_agent['modified_by'] = modifying_user_id
         cleaned_agent['modified_at'] = now
 
         cleaned_agent['user_id'] = user_id

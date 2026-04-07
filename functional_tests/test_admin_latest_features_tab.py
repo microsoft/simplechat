@@ -2,8 +2,8 @@
 # test_admin_latest_features_tab.py
 """
 Functional test for admin Latest Features tab.
-Version: 0.240.067
-Implemented in: 0.240.002
+Version: 0.240.074
+Implemented in: 0.240.074
 
 This test ensures that the Admin Settings page exposes the Latest Features tab,
 renders the expected grouped cards, uses the saved feature screenshots, and
@@ -60,12 +60,16 @@ def test_latest_features_template_structure():
         'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/background_completion_notifications-01.png\') }}"',
         'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/background_completion_notifications-02.png\') }}"',
         'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/model_selection_multi_endpoint_admin.png\') }}"',
+        'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/agent_default_model_review_summary.png\') }}"',
+        'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/agent_default_model_review_action.png\') }}"',
         'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/citation_improvements_history_replay.png\') }}"',
         'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/document_revision_workspace.png\') }}"',
         'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/gunicorn_startup_guidance.png\') }}"',
         'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/redis_key_vault.png\') }}"',
         'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/support_menu_entry.png\') }}"',
         'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/enable_support_menu_for_end_users.png\') }}"',
+        'Admin-only workflow:',
+        'Review Modal Action',
         'General Tab Feature Sharing'
     ]
 
@@ -260,9 +264,11 @@ def test_latest_features_supporting_assets():
     assert os.path.isdir(FEATURE_IMAGE_DIR), 'Missing placeholder image directory for Latest Features'
 
     doc_content = read_text(FEATURE_DOC)
-    assert 'Version Updated: 0.240.067' in doc_content, 'Feature documentation version header missing or incorrect'
+    assert 'Version Updated: 0.240.074' in doc_content, 'Feature documentation version header missing or incorrect'
 
     required_images = [
+        'agent_default_model_review_action.png',
+        'agent_default_model_review_summary.png',
         'agent_action_grid_view.png',
         'background_completion_notifications-01.png',
         'background_completion_notifications-02.png',
@@ -275,7 +281,6 @@ def test_latest_features_supporting_assets():
         'guided_tutorials_chat.png',
         'guided_tutorials_workspace.png',
         'gunicorn_startup_guidance.png',
-        'model_selection_chat_selector.png',
         'model_selection_multi_endpoint_admin.png',
         'pdf_export_option.png',
         'per_message_export_menu.png',

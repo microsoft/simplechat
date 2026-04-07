@@ -1008,6 +1008,18 @@
                 <p class="text-muted">
                     Configure AI agents and actions for enhanced functionality. Agents provide AI-driven task automation while Actions extend functionality with custom tools and integrations.
                 </p>
+
+                <div class="alert alert-info d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3" role="alert">
+                    <div>
+                        <strong>Agent model lifecycle review lives in AI Models.</strong>
+                        <div class="small mt-1">
+                            Use AI Models to review inherited agents, selectively override explicit agent model choices, and move agents to newer default models as costs or model releases change.
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-outline-primary btn-sm align-self-start" data-open-admin-tab="#ai-models">
+                        <i class="bi bi-box-arrow-up-right me-1"></i>Open AI Models
+                    </button>
+                </div>
                 
                 <div class="alert alert-warning mb-3" role="alert">
                     <strong>Note:</strong> All changes to global agents and actions require a restart of the web app to take effect.
@@ -2039,7 +2051,7 @@
                             <h5 class="mb-1">
                                 <i class="bi bi-cpu me-2"></i>Multi-Endpoint GPT Selection
                             </h5>
-                            <p class="text-muted mb-0">Admins can now expose multiple GPT choices across Azure OpenAI and Azure AI Foundry, then set a default fallback model for chat, agents, and background operations.</p>
+                            <p class="text-muted mb-0">Admins can expose multiple GPT choices across Azure OpenAI and Azure AI Foundry, set a saved default fallback model, and now review agent rebinding in a modal before applying changes.</p>
                         </div>
                         <a href="#latestFeaturesModelSelection" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesModelSelection">
                             Show Details
@@ -2050,9 +2062,12 @@
                             <p class="mb-2">This is the high-value admin control for teams that want broader GPT choice without locking every workflow to a single deployment.</p>
                             <ul class="mb-3">
                                 <li>Configure multiple model endpoints and choose which GPT deployments are available to users.</li>
-                                <li>Let users switch models in chat when they need a different balance of speed, cost, or capability.</li>
                                 <li>Set a default fallback model so summarization, agent requests, and other background flows still resolve a usable GPT when an explicit selection is missing.</li>
+                                <li>Use the admin-only Agent Default Model Review modal to inspect inherited agents, search and filter large agent sets, and explicitly choose which review rows should be overridden to the saved default.</li>
                             </ul>
+                            <div class="alert alert-info mb-3" role="alert">
+                                <strong>Admin-only workflow:</strong> The review modal is intended for administrators who need to standardize agents on a new default model, control cost, or intentionally replace older explicit bindings as new models are released.
+                            </div>
                             <div class="alert alert-secondary mb-3" role="alert">
                                 Review endpoint and fallback configuration in the <a href="#ai-models" onclick="switchTab(event, 'ai-models-tab')">AI Models</a> tab.
                             </div>
@@ -2075,14 +2090,29 @@
                                 <button
                                     type="button"
                                     class="latest-feature-thumbnail-trigger"
-                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/model_selection_chat_selector.png') }}"
-                                    data-latest-feature-image-title="User Chat Model Selector"
-                                    data-latest-feature-image-caption="Chat composer showing the expanded GPT selector with multiple available choices."
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/agent_default_model_review_summary.png') }}"
+                                    data-latest-feature-image-title="Agent Default Model Review Summary"
+                                    data-latest-feature-image-caption="AI Models summary card showing recommended agents, explicit override candidates, and the saved default model before opening the review modal."
                                 >
                                     <div class="latest-feature-thumbnail-card">
-                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/model_selection_chat_selector.png') }}" alt="User chat model selector screenshot">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/agent_default_model_review_summary.png') }}" alt="Agent default model review summary screenshot">
                                         <div class="latest-feature-thumbnail-body">
-                                            <div class="latest-feature-thumbnail-title">Chat Model Selector</div>
+                                            <div class="latest-feature-thumbnail-title">Review Summary Card</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/agent_default_model_review_action.png') }}"
+                                    data-latest-feature-image-title="Agent Default Model Review Modal"
+                                    data-latest-feature-image-caption="Admin modal for searching, filtering, and selecting the exact agents that should adopt the saved default model."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/agent_default_model_review_action.png') }}" alt="Agent default model review modal screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Review Modal Action</div>
                                             <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
                                         </div>
                                     </div>
@@ -2766,10 +2796,130 @@
                     </div>
                     {% endif %}
 
-                    <div id="multi-endpoint-warning" class="alert alert-warning {% if not settings.multi_endpoint_migration_notice.enabled %}d-none{% endif %}">
-                        <i class="bi bi-exclamation-triangle me-2"></i>
-                        <span>{{ settings.multi_endpoint_migration_notice.message }}</span>
+                    {% if settings.enable_semantic_kernel %}
+                    <div id="agent-default-model-migration-panel" class="border rounded p-3 mt-3">
+                        <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
+                            <div>
+                                <h6 class="mb-1"><i class="bi bi-arrow-repeat me-2"></i>Agent Default Model Review</h6>
+                                <p class="text-muted small mb-0">
+                                    Review local agents in a modal, bulk-bind inherited agents to the saved default model endpoint, and explicitly override selected agent model choices when you need to manage cost or move to newer models.
+                                </p>
+                            </div>
+                            <div class="d-flex flex-wrap gap-2">
+                                <button type="button" class="btn btn-outline-primary btn-sm" id="preview-agent-default-model-migration-btn">
+                                    <i class="bi bi-search me-1"></i>Review And Select Agents
+                                </button>
+                            </div>
+                        </div>
+                        <div id="agent-default-model-migration-status" class="form-text mt-2">
+                            {% if settings.enable_multi_model_endpoints %}
+                            Save your AI model settings before reviewing or migrating agents.
+                            {% else %}
+                            Enable multi-endpoint model management to review and rebind agents to a saved default model.
+                            {% endif %}
+                        </div>
+                        <div id="agent-default-model-migration-callout" class="alert alert-info d-none mt-3 mb-0" role="alert"></div>
                     </div>
+
+                    <div id="agent-default-model-migration-results" class="d-none mt-3">
+                        <div class="d-flex flex-wrap gap-2 mb-3">
+                            <span class="badge text-bg-primary" id="agent-default-model-ready-count">Ready: 0</span>
+                            <span class="badge text-bg-warning" id="agent-default-model-needs-default-count">Needs Default: 0</span>
+                            <span class="badge text-bg-secondary" id="agent-default-model-manual-count">Manual Review: 0</span>
+                            <span class="badge text-bg-success" id="agent-default-model-migrated-count">Already Migrated: 0</span>
+                        </div>
+                        <div class="small text-muted mb-2" id="agent-default-model-current-label"></div>
+                        <div class="small text-muted">
+                            Open the review modal to search, filter, and selectively rebind agents to the saved default model.
+                        </div>
+                    </div>
+
+                    <div class="modal fade" id="agentDefaultModelMigrationModal" tabindex="-1" aria-labelledby="agentDefaultModelMigrationModalLabel" aria-hidden="true">
+                        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+                            <div class="modal-content">
+                                <div class="modal-header">
+                                    <div>
+                                        <h5 class="modal-title" id="agentDefaultModelMigrationModalLabel">Agent Default Model Review</h5>
+                                        <p class="text-muted small mb-0">
+                                            Search, filter, and explicitly choose which agents should adopt the saved default model. Manual review rows are never selected automatically.
+                                        </p>
+                                    </div>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <div class="row g-2 mb-3">
+                                        <div class="col-lg-5">
+                                            <label for="agent-default-model-migration-search" class="form-label small mb-1">Search Agents</label>
+                                            <input type="search" class="form-control form-control-sm" id="agent-default-model-migration-search" placeholder="Search by scope, agent name, binding, or reason" />
+                                        </div>
+                                        <div class="col-lg-3">
+                                            <label for="agent-default-model-migration-filter" class="form-label small mb-1">Filter</label>
+                                            <select class="form-select form-select-sm" id="agent-default-model-migration-filter">
+                                                <option value="all">All Agents</option>
+                                                <option value="selected">Selected</option>
+                                                <option value="ready_to_migrate">Ready</option>
+                                                <option value="manual_review">Manual Review</option>
+                                                <option value="needs_default_model">Needs Default</option>
+                                                <option value="already_migrated">Already On Default</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-lg-4">
+                                            <label class="form-label small mb-1">Selection Tools</label>
+                                            <div class="d-flex flex-wrap gap-2">
+                                                <button type="button" class="btn btn-outline-primary btn-sm" id="select-ready-agent-default-model-migration-btn">Select Recommended</button>
+                                                <button type="button" class="btn btn-outline-secondary btn-sm" id="select-manual-agent-default-model-migration-btn">Add Review Overrides</button>
+                                                <button type="button" class="btn btn-outline-danger btn-sm" id="clear-agent-default-model-migration-selection-btn">Clear</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="small text-muted mb-3" id="agent-default-model-migration-selection-summary">No agents selected.</div>
+                                    <div class="table-responsive">
+                                        <table class="table table-sm table-bordered align-middle">
+                                            <thead>
+                                                <tr>
+                                                    <th style="width: 80px;">Select</th>
+                                                    <th>Scope</th>
+                                                    <th>Agent</th>
+                                                    <th>Status</th>
+                                                    <th>Current Binding</th>
+                                                    <th>Reason</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="agent-default-model-migration-tbody">
+                                                <tr>
+                                                    <td colspan="6" class="text-center text-muted py-3">Run a review to load migration candidates.</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                                <div class="modal-footer d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2">
+                                    <div class="small text-muted">
+                                        Review overrides are for intentional changes when you want to replace an agent's explicit model or legacy custom connection with the saved default model.
+                                    </div>
+                                    <div class="d-flex gap-2">
+                                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+                                        <button type="button" class="btn btn-primary" id="run-agent-default-model-migration-btn">Apply Saved Default To Selected</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    {% else %}
+                    <div id="agent-default-model-migration-disabled-state" class="alert alert-info mt-3" role="alert">
+                        <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
+                            <div>
+                                <h6 class="mb-1"><i class="bi bi-info-circle me-2"></i>Agent Default Model Review</h6>
+                                <p class="small mb-0">
+                                    Enable Agents first to use default-model review in AI Models. Once enabled, admins can use it to move inherited agents to new defaults, selectively override explicit agent model choices, and manage costs as models evolve.
+                                </p>
+                            </div>
+                            <button type="button" class="btn btn-outline-primary btn-sm align-self-start" data-open-admin-tab="#agents">
+                                <i class="bi bi-box-arrow-up-right me-1"></i>Open Agents Settings
+                            </button>
+                        </div>
+                    </div>
+                    {% endif %}
 
                     <div id="default-model-selection-wrapper" class="mt-3">
                         <label for="default-model-selection" class="form-label">Default model for fallbacks</label>
@@ -5912,7 +6062,6 @@
     window.enableMultiModelEndpoints = {{ 'true' if settings.enable_multi_model_endpoints else 'false' }};
     window.modelEndpoints = {{ settings.model_endpoints|default([], true)|tojson|safe }};
     window.defaultModelSelection = {{ settings.default_model_selection|default({}, true)|tojson|safe }};
-    window.multiEndpointMigrationNotice = {{ settings.multi_endpoint_migration_notice|default({}, true)|tojson|safe }};
 
     if (!Array.isArray(window.gptSelected)) {
         window.gptSelected = [];
@@ -5937,9 +6086,6 @@
     }
     if (!window.defaultModelSelection || typeof window.defaultModelSelection !== "object" || Array.isArray(window.defaultModelSelection)) {
         window.defaultModelSelection = {};
-    }
-    if (!window.multiEndpointMigrationNotice || typeof window.multiEndpointMigrationNotice !== "object" || Array.isArray(window.multiEndpointMigrationNotice)) {
-        window.multiEndpointMigrationNotice = {};
     }
 
     // *** NEW: Classification Data ***

@@ -1,9 +1,9 @@
-# Latest Features Admin Tab (v0.240.067)
+# Latest Features Admin Tab (v0.240.074)
 
 ## Overview
 This feature adds a dedicated **Latest Features** tab to Admin Settings so administrators can review the most important recent capabilities in one place and decide what to communicate to users.
 
-Version Updated: 0.240.067
+Version Updated: 0.240.074
 
 ## Dependencies
 - `application/single_app/templates/admin_settings.html`
@@ -64,7 +64,8 @@ Current screenshots surfaced in the admin UI:
 - `background_completion_notifications-01.png`
 - `background_completion_notifications-02.png`
 - `model_selection_multi_endpoint_admin.png`
-- `model_selection_chat_selector.png`
+- `agent_default_model_review_summary.png`
+- `agent_default_model_review_action.png`
 - `tabular_analysis_enhanced_citations.png`
 - `citation_improvements_history_replay.png`
 - `citation_improvements_amplified_results.png`
@@ -83,13 +84,13 @@ Current screenshots surfaced in the admin UI:
 
 Each screenshot now renders as a thumbnail in the Latest Features tab. Clicking a thumbnail opens a larger popup modal with a close button, and clicking outside the popup also dismisses it. The popup styling is tuned for both light and dark themes so the caption text, framed image surface, and modal shell remain easy to distinguish.
 
-The GPT selection, citation improvement, document revision, and Support Menu entries now use saved PNG screenshots so the admin preview matches the user-facing feature surfaces more closely.
+The GPT selection, citation improvement, document revision, and Support Menu entries now use saved PNG screenshots so the admin preview matches the current product surfaces more closely.
 
 The release notifications registration explainer is intentionally text-only. It points admins to a live control that already exists at the top of Admin Settings, so no duplicate screenshot is needed.
 
 ### New Feature Coverage
 - **Release Notifications Registration** explains the Registered or Unregistered badge beside the version number, clarifies that it is admin-only, and tells admins that clicking it opens the modal used to register this environment for release updates.
-- **Multi-Endpoint GPT Selection** highlights the admin workflow for enabling multiple model endpoints, surfacing different GPT choices, and configuring the default fallback model used when a request does not provide an explicit selection.
+- **Multi-Endpoint GPT Selection** highlights the admin workflow for enabling multiple model endpoints, configuring the default fallback model used when a request does not provide an explicit selection, and using the admin-only Agent Default Model Review modal to selectively rebind inherited or explicitly overridden agents.
 - **Citation Improvements** explains conversation history citation replay and citation amplification so admins understand why follow-up questions stay grounded even when the assistant is working from prior evidence.
 - **Document Revisioning and Management** explains that same-name uploads create versioned revision families, keep previous versions available for traceability, and carry classifications and tags forward to the newest revision.
 - **Support Menu** introduces the user-facing support surface that exposes Latest Features and Send Feedback outside the admin-only experience.
@@ -102,7 +103,7 @@ The release notifications registration explainer is intentionally text-only. It 
 - Click any screenshot thumbnail to open a larger preview modal.
 - Use the Release Notifications Registration card to explain what the Registered or Unregistered badge means and where admins can update that status.
 - Use the mirrored toggles when you want to enable Processing Thoughts or Enhanced Citations directly from the overview page.
-- Use the GPT Selection card to direct admins to the AI Models tab when they need to review endpoint availability or the default fallback model.
+- Use the GPT Selection card to direct admins to the AI Models tab when they need to review endpoint availability, confirm the saved default fallback model, or selectively rebind agents in the admin-only review modal.
 - Use the Citation Improvements card to explain how grounded evidence is preserved across follow-up turns.
 - Use the Document Revisioning card to explain why same-name uploads now create a new current version instead of replacing the old file in place.
 - Use the mirrored Redis cache controls when you want to review or update cache settings from the overview page without leaving Latest Features.
@@ -115,7 +116,7 @@ The release notifications registration explainer is intentionally text-only. It 
 - Confirm each card expands and collapses correctly.
 - Confirm the admin-only Release Notifications Registration card renders first and does not depend on a screenshot asset.
 - Confirm saved screenshots render as thumbnails and open in the larger preview modal.
-- Confirm the saved screenshots render for GPT Selection, Citation Improvements, Document Revisioning, Support Menu, and the General-tab user-facing latest-features checklist.
+- Confirm the saved screenshots render for GPT Selection, including the agent review summary and modal action images, plus Citation Improvements, Document Revisioning, Support Menu, and the General-tab user-facing latest-features checklist.
 - Confirm the preview modal closes from both the close button and backdrop click.
 - Confirm mirrored settings remain synchronized with the canonical controls in the existing tabs.
 - Confirm Redis mirror controls stay synchronized with the canonical settings in the Scale tab.

@@ -111,10 +111,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'multi_endpoint_migrated_at': None,
         'multi_endpoint_migration_notice': {
             'enabled': False,
-            'message': (
-                'Multi-endpoint has been enabled and your existing AI endpoint was migrated. '
-                'Agents using the default connection may need to be updated to select a new model endpoint.'
-            ),
+                'message': '',
             'created_at': None
         },
         'azure_apim_gpt_endpoint': '',

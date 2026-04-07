@@ -3,7 +3,6 @@
 import { showToast } from "../chat/chat-toast.js";
 
 const enableMultiEndpointToggle = document.getElementById("enable_multi_model_endpoints");
-const migrationWarning = document.getElementById("multi-endpoint-warning");
 const endpointsWrapper = document.getElementById("model-endpoints-wrapper");
 const endpointsTbody = document.getElementById("model-endpoints-tbody");
 const addEndpointBtn = document.getElementById("add-model-endpoint-btn");
@@ -11,6 +10,27 @@ const endpointsInput = document.getElementById("model_endpoints_json");
 const defaultModelSelect = document.getElementById("default-model-selection");
 const defaultModelInput = document.getElementById("default_model_selection_json");
 const defaultModelWrapper = document.getElementById("default-model-selection-wrapper");
+const migrationPanel = document.getElementById("agent-default-model-migration-panel");
+const migrationStatus = document.getElementById("agent-default-model-migration-status");
+const migrationCallout = document.getElementById("agent-default-model-migration-callout");
+const migrationResults = document.getElementById("agent-default-model-migration-results");
+const previewMigrationBtn = document.getElementById("preview-agent-default-model-migration-btn");
+const runMigrationBtn = document.getElementById("run-agent-default-model-migration-btn");
+const migrationReadyCount = document.getElementById("agent-default-model-ready-count");
+const migrationNeedsDefaultCount = document.getElementById("agent-default-model-needs-default-count");
+const migrationManualCount = document.getElementById("agent-default-model-manual-count");
+const migrationMigratedCount = document.getElementById("agent-default-model-migrated-count");
+const migrationCurrentLabel = document.getElementById("agent-default-model-current-label");
+const migrationSelectionSummary = document.getElementById("agent-default-model-migration-selection-summary");
+const migrationTableBody = document.getElementById("agent-default-model-migration-tbody");
+const migrationSearchInput = document.getElementById("agent-default-model-migration-search");
+const migrationFilterSelect = document.getElementById("agent-default-model-migration-filter");
+const selectReadyMigrationBtn = document.getElementById("select-ready-agent-default-model-migration-btn");
+const selectManualMigrationBtn = document.getElementById("select-manual-agent-default-model-migration-btn");
+const clearMigrationSelectionBtn = document.getElementById("clear-agent-default-model-migration-selection-btn");
+
+const migrationModalEl = document.getElementById("agentDefaultModelMigrationModal");
+const migrationModal = migrationModalEl && window.bootstrap ? bootstrap.Modal.getOrCreateInstance(migrationModalEl) : null;
 
 const endpointModalEl = document.getElementById("modelEndpointModal");
 const endpointModal = endpointModalEl && window.bootstrap ? bootstrap.Modal.getOrCreateInstance(endpointModalEl) : null;
@@ -64,6 +84,8 @@ let pendingDeleteTimeout = null;
 let defaultModelSelection = window.defaultModelSelection && typeof window.defaultModelSelection === "object"
     ? { ...window.defaultModelSelection }
     : {};
+let migrationPreviewState = null;
+let migrationSelectedKeys = new Set();
 
 const DEFAULT_AOAI_OPENAI_API_VERSION = "2024-05-01-preview";
 
@@ -108,6 +130,80 @@ function updateDefaultModelInput() {
         return;
     }
     defaultModelInput.value = JSON.stringify(defaultModelSelection || {});
+}
+
+function isAdminSettingsFormModified() {
+    return typeof window.isAdminSettingsFormModified === "function" && window.isAdminSettingsFormModified();
+}
+
+function setMigrationStatus(message, tone = "muted") {
+    if (!migrationStatus) {
+        return;
+    }
+
+    migrationStatus.textContent = message || "";
+    migrationStatus.classList.remove("text-muted", "text-success", "text-warning", "text-danger");
+    const className = {
+        success: "text-success",
+        warning: "text-warning",
+        danger: "text-danger"
+    }[tone] || "text-muted";
+    migrationStatus.classList.add(className);
+}
+
+function setMigrationCallout(message = "", tone = "info") {
+    if (!migrationCallout) {
+        return;
+    }
+
+    migrationCallout.classList.remove("alert-info", "alert-warning", "alert-success", "alert-danger");
+    if (!message) {
+        migrationCallout.textContent = "";
+        migrationCallout.classList.add("d-none", "alert-info");
+        return;
+    }
+
+    migrationCallout.textContent = message;
+    migrationCallout.classList.remove("d-none");
+    migrationCallout.classList.add(`alert-${tone}`);
+}
+
+function updateMigrationButtonAvailability() {
+    const selectedCount = migrationSelectedKeys.size;
+    const hasValidDefault = Boolean(migrationPreviewState?.default_model?.valid);
+    const formModified = isAdminSettingsFormModified();
+    const multiEndpointEnabled = enableMultiEndpointToggle ? enableMultiEndpointToggle.checked : true;
+
+    if (previewMigrationBtn) {
+        previewMigrationBtn.disabled = !multiEndpointEnabled;
+    }
+    if (runMigrationBtn) {
+        runMigrationBtn.disabled = !multiEndpointEnabled || formModified || !hasValidDefault || selectedCount === 0;
+        runMigrationBtn.textContent = selectedCount > 0
+            ? `Apply Saved Default To Selected (${selectedCount})`
+            : "Apply Saved Default To Selected";
+    }
+}
+
+function handleMigrationConfigurationChange() {
+    migrationPreviewState = null;
+    migrationSelectedKeys = new Set();
+    setElementVisibility(migrationResults, false);
+    if (migrationPanel && !migrationPanel.classList.contains("d-none")) {
+        const multiEndpointEnabled = enableMultiEndpointToggle ? enableMultiEndpointToggle.checked : true;
+        if (!multiEndpointEnabled) {
+            setMigrationStatus("Enable multi-endpoint model management to review and rebind agents to a saved default model.", "warning");
+            setMigrationCallout("Once multi-endpoint is enabled and saved, admins can use this review workflow to move inherited agents to the saved default model and intentionally override selected explicit agent model choices.", "info");
+        } else {
+            setMigrationStatus("Save your AI model settings before reviewing or migrating agents.", "warning");
+            setMigrationCallout("Migration preview uses the saved model endpoints and saved default model. Save settings first.", "warning");
+        }
+    } else {
+        setMigrationCallout("");
+    }
+    renderMigrationTable();
+    updateMigrationSelectionSummary();
+    updateMigrationButtonAvailability();
 }
 
 function markModified() {
@@ -314,6 +410,7 @@ function handleDefaultModelChange() {
     }
     updateDefaultModelInput();
     markModified();
+    handleMigrationConfigurationChange();
 }
 
 function updateAuthVisibility() {
@@ -713,6 +810,7 @@ function saveEndpoint() {
 
         renderEndpoints();
         markModified();
+        handleMigrationConfigurationChange();
         endpointModal?.hide();
         showToast("Please save your settings to persist changes.", "warning");
     } catch (error) {
@@ -779,6 +877,7 @@ function handleTableClick(event) {
         endpoint.enabled = !endpoint.enabled;
         renderEndpoints();
         markModified();
+        handleMigrationConfigurationChange();
         return;
     }
 
@@ -787,6 +886,7 @@ function handleTableClick(event) {
             modelEndpoints = modelEndpoints.filter((item) => item.id !== endpointId);
             renderEndpoints();
             markModified();
+            handleMigrationConfigurationChange();
             pendingDeleteEndpointId = null;
             if (pendingDeleteTimeout) {
                 clearTimeout(pendingDeleteTimeout);
@@ -811,18 +911,374 @@ function handleToggleChange() {
     const enabled = !!enableMultiEndpointToggle?.checked;
     // setElementVisibility(endpointsWrapper, enabled);
     setElementVisibility(defaultModelWrapper, enabled);
-
-    if (enabled) {
-        setElementVisibility(migrationWarning, true);
-        showToast("Multi-endpoint enabled. Existing AI endpoint will be migrated when you save settings.", "warning");
+    if (!enabled) {
+        setElementVisibility(migrationResults, false);
     }
     markModified();
+    handleMigrationConfigurationChange();
 }
 
 function escapeHtml(value) {
     const div = document.createElement("div");
     div.textContent = value || "";
     return div.innerHTML;
+}
+
+function formatMigrationStatus(status) {
+    if (status === "ready_to_migrate") {
+        return { label: "Ready", className: "text-bg-primary" };
+    }
+    if (status === "needs_default_model") {
+        return { label: "Needs Default", className: "text-bg-warning" };
+    }
+    if (status === "manual_review") {
+        return { label: "Review", className: "text-bg-secondary" };
+    }
+    return { label: "On Default", className: "text-bg-success" };
+}
+
+function getMigrationAgents() {
+    return Array.isArray(migrationPreviewState?.agents) ? migrationPreviewState.agents : [];
+}
+
+function resetMigrationSelection(preview) {
+    const nextSelection = new Set();
+    const agents = Array.isArray(preview?.agents) ? preview.agents : [];
+    agents.forEach((agent) => {
+        if (agent?.selected_by_default && agent?.selection_key) {
+            nextSelection.add(agent.selection_key);
+        }
+    });
+    migrationSelectedKeys = nextSelection;
+}
+
+function getFilteredMigrationAgents() {
+    const query = (migrationSearchInput?.value || "").trim().toLowerCase();
+    const filterValue = migrationFilterSelect?.value || "all";
+
+    return getMigrationAgents().filter((agent) => {
+        if (filterValue === "selected" && !migrationSelectedKeys.has(agent.selection_key)) {
+            return false;
+        }
+        if (filterValue !== "all" && filterValue !== "selected" && agent.migration_status !== filterValue) {
+            return false;
+        }
+        if (!query) {
+            return true;
+        }
+
+        const haystack = [
+            agent.scope,
+            agent.scope_label,
+            agent.agent_display_name,
+            agent.agent_name,
+            agent.current_binding_label,
+            agent.reason
+        ].join(" ").toLowerCase();
+        return haystack.includes(query);
+    });
+}
+
+function updateMigrationSelectionSummary() {
+    if (!migrationSelectionSummary) {
+        return;
+    }
+
+    const selectedAgents = getMigrationAgents().filter((agent) => migrationSelectedKeys.has(agent.selection_key));
+    const selectedCount = selectedAgents.length;
+    const recommendedCount = selectedAgents.filter((agent) => agent.migration_status === "ready_to_migrate").length;
+    const overrideCount = selectedAgents.filter((agent) => agent.can_force_migrate).length;
+
+    if (!selectedCount) {
+        migrationSelectionSummary.textContent = "No agents selected. Recommended rows are preselected after each review refresh.";
+        return;
+    }
+
+    migrationSelectionSummary.textContent = `Selected ${selectedCount} agents: ${recommendedCount} recommended and ${overrideCount} explicit overrides.`;
+}
+
+function renderMigrationTable() {
+    if (!migrationTableBody) {
+        return;
+    }
+
+    if (!migrationPreviewState) {
+        migrationTableBody.innerHTML = `
+            <tr>
+                <td colspan="6" class="text-center text-muted py-3">Review agents to load migration candidates.</td>
+            </tr>
+        `;
+        return;
+    }
+
+    const agents = getFilteredMigrationAgents();
+    if (!agents.length) {
+        migrationTableBody.innerHTML = `
+            <tr>
+                <td colspan="6" class="text-center text-muted py-3">No agents match the current filter.</td>
+            </tr>
+        `;
+        return;
+    }
+
+    migrationTableBody.innerHTML = agents.map((agent) => {
+        const status = formatMigrationStatus(agent.migration_status);
+        const agentLabel = agent.agent_display_name || agent.agent_name || "Unnamed agent";
+        const secondaryLabel = agent.agent_display_name && agent.agent_name && agent.agent_display_name !== agent.agent_name
+            ? `<div class="text-muted small">${escapeHtml(agent.agent_name)}</div>`
+            : "";
+        const scopeSuffix = agent.scope !== "global" && agent.scope_label
+            ? `<div class="text-muted small">${escapeHtml(agent.scope_label)}</div>`
+            : "";
+        const isSelected = migrationSelectedKeys.has(agent.selection_key);
+        const selectControl = agent.can_select
+            ? `
+                <div class="form-check m-0">
+                    <input class="form-check-input" type="checkbox" data-selection-key="${escapeHtml(agent.selection_key)}" ${isSelected ? "checked" : ""} aria-label="Select ${escapeHtml(agentLabel)}" />
+                </div>
+                <div class="text-muted small mt-1">${agent.selected_by_default ? "Recommended" : "Override"}</div>
+            `
+            : '<span class="text-muted small">Locked</span>';
+
+        return `
+            <tr>
+                <td>${selectControl}</td>
+                <td>
+                    <div class="fw-semibold text-capitalize">${escapeHtml(agent.scope)}</div>
+                    ${scopeSuffix}
+                </td>
+                <td>
+                    <div class="fw-semibold">${escapeHtml(agentLabel)}</div>
+                    ${secondaryLabel}
+                </td>
+                <td><span class="badge ${status.className}">${status.label}</span></td>
+                <td>${escapeHtml(agent.current_binding_label || "Not set")}</td>
+                <td>${escapeHtml(agent.reason || "")}</td>
+            </tr>
+        `;
+    }).join("");
+}
+
+function selectRecommendedMigrationAgents() {
+    const nextSelection = new Set();
+    getMigrationAgents().forEach((agent) => {
+        if (agent?.selected_by_default && agent?.selection_key) {
+            nextSelection.add(agent.selection_key);
+        }
+    });
+    migrationSelectedKeys = nextSelection;
+    renderMigrationTable();
+    updateMigrationSelectionSummary();
+    updateMigrationButtonAvailability();
+}
+
+function addManualOverrideMigrationAgents() {
+    getMigrationAgents().forEach((agent) => {
+        if (agent?.can_force_migrate && agent?.selection_key) {
+            migrationSelectedKeys.add(agent.selection_key);
+        }
+    });
+    renderMigrationTable();
+    updateMigrationSelectionSummary();
+    updateMigrationButtonAvailability();
+}
+
+function clearMigrationSelection() {
+    migrationSelectedKeys = new Set();
+    renderMigrationTable();
+    updateMigrationSelectionSummary();
+    updateMigrationButtonAvailability();
+}
+
+function handleMigrationTableSelectionChange(event) {
+    const checkbox = event.target.closest('input[data-selection-key]');
+    if (!checkbox) {
+        return;
+    }
+
+    const selectionKey = checkbox.dataset.selectionKey || "";
+    if (!selectionKey) {
+        return;
+    }
+
+    if (checkbox.checked) {
+        migrationSelectedKeys.add(selectionKey);
+    } else {
+        migrationSelectedKeys.delete(selectionKey);
+    }
+
+    updateMigrationSelectionSummary();
+    updateMigrationButtonAvailability();
+}
+
+async function openMigrationReviewModal() {
+    await loadAgentMigrationPreview({ openModal: true, showToastOnSuccess: false });
+}
+
+function renderMigrationPreview(preview) {
+    migrationPreviewState = preview || null;
+
+    if (!preview || !migrationResults || !migrationTableBody) {
+        migrationSelectedKeys = new Set();
+        renderMigrationTable();
+        updateMigrationSelectionSummary();
+        updateMigrationButtonAvailability();
+        return;
+    }
+
+    resetMigrationSelection(preview);
+
+    const summary = preview.summary || {};
+    const defaultModel = preview.default_model || {};
+
+    if (migrationReadyCount) {
+        migrationReadyCount.textContent = `Ready: ${summary.ready_to_migrate || 0}`;
+    }
+    if (migrationNeedsDefaultCount) {
+        migrationNeedsDefaultCount.textContent = `Needs Default: ${summary.needs_default_model || 0}`;
+    }
+    if (migrationManualCount) {
+        migrationManualCount.textContent = `Manual Review: ${summary.manual_review || 0}`;
+    }
+    if (migrationMigratedCount) {
+        migrationMigratedCount.textContent = `On Default: ${summary.already_migrated || 0}`;
+    }
+    if (migrationCurrentLabel) {
+        migrationCurrentLabel.textContent = defaultModel.valid
+            ? `Saved default model: ${defaultModel.label}`
+            : "Saved default model: none selected or no longer available";
+    }
+
+    if (!defaultModel.valid && (summary.needs_default_model || 0) > 0) {
+        setMigrationStatus("Save a valid default model before migrating inherited agents.", "warning");
+        setMigrationCallout("Select and save a valid default model first, then rerun the review or migration.", "warning");
+    } else if ((summary.ready_to_migrate || 0) > 0 || (summary.selectable_override || 0) > 0) {
+        setMigrationStatus(
+            `Found ${summary.ready_to_migrate || 0} recommended agents and ${summary.selectable_override || 0} explicit override candidates for the saved default model.`,
+            "warning"
+        );
+        setMigrationCallout("Use the review modal to confirm the recommended agents and add only the explicit overrides you intentionally want to rebind to the saved default model.", "info");
+    } else if ((summary.manual_review || 0) > 0) {
+        setMigrationStatus("Only manual-review agents remain, and some may require separate handling.", "warning");
+        setMigrationCallout("Foundry-managed agents stay locked here. Other manual-review rows can be selected only when a saved default model is available.", "info");
+    } else {
+        setMigrationStatus("All reviewable agents are already aligned with the saved default model.", "success");
+        setMigrationCallout("Use this review workflow again whenever you want to evaluate agents against a new saved default model for cost or lifecycle changes.", "success");
+    }
+
+    renderMigrationTable();
+    updateMigrationSelectionSummary();
+    setElementVisibility(migrationResults, true);
+    updateMigrationButtonAvailability();
+}
+
+async function loadAgentMigrationPreview({ showToastOnSuccess = false, openModal = false } = {}) {
+    if (isAdminSettingsFormModified()) {
+        setMigrationStatus("Save your AI model settings before reviewing agents.", "warning");
+        setMigrationCallout("The migration preview uses the saved default model and saved endpoint catalog. Save settings first.", "warning");
+        showToast("Save your AI model settings before reviewing agents.", "warning");
+        updateMigrationButtonAvailability();
+        return null;
+    }
+
+    if (previewMigrationBtn) {
+        previewMigrationBtn.disabled = true;
+    }
+
+    try {
+        const response = await fetch("/api/admin/agents/default-model-migration/preview", {
+            headers: { "Content-Type": "application/json" }
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(data.error || "Failed to review agent migration state.");
+        }
+
+        renderMigrationPreview(data);
+        if (openModal && migrationModal) {
+            migrationModal.show();
+        }
+        if (showToastOnSuccess) {
+            showToast("Agent migration review updated.", "success");
+        }
+        return data;
+    } catch (error) {
+        console.error("Agent migration preview failed", error);
+        setMigrationStatus("Unable to load the agent migration review.", "danger");
+        setMigrationCallout(error.message || "Failed to load the agent migration review.", "danger");
+        showToast(error.message || "Failed to load the agent migration review.", "danger");
+        return null;
+    } finally {
+        if (previewMigrationBtn) {
+            previewMigrationBtn.disabled = false;
+        }
+        updateMigrationButtonAvailability();
+    }
+}
+
+async function runDefaultModelAgentMigration() {
+    if (isAdminSettingsFormModified()) {
+        setMigrationStatus("Save your AI model settings before running migration.", "warning");
+        setMigrationCallout("The migration run uses the saved default model and saved endpoint catalog. Save settings first.", "warning");
+        showToast("Save your AI model settings before running migration.", "warning");
+        updateMigrationButtonAvailability();
+        return;
+    }
+
+    if (!migrationPreviewState) {
+        const preview = await loadAgentMigrationPreview();
+        if (!preview) {
+            return;
+        }
+    }
+
+    if (!migrationPreviewState?.default_model?.valid) {
+        setMigrationStatus("A valid saved default model is required before migration.", "warning");
+        setMigrationCallout("Select and save a valid default model before migrating inherited agents.", "warning");
+        showToast("Select and save a valid default model before migrating agents.", "warning");
+        updateMigrationButtonAvailability();
+        return;
+    }
+
+    if (!migrationSelectedKeys.size) {
+        showToast("Select at least one agent in the review modal before migrating.", "warning");
+        updateMigrationButtonAvailability();
+        return;
+    }
+
+    if (runMigrationBtn) {
+        runMigrationBtn.disabled = true;
+    }
+
+    try {
+        const response = await fetch("/api/admin/agents/default-model-migration/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                selected_agent_keys: Array.from(migrationSelectedKeys)
+            })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(data.error || "Failed to migrate agents to the saved default model.");
+        }
+
+        renderMigrationPreview(data.preview || null);
+
+        if (Array.isArray(data.failed) && data.failed.length) {
+            setMigrationCallout(`Migrated ${data.migrated_count || 0} agents, but ${data.failed.length} updates failed. Review server logs for details.`, "warning");
+            showToast(`Migrated ${data.migrated_count || 0} agents with ${data.failed.length} failures.`, "warning");
+        } else {
+            showToast(`Applied the saved default model to ${data.migrated_count || 0} selected agents.`, "success");
+        }
+    } catch (error) {
+        console.error("Agent migration failed", error);
+        setMigrationStatus("Agent migration failed.", "danger");
+        setMigrationCallout(error.message || "Failed to migrate agents to the saved default model.", "danger");
+        showToast(error.message || "Failed to migrate agents to the saved default model.", "danger");
+    } finally {
+        updateMigrationButtonAvailability();
+    }
 }
 
 function init() {
@@ -883,8 +1339,52 @@ function init() {
         defaultModelSelect.addEventListener("change", handleDefaultModelChange);
     }
 
+    if (previewMigrationBtn) {
+        previewMigrationBtn.addEventListener("click", () => {
+            openMigrationReviewModal();
+        });
+    }
+
+    if (runMigrationBtn) {
+        runMigrationBtn.addEventListener("click", () => {
+            runDefaultModelAgentMigration();
+        });
+    }
+
+    if (migrationTableBody) {
+        migrationTableBody.addEventListener("change", handleMigrationTableSelectionChange);
+    }
+
+    if (migrationSearchInput) {
+        migrationSearchInput.addEventListener("input", renderMigrationTable);
+    }
+
+    if (migrationFilterSelect) {
+        migrationFilterSelect.addEventListener("change", renderMigrationTable);
+    }
+
+    if (selectReadyMigrationBtn) {
+        selectReadyMigrationBtn.addEventListener("click", selectRecommendedMigrationAgents);
+    }
+
+    if (selectManualMigrationBtn) {
+        selectManualMigrationBtn.addEventListener("click", addManualOverrideMigrationAgents);
+    }
+
+    if (clearMigrationSelectionBtn) {
+        clearMigrationSelectionBtn.addEventListener("click", clearMigrationSelection);
+    }
+
     updateHiddenInput();
     buildDefaultModelOptions();
+    updateMigrationButtonAvailability();
+
+    if (migrationPanel && isMultiEndpointEnabled) {
+        setMigrationStatus("Review inherited agents and migrate them to the saved default model when ready.", "muted");
+        loadAgentMigrationPreview();
+    } else if (migrationPanel) {
+        handleMigrationConfigurationChange();
+    }
 }
 
 if (document.readyState === "loading") {
