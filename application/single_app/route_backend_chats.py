@@ -578,6 +578,33 @@ def _load_user_message_response_context(
     return response_context
 
 
+def _initialize_assistant_response_tracking(
+    conversation_id,
+    user_message_id,
+    current_user_thread_id,
+    previous_thread_id,
+    retry_thread_attempt,
+    is_retry,
+    user_id,
+):
+    """Create assistant response tracking state for both new and retry/edit flows."""
+    assistant_message_id = f"{conversation_id}_assistant_{int(time.time())}_{random.randint(1000,9999)}"
+    thought_tracker = ThoughtTracker(
+        conversation_id=conversation_id,
+        message_id=assistant_message_id,
+        thread_id=current_user_thread_id,
+        user_id=user_id,
+    )
+    assistant_thread_attempt = retry_thread_attempt if is_retry and retry_thread_attempt is not None else 1
+    response_message_context = _load_user_message_response_context(
+        conversation_id=conversation_id,
+        user_message_id=user_message_id,
+        fallback_thread_id=current_user_thread_id,
+        fallback_previous_thread_id=previous_thread_id,
+    )
+    return assistant_message_id, thought_tracker, assistant_thread_attempt, response_message_context
+
+
 def _build_safety_message_doc(
     conversation_id,
     message_id,
@@ -5383,6 +5410,29 @@ def resolve_foundry_scope_for_auth(auth_settings, endpoint=None):
     return 'https://ai.azure.com/.default'
 
 
+def get_foundry_api_version_candidates(primary_version, settings):
+    """Return distinct Foundry API versions to try for inference compatibility."""
+    settings = settings or {}
+    candidates = [
+        str(primary_version or '').strip(),
+        str(settings.get('azure_openai_gpt_api_version') or '').strip(),
+        '2024-10-01-preview',
+        '2024-07-01-preview',
+        '2024-05-01-preview',
+        '2024-02-01',
+    ]
+
+    unique_candidates = []
+    seen_candidates = set()
+    for candidate in candidates:
+        if not candidate or candidate in seen_candidates:
+            continue
+        seen_candidates.add(candidate)
+        unique_candidates.append(candidate)
+
+    return unique_candidates
+
+
 def build_streaming_multi_endpoint_client(auth_settings, provider, endpoint, api_version):
     """Create an inference client for a resolved streaming model endpoint."""
     auth_settings = auth_settings or {}
@@ -5990,21 +6040,16 @@ def register_route_backend_chats(app):
             )
             try:
                 multi_endpoint_config = None
-                if should_use_default_model:
-                    try:
-                        multi_endpoint_config = resolve_default_model_gpt_config(settings)
-                        if multi_endpoint_config:
-                            debug_print("[GPTClient] Using default multi-endpoint model for agent request.")
-                    except Exception as default_exc:
-                        log_event(
-                            f"[GPTClient] Default model selection unavailable: {default_exc}",
-                            level=logging.WARNING,
-                            exceptionTraceback=True
-                        )
-                if multi_endpoint_config is None and request_agent_info:
-                    debug_print("[GPTClient] Skipping multi-endpoint resolution because agent_info is provided.")
-                elif multi_endpoint_config is None:
-                    multi_endpoint_config = resolve_multi_endpoint_gpt_config(settings, data, enable_gpt_apim)
+                if settings.get('enable_multi_model_endpoints', False):
+                    multi_endpoint_config = resolve_streaming_multi_endpoint_gpt_config(
+                        settings,
+                        data,
+                        user_id,
+                        active_group_ids=active_group_ids,
+                        allow_default_selection=should_use_default_model,
+                    )
+                    if multi_endpoint_config and should_use_default_model and not data.get('model_endpoint_id'):
+                        debug_print("[GPTClient] Using default multi-endpoint model for agent request.")
                 if multi_endpoint_config:
                     gpt_client, gpt_model, gpt_provider, gpt_endpoint, gpt_auth, gpt_api_version = multi_endpoint_config
                 elif enable_gpt_apim:
@@ -6487,26 +6532,18 @@ def register_route_backend_chats(app):
                 conversation_item['last_updated'] = datetime.utcnow().isoformat()
                 cosmos_conversations_container.upsert_item(conversation_item) # Update timestamp and potentially title
 
-                # Generate assistant_message_id early for thought tracking
-                assistant_message_id = f"{conversation_id}_assistant_{int(time.time())}_{random.randint(1000,9999)}"
-
-                # Initialize thought tracker
-                thought_tracker = ThoughtTracker(
-                    conversation_id=conversation_id,
-                    message_id=assistant_message_id,
-                    thread_id=current_user_thread_id,
-                    user_id=user_id
-                )
-                assistant_thread_attempt = retry_thread_attempt if is_retry else 1
-                response_message_context = _load_user_message_response_context(
-                    conversation_id=conversation_id,
-                    user_message_id=user_message_id,
-                    fallback_thread_id=current_user_thread_id,
-                    fallback_previous_thread_id=previous_thread_id,
-                )
-                user_info_for_assistant = response_message_context.get('user_info')
-                user_thread_id = response_message_context.get('thread_id')
-                user_previous_thread_id = response_message_context.get('previous_thread_id')
+            assistant_message_id, thought_tracker, assistant_thread_attempt, response_message_context = _initialize_assistant_response_tracking(
+                conversation_id=conversation_id,
+                user_message_id=user_message_id,
+                current_user_thread_id=current_user_thread_id,
+                previous_thread_id=previous_thread_id,
+                retry_thread_attempt=retry_thread_attempt,
+                is_retry=is_retry,
+                user_id=user_id,
+            )
+            user_info_for_assistant = response_message_context.get('user_info')
+            user_thread_id = response_message_context.get('thread_id')
+            user_previous_thread_id = response_message_context.get('previous_thread_id')
 
         # region 3 - Content Safety
             # ---------------------------------------------------------------------
@@ -8417,7 +8454,12 @@ def register_route_backend_chats(app):
                                 continue
                             try:
                                 debug_print(f"[SKChat] Foundry retry api_version={candidate}")
-                                retry_client = build_multi_endpoint_client(gpt_auth or {}, gpt_provider, gpt_endpoint, candidate)
+                                retry_client = build_streaming_multi_endpoint_client(
+                                    gpt_auth or {},
+                                    gpt_provider,
+                                    gpt_endpoint,
+                                    candidate,
+                                )
                                 response = retry_client.chat.completions.create(**api_params)
                                 break
                             except Exception as retry_exc:
@@ -9405,22 +9447,14 @@ def register_route_backend_chats(app):
                 conversation_item['last_updated'] = datetime.utcnow().isoformat()
                 cosmos_conversations_container.upsert_item(conversation_item)
 
-                # Generate assistant_message_id early for thought tracking
-                assistant_message_id = f"{conversation_id}_assistant_{int(time.time())}_{random.randint(1000,9999)}"
-
-                # Initialize thought tracker for streaming path
-                thought_tracker = ThoughtTracker(
-                    conversation_id=conversation_id,
-                    message_id=assistant_message_id,
-                    thread_id=current_user_thread_id,
-                    user_id=user_id
-                )
-                assistant_thread_attempt = retry_thread_attempt if is_retry else 1
-                response_message_context = _load_user_message_response_context(
+                assistant_message_id, thought_tracker, assistant_thread_attempt, response_message_context = _initialize_assistant_response_tracking(
                     conversation_id=conversation_id,
                     user_message_id=user_message_id,
-                    fallback_thread_id=current_user_thread_id,
-                    fallback_previous_thread_id=previous_thread_id,
+                    current_user_thread_id=current_user_thread_id,
+                    previous_thread_id=previous_thread_id,
+                    retry_thread_attempt=retry_thread_attempt,
+                    is_retry=is_retry,
+                    user_id=user_id,
                 )
                 user_info_for_assistant = response_message_context.get('user_info')
                 user_thread_id = response_message_context.get('thread_id')

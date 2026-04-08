@@ -54,6 +54,12 @@ def test_support_latest_features_image_modal(playwright):
 
         assert response.ok, f"Expected /support/latest-features to load successfully, got HTTP {response.status}."
         expect(page.get_by_role("heading", name="Latest Features")).to_be_visible()
+        page_title = page.title()
+        assert page_title.startswith("Latest Features - "), f"Unexpected page title: {page_title}"
+        app_title = page_title.replace("Latest Features - ", "", 1).strip()
+        main_text = page.locator("main").text_content() or ""
+        if app_title != "SimpleChat":
+            assert "SimpleChat" not in main_text, "Visible Latest Features copy should use the configured application title."
         expect(page.locator(".support-feature-card")).to_have_count(page.locator(".support-feature-card").count())
         expect(page.locator(".support-feature-callout").first).to_be_visible()
         expect(page.locator(".support-feature-action-card").first).to_be_visible()

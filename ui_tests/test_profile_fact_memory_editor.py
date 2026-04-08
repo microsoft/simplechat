@@ -1,11 +1,12 @@
 # test_profile_fact_memory_editor.py
 """
 UI test for the profile fact-memory editor.
-Version: 0.240.083
-Implemented in: 0.240.079; 0.240.082; 0.240.083
+Version: 0.241.004
+Implemented in: 0.240.079; 0.240.082; 0.240.083; 0.241.003; 0.241.004
 
 This test ensures a signed-in user can create, edit, retag, and delete
-fact-memory entries from the profile page using the compact summary and modal editor.
+fact-memory entries from the profile page using the compact summary and modal editor
+without browser parse or runtime errors breaking the workflow.
 """
 
 import os
@@ -49,6 +50,15 @@ def test_profile_fact_memory_editor(playwright):
     created_fact_id = None
     try:
         page = context.new_page()
+        page_errors = []
+        console_errors = []
+
+        page.on('pageerror', lambda error: page_errors.append(str(error)))
+        page.on(
+            'console',
+            lambda message: console_errors.append(message.text) if message.type == 'error' else None,
+        )
+
         response = page.goto(f'{BASE_URL}/profile', wait_until='domcontentloaded')
         assert response is not None, 'Expected a navigation response when loading /profile.'
         if response.status in {401, 403, 404}:
@@ -57,6 +67,23 @@ def test_profile_fact_memory_editor(playwright):
         assert response.ok, f'Expected /profile to load successfully, got HTTP {response.status}.'
         expect(page.get_by_role('heading', name='Fact Memory')).to_be_visible()
         expect(page.locator('#fact-memory-status')).to_contain_text(re.compile(r'Fact memory is'))
+        expect(page.locator('#tutorial-preferences')).to_have_count(1)
+        expect(page.locator('#fact-memory-settings')).to_have_count(1)
+        expect(page.locator('#factMemoryDeleteModal')).to_have_count(1)
+        expect(page.locator('#factMemoryManagerModal')).to_have_count(1)
+        assert not page_errors, f'Unexpected profile page errors: {page_errors}'
+        duplicate_declaration_errors = [
+            message for message in console_errors
+            if 'factMemoryEntries' in message
+            or 'factMemorySearchInput' in message
+            or 'already been declared' in message
+            or 'Identifier' in message
+            or 'SyntaxError' in message
+        ]
+        assert not duplicate_declaration_errors, (
+            'Unexpected profile console errors during page load: '
+            f'{duplicate_declaration_errors}'
+        )
         count_before_text = page.locator('#fact-memory-count').text_content() or '0'
         initial_count = int(count_before_text.strip())
 
