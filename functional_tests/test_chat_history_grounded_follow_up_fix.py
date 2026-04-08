@@ -1,12 +1,13 @@
 # test_chat_history_grounded_follow_up_fix.py
 """
 Functional test for grounded follow-up chat fallback.
-Version: 0.240.055
-Implemented in: 0.240.054; Updated in: 0.240.055
+Version: 0.241.003
+Implemented in: 0.240.054; Updated in: 0.241.003
 
 This test ensures follow-up turns with workspace search disabled can reuse
 prior grounded document refs, derive bounded fallback search parameters, and
-preserve the no-search grounding contract in both chat execution paths.
+preserve the no-search grounding contract only for conversations that already
+have grounded document history.
 """
 
 import ast
@@ -22,6 +23,7 @@ FIX_DOC = os.path.join(
     'docs',
     'explanation',
     'fixes',
+    'v0.241.003',
     'CHAT_HISTORY_GROUNDED_FOLLOW_UP_FIX.md',
 )
 ROUTE_TARGET_FUNCTIONS = {
@@ -29,6 +31,7 @@ ROUTE_TARGET_FUNCTIONS = {
     'build_prior_grounded_document_search_parameters',
     'build_history_only_assessment_messages',
     'build_history_grounding_system_message',
+    'should_apply_history_grounding_message',
 }
 METADATA_TARGET_FUNCTIONS = {
     '_extract_document_id_from_search_result',
@@ -266,6 +269,7 @@ def test_history_only_prompt_contract_is_explicit():
     namespace, _ = load_route_helpers()
     build_assessment_messages = namespace['build_history_only_assessment_messages']
     build_grounding_message = namespace['build_history_grounding_system_message']
+    should_apply_grounding_message = namespace['should_apply_history_grounding_message']
 
     assessment_messages = build_assessment_messages(
         {
@@ -289,6 +293,11 @@ def test_history_only_prompt_contract_is_explicit():
     assert 'Workspace search is disabled for this turn.' in grounding_message['content']
     assert 'ask the user to select a workspace or document' in grounding_message['content']
 
+    assert should_apply_grounding_message(False, []) is False
+    assert should_apply_grounding_message(False, None) is False
+    assert should_apply_grounding_message(True, [{'document_id': 'doc-1'}]) is False
+    assert should_apply_grounding_message(False, [{'document_id': 'doc-1'}]) is True
+
     print('✅ History-only prompt contract passed')
     return True
 
@@ -306,6 +315,8 @@ def test_route_and_metadata_wiring_cover_both_chat_paths():
     assert route_source.count('Conversation context alone was insufficient; searching previously grounded documents') == 2
     assert route_source.count('No prior grounded documents were available; using conversation history only') == 2
     assert route_source.count("'history_grounded_fallback'") == 2
+    assert route_source.count('if not original_hybrid_search_enabled:') == 2
+    assert route_source.count('if should_apply_history_grounding_message(') == 2
     assert route_source.count('history_grounding_message = build_history_grounding_system_message()') == 2
 
     print('✅ Grounded follow-up wiring passed')
@@ -318,10 +329,11 @@ def test_version_and_fix_documentation_alignment():
 
     fix_doc_content = read_file_text(FIX_DOC)
 
-    assert read_config_version() == '0.240.055'
-    assert 'Fixed/Implemented in version: **0.240.055**' in fix_doc_content
+    assert read_config_version() == '0.241.003'
+    assert 'Fixed/Implemented in version: **0.241.003**' in fix_doc_content
     assert 'last_grounded_document_refs' in fix_doc_content
     assert 'previously grounded documents' in fix_doc_content.lower()
+    assert 'new conversations without prior grounded document refs now answer normally' in fix_doc_content.lower()
     assert 'application/single_app/route_backend_chats.py' in fix_doc_content
     assert 'application/single_app/functions_conversation_metadata.py' in fix_doc_content
 

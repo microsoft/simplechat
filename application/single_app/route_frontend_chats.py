@@ -538,12 +538,11 @@ def register_route_frontend_chats(app):
                         # Continue without vision analysis
                 
             elif file_ext_nodot in {'doc', 'docm'}:
-                # Use docx2txt for .doc and .docm files
+                # Use OLE parsing for legacy .doc files and docx2txt for .docm files
                 try:
-                    import docx2txt
-                    extracted_content = docx2txt.process(temp_file_path)
-                except ImportError:
-                    return jsonify({'error': 'docx2txt library required for .doc/.docm files'}), 500
+                    extracted_content = extract_word_text(temp_file_path, f'.{file_ext_nodot}')
+                except Exception as e:
+                    return jsonify({'error': f'Error extracting text from {filename}: {e}'}), 500
             elif file_ext_nodot == 'txt':
                 extracted_content  = extract_text_file(temp_file_path)
             elif file_ext_nodot == 'md':
