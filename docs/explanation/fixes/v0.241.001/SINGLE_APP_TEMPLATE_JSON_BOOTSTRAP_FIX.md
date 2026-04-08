@@ -4,7 +4,7 @@ Fixed/Implemented in version: **0.240.020**
 
 ## Issue Description
 
-Several `single_app` templates were still bootstrapping server-side JSON with patterns such as `JSON.parse('{{ value|tojson }}')`. That left workspace and admin pages vulnerable to the same control-character and quoting failures already fixed in the chat template.
+Several `single_app` templates were still bootstrapping server-side JSON with patterns such as `JSON.parse('{% raw %}{{ value|tojson }}{% endraw %}')`. That left workspace and admin pages vulnerable to the same control-character and quoting failures already fixed in the chat template.
 
 ## Root Cause Analysis
 
@@ -47,4 +47,4 @@ Several `single_app` templates were still bootstrapping server-side JSON with pa
 
 - The affected templates now emit direct JavaScript literals from Jinja `tojson` output.
 - Escaped values remain encoded within the serialized payload instead of being reinterpreted by an intermediate JavaScript string literal.
-- The added regression tests help prevent `JSON.parse('{{ ...|tojson ... }}')` from being reintroduced in these templates.
+- The added regression tests help prevent `JSON.parse('{% raw %}{{ ...|tojson ... }}{% endraw %}')` from being reintroduced in these templates.

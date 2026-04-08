@@ -10,7 +10,7 @@ New Foundry had already been wired into backend fetch and streaming paths, but t
 
 ## Root Cause
 
-- The New Foundry agent type radio in `_agent_modal.html` was wrapped in a disabled `{% if false %}` block.
+- The New Foundry agent type radio in `_agent_modal.html` was wrapped in a disabled {% raw %}{% if false %}{% endraw %} block.
 - `_multiendpoint_modal.html` only exposed `aoai` and classic Foundry in the provider selector.
 - `is_frontend_visible_model_endpoint_provider()` in `functions_settings.py` still treated `new_foundry` as unsupported for frontend use.
 
