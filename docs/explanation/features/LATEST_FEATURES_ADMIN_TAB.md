@@ -1,9 +1,9 @@
-# Latest Features Admin Tab (v0.240.084)
+# Latest Features Admin Tab (v0.240.085)
 
 ## Overview
 This feature adds a dedicated **Latest Features** tab to Admin Settings so administrators can review the most important recent capabilities in one place and decide what to communicate to users.
 
-Version Updated: 0.240.084
+Version Updated: 0.240.085
 
 ## Dependencies
 - `application/single_app/templates/admin_settings.html`

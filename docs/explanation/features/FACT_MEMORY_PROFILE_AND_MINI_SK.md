@@ -10,9 +10,9 @@ Updated in version: **0.240.082**
 
 Updated in version: **0.240.083**
 
-Updated in version: **0.240.084**
+Updated in version: **0.240.085**
 
-Related config.py update: `VERSION = "0.240.084"`
+Related config.py update: `VERSION = "0.240.085"`
 
 ## Overview
 

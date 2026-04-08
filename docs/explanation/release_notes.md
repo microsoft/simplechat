@@ -4,7 +4,7 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
-### **(v0.240.084)**
+### **(v0.240.085)**
 
 #### New Features
 

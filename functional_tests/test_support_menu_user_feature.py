@@ -2,8 +2,8 @@
 """
 Functional test for support menu sidebar visibility, access behavior, and
 latest-feature image preview support.
-Version: 0.240.084
-Implemented in: 0.240.061; 0.240.084
+Version: 0.240.085
+Implemented in: 0.240.061; 0.240.085
 
 This test ensures the Support menu renders for signed-in app users when enabled,
 the sidebar and top-nav templates expose the expected links, and the user-facing

@@ -2,8 +2,8 @@
 # test_admin_latest_features_tab.py
 """
 Functional test for admin Latest Features tab.
-Version: 0.240.084
-Implemented in: 0.240.074; 0.240.084
+Version: 0.240.085
+Implemented in: 0.240.074; 0.240.085
 
 This test ensures that the Admin Settings page exposes the Latest Features tab,
 renders the expected grouped cards, uses the saved feature screenshots, and
@@ -270,7 +270,7 @@ def test_latest_features_supporting_assets():
     assert os.path.isdir(FEATURE_IMAGE_DIR), 'Missing placeholder image directory for Latest Features'
 
     doc_content = read_text(FEATURE_DOC)
-    assert 'Version Updated: 0.240.084' in doc_content, 'Feature documentation version header missing or incorrect'
+    assert 'Version Updated: 0.240.085' in doc_content, 'Feature documentation version header missing or incorrect'
 
     required_images = [
         'agent_default_model_review_action.png',
