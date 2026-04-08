@@ -1,5 +1,5 @@
 ---
-layout: page
+layout: latest-release-feature
 title: "Export Conversation"
 description: "How to export conversations in JSON or Markdown format"
 section: "Latest Release"

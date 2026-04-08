@@ -1,5 +1,5 @@
 ---
-layout: page
+layout: latest-release-feature
 title: "Summaries and Export"
 description: "How conversation summaries and export actions help users reuse and share chat content"
 section: "Latest Release"

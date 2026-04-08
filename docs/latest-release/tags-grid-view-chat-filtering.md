@@ -1,5 +1,5 @@
 ---
-layout: page
+layout: latest-release-feature
 title: "Tags, Grid View, and Chat Filtering"
 description: "How to create tags, organize documents in grid view, and filter by tags in chat"
 section: "Latest Release"

@@ -1,5 +1,5 @@
 ---
-layout: page
+layout: latest-release-feature
 title: "GPT Selection"
 description: "How users can choose among available GPT models for different tasks"
 section: "Latest Release"

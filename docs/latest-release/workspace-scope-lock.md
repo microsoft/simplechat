@@ -1,5 +1,5 @@
 ---
-layout: page
+layout: latest-release-feature
 title: "Workspace Scope Lock"
 description: "How workspace scope locking prevents cross-contamination between data sources"
 section: "Latest Release"
