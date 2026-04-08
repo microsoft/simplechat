@@ -13,7 +13,7 @@ from semantic_kernel_plugins.plugin_invocation_thoughts import (
     register_plugin_invocation_thought_callback,
 )
 from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
-from foundry_agent_runtime import FoundryAgentInvocationError, execute_foundry_agent, resolve_authority
+from foundry_agent_runtime import FoundryAgentInvocationError, execute_foundry_agent, resolve_authority, resolve_authority
 import builtins
 import asyncio, types
 import ast
