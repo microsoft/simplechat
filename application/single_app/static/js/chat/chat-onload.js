@@ -1,16 +1,17 @@
 // chat-onload.js
 
-import { loadConversations, selectConversation, ensureConversationPresent } from "./chat-conversations.js";
+import { loadConversations, selectConversation, ensureConversationPresent, createNewConversation } from "./chat-conversations.js";
 // Import handleDocumentSelectChange
 import { loadAllDocs, populateDocumentSelectScope, handleDocumentSelectChange, loadTagsForScope, filterDocumentsBySelectedTags, setScopeFromUrlParam } from "./chat-documents.js";
 import { getUrlParameter } from "./chat-utils.js"; // Assuming getUrlParameter is in chat-utils.js now
 import { loadUserPrompts, loadGroupPrompts, initializePromptInteractions } from "./chat-prompts.js";
+import { initializeModelSelector, populateModelDropdown } from "./chat-model-selector.js";
 import { loadUserSettings } from "./chat-layout.js";
 import { showToast } from "./chat-toast.js";
 import { initConversationInfoButton } from "./chat-conversation-info-button.js";
-import { initializeStreamingToggle } from "./chat-streaming.js";
 import { initializeReasoningToggle } from "./chat-reasoning.js";
 import { initializeSpeechInput } from "./chat-speech-input.js";
+import { initChatTutorial } from "./chat-tutorial.js";
 
 window.addEventListener('DOMContentLoaded', async () => {
   console.log("DOM Content Loaded. Starting initializations."); // Log start
@@ -20,12 +21,6 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   // Initialize the conversation info button
   initConversationInfoButton();
-  
-  // Initialize streaming toggle
-  initializeStreamingToggle();
-  
-  // Initialize reasoning toggle
-  initializeReasoningToggle();
   
   // Initialize speech input
   try {
@@ -44,7 +39,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   if (userInput && newConversationBtn) {
     userInput.addEventListener("focus", () => {
       if (!currentConversationId) {
-        newConversationBtn.click();
+                createNewConversation(null, { preserveSelections: true });
       }
     });
   }
@@ -55,7 +50,7 @@ window.addEventListener('DOMContentLoaded', async () => {
       if (!currentConversationId) {
         // Optionally prevent the default action if it does something immediately
         // event.preventDefault(); 
-        newConversationBtn.click();
+                createNewConversation(null, { preserveSelections: true });
 
         // (Optional) If you need the prompt UI to appear *after* the conversation is created,
         // you can open the prompt UI programmatically in a small setTimeout or callback.
@@ -69,7 +64,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     fileBtn.addEventListener("click", (event) => {
       if (!currentConversationId) {
         // event.preventDefault(); // If file dialog should only open once conversation is created
-        newConversationBtn.click();
+                createNewConversation(null, { preserveSelections: true });
 
         // (Optional) If you want the file dialog to appear *after* the conversation is created,
         // do it in a short setTimeout or callback:
@@ -79,23 +74,31 @@ window.addEventListener('DOMContentLoaded', async () => {
   }
 
   // Load documents, prompts, and user settings
+  const docsPromise = loadAllDocs();
+  const userPromptsPromise = loadUserPrompts();
+  const groupPromptsPromise = loadGroupPrompts();
+  const userSettingsPromise = loadUserSettings();
+
   try {
-      const [docsResult, userPromptsResult, groupPromptsResult, userSettings] = await Promise.all([
-          loadAllDocs(),
-          loadUserPrompts(),
-          loadGroupPrompts(),
-          loadUserSettings()
+      const userSettings = await userSettingsPromise;
+      
+                const preferredModelId = userSettings?.preferredModelId;
+                const preferredModelDeployment = userSettings?.preferredModelDeployment;
+
+            initializeModelSelector();
+            await populateModelDropdown({
+                preferredModelId,
+                preferredModelDeployment,
+                preserveCurrentSelection: false,
+            });
+      initializeReasoningToggle(userSettings);
+
+      const [docsResult, userPromptsResult, groupPromptsResult] = await Promise.all([
+          docsPromise,
+          userPromptsPromise,
+          groupPromptsPromise
       ]);
       console.log("Initial data (Docs, Prompts, Settings) loaded successfully."); // Log success
-      
-      // Set the preferred model if available
-      if (userSettings && userSettings.preferredModelDeployment) {
-          const modelSelect = document.getElementById("model-select");
-          if (modelSelect) {
-              console.log(`Setting preferred model: ${userSettings.preferredModelDeployment}`);
-              modelSelect.value = userSettings.preferredModelDeployment;
-          }
-      }
 
       // --- Initialize Document-related UI ---
       // This part handles URL params for documents - KEEP IT
@@ -304,5 +307,7 @@ window.addEventListener('DOMContentLoaded', async () => {
       // Maybe try to initialize prompts even if doc loading fails? Depends on requirements.
       // console.log("Attempting to initialize prompts despite data load error...");
       // initializePromptInteractions();
+  } finally {
+      initChatTutorial();
   }
 });

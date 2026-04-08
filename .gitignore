@@ -45,3 +45,10 @@ flask_session
 tmp**cwd
 /tmp_images
 nul
+/.github/plans
+*.xlsx
+/artifacts/tests
+/artifacts/tmp/*
+/artifacts/tmp
+scripts/agent.json
+scripts/me.json

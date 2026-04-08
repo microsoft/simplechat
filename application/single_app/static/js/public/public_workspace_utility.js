@@ -14,6 +14,53 @@ function escapeHtml(unsafe) {
 }
 
 /**
+ * Shows a Bootstrap toast for public workspace actions.
+ * @param {string} message - The message to display
+ * @param {string} [type='info'] - Bootstrap contextual color
+ * @param {number} [duration=5000] - Toast delay in milliseconds
+ */
+function showPublicWorkspaceToast(message, type = 'info', duration = 5000) {
+  const safeMessage = escapeHtml(message || '');
+  let toastContainer = document.getElementById('toast-container');
+
+  if (!toastContainer) {
+    toastContainer = document.createElement('div');
+    toastContainer.id = 'toast-container';
+    toastContainer.className = 'toast-container position-fixed bottom-0 end-0 p-3';
+    toastContainer.style.zIndex = '1100';
+    document.body.appendChild(toastContainer);
+  }
+
+  const toastId = `public-workspace-toast-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+  toastContainer.insertAdjacentHTML('beforeend', `
+    <div id="${toastId}" class="toast align-items-center text-bg-${type} border-0" role="alert" aria-live="assertive" aria-atomic="true">
+      <div class="d-flex">
+        <div class="toast-body">${safeMessage}</div>
+        <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+      </div>
+    </div>
+  `);
+
+  const toastElement = document.getElementById(toastId);
+  if (!toastElement) {
+    return;
+  }
+
+  if (!window.bootstrap || !window.bootstrap.Toast) {
+    toastElement.classList.add('show');
+    return;
+  }
+
+  const toast = new bootstrap.Toast(toastElement, { delay: duration });
+  toast.show();
+  toastElement.addEventListener('hidden.bs.toast', () => {
+    toastElement.remove();
+  });
+}
+
+window.showPublicWorkspaceToast = showPublicWorkspaceToast;
+
+/**
  * Updates the workspace status alert display based on workspace status
  * @param {Object} options - Configuration options
  * @param {string} options.status - The workspace status ('active', 'locked', 'upload_disabled', 'inactive')

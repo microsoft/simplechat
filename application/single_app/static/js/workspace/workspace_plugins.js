@@ -1,10 +1,14 @@
 // workspace_plugins.js (refactored to use plugin_common.js and new multi-step modal)
-import { renderPluginsTable, ensurePluginsTableInRoot, validatePluginManifest } from '../plugin_common.js';
+import { renderPluginsTable, renderPluginsGrid, ensurePluginsTableInRoot, validatePluginManifest, getErrorMessageFromResponse } from '../plugin_common.js';
 import { showToast } from "../chat/chat-toast.js"
+import {
+    setupViewToggle, switchViewContainers, openViewModal
+} from './view-utils.js';
 
 const root = document.getElementById('workspace-plugins-root');
 let plugins = [];
 let filteredPlugins = [];
+let currentViewMode = 'list';
 
 function renderLoading() {
   root.innerHTML = `<div class="text-center p-4"><div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div></div>`;
@@ -12,6 +16,22 @@ function renderLoading() {
 
 function renderError(msg) {
   root.innerHTML = `<div class="alert alert-danger">${msg}</div>`;
+}
+
+function getViewHandlers() {
+  return {
+    onEdit: name => openPluginModal(plugins.find(p => p.name === name)),
+    onDelete: name => deletePlugin(name),
+    onView: name => {
+      const plugin = plugins.find(p => p.name === name);
+      if (plugin) {
+        openViewModal(plugin, 'action', {
+          onEdit: (item) => openPluginModal(item),
+          onDelete: (item) => deletePlugin(item.name)
+        });
+      }
+    }
+  };
 }
 
 function filterPlugins(searchTerm) {
@@ -26,14 +46,18 @@ function filterPlugins(searchTerm) {
     });
   }
   
-  // Ensure table template is in place
   ensurePluginsTableInRoot();
+  const handlers = getViewHandlers();
   
   renderPluginsTable({
     plugins: filteredPlugins,
     tbodySelector: '#plugins-table-body',
-    onEdit: name => openPluginModal(plugins.find(p => p.name === name)),
-    onDelete: name => deletePlugin(name)
+    ...handlers
+  });
+  renderPluginsGrid({
+    plugins: filteredPlugins,
+    containerSelector: '#plugins-grid-view',
+    ...handlers
   });
 }
 
@@ -47,12 +71,26 @@ async function fetchPlugins() {
     
     // Ensure table template is in place
     ensurePluginsTableInRoot();
+    const handlers = getViewHandlers();
     
     renderPluginsTable({
       plugins: filteredPlugins,
       tbodySelector: '#plugins-table-body',
-      onEdit: name => openPluginModal(plugins.find(p => p.name === name)),
-      onDelete: name => deletePlugin(name)
+      ...handlers
+    });
+    renderPluginsGrid({
+      plugins: filteredPlugins,
+      containerSelector: '#plugins-grid-view',
+      ...handlers
+    });
+    
+    // Set up view toggle (only once after template is in DOM)
+    setupViewToggle('plugins', 'pluginsViewPreference', (mode) => {
+      currentViewMode = mode;
+      switchViewContainers(mode,
+        document.getElementById('plugins-list-view'),
+        document.getElementById('plugins-grid-view')
+      );
     });
     
     // Set up the create action button
@@ -98,9 +136,11 @@ function setupSaveHandler(plugin, modal) {
         const formData = window.pluginModalStepper.getFormData();
         
         // Validate with JSON schema
-        const valid = await validatePluginManifest(formData);
-        if (!valid) {
-          window.pluginModalStepper.showError('Validation error: Invalid action data.');
+        const validation = await validatePluginManifest(formData);
+        const validationFailed = validation === false || (validation && validation.valid === false);
+        if (validationFailed) {
+          const message = validation?.errors?.join('\n') || 'Validation error: Invalid action data.';
+          window.pluginModalStepper.showError(message);
           return;
         }
         
@@ -137,6 +177,8 @@ function setupSaveHandler(plugin, modal) {
 }
 
 async function savePlugin(pluginData, existingPlugin = null) {
+  const payload = existingPlugin?.id ? { ...pluginData, id: existingPlugin.id } : { ...pluginData };
+
   // Get all plugins first
   const res = await fetch('/api/user/plugins');
 
@@ -145,11 +187,19 @@ async function savePlugin(pluginData, existingPlugin = null) {
   let plugins = await res.json();
   
   // Update or add the plugin
-  const existingIndex = plugins.findIndex(p => p.name === pluginData.name);
+  const existingIndex = plugins.findIndex(p => {
+    if (payload.id && p.id === payload.id) {
+      return true;
+    }
+    if (existingPlugin?.name && p.name === existingPlugin.name) {
+      return true;
+    }
+    return p.name === payload.name;
+  });
   if (existingIndex >= 0) {
-    plugins[existingIndex] = pluginData;
+    plugins[existingIndex] = payload;
   } else {
-    plugins.push(pluginData);
+    plugins.push(payload);
   }
   
   // Save back to server
@@ -160,7 +210,8 @@ async function savePlugin(pluginData, existingPlugin = null) {
   });
   
   if (!saveRes.ok) {
-    throw new Error('Failed to save action');
+    const errorMessage = await getErrorMessageFromResponse(saveRes, 'Failed to save action');
+    throw new Error(errorMessage);
   }
 }
 

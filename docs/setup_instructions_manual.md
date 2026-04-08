@@ -354,6 +354,23 @@ Core configuration values are managed via environment variables, typically set i
         *   **Optional features**: Content safety, user feedback, conversation archiving, and other optional features
     *   Required settings are clearly marked, ensuring that you configure all necessary components for your deployment scenario.
 
+### Local VS Code Developer Environment
+
+If you want to run Simple Chat locally in VS Code before deploying to Azure App Service, use a repo-local `.venv` created with Python 3.12.
+
+From the repo root on Windows:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install --upgrade pip
+pip install -r application/single_app/requirements.txt
+```
+
+Then in VS Code run `Python: Select Interpreter` and choose the Python 3.12 interpreter inside `.venv`.
+
+For the full local development workflow, including `FLASK_DEBUG` guidance and when to use Docker or WSL2 for Gunicorn validation, see [Running Simple Chat Locally](./explanation/running_simplechat_locally.md).
+
 ### Alternate Method: Update App Settings via JSON (Advanced)
 
 You can directly edit Application Settings in the Azure portal using the "Advanced edit" feature, pasting a JSON array. This is useful for bulk updates but requires care not to overwrite essential settings added by Azure.
@@ -471,7 +488,7 @@ Deploy the application code from your local repository to the Azure App Service.
    - Expand **App Service**, find your subscription and the App Service instance you created.
    - **Right-click** on the App Service name.
    - Select **Deploy to Web App...**.
-   - Browse and select the folder containing the application code (the root folder you cloned, e.g., SimpleChat).
+    - Browse and select the `application/single_app` folder from the repository.
    - VS Code will prompt to confirm the deployment, potentially warning about overwriting existing content. Click **Deploy**.
    - Make sure your requirements.txt file is up-to-date before deploying. The deployment process (SCM_DO_BUILD_DURING_DEPLOYMENT=true) will use this file to install dependencies on the App Service.
    - Monitor the deployment progress in the VS Code Output window.
@@ -484,7 +501,7 @@ This method involves creating a zip file of the application code and uploading i
 
 1. **Create the ZIP file**:
 
-   - Navigate into the application's root directory (e.g., SimpleChat) in your terminal.
+    - Navigate into `application/single_app` in your terminal.
    - Create a zip file containing **only** the necessary application files and folders. **Crucially, zip the contents, not the parent folder itself.**
    - **Include**:
      - static/ folder
@@ -528,6 +545,20 @@ This method involves creating a zip file of the application code and uploading i
 ## Upgrading the Application
 
 > <a href="#simple-chat---manual-setup-instructions" style="text-decoration: none;">Return to top</a>
+
+This section covers **native Python Azure App Service** upgrades for the manual deployment path.
+
+Before upgrading a native Python deployment, confirm that the App Service Stack Settings Startup command is set correctly and is not blank.
+
+Deploy and run the `application/single_app` folder in App Service.
+
+Use this Startup command:
+
+```bash
+python -m gunicorn -c gunicorn.conf.py app:app
+```
+
+For a shorter decision guide that also covers container-based upgrades, see [Upgrade Paths](./how-to/upgrade_paths.md).
 
 Keeping your Simple Chat application up-to-date involves deploying the newer version of the code. Using **Deployment Slots** is the recommended approach for production environments to ensure zero downtime and provide easy rollback capabilities.
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for Azure AI Foundry agent payload sanitation.
-Version: 0.233.176
-Implemented in: 0.233.176
+Version: 0.239.149
+Implemented in: 0.239.149
 
 This test ensures that sanitize_agent_payload enforces Foundry-specific backend
 constraints (actions_to_load cleared, APIM disabled, agent_id required) and
@@ -84,12 +84,16 @@ def test_foundry_agent_requires_agent_id():
     raise AssertionError("Expected AgentPayloadError for missing agent_id")
 
 if __name__ == "__main__":
-     tests = [
-         test_foundry_agent_actions_and_apim_rules,
-         test_foundry_agent_requires_agent_id
-     ]
-     results = []
-@@
-     success = all(results)
-     print(f"\n📊 Results: {sum(results)}/{len(tests)} tests passed")
-     sys.exit(0 if success else 1)
+    tests = [
+        test_foundry_agent_actions_and_apim_rules,
+        test_foundry_agent_requires_agent_id
+    ]
+    results = []
+
+    for test in tests:
+        print(f"\n🧪 Running {test.__name__}...")
+        results.append(test() is not False)
+
+    success = all(results)
+    print(f"\n📊 Results: {sum(results)}/{len(tests)} tests passed")
+    sys.exit(0 if success else 1)

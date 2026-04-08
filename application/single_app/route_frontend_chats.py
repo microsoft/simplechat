@@ -6,13 +6,246 @@ from functions_authentication import *
 from functions_content import *
 from functions_settings import *
 from functions_documents import *
-from functions_group import find_group_by_id, get_user_groups
+from functions_group import find_group_by_id, get_group_model_endpoints, get_user_groups
+from functions_group_agents import get_group_agents
+from functions_global_agents import get_global_agents
+from functions_personal_agents import ensure_migration_complete, get_personal_agents
+from functions_prompts import list_all_prompts_for_scope
 from functions_public_workspaces import find_public_workspace_by_id, get_user_visible_public_workspace_ids_from_settings
 from functions_appinsights import log_event
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_debug import debug_print
 
 logger = logging.getLogger(__name__)
+
+
+def _serialize_chat_agent_option(agent, *, is_global=False, is_group=False, group_id=None, group_name=None):
+    return {
+        'id': agent.get('id'),
+        'name': agent.get('name', ''),
+        'display_name': agent.get('display_name') or agent.get('displayName') or agent.get('name', ''),
+        'is_global': is_global,
+        'is_group': is_group,
+        'group_id': group_id,
+        'group_name': group_name,
+    }
+
+
+def _serialize_chat_prompt_option(prompt, *, scope_type, scope_id=None, scope_name=None):
+    return {
+        'id': prompt.get('id'),
+        'name': prompt.get('name', ''),
+        'content': prompt.get('content', ''),
+        'scope_type': scope_type,
+        'scope_id': scope_id,
+        'scope_name': scope_name,
+    }
+
+
+def _normalize_chat_model_value(value):
+    return str(value or '').strip()
+
+
+def _build_initial_chat_model_selection(*, chat_model_options, preferred_model_id=None, preferred_model_deployment=None):
+    scope_order = {
+        'global': 0,
+        'personal': 1,
+        'group': 2,
+    }
+
+    def serialize_option(option):
+        if not isinstance(option, dict):
+            return None
+
+        selection_key = _normalize_chat_model_value(option.get('selection_key'))
+        model_id = _normalize_chat_model_value(option.get('model_id'))
+        display_name = _normalize_chat_model_value(
+            option.get('display_name') or option.get('deployment_name') or option.get('model_id')
+        ) or 'Select a Model'
+        deployment_name = _normalize_chat_model_value(option.get('deployment_name'))
+        scope_type = _normalize_chat_model_value(option.get('scope_type'))
+        scope_name = _normalize_chat_model_value(option.get('scope_name'))
+
+        search_parts = [
+            display_name,
+            model_id,
+            deployment_name,
+            scope_name or scope_type,
+        ]
+        return {
+            'selection_key': selection_key,
+            'model_id': model_id,
+            'display_name': display_name,
+            'deployment_name': deployment_name,
+            'endpoint_id': _normalize_chat_model_value(option.get('endpoint_id')),
+            'provider': _normalize_chat_model_value(option.get('provider')),
+            'scope_type': scope_type,
+            'scope_id': _normalize_chat_model_value(option.get('scope_id')),
+            'scope_name': scope_name,
+            'option_value': deployment_name or model_id or selection_key,
+            'search_text': ' '.join(part for part in search_parts if part),
+        }
+
+    def sort_key(option):
+        scope_type = _normalize_chat_model_value(option.get('scope_type'))
+        display_name = _normalize_chat_model_value(
+            option.get('display_name') or option.get('deployment_name') or option.get('model_id')
+        ).lower()
+        scope_name = _normalize_chat_model_value(option.get('scope_name')).lower()
+        model_id = _normalize_chat_model_value(option.get('model_id')).lower()
+        deployment_name = _normalize_chat_model_value(option.get('deployment_name')).lower()
+        return (
+            scope_order.get(scope_type, 99),
+            scope_name,
+            display_name,
+            model_id,
+            deployment_name,
+        )
+
+    valid_options = [option for option in (chat_model_options or []) if isinstance(option, dict)]
+    if not valid_options:
+        return None
+
+    sorted_options = sorted(valid_options, key=sort_key)
+    normalized_preferred_model_id = _normalize_chat_model_value(preferred_model_id)
+    normalized_preferred_model_deployment = _normalize_chat_model_value(preferred_model_deployment)
+
+    if normalized_preferred_model_id:
+        for option in sorted_options:
+            selection_key = _normalize_chat_model_value(option.get('selection_key'))
+            model_id = _normalize_chat_model_value(option.get('model_id'))
+            if selection_key == normalized_preferred_model_id or model_id == normalized_preferred_model_id:
+                return serialize_option(option)
+
+    if normalized_preferred_model_deployment:
+        for option in sorted_options:
+            deployment_name = _normalize_chat_model_value(option.get('deployment_name'))
+            if deployment_name == normalized_preferred_model_deployment:
+                return serialize_option(option)
+
+    return serialize_option(sorted_options[0])
+
+
+def _build_chat_model_catalog(*, user_id, settings, user_settings_dict, user_groups_raw):
+    if not settings.get('enable_multi_model_endpoints', False):
+        return []
+
+    catalog = []
+
+    def append_models(endpoints, scope_type, scope_id=None, scope_name=None):
+        sanitized_endpoints = sanitize_model_endpoints_for_frontend(endpoints)
+        normalized_endpoints, _ = normalize_model_endpoints(sanitized_endpoints)
+
+        for endpoint in normalized_endpoints:
+            if not endpoint.get('enabled', True):
+                continue
+
+            endpoint_id = endpoint.get('id') or ''
+            provider = endpoint.get('provider') or 'aoai'
+            models = endpoint.get('models') or []
+
+            for model in models:
+                if not isinstance(model, dict) or not model.get('enabled', True):
+                    continue
+
+                model_id = model.get('id') or model.get('deploymentName') or model.get('deployment') or model.get('modelName') or model.get('name') or ''
+                deployment_name = model.get('deploymentName') or model.get('deployment') or ''
+                display_name = model.get('displayName') or model.get('modelName') or deployment_name or model.get('name') or model_id
+                selection_key = f"{scope_type}:{scope_id or ''}:{endpoint_id}:{model_id or deployment_name}"
+
+                catalog.append({
+                    'selection_key': selection_key,
+                    'model_id': model_id,
+                    'display_name': display_name,
+                    'deployment_name': deployment_name,
+                    'endpoint_id': endpoint_id,
+                    'provider': provider,
+                    'scope_type': scope_type,
+                    'scope_id': scope_id,
+                    'scope_name': scope_name,
+                })
+
+    append_models(settings.get('model_endpoints', []) or [], 'global', None, 'Global')
+
+    if settings.get('allow_user_custom_endpoints', False):
+        append_models(
+            user_settings_dict.get('personal_model_endpoints', []) or [],
+            'personal',
+            user_id,
+            'Personal'
+        )
+
+    if settings.get('enable_group_workspaces', False) and settings.get('allow_group_custom_endpoints', False):
+        for group_doc in user_groups_raw:
+            group_id = group_doc.get('id')
+            if not group_id:
+                continue
+            append_models(
+                get_group_model_endpoints(group_id),
+                'group',
+                group_id,
+                group_doc.get('name', 'Unnamed Group')
+            )
+
+    return catalog
+
+
+def _build_chat_prompt_catalog(*, user_id, settings, user_groups_raw, user_visible_public_workspaces):
+    catalog = []
+
+    if settings.get('enable_user_workspace', False):
+        for prompt in list_all_prompts_for_scope(user_id, 'user_prompt'):
+            catalog.append(
+                _serialize_chat_prompt_option(
+                    prompt,
+                    scope_type='personal',
+                    scope_id=user_id,
+                    scope_name='Personal',
+                )
+            )
+
+    if settings.get('enable_group_workspaces', False):
+        for group_doc in user_groups_raw:
+            group_id = group_doc.get('id')
+            if not group_id:
+                continue
+
+            group_name = group_doc.get('name', 'Unnamed Group')
+            for prompt in list_all_prompts_for_scope(
+                user_id,
+                'group_prompt',
+                group_id=group_id,
+            ):
+                catalog.append(
+                    _serialize_chat_prompt_option(
+                        prompt,
+                        scope_type='group',
+                        scope_id=group_id,
+                        scope_name=group_name,
+                    )
+                )
+
+    if settings.get('enable_public_workspaces', False):
+        for workspace in user_visible_public_workspaces:
+            workspace_id = workspace.get('id')
+            if not workspace_id:
+                continue
+
+            for prompt in list_all_prompts_for_scope(
+                user_id,
+                'public_prompt',
+                public_workspace_id=workspace_id,
+            ):
+                catalog.append(
+                    _serialize_chat_prompt_option(
+                        prompt,
+                        scope_type='public',
+                        scope_id=workspace_id,
+                        scope_name=workspace.get('name', 'Unknown Workspace'),
+                    )
+                )
+
+    return catalog
 
 def register_route_frontend_chats(app):
     @app.route('/chats', methods=['GET'])
@@ -32,6 +265,7 @@ def register_route_frontend_chats(app):
         enable_enhanced_citations = public_settings.get("enable_enhanced_citations", False)
         enable_document_classification = public_settings.get("enable_document_classification", False)
         enable_extract_meta_data = public_settings.get("enable_extract_meta_data", False)
+        enable_multi_model_endpoints = public_settings.get("enable_multi_model_endpoints", False)
         active_group_id = user_settings_dict.get("activeGroupOid", "")
         active_group_name = ""
         if active_group_id:
@@ -44,11 +278,32 @@ def register_route_frontend_chats(app):
         
         categories_list = public_settings.get("document_classification_categories","")
 
+        multi_endpoint_models = []
+        if enable_multi_model_endpoints:
+            endpoints = public_settings.get("model_endpoints", []) or []
+            for endpoint in endpoints:
+                if not endpoint.get("enabled", True):
+                    continue
+                for model in endpoint.get("models", []) or []:
+                    if not model.get("enabled", True):
+                        continue
+                    multi_endpoint_models.append({
+                        "id": model.get("id"),
+                        "display_name": model.get("displayName") or model.get("deploymentName") or model.get("modelName") or "",
+                        "deployment_name": model.get("deploymentName") or "",
+                        "endpoint_id": endpoint.get("id"),
+                        "provider": endpoint.get("provider")
+                    })
+
+        if not user_id:
+            return redirect(url_for('login'))
+        
         # Get user display name from user settings
         user_display_name = user_settings.get('display_name', '')
 
         # Get all groups the user belongs to (for multi-scope selector)
         user_groups_simple = []
+        user_groups_raw = []
         try:
             user_groups_raw = get_user_groups(user_id)
             user_groups_simple = [{'id': g['id'], 'name': g.get('name', 'Unnamed')} for g in user_groups_raw]
@@ -66,6 +321,64 @@ def register_route_frontend_chats(app):
         except Exception as e:
             logger.warning(f"Failed to load visible public workspaces for chats page: {e}")
 
+        chat_agent_options = []
+        try:
+            if settings.get('allow_user_agents', False):
+                ensure_migration_complete(user_id)
+                for agent in get_personal_agents(user_id):
+                    chat_agent_options.append(_serialize_chat_agent_option(agent))
+
+            merge_global = settings.get('per_user_semantic_kernel', False) and settings.get('merge_global_semantic_kernel_with_workspace', False)
+            if merge_global:
+                for agent in get_global_agents():
+                    chat_agent_options.append(_serialize_chat_agent_option(agent, is_global=True))
+
+            if settings.get('enable_group_workspaces', False) and settings.get('allow_group_agents', False):
+                for group_doc in user_groups_raw:
+                    group_id = group_doc.get('id')
+                    if not group_id:
+                        continue
+                    group_name = group_doc.get('name', 'Unnamed Group')
+                    for agent in get_group_agents(group_id):
+                        chat_agent_options.append(
+                            _serialize_chat_agent_option(
+                                agent,
+                                is_group=True,
+                                group_id=group_id,
+                                group_name=group_name,
+                            )
+                        )
+        except Exception as e:
+            logger.warning(f"Failed to load chat agent options: {e}")
+
+        chat_model_options = []
+        try:
+            chat_model_options = _build_chat_model_catalog(
+                user_id=user_id,
+                settings=settings,
+                user_settings_dict=user_settings_dict,
+                user_groups_raw=user_groups_raw,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to load chat model options: {e}")
+
+        initial_chat_model_selection = _build_initial_chat_model_selection(
+            chat_model_options=chat_model_options,
+            preferred_model_id=user_settings_dict.get('preferredModelId'),
+            preferred_model_deployment=user_settings_dict.get('preferredModelDeployment'),
+        )
+
+        chat_prompt_options = []
+        try:
+            chat_prompt_options = _build_chat_prompt_catalog(
+                user_id=user_id,
+                settings=settings,
+                user_groups_raw=user_groups_raw,
+                user_visible_public_workspaces=user_visible_public_workspaces,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to load chat prompt options: {e}")
+
         return render_template(
             'chats.html',
             settings=public_settings,
@@ -77,10 +390,16 @@ def register_route_frontend_chats(app):
             enable_document_classification=enable_document_classification,
             document_classification_categories=categories_list,
             enable_extract_meta_data=enable_extract_meta_data,
+            enable_multi_model_endpoints=enable_multi_model_endpoints,
+            multi_endpoint_models=multi_endpoint_models,
             user_id=user_id,
             user_display_name=user_display_name,
             user_groups=user_groups_simple,
             user_visible_public_workspaces=user_visible_public_workspaces,
+            chat_prompt_options=chat_prompt_options,
+            chat_agent_options=chat_agent_options,
+            chat_model_options=chat_model_options,
+            initial_chat_model_selection=initial_chat_model_selection,
         )
     
     @app.route('/upload', methods=['POST'])
@@ -237,8 +556,33 @@ def register_route_frontend_chats(app):
                 # Handle XML, YAML, and LOG files as text for inline chat
                 extracted_content  = extract_text_file(temp_file_path)
             elif file_ext_nodot in TABULAR_EXTENSIONS:
-                extracted_content = extract_table_file(temp_file_path, file_ext)
                 is_table = True
+
+                # Upload tabular file to blob storage for tabular processing plugin access
+                if settings.get('enable_enhanced_citations', False):
+                    try:
+                        blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+                        if blob_service_client:
+                            blob_path = f"{user_id}/{conversation_id}/{filename}"
+                            blob_client = blob_service_client.get_blob_client(
+                                container=storage_account_personal_chat_container_name,
+                                blob=blob_path
+                            )
+                            metadata = {
+                                "conversation_id": str(conversation_id),
+                                "user_id": str(user_id)
+                            }
+                            with open(temp_file_path, "rb") as blob_f:
+                                blob_client.upload_blob(blob_f, overwrite=True, metadata=metadata)
+                            log_event(f"Uploaded chat tabular file to blob storage: {blob_path}")
+                    except Exception as blob_err:
+                        log_event(
+                            f"Warning: Failed to upload chat tabular file to blob storage: {blob_err}",
+                            level=logging.WARNING
+                        )
+                else:
+                    # Only extract content for Cosmos storage when enhanced citations is disabled
+                    extracted_content = extract_table_file(temp_file_path, file_ext)
             else:
                 return jsonify({'error': 'Unsupported file type'}), 400
 
@@ -277,7 +621,7 @@ def register_route_frontend_chats(app):
                         last_msgs = list(cosmos_messages_container.query_items(query=last_msg_query, partition_key=conversation_id))
                         if last_msgs:
                             previous_thread_id = last_msgs[0].get('thread_id')
-                    except:
+                    except Exception as ex:
                         pass
 
                     current_thread_id = str(uuid.uuid4())
@@ -345,7 +689,7 @@ def register_route_frontend_chats(app):
                         last_msgs = list(cosmos_messages_container.query_items(query=last_msg_query, partition_key=conversation_id))
                         if last_msgs:
                             previous_thread_id = last_msgs[0].get('thread_id')
-                    except:
+                    except Exception as ex:
                         pass
 
                     current_thread_id = str(uuid.uuid4())
@@ -390,30 +734,55 @@ def register_route_frontend_chats(app):
                     last_msgs = list(cosmos_messages_container.query_items(query=last_msg_query, partition_key=conversation_id))
                     if last_msgs:
                         previous_thread_id = last_msgs[0].get('thread_id')
-                except:
+                except Exception as ex:
                     pass
 
                 current_thread_id = str(uuid.uuid4())
                 
-                file_message = {
-                    'id': file_message_id,
-                    'conversation_id': conversation_id,
-                    'role': 'file',
-                    'filename': filename,
-                    'file_content': extracted_content,
-                    'is_table': is_table,
-                    'timestamp': datetime.utcnow().isoformat(),
-                    'model_deployment_name': None,
-                    'metadata': {
-                        'thread_info': {
-                            'thread_id': current_thread_id,
-                            'previous_thread_id': previous_thread_id,
-                            'active_thread': True,
-                            'thread_attempt': 1
+                # When enhanced citations is enabled and file is tabular, store a lightweight
+                # reference without file_content to avoid Cosmos DB size limits.
+                # The tabular data lives in blob storage and is served from there.
+                if is_table and settings.get('enable_enhanced_citations', False):
+                    file_message = {
+                        'id': file_message_id,
+                        'conversation_id': conversation_id,
+                        'role': 'file',
+                        'filename': filename,
+                        'is_table': is_table,
+                        'file_content_source': 'blob',
+                        'blob_container': storage_account_personal_chat_container_name,
+                        'blob_path': f"{user_id}/{conversation_id}/{filename}",
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'model_deployment_name': None,
+                        'metadata': {
+                            'thread_info': {
+                                'thread_id': current_thread_id,
+                                'previous_thread_id': previous_thread_id,
+                                'active_thread': True,
+                                'thread_attempt': 1
+                            }
                         }
                     }
-                }
-                
+                else:
+                    file_message = {
+                        'id': file_message_id,
+                        'conversation_id': conversation_id,
+                        'role': 'file',
+                        'filename': filename,
+                        'file_content': extracted_content,
+                        'is_table': is_table,
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'model_deployment_name': None,
+                        'metadata': {
+                            'thread_info': {
+                                'thread_id': current_thread_id,
+                                'previous_thread_id': previous_thread_id,
+                                'active_thread': True,
+                                'thread_attempt': 1
+                            }
+                        }
+                    }
+
                 # Add vision analysis if available
                 if vision_analysis:
                     file_message['vision_analysis'] = vision_analysis

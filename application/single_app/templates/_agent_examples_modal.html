@@ -92,7 +92,7 @@
         <div class="mb-3" id="agent-example-details-actions"></div>
         <div class="mb-3">
           <label class="fw-semibold text-muted small">Instructions</label>
-          <pre class="bg-dark text-white rounded p-3" id="agent-example-details-instructions"></pre>
+          <div class="border rounded p-3 rendered-markdown" id="agent-example-details-instructions" style="max-height: 400px; overflow-y: auto; font-size: 0.9rem;"></div>
         </div>
         <div class="mb-3 d-none" id="agent-example-details-settings-wrapper">
           <label class="fw-semibold text-muted small">Additional Settings</label>
@@ -427,7 +427,12 @@
                 detailDescription.textContent = template.description || template.helper_text || 'No description provided.';
               }
               if (detailInstructions) {
-                detailInstructions.textContent = template.instructions || '';
+                const rawInstructions = template.instructions || '';
+                if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined' && rawInstructions) {
+                  detailInstructions.innerHTML = DOMPurify.sanitize(marked.parse(rawInstructions));
+                } else {
+                  detailInstructions.textContent = rawInstructions;
+                }
               }
               if (detailSettingsWrapper && detailSettings) {
                 if (template.additional_settings) {

@@ -4,6 +4,10 @@ from config import *
 from functions_authentication import *
 from functions_debug import debug_print
 from functions_chat import sort_messages_by_thread
+from functions_message_artifacts import (
+    build_message_artifact_payload_map,
+    filter_assistant_artifact_items,
+)
 from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_frontend_conversations(app):
@@ -53,6 +57,7 @@ def register_route_frontend_conversations(app):
             query=message_query,
             partition_key=conversation_id
         ))
+        messages = filter_assistant_artifact_items(messages)
         return render_template('chat.html', conversation_id=conversation_id, messages=messages)
     
     @app.route('/conversation/<conversation_id>/messages', methods=['GET'])
@@ -78,6 +83,7 @@ def register_route_frontend_conversations(app):
             query=msg_query,
             partition_key=conversation_id
         ))
+        all_items = filter_assistant_artifact_items(all_items)
 
         debug_print(f"Frontend endpoint - Query returned {len(all_items)} total items (before filtering)")
         
@@ -189,6 +195,42 @@ def register_route_frontend_conversations(app):
                 del m['file_content']
 
         return jsonify({'messages': messages})
+
+    @app.route('/api/conversation/<conversation_id>/agent-citation/<artifact_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def get_agent_citation_artifact(conversation_id, artifact_id):
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        try:
+            conversation = cosmos_conversations_container.read_item(
+                item=conversation_id,
+                partition_key=conversation_id,
+            )
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Conversation not found'}), 404
+
+        if conversation.get('user_id') != user_id:
+            return jsonify({'error': 'Unauthorized access to conversation'}), 403
+
+        conversation_messages = list(cosmos_messages_container.query_items(
+            query="SELECT * FROM c WHERE c.conversation_id = @conversation_id",
+            parameters=[{'name': '@conversation_id', 'value': conversation_id}],
+            partition_key=conversation_id,
+        ))
+        artifact_payload_map = build_message_artifact_payload_map(conversation_messages)
+        artifact_payload = artifact_payload_map.get(str(artifact_id or ''))
+        if not isinstance(artifact_payload, dict):
+            return jsonify({'error': 'Agent citation artifact not found'}), 404
+
+        citation = artifact_payload.get('citation')
+        if citation is None:
+            return jsonify({'error': 'Agent citation payload not found'}), 404
+
+        return jsonify({'citation': citation})
 
     @app.route('/api/message/<message_id>/metadata', methods=['GET'])
     @swagger_route(security=get_auth_security())

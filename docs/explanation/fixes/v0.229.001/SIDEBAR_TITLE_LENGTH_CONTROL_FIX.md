@@ -19,13 +19,15 @@ The sidebar navigation template (`_sidebar_nav.html`) did not include any logic 
 ### Code Changes Summary
 
 1. **Enhanced Title Elements**: Added data attributes to track title content and logo state
+   {% raw %}
    ```html
-   <span id="sidebar-app-title" class="fw-bold" 
-         data-title="{{ app_settings.app_title }}" 
+   <span id="sidebar-app-title" class="fw-bold"
+         data-title="{{ app_settings.app_title }}"
          data-show-logo="{{ app_settings.show_logo }}">
      {{ app_settings.app_title }}
    </span>
    ```
+   {% endraw %}
 
 2. **JavaScript Logic**: Implemented character length validation
    ```javascript

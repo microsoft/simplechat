@@ -5,6 +5,7 @@ gem "github-pages", group: :jekyll_plugins
 
 # Ruby 3+ compatibility
 gem "webrick", "~> 1.8"
+gem "json", ">= 2.19.2"
 
 # Jekyll plugins for enhanced functionality
 group :jekyll_plugins do
