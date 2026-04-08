@@ -8,9 +8,9 @@ This test ensures the group workspace delete-choice modal is rendered as
 standalone page markup and is not injected through the dynamic status alert.
 """
 
-from pathlib import Path
 import re
 import sys
+from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
