@@ -8,7 +8,7 @@ category: Explanation
 
 This guide explains the recommended local developer workflow for Simple Chat.
 
-Current documentation version: 0.240.002
+Current documentation version: 0.241.002
 
 ## VS Code Python 3.12 Setup
 
