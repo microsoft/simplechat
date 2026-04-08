@@ -13,6 +13,8 @@ from datetime import datetime, timedelta, timezone
 from admin_settings_int_utils import safe_int_with_source
 from support_menu_config import (
     get_support_latest_feature_catalog,
+    get_support_latest_feature_release_groups,
+    get_support_latest_feature_release_groups_for_settings,
     has_visible_support_latest_features,
     normalize_support_latest_features_visibility,
 )
@@ -123,6 +125,8 @@ def register_route_frontend_admin_settings(app):
             settings['support_feedback_recipient_email'] = ''
         if 'enable_support_latest_features' not in settings:
             settings['enable_support_latest_features'] = True
+        if 'enable_support_latest_feature_documentation_links' not in settings:
+            settings['enable_support_latest_feature_documentation_links'] = False
         settings['support_latest_features_visibility'] = normalize_support_latest_features_visibility(
             settings.get('support_latest_features_visibility', {})
         )
@@ -368,6 +372,8 @@ def register_route_frontend_admin_settings(app):
                 latest_version=latest_version,
                 download_url=download_url,
                 support_latest_feature_catalog=get_support_latest_feature_catalog(),
+                support_latest_feature_release_groups=get_support_latest_feature_release_groups(),
+                support_latest_feature_release_groups_preview=get_support_latest_feature_release_groups_for_settings(settings),
                 chunk_size_defaults=get_chunk_size_defaults(),
                 chunk_size_settings=settings.get('chunk_size', {}),
                 chunk_size_cap=get_chunk_size_cap(settings),
@@ -566,6 +572,9 @@ def register_route_frontend_admin_settings(app):
                 enable_support_send_feedback = False
 
             enable_support_latest_features = form_data.get('enable_support_latest_features') == 'on'
+            enable_support_latest_feature_documentation_links = (
+                form_data.get('enable_support_latest_feature_documentation_links') == 'on'
+            )
             support_latest_features_visibility = {}
             for feature in get_support_latest_feature_catalog():
                 field_name = f"support_latest_feature_{feature['id']}"
@@ -1210,6 +1219,7 @@ def register_route_frontend_admin_settings(app):
                 'enable_support_send_feedback': enable_support_send_feedback,
                 'support_feedback_recipient_email': support_feedback_recipient_email,
                 'enable_support_latest_features': enable_support_latest_features,
+                'enable_support_latest_feature_documentation_links': enable_support_latest_feature_documentation_links,
                 'support_latest_features_visibility': support_latest_features_visibility,
 
                 # Enhanced Citations

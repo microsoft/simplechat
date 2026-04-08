@@ -160,6 +160,34 @@
     padding-top: 0.9rem;
   }
 
+  .support-feature-release-panel {
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 1rem;
+    margin-top: 1.5rem;
+    padding: 1rem 1rem 1.1rem;
+  }
+
+  .support-feature-release-heading {
+    align-items: center;
+    display: flex;
+    gap: 1rem;
+    justify-content: space-between;
+  }
+
+  .support-feature-release-toggle {
+    flex-shrink: 0;
+  }
+
+  .support-feature-release-version {
+    color: #6c757d;
+    font-size: 0.9rem;
+    margin-top: 0.25rem;
+  }
+
+  .support-feature-release-body {
+    margin-top: 1rem;
+  }
+
   .support-feature-icon {
     width: 2.5rem;
     height: 2.5rem;
@@ -258,10 +286,124 @@
   [data-bs-theme="dark"] .support-feature-passive-note {
     color: rgba(226, 232, 240, 0.8);
   }
+
+  [data-bs-theme="dark"] .support-feature-release-panel {
+    border-color: rgba(148, 163, 184, 0.18);
+  }
+
+  @media (max-width: 767.98px) {
+    .support-feature-release-heading {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .support-feature-release-toggle {
+      width: 100%;
+    }
+  }
 </style>
 {% endblock %}
 
 {% block content %}
+{% macro render_support_feature_card(feature) %}
+<div class="col-12">
+  <div class="card support-feature-card shadow-sm h-100">
+    <div class="card-body p-4">
+      <div class="d-flex flex-column flex-xl-row gap-4 align-items-start">
+        {% if feature.images %}
+        <div class="support-feature-gallery">
+          {% for image in feature.images %}
+          <button
+            type="button"
+            class="support-feature-thumbnail-trigger"
+            data-latest-feature-image-src="{{ url_for('static', filename=image.path) }}"
+            data-latest-feature-image-title="{{ image.title }}"
+            data-latest-feature-image-caption="{{ image.caption }}"
+            aria-label="View {{ image.title }} image"
+          >
+            <span class="support-feature-thumbnail-card">
+              <img class="support-feature-media" src="{{ url_for('static', filename=image.path) }}" alt="{{ image.alt }}" />
+              <span class="support-feature-thumbnail-title">{{ image.label }}</span>
+              <span class="support-feature-thumbnail-meta">Click to enlarge</span>
+            </span>
+          </button>
+          {% endfor %}
+        </div>
+        {% elif feature.image %}
+        <button
+          type="button"
+          class="support-feature-thumbnail-trigger"
+          data-latest-feature-image-src="{{ url_for('static', filename=feature.image) }}"
+          data-latest-feature-image-title="{{ feature.title }}"
+          data-latest-feature-image-caption="{{ feature.summary }}"
+          aria-label="View {{ feature.title }} image"
+        >
+          <span class="support-feature-thumbnail-card">
+            <img class="support-feature-media" src="{{ url_for('static', filename=feature.image) }}" alt="{{ feature.image_alt }}" />
+            <span class="support-feature-thumbnail-title">{{ feature.title }}</span>
+            <span class="support-feature-thumbnail-meta">Click to enlarge</span>
+          </span>
+        </button>
+        {% endif %}
+        <div class="flex-grow-1 support-feature-copy-block">
+          <div class="d-flex align-items-center gap-3 mb-3">
+            <span class="support-feature-icon">
+              <i class="bi {{ feature.icon }}"></i>
+            </span>
+            <div>
+              <h4 class="mb-1">{{ feature.title }}</h4>
+              <p class="text-muted mb-0">{{ feature.summary }}</p>
+            </div>
+          </div>
+          <p class="mb-0">{{ feature.details }}</p>
+
+          <div class="support-feature-sections">
+            <div class="support-feature-callout">
+              <div class="support-feature-section-title">Why It Matters</div>
+              <p class="mb-0">{{ feature.why }}</p>
+            </div>
+
+            {% if feature.guidance %}
+            <div>
+              <div class="support-feature-section-title">How To Try It</div>
+              <ul class="support-feature-guidance-list">
+                {% for tip in feature.guidance %}
+                <li>{{ tip }}</li>
+                {% endfor %}
+              </ul>
+            </div>
+            {% endif %}
+
+            {% if feature.actions %}
+            <div>
+              <div class="support-feature-section-title">Open The Right Page</div>
+              <div class="support-feature-action-grid">
+                {% for action in feature.actions %}
+                <a
+                  class="support-feature-action-card"
+                  href="{% if action.href %}{{ action.href }}{% else %}{{ url_for(action.endpoint) }}{% if action.fragment %}#{{ action.fragment }}{% endif %}{% endif %}"
+                  {% if action.is_external %}target="_blank" rel="noopener noreferrer"{% endif %}
+                >
+                  <span class="support-feature-action-label"><i class="bi {{ action.icon }} me-2"></i>{{ action.label }}</span>
+                  <span class="support-feature-action-description">{{ action.description }}</span>
+                </a>
+                {% endfor %}
+              </div>
+            </div>
+            {% if feature.id == 'guided_tutorials' %}
+            <p class="support-feature-passive-note mb-0">Guided tutorial buttons are shown by default. If you want them out of the way after onboarding, use the profile shortcut above to hide or restore them for your own account.</p>
+            {% endif %}
+            {% else %}
+            <p class="support-feature-passive-note mb-0">{{ feature.passive_note or 'This is mostly a behind-the-scenes improvement managed by your admins. You will usually notice it through a smoother experience rather than a new user control.' }}</p>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endmacro %}
+
 <div class="container py-4">
   <div class="d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-3 mb-4">
     <div>
@@ -271,106 +413,45 @@
     <span class="badge bg-warning text-dark text-uppercase align-self-start align-self-lg-center">New</span>
   </div>
 
+  {% if support_latest_features or support_previous_release_feature_groups %}
   {% if support_latest_features %}
   <div class="row g-3">
     {% for feature in support_latest_features %}
-    <div class="col-12">
-      <div class="card support-feature-card shadow-sm h-100">
-        <div class="card-body p-4">
-          <div class="d-flex flex-column flex-xl-row gap-4 align-items-start">
-            {% if feature.images %}
-            <div class="support-feature-gallery">
-              {% for image in feature.images %}
-              <button
-                type="button"
-                class="support-feature-thumbnail-trigger"
-                data-latest-feature-image-src="{{ url_for('static', filename=image.path) }}"
-                data-latest-feature-image-title="{{ image.title }}"
-                data-latest-feature-image-caption="{{ image.caption }}"
-                aria-label="View {{ image.title }} image"
-              >
-                <span class="support-feature-thumbnail-card">
-                  <img class="support-feature-media" src="{{ url_for('static', filename=image.path) }}" alt="{{ image.alt }}" />
-                  <span class="support-feature-thumbnail-title">{{ image.label }}</span>
-                  <span class="support-feature-thumbnail-meta">Click to enlarge</span>
-                </span>
-              </button>
-              {% endfor %}
-            </div>
-            {% elif feature.image %}
-            <button
-              type="button"
-              class="support-feature-thumbnail-trigger"
-              data-latest-feature-image-src="{{ url_for('static', filename=feature.image) }}"
-              data-latest-feature-image-title="{{ feature.title }}"
-              data-latest-feature-image-caption="{{ feature.summary }}"
-              aria-label="View {{ feature.title }} image"
-            >
-              <span class="support-feature-thumbnail-card">
-                <img class="support-feature-media" src="{{ url_for('static', filename=feature.image) }}" alt="{{ feature.image_alt }}" />
-                <span class="support-feature-thumbnail-title">{{ feature.title }}</span>
-                <span class="support-feature-thumbnail-meta">Click to enlarge</span>
-              </span>
-            </button>
-            {% endif %}
-            <div class="flex-grow-1 support-feature-copy-block">
-              <div class="d-flex align-items-center gap-3 mb-3">
-                <span class="support-feature-icon">
-                  <i class="bi {{ feature.icon }}"></i>
-                </span>
-                <div>
-                  <h4 class="mb-1">{{ feature.title }}</h4>
-                  <p class="text-muted mb-0">{{ feature.summary }}</p>
-                </div>
-              </div>
-              <p class="mb-0">{{ feature.details }}</p>
-
-              <div class="support-feature-sections">
-                <div class="support-feature-callout">
-                  <div class="support-feature-section-title">Why It Matters</div>
-                  <p class="mb-0">{{ feature.why }}</p>
-                </div>
-
-                {% if feature.guidance %}
-                <div>
-                  <div class="support-feature-section-title">How To Try It</div>
-                  <ul class="support-feature-guidance-list">
-                    {% for tip in feature.guidance %}
-                    <li>{{ tip }}</li>
-                    {% endfor %}
-                  </ul>
-                </div>
-                {% endif %}
-
-                {% if feature.actions %}
-                <div>
-                  <div class="support-feature-section-title">Open The Right Page</div>
-                  <div class="support-feature-action-grid">
-                    {% for action in feature.actions %}
-                    <a
-                      class="support-feature-action-card"
-                      href="{{ url_for(action.endpoint) }}{% if action.fragment %}#{{ action.fragment }}{% endif %}"
-                    >
-                      <span class="support-feature-action-label"><i class="bi {{ action.icon }} me-2"></i>{{ action.label }}</span>
-                      <span class="support-feature-action-description">{{ action.description }}</span>
-                    </a>
-                    {% endfor %}
-                  </div>
-                </div>
-                {% if feature.id == 'guided_tutorials' %}
-                <p class="support-feature-passive-note mb-0">Guided tutorial buttons are shown by default. If you want them out of the way after onboarding, use the profile shortcut above to hide or restore them for your own account.</p>
-                {% endif %}
-                {% else %}
-                <p class="support-feature-passive-note mb-0">This is mostly a behind-the-scenes improvement managed by your admins. You will usually notice it through a smoother experience rather than a new user control.</p>
-                {% endif %}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+    {{ render_support_feature_card(feature) }}
     {% endfor %}
   </div>
+  {% endif %}
+
+  {% for release_group in support_previous_release_feature_groups %}
+  <section class="support-feature-release-panel" aria-labelledby="{{ release_group.collapse_id }}Heading">
+    <div class="support-feature-release-heading">
+      <div>
+        <h3 class="h5 mb-1" id="{{ release_group.collapse_id }}Heading">{{ release_group.label }}</h3>
+        <p class="text-muted mb-0">{{ release_group.description }}</p>
+        {% if release_group.release_version %}
+        <div class="support-feature-release-version">Based on the v{{ release_group.release_version }} release.</div>
+        {% endif %}
+      </div>
+      <button
+        type="button"
+        class="btn btn-outline-secondary support-feature-release-toggle"
+        data-bs-toggle="collapse"
+        data-bs-target="#{{ release_group.collapse_id }}"
+        aria-expanded="false"
+        aria-controls="{{ release_group.collapse_id }}"
+      >
+        Show {{ release_group.label }}
+      </button>
+    </div>
+    <div class="collapse support-feature-release-body" id="{{ release_group.collapse_id }}">
+      <div class="row g-3">
+        {% for feature in release_group.features %}
+        {{ render_support_feature_card(feature) }}
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+  {% endfor %}
   {% else %}
   <div class="alert alert-info" role="alert">
     Your admins have not shared any Latest Features announcements right now.

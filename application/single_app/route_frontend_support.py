@@ -4,7 +4,10 @@ from config import *
 from functions_authentication import *
 from functions_settings import *
 from swagger_wrapper import swagger_route, get_auth_security
-from support_menu_config import get_visible_support_latest_features
+from support_menu_config import (
+    get_visible_support_latest_feature_groups,
+    get_visible_support_latest_features,
+)
 
 
 def _support_menu_access_allowed():
@@ -30,9 +33,21 @@ def register_route_frontend_support(app):
             return 'Not Found', 404
 
         visible_features = get_visible_support_latest_features(settings)
+        visible_feature_groups = get_visible_support_latest_feature_groups(settings)
+        current_release_features = []
+        previous_release_feature_groups = []
+
+        for feature_group in visible_feature_groups:
+            if feature_group.get('id') == 'current_release':
+                current_release_features = feature_group.get('features', [])
+            else:
+                previous_release_feature_groups.append(feature_group)
+
         return render_template(
             'latest_features.html',
-            support_latest_features=visible_features,
+            support_latest_features=current_release_features or visible_features,
+            support_latest_feature_groups=visible_feature_groups,
+            support_previous_release_feature_groups=previous_release_feature_groups,
         )
 
     @app.route('/support/send-feedback')

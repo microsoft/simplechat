@@ -2,8 +2,8 @@
 # test_user_tutorial_visibility_preference.py
 """
 Functional test for user tutorial visibility preference.
-Version: 0.240.068
-Implemented in: 0.240.068
+Version: 0.241.003
+Implemented in: 0.240.068; 0.241.002; 0.241.003
 
 This test ensures that guided tutorial launchers remain visible by default,
 users can manage the preference from the profile page, and the Latest Features
@@ -24,7 +24,7 @@ PROFILE_TEMPLATE_FILE = REPO_ROOT / "application" / "single_app" / "templates" /
 CHAT_TEMPLATE_FILE = REPO_ROOT / "application" / "single_app" / "templates" / "chats.html"
 WORKSPACE_TEMPLATE_FILE = REPO_ROOT / "application" / "single_app" / "templates" / "workspace.html"
 LATEST_FEATURES_TEMPLATE_FILE = REPO_ROOT / "application" / "single_app" / "templates" / "latest_features.html"
-FEATURE_DOC_FILE = REPO_ROOT / "docs" / "explanation" / "features" / "USER_TUTORIAL_VISIBILITY_PREFERENCE.md"
+FEATURE_DOC_FILE = REPO_ROOT / "docs" / "explanation" / "features" / "v0.241.001" / "USER_TUTORIAL_VISIBILITY_PREFERENCE.md"
 
 
 def read_text(path: Path) -> str:
@@ -45,7 +45,7 @@ def test_user_tutorial_visibility_preference() -> bool:
     latest_features_content = read_text(LATEST_FEATURES_TEMPLATE_FILE)
 
     required_config_markers = [
-        'VERSION = "0.240.068"',
+        'VERSION = "0.241.003"',
     ]
     missing_config = [marker for marker in required_config_markers if marker not in config_content]
     assert not missing_config, f"Missing config markers: {missing_config}"

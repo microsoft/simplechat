@@ -16,7 +16,7 @@
   - [Using Deployment Slots (Recommended for Production/Staging)](#using-deployment-slots-recommended-for-productionstaging)
   - [Using Direct Deployment to Production (Simpler, for Dev/Test or Low Impact Changes)](#using-direct-deployment-to-production-simpler-for-devtest-or-low-impact-changes)
   - [Automate via CI/CD](#automate-via-cicd)
-- [Return to Main](../README.md)
+- [Return to Setup Instructions](./setup_instructions.md)
 
 
 > <a href="#simple-chat---manual-setup-instructions" style="text-decoration: none;">Return to top</a>

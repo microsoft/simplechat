@@ -1,8 +1,8 @@
 # test_workspace_family_document_revision_delete_modal.py
 """
 UI test for workspace-family document revision delete modals.
-Version: 0.240.056
-Implemented in: 0.240.056
+Version: 0.241.004
+Implemented in: 0.241.004
 
 This test ensures the personal, group, and public workspace pages use a
 Bootstrap revision delete modal instead of a native browser confirm dialog,
@@ -47,9 +47,12 @@ def _assert_delete_modal(page, page_path, ready_selector, trigger_script, modal_
     assert response.ok, f"Expected {page_path} to load successfully, got HTTP {response.status}."
     expect(page.locator(ready_selector)).to_be_visible()
 
+    modal = page.locator(modal_selector)
+    expect(modal).to_have_count(1)
+    expect(modal).to_be_hidden()
+
     page.evaluate(trigger_script)
 
-    modal = page.locator(modal_selector)
     expect(modal).to_be_visible()
     expect(modal.get_by_role("button", name="Delete Current Version")).to_be_visible()
     expect(modal.get_by_role("button", name="Delete All Versions")).to_be_visible()
