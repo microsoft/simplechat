@@ -8,7 +8,7 @@ category: Explanation
 
 This guide explains the supported production startup patterns for Simple Chat in Azure.
 
-Current documentation version: 0.239.139
+Current documentation version: 0.241.002
 
 ## Default Azure Production Model in This Repo
 
