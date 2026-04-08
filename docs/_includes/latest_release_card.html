@@ -1,0 +1,47 @@
+{% assign feature = include.feature %}
+{% assign accent = feature.accent | default: 'blue' %}
+{% assign badge = include.badge | default: feature.release_label | default: 'Guide' %}
+{% assign primary_image = feature.image %}
+{% assign primary_image_alt = feature.image_alt | default: feature.title %}
+
+{% if primary_image == nil and feature.images and feature.images.size > 0 %}
+  {% assign primary_image = feature.images[0].path %}
+  {% assign primary_image_alt = feature.images[0].alt | default: feature.title %}
+{% endif %}
+
+<article class="latest-release-card latest-release-accent--{{ accent }}">
+  <div class="latest-release-card-shell">
+    <div class="latest-release-card-top">
+      <span class="latest-release-card-icon" aria-hidden="true">
+        <i class="bi {{ feature.icon | default: 'bi-stars' }}"></i>
+      </span>
+      <span class="latest-release-card-badge">{{ badge }}</span>
+    </div>
+
+    {% if primary_image %}
+      <a class="latest-release-card-image" href="{{ feature.url | relative_url }}">
+        <img src="{{ primary_image | relative_url }}" alt="{{ primary_image_alt }}" />
+      </a>
+    {% endif %}
+
+    <h3 class="latest-release-card-title">
+      <a href="{{ feature.url | relative_url }}">{{ feature.title }}</a>
+    </h3>
+
+    <p class="latest-release-card-summary">{{ feature.summary | default: feature.description }}</p>
+
+    {% if feature.why %}
+      <div class="latest-release-card-why">
+        <div class="latest-release-card-why-label">Why It Matters</div>
+        <p class="mb-0">{{ feature.why }}</p>
+      </div>
+    {% endif %}
+
+    <div class="latest-release-card-actions">
+      <a class="btn btn-primary btn-sm" href="{{ feature.url | relative_url }}">{{ feature.cta_label | default: 'Read guide' }}</a>
+      {% if primary_image %}
+        <a class="btn btn-outline-secondary btn-sm" href="{{ primary_image | relative_url }}" target="_blank" rel="noopener">Open image</a>
+      {% endif %}
+    </div>
+  </div>
+</article>

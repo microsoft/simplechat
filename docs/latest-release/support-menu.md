@@ -1,5 +1,5 @@
 ---
-layout: page
+layout: latest-release-feature
 title: "Support Menu"
 description: "How admins can expose Latest Features and Send Feedback in one predictable support surface"
 section: "Latest Release"

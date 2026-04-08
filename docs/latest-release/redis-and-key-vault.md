@@ -1,5 +1,5 @@
 ---
-layout: page
+layout: latest-release-feature
 title: "Redis and Key Vault"
 description: "How cache and secret-storage guidance support more secure and predictable operations"
 section: "Latest Release"

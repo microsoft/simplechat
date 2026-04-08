@@ -101,8 +101,9 @@ Each assistant message footer includes a lightbulb toggle button (when thoughts 
 ## Configuration
 
 ### Admin Settings
-- **Toggle**: `enable_thoughts` (default: `false`)
+- **Toggle**: `enable_thoughts` (default: `true` for new installs and when the setting is missing)
 - **Location**: Admin Settings > Optional Features tab > "Processing Thoughts" section
+- **Default updated in version:** 0.241.004
 - **Effect**: When disabled, no thoughts are recorded and no UI elements are shown
 
 ### Cosmos DB Containers

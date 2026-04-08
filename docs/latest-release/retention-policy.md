@@ -1,5 +1,5 @@
 ---
-layout: page
+layout: latest-release-feature
 title: "Retention Policy"
 description: "How to configure conversation and document retention periods"
 section: "Latest Release"

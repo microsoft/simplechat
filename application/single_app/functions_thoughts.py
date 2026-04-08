@@ -25,7 +25,7 @@ class ThoughtTracker:
         self.user_id = user_id
         self.current_index = 0
         settings = get_settings()
-        self.enabled = settings.get('enable_thoughts', False)
+        self.enabled = settings.get('enable_thoughts', True)
 
     def add_thought(self, step_type, content, detail=None):
         """Write a thought step to Cosmos immediately.
