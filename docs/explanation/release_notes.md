@@ -1,8 +1,33 @@
 <!-- BEGIN release_notes.md BLOCK -->
 
-This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.240.001, and the per-version entries continue immediately after it.
+This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.240.002, and the per-version entries continue immediately after it.
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
+
+### **(v0.241.002)**
+
+#### Bug Fixes
+
+*   **Support Pages Respect Custom Application Titles**
+    *   Fixed user-facing Support copy so Latest Features, Previous Release Features, and Send Feedback no longer fall back to the default `SimpleChat` name in customized deployments.
+    *   Support feedback email drafts now also use the configured application title, keeping the user-facing support flow consistent with branded environments.
+    *   (Ref: `support_menu_config.py`, `support_send_feedback.html`, `route_backend_settings.py`, support application-title personalization)
+
+*   **Streaming Retry and Edit Thought Tracking**
+    *   Fixed retry and edit requests in streaming chat when they fall back to the compatibility bridge and continue through the legacy `/api/chat` path.
+    *   Assistant response tracking is now initialized for both new-message and retry/edit flows before content safety runs, preventing compatibility-mode failures caused by an uninitialized `ThoughtTracker`.
+    *   (Ref: `route_backend_chats.py`, `ThoughtTracker`, `/api/chat/stream`, `/api/chat`, retry/edit compatibility bridge)
+
+*   **Streaming Retry and Edit Multi-Endpoint Model Resolution**
+    *   Fixed streaming retry and edit requests that route through the compatibility bridge so they no longer fail during AI model initialization in multi-endpoint environments.
+    *   The compatibility path now reuses the in-app multi-endpoint GPT resolver and Foundry fallback helpers instead of depending on script-only helper functions that were not available inside the Flask runtime.
+    *   (Ref: `route_backend_chats.py`, `/api/chat/stream`, `/api/chat`, multi-endpoint model resolution, Foundry fallback helpers)
+
+*   **Profile Fact Memory Script Deduplication**
+    *   Fixed a profile-page load failure where duplicate inline Fact Memory and tutorial script blocks could trigger browser parse errors such as `Identifier 'factMemorySearchInput' has already been declared`.
+    *   Removed duplicated profile sections, modal markup, and shadowing helper definitions so Fact Memory, tutorial preferences, and retention settings now initialize from one canonical script path.
+    *   Added source-level and UI regression coverage so duplicate profile blocks and page-load JavaScript errors are caught earlier.
+    *   (Ref: `profile.html`, `test_profile_fact_memory_script_dedup.py`, `test_profile_fact_memory_editor.py`, profile page script initialization)
 
 ### **(v0.241.001)**
 

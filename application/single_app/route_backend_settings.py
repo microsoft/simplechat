@@ -542,7 +542,8 @@ def register_route_backend_settings(app):
 
             user_email = user.get('preferred_username', user.get('email', reporter_email))
             feedback_label = 'Bug Report' if feedback_type == 'bug_report' else 'Feature Request'
-            subject_line = f'[SimpleChat User Support] {feedback_label} - {organization}'
+            application_title = str(settings.get('app_title') or '').strip() or 'Simple Chat'
+            subject_line = f'[{application_title} User Support] {feedback_label} - {organization}'
 
             log_user_support_feedback_email_submission(
                 user_id=user_id,

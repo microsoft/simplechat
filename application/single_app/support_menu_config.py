@@ -7,6 +7,29 @@ from copy import deepcopy
 _SUPPORT_LATEST_FEATURE_DOCS_SETTING_KEY = 'enable_support_latest_feature_documentation_links'
 
 
+def _resolve_support_application_title(settings):
+    """Return the application title used for user-facing support copy."""
+    app_title = str((settings or {}).get('app_title') or '').strip()
+    return app_title or 'Simple Chat'
+
+
+def _apply_support_application_title(value, app_title):
+    """Replace hard-coded product naming in user-facing support metadata."""
+    if isinstance(value, str):
+        return value.replace('{app_title}', app_title).replace('SimpleChat', app_title)
+
+    if isinstance(value, list):
+        return [_apply_support_application_title(item, app_title) for item in value]
+
+    if isinstance(value, dict):
+        return {
+            key: _apply_support_application_title(item, app_title)
+            for key, item in value.items()
+        }
+
+    return value
+
+
 _SUPPORT_LATEST_FEATURE_CATALOG = [
     {
         'id': 'guided_tutorials',
@@ -145,7 +168,7 @@ _SUPPORT_LATEST_FEATURE_CATALOG = [
         'title': 'Tabular Analysis',
         'icon': 'bi-table',
         'summary': 'Spreadsheet and table workflows continue to improve for exploration, filtering, and grounded follow-up questions.',
-        'details': 'Tabular Analysis improves how SimpleChat works with CSV and spreadsheet files for filtering, comparisons, and grounded follow-up questions.',
+        'details': 'Tabular Analysis improves how {app_title} works with CSV and spreadsheet files for filtering, comparisons, and grounded follow-up questions.',
         'why': 'You get the most value after the file is uploaded, because the assistant can reason over the stored rows and columns instead of only whatever is pasted into one message.',
         'guidance': [
             'Upload your CSV or XLSX to Personal Workspace if it is enabled, or add the file directly to Chat when you want a quicker one-off analysis.',
@@ -501,7 +524,7 @@ _SUPPORT_LATEST_FEATURE_CATALOG = [
         'id': 'send_feedback',
         'title': 'Send Feedback',
         'icon': 'bi-envelope-paper',
-        'summary': 'End users can prepare bug reports and feature requests for their SimpleChat admins directly from the Support menu.',
+        'summary': 'End users can prepare bug reports and feature requests for their {app_title} admins directly from the Support menu.',
         'details': 'Send Feedback opens a guided, text-only email draft workflow so you can report issues or request improvements without leaving the app.',
         'why': 'That gives your admins a cleaner starting point for triage than a vague message without context or reproduction details.',
         'guidance': [
@@ -577,7 +600,7 @@ _SUPPORT_PREVIOUS_RELEASE_FEATURE_CATALOG = [
         'icon': 'bi-download',
         'summary': 'Export one or multiple conversations from Chat in JSON or Markdown without carrying internal-only metadata into the downloaded package.',
         'details': 'Conversation Export adds a guided workflow for choosing format, packaging, and download options when you need to reuse or archive chat history outside the app.',
-        'why': 'This matters because users often need to share, archive, or reuse a conversation without copying raw chat text by hand or exposing internal metadata that should stay inside SimpleChat.',
+        'why': 'This matters because users often need to share, archive, or reuse a conversation without copying raw chat text by hand or exposing internal metadata that should stay inside {app_title}.',
         'guidance': [
             'Open an existing conversation from Chat when you want to export content that already has enough context to share.',
             'Choose JSON when you want a machine-readable export and Markdown when you want something easier for people to review directly.',
@@ -975,6 +998,7 @@ def get_visible_support_latest_features(settings):
     normalized_visibility = normalize_support_latest_features_visibility(
         (settings or {}).get('support_latest_features_visibility', {})
     )
+    app_title = _resolve_support_application_title(settings)
     visible_items = []
 
     for item in _SUPPORT_LATEST_FEATURE_CATALOG:
@@ -984,6 +1008,7 @@ def get_visible_support_latest_features(settings):
                 action for action in visible_item.get('actions', [])
                 if _action_enabled(action, settings)
             ]
+            visible_item = _apply_support_application_title(visible_item, app_title)
             _normalize_feature_media(visible_item)
             visible_items.append(visible_item)
 
@@ -995,6 +1020,7 @@ def get_visible_support_latest_feature_groups(settings):
     normalized_visibility = normalize_support_latest_features_visibility(
         (settings or {}).get('support_latest_features_visibility', {})
     )
+    app_title = _resolve_support_application_title(settings)
     visible_groups = []
 
     for feature_group in _SUPPORT_LATEST_FEATURE_RELEASE_GROUPS:
@@ -1008,12 +1034,14 @@ def get_visible_support_latest_feature_groups(settings):
                 action for action in visible_feature.get('actions', [])
                 if _action_enabled(action, settings)
             ]
+            visible_feature = _apply_support_application_title(visible_feature, app_title)
             _normalize_feature_media(visible_feature)
             visible_features.append(visible_feature)
 
         if visible_features:
             visible_group = deepcopy(feature_group)
             visible_group['features'] = visible_features
+            visible_group = _apply_support_application_title(visible_group, app_title)
             visible_groups.append(visible_group)
 
     return visible_groups
@@ -1022,6 +1050,7 @@ def get_visible_support_latest_feature_groups(settings):
 def get_support_latest_feature_release_groups_for_settings(settings):
     """Return grouped latest-feature metadata with actions filtered for the current settings."""
     filtered_groups = deepcopy(_SUPPORT_LATEST_FEATURE_RELEASE_GROUPS)
+    app_title = _resolve_support_application_title(settings)
 
     for feature_group in filtered_groups:
         for feature in feature_group.get('features', []):
@@ -1029,7 +1058,10 @@ def get_support_latest_feature_release_groups_for_settings(settings):
                 action for action in feature.get('actions', [])
                 if _action_enabled(action, settings)
             ]
+            feature.update(_apply_support_application_title(feature, app_title))
             _normalize_feature_media(feature)
+
+        feature_group.update(_apply_support_application_title(feature_group, app_title))
 
     return filtered_groups
 
