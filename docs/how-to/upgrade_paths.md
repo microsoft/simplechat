@@ -134,8 +134,9 @@ This is an **advanced operational option**, not the default repo deployment work
 ### Container Upgrade References
 
 - [AZD deployment guide](../reference/deploy/azd-cli_deploy.md)
-- [Bicep deployment guide](../../deployers/bicep/README.md)
-- [Terraform deployment guide](../../deployers/terraform/ReadMe.md)
+- [Azure CLI with PowerShell deployment guide](../reference/deploy/azurecli_powershell_deploy.md)
+- [Bicep deployment guide](../reference/deploy/bicep_deploy.md)
+- [Terraform deployment guide](../reference/deploy/terraform_deploy.md)
 
 ## Summary
 

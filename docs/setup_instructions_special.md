@@ -4,7 +4,7 @@
 - [How to use Managed Identity](#how-to-use-managed-identity)
 - [Enterprise Networking](#enterprise-networking)
 
-- [Return to Main](../README.md)
+- [Return to Setup Instructions](./setup_instructions.md)
 
 
 ## Azure Government Configuration
@@ -31,7 +31,7 @@ To run the application in Azure Government cloud:
 
 ## How to use Managed Identity
 
-> <a href="#simple-chat---setup-instructions" style="text-decoration: none;">Return to top</a>
+> <a href="#simple-chat---special-setup-instructions" style="text-decoration: none;">Return to top</a>
 
 Using Managed Identity allows the App Service to authenticate to other Azure resources securely without needing to store secrets (like API keys or connection strings) in Application Settings.
 

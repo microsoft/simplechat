@@ -1693,20 +1693,56 @@
                         <div id="support_latest_features_settings" {% if not settings.enable_support_latest_features %}style="display: none;"{% endif %}>
                             <h6 class="mt-3">User-Facing Latest Features</h6>
                             <p class="text-muted small">Choose which recent features are shared on the user Latest Features page. Deployment and Redis start unchecked because they are mainly admin-facing rollout and infrastructure topics.</p>
-                            <div class="row g-2">
-                                {% for feature in support_latest_feature_catalog %}
-                                <div class="col-md-6">
-                                    <div class="form-check border rounded p-3 h-100">
-                                        <input class="form-check-input" type="checkbox" id="support_latest_feature_{{ feature.id }}" name="support_latest_feature_{{ feature.id }}"
-                                            {% if settings.support_latest_features_visibility.get(feature.id, true) %}checked{% endif %}>
-                                        <label class="form-check-label ms-2" for="support_latest_feature_{{ feature.id }}">
-                                            <span class="fw-semibold d-block">{{ feature.title }}</span>
-                                            <span class="text-muted small">{{ feature.summary }}</span>
-                                        </label>
+                            <div class="form-check form-switch mb-3">
+                                <input class="form-check-input" type="checkbox" id="enable_support_latest_feature_documentation_links" name="enable_support_latest_feature_documentation_links"
+                                    {% if settings.enable_support_latest_feature_documentation_links %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="enable_support_latest_feature_documentation_links">
+                                    Show Simple Chat Documentation Guide Links
+                                </label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Show public documentation guide buttons alongside the in-app Latest Features shortcuts. This is disabled by default."></i>
+                                <small class="form-text text-muted d-block mt-1">When enabled, user-facing Latest Features cards can show public guide buttons in addition to the direct in-app shortcuts.</small>
+                            </div>
+                            {% for release_group in support_latest_feature_release_groups %}
+                            {% set checklist_collapse_id = release_group.collapse_id ~ 'Checklist' %}
+                            <div class="card border-0 bg-body-tertiary mb-3">
+                                <div class="card-body p-3">
+                                    <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-3">
+                                        <div>
+                                            <h6 class="mb-1">{{ release_group.label }}{% if release_group.release_version %}<span class="badge bg-light text-dark ms-2">v{{ release_group.release_version }}</span>{% endif %}</h6>
+                                            <p class="text-muted small mb-0">{{ release_group.description }}</p>
+                                        </div>
+                                        {% if not release_group.default_expanded %}
+                                        <button
+                                            type="button"
+                                            class="btn btn-sm btn-outline-secondary"
+                                            data-bs-toggle="collapse"
+                                            data-bs-target="#{{ checklist_collapse_id }}"
+                                            aria-expanded="false"
+                                            aria-controls="{{ checklist_collapse_id }}"
+                                        >
+                                            Show {{ release_group.label }}
+                                        </button>
+                                        {% endif %}
+                                    </div>
+                                    <div {% if not release_group.default_expanded %}class="collapse mt-3" id="{{ checklist_collapse_id }}"{% else %}class="mt-3"{% endif %}>
+                                        <div class="row g-2">
+                                            {% for feature in release_group.features %}
+                                            <div class="col-md-6">
+                                                <div class="form-check border rounded p-3 h-100">
+                                                    <input class="form-check-input" type="checkbox" id="support_latest_feature_{{ feature.id }}" name="support_latest_feature_{{ feature.id }}"
+                                                        {% if settings.support_latest_features_visibility.get(feature.id, true) %}checked{% endif %}>
+                                                    <label class="form-check-label ms-2" for="support_latest_feature_{{ feature.id }}">
+                                                        <span class="fw-semibold d-block">{{ feature.title }}</span>
+                                                        <span class="text-muted small">{{ feature.summary }}</span>
+                                                    </label>
+                                                </div>
+                                            </div>
+                                            {% endfor %}
+                                        </div>
                                     </div>
                                 </div>
-                                {% endfor %}
                             </div>
+                            {% endfor %}
                         </div>
                     </div>
                 </div>
@@ -2847,6 +2883,93 @@
                         </div>
                     </div>
                 </div>
+
+                {% for release_group in support_latest_feature_release_groups_preview %}
+                {% if release_group.id == 'previous_release' %}
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-previous-release-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-clock-history me-2"></i>{{ release_group.label }}
+                            </h5>
+                            <p class="text-muted mb-0">{{ release_group.description }}</p>
+                        </div>
+                        <a href="#latestFeaturesPreviousRelease" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesPreviousRelease">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesPreviousRelease">
+                        <div class="card card-body">
+                            <div class="alert alert-secondary mb-3" role="alert">
+                                These were the headline user-facing items in the earlier v{{ release_group.release_version }} release set. Keeping them here gives admins a simple N and N-1 view without mixing older items into the current release list.
+                            </div>
+                            <div class="row g-3">
+                                {% for feature in release_group.features %}
+                                <div class="col-xl-6">
+                                    <div class="border rounded p-3 h-100 bg-body-tertiary">
+                                        <div class="d-flex flex-column gap-3 h-100">
+                                            <div class="d-flex align-items-start justify-content-between gap-3">
+                                                <div>
+                                                    <h6 class="mb-1"><i class="bi {{ feature.icon }} me-2"></i>{{ feature.title }}</h6>
+                                                    <p class="text-muted small mb-0">{{ feature.summary }}</p>
+                                                </div>
+                                                <span class="badge {% if settings.support_latest_features_visibility.get(feature.id, true) %}bg-success{% else %}bg-secondary{% endif %}">
+                                                    {% if settings.support_latest_features_visibility.get(feature.id, true) %}Shared with Users{% else %}Hidden from Users{% endif %}
+                                                </span>
+                                            </div>
+                                            <p class="small mb-0">{{ feature.details }}</p>
+                                            {% if feature.guidance %}
+                                            <ul class="small mb-0">
+                                                {% for tip in feature.guidance %}
+                                                <li>{{ tip }}</li>
+                                                {% endfor %}
+                                            </ul>
+                                            {% endif %}
+                                            {% if feature.images %}
+                                            <div class="latest-feature-gallery">
+                                                {% for image in feature.images %}
+                                                <button
+                                                    type="button"
+                                                    class="latest-feature-thumbnail-trigger"
+                                                    data-latest-feature-image-src="{{ url_for('static', filename=image.path) }}"
+                                                    data-latest-feature-image-title="{{ image.title }}"
+                                                    data-latest-feature-image-caption="{{ image.caption }}"
+                                                >
+                                                    <div class="latest-feature-thumbnail-card h-100">
+                                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename=image.path) }}" alt="{{ image.alt }}">
+                                                        <div class="latest-feature-thumbnail-body">
+                                                            <div class="latest-feature-thumbnail-title">{{ image.label }}</div>
+                                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                                        </div>
+                                                    </div>
+                                                </button>
+                                                {% endfor %}
+                                            </div>
+                                            {% endif %}
+                                            {% if feature.actions %}
+                                            <div class="d-flex flex-wrap gap-2 mt-auto pt-2">
+                                                {% for action in feature.actions %}
+                                                <a
+                                                    class="btn btn-outline-primary btn-sm"
+                                                    href="{% if action.href %}{{ action.href }}{% else %}{{ url_for(action.endpoint) }}{% if action.fragment %}#{{ action.fragment }}{% endif %}{% endif %}"
+                                                    {% if action.is_external %}target="_blank" rel="noopener noreferrer"{% endif %}
+                                                >
+                                                    <i class="bi {{ action.icon }} me-1"></i>{{ action.label }}
+                                                </a>
+                                                {% endfor %}
+                                            </div>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            <p class="text-muted small mb-0 mt-3">Visibility still comes from <strong>General &gt; User-Facing Latest Features</strong>, so admins can keep previous release content available without promoting every item forever.</p>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+                {% endfor %}
             </div>
 
             

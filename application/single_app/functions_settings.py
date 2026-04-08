@@ -15,6 +15,17 @@ from support_menu_config import (
 def is_tabular_processing_enabled(settings):
     """Tabular processing is available whenever enhanced citations is enabled."""
     return bool((settings or {}).get('enable_enhanced_citations', False))
+import copy
+from support_menu_config import (
+    get_default_support_latest_features_visibility,
+    has_visible_support_latest_features,
+    normalize_support_latest_features_visibility,
+)
+
+
+def is_tabular_processing_enabled(settings):
+    """Tabular processing is available whenever enhanced citations is enabled."""
+    return bool((settings or {}).get('enable_enhanced_citations', False))
 
 def get_settings(use_cosmos=False, include_source=False):
     import secrets
@@ -215,6 +226,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_support_send_feedback': True,
         'support_feedback_recipient_email': '',
         'enable_support_latest_features': True,
+        'enable_support_latest_feature_documentation_links': False,
         'support_latest_features_visibility': get_default_support_latest_features_visibility(),
 
         # Enhanced Citations

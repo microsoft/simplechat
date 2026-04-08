@@ -2,8 +2,8 @@
 """
 Functional test for support menu sidebar visibility, access behavior, and
 latest-feature image preview support.
-Version: 0.240.085
-Implemented in: 0.240.061; 0.240.085
+Version: 0.241.002
+Implemented in: 0.240.061; 0.240.085; 0.241.002
 
 This test ensures the Support menu renders for signed-in app users when enabled,
 the sidebar and top-nav templates expose the expected links, and the user-facing
@@ -79,6 +79,7 @@ def test_support_menu_settings_defaults_and_persistence():
 
     route_markers = [
         "get_support_latest_feature_catalog",
+        "get_support_latest_feature_release_groups",
         "normalize_support_latest_features_visibility",
         "enable_support_menu = form_data.get('enable_support_menu') == 'on'",
         "support_menu_name = form_data.get('support_menu_name', 'Support').strip()",
@@ -105,6 +106,26 @@ def test_support_menu_settings_defaults_and_persistence():
         "'id': 'redis_key_vault'",
         "'id': 'send_feedback'",
         "'id': 'support_menu'",
+        "'id': 'conversation_export'",
+        "'id': 'retention_policy'",
+        "'id': 'owner_only_group_agent_management'",
+        "'id': 'enforce_workspace_scope_lock'",
+        "'id': 'document_tag_system'",
+        "'id': 'workspace_folder_view'",
+        "'id': 'multi_workspace_scope_management'",
+        "'id': 'chat_document_and_tag_filtering'",
+        "'label': 'Previous Release Features'",
+        "'release_version': '0.239.001'",
+        "'href': 'https://microsoft.github.io/simplechat/latest-release/export-conversation/'",
+        "'path': 'images/features/conversation_export.png'",
+        "'path': 'images/features/conversation_export_type_option.png'",
+        "'path': 'images/features/retention_policy-personal_profile.png'",
+        "'path': 'images/features/retention_policy-manage_group.png'",
+        "'path': 'images/features/workspace_scope_lock.png'",
+        "'path': 'images/features/workspace_tags.png'",
+        "'path': 'images/features/workspace_grid_view.png'",
+        "'path': 'images/features/workspace_scopes_in_chat.png'",
+        "'path': 'images/features/chat_tags_including_doc_classification.png'",
         "'path': 'images/features/facts_memory_view_profile.png'",
         "'path': 'images/features/fact_memory_management.png'",
         "'path': 'images/features/facts_citation_and_thoughts.png'",
@@ -130,7 +151,9 @@ def test_support_menu_settings_defaults_and_persistence():
         "'fragment': 'workspace-tutorial-launch'",
         "'fragment': 'upload-area'",
         "'requires_settings': ['enable_user_workspace']",
+        'def get_support_latest_feature_release_groups():',
         'def get_visible_support_latest_features(settings):',
+        'def get_visible_support_latest_feature_groups(settings):',
         'def _normalize_feature_media(feature):',
     ]
     missing_config = [marker for marker in config_markers if marker not in config_content]
@@ -157,6 +180,9 @@ def test_support_menu_admin_template_and_js():
         '{{ feature.title }}',
         'Enable Support Menu for End Users',
         'Deployment and Redis start unchecked because they are mainly admin-facing rollout and infrastructure topics.',
+        "release_group.id == 'previous_release'",
+        "release_group.collapse_id ~ 'Checklist'",
+        'Show {{ release_group.label }}',
         '<i class="bi bi-life-preserver me-2"></i>Support Menu',
     ]
     missing_template = [marker for marker in template_markers if marker not in template_content]
@@ -218,6 +244,8 @@ def test_support_menu_navigation_and_routes():
     route_markers = [
         "@app.route('/support/latest-features')",
         "def support_latest_features():",
+        'get_visible_support_latest_feature_groups',
+        'support_previous_release_feature_groups',
         "render_template(",
         "'latest_features.html'",
         "@app.route('/support/send-feedback')",
@@ -263,11 +291,15 @@ def test_support_menu_feedback_backend_and_templates():
     latest_features_markers = [
         'A curated view of recent updates your admins have chosen to share with end users.',
         '{% if support_latest_features %}',
+        'support_previous_release_feature_groups',
         'support-feature-card',
         'support-feature-gallery',
         'support-feature-thumbnail-trigger',
         'support-feature-thumbnail-title',
         'support-feature-callout',
+        'support-feature-release-panel',
+        'support-feature-release-toggle',
+        'support-feature-release-version',
         'support-feature-guidance-list',
         'support-feature-action-grid',
         'support-feature-action-card',
@@ -281,7 +313,11 @@ def test_support_menu_feedback_backend_and_templates():
         'Why It Matters',
         'How To Try It',
         'Open The Right Page',
+        '{% if action.href %}',
+        '{% if action.is_external %}',
         "url_for(action.endpoint)",
+        'release_group.collapse_id',
+        'Show {{ release_group.label }}',
         'latestFeatureImageModal',
         'latestFeatureImageModalImage',
         '{{ feature.title }}',

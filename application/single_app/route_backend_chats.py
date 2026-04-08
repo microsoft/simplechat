@@ -13,7 +13,7 @@ from semantic_kernel_plugins.plugin_invocation_thoughts import (
     register_plugin_invocation_thought_callback,
 )
 from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
-from foundry_agent_runtime import FoundryAgentInvocationError, execute_foundry_agent, resolve_authority
+from foundry_agent_runtime import FoundryAgentInvocationError, execute_foundry_agent, resolve_authority, resolve_authority
 import builtins
 import asyncio, types
 import ast
@@ -7771,7 +7771,10 @@ def register_route_backend_chats(app):
                     final_api_source_refs.insert(insert_idx, 'system:default_prompt')
                     default_system_prompt_inserted = True
 
-            if not original_hybrid_search_enabled:
+            if should_apply_history_grounding_message(
+                original_hybrid_search_enabled,
+                prior_grounded_document_refs,
+            ):
                 history_grounding_message = build_history_grounding_system_message()
                 insert_idx = 0
                 if (
@@ -10214,7 +10217,10 @@ def register_route_backend_chats(app):
                         final_api_source_refs.insert(insert_idx, 'system:default_prompt')
                         default_system_prompt_inserted = True
 
-                if not original_hybrid_search_enabled:
+                if should_apply_history_grounding_message(
+                    original_hybrid_search_enabled,
+                    prior_grounded_document_refs,
+                ):
                     history_grounding_message = build_history_grounding_system_message()
                     insert_idx = 0
                     if (
@@ -11630,6 +11636,14 @@ def build_history_grounding_system_message():
             "prior conversation sources and ask the user to select a workspace or document."
         ),
     }
+
+
+def should_apply_history_grounding_message(
+    original_hybrid_search_enabled,
+    prior_grounded_document_refs,
+):
+    """Apply bounded grounding only when prior grounded docs exist for this conversation."""
+    return (not bool(original_hybrid_search_enabled)) and bool(prior_grounded_document_refs)
 
 
 def build_assistant_history_content_with_citations(message, content):

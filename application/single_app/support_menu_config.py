@@ -4,6 +4,9 @@
 from copy import deepcopy
 
 
+_SUPPORT_LATEST_FEATURE_DOCS_SETTING_KEY = 'enable_support_latest_feature_documentation_links'
+
+
 _SUPPORT_LATEST_FEATURE_CATALOG = [
     {
         'id': 'guided_tutorials',
@@ -567,6 +570,332 @@ _SUPPORT_LATEST_FEATURE_CATALOG = [
     },
 ]
 
+_SUPPORT_PREVIOUS_RELEASE_FEATURE_CATALOG = [
+    {
+        'id': 'conversation_export',
+        'title': 'Conversation Export',
+        'icon': 'bi-download',
+        'summary': 'Export one or multiple conversations from Chat in JSON or Markdown without carrying internal-only metadata into the downloaded package.',
+        'details': 'Conversation Export adds a guided workflow for choosing format, packaging, and download options when you need to reuse or archive chat history outside the app.',
+        'why': 'This matters because users often need to share, archive, or reuse a conversation without copying raw chat text by hand or exposing internal metadata that should stay inside SimpleChat.',
+        'guidance': [
+            'Open an existing conversation from Chat when you want to export content that already has enough context to share.',
+            'Choose JSON when you want a machine-readable export and Markdown when you want something easier for people to review directly.',
+            'Use the packaging options in the export flow when you need a cleaner handoff for reporting or project documentation.',
+        ],
+        'actions': [
+            {
+                'label': 'Open Conversation Export',
+                'description': 'Jump to Chat, open the first available conversation, and launch the export workflow directly.',
+                'href': '/chats?feature_action=conversation_export',
+                'icon': 'bi-box-arrow-in-right',
+            },
+            {
+                'label': 'Read Export Guide',
+                'description': 'Open the public release guide that walks through the conversation export workflow.',
+                'href': 'https://microsoft.github.io/simplechat/latest-release/export-conversation/',
+                'icon': 'bi-box-arrow-up-right',
+                'is_external': True,
+                'requires_settings': [_SUPPORT_LATEST_FEATURE_DOCS_SETTING_KEY],
+            },
+        ],
+        'images': [
+            {
+                'path': 'images/features/conversation_export.png',
+                'alt': 'Conversation export workflow screenshot',
+                'title': 'Conversation Export Workflow',
+                'caption': 'Primary export workflow showing how users can package and download conversation history.',
+                'label': 'Export Workflow',
+            },
+            {
+                'path': 'images/features/conversation_export_type_option.png',
+                'alt': 'Conversation export type option screenshot',
+                'title': 'Conversation Export Format Options',
+                'caption': 'Format selection options for choosing how conversation exports should be generated.',
+                'label': 'Format Options',
+            },
+        ],
+    },
+    {
+        'id': 'retention_policy',
+        'title': 'Retention Policy',
+        'icon': 'bi-hourglass-split',
+        'summary': 'Retention periods for conversations and documents can be configured with presets, organization defaults, or fully disabled automatic cleanup.',
+        'details': 'Retention Policy adds clearer controls for deciding how long conversations and documents should remain available before they are removed automatically.',
+        'why': 'This matters because teams often need predictable cleanup rules for compliance, storage hygiene, or operational consistency instead of manually pruning old content.',
+        'guidance': [
+            'Use the documented presets when you want a consistent retention window without manually calculating dates.',
+            'Choose the organization default when you want shared policy behavior across workspaces instead of one-off overrides.',
+            'Disable automatic deletion only when your environment has another retention process that already handles lifecycle management.',
+        ],
+        'actions': [
+            {
+                'label': 'Open Retention Settings',
+                'description': 'Open your profile page and jump to the retention policy settings section.',
+                'href': '/profile?feature_action=retention_policy#retention-policy-settings',
+                'icon': 'bi-box-arrow-in-right',
+            },
+            {
+                'label': 'Read Retention Guide',
+                'description': 'Open the public release guide for workspace and conversation retention controls.',
+                'href': 'https://microsoft.github.io/simplechat/latest-release/retention-policy/',
+                'icon': 'bi-box-arrow-up-right',
+                'is_external': True,
+                'requires_settings': [_SUPPORT_LATEST_FEATURE_DOCS_SETTING_KEY],
+            },
+        ],
+        'images': [
+            {
+                'path': 'images/features/retention_policy-personal_profile.png',
+                'alt': 'Personal retention policy profile settings screenshot',
+                'title': 'Personal Retention Settings',
+                'caption': 'Profile-based retention settings for personal conversations and documents.',
+                'label': 'Personal Profile Settings',
+            },
+            {
+                'path': 'images/features/retention_policy-manage_group.png',
+                'alt': 'Group retention policy management screenshot',
+                'title': 'Group Retention Management',
+                'caption': 'Group-level retention policy management for shared workspace content.',
+                'label': 'Manage Group Retention',
+            },
+        ],
+    },
+    {
+        'id': 'owner_only_group_agent_management',
+        'title': 'Owner-Only Group Agent Management',
+        'icon': 'bi-shield-lock',
+        'summary': 'Admins can restrict group agent and action management to the Owner role so other group roles stay read-only.',
+        'details': 'Owner-Only Group Agent Management adds a stricter governance option for teams that want group agents and actions maintained only by the group owner.',
+        'why': 'This matters because collaborative workspaces often need a smaller set of people with change authority, especially when group agents and connected actions affect many users at once.',
+        'guidance': [
+            'Use this when group ownership should be the only role that can change shared agents or actions.',
+            'Expect non-owner users to keep read access while creation, editing, and deletion move behind a stricter permission boundary.',
+            'If your environment relies on delegated group administrators, confirm that workflow before switching to owner-only enforcement.',
+        ],
+        'actions': [],
+    },
+    {
+        'id': 'enforce_workspace_scope_lock',
+        'title': 'Enforce Workspace Scope Lock',
+        'icon': 'bi-lock',
+        'summary': 'Admins can keep workspace scope locked after the first AI search so users do not accidentally mix sources mid-conversation.',
+        'details': 'Workspace Scope Lock prevents a conversation from drifting across personal, group, or public workspaces after the first grounded search has established the working scope.',
+        'why': 'This matters because cross-scope drift is hard to detect once a conversation is underway, and locking the scope protects against mixing evidence from the wrong workspace.',
+        'guidance': [
+            'Use this when your team wants stronger grounding discipline for workspace-scoped chat conversations.',
+            'Expect the lock to take effect after the first AI search in a conversation rather than before any prompt is sent.',
+            'If you train users to work across multiple scopes in the same session, document that this setting intentionally tightens that behavior.',
+        ],
+        'actions': [
+            {
+                'label': 'Read Scope Lock Guide',
+                'description': 'Open the public release guide for enforced workspace scope locking.',
+                'href': 'https://microsoft.github.io/simplechat/latest-release/workspace-scope-lock/',
+                'icon': 'bi-box-arrow-up-right',
+                'is_external': True,
+                'requires_settings': [_SUPPORT_LATEST_FEATURE_DOCS_SETTING_KEY],
+            },
+        ],
+        'images': [
+            {
+                'path': 'images/features/workspace_scope_lock.png',
+                'alt': 'Workspace scope lock screenshot',
+                'title': 'Workspace Scope Lock',
+                'caption': 'Locked workspace scope in chat after the first grounded search has established the evidence boundary.',
+                'label': 'Scope Lock',
+            },
+        ],
+    },
+    {
+        'id': 'document_tag_system',
+        'title': 'Document Tag System',
+        'icon': 'bi-tags',
+        'summary': 'Documents can be organized with color-coded tags across personal, group, and public workspaces, with AI search-aware filtering built in.',
+        'details': 'Document Tag System adds durable tag management, bulk tag workflows, and tag-aware search filtering so users can organize and target document sets more deliberately.',
+        'why': 'This matters because document-heavy workspaces become much easier to navigate when teams can classify content with reusable tags and then ask grounded questions against those tag groupings.',
+        'guidance': [
+            'Use tags when you want a lightweight way to organize documents without forcing everything into a rigid folder hierarchy.',
+            'Apply tags consistently across related documents so AI search filters can narrow results more cleanly during chat.',
+            'Revisit the shared guide if you want the combined tags, folder view, and chat filtering walkthrough from the original release.',
+        ],
+        'actions': [
+            {
+                'label': 'Open Workspace Tags',
+                'description': 'Open Personal Workspace and launch the tag-management workflow directly.',
+                'href': '/workspace?feature_action=document_tag_system',
+                'icon': 'bi-box-arrow-in-right',
+            },
+            {
+                'label': 'Read Tags Guide',
+                'description': 'Open the public release guide covering tags, grid view, and chat filtering together.',
+                'href': 'https://microsoft.github.io/simplechat/latest-release/tags-grid-view-chat-filtering/',
+                'icon': 'bi-box-arrow-up-right',
+                'is_external': True,
+                'requires_settings': [_SUPPORT_LATEST_FEATURE_DOCS_SETTING_KEY],
+            },
+        ],
+        'images': [
+            {
+                'path': 'images/features/workspace_tags.png',
+                'alt': 'Workspace tag management screenshot',
+                'title': 'Workspace Tags',
+                'caption': 'Workspace tag-management experience for creating, organizing, and reusing document tags.',
+                'label': 'Tag Management',
+            },
+        ],
+    },
+    {
+        'id': 'workspace_folder_view',
+        'title': 'Workspace Folder View',
+        'icon': 'bi-grid-3x3-gap',
+        'summary': 'Workspace documents can be viewed in a folder-style grid with tag-based drill-down, counts, search, and saved display preferences.',
+        'details': 'Workspace Folder View adds a more visual document-browsing mode for tag-heavy workspaces where users want to scan categories before opening the underlying files.',
+        'why': 'This matters because large workspaces become easier to browse when users can move between list and folder-style views depending on whether they are searching for one file or surveying a whole category.',
+        'guidance': [
+            'Switch to folder view when you want to browse by tag grouping instead of scanning a flat document table.',
+            'Use in-folder search when a tag contains many documents and you still need to narrow within that bucket.',
+            'The original release guide covers folder view together with tag workflows and chat filtering because those experiences were introduced together.',
+        ],
+        'actions': [
+            {
+                'label': 'Open Workspace Grid View',
+                'description': 'Open Personal Workspace and switch straight into the folder-style grid view.',
+                'href': '/workspace?feature_action=workspace_folder_view',
+                'icon': 'bi-box-arrow-in-right',
+            },
+            {
+                'label': 'Read Folder View Guide',
+                'description': 'Open the public release guide covering tags, folder view, and chat filtering.',
+                'href': 'https://microsoft.github.io/simplechat/latest-release/tags-grid-view-chat-filtering/',
+                'icon': 'bi-box-arrow-up-right',
+                'is_external': True,
+                'requires_settings': [_SUPPORT_LATEST_FEATURE_DOCS_SETTING_KEY],
+            },
+        ],
+        'images': [
+            {
+                'path': 'images/features/workspace_grid_view.png',
+                'alt': 'Workspace grid view screenshot',
+                'title': 'Workspace Folder Grid View',
+                'caption': 'Folder-style grid view for browsing workspace documents through tag-driven groupings.',
+                'label': 'Grid View',
+            },
+        ],
+    },
+    {
+        'id': 'multi_workspace_scope_management',
+        'title': 'Multi-Workspace Scope Management',
+        'icon': 'bi-diagram-3',
+        'summary': 'Chat can span personal, multiple group, and multiple public workspaces together, with selection freezing after the first grounded search when locking is enabled.',
+        'details': 'Multi-Workspace Scope Management expands chat scope selection so users can compose a conversation context from more than one workspace at a time before the grounded search lock takes effect.',
+        'why': 'This matters because many real workflows depend on combining evidence from multiple approved workspaces, but that needs clearer selection controls and more predictable locking behavior.',
+        'guidance': [
+            'Select the needed personal, group, and public scopes before the first grounded search if you expect to work across multiple sources.',
+            'Use the lock behavior as a signal that the conversation has now committed to the chosen evidence boundary.',
+            'Review the combined guide if you want the original walkthrough for multi-scope chat, document filters, and tag-aware narrowing.',
+        ],
+        'actions': [
+            {
+                'label': 'Open Scope Menu',
+                'description': 'Open Chat, expand grounded search, and show the multi-workspace scope picker.',
+                'href': '/chats?feature_action=multi_workspace_scope_management',
+                'icon': 'bi-box-arrow-in-right',
+            },
+            {
+                'label': 'Read Multi-Scope Guide',
+                'description': 'Open the public release guide covering multi-workspace scope management and chat filtering.',
+                'href': 'https://microsoft.github.io/simplechat/latest-release/tags-grid-view-chat-filtering/',
+                'icon': 'bi-box-arrow-up-right',
+                'is_external': True,
+                'requires_settings': [_SUPPORT_LATEST_FEATURE_DOCS_SETTING_KEY],
+            },
+        ],
+        'images': [
+            {
+                'path': 'images/features/workspace_scopes_in_chat.png',
+                'alt': 'Workspace scopes in chat screenshot',
+                'title': 'Workspace Scopes in Chat',
+                'caption': 'Chat interface showing how multiple workspace scopes can be selected together before the conversation locks.',
+                'label': 'Workspace Scopes',
+            },
+        ],
+    },
+    {
+        'id': 'chat_document_and_tag_filtering',
+        'title': 'Chat Document and Tag Filtering',
+        'icon': 'bi-funnel',
+        'summary': 'Chat filtering moved from a single-document dropdown to multi-document and multi-tag checkboxes that work across selected workspaces.',
+        'details': 'Chat Document and Tag Filtering gives users a more explicit way to narrow grounded chat context to the exact documents and tags they want included.',
+        'why': 'This matters because grounded chat gets more predictable when users can select a precise subset of source material instead of relying on one dropdown or a broad workspace search.',
+        'guidance': [
+            'Use multi-document selection when you know the exact sources that should ground the conversation.',
+            'Use multi-tag filtering when the relevant documents share a reusable label but live across several workspaces.',
+            'Open the combined release guide when you want the original walkthrough for tags, folder view, and chat filtering as one workflow.',
+        ],
+        'actions': [
+            {
+                'label': 'Open Chat Tag Filters',
+                'description': 'Open Chat, expand grounded search, and show the tag-filtering controls.',
+                'href': '/chats?feature_action=chat_document_and_tag_filtering',
+                'icon': 'bi-box-arrow-in-right',
+            },
+            {
+                'label': 'Read Filtering Guide',
+                'description': 'Open the public release guide covering chat document and tag filtering.',
+                'href': 'https://microsoft.github.io/simplechat/latest-release/tags-grid-view-chat-filtering/',
+                'icon': 'bi-box-arrow-up-right',
+                'is_external': True,
+                'requires_settings': [_SUPPORT_LATEST_FEATURE_DOCS_SETTING_KEY],
+            },
+        ],
+        'images': [
+            {
+                'path': 'images/features/chat_tags_including_doc_classification.png',
+                'alt': 'Chat tags including document classification screenshot',
+                'title': 'Chat Tag and Classification Filtering',
+                'caption': 'Chat filtering experience showing tags and document classifications together when narrowing grounded sources.',
+                'label': 'Tag and Classification Filters',
+            },
+        ],
+    },
+]
+
+_SUPPORT_LATEST_FEATURE_RELEASE_GROUPS = [
+    {
+        'id': 'current_release',
+        'label': 'Latest Features',
+        'description': 'The newest feature set your admins are currently sharing with end users.',
+        'release_version': None,
+        'default_expanded': True,
+        'collapse_id': 'supportLatestFeaturesCurrentRelease',
+        'features': _SUPPORT_LATEST_FEATURE_CATALOG,
+    },
+    {
+        'id': 'previous_release',
+        'label': 'Previous Release Features',
+        'description': 'Highlights carried forward from the earlier v0.239.001 release set so users can still find the last major round of feature announcements.',
+        'release_version': '0.239.001',
+        'default_expanded': False,
+        'collapse_id': 'supportLatestFeaturesPreviousRelease',
+        'features': _SUPPORT_PREVIOUS_RELEASE_FEATURE_CATALOG,
+    },
+]
+
+
+def _flatten_support_feature_groups(feature_groups):
+    """Return a flat list of features from grouped latest-feature metadata."""
+    flattened = []
+    for feature_group in feature_groups:
+        for feature in feature_group.get('features', []):
+            feature_copy = deepcopy(feature)
+            feature_copy['release_group_id'] = feature_group.get('id')
+            feature_copy['release_group_label'] = feature_group.get('label')
+            feature_copy['release_version'] = feature_group.get('release_version')
+            flattened.append(feature_copy)
+
+    return flattened
+
 
 def _setting_enabled(settings, key):
     """Return True when the named setting is enabled."""
@@ -608,12 +937,20 @@ def _normalize_feature_media(feature):
 
 def get_support_latest_feature_catalog():
     """Return a copy of the support latest-features catalog."""
-    return deepcopy(_SUPPORT_LATEST_FEATURE_CATALOG)
+    return _flatten_support_feature_groups(_SUPPORT_LATEST_FEATURE_RELEASE_GROUPS)
+
+
+def get_support_latest_feature_release_groups():
+    """Return grouped latest-feature metadata organized by release."""
+    return deepcopy(_SUPPORT_LATEST_FEATURE_RELEASE_GROUPS)
 
 
 def get_default_support_latest_features_visibility():
     """Return default visibility for each user-facing latest feature."""
-    defaults = {item['id']: True for item in _SUPPORT_LATEST_FEATURE_CATALOG}
+    defaults = {
+        item['id']: True
+        for item in _flatten_support_feature_groups(_SUPPORT_LATEST_FEATURE_RELEASE_GROUPS)
+    }
     defaults['deployment'] = False
     defaults['redis_key_vault'] = False
     return defaults
@@ -651,6 +988,50 @@ def get_visible_support_latest_features(settings):
             visible_items.append(visible_item)
 
     return visible_items
+
+
+def get_visible_support_latest_feature_groups(settings):
+    """Return visible latest-feature entries grouped by release metadata."""
+    normalized_visibility = normalize_support_latest_features_visibility(
+        (settings or {}).get('support_latest_features_visibility', {})
+    )
+    visible_groups = []
+
+    for feature_group in _SUPPORT_LATEST_FEATURE_RELEASE_GROUPS:
+        visible_features = []
+        for feature in feature_group.get('features', []):
+            if not normalized_visibility.get(feature['id'], True):
+                continue
+
+            visible_feature = deepcopy(feature)
+            visible_feature['actions'] = [
+                action for action in visible_feature.get('actions', [])
+                if _action_enabled(action, settings)
+            ]
+            _normalize_feature_media(visible_feature)
+            visible_features.append(visible_feature)
+
+        if visible_features:
+            visible_group = deepcopy(feature_group)
+            visible_group['features'] = visible_features
+            visible_groups.append(visible_group)
+
+    return visible_groups
+
+
+def get_support_latest_feature_release_groups_for_settings(settings):
+    """Return grouped latest-feature metadata with actions filtered for the current settings."""
+    filtered_groups = deepcopy(_SUPPORT_LATEST_FEATURE_RELEASE_GROUPS)
+
+    for feature_group in filtered_groups:
+        for feature in feature_group.get('features', []):
+            feature['actions'] = [
+                action for action in feature.get('actions', [])
+                if _action_enabled(action, settings)
+            ]
+            _normalize_feature_media(feature)
+
+    return filtered_groups
 
 
 def has_visible_support_latest_features(settings):

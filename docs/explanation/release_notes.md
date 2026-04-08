@@ -271,6 +271,13 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Updated `deep_merge_dicts()` to return a boolean `changed` flag and wired `get_settings()` to call `upsert_item()` when `settings_changed` is `True`, so missing default keys correctly trigger persistence back to Cosmos DB.
     *   Added a functional regression test to validate the merge detection and persistence markers.
     *   (Ref: `application/single_app/functions_settings.py`, `application/single_app/config.py`, `functional_tests/test_settings_deep_merge_persistence_fix.py`)
+
+*   **Legacy Office Binary Upload Support**
+    *   Added native OLE-based support for older Word `.doc` and PowerPoint `.ppt` files instead of relying on OOXML-only assumptions during processing.
+    *   Legacy `.doc` uploads now extract available metadata and follow the same shared document-processing workflow used for richer Office files, so enhanced citations and final metadata extraction stay consistent when those features are enabled.
+    *   Legacy `.ppt` uploads now extract slide text and available summary metadata from the OLE presentation streams while keeping the same enhanced-citation and final-metadata workflow used by `.pptx` uploads.
+    *   `.pptx` uploads now also populate presentation metadata such as title, author, subject, and keywords during the initial metadata update when metadata extraction is enabled.
+    *   (Ref: `functions_content.py`, `functions_documents.py`, `test_legacy_doc_ole_extraction.py`, `test_legacy_ppt_ole_extraction.py`, legacy Office OLE support and metadata parity)
     
 *   **Pillow PSD Upload Hardening**
     *   Updated the application to use `pillow==12.1.1`, moving the app off the vulnerable Pillow range for specially crafted PSD image parsing.

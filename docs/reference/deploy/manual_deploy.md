@@ -1,3 +1,10 @@
+---
+layout: page
+title: "Manual Deployment Notes"
+description: "Use the native Python Azure App Service deployment path when container deployers are not the right fit"
+section: "Reference"
+---
+
 # Manual Deployment Notes
 
 Use this path when deploying SimpleChat to **native Python Azure App Service** instead of the repo's container-based deployers.

@@ -1,3 +1,10 @@
+---
+layout: page
+title: "Azure Developer CLI Deployment"
+description: "Deploy Simple Chat with azd up"
+section: "Reference"
+---
+
 # Azure Developer CLI Deployment
 
 Azure Developer CLI (azd) provides the fastest and most automated way to deploy Simple Chat. This method handles resource provisioning, configuration, and application deployment with minimal manual steps.
@@ -9,6 +16,8 @@ Azure Developer CLI (azd) provides the fastest and most automated way to deploy 
 - Configures service connections
 - Deploys the application code
 - Sets up monitoring and logging
+
+This is the primary recommended deployment path for the repo.
 
 ## Prerequisites
 
