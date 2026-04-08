@@ -28,13 +28,14 @@ class FactMemoryPlugin:
             value (str): The value to be stored in memory.
             conversation_id (str): The id of the conversation.
             agent_id (str): The id of the agent, as specified in the agent's manifest.
+            memory_type (str): Either 'instruction' or 'fact'. Use 'instruction' for durable response rules or user preferences that should be applied to every future prompt. Use 'fact' for profile/context details that should only be recalled when relevant to the current request.
 
         Facts are persistent values that provide important context, background knowledge, or user preferences to the AI agent.
-        Use facts to remember things that should always be available as context for this agent.
+        Let the model decide the memory_type when saving a new memory.
         """,
         name="set_fact"
     )
-    def set_fact(self, scope_type: str, scope_id: str, value: str, conversation_id: str, agent_id: str) -> dict:
+    def set_fact(self, scope_type: str, scope_id: str, value: str, conversation_id: str, agent_id: str, memory_type: str = 'fact') -> dict:
         """
         Store a fact for the given agent, scope, and conversation.
         """
@@ -43,21 +44,28 @@ class FactMemoryPlugin:
             scope_id=scope_id,
             value=value,
             conversation_id=conversation_id,
-            agent_id=agent_id
+            agent_id=agent_id,
+            memory_type=memory_type,
         )
 
     @kernel_function(
-        description="Update an existing fact by its unique id.",
+        description="Update an existing fact by its unique id. Provide memory_type only when you want to change it between 'instruction' and 'fact'.",
         name="update_fact"
     )
-    def update_fact(self, scope_id: str, fact_id: str, value: str) -> dict:
+    def update_fact(self, scope_id: str, fact_id: str, value: str, memory_type: str = '') -> dict:
         """
         Update a fact value by its unique id and scope_id partition key.
         """
+        update_kwargs = {
+            'scope_id': scope_id,
+            'fact_id': fact_id,
+            'value': value,
+        }
+        if str(memory_type or '').strip():
+            update_kwargs['memory_type'] = memory_type
+
         updated_fact = self.store.update_fact(
-            scope_id=scope_id,
-            fact_id=fact_id,
-            value=value,
+            **update_kwargs,
         )
         return updated_fact or {}
 

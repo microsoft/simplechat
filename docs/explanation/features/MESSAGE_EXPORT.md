@@ -4,7 +4,7 @@
 The Per-Message Export feature adds export and action options directly to the three-dots dropdown menu on individual chat messages. Users can export a single message to Markdown or Word, insert it into the chat prompt, or open it in their default email client — all without leaving the chat interface.
 
 **Version Implemented:** 0.239.005–0.239.007
-**Latest export formatting update:** 0.240.078
+**Latest export formatting update:** 0.240.079
 
 ## Dependencies
 - Flask (backend route for Word export)
@@ -64,6 +64,7 @@ The server verifies user ownership of the conversation, fetches the specific mes
 - **Behavior:** Requests a backend-generated mailto draft, then opens the user's default email client via a `mailto:` link with:
   - **Subject:** An explicit subject from the message when present, otherwise a generated subject from the same GPT initialization path used by conversation summary generation
   - **Body:** Word-style plain text derived from the message markdown so headings, lists, tables, code blocks, and citations are no longer pasted as raw markdown
+  - **Body Scope:** Starts directly with the formatted message content instead of a leading export metadata block
 - Uses `encodeURIComponent` for safe URL encoding of the subject and body.
 
 ## Dropdown Menu Structure

@@ -1374,8 +1374,6 @@ def _message_to_email_draft_payload(
     settings: Dict[str, Any],
     summary_model_deployment: str = ''
 ) -> Dict[str, Any]:
-    role_label = _role_to_label(message.get('role', 'unknown'))
-    timestamp = str(message.get('timestamp', '') or '').strip()
     content = _normalize_content(message.get('content', ''))
     subject_payload = _build_message_email_subject(
         content=content,
@@ -1384,15 +1382,7 @@ def _message_to_email_draft_payload(
     )
     body_content = _strip_explicit_message_email_subject(content)
 
-    body_lines = [
-        'Message Export',
-        '==============',
-        '',
-        f'Role: {role_label}'
-    ]
-    if timestamp:
-        body_lines.append(f'Timestamp: {timestamp}')
-    body_lines.append('')
+    body_lines = []
 
     if body_content.strip():
         body_lines.extend(_render_markdown_to_email_lines(body_content))

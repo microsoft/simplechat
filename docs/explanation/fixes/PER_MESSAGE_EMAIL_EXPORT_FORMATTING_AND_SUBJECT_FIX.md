@@ -1,6 +1,6 @@
 # Per-Message Email Export Formatting And Subject Fix
 
-Fixed/Implemented in version: **0.240.078**
+Fixed/Implemented in version: **0.240.079**
 
 ## Issue Description
 
@@ -29,7 +29,8 @@ Because the client built the mailto draft directly from the raw markdown, the bo
 - Added helpers to render markdown into mailto-safe plain text that preserves headings, lists, tables, code blocks, and citations without raw markdown markers.
 - Added subject extraction for explicit `Subject:` and heading-based titles, plus GPT-generated fallback subjects through the same shared model initialization path used by conversation summary generation.
 - Updated the frontend email action to request the backend draft while continuing to launch the user's mail client with a `mailto:` URL.
-- Bumped the application version to `0.240.078`.
+- Removed the leading export metadata wrapper so email drafts start directly with the formatted message body.
+- Bumped the application version to `0.240.079`.
 
 ### Testing Approach
 

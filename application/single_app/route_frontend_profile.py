@@ -21,6 +21,7 @@ def register_route_frontend_profile(app):
         return {
             'id': fact_item.get('id'),
             'value': str(fact_item.get('value') or ''),
+            'memory_type': fact_item.get('memory_type') or 'fact',
             'agent_id': fact_item.get('agent_id'),
             'conversation_id': fact_item.get('conversation_id'),
             'scope_type': fact_item.get('scope_type'),
@@ -33,9 +34,13 @@ def register_route_frontend_profile(app):
         settings = get_settings()
         fact_store = FactMemoryStore()
         facts = fact_store.list_facts(scope_type='user', scope_id=user_id)
+        instruction_count = sum(1 for fact in facts if fact.get('memory_type') == 'instruction')
+        fact_count = sum(1 for fact in facts if fact.get('memory_type') != 'instruction')
         return {
             'success': True,
             'enabled': bool(settings.get('enable_fact_memory_plugin', False)),
+            'instruction_count': instruction_count,
+            'fact_count': fact_count,
             'facts': [serialize_fact_memory_item(fact) for fact in facts],
         }
     
@@ -425,16 +430,18 @@ def register_route_frontend_profile(app):
                 return jsonify({'error': 'Memory value is required'}), 400
 
             fact_store = FactMemoryStore()
+            memory_type = fact_store.normalize_memory_type(data.get('memory_type'))
             fact_item = fact_store.set_fact(
                 scope_type='user',
                 scope_id=user_id,
                 value=value,
                 conversation_id=None,
                 agent_id=None,
+                memory_type=memory_type,
             )
             log_event(
                 '[ProfileFactMemory] Created fact memory entry',
-                extra={'user_id': user_id, 'fact_id': fact_item.get('id')},
+                extra={'user_id': user_id, 'fact_id': fact_item.get('id'), 'memory_type': memory_type},
                 level=logging.INFO,
             )
             return jsonify({
@@ -469,13 +476,14 @@ def register_route_frontend_profile(app):
                 return jsonify({'error': 'Memory value is required'}), 400
 
             fact_store = FactMemoryStore()
-            updated_fact = fact_store.update_fact(user_id, fact_id, value)
+            memory_type = fact_store.normalize_memory_type(data.get('memory_type'))
+            updated_fact = fact_store.update_fact(user_id, fact_id, value=value, memory_type=memory_type)
             if updated_fact is None:
                 return jsonify({'error': 'Fact memory entry not found'}), 404
 
             log_event(
                 '[ProfileFactMemory] Updated fact memory entry',
-                extra={'user_id': user_id, 'fact_id': fact_id},
+                extra={'user_id': user_id, 'fact_id': fact_id, 'memory_type': memory_type},
                 level=logging.INFO,
             )
             return jsonify({

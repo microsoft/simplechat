@@ -1,11 +1,11 @@
 # test_profile_fact_memory_editor.py
 """
 UI test for the profile fact-memory editor.
-Version: 0.240.077
-Implemented in: 0.240.077
+Version: 0.240.083
+Implemented in: 0.240.079; 0.240.082; 0.240.083
 
-This test ensures a signed-in user can create, edit, and delete fact-memory
-entries from the profile page.
+This test ensures a signed-in user can create, edit, retag, and delete
+fact-memory entries from the profile page using the compact summary and modal editor.
 """
 
 import os
@@ -57,35 +57,51 @@ def test_profile_fact_memory_editor(playwright):
         assert response.ok, f'Expected /profile to load successfully, got HTTP {response.status}.'
         expect(page.get_by_role('heading', name='Fact Memory')).to_be_visible()
         expect(page.locator('#fact-memory-status')).to_contain_text(re.compile(r'Fact memory is'))
+        count_before_text = page.locator('#fact-memory-count').text_content() or '0'
+        initial_count = int(count_before_text.strip())
 
-        items = page.locator('[data-fact-memory-id]')
-        initial_count = items.count()
         created_value = f'UI fact memory {uuid.uuid4().hex[:8]}'
         updated_value = f'{created_value} updated'
 
         page.locator('#fact-memory-new-value').fill(created_value)
+        page.locator('#fact-memory-new-type').select_option('instruction')
         page.locator('#fact-memory-add-btn').click()
         expect(page.locator('#fact-memory-status')).to_contain_text('saved')
-        expect(items).to_have_count(initial_count + 1)
+        expect(page.locator('#fact-memory-count')).to_have_text(str(initial_count + 1))
 
-        created_item = page.locator('[data-fact-memory-id]').first
+        page.locator('#open-fact-memory-modal-btn').click()
+        expect(page.get_by_role('dialog', name='Manage Fact Memories')).to_be_visible()
+
+        search_input = page.locator('#fact-memory-search-input')
+        search_input.fill(created_value)
+
+        items = page.locator('#fact-memory-modal-list [data-fact-memory-id]')
+        expect(items).to_have_count(1)
+
+        created_item = items.first
         created_fact_id = created_item.get_attribute('data-fact-memory-id')
         assert created_fact_id, 'Expected a fact-memory item id after creating an entry.'
         expect(created_item.locator('textarea[aria-label="Fact memory value"]')).to_have_value(created_value)
+        expect(created_item).to_contain_text('Instruction')
+        expect(created_item.locator('select[aria-label="Fact memory type"]')).to_have_value('instruction')
 
         created_item.locator('textarea[aria-label="Fact memory value"]').fill(updated_value)
+        created_item.locator('select[aria-label="Fact memory type"]').select_option('fact')
         created_item.get_by_role('button', name='Save memory').click()
         expect(page.locator('#fact-memory-status')).to_contain_text('updated')
 
-        updated_item = page.locator(f'[data-fact-memory-id="{created_fact_id}"]')
+        search_input.fill(updated_value)
+        updated_item = page.locator(f'#fact-memory-modal-list [data-fact-memory-id="{created_fact_id}"]')
         expect(updated_item.locator('textarea[aria-label="Fact memory value"]')).to_have_value(updated_value)
+        expect(updated_item.locator('select[aria-label="Fact memory type"]')).to_have_value('fact')
+        expect(updated_item).to_contain_text('Fact')
 
         updated_item.get_by_role('button', name='Delete memory').click()
         expect(page.get_by_role('dialog', name='Delete Fact Memory')).to_be_visible()
         page.locator('#confirm-delete-fact-memory-btn').click()
         expect(page.locator('#fact-memory-status')).to_contain_text('deleted')
-        expect(page.locator(f'[data-fact-memory-id="{created_fact_id}"]')).to_have_count(0)
-        assert page.locator('[data-fact-memory-id]').count() == initial_count
+        expect(page.locator(f'#fact-memory-modal-list [data-fact-memory-id="{created_fact_id}"]')).to_have_count(0)
+        expect(page.locator('#fact-memory-count')).to_have_text(str(initial_count))
         created_fact_id = None
     finally:
         if created_fact_id:

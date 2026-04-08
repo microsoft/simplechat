@@ -2,8 +2,8 @@
 # test_per_message_export.py
 """
 Functional tests for the per-message export feature and Word route regression fix.
-Version: 0.240.078
-Implemented in: 0.240.078
+Version: 0.240.079
+Implemented in: 0.240.079
 
 Covers:
  - Happy path: Word document built successfully from a valid message.
@@ -432,15 +432,15 @@ def test_email_export_uses_word_style_plain_text_and_message_subject():
     body = draft['body']
     assert draft['subject'] == 'Quarterly Budget Update', draft
     assert draft['subject_source'] == 'message', draft
-    assert 'Message Export\n==============' in body, body
-    assert 'Role: Assistant' in body, body
-    assert 'Timestamp: 2026-04-07T12:34:56Z' in body, body
     assert 'Executive Summary\n=================' in body, body
     assert '- First item' in body and '- Second item' in body, body
     assert 'Reference Doc' in body and 'Citations\n---------' in body, body
     assert "    print('hello')" in body, body
     assert 'Name' in body and 'Value' in body and 'Alpha' in body and '42' in body, body
     assert 'Subject: Quarterly Budget Update' not in body, body
+    assert 'Message Export' not in body, body
+    assert 'Role: Assistant' not in body, body
+    assert 'Timestamp: 2026-04-07T12:34:56Z' not in body, body
 
     assert '# Executive Summary' not in body, body
     assert '**bold**' not in body, body

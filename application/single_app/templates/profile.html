@@ -150,6 +150,35 @@
     .preference-status {
         min-height: 1.5rem;
     }
+
+    .fact-memory-summary-card {
+        background: linear-gradient(135deg, rgba(13, 110, 253, 0.08), rgba(13, 202, 240, 0.12));
+        border: 1px solid rgba(13, 110, 253, 0.14);
+        border-radius: 16px;
+        padding: 1.25rem;
+    }
+
+    .fact-memory-count {
+        font-size: 2rem;
+        font-weight: 700;
+        line-height: 1;
+    }
+
+    .fact-memory-modal-list {
+        max-height: 55vh;
+        overflow-y: auto;
+    }
+
+    .fact-memory-modal-card {
+        border: 1px solid var(--bs-border-color);
+        border-radius: 14px;
+        padding: 1rem;
+        background: var(--bs-body-bg);
+    }
+
+    .fact-memory-pagination-summary {
+        min-height: 1.5rem;
+    }
     
     @keyframes spin {
         0% { transform: rotate(0deg); }
@@ -360,11 +389,11 @@
         <div class="d-flex flex-column flex-lg-row align-items-lg-start justify-content-between gap-3">
             <div class="d-flex gap-3 align-items-start">
                 <span class="preference-card-icon">
-                    <i class="bi bi-brain"></i>
+                    <i class="bi bi-journal-text"></i>
                 </span>
                 <div>
-                    <h5 class="mb-2"><i class="bi bi-braces-asterisk me-2"></i>Fact Memory</h5>
-                    <p class="text-muted mb-2">Review, add, and edit the durable facts AI agents can remember for your account.</p>
+                    <h5 class="mb-2"><i class="bi bi-journal-text me-2"></i>Fact Memory</h5>
+                    <p class="text-muted mb-2">Save durable facts for your account, then manage the full memory list from a compact popup editor.</p>
                     {% if app_settings.enable_fact_memory_plugin %}
                     <span id="fact-memory-enabled-badge" class="badge bg-success">Enabled by admin</span>
                     <span class="small text-muted ms-2">Supported chat and mini-SK flows can use these memories when fact memory is enabled.</span>
@@ -377,29 +406,45 @@
         </div>
 
         <div class="row g-4 mt-1">
-            <div class="col-lg-5">
+            <div class="col-lg-7">
                 <label for="fact-memory-new-value" class="form-label fw-semibold">Add a memory</label>
                 <textarea
                     class="form-control"
                     id="fact-memory-new-value"
-                    rows="4"
+                    rows="3"
                     placeholder="Example: I prefer concise responses with explicit next steps when there are options."
                 ></textarea>
-                <small class="d-block text-muted mt-2">Save durable preferences or facts that should stay available for future AI conversations.</small>
+                <div class="row g-3 mt-1 align-items-end">
+                    <div class="col-md-6">
+                        <label for="fact-memory-new-type" class="form-label fw-semibold small">Memory type</label>
+                        <select class="form-select" id="fact-memory-new-type">
+                            <option value="instruction">Instruction: always apply to future responses</option>
+                            <option value="fact" selected>Fact: recall only when relevant</option>
+                        </select>
+                    </div>
+                </div>
+                <small class="d-block text-muted mt-2">Use instruction memories for durable preferences like tone or formatting. Use fact memories for details about you that the model should recall only when relevant.</small>
                 <button type="button" class="btn btn-primary mt-3" id="fact-memory-add-btn" onclick="createFactMemory()">
                     <i class="bi bi-plus-circle me-1"></i>Add Memory
                 </button>
             </div>
-            <div class="col-lg-7">
-                <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
-                    <h6 class="mb-0">Saved Memories</h6>
-                    <button type="button" class="btn btn-outline-secondary btn-sm" id="fact-memory-refresh-btn" onclick="loadFactMemory()">
-                        <i class="bi bi-arrow-clockwise me-1"></i>Refresh
-                    </button>
-                </div>
-                <div id="fact-memory-list" class="vstack gap-3"></div>
-                <div id="fact-memory-empty-state" class="alert alert-light border d-none mb-0" role="status">
-                    <i class="bi bi-info-circle me-2"></i>No fact memories saved yet.
+            <div class="col-lg-5">
+                <div class="fact-memory-summary-card h-100 d-flex flex-column justify-content-between">
+                    <div>
+                        <div class="small text-uppercase text-muted fw-semibold mb-2">Saved Memories</div>
+                        <div class="fact-memory-count" id="fact-memory-count">0</div>
+                        <div class="text-muted mt-2" id="fact-memory-last-updated">No memories saved yet.</div>
+                        <div class="small text-muted mt-2" id="fact-memory-type-summary">0 instructions, 0 facts</div>
+                    </div>
+                    <div class="d-flex flex-wrap gap-2 mt-3">
+                        <button type="button" class="btn btn-outline-primary" id="open-fact-memory-modal-btn" onclick="openFactMemoryModal()">
+                            <i class="bi bi-window-stack me-1"></i>Manage Memories
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary" id="fact-memory-refresh-btn" onclick="loadFactMemory()">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                        </button>
+                    </div>
+                    <small class="text-muted d-block mt-3">Use the popup editor for search, paging, and updates.</small>
                 </div>
             </div>
         </div>
@@ -699,6 +744,66 @@
     </div>
 </div>
 
+<div class="modal fade" id="factMemoryManagerModal" tabindex="-1" aria-labelledby="factMemoryManagerModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h5 class="modal-title" id="factMemoryManagerModalLabel">
+                        <i class="bi bi-journal-text me-2"></i>Manage Fact Memories
+                    </h5>
+                    <div class="small text-muted mt-1">Search, review, and edit your saved memories.</div>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row g-3 align-items-end mb-3">
+                    <div class="col-lg-6">
+                        <label for="fact-memory-search-input" class="form-label fw-semibold">Search memories</label>
+                        <input type="search" class="form-control" id="fact-memory-search-input" placeholder="Search memory text" />
+                    </div>
+                    <div class="col-lg-3">
+                        <label for="fact-memory-type-filter" class="form-label fw-semibold">Type</label>
+                        <select class="form-select" id="fact-memory-type-filter">
+                            <option value="all" selected>All memory types</option>
+                            <option value="instruction">Instruction</option>
+                            <option value="fact">Fact</option>
+                        </select>
+                    </div>
+                    <div class="col-lg-3 text-lg-end">
+                        <button type="button" class="btn btn-outline-secondary" id="fact-memory-modal-refresh-btn" onclick="loadFactMemory()">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Refresh List
+                        </button>
+                    </div>
+                </div>
+
+                <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 mb-3">
+                    <div id="fact-memory-modal-summary" class="small text-muted">0 memories</div>
+                    <div id="fact-memory-pagination-summary" class="small text-muted fact-memory-pagination-summary"></div>
+                </div>
+
+                <div id="fact-memory-modal-list" class="fact-memory-modal-list vstack gap-3"></div>
+                <div id="fact-memory-modal-empty-state" class="alert alert-light border d-none mb-0" role="status">
+                    <i class="bi bi-info-circle me-2"></i>No memories match the current search.
+                </div>
+            </div>
+            <div class="modal-footer justify-content-between">
+                <nav aria-label="Fact memory pagination">
+                    <ul class="pagination pagination-sm mb-0">
+                        <li class="page-item">
+                            <button class="page-link" type="button" id="fact-memory-prev-page" aria-label="Previous memories page">Previous</button>
+                        </li>
+                        <li class="page-item">
+                            <button class="page-link" type="button" id="fact-memory-next-page" aria-label="Next memories page">Next</button>
+                        </li>
+                    </ul>
+                </nav>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Export Activity Modal -->
 <div class="modal fade" id="exportActivityModal" tabindex="-1" aria-labelledby="exportActivityModalLabel" aria-hidden="true">
     <div class="modal-dialog">
@@ -765,8 +870,15 @@
 // Initialize charts
 let loginChart, conversationChart, documentChart, tokenChart, storageChart;
 let factMemoryEntries = [];
+let filteredFactMemoryEntries = [];
+let factMemoryCurrentPage = 1;
+const FACT_MEMORY_PAGE_SIZE = 5;
+const FACT_MEMORY_TYPE_INSTRUCTION = 'instruction';
+const FACT_MEMORY_TYPE_FACT = 'fact';
+const FACT_MEMORY_TYPE_LEGACY_DESCRIBER = 'describer';
 let pendingFactMemoryDeleteId = null;
 let factMemoryDeleteModalInstance = null;
+let factMemoryManagerModalInstance = null;
 
 console.log('Profile page script loaded - preparing to initialize');
 
@@ -816,6 +928,43 @@ document.addEventListener('DOMContentLoaded', function() {
     loadMicrophoneSettings();
     loadUserMetrics();
     initializeCharts();
+
+    const factMemorySearchInput = document.getElementById('fact-memory-search-input');
+    if (factMemorySearchInput) {
+        factMemorySearchInput.addEventListener('input', function() {
+            factMemoryCurrentPage = 1;
+            renderFactMemoryModalList();
+        });
+    }
+
+    const factMemoryTypeFilter = document.getElementById('fact-memory-type-filter');
+    if (factMemoryTypeFilter) {
+        factMemoryTypeFilter.addEventListener('change', function() {
+            factMemoryCurrentPage = 1;
+            renderFactMemoryModalList();
+        });
+    }
+
+    const previousPageButton = document.getElementById('fact-memory-prev-page');
+    if (previousPageButton) {
+        previousPageButton.addEventListener('click', function() {
+            if (factMemoryCurrentPage > 1) {
+                factMemoryCurrentPage -= 1;
+                renderFactMemoryModalList();
+            }
+        });
+    }
+
+    const nextPageButton = document.getElementById('fact-memory-next-page');
+    if (nextPageButton) {
+        nextPageButton.addEventListener('click', function() {
+            const totalPages = Math.max(1, Math.ceil(filteredFactMemoryEntries.length / FACT_MEMORY_PAGE_SIZE));
+            if (factMemoryCurrentPage < totalPages) {
+                factMemoryCurrentPage += 1;
+                renderFactMemoryModalList();
+            }
+        });
+    }
     
     // Initialize TTS settings if enabled
     {% if app_settings.enable_text_to_speech %}
@@ -923,38 +1072,169 @@ function formatFactMemoryTimestamp(value) {
     return parsedDate.toLocaleString();
 }
 
-function buildFactMemoryMetaText(fact) {
-    const parts = [];
-    if (fact.agent_id) {
-        parts.push(`Agent: ${fact.agent_id}`);
+function formatFactMemoryDate(value) {
+    if (!value) {
+        return 'Unknown date';
     }
-    if (fact.conversation_id) {
-        parts.push(`Conversation: ${fact.conversation_id}`);
+
+    const parsedDate = new Date(value);
+    if (Number.isNaN(parsedDate.getTime())) {
+        return value;
     }
-    parts.push(`Updated: ${formatFactMemoryTimestamp(fact.updated_at)}`);
-    return parts.join(' • ');
+
+    return parsedDate.toLocaleDateString();
 }
 
-function renderFactMemoryList() {
-    const listElement = document.getElementById('fact-memory-list');
-    const emptyState = document.getElementById('fact-memory-empty-state');
+function normalizeFactMemoryType(memoryType) {
+    if (memoryType === FACT_MEMORY_TYPE_INSTRUCTION) {
+        return FACT_MEMORY_TYPE_INSTRUCTION;
+    }
+    if (memoryType === FACT_MEMORY_TYPE_LEGACY_DESCRIBER) {
+        return FACT_MEMORY_TYPE_FACT;
+    }
+    return FACT_MEMORY_TYPE_FACT;
+}
+
+function getFactMemoryTypeLabel(memoryType) {
+    return normalizeFactMemoryType(memoryType) === FACT_MEMORY_TYPE_INSTRUCTION ? 'Instruction' : 'Fact';
+}
+
+function getFactMemoryTypeBadgeClass(memoryType) {
+    return normalizeFactMemoryType(memoryType) === FACT_MEMORY_TYPE_INSTRUCTION ? 'bg-primary-subtle text-primary-emphasis' : 'bg-secondary-subtle text-secondary-emphasis';
+}
+
+function buildFactMemoryMetaText(fact) {
+    return `${getFactMemoryTypeLabel(fact.memory_type)} memory · Updated ${formatFactMemoryDate(fact.updated_at)}`;
+}
+
+function updateFactMemorySummary() {
+    const countElement = document.getElementById('fact-memory-count');
+    const updatedElement = document.getElementById('fact-memory-last-updated');
+    const typeSummaryElement = document.getElementById('fact-memory-type-summary');
+    const modalSummaryElement = document.getElementById('fact-memory-modal-summary');
+    const instructionCount = factMemoryEntries.filter((fact) => normalizeFactMemoryType(fact.memory_type) === FACT_MEMORY_TYPE_INSTRUCTION).length;
+    const factCount = factMemoryEntries.length - instructionCount;
+
+    if (countElement) {
+        countElement.textContent = String(factMemoryEntries.length);
+    }
+
+    if (updatedElement) {
+        if (!factMemoryEntries.length) {
+            updatedElement.textContent = 'No memories saved yet.';
+        } else {
+            updatedElement.textContent = `Last updated ${formatFactMemoryDate(factMemoryEntries[0].updated_at)}.`;
+        }
+    }
+
+    if (typeSummaryElement) {
+        typeSummaryElement.textContent = `${instructionCount} instruction${instructionCount === 1 ? '' : 's'}, ${factCount} fact${factCount === 1 ? '' : 's'}`;
+    }
+
+    if (modalSummaryElement) {
+        modalSummaryElement.textContent = `${filteredFactMemoryEntries.length} matching mem${filteredFactMemoryEntries.length === 1 ? 'ory' : 'ories'} · ${instructionCount} instruction${instructionCount === 1 ? '' : 's'} · ${factCount} fact${factCount === 1 ? '' : 's'}`;
+    }
+}
+
+function getFilteredFactMemoryEntries() {
+    const searchInput = document.getElementById('fact-memory-search-input');
+    const typeFilter = document.getElementById('fact-memory-type-filter');
+    const query = searchInput ? searchInput.value.trim().toLowerCase() : '';
+    const selectedType = typeFilter ? typeFilter.value : 'all';
+
+    return factMemoryEntries.filter((fact) => {
+        const value = String(fact.value || '').toLowerCase();
+        const memoryType = normalizeFactMemoryType(fact.memory_type);
+        const matchesQuery = !query || value.includes(query) || memoryType.includes(query);
+        const matchesType = selectedType === 'all' || memoryType === selectedType;
+        return matchesQuery && matchesType;
+    });
+}
+
+function renderFactMemoryModalList() {
+    const listElement = document.getElementById('fact-memory-modal-list');
+    const emptyState = document.getElementById('fact-memory-modal-empty-state');
+    const paginationSummary = document.getElementById('fact-memory-pagination-summary');
+    const previousPageButton = document.getElementById('fact-memory-prev-page');
+    const nextPageButton = document.getElementById('fact-memory-next-page');
     if (!listElement || !emptyState) {
         return;
     }
 
+    filteredFactMemoryEntries = getFilteredFactMemoryEntries();
+    const totalPages = Math.max(1, Math.ceil(filteredFactMemoryEntries.length / FACT_MEMORY_PAGE_SIZE));
+    if (factMemoryCurrentPage > totalPages) {
+        factMemoryCurrentPage = totalPages;
+    }
+
+    const startIndex = (factMemoryCurrentPage - 1) * FACT_MEMORY_PAGE_SIZE;
+    const endIndex = startIndex + FACT_MEMORY_PAGE_SIZE;
+    const currentPageItems = filteredFactMemoryEntries.slice(startIndex, endIndex);
+
     listElement.innerHTML = '';
 
-    if (!factMemoryEntries.length) {
+    if (!filteredFactMemoryEntries.length) {
         emptyState.classList.remove('d-none');
+        if (paginationSummary) {
+            paginationSummary.textContent = 'No results';
+        }
+        if (previousPageButton) {
+            previousPageButton.disabled = true;
+        }
+        if (nextPageButton) {
+            nextPageButton.disabled = true;
+        }
+        updateFactMemorySummary();
         return;
     }
 
     emptyState.classList.add('d-none');
+    if (paginationSummary) {
+        paginationSummary.textContent = `Page ${factMemoryCurrentPage} of ${totalPages}`;
+    }
+    if (previousPageButton) {
+        previousPageButton.disabled = factMemoryCurrentPage <= 1;
+    }
+    if (nextPageButton) {
+        nextPageButton.disabled = factMemoryCurrentPage >= totalPages;
+    }
 
-    factMemoryEntries.forEach((fact) => {
+    currentPageItems.forEach((fact) => {
         const itemContainer = document.createElement('div');
-        itemContainer.className = 'border rounded-3 p-3';
+        itemContainer.className = 'fact-memory-modal-card';
         itemContainer.dataset.factMemoryId = fact.id;
+
+        const headerRow = document.createElement('div');
+        headerRow.className = 'd-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 mb-2';
+
+        const typeBadge = document.createElement('span');
+        typeBadge.className = `badge ${getFactMemoryTypeBadgeClass(fact.memory_type)}`;
+        typeBadge.textContent = getFactMemoryTypeLabel(fact.memory_type);
+
+        const typeSelect = document.createElement('select');
+        typeSelect.className = 'form-select form-select-sm';
+        typeSelect.id = `fact-memory-type-${fact.id}`;
+        typeSelect.style.maxWidth = '220px';
+        typeSelect.setAttribute('aria-label', 'Fact memory type');
+
+        const instructionOption = document.createElement('option');
+        instructionOption.value = FACT_MEMORY_TYPE_INSTRUCTION;
+        instructionOption.textContent = 'Instruction';
+
+        const factOption = document.createElement('option');
+        factOption.value = FACT_MEMORY_TYPE_FACT;
+        factOption.textContent = 'Fact';
+
+        typeSelect.appendChild(instructionOption);
+        typeSelect.appendChild(factOption);
+        typeSelect.value = normalizeFactMemoryType(fact.memory_type);
+        typeSelect.addEventListener('change', () => {
+            typeBadge.className = `badge ${getFactMemoryTypeBadgeClass(typeSelect.value)}`;
+            typeBadge.textContent = getFactMemoryTypeLabel(typeSelect.value);
+        });
+
+        headerRow.appendChild(typeBadge);
+        headerRow.appendChild(typeSelect);
 
         const textArea = document.createElement('textarea');
         textArea.className = 'form-control';
@@ -987,11 +1267,29 @@ function renderFactMemoryList() {
         actions.appendChild(saveButton);
         actions.appendChild(deleteButton);
 
+        itemContainer.appendChild(headerRow);
         itemContainer.appendChild(textArea);
         itemContainer.appendChild(metaText);
         itemContainer.appendChild(actions);
         listElement.appendChild(itemContainer);
     });
+
+    updateFactMemorySummary();
+}
+
+function openFactMemoryModal() {
+    const modalElement = document.getElementById('factMemoryManagerModal');
+    if (!modalElement || typeof bootstrap === 'undefined') {
+        return;
+    }
+
+    if (!factMemoryManagerModalInstance) {
+        factMemoryManagerModalInstance = new bootstrap.Modal(modalElement);
+    }
+
+    factMemoryCurrentPage = 1;
+    renderFactMemoryModalList();
+    factMemoryManagerModalInstance.show();
 }
 
 async function loadFactMemory() {
@@ -1011,8 +1309,12 @@ async function loadFactMemory() {
             throw new Error(data.error || 'Failed to load fact memory');
         }
 
-        factMemoryEntries = Array.isArray(data.facts) ? data.facts : [];
-        renderFactMemoryList();
+        factMemoryEntries = (Array.isArray(data.facts) ? data.facts : []).map((fact) => ({
+            ...fact,
+            memory_type: normalizeFactMemoryType(fact.memory_type)
+        }));
+        factMemoryCurrentPage = 1;
+        renderFactMemoryModalList();
 
         const enabledBadge = document.getElementById('fact-memory-enabled-badge');
         if (enabledBadge) {
@@ -1039,12 +1341,14 @@ async function loadFactMemory() {
 
 async function createFactMemory() {
     const textArea = document.getElementById('fact-memory-new-value');
+    const typeSelect = document.getElementById('fact-memory-new-type');
     const addButton = document.getElementById('fact-memory-add-btn');
-    if (!textArea || !addButton) {
+    if (!textArea || !typeSelect || !addButton) {
         return;
     }
 
     const value = textArea.value.trim();
+    const memoryType = normalizeFactMemoryType(typeSelect.value);
     if (!value) {
         updateFactMemoryStatus('Enter a memory before saving.', 'danger');
         return;
@@ -1061,7 +1365,7 @@ async function createFactMemory() {
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ value })
+            body: JSON.stringify({ value, memory_type: memoryType })
         });
         const data = await response.json();
         if (!response.ok) {
@@ -1069,6 +1373,7 @@ async function createFactMemory() {
         }
 
         textArea.value = '';
+        typeSelect.value = FACT_MEMORY_TYPE_FACT;
         await loadFactMemory();
         updateFactMemoryStatus('Fact memory saved.', 'success');
         if (typeof showToastMessage === 'function') {
@@ -1085,12 +1390,14 @@ async function createFactMemory() {
 
 async function saveFactMemory(factId) {
     const textArea = document.getElementById(`fact-memory-value-${factId}`);
+    const typeSelect = document.getElementById(`fact-memory-type-${factId}`);
     const itemContainer = document.querySelector(`[data-fact-memory-id="${factId}"]`);
-    if (!textArea || !itemContainer) {
+    if (!textArea || !typeSelect || !itemContainer) {
         return;
     }
 
     const value = textArea.value.trim();
+    const memoryType = normalizeFactMemoryType(typeSelect.value);
     if (!value) {
         updateFactMemoryStatus('Memory text cannot be empty.', 'danger');
         return;
@@ -1111,7 +1418,7 @@ async function saveFactMemory(factId) {
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ value })
+            body: JSON.stringify({ value, memory_type: memoryType })
         });
         const data = await response.json();
         if (!response.ok) {
