@@ -1,9 +1,9 @@
-# Latest Features Admin Tab (v0.240.074)
+# Latest Features Admin Tab (v0.240.084)
 
 ## Overview
 This feature adds a dedicated **Latest Features** tab to Admin Settings so administrators can review the most important recent capabilities in one place and decide what to communicate to users.
 
-Version Updated: 0.240.074
+Version Updated: 0.240.084
 
 ## Dependencies
 - `application/single_app/templates/admin_settings.html`
@@ -32,6 +32,7 @@ The tab groups recent functionality into broader themes instead of listing every
 - Conversation Summaries and Export
 - Agent and Action Operations
 - AI Transparency
+- Fact Memory
 - Deployment and Runtime Guidance
 - Redis and Key Vault
 - Send Feedback
@@ -78,6 +79,9 @@ Current screenshots surfaced in the admin UI:
 - `agent_action_grid_view.png`
 - `sql_test_connection.png`
 - `thoughts_visibility.png`
+- `facts_memory_view_profile.png`
+- `fact_memory_management.png`
+- `facts_citation_and_thoughts.png`
 - `gunicorn_startup_guidance.png`
 - `redis_key_vault.png`
 - `support_menu_entry.png`
@@ -95,6 +99,7 @@ The release notifications registration explainer is intentionally text-only. It 
 - **Document Revisioning and Management** explains that same-name uploads create versioned revision families, keep previous versions available for traceability, and carry classifications and tags forward to the newest revision.
 - **Support Menu** introduces the user-facing support surface that exposes Latest Features and Send Feedback outside the admin-only experience.
 - **User-Facing Latest Features in General Settings** gives admins a direct visual reminder that the General tab controls which latest-feature cards are shared with end users.
+- **Fact Memory** explains the new Instructions-versus-Facts model, the profile memory manager, and the dedicated memory-thought and citation visibility users now see in chat.
 
 ## Usage Instructions
 - Open **Admin Settings**.
@@ -117,6 +122,7 @@ The release notifications registration explainer is intentionally text-only. It 
 - Confirm the admin-only Release Notifications Registration card renders first and does not depend on a screenshot asset.
 - Confirm saved screenshots render as thumbnails and open in the larger preview modal.
 - Confirm the saved screenshots render for GPT Selection, including the agent review summary and modal action images, plus Citation Improvements, Document Revisioning, Support Menu, and the General-tab user-facing latest-features checklist.
+- Confirm the Fact Memory card renders with screenshots for the profile entry point, memory manager, and chat recall experience.
 - Confirm the preview modal closes from both the close button and backdrop click.
 - Confirm mirrored settings remain synchronized with the canonical controls in the existing tabs.
 - Confirm Redis mirror controls stay synchronized with the canonical settings in the Scale tab.

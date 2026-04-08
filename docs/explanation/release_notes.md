@@ -4,6 +4,16 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.240.084)**
+
+#### New Features
+
+*   **Fact Memory Instructions and Facts**
+    *   Added a clearer Fact Memory experience that distinguishes always-on Instructions from relevance-based Facts on the profile page and in chat-time recall.
+    *   Chat responses now surface saved-memory usage more clearly through separate Instruction Memory and Fact Memory Recall thoughts and citations.
+    *   Admin Settings Latest Features and the user-facing Support > Latest Features page now include Fact Memory guidance and screenshots, and admins can show or hide that announcement from General > User-Facing Latest Features.
+    *   (Ref: `semantic_kernel_fact_memory_store.py`, `route_backend_chats.py`, `route_frontend_profile.py`, `profile.html`, `support_menu_config.py`, `admin_settings.html`, `latest_features.html`, fact memory guidance and latest-features coverage)
+
 ### **(v0.240.063)**
 
 #### New Features

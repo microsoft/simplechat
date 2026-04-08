@@ -10,7 +10,9 @@ Updated in version: **0.240.082**
 
 Updated in version: **0.240.083**
 
-Related config.py update: `VERSION = "0.240.083"`
+Updated in version: **0.240.084**
+
+Related config.py update: `VERSION = "0.240.084"`
 
 ## Overview
 
@@ -19,6 +21,8 @@ This feature extends fact memory into the lightweight mini-SK tabular analysis f
 The profile experience was later tightened into a smaller page-level summary with a dedicated popup manager for searching, paging, and editing memories.
 
 The chat experience now splits saved memories into instruction memories and fact memories. Instruction memories are always applied like durable user-specific prompt rules, while fact memories are recalled by embedding similarity only when they are relevant to the current request.
+
+The feature is now also surfaced in both the admin-only Latest Features tab and the user-facing Support > Latest Features page, and admins can control whether that user-facing announcement is shown from General > User-Facing Latest Features.
 
 ## Dependencies
 
@@ -63,6 +67,7 @@ The chat experience now splits saved memories into instruction memories and fact
 3. Users can open the Manage Memories popup to search, page through, filter by type, edit, reclassify, and delete saved entries.
 4. When the toggle is enabled, supported chat and mini-SK flows apply instruction memories on every prompt and retrieve fact memories only when they are relevant.
 5. When instruction memories are applied or fact memories are retrieved, chat thoughts and citations show dedicated memory steps so users can see how memory was used.
+6. Admins can decide whether the user-facing Fact Memory announcement is shown from General > User-Facing Latest Features.
 
 ## Testing and Validation
 

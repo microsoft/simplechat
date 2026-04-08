@@ -1,8 +1,8 @@
 # test_fact_memory_profile_and_mini_sk.py
 """
 Functional test for profile fact memory recall and mini-SK fact-memory support.
-Version: 0.240.083
-Implemented in: 0.240.077; 0.240.079; 0.240.081; 0.240.082; 0.240.083
+Version: 0.240.084
+Implemented in: 0.240.077; 0.240.079; 0.240.081; 0.240.082; 0.240.083; 0.240.084
 
 This test ensures fact memory supports instruction/fact memory types,
 the mini-SK helper injects always-on instructions plus embedding-recalled
@@ -374,17 +374,18 @@ def test_version_and_feature_documentation_alignment():
 
     feature_doc_content = read_file_text(FEATURE_DOC)
 
-    assert read_config_version() == '0.240.083'
+    assert read_config_version() == '0.240.084'
     assert 'Implemented in version: **0.240.077**' in feature_doc_content
     assert 'Updated in version:' in feature_doc_content
-    assert 'Updated in version: **0.240.083**' in feature_doc_content
-    assert 'Related config.py update: `VERSION = "0.240.083"`' in feature_doc_content
+    assert 'Updated in version: **0.240.084**' in feature_doc_content
+    assert 'Related config.py update: `VERSION = "0.240.084"`' in feature_doc_content
     assert 'mini-SK' in feature_doc_content
     assert 'profile recall' in feature_doc_content.lower()
     assert 'popup manager' in feature_doc_content.lower()
     assert 'thoughts and citations' in feature_doc_content.lower()
     assert 'instruction memories' in feature_doc_content.lower()
     assert 'fact memories' in feature_doc_content.lower()
+    assert 'latest features' in feature_doc_content.lower()
     assert 'functional_tests/test_fact_memory_profile_and_mini_sk.py' in feature_doc_content
     assert 'ui_tests/test_profile_fact_memory_editor.py' in feature_doc_content
 

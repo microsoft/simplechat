@@ -2559,6 +2559,81 @@
                     </div>
                 </div>
 
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-fact-memory-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-journal-bookmark me-2"></i>Fact Memory
+                            </h5>
+                            <p class="text-muted mb-0">Users can now save Instructions and Facts on their profile so the assistant can apply durable preferences every time and recall relevant personal context only when needed.</p>
+                        </div>
+                        <a href="#latestFeaturesFactMemory" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesFactMemory">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesFactMemory">
+                        <div class="card card-body">
+                            <p class="mb-2">Fact Memory gives users a compact profile experience for managing two distinct memory types: always-on Instructions and relevance-based Facts.</p>
+                            <ul class="mb-3">
+                                <li>Instructions act like stable user preferences and are applied on every prompt unless the current message overrides them.</li>
+                                <li>Facts are recalled only when relevant and now appear as dedicated thought and citation entries in chat.</li>
+                                <li>The profile page includes a compact add flow plus a popup manager for search, paging, edit, retag, and delete actions.</li>
+                                <li>Admins can choose whether this announcement is visible on the user-facing Latest Features page from <strong>General > User-Facing Latest Features</strong>.</li>
+                            </ul>
+                            <div class="alert alert-secondary mb-3" role="alert">
+                                Use the <a href="#general" onclick="switchTab(event, 'general-tab')">General</a> tab when you want to show or hide the Fact Memory announcement for end users.
+                            </div>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/facts_memory_view_profile.png') }}"
+                                    data-latest-feature-image-title="Fact Memory on Profile"
+                                    data-latest-feature-image-caption="Profile page section for adding saved instructions and facts and opening the manager modal."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/facts_memory_view_profile.png') }}" alt="Profile fact memory section screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Profile Entry Point</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/fact_memory_management.png') }}"
+                                    data-latest-feature-image-title="Manage Fact Memories"
+                                    data-latest-feature-image-caption="Compact popup manager showing saved instructions and facts with search, paging, edit, and type controls."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/fact_memory_management.png') }}" alt="Fact memory management modal screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Memory Manager</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/facts_citation_and_thoughts.png') }}"
+                                    data-latest-feature-image-title="Instruction Memory and Fact Recall in Chat"
+                                    data-latest-feature-image-caption="Chat response showing instruction memory and fact recall surfaced as dedicated thoughts and citations."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/facts_citation_and_thoughts.png') }}" alt="Chat fact memory thoughts and citations screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Chat Recall</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="card p-3 mb-3 latest-feature-card" id="latest-features-redis-card">
                     <div class="latest-feature-header">
                         <div class="latest-feature-copy">

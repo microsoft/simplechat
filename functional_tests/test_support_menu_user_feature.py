@@ -2,8 +2,8 @@
 """
 Functional test for support menu sidebar visibility, access behavior, and
 latest-feature image preview support.
-Version: 0.240.069
-Implemented in: 0.240.061
+Version: 0.240.084
+Implemented in: 0.240.061; 0.240.084
 
 This test ensures the Support menu renders for signed-in app users when enabled,
 the sidebar and top-nav templates expose the expected links, and the user-facing
@@ -100,10 +100,14 @@ def test_support_menu_settings_defaults_and_persistence():
         "'id': 'summaries_export'",
         "'id': 'agent_operations'",
         "'id': 'ai_transparency'",
+        "'id': 'fact_memory'",
         "'id': 'deployment'",
         "'id': 'redis_key_vault'",
         "'id': 'send_feedback'",
         "'id': 'support_menu'",
+        "'path': 'images/features/facts_memory_view_profile.png'",
+        "'path': 'images/features/fact_memory_management.png'",
+        "'path': 'images/features/facts_citation_and_thoughts.png'",
         "'path': 'images/features/guided_tutorials_workspace.png'",
         "'path': 'images/features/background_completion_notifications-02.png'",
         "'path': 'images/features/model_selection_multi_endpoint_admin.png'",
@@ -120,6 +124,7 @@ def test_support_menu_settings_defaults_and_persistence():
         "'path': 'images/features/sql_test_connection.png'",
         "'path': 'images/features/thoughts_visibility.png'",
         "'path': 'images/features/support_menu_entry.png'",
+        "'fragment': 'fact-memory-settings'",
         "'why': 'This matters because the fastest way to learn a new workflow is usually inside the workflow itself, with the right controls highlighted as you go, while still letting each user hide the launcher once they are comfortable with the app.'",
         "'endpoint': 'chats'",
         "'fragment': 'workspace-tutorial-launch'",
