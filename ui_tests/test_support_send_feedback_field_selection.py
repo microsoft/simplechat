@@ -1,8 +1,8 @@
 # test_support_send_feedback_field_selection.py
 """
 UI test for support Send Feedback field selection stability.
-Version: 0.240.064
-Implemented in: 0.240.064
+Version: 0.241.002
+Implemented in: 0.240.064; 0.241.002
 
 This test ensures the Send Feedback page targets fields by stable form metadata
 even if an extra text input is inserted ahead of the intended controls.
@@ -53,6 +53,11 @@ def test_support_send_feedback_uses_stable_field_selectors(playwright):
 
         assert response.ok, f"Expected /support/send-feedback to load successfully, got HTTP {response.status}."
         expect(page.get_by_role("heading", name="Send Feedback")).to_be_visible()
+        page_title = page.title()
+        assert page_title.startswith("Send Feedback - "), f"Unexpected page title: {page_title}"
+        app_title = page_title.replace("Send Feedback - ", "", 1).strip()
+        intro_text = page.locator("#support-send-feedback-pane .text-muted")
+        expect(intro_text).to_contain_text(app_title)
 
         captured_payload = {}
 

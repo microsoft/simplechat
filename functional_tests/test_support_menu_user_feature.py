@@ -274,8 +274,9 @@ def test_support_menu_feedback_backend_and_templates():
         "@app.route('/api/support/send_feedback_email', methods=['POST'])",
         'def send_support_feedback_email():',
         "return jsonify({'error': 'Support menu is available to signed-in app users only'}), 403",
+        "application_title = str(settings.get('app_title') or '').strip() or 'Simple Chat'",
         'log_user_support_feedback_email_submission(',
-        "'[SimpleChat User Support]",
+        "subject_line = f'[{application_title} User Support] {feedback_label} - {organization}'",
     ]
     missing_backend = [marker for marker in backend_markers if marker not in backend_content]
     assert not missing_backend, f'Missing support feedback backend markers: {missing_backend}'
