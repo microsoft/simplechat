@@ -174,7 +174,7 @@ azd up
     - The container already starts Gunicorn through `application/single_app/Dockerfile`.
 - If your environment needs private or self-signed certificate authorities for outbound TLS checks to internal services, add them during image build using [docs/how-to/docker_customization.md](docs/how-to/docker_customization.md).
 
-## Native Python
+### Native Python
 - For **native Python App Service** deployments, deploy the `application/single_app` folder and set the App Service Startup command explicitly.
 
 Native Python deployment references:

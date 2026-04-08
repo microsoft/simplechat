@@ -2,7 +2,17 @@
 
 import { loadConversations, selectConversation, ensureConversationPresent, createNewConversation } from "./chat-conversations.js";
 // Import handleDocumentSelectChange
-import { loadAllDocs, populateDocumentSelectScope, handleDocumentSelectChange, loadTagsForScope, filterDocumentsBySelectedTags, setScopeFromUrlParam } from "./chat-documents.js";
+import {
+    loadAllDocs,
+    populateDocumentSelectScope,
+    handleDocumentSelectChange,
+    loadTagsForScope,
+    filterDocumentsBySelectedTags,
+    setScopeFromUrlParam,
+    ensureSearchDocumentsVisible,
+    openScopeDropdown,
+    openTagsDropdown,
+} from "./chat-documents.js";
 import { getUrlParameter } from "./chat-utils.js"; // Assuming getUrlParameter is in chat-utils.js now
 import { loadUserPrompts, loadGroupPrompts, initializePromptInteractions } from "./chat-prompts.js";
 import { initializeModelSelector, populateModelDropdown } from "./chat-model-selector.js";
@@ -12,6 +22,68 @@ import { initConversationInfoButton } from "./chat-conversation-info-button.js";
 import { initializeReasoningToggle } from "./chat-reasoning.js";
 import { initializeSpeechInput } from "./chat-speech-input.js";
 import { initChatTutorial } from "./chat-tutorial.js";
+
+
+function clearFeatureActionParam() {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has('feature_action')) {
+        return;
+    }
+
+    url.searchParams.delete('feature_action');
+    const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+    window.history.replaceState({}, document.title, nextUrl);
+}
+
+
+function getFirstConversationId() {
+    const currentConversationId = window.chatConversations?.getCurrentConversationId?.();
+    if (currentConversationId) {
+        return currentConversationId;
+    }
+
+    const firstConversation = document.querySelector('.conversation-item[data-conversation-id]');
+    return firstConversation?.getAttribute('data-conversation-id') || null;
+}
+
+
+async function handleLatestFeatureLaunch(featureAction) {
+    switch (featureAction) {
+        case 'conversation_export': {
+            const conversationId = getFirstConversationId();
+            if (!conversationId) {
+                showToast('Open or start a conversation before exporting.', 'info');
+                return;
+            }
+
+            await ensureConversationPresent(conversationId);
+            await selectConversation(conversationId);
+
+            if (window.chatExport?.openExportWizard) {
+                window.chatExport.openExportWizard([conversationId], true);
+            } else {
+                showToast('Conversation export is not available right now.', 'warning');
+            }
+            return;
+        }
+        case 'multi_workspace_scope_management': {
+            await ensureSearchDocumentsVisible();
+            if (!openScopeDropdown()) {
+                showToast('Grounded-search scopes are not available right now.', 'info');
+            }
+            return;
+        }
+        case 'chat_document_and_tag_filtering': {
+            await ensureSearchDocumentsVisible();
+            if (!openTagsDropdown()) {
+                showToast('No tags are available yet for the current search scope.', 'info');
+            }
+            return;
+        }
+        default:
+            return;
+    }
+}
 
 window.addEventListener('DOMContentLoaded', async () => {
   console.log("DOM Content Loaded. Starting initializations."); // Log start
@@ -297,6 +369,17 @@ window.addEventListener('DOMContentLoaded', async () => {
           } catch (err) {
               console.error('Failed to load conversation from URL param:', err);
               showToast('Could not open that conversation.', 'danger');
+          }
+      }
+
+      const featureAction = getUrlParameter('feature_action') || '';
+      if (featureAction) {
+          try {
+              await handleLatestFeatureLaunch(featureAction);
+          } catch (err) {
+              console.error('Failed to handle latest-feature launch action:', err);
+          } finally {
+              clearFeatureActionParam();
           }
       }
 

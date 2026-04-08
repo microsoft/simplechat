@@ -215,6 +215,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_support_send_feedback': True,
         'support_feedback_recipient_email': '',
         'enable_support_latest_features': True,
+        'enable_support_latest_feature_documentation_links': False,
         'support_latest_features_visibility': get_default_support_latest_features_visibility(),
 
         # Enhanced Citations

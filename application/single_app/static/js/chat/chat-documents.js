@@ -1323,6 +1323,74 @@ function syncTagsDropdownButtonText() {
   }
 }
 
+
+export async function ensureSearchDocumentsVisible() {
+  if (!searchDocumentsBtn || !searchDocumentsContainer) {
+    return false;
+  }
+
+  searchDocumentsBtn.classList.add('active');
+  searchDocumentsContainer.style.display = 'block';
+
+  if (scopeLocked === true) {
+    rebuildScopeDropdownWithLock();
+  } else {
+    buildScopeDropdown();
+  }
+
+  await loadAllDocs();
+  await loadTagsForScope();
+
+  try {
+    const dropdownInstance = bootstrap.Dropdown.getInstance(docDropdownButton);
+    if (dropdownInstance) {
+      dropdownInstance.update();
+    }
+  } catch (err) {
+    console.error('Error updating document dropdown:', err);
+  }
+
+  handleDocumentSelectChange();
+  return true;
+}
+
+
+function openDropdown(buttonElement) {
+  if (!buttonElement) {
+    return false;
+  }
+
+  try {
+    bootstrap.Dropdown.getOrCreateInstance(buttonElement, {
+      autoClose: 'outside'
+    }).show();
+    buttonElement.focus();
+    return true;
+  } catch (err) {
+    console.error('Error opening dropdown:', err);
+    return false;
+  }
+}
+
+
+export function openScopeDropdown() {
+  return openDropdown(scopeDropdownButton);
+}
+
+
+export function openTagsDropdown() {
+  if (!tagsDropdown || !tagsDropdownButton) {
+    return false;
+  }
+
+  if (tagsDropdown.style.display === 'none' && (!tagsDropdownItems || !tagsDropdownItems.children.length)) {
+    return false;
+  }
+
+  showTagsDropdown();
+  return openDropdown(tagsDropdownButton);
+}
+
 /* ---------------------------------------------------------------------------
    Get Selected Tags
 --------------------------------------------------------------------------- */
@@ -1541,27 +1609,7 @@ if (searchDocumentsBtn) {
     if (!searchDocumentsContainer) return;
 
     if (this.classList.contains("active")) {
-      searchDocumentsContainer.style.display = "block";
-      // Build the scope dropdown on first open (respect lock state)
-      if (scopeLocked === true) {
-        rebuildScopeDropdownWithLock();
-      } else {
-        buildScopeDropdown();
-      }
-      // Ensure initial population and state is correct when opening
-      loadAllDocs().then(() => {
-        // Load tags for the currently selected scope
-        loadTagsForScope();
-        // Update Bootstrap Popper positioning if dropdown was already initialized
-        try {
-          const dropdownInstance = bootstrap.Dropdown.getInstance(docDropdownButton);
-          if (dropdownInstance) {
-            dropdownInstance.update();
-          }
-        } catch (err) {
-          console.error("Error updating dropdown:", err);
-        }
-      });
+      ensureSearchDocumentsVisible();
     } else {
       searchDocumentsContainer.style.display = "none";
     }

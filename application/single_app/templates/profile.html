@@ -454,7 +454,7 @@
 
     <!-- Retention Policy Settings -->
     {% if app_settings.enable_retention_policy_personal %}
-    <div class="section-card">
+    <div class="section-card" id="retention-policy-settings">
         <h5 class="mb-3"><i class="bi bi-hourglass-split me-2"></i>Retention Policy Settings</h5>
         <p class="text-muted">Configure how long to keep your conversations and documents. Items older than the specified period will be automatically deleted.</p>
         
@@ -907,6 +907,31 @@ function updateProfileHeroImage() {
     }
 }
 
+function handleProfileFeatureAction() {
+    const url = new URL(window.location.href);
+    const featureAction = url.searchParams.get('feature_action') || '';
+
+    if (featureAction !== 'retention_policy') {
+        return;
+    }
+
+    const retentionSection = document.getElementById('retention-policy-settings');
+    const retentionSelect = document.getElementById('conversation_retention_days');
+
+    if (retentionSection) {
+        retentionSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    if (retentionSelect) {
+        window.setTimeout(() => {
+            retentionSelect.focus({ preventScroll: true });
+        }, 150);
+    }
+
+    url.searchParams.delete('feature_action');
+    window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     console.log('Profile DOMContentLoaded fired');
     
@@ -923,6 +948,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     loadRetentionSettings();
+    handleProfileFeatureAction();
     loadTutorialPreferences();
     loadFactMemory();
     loadMicrophoneSettings();

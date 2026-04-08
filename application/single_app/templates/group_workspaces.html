@@ -1318,6 +1318,29 @@ app_settings.app_title }} {% endblock %} {% block head %}
     </form>
   </div>
 </div>
+
+<!-- Group Document Delete Modal -->
+<div class="modal fade" id="groupDocumentDeleteModal" tabindex="-1" aria-labelledby="groupDocumentDeleteModalLabel" aria-hidden="true" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="groupDocumentDeleteModalLabel">Delete Group Document</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="groupDocumentDeleteModalBody">
+        <p class="mb-0">Choose how you want to delete this group document revision.</p>
+      </div>
+      <div class="modal-footer d-flex flex-wrap justify-content-between gap-2">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <div class="d-flex flex-wrap gap-2">
+          <button type="button" class="btn btn-outline-danger" id="groupDeleteCurrentBtn">Delete Current Version</button>
+          <button type="button" class="btn btn-danger" id="groupDeleteAllBtn">Delete All Versions</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Bulk Tag Assignment Modal (Group) -->
 <div class="modal fade" id="groupBulkTagModal" tabindex="-1" aria-labelledby="groupBulkTagModalLabel" aria-hidden="true" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
   <div class="modal-dialog modal-lg">
@@ -2609,27 +2632,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
               <ul class="mb-0 mt-2 small">
                 ${detailsList}
               </ul>
-            </div>
-          </div>
-
-          <div class="modal fade" id="groupDocumentDeleteModal" tabindex="-1" aria-labelledby="groupDocumentDeleteModalLabel" aria-hidden="true" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
-            <div class="modal-dialog">
-              <div class="modal-content">
-                <div class="modal-header">
-                  <h5 class="modal-title" id="groupDocumentDeleteModalLabel">Delete Group Document</h5>
-                  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                </div>
-                <div class="modal-body" id="groupDocumentDeleteModalBody">
-                  <p class="mb-0">Choose how you want to delete this group document revision.</p>
-                </div>
-                <div class="modal-footer d-flex flex-wrap justify-content-between gap-2">
-                  <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                  <div class="d-flex flex-wrap gap-2">
-                    <button type="button" class="btn btn-outline-danger" id="groupDeleteCurrentBtn">Delete Current Version</button>
-                    <button type="button" class="btn btn-danger" id="groupDeleteAllBtn">Delete All Versions</button>
-                  </div>
-                </div>
-              </div>
             </div>
           </div>
         `;

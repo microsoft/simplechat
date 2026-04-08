@@ -1,13 +1,103 @@
 ---
 layout: page
-title: "v0.239.001 Release"
-description: "Overview of new features and improvements in v0.239.001"
+title: "Latest Release Highlights"
+description: "Current feature guides with previous release highlights kept for reference"
 section: "Latest Release"
 ---
 
-This release introduces conversation export capabilities, retention policy management, enhanced workspace controls, and a comprehensive document tagging system.
+This page tracks the current set of guides behind the in-app **Latest Features** experience and keeps the earlier `v0.239.001` content available below as **Previous Release Features**.
 
-## New Features
+## Current Release Features
+
+These guides map to the feature set currently highlighted in the app for end users.
+
+### Guided Tutorials
+
+Step-by-step walkthroughs help users discover core chat, workspace, and onboarding flows faster, and each user can now hide the launchers when they no longer need them.
+
+[Read the full guide]({{ '/latest-release/guided-tutorials/' | relative_url }})
+
+### Background Chat
+
+Long-running chat requests can finish in the background while users continue working elsewhere in the app.
+
+[Read the full guide]({{ '/latest-release/background-chat/' | relative_url }})
+
+### GPT Selection
+
+Teams can expose better model-selection options so users can choose the best experience for a task.
+
+[Read the full guide]({{ '/latest-release/gpt-selection/' | relative_url }})
+
+### Tabular Analysis
+
+Spreadsheet and table workflows continue to improve for exploration, filtering, and grounded follow-up questions.
+
+[Read the full guide]({{ '/latest-release/tabular-analysis/' | relative_url }})
+
+### Citation Improvements
+
+Enhanced citations give users better source traceability, document previews, and history-aware grounding.
+
+[Read the full guide]({{ '/latest-release/citation-improvements/' | relative_url }})
+
+### Document Versioning
+
+Document revision visibility has improved so users can work with the right version of shared content.
+
+[Read the full guide]({{ '/latest-release/document-versioning/' | relative_url }})
+
+### Summaries and Export
+
+Conversation summaries and export workflows continue to expand for reporting and follow-up sharing.
+
+[Read the full guide]({{ '/latest-release/summaries-and-export/' | relative_url }})
+
+### Agent Operations
+
+Agent creation, organization, and operational controls keep getting smoother for advanced scenarios.
+
+[Read the full guide]({{ '/latest-release/agent-operations/' | relative_url }})
+
+### AI Transparency
+
+Thought and reasoning transparency options help users better understand what the assistant is doing.
+
+[Read the full guide]({{ '/latest-release/ai-transparency/' | relative_url }})
+
+### Fact Memory
+
+Profile-based memory now distinguishes always-on Instructions from recall-only Facts so the assistant can carry durable preferences and relevant personal context forward more cleanly.
+
+[Read the full guide]({{ '/latest-release/fact-memory/' | relative_url }})
+
+### Deployment
+
+Deployment guidance and diagnostics keep improving so admins can roll out changes with less guesswork.
+
+[Read the full guide]({{ '/latest-release/deployment/' | relative_url }})
+
+### Redis and Key Vault
+
+Caching and secret-management setup guidance has expanded for more secure and predictable operations.
+
+[Read the full guide]({{ '/latest-release/redis-and-key-vault/' | relative_url }})
+
+### Send Feedback
+
+End users can prepare bug reports and feature requests for their SimpleChat admins directly from the Support menu.
+
+[Read the full guide]({{ '/latest-release/send-feedback/' | relative_url }})
+
+### Support Menu
+
+Admins can surface a dedicated Support menu in navigation with Latest Features and Send Feedback entries for end users.
+
+[Read the full guide]({{ '/latest-release/support-menu/' | relative_url }})
+
+## Previous Release Features
+
+The earlier `v0.239.001` release guides remain available here for reference.
 
 ### Conversation Export
 
@@ -15,7 +105,7 @@ Export one or multiple conversations from the Chat page in JSON or Markdown form
 
 [Read the full guide]({{ '/latest-release/export-conversation/' | relative_url }})
 
-### Retention Policy UI
+### Retention Policy
 
 Configure conversation and document retention periods directly from the workspace and group management pages. Choose from preset retention periods ranging from 7 days to 10 years, use the organization default, or disable automatic deletion entirely.
 
@@ -55,7 +145,7 @@ Checkbox-based multi-document and multi-tag filtering in the chat interface, rep
 
 [Read the full guide]({{ '/latest-release/tags-grid-view-chat-filtering/' | relative_url }})
 
-## Bug Fixes
+## Previous Release Bug Fixes
 
 - **Citation Parsing** -- Fixed edge cases where page range references failed to generate correct clickable links when not all pages had explicit reference IDs.
 - **Public Workspace Activation** -- Fixed 403 error when non-owner users tried to activate a public workspace for chat.

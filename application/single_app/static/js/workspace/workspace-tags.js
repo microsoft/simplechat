@@ -165,6 +165,31 @@ function switchView(view) {
     }
 }
 
+
+export function setWorkspaceView(view) {
+    const normalizedView = view === 'grid' ? 'grid' : 'list';
+    const listRadio = document.getElementById('docs-view-list');
+    const gridRadio = document.getElementById('docs-view-grid');
+
+    if (normalizedView === 'grid') {
+        if (gridRadio) {
+            gridRadio.checked = true;
+        }
+        if (listRadio) {
+            listRadio.checked = false;
+        }
+    } else {
+        if (listRadio) {
+            listRadio.checked = true;
+        }
+        if (gridRadio) {
+            gridRadio.checked = false;
+        }
+    }
+
+    switchView(normalizedView);
+}
+
 // Update sort icons in the static grid control bar
 function updateGridSortIcons() {
     const bar = document.getElementById('grid-controls-bar');

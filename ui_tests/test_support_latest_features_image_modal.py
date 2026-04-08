@@ -1,8 +1,8 @@
 # test_support_latest_features_image_modal.py
 """
 UI test for support latest-features image previews.
-Version: 0.240.061
-Implemented in: 0.240.061
+Version: 0.241.002
+Implemented in: 0.240.061; 0.241.002
 
 This test ensures the user-facing Latest Features page opens a full-size image
 preview modal when a feature thumbnail is clicked and keeps the expanded
@@ -57,6 +57,21 @@ def test_support_latest_features_image_modal(playwright):
         expect(page.locator(".support-feature-card")).to_have_count(page.locator(".support-feature-card").count())
         expect(page.locator(".support-feature-callout").first).to_be_visible()
         expect(page.locator(".support-feature-action-card").first).to_be_visible()
+
+        previous_release_toggle = page.get_by_role("button", name="Show Previous Release Features")
+        if previous_release_toggle.count() > 0:
+            previous_release_toggle.first.click()
+            expect(page.locator("#supportLatestFeaturesPreviousRelease")).to_be_visible()
+            expect(page.get_by_role("heading", name="Previous Release Features")).to_be_visible()
+
+            previous_release_thumbnail = page.locator("#supportLatestFeaturesPreviousRelease .support-feature-thumbnail-trigger").first
+            if previous_release_thumbnail.count() > 0:
+                previous_release_thumbnail.click()
+                modal = page.locator("#latestFeatureImageModal")
+                expect(modal).to_be_visible()
+                expect(page.locator("#latestFeatureImageModalImage")).to_be_visible()
+                page.locator("#latestFeatureImageModal .btn-close").click()
+                expect(modal).not_to_be_visible()
 
         thumbnail_trigger = page.locator(".support-feature-thumbnail-trigger").first
         if thumbnail_trigger.count() == 0:
