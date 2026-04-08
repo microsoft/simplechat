@@ -1,0 +1,85 @@
+---
+layout: default
+---
+
+{% assign feature_meta = site.data.latest_release_features.lookup[page.slug] %}
+{% assign accent = feature_meta.accent | default: 'blue' %}
+{% assign primary_image = feature_meta.image %}
+{% assign primary_image_alt = feature_meta.image_alt | default: page.title %}
+
+{% if primary_image == nil and feature_meta.images and feature_meta.images.size > 0 %}
+  {% assign primary_image = feature_meta.images[0].path %}
+  {% assign primary_image_alt = feature_meta.images[0].alt | default: page.title %}
+{% endif %}
+
+<article class="page-content latest-release-page latest-release-feature-page">
+  <section class="latest-release-hero latest-release-accent--{{ accent }}">
+    <div class="latest-release-hero-copy">
+      <div class="latest-release-breadcrumb">
+        <a href="{{ '/latest-release/' | relative_url }}"><i class="bi bi-arrow-left"></i> Latest Release Highlights</a>
+      </div>
+
+      <div class="latest-release-pill-row">
+        <span class="latest-release-pill">{{ feature_meta.release_label | default: 'Latest Release' }}</span>
+        {% if feature_meta.release_version %}
+          <span class="latest-release-subtle">v{{ feature_meta.release_version }}</span>
+        {% endif %}
+      </div>
+
+      <h1 class="latest-release-hero-title">{{ page.title }}</h1>
+      <p class="latest-release-hero-description">{{ feature_meta.summary | default: page.description }}</p>
+
+      <div class="latest-release-hero-actions">
+        <a href="{{ '/latest-release/' | relative_url }}" class="btn btn-primary btn-sm">Back to all highlights</a>
+        {% if primary_image %}
+          <a href="{{ primary_image | relative_url }}" class="btn btn-outline-secondary btn-sm" target="_blank" rel="noopener">Open screenshot</a>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="latest-release-hero-art">
+      {% if primary_image %}
+        <a class="latest-release-hero-image" href="{{ primary_image | relative_url }}" target="_blank" rel="noopener">
+          <img src="{{ primary_image | relative_url }}" alt="{{ primary_image_alt }}" />
+        </a>
+      {% else %}
+        <div class="latest-release-icon-orb" aria-hidden="true">
+          <i class="bi {{ feature_meta.icon | default: 'bi-stars' }}"></i>
+        </div>
+      {% endif %}
+    </div>
+  </section>
+
+  {% if feature_meta.images and feature_meta.images.size > 0 %}
+  <section class="latest-release-gallery-section">
+    <div class="latest-release-section-header">
+      <div>
+        <div class="latest-release-section-kicker">Visual tour</div>
+        <h2>Screenshots</h2>
+        <p>These screenshots come from the same app-side Latest Features gallery used in the product experience.</p>
+      </div>
+      <span class="latest-release-section-badge">{{ feature_meta.images.size }} image{% if feature_meta.images.size != 1 %}s{% endif %}</span>
+    </div>
+
+    <div class="latest-release-gallery-grid{% if feature_meta.images.size == 1 %} latest-release-gallery-grid--single{% endif %}">
+      {% for image in feature_meta.images %}
+      <figure class="latest-release-gallery-card">
+        <a class="latest-release-gallery-link" href="{{ image.path | relative_url }}" target="_blank" rel="noopener">
+          <img src="{{ image.path | relative_url }}" alt="{{ image.alt | default: image.title | default: page.title }}" />
+        </a>
+        <figcaption class="latest-release-gallery-caption">
+          <strong>{{ image.label | default: image.title }}</strong>
+          <span>{{ image.caption }}</span>
+        </figcaption>
+      </figure>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <div class="latest-release-feature-content">
+    <div class="latest-release-rich-content">
+      {{ content }}
+    </div>
+  </div>
+</article>

@@ -1,5 +1,5 @@
 ---
-layout: page
+layout: latest-release-feature
 title: "Guided Tutorials"
 description: "How guided walkthroughs help users learn chat and workspace flows inside the app"
 section: "Latest Release"

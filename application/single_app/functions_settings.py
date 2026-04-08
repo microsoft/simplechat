@@ -262,7 +262,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_conversation_archiving': False,
 
         # Processing Thoughts
-        'enable_thoughts': False,
+        'enable_thoughts': True,
 
         # Search and Extract
         'azure_ai_search_endpoint': '',

@@ -1,5 +1,5 @@
 ---
-layout: page
+layout: latest-release-feature
 title: "Send Feedback"
 description: "How end users can prepare structured bug reports and feature requests for their SimpleChat admins"
 section: "Latest Release"

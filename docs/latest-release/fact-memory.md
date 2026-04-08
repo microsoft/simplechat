@@ -1,5 +1,5 @@
 ---
-layout: page
+layout: latest-release-feature
 title: "Fact Memory"
 description: "How Instructions and Facts help the assistant remember durable preferences and relevant personal context"
 section: "Latest Release"
