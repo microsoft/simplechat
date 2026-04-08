@@ -155,17 +155,42 @@ export function copyAsPrompt(messageDiv, messageId, role) {
  * Open the user's default email client with the message content
  * pre-filled in the email body via a mailto: link.
  */
-export function openInEmail(messageDiv, messageId, role) {
+export async function openInEmail(messageDiv, messageId, role) {
+    const conversationId = window.currentConversationId;
+    if (!conversationId || !messageId) {
+        showToast('Cannot email — no active conversation or message.', 'warning');
+        return;
+    }
+
     const content = getMessageMarkdown(messageDiv, role);
     if (!content) {
         showToast('No message content to email.', 'warning');
         return;
     }
 
-    const { sender } = getMessageMeta(messageDiv, role);
-    const subject = `Chat message from ${sender}`;
+    try {
+        const response = await fetch('/api/message/export-email-draft', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                message_id: messageId,
+                conversation_id: conversationId
+            })
+        });
 
-    // mailto: uses the body parameter for content
-    const mailtoUrl = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(content)}`;
-    window.open(mailtoUrl, '_blank');
+        const data = await response.json().catch(() => null);
+        if (!response.ok) {
+            const errorMsg = data?.error || `Email export failed (${response.status})`;
+            showToast(errorMsg, 'danger');
+            return;
+        }
+
+        const subject = data?.subject || 'Shared chat message';
+        const body = data?.body || content;
+        const mailtoUrl = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+        window.location.href = mailtoUrl;
+    } catch (err) {
+        console.error('Error exporting message to email:', err);
+        showToast('Failed to open email draft.', 'danger');
+    }
 }

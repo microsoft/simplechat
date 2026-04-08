@@ -2,8 +2,8 @@
 """
 Functional test for support menu sidebar visibility, access behavior, and
 latest-feature image preview support.
-Version: 0.240.061
-Implemented in: 0.240.061
+Version: 0.240.085
+Implemented in: 0.240.061; 0.240.085
 
 This test ensures the Support menu renders for signed-in app users when enabled,
 the sidebar and top-nav templates expose the expected links, and the user-facing
@@ -13,6 +13,7 @@ links, and feature parity with the admin latest-features catalog.
 
 import os
 import sys
+import importlib.util
 
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -40,12 +41,20 @@ def read_text(path):
         return file_handle.read()
 
 
+def load_module(path, module_name):
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_support_menu_settings_defaults_and_persistence():
     print('🔍 Testing support menu settings defaults and persistence markers...')
 
     settings_content = read_text(FUNCTIONS_SETTINGS)
     admin_route_content = read_text(ADMIN_ROUTE)
     config_content = read_text(SUPPORT_CONFIG)
+    support_config = load_module(SUPPORT_CONFIG, 'support_menu_config_test')
 
     settings_markers = [
         "'enable_support_menu': False",
@@ -59,6 +68,14 @@ def test_support_menu_settings_defaults_and_persistence():
     ]
     missing_settings = [marker for marker in settings_markers if marker not in settings_content]
     assert not missing_settings, f'Missing support menu settings markers: {missing_settings}'
+
+    default_visibility = support_config.get_default_support_latest_features_visibility()
+    assert default_visibility['deployment'] is False, 'Deployment should be hidden by default for user-facing latest features'
+    assert default_visibility['redis_key_vault'] is False, 'Redis and Key Vault should be hidden by default for user-facing latest features'
+
+    normalized_visibility = support_config.normalize_support_latest_features_visibility({})
+    assert normalized_visibility['deployment'] is False, 'Normalized defaults should keep Deployment hidden by default'
+    assert normalized_visibility['redis_key_vault'] is False, 'Normalized defaults should keep Redis and Key Vault hidden by default'
 
     route_markers = [
         "get_support_latest_feature_catalog",
@@ -83,10 +100,14 @@ def test_support_menu_settings_defaults_and_persistence():
         "'id': 'summaries_export'",
         "'id': 'agent_operations'",
         "'id': 'ai_transparency'",
+        "'id': 'fact_memory'",
         "'id': 'deployment'",
         "'id': 'redis_key_vault'",
         "'id': 'send_feedback'",
         "'id': 'support_menu'",
+        "'path': 'images/features/facts_memory_view_profile.png'",
+        "'path': 'images/features/fact_memory_management.png'",
+        "'path': 'images/features/facts_citation_and_thoughts.png'",
         "'path': 'images/features/guided_tutorials_workspace.png'",
         "'path': 'images/features/background_completion_notifications-02.png'",
         "'path': 'images/features/model_selection_multi_endpoint_admin.png'",
@@ -103,7 +124,8 @@ def test_support_menu_settings_defaults_and_persistence():
         "'path': 'images/features/sql_test_connection.png'",
         "'path': 'images/features/thoughts_visibility.png'",
         "'path': 'images/features/support_menu_entry.png'",
-        "'why': 'This matters because the fastest way to learn a new workflow is usually inside the workflow itself, with the right controls highlighted as you go.'",
+        "'fragment': 'fact-memory-settings'",
+        "'why': 'This matters because the fastest way to learn a new workflow is usually inside the workflow itself, with the right controls highlighted as you go, while still letting each user hide the launcher once they are comfortable with the app.'",
         "'endpoint': 'chats'",
         "'fragment': 'workspace-tutorial-launch'",
         "'fragment': 'upload-area'",
@@ -134,6 +156,7 @@ def test_support_menu_admin_template_and_js():
         'name="support_latest_feature_{{ feature.id }}"',
         '{{ feature.title }}',
         'Enable Support Menu for End Users',
+        'Deployment and Redis start unchecked because they are mainly admin-facing rollout and infrastructure topics.',
         '<i class="bi bi-life-preserver me-2"></i>Support Menu',
     ]
     missing_template = [marker for marker in template_markers if marker not in template_content]

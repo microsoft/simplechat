@@ -4,6 +4,7 @@
 The Per-Message Export feature adds export and action options directly to the three-dots dropdown menu on individual chat messages. Users can export a single message to Markdown or Word, insert it into the chat prompt, or open it in their default email client — all without leaving the chat interface.
 
 **Version Implemented:** 0.239.005–0.239.007
+**Latest export formatting update:** 0.240.079
 
 ## Dependencies
 - Flask (backend route for Word export)
@@ -26,7 +27,7 @@ The Word export endpoint accepts a JSON body with:
 | `message_id` | string | ID of the message to export |
 | `conversation_id` | string | ID of the conversation the message belongs to |
 
-The server verifies user ownership of the conversation, fetches the specific message from Cosmos DB, generates a Word document using `python-docx` with basic Markdown-to-DOCX conversion (headings, paragraphs, bold, italic, inline code, code blocks, lists, citations), and returns the `.docx` as a binary download.
+The server verifies user ownership of the conversation, fetches the specific message from Cosmos DB, converts the stored markdown into Word-native structures, generates a Word document using `python-docx`, and returns the `.docx` as a binary download.
 
 ### Frontend
 - **JS module:** `static/js/chat/chat-message-export.js`
@@ -47,7 +48,8 @@ The server verifies user ownership of the conversation, fetches the specific mes
 - **Behavior:** POSTs to `/api/message/export-word`. The backend generates a styled `.docx` document with:
   - Title heading ("Message Export")
   - Role metadata
-  - Message content with Markdown formatting preserved (headings, bold, italic, code blocks, lists)
+  - Message content converted into Word formatting (headings, paragraphs, bold, italic, inline code, code blocks, bullet and numbered lists)
+  - Markdown tables rendered as Word tables instead of pipe-delimited text
   - Citations section (if present on the message)
 - **Filename pattern:** `message_export_YYYYMMDD_HHMMSS.docx`
 
@@ -59,10 +61,11 @@ The server verifies user ownership of the conversation, fetches the specific mes
 ### Open in Email
 - **Location:** Three-dots dropdown → "Open in Email"
 - **Icon:** `bi-envelope`
-- **Behavior:** Entirely client-side. Opens the user's default email client via a `mailto:` link with:
-  - **Subject:** "Chat message from [sender name]"
-  - **Body:** The full message content
-- Uses `encodeURIComponent` for safe URL encoding of the content.
+- **Behavior:** Requests a backend-generated mailto draft, then opens the user's default email client via a `mailto:` link with:
+  - **Subject:** An explicit subject from the message when present, otherwise a generated subject from the same GPT initialization path used by conversation summary generation
+  - **Body:** Word-style plain text derived from the message markdown so headings, lists, tables, code blocks, and citations are no longer pasted as raw markdown
+  - **Body Scope:** Starts directly with the formatted message content instead of a leading export metadata block
+- Uses `encodeURIComponent` for safe URL encoding of the subject and body.
 
 ## Dropdown Menu Structure
 
@@ -94,7 +97,7 @@ Both AI and user messages now have export options below a divider:
 |------|---------|
 | `static/js/chat/chat-message-export.js` | Client-side export functions (Markdown, Word fetch, Use as Prompt, Open in Email) |
 | `static/js/chat/chat-messages.js` | Dropdown menu HTML and event bindings for both AI and user messages |
-| `route_backend_conversation_export.py` | Backend `/api/message/export-word` endpoint and Markdown-to-DOCX conversion |
+| `route_backend_conversation_export.py` | Backend `/api/message/export-word` endpoint and markdown-to-Word conversion |
 
 ## Testing and Validation
 
@@ -110,9 +113,10 @@ Both AI and user messages now have export options below a divider:
 ### Known Limitations
 - Word export requires a round-trip to the backend; offline use is not supported for Word format
 - `mailto:` URL length is limited by the email client/OS; very long messages may be truncated
+- `mailto:` does not guarantee rich HTML or RTF composition, so the email body preserves Word-like structure in plain text rather than forcing true rich-text formatting
 - Markdown export for user messages uses `innerText` rather than original markdown source
 
 ## Cross-References
 - Related feature: [Conversation Export](CONVERSATION_EXPORT.md) — exports entire conversations
 - Backend shares infrastructure with conversation export (`route_backend_conversation_export.py`)
-- Functional tests: `functional_tests/test_message_export.py` (when created)
+- Functional tests: `functional_tests/test_per_message_export.py`

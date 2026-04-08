@@ -115,6 +115,16 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
+    document.addEventListener('click', function (event) {
+        const trigger = event.target.closest('[data-open-admin-tab]');
+        if (!trigger) {
+            return;
+        }
+
+        event.preventDefault();
+        openAdminSettingsTab(trigger.getAttribute('data-open-admin-tab'));
+    });
+
     window.addEventListener("popstate", activateTabFromHash);
 
     // --- NEW: Classification Setup ---
@@ -4815,6 +4825,7 @@ function markFormAsModified() {
 }
 
 window.markFormAsModified = markFormAsModified;
+window.isAdminSettingsFormModified = () => formModified;
 
 /**
  * Update the save button appearance based on form state
@@ -4874,3 +4885,15 @@ function setupLatestFeatureImageModal() {
         modalImage.alt = 'Latest feature preview';
     });
 }
+
+function openAdminSettingsTab(targetHash) {
+    if (!targetHash) {
+        return;
+    }
+
+    const normalizedHash = targetHash.startsWith('#') ? targetHash : `#${targetHash}`;
+    history.pushState(null, null, normalizedHash);
+    activateTabFromHash();
+}
+
+window.openAdminSettingsTab = openAdminSettingsTab;

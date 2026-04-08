@@ -542,10 +542,12 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData) {
         }
         return;
     }
+
+    const sender = finalData.role === 'safety' || finalData.blocked ? 'safety' : 'AI';
     
     // Create proper message with all metadata using appendMessage
     appendMessage(
-        'AI',
+        sender,
         finalData.full_content || '',
         finalData.model_deployment_name,
         finalData.message_id,

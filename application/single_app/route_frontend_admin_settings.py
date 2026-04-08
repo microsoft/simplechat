@@ -67,10 +67,7 @@ def register_route_frontend_admin_settings(app):
         if 'multi_endpoint_migration_notice' not in settings or not isinstance(settings.get('multi_endpoint_migration_notice'), dict):
             settings['multi_endpoint_migration_notice'] = {
                 'enabled': False,
-                'message': (
-                    'Multi-endpoint has been enabled and your existing AI endpoint was migrated. '
-                    'Agents using the default connection may need to be updated to select a new model endpoint.'
-                ),
+                'message': '',
                 'created_at': None
             }
 
@@ -638,12 +635,11 @@ def register_route_frontend_admin_settings(app):
             should_migrate_endpoints = enable_multi_model_endpoints and not existing_multi_endpoints_enabled
             migration_notice = settings.get('multi_endpoint_migration_notice', {
                 'enabled': False,
-                'message': (
-                    'Multi-endpoint has been enabled and your existing AI endpoint was migrated. '
-                    'Agents using the default connection may need to be updated to select a new model endpoint.'
-                ),
+                'message': '',
                 'created_at': None
             })
+            migration_notice['enabled'] = False
+            migration_notice['message'] = ''
             migrated_at = settings.get('multi_endpoint_migrated_at')
 
             if should_migrate_endpoints and not parsed_model_endpoints:
@@ -709,7 +705,6 @@ def register_route_frontend_admin_settings(app):
 
 
                 migrated_at = datetime.now(timezone.utc).isoformat()
-                migration_notice['enabled'] = True
                 migration_notice['created_at'] = migrated_at
 
             parsed_model_endpoints = merge_model_endpoints_with_existing(parsed_model_endpoints, existing_model_endpoints)

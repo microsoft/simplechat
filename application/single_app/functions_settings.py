@@ -111,10 +111,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'multi_endpoint_migrated_at': None,
         'multi_endpoint_migration_notice': {
             'enabled': False,
-            'message': (
-                'Multi-endpoint has been enabled and your existing AI endpoint was migrated. '
-                'Agents using the default connection may need to be updated to select a new model endpoint.'
-            ),
+                'message': '',
             'created_at': None
         },
         'azure_apim_gpt_endpoint': '',
@@ -1041,6 +1038,9 @@ def get_user_settings(user_id):
 
         if 'personal_model_endpoints' not in doc['settings']:
             doc['settings']['personal_model_endpoints'] = []
+        if 'showTutorialButtons' not in doc['settings']:
+            doc['settings']['showTutorialButtons'] = True
+            updated = True
         
         # Try to update email/display_name if missing and available in session
         user = session.get("user", {})
@@ -1082,6 +1082,7 @@ def get_user_settings(user_id):
         display_name = user.get("name")
         doc = {"id": user_id, "settings": {}}
         doc["settings"]["personal_model_endpoints"] = []
+        doc["settings"]["showTutorialButtons"] = True
         if email:
             doc["email"] = email
         if display_name:
@@ -1342,6 +1343,12 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
         sanitized['support_feedback_recipient_configured'] = bool(
             str(full_settings.get('support_feedback_recipient_email') or '').strip()
         )
+
+    if isinstance(sanitized.get('multi_endpoint_migration_notice'), dict):
+        sanitized['multi_endpoint_migration_notice'] = {
+            **sanitized['multi_endpoint_migration_notice'],
+            'enabled': False,
+        }
 
     return sanitized
 

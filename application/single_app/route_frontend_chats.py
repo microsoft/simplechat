@@ -42,6 +42,90 @@ def _serialize_chat_prompt_option(prompt, *, scope_type, scope_id=None, scope_na
     }
 
 
+def _normalize_chat_model_value(value):
+    return str(value or '').strip()
+
+
+def _build_initial_chat_model_selection(*, chat_model_options, preferred_model_id=None, preferred_model_deployment=None):
+    scope_order = {
+        'global': 0,
+        'personal': 1,
+        'group': 2,
+    }
+
+    def serialize_option(option):
+        if not isinstance(option, dict):
+            return None
+
+        selection_key = _normalize_chat_model_value(option.get('selection_key'))
+        model_id = _normalize_chat_model_value(option.get('model_id'))
+        display_name = _normalize_chat_model_value(
+            option.get('display_name') or option.get('deployment_name') or option.get('model_id')
+        ) or 'Select a Model'
+        deployment_name = _normalize_chat_model_value(option.get('deployment_name'))
+        scope_type = _normalize_chat_model_value(option.get('scope_type'))
+        scope_name = _normalize_chat_model_value(option.get('scope_name'))
+
+        search_parts = [
+            display_name,
+            model_id,
+            deployment_name,
+            scope_name or scope_type,
+        ]
+        return {
+            'selection_key': selection_key,
+            'model_id': model_id,
+            'display_name': display_name,
+            'deployment_name': deployment_name,
+            'endpoint_id': _normalize_chat_model_value(option.get('endpoint_id')),
+            'provider': _normalize_chat_model_value(option.get('provider')),
+            'scope_type': scope_type,
+            'scope_id': _normalize_chat_model_value(option.get('scope_id')),
+            'scope_name': scope_name,
+            'option_value': deployment_name or model_id or selection_key,
+            'search_text': ' '.join(part for part in search_parts if part),
+        }
+
+    def sort_key(option):
+        scope_type = _normalize_chat_model_value(option.get('scope_type'))
+        display_name = _normalize_chat_model_value(
+            option.get('display_name') or option.get('deployment_name') or option.get('model_id')
+        ).lower()
+        scope_name = _normalize_chat_model_value(option.get('scope_name')).lower()
+        model_id = _normalize_chat_model_value(option.get('model_id')).lower()
+        deployment_name = _normalize_chat_model_value(option.get('deployment_name')).lower()
+        return (
+            scope_order.get(scope_type, 99),
+            scope_name,
+            display_name,
+            model_id,
+            deployment_name,
+        )
+
+    valid_options = [option for option in (chat_model_options or []) if isinstance(option, dict)]
+    if not valid_options:
+        return None
+
+    sorted_options = sorted(valid_options, key=sort_key)
+    normalized_preferred_model_id = _normalize_chat_model_value(preferred_model_id)
+    normalized_preferred_model_deployment = _normalize_chat_model_value(preferred_model_deployment)
+
+    if normalized_preferred_model_id:
+        for option in sorted_options:
+            selection_key = _normalize_chat_model_value(option.get('selection_key'))
+            model_id = _normalize_chat_model_value(option.get('model_id'))
+            if selection_key == normalized_preferred_model_id or model_id == normalized_preferred_model_id:
+                return serialize_option(option)
+
+    if normalized_preferred_model_deployment:
+        for option in sorted_options:
+            deployment_name = _normalize_chat_model_value(option.get('deployment_name'))
+            if deployment_name == normalized_preferred_model_deployment:
+                return serialize_option(option)
+
+    return serialize_option(sorted_options[0])
+
+
 def _build_chat_model_catalog(*, user_id, settings, user_settings_dict, user_groups_raw):
     if not settings.get('enable_multi_model_endpoints', False):
         return []
@@ -182,7 +266,6 @@ def register_route_frontend_chats(app):
         enable_document_classification = public_settings.get("enable_document_classification", False)
         enable_extract_meta_data = public_settings.get("enable_extract_meta_data", False)
         enable_multi_model_endpoints = public_settings.get("enable_multi_model_endpoints", False)
-        multi_endpoint_notice = public_settings.get("multi_endpoint_migration_notice", {})
         active_group_id = user_settings_dict.get("activeGroupOid", "")
         active_group_name = ""
         if active_group_id:
@@ -279,6 +362,12 @@ def register_route_frontend_chats(app):
         except Exception as e:
             logger.warning(f"Failed to load chat model options: {e}")
 
+        initial_chat_model_selection = _build_initial_chat_model_selection(
+            chat_model_options=chat_model_options,
+            preferred_model_id=user_settings_dict.get('preferredModelId'),
+            preferred_model_deployment=user_settings_dict.get('preferredModelDeployment'),
+        )
+
         chat_prompt_options = []
         try:
             chat_prompt_options = _build_chat_prompt_catalog(
@@ -302,7 +391,6 @@ def register_route_frontend_chats(app):
             document_classification_categories=categories_list,
             enable_extract_meta_data=enable_extract_meta_data,
             enable_multi_model_endpoints=enable_multi_model_endpoints,
-            multi_endpoint_notice=multi_endpoint_notice,
             multi_endpoint_models=multi_endpoint_models,
             user_id=user_id,
             user_display_name=user_display_name,
@@ -311,6 +399,7 @@ def register_route_frontend_chats(app):
             chat_prompt_options=chat_prompt_options,
             chat_agent_options=chat_agent_options,
             chat_model_options=chat_model_options,
+            initial_chat_model_selection=initial_chat_model_selection,
         )
     
     @app.route('/upload', methods=['POST'])

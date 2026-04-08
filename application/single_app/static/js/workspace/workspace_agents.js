@@ -207,8 +207,13 @@ async function chatWithAgent(agentName) {
     
     const payloadData = { 
       selected_agent: { 
-        name: agentName, 
-        is_global: !!agent.is_global 
+        id: agent.id || null,
+        name: agentName,
+        display_name: agent.display_name || agent.displayName || agentName,
+        is_global: !!agent.is_global,
+        is_group: false,
+        group_id: null,
+        group_name: null
       } 
     };
     

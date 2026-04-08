@@ -1334,6 +1334,7 @@ a.citation-link:hover {
   background-color: #f1f0f0; /* Lighter grey for AI */
   color: black;
   border-bottom-left-radius: 0;
+  min-width: min(320px, 90%);
 }
 
 /* File message bubble styling */

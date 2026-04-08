@@ -357,6 +357,9 @@
                     {% endfor %}
                   </div>
                 </div>
+                {% if feature.id == 'guided_tutorials' %}
+                <p class="support-feature-passive-note mb-0">Guided tutorial buttons are shown by default. If you want them out of the way after onboarding, use the profile shortcut above to hide or restore them for your own account.</p>
+                {% endif %}
                 {% else %}
                 <p class="support-feature-passive-note mb-0">This is mostly a behind-the-scenes improvement managed by your admins. You will usually notice it through a smoother experience rather than a new user control.</p>
                 {% endif %}

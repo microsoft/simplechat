@@ -9,12 +9,13 @@ _SUPPORT_LATEST_FEATURE_CATALOG = [
         'id': 'guided_tutorials',
         'title': 'Guided Tutorials',
         'icon': 'bi-signpost-split',
-        'summary': 'Step-by-step walkthroughs help users discover core chat, workspace, and onboarding flows faster.',
-        'details': 'Guided Tutorials add in-product walkthroughs so you can learn the interface in context instead of hunting through menus first.',
-        'why': 'This matters because the fastest way to learn a new workflow is usually inside the workflow itself, with the right controls highlighted as you go.',
+        'summary': 'Step-by-step walkthroughs help users discover core chat, workspace, and onboarding flows faster, and each user can now hide the launchers when they no longer need them.',
+        'details': 'Guided Tutorials add in-product walkthroughs so you can learn the interface in context instead of hunting through menus first. Tutorial launchers are shown by default and can be hidden or restored later from your profile page.',
+        'why': 'This matters because the fastest way to learn a new workflow is usually inside the workflow itself, with the right controls highlighted as you go, while still letting each user hide the launcher once they are comfortable with the app.',
         'guidance': [
             'Start with the Chat Tutorial to learn message tools, uploads, prompts, and follow-up workflows.',
             'If Personal Workspace is enabled for your environment, open the Workspace Tutorial to learn uploads, filters, tags, prompts, agents, and actions.',
+            'Tutorial buttons are visible by default. If you prefer a cleaner interface, open your profile page and hide them for your own account.',
         ],
         'actions': [
             {
@@ -31,6 +32,13 @@ _SUPPORT_LATEST_FEATURE_CATALOG = [
                 'fragment': 'workspace-tutorial-launch',
                 'icon': 'bi-folder2-open',
                 'requires_settings': ['enable_user_workspace'],
+            },
+            {
+                'label': 'Manage Tutorial Visibility',
+                'description': 'Open your profile page to show or hide the tutorial launch buttons for your account.',
+                'endpoint': 'profile',
+                'fragment': 'tutorial-preferences',
+                'icon': 'bi-person-gear',
             },
         ],
         'image': 'images/features/guided_tutorials_chat.png',
@@ -384,6 +392,61 @@ _SUPPORT_LATEST_FEATURE_CATALOG = [
         ],
     },
     {
+        'id': 'fact_memory',
+        'title': 'Fact Memory',
+        'icon': 'bi-journal-bookmark',
+        'summary': 'Profile-based memory now distinguishes always-on Instructions from recall-only Facts so the assistant can carry durable preferences and relevant personal context forward more cleanly.',
+        'details': 'Fact Memory gives each user a compact profile experience for saving Instructions and Facts. Instructions act like durable response preferences, while Facts are recalled only when they are relevant to the current request.',
+        'why': 'This matters because you no longer need to restate the same preferences or personal context in every conversation, and the chat experience now shows when saved instructions and facts were actually used.',
+        'guidance': [
+            'Open your profile page and use Fact Memory when you want to save a lasting preference or a detail about yourself.',
+            'Choose Instruction for durable preferences like tone, brevity, formatting, or things the assistant should always keep in mind.',
+            'Choose Fact for details that should only be recalled when relevant, such as who you are, what you prefer, or other personal context.',
+            'Try a chat prompt like "tell me all about myself" when you want to confirm which saved facts the assistant can recall.',
+        ],
+        'actions': [
+            {
+                'label': 'Manage Fact Memory',
+                'description': 'Open your profile page and jump straight to the Fact Memory section to add, edit, or remove saved instructions and facts.',
+                'endpoint': 'profile',
+                'fragment': 'fact-memory-settings',
+                'icon': 'bi-person-gear',
+            },
+            {
+                'label': 'Try It in Chat',
+                'description': 'Open Chat and ask a personal or preference-aware question to see instruction memory and fact recall in action.',
+                'endpoint': 'chats',
+                'fragment': 'chatbox',
+                'icon': 'bi-chat-dots',
+            },
+        ],
+        'image': 'images/features/fact_memory_management.png',
+        'image_alt': 'Fact memory management modal screenshot',
+        'images': [
+            {
+                'path': 'images/features/facts_memory_view_profile.png',
+                'alt': 'Profile fact memory section screenshot',
+                'title': 'Fact Memory on Profile',
+                'caption': 'Profile page section for adding saved instructions and facts and opening the manager modal.',
+                'label': 'Profile Entry Point',
+            },
+            {
+                'path': 'images/features/fact_memory_management.png',
+                'alt': 'Fact memory management modal screenshot',
+                'title': 'Manage Fact Memories',
+                'caption': 'Compact popup manager showing saved instructions and facts with search, paging, edit, and type controls.',
+                'label': 'Memory Manager',
+            },
+            {
+                'path': 'images/features/facts_citation_and_thoughts.png',
+                'alt': 'Chat fact memory thoughts and citations screenshot',
+                'title': 'Instruction Memory and Fact Recall in Chat',
+                'caption': 'Chat response showing instruction memory and fact recall surfaced as dedicated thoughts and citations.',
+                'label': 'Chat Recall',
+            },
+        ],
+    },
+    {
         'id': 'deployment',
         'title': 'Deployment',
         'icon': 'bi-hdd-rack',
@@ -550,7 +613,10 @@ def get_support_latest_feature_catalog():
 
 def get_default_support_latest_features_visibility():
     """Return default visibility for each user-facing latest feature."""
-    return {item['id']: True for item in _SUPPORT_LATEST_FEATURE_CATALOG}
+    defaults = {item['id']: True for item in _SUPPORT_LATEST_FEATURE_CATALOG}
+    defaults['deployment'] = False
+    defaults['redis_key_vault'] = False
+    return defaults
 
 
 def normalize_support_latest_features_visibility(raw_visibility):
