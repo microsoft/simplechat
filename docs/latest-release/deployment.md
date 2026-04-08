@@ -1,5 +1,5 @@
 ---
-layout: page
+layout: latest-release-feature
 title: "Deployment"
 description: "How deployment guidance and diagnostics improve rollout stability and operational clarity"
 section: "Latest Release"

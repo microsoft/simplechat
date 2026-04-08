@@ -1,5 +1,5 @@
 ---
-layout: page
+layout: latest-release-feature
 title: "Citation Improvements"
 description: "How enhanced citations improve source traceability and follow-up grounding"
 section: "Latest Release"

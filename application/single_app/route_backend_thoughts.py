@@ -21,7 +21,7 @@ def register_route_backend_thoughts(app):
             return jsonify({'error': 'User not authenticated'}), 401
 
         settings = get_settings()
-        if not settings.get('enable_thoughts', False):
+        if not settings.get('enable_thoughts', True):
             return jsonify({'thoughts': [], 'enabled': False}), 200
 
         try:
@@ -59,7 +59,7 @@ def register_route_backend_thoughts(app):
             return jsonify({'error': 'User not authenticated'}), 401
 
         settings = get_settings()
-        if not settings.get('enable_thoughts', False):
+        if not settings.get('enable_thoughts', True):
             return jsonify({'thoughts': [], 'enabled': False}), 200
 
         try:

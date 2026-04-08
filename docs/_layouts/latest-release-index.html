@@ -1,0 +1,28 @@
+---
+layout: default
+---
+
+<article class="page-content latest-release-page latest-release-index-page">
+  <section class="latest-release-hero latest-release-accent--blue latest-release-hero--index">
+    <div class="latest-release-hero-copy">
+      <span class="latest-release-pill">Docs + In-App Highlights</span>
+      <h1 class="latest-release-hero-title">{{ page.title }}</h1>
+      <p class="latest-release-hero-description">{{ page.description }}</p>
+      <div class="latest-release-hero-actions">
+        <a href="{{ '/features/' | relative_url }}" class="btn btn-primary btn-sm">Browse feature docs</a>
+        <a href="{{ '/explanation/release_notes/' | relative_url }}" class="btn btn-outline-secondary btn-sm">Release notes</a>
+      </div>
+    </div>
+    <div class="latest-release-hero-art" aria-hidden="true">
+      <div class="latest-release-hero-stack">
+        <span><i class="bi bi-stars"></i></span>
+        <span><i class="bi bi-window-stack"></i></span>
+        <span><i class="bi bi-journal-richtext"></i></span>
+      </div>
+    </div>
+  </section>
+
+  <div class="latest-release-index-content">
+    {{ content }}
+  </div>
+</article>

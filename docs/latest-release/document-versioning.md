@@ -1,5 +1,5 @@
 ---
-layout: page
+layout: latest-release-feature
 title: "Document Versioning"
 description: "How same-name uploads become revisions so users can work with the right document version"
 section: "Latest Release"
