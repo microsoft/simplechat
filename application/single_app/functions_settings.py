@@ -4,8 +4,30 @@ from config import *
 from functions_appinsights import log_event
 import app_settings_cache
 import inspect
+import copy
+from support_menu_config import (
+    get_default_support_latest_features_visibility,
+    has_visible_support_latest_features,
+    normalize_support_latest_features_visibility,
+)
 
-def get_settings(use_cosmos=False):
+
+def is_tabular_processing_enabled(settings):
+    """Tabular processing is available whenever enhanced citations is enabled."""
+    return bool((settings or {}).get('enable_enhanced_citations', False))
+import copy
+from support_menu_config import (
+    get_default_support_latest_features_visibility,
+    has_visible_support_latest_features,
+    normalize_support_latest_features_visibility,
+)
+
+
+def is_tabular_processing_enabled(settings):
+    """Tabular processing is available whenever enhanced citations is enabled."""
+    return bool((settings or {}).get('enable_enhanced_citations', False))
+
+def get_settings(use_cosmos=False, include_source=False):
     import secrets
     default_settings = {
         # External health check
@@ -25,6 +47,7 @@ def get_settings(use_cosmos=False):
         'enable_text_plugin': True,
         'enable_default_embedding_model_plugin': False,
         'enable_fact_memory_plugin': True,
+        'enable_tabular_processing_plugin': False,
         'enable_multi_agent_orchestration': False,
         'max_rounds_per_agent': 1,
         'enable_semantic_kernel': False,
@@ -36,13 +59,18 @@ def get_settings(use_cosmos=False):
             'is_global': True
         },
         'allow_user_agents': False,
+        'allow_user_custom_endpoints': False,
         'allow_user_custom_agent_endpoints': False,
         'allow_user_plugins': False,
         'allow_group_agents': False,
+        'allow_group_custom_endpoints': False,
         'allow_group_custom_agent_endpoints': False,
         'allow_ai_foundry_agents': False,
         'allow_group_ai_foundry_agents': False,
         'allow_personal_ai_foundry_agents': False,
+        'allow_new_foundry_agents': False,
+        'allow_group_new_foundry_agents': False,
+        'allow_personal_new_foundry_agents': False,
         'enable_agent_template_gallery': True,
         'agent_templates_allow_user_submission': True,
         'agent_templates_require_approval': True,
@@ -65,6 +93,12 @@ def get_settings(use_cosmos=False):
         'favicon_version': 1,
         'enable_dark_mode_default': False,
         'enable_left_nav_default': True,
+        'release_notifications_registered': False,
+        'release_notifications_name': '',
+        'release_notifications_email': '',
+        'release_notifications_org': '',
+        'release_notifications_registered_at': '',
+        'release_notifications_updated_at': '',
 
         # GPT Settings
         'enable_gpt_apim': False,
@@ -77,6 +111,19 @@ def get_settings(use_cosmos=False):
         'gpt_model': {
             "selected": [],
             "all": []
+        },
+        'enable_multi_model_endpoints': False,
+        'model_endpoints': [],
+        'default_model_selection': {
+            'endpoint_id': '',
+            'model_id': '',
+            'provider': ''
+        },
+        'multi_endpoint_migrated_at': None,
+        'multi_endpoint_migration_notice': {
+            'enabled': False,
+                'message': '',
+            'created_at': None
         },
         'azure_apim_gpt_endpoint': '',
         'azure_apim_gpt_subscription_key': '',
@@ -173,6 +220,15 @@ def get_settings(use_cosmos=False):
             {"label": "Prompt Ideas", "url": "https://example.com/prompts"}
         ],
 
+        # Support Menu
+        'enable_support_menu': False,
+        'support_menu_name': 'Support',
+        'enable_support_send_feedback': True,
+        'support_feedback_recipient_email': '',
+        'enable_support_latest_features': True,
+        'enable_support_latest_feature_documentation_links': False,
+        'support_latest_features_visibility': get_default_support_latest_features_visibility(),
+
         # Enhanced Citations
         'enable_enhanced_citations': False,
         'enable_enhanced_citations_mount': False,
@@ -205,6 +261,9 @@ def get_settings(use_cosmos=False):
         'require_member_of_feedback_admin': False,
         'enable_conversation_archiving': False,
 
+        # Processing Thoughts
+        'enable_thoughts': False,
+
         # Search and Extract
         'azure_ai_search_endpoint': '',
         'azure_ai_search_key': '',
@@ -212,6 +271,25 @@ def get_settings(use_cosmos=False):
         'enable_ai_search_apim': False,
         'azure_apim_ai_search_endpoint': '',
         'azure_apim_ai_search_subscription_key': '',
+        'enable_chunk_size_override': False,
+        'chunk_size': {
+            'txt': {'value': 400, 'unit': 'words'},
+            'log': {'value': 1000, 'unit': 'words'},
+            'doc': {'value': 400, 'unit': 'words'},
+            'docm': {'value': 400, 'unit': 'words'},
+            'docx': {'value': WORD_CHUNK_SIZE, 'unit': 'words'},
+            'html': {'value': 1200, 'unit': 'words'},
+            'md': {'value': 1200, 'unit': 'words'},
+            'xml': {'value': 4000, 'unit': 'characters'},
+            'yaml': {'value': 4000, 'unit': 'characters'},
+            'yml': {'value': 4000, 'unit': 'characters'},
+            'json': {'value': 4000, 'unit': 'characters'},
+            'csv': {'value': 800, 'unit': 'characters'},
+            'excel': {'value': 800, 'unit': 'characters'},
+            'transcript': {'value': 400, 'unit': 'words'},
+            'pdf': {'value': 1, 'unit': 'pages'},
+            'pptx': {'value': 1, 'unit': 'slides'}
+        },
         
         # Search Result Caching
         'enable_search_result_caching': True,
@@ -258,8 +336,16 @@ def get_settings(use_cosmos=False):
 
         # Other
         'max_file_size_mb': 150,
+        'tabular_preview_max_blob_size_mb': 200,
         'conversation_history_limit': 10,
+        'enable_idle_timeout': False,
+        'idle_timeout_minutes': 30,
+        'idle_warning_minutes': 28,
+        'idle_warning_message': "You've been inactive for a while.",
         'default_system_prompt': '',
+        # Access denied message shown on the home page for signed-in users who lack required roles.
+        # Default is hard-coded; admins can override via Admin Settings (persisted in Cosmos DB).
+        'access_denied_message': 'You are logged in but do not have the required permissions to access this application.\nPlease contact an administrator for access.',
         'enable_file_processing_logs': True,
         'file_processing_logs_timer_enabled': False,
         'file_timer_value': 1,
@@ -268,7 +354,7 @@ def get_settings(use_cosmos=False):
         'enable_external_healthcheck': False,
         
         # Streaming settings
-        'streamingEnabled': False,
+        'streamingEnabled': True,
         
         # Reasoning effort settings (per-model)
         'reasoningEffortSettings': {},
@@ -280,7 +366,7 @@ def get_settings(use_cosmos=False):
         'video_indexer_resource_group': '',
         'video_indexer_subscription_id': '',
         'video_indexer_account_name': '',
-        'video_indexer_arm_api_version': '2024-01-01',
+        'video_indexer_arm_api_version': DEFAULT_VIDEO_INDEXER_ARM_API_VERSION,
         'video_index_timeout': 600,
 
         # Audio file settings with Azure speech service
@@ -323,6 +409,11 @@ def get_settings(use_cosmos=False):
         'default_retention_document_public': 'none',
     }
 
+    def _format_result(settings_payload, source):
+        if include_source:
+            return settings_payload, source
+        return settings_payload
+
     try:
         # Attempt to read the existing doc
         if use_cosmos:
@@ -330,17 +421,35 @@ def get_settings(use_cosmos=False):
                 item="app_settings",
                 partition_key="app_settings"
             )
+            settings_source = "cosmos_forced"
+            log_event(
+                "App settings loaded from Cosmos DB (forced).",
+                extra={
+                    "settings_source": settings_source,
+                    "use_cosmos": True
+                },
+                level=logging.INFO
+            )
         else:
             settings_item = None
+            settings_source = "cache"
 
             cache_accessor = getattr(app_settings_cache, "get_settings_cache", None)
             if callable(cache_accessor):
                 try:
                     settings_item = cache_accessor()
-                except Exception:
+                except Exception as cache_error:
                     settings_item = None
+                    log_event(
+                        "Error reading app settings from cache accessor.",
+                        extra={
+                            "error": str(cache_error)
+                        },
+                        level=logging.WARNING
+                    )
 
             if not settings_item:
+                settings_source = "cosmos_fallback"
                 settings_item = cosmos_settings_container.read_item(
                     item="app_settings",
                     partition_key="app_settings"
@@ -354,52 +463,208 @@ def get_settings(use_cosmos=False):
                     caller_file = code.co_filename
                     caller_line = caller.f_lineno
                     caller_func = code.co_name
-                    print(
-                        "Warning: Failed to get settings from cache, read from Cosmos DB instead. "
-                        f"Called from {caller_file}:{caller_line} in {caller_func}()."
+
+                    log_event(
+                        "App settings cache miss. Falling back to Cosmos DB.",
+                        extra={
+                            "settings_source": settings_source,
+                            "caller_file": caller_file,
+                            "caller_line": caller_line,
+                            "caller_func": caller_func
+                        },
+                        level=logging.WARNING
                     )
                 else:
-                    print(
-                        "Warning: Failed to get settings from cache, "
-                        "read from Cosmos DB instead. (no caller frame)"
+
+                    log_event(
+                        "App settings cache miss. Falling back to Cosmos DB (no caller frame).",
+                        extra={
+                            "settings_source": settings_source
+                        },
+                        level=logging.WARNING
                     )
-        #print("Successfully retrieved settings from Cosmos DB.")
 
         # Merge default_settings in, to fill in any missing or nested keys
-        merged = deep_merge_dicts(default_settings, settings_item)
+        merge_changed = deep_merge_dicts(default_settings, settings_item)
+        merged = settings_item
+        migration_updated = apply_custom_endpoint_setting_migration(merged)
+
+        merged['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(merged)
 
         # If merging added anything new, upsert back to Cosmos so future reads remain up to date
-        if merged != settings_item:
+        if merge_changed or migration_updated:
             cosmos_settings_container.upsert_item(merged)
-            print("App Settings had missing keys and was updated in Cosmos DB.")
-            return merged
+            cache_updater = getattr(app_settings_cache, "update_settings_cache", None)
+            if callable(cache_updater):
+                try:
+                    cache_updater(copy.deepcopy(merged))
+                except Exception as cache_error:
+                    log_event(
+                        "App settings cache update failed after merge upsert.",
+                        extra={
+                            "settings_source": settings_source,
+                            "error": str(cache_error)
+                        },
+                        level=logging.WARNING
+                    )
+
+            log_event(
+                "App settings missing keys were merged and persisted to Cosmos DB.",
+                extra={
+                    "settings_source": settings_source
+                },
+                level=logging.INFO
+            )
+            return _format_result(merged, settings_source)
         else:
             # If merged is unchanged, no new keys needed
-            return merged
+            return _format_result(merged, settings_source)
 
     except CosmosResourceNotFoundError:
         cosmos_settings_container.create_item(body=default_settings)
-        print("Default settings created in Cosmos and returned.")
-        return default_settings
+
+        log_event(
+            "App settings document not found. Default settings created in Cosmos DB.",
+            extra={
+                "settings_source": "cosmos_default_created"
+            },
+            level=logging.WARNING
+        )
+        return _format_result(default_settings, "cosmos_default_created")
 
     except Exception as e:
-        print(f"Error retrieving settings: {str(e)}")
-        return None
+        log_event(
+            "Error retrieving app settings.",
+            extra={
+                "error": str(e),
+                "use_cosmos": use_cosmos
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
+        return _format_result(None, "error")
 
 def update_settings(new_settings):
     try:
         # always fetch the latest settings doc, which includes your merges
         settings_item = get_settings()
+        existing_multi_endpoint_enabled = settings_item.get('enable_multi_model_endpoints', False)
         settings_item.update(new_settings)
+        settings_item['enable_multi_model_endpoints'] = coerce_multi_model_endpoint_enablement(
+            existing_multi_endpoint_enabled,
+            settings_item.get('enable_multi_model_endpoints', False),
+        )
+        settings_item['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(settings_item)
         cosmos_settings_container.upsert_item(settings_item)
         cache_updater = getattr(app_settings_cache, "update_settings_cache", None)
         if callable(cache_updater):
             cache_updater(settings_item)
-        print("Settings updated successfully.")
+        log_event(
+            "App settings updated successfully.",
+            level=logging.INFO
+        )
         return True
     except Exception as e:
-        print(f"Error updating settings: {str(e)}")
+        log_event(
+            "Error updating app settings.",
+            extra={
+                "error": str(e)
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
         return False
+
+
+def coerce_multi_model_endpoint_enablement(existing_enabled, requested_enabled):
+    """Treat multi-endpoint enablement as one-way once it has been turned on."""
+    return bool(existing_enabled) or bool(requested_enabled)
+
+
+def get_chunk_size_defaults():
+    """Return the baseline chunk size configuration used when overrides are disabled."""
+    return {
+        'txt': {'value': 400, 'unit': 'words'},
+        'log': {'value': 1000, 'unit': 'words'},
+        'doc': {'value': 400, 'unit': 'words'},
+        'docm': {'value': 400, 'unit': 'words'},
+        'docx': {'value': WORD_CHUNK_SIZE, 'unit': 'words'},
+        'html': {'value': 1200, 'unit': 'words'},
+        'md': {'value': 1200, 'unit': 'words'},
+        'xml': {'value': 4000, 'unit': 'characters'},
+        'yaml': {'value': 4000, 'unit': 'characters'},
+        'yml': {'value': 4000, 'unit': 'characters'},
+        'json': {'value': 4000, 'unit': 'characters'},
+        'csv': {'value': 800, 'unit': 'characters'},
+        'excel': {'value': 800, 'unit': 'characters'},
+        'transcript': {'value': 400, 'unit': 'words'},
+        'pdf': {'value': 1, 'unit': 'pages'},
+        'pptx': {'value': 1, 'unit': 'slides'}
+    }
+
+
+def get_chunk_size_cap(settings=None):
+    """Return the maximum allowed chunk size (2x embedding context window, fallback 16,384)."""
+    fallback_cap = 16384
+    try:
+        settings = settings or get_settings()
+        embedding_model = settings.get('embedding_model', {}) if isinstance(settings, dict) else {}
+        selected_models = embedding_model.get('selected') or []
+
+        base_context = None
+        for model in selected_models:
+            if not isinstance(model, dict):
+                continue
+            for key in ['context_window', 'contextWindow', 'maxContextTokens', 'context_length', 'contextLength', 'maxTokens']:
+                value = model.get(key)
+                if value is not None:
+                    try:
+                        parsed_value = int(value)
+                        if parsed_value > 0:
+                            base_context = parsed_value
+                            break
+                    except Exception:
+                        continue
+            if base_context:
+                break
+
+        if base_context and base_context > 0:
+            return base_context * 2
+    except Exception:
+        pass
+
+    return fallback_cap
+
+
+def get_chunk_size_config(settings=None):
+    """
+    Compute the effective chunk size configuration, respecting defaults, caps, and the override toggle.
+    When overrides are disabled, defaults are returned regardless of stored values.
+    """
+    settings = settings or get_settings()
+    defaults = get_chunk_size_defaults()
+    use_custom = isinstance(settings, dict) and settings.get('enable_chunk_size_override', False)
+    stored = settings.get('chunk_size', {}) if isinstance(settings, dict) else {}
+    cap = get_chunk_size_cap(settings)
+
+    normalized = {}
+    for key, default_meta in defaults.items():
+        incoming_meta = stored.get(key, {}) if use_custom and isinstance(stored, dict) else {}
+        unit = incoming_meta.get('unit', default_meta['unit']) if isinstance(incoming_meta, dict) else default_meta['unit']
+        try:
+            raw_value = int(incoming_meta.get('value', default_meta['value'])) if isinstance(incoming_meta, dict) else int(default_meta['value'])
+        except Exception:
+            raw_value = default_meta['value']
+
+        value = max(1, raw_value)
+        value = min(value, cap)
+
+        normalized[key] = {
+            'value': value,
+            'unit': unit
+        }
+
+    return normalized
 
 def compare_versions(v1_str, v2_str):
     """
@@ -425,7 +690,14 @@ def compare_versions(v1_str, v2_str):
         v2_parts = [int(part) for part in v2_str.split('.')]
     except ValueError:
         # Handle cases where parts are not integers or contain invalid chars
-        print(f"Invalid version format encountered: '{v1_str}' or '{v2_str}'")
+        log_event(
+            "Invalid version format encountered during comparison.",
+            extra={
+                "version_1": v1_str,
+                "version_2": v2_str
+            },
+            level=logging.WARNING
+        )
         return None
 
     # Compare parts element by element
@@ -457,7 +729,10 @@ def extract_latest_version_from_html(html_content):
              valid versions are found or an error occurs.
     """
     if not html_content:
-        print("HTML content is empty.")
+        log_event(
+            "Latest-version extraction skipped because HTML content is empty.",
+            level=logging.WARNING
+        )
         return None
 
     try:
@@ -481,16 +756,16 @@ def extract_latest_version_from_html(html_content):
                         # Validate the format (digits and dots only) using regex
                         if re.match(r'^\d+(\.\d+)*$', version_str):
                             versions_found.add(version_str)
-                        # else:
-                        #     print(f"Skipping invalid version format from href '{href}': '{version_str}'")
 
                 except (IndexError, ValueError):
                     # Ignore links where splitting or processing fails
-                    # print(f"Could not process href: {href}")
                     continue # Skip to the next link
 
         if not versions_found:
-            print("No valid version tags found in HTML matching the pattern.")
+            log_event(
+                "No valid release version tags found in HTML content.",
+                level=logging.WARNING
+            )
             return None
 
         # Now compare the found versions to find the latest
@@ -498,38 +773,245 @@ def extract_latest_version_from_html(html_content):
         for current_version in versions_found:
             if latest_version is None:
                 latest_version = current_version
-                # print(f"Initial latest version set to: {latest_version}")
             else:
-                # print(f"Comparing '{current_version}' with current latest '{latest_version}'")
                 comparison_result = compare_versions(current_version, latest_version)
 
                 if comparison_result == 1: # current_version > latest_version
-                    # print(f"  -> New latest version: {current_version}")
                     latest_version = current_version
                 elif comparison_result is None:
                      # Log if comparison fails, but continue trying others
-                     print(f"Warning: Could not compare version '{current_version}' with '{latest_version}'. Skipping this comparison.")
-                # else: comparison is -1 or 0, keep existing latest_version
-                #     print(f"  -> '{latest_version}' remains latest.")
+                     log_event(
+                         "Could not compare release version values while scanning HTML.",
+                         extra={
+                             "current_version": current_version,
+                             "latest_version": latest_version
+                         },
+                         level=logging.WARNING
+                     )
 
-
-        print(f"Latest version identified from HTML: {latest_version}")
+        log_event(
+            "Latest release version identified from HTML.",
+            extra={
+                "latest_version": latest_version
+            },
+            level=logging.INFO
+        )
         return latest_version
 
     except Exception as e:
-        print(f"Error parsing HTML or finding latest version: {e}")
+        log_event(
+            "Error parsing HTML while identifying latest release version.",
+            extra={
+                "error": str(e)
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
         return None
     
 def deep_merge_dicts(default_dict, existing_dict):
+    """
+    Recursively merge keys from default_dict into existing_dict in place.
+    This function DOES NOT return a merged dictionary. Instead, it mutates
+    existing_dict directly, adding any keys that are missing (and, for nested
+    dict values, recursing to merge their contents as well). Non-dict values
+    in existing_dict are left as-is and are not overwritten.
+
+    Args:
+        default_dict (dict): Source of default values.
+        existing_dict (dict): Target dictionary that will be updated in place.
+        
+    Returns:
+        bool: True if existing_dict was modified at any depth, otherwise False.
+    """
+    changed = False
     for k, default_val in default_dict.items():
         if k not in existing_dict:
             existing_dict[k] = default_val
+            changed = True
         else:
             existing_val = existing_dict[k]
             if isinstance(default_val, dict) and isinstance(existing_val, dict):
-                deep_merge_dicts(default_val, existing_val)
+                if deep_merge_dicts(default_val, existing_val):
+                    changed = True
             # For lists or other types, we skip overwriting.
-    return existing_dict
+    return changed
+
+def apply_custom_endpoint_setting_migration(settings_item):
+    if not isinstance(settings_item, dict):
+        return False
+
+    updated = False
+    if "allow_user_custom_endpoints" not in settings_item:
+        settings_item["allow_user_custom_endpoints"] = settings_item.get("allow_user_custom_agent_endpoints", False)
+        updated = True
+    if "allow_group_custom_endpoints" not in settings_item:
+        settings_item["allow_group_custom_endpoints"] = settings_item.get("allow_group_custom_agent_endpoints", False)
+        updated = True
+
+    if settings_item.get("allow_user_custom_agent_endpoints") != settings_item.get("allow_user_custom_endpoints"):
+        settings_item["allow_user_custom_agent_endpoints"] = settings_item.get("allow_user_custom_endpoints", False)
+        updated = True
+    if settings_item.get("allow_group_custom_agent_endpoints") != settings_item.get("allow_group_custom_endpoints"):
+        settings_item["allow_group_custom_agent_endpoints"] = settings_item.get("allow_group_custom_endpoints", False)
+        updated = True
+
+    return updated
+
+def normalize_model_endpoints(endpoints):
+    """Normalize model endpoints with stable IDs and enabled flags."""
+    if not isinstance(endpoints, list):
+        return [], False
+
+    normalized = []
+    changed = False
+
+    for endpoint in endpoints:
+        if not isinstance(endpoint, dict):
+            continue
+        endpoint_copy = json.loads(json.dumps(endpoint))
+        endpoint_copy.pop("has_api_key", None)
+        endpoint_copy.pop("has_client_secret", None)
+        connection = endpoint_copy.get("connection") or {}
+
+        if not endpoint_copy.get("id"):
+            fallback_id = endpoint_copy.get("name") or connection.get("endpoint")
+            if fallback_id:
+                endpoint_copy["id"] = fallback_id
+                changed = True
+
+        if endpoint_copy.get("enabled") is None:
+            endpoint_copy["enabled"] = True
+            changed = True
+
+        models = endpoint_copy.get("models") or []
+        normalized_models = []
+        for model in models:
+            if not isinstance(model, dict):
+                continue
+            model_copy = json.loads(json.dumps(model))
+            if not model_copy.get("id"):
+                model_id = (
+                    model_copy.get("deploymentName")
+                    or model_copy.get("deployment")
+                    or model_copy.get("modelName")
+                    or model_copy.get("name")
+                )
+                if model_id:
+                    model_copy["id"] = model_id
+                    changed = True
+            if model_copy.get("enabled") is None:
+                model_copy["enabled"] = True
+                changed = True
+            normalized_models.append(model_copy)
+
+        endpoint_copy["models"] = normalized_models
+        normalized.append(endpoint_copy)
+
+    return normalized, changed
+
+
+def is_frontend_visible_model_endpoint_provider(provider):
+    """Return whether the provider should be exposed in user-facing endpoint UIs."""
+    normalized_provider = (provider or "aoai").lower()
+    return normalized_provider in {"aoai", "aifoundry", "new_foundry"}
+
+
+def merge_model_endpoint_auth(existing_auth, incoming_auth):
+    """Merge endpoint auth settings while preserving stored secrets when inputs are blank."""
+    if not isinstance(existing_auth, dict):
+        existing_auth = {}
+    if not isinstance(incoming_auth, dict):
+        incoming_auth = {}
+
+    merged = dict(existing_auth)
+    for key, value in incoming_auth.items():
+        if value in (None, ""):
+            continue
+        merged[key] = value
+    return merged
+
+
+def merge_model_endpoint_payload(existing_endpoint, incoming_endpoint):
+    """Merge an incoming endpoint payload with an existing saved endpoint."""
+    if not isinstance(existing_endpoint, dict):
+        return incoming_endpoint if isinstance(incoming_endpoint, dict) else {}
+    if not isinstance(incoming_endpoint, dict):
+        return dict(existing_endpoint)
+
+    merged = dict(existing_endpoint)
+    for key, value in incoming_endpoint.items():
+        if key == "auth":
+            merged["auth"] = merge_model_endpoint_auth(existing_endpoint.get("auth"), value)
+            continue
+        if value in (None, ""):
+            continue
+        merged[key] = value
+    return merged
+
+
+def merge_model_endpoints_with_existing(incoming_endpoints, existing_endpoints):
+    """Merge endpoint lists by endpoint ID so edits preserve stored auth values."""
+    if not isinstance(incoming_endpoints, list):
+        return []
+
+    existing_by_id = {}
+    if isinstance(existing_endpoints, list):
+        existing_by_id = {
+            endpoint.get("id"): endpoint
+            for endpoint in existing_endpoints
+            if isinstance(endpoint, dict) and endpoint.get("id")
+        }
+
+    merged = []
+    incoming_endpoint_ids = set()
+    for endpoint in incoming_endpoints:
+        if not isinstance(endpoint, dict):
+            continue
+        endpoint_id = endpoint.get("id")
+        if endpoint_id:
+            incoming_endpoint_ids.add(endpoint_id)
+        existing_endpoint = existing_by_id.get(endpoint_id)
+        merged.append(merge_model_endpoint_payload(existing_endpoint or {}, endpoint))
+
+    if isinstance(existing_endpoints, list):
+        for endpoint in existing_endpoints:
+            if not isinstance(endpoint, dict):
+                continue
+            endpoint_id = endpoint.get("id")
+            if endpoint_id in incoming_endpoint_ids:
+                continue
+            if is_frontend_visible_model_endpoint_provider(endpoint.get("provider")):
+                continue
+            merged.append(json.loads(json.dumps(endpoint)))
+
+    return merged
+
+
+def sanitize_model_endpoints_for_frontend(endpoints):
+    """Return model endpoint configs with secrets stripped for frontend use."""
+    normalized, _ = normalize_model_endpoints(endpoints)
+    if not isinstance(normalized, list):
+        return []
+
+    sanitized = []
+    for endpoint in normalized:
+        if not isinstance(endpoint, dict):
+            continue
+        if not is_frontend_visible_model_endpoint_provider(endpoint.get("provider")):
+            continue
+        endpoint_copy = json.loads(json.dumps(endpoint))
+        auth = endpoint_copy.get("auth") or {}
+        has_api_key = bool(auth.get("api_key"))
+        has_client_secret = bool(auth.get("client_secret"))
+        auth.pop("api_key", None)
+        auth.pop("client_secret", None)
+        endpoint_copy["auth"] = auth
+        endpoint_copy["has_api_key"] = has_api_key
+        endpoint_copy["has_client_secret"] = has_client_secret
+        sanitized.append(endpoint_copy)
+
+    return sanitized
 
 def encrypt_key(key):
     cipher_suite = Fernet(app.config['SECRET_KEY'])
@@ -543,7 +1025,10 @@ def decrypt_key(encrypted_key):
         decrypted_key = cipher_suite.decrypt(encrypted_key_bytes).decode()
         return decrypted_key
     except InvalidToken:
-        print("Decryption failed: Invalid token")
+        log_event(
+            "Decryption failed due to invalid token.",
+            level=logging.WARNING
+        )
         return None
 
 def get_user_settings(user_id):
@@ -562,6 +1047,12 @@ def get_user_settings(user_id):
                 "user_id": user_id,
                 "previous_type": previous_type,
             })
+
+        if 'personal_model_endpoints' not in doc['settings']:
+            doc['settings']['personal_model_endpoints'] = []
+        if 'showTutorialButtons' not in doc['settings']:
+            doc['settings']['showTutorialButtons'] = True
+            updated = True
         
         # Try to update email/display_name if missing and available in session
         user = session.get("user", {})
@@ -582,7 +1073,14 @@ def get_user_settings(user_id):
                 doc['settings']['profileImage'] = profile_image
                 updated = True
             except Exception as e:
-                print(f"Warning: Could not fetch profile image for user {user_id}: {e}")
+                log_event(
+                    "Could not fetch profile image for existing user.",
+                    extra={
+                        "user_id": user_id,
+                        "error": str(e)
+                    },
+                    level=logging.WARNING
+                )
                 doc['settings']['profileImage'] = None
                 updated = True
         
@@ -595,6 +1093,8 @@ def get_user_settings(user_id):
         email = user.get("preferred_username") or user.get("email")
         display_name = user.get("name")
         doc = {"id": user_id, "settings": {}}
+        doc["settings"]["personal_model_endpoints"] = []
+        doc["settings"]["showTutorialButtons"] = True
         if email:
             doc["email"] = email
         if display_name:
@@ -606,13 +1106,28 @@ def get_user_settings(user_id):
             profile_image = get_user_profile_image()
             doc['settings']['profileImage'] = profile_image
         except Exception as e:
-            print(f"Warning: Could not fetch profile image for new user {user_id}: {e}")
+            log_event(
+                "Could not fetch profile image for new user.",
+                extra={
+                    "user_id": user_id,
+                    "error": str(e)
+                },
+                level=logging.WARNING
+            )
             doc['settings']['profileImage'] = None
             
         cosmos_user_settings_container.upsert_item(body=doc)
         return doc
     except Exception as e:
-        print(f"Error in get_user_settings for {user_id}: {e}")
+        log_event(
+            "Error retrieving user settings.",
+            extra={
+                "user_id": user_id,
+                "error": str(e)
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
         raise # Re-raise the exception to be handled by the route
     
 def update_user_settings(user_id, settings_to_update):
@@ -628,7 +1143,6 @@ def update_user_settings(user_id, settings_to_update):
     Returns:
         bool: True if the update was successful, False otherwise.
     """
-    log_prefix = f"User settings update for {user_id}:"
     sanitized_settings_to_update = sanitize_settings_for_logging(settings_to_update)
     log_event("[UserSettings] Update Attempt", {"user_id": user_id, "settings_to_update": sanitized_settings_to_update})
 
@@ -762,12 +1276,28 @@ def update_user_settings(user_id, settings_to_update):
         return True
 
     except exceptions.CosmosHttpResponseError as e:
-        print(f"{log_prefix} Cosmos DB HTTP error: {e}")
+        log_event(
+            "User settings update failed with Cosmos DB HTTP error.",
+            extra={
+                "user_id": user_id,
+                "error": str(e)
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
 
         return False
     except Exception as e:
         # Catch any other unexpected errors during the update process
-        print(f"{log_prefix} Unexpected error during update: {e}")
+        log_event(
+            "User settings update failed with unexpected error.",
+            extra={
+                "user_id": user_id,
+                "error": str(e)
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
 
         return False
 
@@ -791,7 +1321,12 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
     sanitized = {}
 
     for k, v in full_settings.items():
+        if k == 'support_feedback_recipient_email':
+            continue
         if any(term in k.lower() for term in sensitive_terms):
+            continue
+        if k in ('model_endpoints', 'personal_model_endpoints') and isinstance(v, list):
+            sanitized[k] = sanitize_model_endpoints_for_frontend(v)
             continue
         if isinstance(v, dict):
             sanitized[k] = sanitize_settings_for_user(v)
@@ -812,6 +1347,21 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
     if 'custom_favicon_base64' in full_settings:
         sanitized['custom_favicon_base64'] = bool(full_settings.get('custom_favicon_base64'))
 
+    if 'support_latest_features_visibility' in full_settings or 'enable_support_latest_features' in full_settings:
+        sanitized['support_latest_features_visibility'] = normalize_support_latest_features_visibility(
+            full_settings.get('support_latest_features_visibility', {})
+        )
+        sanitized['support_latest_features_has_visible_items'] = has_visible_support_latest_features(full_settings)
+        sanitized['support_feedback_recipient_configured'] = bool(
+            str(full_settings.get('support_feedback_recipient_email') or '').strip()
+        )
+
+    if isinstance(sanitized.get('multi_endpoint_migration_notice'), dict):
+        sanitized['multi_endpoint_migration_notice'] = {
+            **sanitized['multi_endpoint_migration_notice'],
+            'enabled': False,
+        }
+
     return sanitized
 
 def sanitize_settings_for_logging(full_settings: dict) -> dict:
@@ -824,7 +1374,7 @@ def sanitize_settings_for_logging(full_settings: dict) -> dict:
         return full_settings
     
     sanitized = {}
-    sensitive_key_terms = ["key", "base64", "image", "storage_account_url"]
+    sensitive_key_terms = ["key", "base64", "image", "storage_account_url", "_secret"]
     
     for k, v in full_settings.items():
         # Skip keys with sensitive terms
@@ -855,7 +1405,15 @@ def get_user_search_history(user_id):
     except exceptions.CosmosResourceNotFoundError:
         return []
     except Exception as e:
-        print(f"Error getting search history: {e}")
+        log_event(
+            "Error retrieving user search history.",
+            extra={
+                "user_id": user_id,
+                "error": str(e)
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
         return []
 
 def add_search_to_history(user_id, search_term):
@@ -885,7 +1443,15 @@ def add_search_to_history(user_id, search_term):
         
         return search_history
     except Exception as e:
-        print(f"Error adding search to history: {e}")
+        log_event(
+            "Error adding search term to user history.",
+            extra={
+                "user_id": user_id,
+                "error": str(e)
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
         return []
 
 def clear_user_search_history(user_id):
@@ -901,5 +1467,13 @@ def clear_user_search_history(user_id):
         
         return True
     except Exception as e:
-        print(f"Error clearing search history: {e}")
+        log_event(
+            "Error clearing user search history.",
+            extra={
+                "user_id": user_id,
+                "error": str(e)
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
         return False

@@ -122,7 +122,7 @@ startxref
             # Clean up temp file
             try:
                 os.unlink(temp_file_path)
-            except:
+            except Exception as ex:
                 pass
                 
     except ImportError as e:

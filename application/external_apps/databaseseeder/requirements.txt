@@ -1,5 +1,3 @@
-requests
-msal
-logging
-dotenv
-flask
+requests==2.32.4
+msal==1.31.0
+python-dotenv==0.21.0

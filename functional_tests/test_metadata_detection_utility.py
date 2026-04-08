@@ -7,7 +7,7 @@ def test_metadata_detection(metadata_value):
     try:
         metadata_obj = json.loads(metadata or '{}')
         has_metadata = len(metadata_obj) > 0
-    except:
+    except Exception as ex:
         has_metadata = len(metadata) > 0 and metadata != '{}'
     
     return has_metadata

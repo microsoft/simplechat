@@ -4,6 +4,11 @@ from config import *
 from functions_documents import *
 from functions_authentication import *
 from functions_settings import *
+from functions_activity_logging import (
+    log_admin_feedback_email_submission,
+    log_admin_release_notifications_registration,
+    log_user_support_feedback_email_submission,
+)
 from functions_appinsights import log_event
 from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
@@ -433,6 +438,219 @@ def register_route_backend_settings(app):
         except Exception as e:
             return jsonify({'error': str(e)}), 500
 
+    @app.route('/api/admin/settings/send_feedback_email', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def send_feedback_email():
+        """Log an admin feedback email draft request before the client opens mailto."""
+        user_id = get_current_user_id() or 'unknown'
+        feedback_type = ''
+        try:
+            data = request.get_json(force=True)
+
+            feedback_type = (data.get('feedbackType') or '').strip()
+            reporter_name = (data.get('reporterName') or '').strip()
+            reporter_email = (data.get('reporterEmail') or '').strip()
+            organization = (data.get('organization') or '').strip()
+            details = (data.get('details') or '').strip()
+            if feedback_type not in ['bug_report', 'feature_request']:
+                return jsonify({'error': 'Invalid feedback type'}), 400
+
+            if not reporter_name or not reporter_email or not organization or not details:
+                return jsonify({'error': 'Name, email, organization, and details are required'}), 400
+
+            if '@' not in reporter_email:
+                return jsonify({'error': 'Reporter email must be a valid email address'}), 400
+
+            user = session.get('user', {})
+            admin_email = user.get('preferred_username', user.get('email', reporter_email))
+
+            feedback_label = 'Bug Report' if feedback_type == 'bug_report' else 'Feature Request'
+            subject_line = f'[SimpleChat Admin Feedback] {feedback_label} - {organization}'
+
+            log_admin_feedback_email_submission(
+                user_id=user_id,
+                admin_email=admin_email,
+                feedback_type=feedback_type,
+                reporter_name=reporter_name,
+                reporter_email=reporter_email,
+                organization=organization,
+                details=details,
+                recipient_email='simplechat@microsoft.com'
+            )
+
+            return jsonify({
+                'success': True,
+                'recipientEmail': 'simplechat@microsoft.com',
+                'subjectLine': subject_line,
+                'feedbackLabel': feedback_label
+            }), 200
+
+        except Exception:
+            log_event(
+                '[Admin Feedback] Failed to prepare feedback email',
+                extra={
+                    'user_id': user_id,
+                    'activity_type': 'admin_feedback_email_submission',
+                    'route': 'send_feedback_email',
+                    'feedback_type': feedback_type,
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True
+            )
+            return jsonify({'error': 'Failed to prepare feedback email'}), 500
+
+    @app.route('/api/support/send_feedback_email', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_support_menu")
+    def send_support_feedback_email():
+        """Log a support feedback draft request before the client opens mailto."""
+        user_id = get_current_user_id() or 'unknown'
+        feedback_type = ''
+        try:
+            user = session.get('user', {})
+            roles = user.get('roles', []) if isinstance(user.get('roles', []), list) else []
+            if 'Admin' not in roles and 'User' not in roles:
+                return jsonify({'error': 'Support menu is available to signed-in app users only'}), 403
+
+            settings = get_settings()
+            if not settings.get('enable_support_send_feedback', True):
+                return jsonify({'error': 'Send Feedback is disabled'}), 400
+
+            recipient_email = (settings.get('support_feedback_recipient_email') or '').strip()
+            if not recipient_email or '@' not in recipient_email:
+                return jsonify({'error': 'Support feedback recipient email is not configured'}), 400
+
+            data = request.get_json(force=True)
+
+            feedback_type = (data.get('feedbackType') or '').strip()
+            reporter_name = (data.get('reporterName') or '').strip()
+            reporter_email = (data.get('reporterEmail') or '').strip()
+            organization = (data.get('organization') or '').strip()
+            details = (data.get('details') or '').strip()
+            if feedback_type not in ['bug_report', 'feature_request']:
+                return jsonify({'error': 'Invalid feedback type'}), 400
+
+            if not reporter_name or not reporter_email or not organization or not details:
+                return jsonify({'error': 'Name, email, organization, and details are required'}), 400
+
+            if '@' not in reporter_email:
+                return jsonify({'error': 'Reporter email must be a valid email address'}), 400
+
+            user_email = user.get('preferred_username', user.get('email', reporter_email))
+            feedback_label = 'Bug Report' if feedback_type == 'bug_report' else 'Feature Request'
+            subject_line = f'[SimpleChat User Support] {feedback_label} - {organization}'
+
+            log_user_support_feedback_email_submission(
+                user_id=user_id,
+                user_email=user_email,
+                feedback_type=feedback_type,
+                reporter_name=reporter_name,
+                reporter_email=reporter_email,
+                organization=organization,
+                details=details,
+                recipient_email=recipient_email,
+            )
+
+            return jsonify({
+                'success': True,
+                'recipientEmail': recipient_email,
+                'subjectLine': subject_line,
+                'feedbackLabel': feedback_label
+            }), 200
+
+        except Exception:
+            log_event(
+                '[Support Feedback] Failed to prepare feedback email',
+                extra={
+                    'user_id': user_id,
+                    'activity_type': 'user_support_feedback_email_submission',
+                    'route': 'send_support_feedback_email',
+                    'feedback_type': feedback_type,
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True
+            )
+            return jsonify({'error': 'Failed to prepare feedback email'}), 500
+
+    @app.route('/api/admin/settings/release_notifications_registration', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def release_notifications_registration():
+        """Persist release/community call registration and prepare a mailto draft."""
+        user_id = get_current_user_id() or 'unknown'
+        try:
+            data = request.get_json(force=True)
+
+            registrant_name = (data.get('name') or '').strip()
+            registrant_email = (data.get('email') or '').strip()
+            organization = (data.get('organization') or '').strip()
+
+            if not registrant_name or not registrant_email or not organization:
+                return jsonify({'error': 'Name, email, and organization are required'}), 400
+
+            if '@' not in registrant_email:
+                return jsonify({'error': 'Email must be a valid email address'}), 400
+
+            existing_settings = get_settings()
+            now_iso = datetime.now(timezone.utc).isoformat()
+            registered_at = existing_settings.get('release_notifications_registered_at') or now_iso
+
+            new_settings = {
+                'release_notifications_registered': True,
+                'release_notifications_name': registrant_name,
+                'release_notifications_email': registrant_email,
+                'release_notifications_org': organization,
+                'release_notifications_registered_at': registered_at,
+                'release_notifications_updated_at': now_iso,
+            }
+
+            if not update_settings(new_settings):
+                return jsonify({'error': 'Failed to persist registration settings'}), 500
+
+            user = session.get('user', {})
+            admin_email = user.get('preferred_username', user.get('email', registrant_email))
+            subject_line = f'[SimpleChat Registration] Release and Community Call Notifications - {organization}'
+
+            log_admin_release_notifications_registration(
+                user_id=user_id,
+                admin_email=admin_email,
+                registrant_name=registrant_name,
+                registrant_email=registrant_email,
+                organization=organization,
+                registered_at=registered_at,
+                updated_at=now_iso,
+                recipient_email='simplechat@microsoft.com',
+                source='admin_settings'
+            )
+
+            return jsonify({
+                'success': True,
+                'recipientEmail': 'simplechat@microsoft.com',
+                'subjectLine': subject_line,
+                'registered': True,
+                'registeredAt': registered_at,
+                'updatedAt': now_iso,
+            }), 200
+
+        except Exception:
+            log_event(
+                '[Admin Release Notifications] Failed to prepare registration email',
+                extra={
+                    'user_id': user_id,
+                    'activity_type': 'admin_release_notifications_registration',
+                    'route': 'release_notifications_registration',
+                    'source': 'admin_settings',
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True
+            )
+            return jsonify({'error': 'Failed to prepare registration email'}), 500
+
 def _test_multimodal_vision_connection(payload):
     """Test multi-modal vision analysis with a sample image."""
     enable_apim = payload.get('enable_apim', False)
@@ -706,9 +924,18 @@ def _test_redis_connection(payload):
             cache_endpoint = get_redis_cache_infrastructure_endpoint(redis_hostname)
             token = credential.get_token(cache_endpoint)
             redis_password = token.token
+        elif redis_auth_type == 'key_vault':
+            if not redis_key:
+                return jsonify({'error': 'Key Vault secret name is required for Key Vault authentication'}), 400
+            try:
+                from functions_keyvault import retrieve_secret_direct
+                redis_password = retrieve_secret_direct(redis_key)
+            except Exception as kv_err:
+                log_event(f"[REDIS_TEST] Key Vault retrieval failed for secret '{redis_key}': {str(kv_err)}", level="error")
+                return jsonify({'error': 'Failed to retrieve Redis key from Key Vault. Check Application Insights using "[REDIS_TEST]" for details.'}), 500
         else:
             if not redis_key:
-                return jsonify({'error': 'Redis key is required for key auth'}), 400
+                return jsonify({'error': 'Redis key is required for key authentication'}), 400
             redis_password = redis_key
 
         r = redis.Redis(
@@ -1043,4 +1270,4 @@ def _test_key_vault_connection(payload):
 
     except Exception as e:
         log_event(f"[AKV_TEST] Key Vault connection error: {str(e)}", level="error")
-        return jsonify({'error': f'Key Vault connection error. Check Application Insights using "[AKV_TEST]" for details.'}), 500
+        return jsonify({'error': 'Key Vault connection failed. Check Application Insights using "[AKV_TEST]" for details.'}), 500

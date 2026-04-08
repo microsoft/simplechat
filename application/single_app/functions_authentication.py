@@ -6,6 +6,7 @@ from functions_debug import debug_print
 
 # Default redirect path for OAuth consent flow (must match your Azure AD app registration)
 REDIRECT_PATH = getattr(globals(), 'REDIRECT_PATH', '/getAToken')
+REQUESTED_SCOPES_SESSION_KEY = "requested_oauth_scopes"
 #REDIRECT_PATH = getattr(globals(), 'REDIRECT_PATH', '/.auth/login/aad/callback')
 
 def build_front_door_urls(front_door_url):
@@ -52,28 +53,104 @@ def _save_cache(cache):
             # Decide how to handle this, maybe clear cache or log extensively
             # session.pop("token_cache", None) # Option: Clear on serialization failure
 
-def _build_msal_app(cache=None):
+def _build_msal_app(cache=None, authority_override=None):
     """Builds the MSAL ConfidentialClientApplication, optionally initializing with a cache."""
+    authority = authority_override or AUTHORITY
     return ConfidentialClientApplication(
         CLIENT_ID,
-        authority=AUTHORITY,
+        authority=authority,
         client_credential=CLIENT_SECRET,
         token_cache=cache  # Pass the cache instance here
     )
 
 
+def _normalize_scopes(scopes=None):
+    """Return a de-duplicated scope list while preserving the original order."""
+    normalized_scopes = []
+    for scope in scopes or SCOPE:
+        if isinstance(scope, str) and scope and scope not in normalized_scopes:
+            normalized_scopes.append(scope)
+    return normalized_scopes or list(SCOPE)
+
+
+def set_requested_oauth_scopes(scopes=None):
+    """Persist the scopes required for the next interactive OAuth callback."""
+    session[REQUESTED_SCOPES_SESSION_KEY] = _normalize_scopes(scopes)
+
+
+def get_requested_oauth_scopes(clear_after_read=False):
+    """Return the currently requested OAuth scopes, optionally clearing them."""
+    stored_scopes = _normalize_scopes(session.get(REQUESTED_SCOPES_SESSION_KEY))
+    if clear_after_read:
+        session.pop(REQUESTED_SCOPES_SESSION_KEY, None)
+    return stored_scopes
+
+
+def clear_requested_oauth_scopes():
+    """Clear any interactive OAuth scope request state from the session."""
+    session.pop(REQUESTED_SCOPES_SESSION_KEY, None)
+
+
+def _build_redirect_url(host_url):
+    """Build the absolute redirect URL used for interactive OAuth flows."""
+    normalized_host_url = host_url.rstrip('/')
+    if not (
+        normalized_host_url.startswith('http://localhost')
+        or normalized_host_url.startswith('http://127.0.0.1')
+    ):
+        if not normalized_host_url.startswith('https://'):
+            normalized_host_url = 'https://' + normalized_host_url.split('://', 1)[-1]
+    return normalized_host_url + REDIRECT_PATH
+
+
+def _build_plugin_auth_response(
+    msal_app,
+    user_info,
+    scopes,
+    error,
+    message,
+    error_code=None,
+    error_description=None,
+    prompt=None,
+):
+    """Create a structured interactive authentication response for plugin callers."""
+    required_scopes = _normalize_scopes(scopes)
+    set_requested_oauth_scopes(required_scopes)
+
+    redirect_url = _build_redirect_url(request.host_url)
+    debug_print(f"[Auth] Redirect URL for {user_info.get('oid')}: {redirect_url}")
+    consent_url = get_consent_url(
+        msal_app=msal_app,
+        scopes=required_scopes,
+        redirect_uri=redirect_url,
+        prompt=prompt,
+    )
+    debug_print(f"[Auth] Interactive auth URL generated for scopes {required_scopes}")
+
+    return {
+        "error": error,
+        "message": message,
+        "consent_url": consent_url,
+        "auth_url": consent_url,
+        "scopes": required_scopes,
+        "error_code": error_code,
+        "error_description": error_description,
+    }
+
+
 # Helper: Generate a consent URL for user to grant permissions
-def get_consent_url(msal_app=None, scopes=None, redirect_uri=None, state=None, prompt="consent"):
+def get_consent_url(msal_app=None, scopes=None, redirect_uri=None, state=None, prompt=None):
     msal_app = _build_msal_app() if msal_app is None else msal_app
-    required_scopes = scopes or SCOPE
+    required_scopes = _normalize_scopes(scopes)
     # Use a default redirect URI if not provided
     redirect_uri = redirect_uri or REDIRECT_PATH
-    auth_url = msal_app.get_authorization_request_url(
-        required_scopes,
-        redirect_uri=redirect_uri,
-        state=state,
-        prompt=prompt
-    )
+    auth_request_kwargs = {
+        "redirect_uri": redirect_uri,
+        "state": state,
+    }
+    if prompt:
+        auth_request_kwargs["prompt"] = prompt
+    auth_url = msal_app.get_authorization_request_url(required_scopes, **auth_request_kwargs)
     return auth_url
 
 def get_valid_access_token(scopes=None):
@@ -86,9 +163,9 @@ def get_valid_access_token(scopes=None):
         debug_print("get_valid_access_token: No user in session.")
         return None # User not logged in
 
-    required_scopes = scopes or SCOPE # Use default SCOPE if none provided
+    required_scopes = _normalize_scopes(scopes) # Use default SCOPE if none provided
 
-    msal_app = _build_msal_app(cache=_load_cache())
+    msal_app = _build_msal_app(cache=_load_cache(), authority_override=get_graph_authority())
     user_info = session.get("user", {})
     # MSAL uses home_account_id which combines oid and tid
     # Construct it carefully based on your id_token_claims structure
@@ -158,9 +235,9 @@ def get_valid_access_token_for_plugins(scopes=None):
             "error_description": "No user in session."
         }
 
-    required_scopes = scopes or SCOPE # Use default SCOPE if none provided
+    required_scopes = _normalize_scopes(scopes) # Use default SCOPE if none provided
 
-    msal_app = _build_msal_app(cache=_load_cache())
+    msal_app = _build_msal_app(cache=_load_cache(), authority_override=get_graph_authority())
     user_info = session.get("user", {})
     # MSAL uses home_account_id which combines oid and tid
     # Construct it carefully based on your id_token_claims structure
@@ -194,51 +271,55 @@ def get_valid_access_token_for_plugins(scopes=None):
 
     if result and "access_token" in result:
         debug_print(f"get_valid_access_token: Token acquired silently for scopes: {required_scopes}")
+        clear_requested_oauth_scopes()
         return {"access_token": result['access_token']}
 
     # If we reach here, it means silent acquisition failed
-    debug_print("get_valid_access_token: acquire_token_silent failed. Needs re-authentication or received invalid grants.")
-    if result is None: # Assume invalid grants or no token
-        debug_print("result is None: get_valid_access_token: Consent required.")
-        host_url = request.host_url.rstrip('/')
-        # Only enforce https if not localhost or 127.0.0.1
-        if not (host_url.startswith('http://localhost') or host_url.startswith('http://127.0.0.1')):
-            if not host_url.startswith('https://'):
-                host_url = 'https://' + host_url.split('://', 1)[-1]
-        redirect_url = host_url + REDIRECT_PATH
-        logging.debug(f"Redirect URL for {user_info.get('oid')}: {redirect_url}")
-        consent_url = get_consent_url(msal_app=msal_app ,scopes=required_scopes, redirect_uri=redirect_url)
-        logging.debug(f"Consent URL: {consent_url}")
-        return {
-            "error": "consent_required",
-            "message": "User consent is required to access this resource. Present to the user so the consent url opens in a new tab.",
-            "consent_url": consent_url,
-            "scopes": required_scopes,
-            "error_code": None,
-            "error_description": "No token result; interactive authentication required."
-        }
+    debug_print("[Auth] acquire_token_silent_with_error failed. Evaluating interactive auth requirements.")
+    if result is None:
+        debug_print("[Auth] Silent token lookup returned no result. Interactive sign-in is required.")
+        return _build_plugin_auth_response(
+            msal_app,
+            user_info,
+            required_scopes,
+            error="interactive_auth_required",
+            message=(
+                "Interactive sign-in is required to access this Microsoft Graph resource. "
+                "If the permission is already granted, the auth flow should complete without prompting for consent."
+            ),
+            error_description="No token result; interactive authentication required.",
+        )
 
     error_code = result.get('error') if result else None
     error_desc = result.get('error_description') if result else None
-    debug_print(f"MSAL Error: {error_code}, Description: {error_desc}")
+    debug_print(f"[Auth] MSAL Error: {error_code}, Description: {error_desc}")
 
     if error_code == "invalid_grant" and error_desc and ("AADSTS65001" in error_desc or "consent_required" in error_desc):
-        host_url = request.host_url.rstrip('/')
-        if not (host_url.startswith('http://localhost') or host_url.startswith('http://127.0.0.1')):
-            if not host_url.startswith('https://'):
-                host_url = 'https://' + host_url.split('://', 1)[-1]
-        redirect_url = host_url + REDIRECT_PATH
-        logging.debug(f"Redirect URL for {user_info.get('oid')}: {redirect_url}")
-        consent_url = get_consent_url(msal_app=msal_app ,scopes=required_scopes, redirect_uri=redirect_url)
-        logging.debug(f"Consent URL: {consent_url}")
-        return {
-            "error": "consent_required",
-            "message": "User consent is required to access this resource. Present to the user so the consent url opens in a new tab.",
-            "consent_url": consent_url,
-            "scopes": required_scopes,
-            "error_code": error_code,
-            "error_description": error_desc
-        }
+        debug_print("[Auth] Entra explicitly reported missing consent for the requested scopes.")
+        return _build_plugin_auth_response(
+            msal_app,
+            user_info,
+            required_scopes,
+            error="consent_required",
+            message="User consent is required to access this Microsoft Graph resource.",
+            error_code=error_code,
+            error_description=error_desc,
+            prompt="consent",
+        )
+    if error_code in {"interaction_required", "login_required"}:
+        debug_print("[Auth] Entra requested an interactive sign-in without requiring new consent.")
+        return _build_plugin_auth_response(
+            msal_app,
+            user_info,
+            required_scopes,
+            error="interactive_auth_required",
+            message=(
+                "Interactive sign-in is required to refresh this Microsoft Graph session. "
+                "If permissions are already granted, the auth flow should complete without another consent prompt."
+            ),
+            error_code=error_code,
+            error_description=error_desc,
+        )
     else:
         return {
             "error": "token_acquisition_failed",
@@ -844,6 +925,103 @@ def get_current_user_info():
         "displayName": user.get("name")
     }
 
+
+def _normalize_authority(authority_base, tenant_id):
+    """Normalize an authority URL and append tenant when appropriate."""
+    base = (authority_base or "").strip().rstrip("/")
+    tenant = (tenant_id or "").strip()
+
+    if not base or not tenant:
+        return base
+
+    lowered = base.lower()
+    tenant_lower = tenant.lower()
+
+    if lowered.endswith(f"/{tenant_lower}"):
+        return base
+
+    if lowered.endswith("/common") or lowered.endswith("/organizations") or lowered.endswith("/consumers"):
+        return base
+
+    return f"{base}/{tenant}"
+
+
+def get_graph_authority():
+    """
+    Resolve authority for Graph token acquisition, independent of general Azure environment defaults.
+
+    Precedence:
+    1. CUSTOM_GRAPH_AUTHORITY_URL_VALUE if provided
+    2. Custom cloud identity authority for AZURE_ENVIRONMENT=custom
+    3. Gov/Public cloud authority based on AZURE_ENVIRONMENT
+    """
+    custom_graph_authority = (CUSTOM_GRAPH_AUTHORITY_URL_VALUE or "").strip()
+    if custom_graph_authority:
+        return _normalize_authority(custom_graph_authority, TENANT_ID)
+
+    if AZURE_ENVIRONMENT == "custom":
+        return _normalize_authority(CUSTOM_IDENTITY_URL_VALUE, TENANT_ID)
+
+    if AZURE_ENVIRONMENT == "usgovernment":
+        return f"https://login.microsoftonline.us/{TENANT_ID}"
+
+    return f"https://login.microsoftonline.com/{TENANT_ID}"
+
+
+def get_graph_base_url():
+    """
+    Resolve the Microsoft Graph base URL for this deployment.
+
+    Precedence:
+    1. CUSTOM_GRAPH_URL_VALUE if provided (works in any AZURE_ENVIRONMENT mode)
+    2. Azure Gov Graph for usgovernment
+    3. Public Graph by default
+
+    Returns:
+        str: Normalized Graph base URL ending with /v1.0
+    """
+    custom_graph_url = (CUSTOM_GRAPH_URL_VALUE or "").strip().rstrip("/")
+    if custom_graph_url:
+        normalized = custom_graph_url
+        lowered = normalized.lower()
+
+        # Allow legacy values such as https://.../v1.0/users
+        if lowered.endswith("/users"):
+            normalized = normalized[:-6].rstrip("/")
+            lowered = normalized.lower()
+
+        if "/v1.0" not in lowered:
+            normalized = f"{normalized}/v1.0"
+
+        return normalized
+
+    if AZURE_ENVIRONMENT == "usgovernment":
+        return "https://graph.microsoft.us/v1.0"
+
+    return "https://graph.microsoft.com/v1.0"
+
+
+def get_graph_endpoint(path=""):
+    """
+    Build a full Graph endpoint from a relative path.
+
+    Args:
+        path (str): Relative Graph path (for example: "/users" or "users/{id}")
+
+    Returns:
+        str: Fully qualified Microsoft Graph URL
+    """
+    base_url = get_graph_base_url().rstrip("/")
+    path = (path or "").strip()
+
+    if not path:
+        return base_url
+
+    if not path.startswith("/"):
+        path = f"/{path}"
+
+    return f"{base_url}{path}"
+
 def get_user_profile_image():
     """
     Fetches the user's profile image from Microsoft Graph and returns it as base64.
@@ -854,13 +1032,7 @@ def get_user_profile_image():
         debug_print("get_user_profile_image: Could not acquire access token")
         return None
 
-    # Determine the correct Graph endpoint based on Azure environment
-    if AZURE_ENVIRONMENT == "usgovernment":
-        profile_image_endpoint = "https://graph.microsoft.us/v1.0/me/photo/$value"
-    elif AZURE_ENVIRONMENT == "custom":
-        profile_image_endpoint = f"{CUSTOM_GRAPH_URL_VALUE}/me/photo/$value"
-    else:
-        profile_image_endpoint = "https://graph.microsoft.com/v1.0/me/photo/$value"
+    profile_image_endpoint = get_graph_endpoint("/me/photo/$value")
     
     headers = {
         "Authorization": f"Bearer {token}",

@@ -8,10 +8,6 @@ param tags object
 param enableDiagLogging bool
 param logAnalyticsId string
 
-param keyVault string
-param authenticationType string
-param configureApplicationPermissions bool
-
 param enablePrivateNetworking bool
 param allowedIpAddresses array = []
 
@@ -86,18 +82,6 @@ resource cosmosDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-pre
     #disable-next-line BCP318 // expect one value to be null
     logs: diagnosticConfigs.outputs.standardLogCategories
     metrics: [] // Cosmos DB typically doesn't need metrics enabled
-  }
-}
-
-//=========================================================
-// store cosmos db keys in key vault if using key authentication and configure app permissions = true
-//=========================================================
-module storeCosmosDbSecret 'keyVault-Secrets.bicep' = if (authenticationType == 'key' && configureApplicationPermissions) {
-  name: 'storeCosmosDbSecret'
-  params: {
-    keyVaultName: keyVault
-    secretName: 'cosmos-db-key'
-    secretValue: cosmosDb.listKeys().primaryMasterKey
   }
 }
 

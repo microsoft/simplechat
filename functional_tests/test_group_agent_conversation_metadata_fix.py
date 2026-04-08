@@ -2,8 +2,8 @@
 # test_group_agent_conversation_metadata_fix.py
 """
 Functional test for group agent conversation metadata fix.
-Version: 0.233.161
-Implemented in: 0.233.161
+Version: 0.239.166
+Implemented in: 0.239.166
 
 This test ensures that conversations using group agents receive the correct
 primary context and chat type metadata even when no documents are retrieved.
@@ -11,9 +11,15 @@ primary context and chat type metadata even when no documents are retrieved.
 
 import sys
 import os
+from pathlib import Path
 from unittest.mock import patch
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+ROOT = Path(__file__).resolve().parents[1]
+APP_DIR = ROOT / "application" / "single_app"
+
+if str(APP_DIR) not in sys.path:
+    sys.path.insert(0, str(APP_DIR))
 
 
 def test_group_agent_primary_context():

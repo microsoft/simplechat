@@ -5,3 +5,8 @@ title: Features by Version
 order: 110
 category: Version History
 ---
+
+## Tutorial Features
+
+- [Guided Tutorials](GUIDED_TUTORIALS.md)
+- [User Tutorial Visibility Preference](USER_TUTORIAL_VISIBILITY_PREFERENCE.md)

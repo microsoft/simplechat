@@ -1,9 +1,20 @@
 <#
+How to authenticate before running this script:
+
+Azure Government:
 az cloud set --name AzureUSGovernment
 az login --scope https://management.core.usgovcloudapi.net//.default
 az login --scope https://graph.microsoft.us//.default
-az account get-access-token --resource https://management.core.usgovcloudapi.net/
-az account get-access-token --resource https://graph.microsoft.us/
+
+Azure Commercial:
+az cloud set --name AzureCloud
+az login --scope https://management.azure.com//.default
+az login --scope https://graph.microsoft.com//.default
+
+Cleanup scope note:
+- This script deletes the Simple Chat resource group and Entra objects created by the Azure CLI deployer.
+- If the deployment reused an existing VNet, existing subnets, or customer-managed private DNS zones outside the deployment resource group, this script does not delete those shared resources.
+- Any private networking resources created inside the Simple Chat deployment resource group are removed when the resource group is deleted.
 #>
 
 param (
@@ -28,19 +39,39 @@ $entraGroupName_Users = $entraGroupName + "-Users"
 $entraGroupName_CreateGroup = $entraGroupName + "-CreateGroup"
 $entraGroupName_SafetyViolationAdmin = $entraGroupName + "-SafetyViolationAdmin"
 $entraGroupName_FeedbackAdmin = $entraGroupName + "-FeedbackAdmin"
-$entraSecurityGroupNames = @($entraGroupName_Admins, $entraGroupName_Users, $entraGroupName_CreateGroup, $entraGroupName_SafetyViolationAdmin, $entraGroupName_FeedbackAdmin)
+$entraGroupName_CreatePublicWorkspace = $entraGroupName + "-CreatePublicWorkspace"
+$entraSecurityGroupNames = @($entraGroupName_Admins, $entraGroupName_Users, $entraGroupName_CreateGroup, $entraGroupName_SafetyViolationAdmin, $entraGroupName_FeedbackAdmin, $entraGroupName_CreatePublicWorkspace)
+
+$currentCloudName = az cloud show --query "name" --output tsv
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($currentCloudName)) {
+    Write-Error "Failed to determine the active Azure cloud from Azure CLI."
+    exit 1
+}
+
+if ($currentCloudName -eq "AzureUSGovernment") {
+    $armResource = "https://management.core.usgovcloudapi.net/"
+    $graphResource = "https://graph.microsoft.us/"
+} elseif ($currentCloudName -eq "AzureCloud") {
+    $armResource = "https://management.azure.com/"
+    $graphResource = "https://graph.microsoft.com/"
+} else {
+    Write-Error "Unsupported Azure cloud '$currentCloudName'. Switch to AzureCloud or AzureUSGovernment before running this script."
+    exit 1
+}
 
 # --- Destroy Instance ---
 cls
 Write-Host "`nSimpleChat Destroy Executing:" -ForegroundColor Green
+Write-Host "Active Azure cloud: $currentCloudName" -ForegroundColor Green
 
 Write-Host "`nHow to run this script: ./destroy-simplechat.ps1 -p <productName> -e <environment>" -ForegroundColor Yellow
+Write-Host "`nCleanup note: shared VNets, shared subnets, and customer-managed private DNS zones reused by the deployment are not deleted by this script." -ForegroundColor Yellow
 
-Write-Host "`nGetting Access Tokeen Refreshed for: https://management.core.usgovcloudapi.net/" -ForegroundColor Yellow
-az account get-access-token --resource https://management.core.usgovcloudapi.net/ --output none
+Write-Host "`nGetting Access Tokeen Refreshed for: $armResource" -ForegroundColor Yellow
+az account get-access-token --resource $armResource --output none
 if ($LASTEXITCODE -ne 0) { Write-Error "Failed to get ARM  Access Token." ; exit 1 } # Basic error check
-Write-Host "`nGetting Access Tokeen Refreshed for: https://graph.microsoft.us/" -ForegroundColor Yellow
-az account get-access-token --resource https://graph.microsoft.us/ --output none
+Write-Host "`nGetting Access Tokeen Refreshed for: $graphResource" -ForegroundColor Yellow
+az account get-access-token --resource $graphResource --output none
 if ($LASTEXITCODE -ne 0) { Write-Error "Failed to get MSGraph Access Token." ; exit 1 } # Basic error check
 
 Read-Host -Prompt "Press Enter to delete all created resources in group '$($resourceGroupName)' (or Ctrl+C to exit)"
@@ -49,7 +80,7 @@ az group delete --name $resourceGroupName --yes --no-wait
 if ($LASTEXITCODE -ne 0) { Write-Warning "Failed to delete Resource Group." }
 else { Write-Host "Resource Group '$($resourceGroupName)' deletion initiated." }
 
-foreach ($securityGroupName in $global_EntraSecurityGroupNames) {
+foreach ($securityGroupName in $entraSecurityGroupNames) {
     Write-Host "`nChecking if exists Security Group: $($securityGroupName)..." -ForegroundColor Yellow
     $entraGroup = az ad group show --group $securityGroupName --query "id" -o tsv 2>$null
     if (-not $entraGroup) {

@@ -8,18 +8,102 @@ import tempfile
 import requests
 import mimetypes
 import io
+import pandas
 
 from functions_authentication import login_required, user_required, get_current_user_id
 from functions_settings import get_settings, enabled_required
-from functions_documents import get_document_metadata
+from functions_documents import get_document_metadata, get_document_blob_storage_info
 from functions_group import get_user_groups
 from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
 from swagger_wrapper import swagger_route, get_auth_security
-from config import CLIENTS, storage_account_user_documents_container_name, storage_account_group_documents_container_name, storage_account_public_documents_container_name, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, AUDIO_EXTENSIONS
+from config import CLIENTS, storage_account_user_documents_container_name, storage_account_group_documents_container_name, storage_account_public_documents_container_name, storage_account_personal_chat_container_name, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, AUDIO_EXTENSIONS, TABULAR_EXTENSIONS, cosmos_messages_container, cosmos_conversations_container
 from functions_debug import debug_print
+
+
+def _sanitize_tabular_preview_value(value):
+    """Convert pandas preview values into JSON-safe display strings."""
+    if hasattr(value, 'item') and not isinstance(value, (str, bytes)):
+        try:
+            value = value.item()
+        except (TypeError, ValueError):
+            pass
+
+    if value is None:
+        return ''
+
+    if pandas.api.types.is_scalar(value):
+        try:
+            if pandas.isna(value):
+                return ''
+        except (TypeError, ValueError):
+            pass
+
+    if isinstance(value, bytes):
+        return value.decode('utf-8', errors='replace')
+
+    if hasattr(value, 'isoformat') and not isinstance(value, str):
+        try:
+            return value.isoformat()
+        except TypeError:
+            pass
+
+    return str(value)
+
+
+def _serialize_tabular_preview_table(df_preview):
+    """Build JSON-safe tabular preview payload pieces for the browser."""
+    columns = [
+        _sanitize_tabular_preview_value(column)
+        for column in df_preview.columns.tolist()
+    ]
+    rows = [
+        [_sanitize_tabular_preview_value(cell) for cell in row]
+        for row in df_preview.itertuples(index=False, name=None)
+    ]
+    return columns, rows
 
 def register_enhanced_citations_routes(app):
     """Register enhanced citations routes"""
+
+    @app.route("/api/enhanced_citations/document_metadata", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_enhanced_citations")
+    def get_enhanced_citation_document_metadata():
+        """
+        Return minimal document metadata for an exact historical or current doc_id.
+        This lets the chat UI render enhanced citations even when the cited
+        document revision is not part of the currently loaded workspace list.
+        """
+        doc_id = request.args.get("doc_id")
+        if not doc_id:
+            return jsonify({"error": "doc_id is required"}), 400
+
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated"}), 401
+
+        try:
+            doc_response, status_code = get_document(user_id, doc_id)
+            if status_code != 200:
+                return doc_response, status_code
+
+            raw_doc = doc_response.get_json()
+            _, blob_path = get_document_blob_storage_info(raw_doc)
+
+            return jsonify({
+                "id": raw_doc.get("id"),
+                "document_id": raw_doc.get("id"),
+                "file_name": raw_doc.get("file_name"),
+                "version": raw_doc.get("version"),
+                "is_current_version": raw_doc.get("is_current_version"),
+                "enhanced_citations": bool(blob_path),
+            }), 200
+
+        except Exception as e:
+            debug_print(f"Error getting enhanced citation document metadata: {e}")
+            return jsonify({"error": str(e)}), 500
     
     @app.route("/api/enhanced_citations/image", methods=["GET"])
     @swagger_route(security=get_auth_security())
@@ -183,6 +267,275 @@ def register_enhanced_citations_routes(app):
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    @app.route("/api/enhanced_citations/tabular", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_enhanced_citations")
+    def get_enhanced_citation_tabular():
+        """
+        Serve original tabular file (CSV, XLSX, etc.) from blob storage for download.
+        Used for chat-uploaded tabular files stored in blob storage.
+        """
+        conversation_id = request.args.get("conversation_id")
+        file_id = request.args.get("file_id")
+
+        if not conversation_id or not file_id:
+            return jsonify({"error": "conversation_id and file_id are required"}), 400
+
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated"}), 401
+
+        try:
+            # Verify the current user owns the conversation
+            try:
+                conversation = cosmos_conversations_container.read_item(
+                    item=conversation_id,
+                    partition_key=conversation_id
+                )
+            except Exception:
+                return jsonify({"error": "Conversation not found"}), 404
+
+            if conversation.get('user_id') != user_id:
+                return jsonify({"error": "Forbidden"}), 403
+
+            # Look up the file message in Cosmos to get blob reference
+            query_str = """
+                SELECT * FROM c
+                WHERE c.conversation_id = @conversation_id
+                AND c.id = @file_id
+            """
+            items = list(cosmos_messages_container.query_items(
+                query=query_str,
+                parameters=[
+                    {'name': '@conversation_id', 'value': conversation_id},
+                    {'name': '@file_id', 'value': file_id}
+                ],
+                partition_key=conversation_id
+            ))
+
+            if not items:
+                return jsonify({"error": "File not found"}), 404
+
+            file_msg = items[0]
+            file_content_source = file_msg.get('file_content_source', '')
+
+            if file_content_source != 'blob':
+                return jsonify({"error": "File is not stored in blob storage"}), 400
+
+            blob_container = file_msg.get('blob_container', '')
+            blob_path = file_msg.get('blob_path', '')
+            filename = file_msg.get('filename', 'download')
+
+            if not blob_container or not blob_path:
+                return jsonify({"error": "Blob reference is incomplete"}), 500
+
+            blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+            if not blob_service_client:
+                return jsonify({"error": "Storage not available"}), 500
+
+            blob_client = blob_service_client.get_blob_client(
+                container=blob_container,
+                blob=blob_path
+            )
+            stream = blob_client.download_blob()
+            content = stream.readall()
+
+            # Determine content type
+            content_type, _ = mimetypes.guess_type(filename)
+            if not content_type:
+                content_type = 'application/octet-stream'
+
+            return Response(
+                content,
+                content_type=content_type,
+                headers={
+                    'Content-Length': str(len(content)),
+                    'Content-Disposition': f'attachment; filename="{filename}"',
+                    'Cache-Control': 'private, max-age=300',
+                }
+            )
+
+        except Exception as e:
+            debug_print(f"Error serving tabular citation: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/enhanced_citations/tabular_workspace", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_enhanced_citations")
+    def get_enhanced_citation_tabular_workspace():
+        """
+        Serve tabular file (CSV, XLSX, etc.) from blob storage for workspace documents.
+        Uses doc_id to look up the document across personal, group, and public workspaces.
+        """
+        doc_id = request.args.get("doc_id")
+        if not doc_id:
+            return jsonify({"error": "doc_id is required"}), 400
+
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated"}), 401
+
+        try:
+            doc_response, status_code = get_document(user_id, doc_id)
+            if status_code != 200:
+                return doc_response, status_code
+
+            raw_doc = doc_response.get_json()
+            file_name = raw_doc.get('file_name', '')
+            ext = file_name.lower().split('.')[-1] if '.' in file_name else ''
+
+            if ext not in ('csv', 'xlsx', 'xls', 'xlsm'):
+                return jsonify({"error": "File is not a tabular file"}), 400
+
+            return serve_enhanced_citation_content(raw_doc, force_download=True)
+
+        except Exception as e:
+            debug_print(f"Error serving tabular workspace citation: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/enhanced_citations/tabular_preview", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_enhanced_citations")
+    def get_enhanced_citation_tabular_preview():
+        """
+        Return JSON preview of a tabular file for rendering as an HTML table.
+        Reads the file into a pandas DataFrame and returns columns + rows as JSON.
+        """
+        doc_id = request.args.get("doc_id")
+        sheet_name = request.args.get("sheet_name")
+        sheet_index = request.args.get("sheet_index")
+        max_rows = min(request.args.get("max_rows", 200, type=int), 500)
+        if not doc_id:
+            return jsonify({"error": "doc_id is required"}), 400
+
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated"}), 401
+
+        try:
+            doc_response, status_code = get_document(user_id, doc_id)
+            if status_code != 200:
+                return doc_response, status_code
+
+            raw_doc = doc_response.get_json()
+            file_name = raw_doc.get('file_name', '')
+            ext = file_name.lower().rsplit('.', 1)[-1] if '.' in file_name else ''
+            if ext not in ('csv', 'xlsx', 'xls', 'xlsm'):
+                return jsonify({"error": "File is not a tabular file"}), 400
+
+            # Download blob with size cap to protect memory
+            settings = get_settings()
+            max_blob_size = int(settings.get('tabular_preview_max_blob_size_mb', 200)) * 1024 * 1024
+            workspace_type, container_name = determine_workspace_type_and_container(raw_doc)
+            blob_name = get_blob_name(raw_doc, workspace_type)
+            blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+            if not blob_service_client:
+                return jsonify({"error": "Blob storage client not available"}), 500
+            blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
+            blob_props = blob_client.get_blob_properties()
+            if blob_props.size > max_blob_size:
+                return jsonify({"error": "File is too large to preview"}), 400
+            data = blob_client.download_blob().readall()
+
+            # Read into DataFrame, limiting rows for preview efficiency
+            # Read max_rows + 1 so we can detect truncation without loading the full file
+            nrows_limit = max_rows + 1
+            selected_sheet = None
+            sheet_names = []
+            if ext == 'csv':
+                df = pandas.read_csv(io.BytesIO(data), keep_default_na=False, dtype=str, nrows=nrows_limit)
+            elif ext in ('xlsx', 'xlsm'):
+                excel_file = pandas.ExcelFile(io.BytesIO(data), engine='openpyxl')
+                sheet_names = list(excel_file.sheet_names)
+                if not sheet_names:
+                    return jsonify({"error": "Workbook does not contain any readable sheets"}), 400
+
+                if sheet_name:
+                    requested_sheet_name = sheet_name.strip()
+                    matching_sheet_name = next(
+                        (candidate for candidate in sheet_names if candidate.lower() == requested_sheet_name.lower()),
+                        None,
+                    )
+                    if not matching_sheet_name:
+                        return jsonify({
+                            "error": f"Sheet '{requested_sheet_name}' was not found. Available sheets: {sheet_names}"
+                        }), 400
+                    selected_sheet = matching_sheet_name
+                elif sheet_index not in (None, ''):
+                    try:
+                        resolved_sheet_index = int(sheet_index)
+                    except ValueError:
+                        return jsonify({"error": "sheet_index must be an integer"}), 400
+                    if resolved_sheet_index < 0 or resolved_sheet_index >= len(sheet_names):
+                        return jsonify({
+                            "error": f"sheet_index {resolved_sheet_index} is out of range. Available sheets: {sheet_names}"
+                        }), 400
+                    selected_sheet = sheet_names[resolved_sheet_index]
+                else:
+                    selected_sheet = sheet_names[0]
+
+                df = excel_file.parse(selected_sheet, keep_default_na=False, dtype=str, nrows=nrows_limit)
+            elif ext == 'xls':
+                excel_file = pandas.ExcelFile(io.BytesIO(data), engine='xlrd')
+                sheet_names = list(excel_file.sheet_names)
+                if not sheet_names:
+                    return jsonify({"error": "Workbook does not contain any readable sheets"}), 400
+
+                if sheet_name:
+                    requested_sheet_name = sheet_name.strip()
+                    matching_sheet_name = next(
+                        (candidate for candidate in sheet_names if candidate.lower() == requested_sheet_name.lower()),
+                        None,
+                    )
+                    if not matching_sheet_name:
+                        return jsonify({
+                            "error": f"Sheet '{requested_sheet_name}' was not found. Available sheets: {sheet_names}"
+                        }), 400
+                    selected_sheet = matching_sheet_name
+                elif sheet_index not in (None, ''):
+                    try:
+                        resolved_sheet_index = int(sheet_index)
+                    except ValueError:
+                        return jsonify({"error": "sheet_index must be an integer"}), 400
+                    if resolved_sheet_index < 0 or resolved_sheet_index >= len(sheet_names):
+                        return jsonify({
+                            "error": f"sheet_index {resolved_sheet_index} is out of range. Available sheets: {sheet_names}"
+                        }), 400
+                    selected_sheet = sheet_names[resolved_sheet_index]
+                else:
+                    selected_sheet = sheet_names[0]
+
+                df = excel_file.parse(selected_sheet, keep_default_na=False, dtype=str, nrows=nrows_limit)
+            else:
+                return jsonify({"error": f"Unsupported file type: {ext}"}), 400
+
+            total_rows = len(df)
+            truncated = total_rows > max_rows
+            preview = df.head(max_rows)
+            columns, rows = _serialize_tabular_preview_table(preview)
+
+            return jsonify({
+                "filename": file_name,
+                "selected_sheet": selected_sheet,
+                "sheet_names": sheet_names,
+                "sheet_count": len(sheet_names),
+                "total_rows": total_rows if not truncated else None,
+                "total_columns": len(df.columns),
+                "columns": columns,
+                "rows": rows,
+                "truncated": truncated
+            })
+
+        except Exception as e:
+            debug_print(f"Error generating tabular preview: {e}")
+            return jsonify({"error": str(e)}), 500
+
 def get_document(user_id, doc_id):
     """
     Get document metadata - searches across all enabled workspace types
@@ -199,7 +552,7 @@ def get_document(user_id, doc_id):
             doc_response, status_code = backend_get_document(user_id, doc_id)
             if status_code == 200:
                 return doc_response, status_code
-        except:
+        except Exception as ex:
             pass
     
     # Try group workspaces if enabled
@@ -215,9 +568,9 @@ def get_document(user_id, doc_id):
                         doc_response, status_code = backend_get_document(user_id, doc_id, group_id=group_id)
                         if status_code == 200:
                             return doc_response, status_code
-                    except:
+                    except Exception as ex:
                         continue
-        except:
+        except Exception as ex:
             pass
     
     # Try public workspaces if enabled
@@ -231,9 +584,9 @@ def get_document(user_id, doc_id):
                     doc_response, status_code = backend_get_document(user_id, doc_id, public_workspace_id=workspace_id)
                     if status_code == 200:
                         return doc_response, status_code
-                except:
+                except Exception as ex:
                     continue
-        except:
+        except Exception as ex:
             pass
     
     # If document not found in any workspace
@@ -244,16 +597,20 @@ def determine_workspace_type_and_container(raw_doc):
     Determine workspace type and appropriate container based on document metadata
     """
     if raw_doc.get('public_workspace_id'):
-        return 'public', storage_account_public_documents_container_name
+        return 'public', raw_doc.get('blob_container') or storage_account_public_documents_container_name
     elif raw_doc.get('group_id'):
-        return 'group', storage_account_group_documents_container_name
+        return 'group', raw_doc.get('blob_container') or storage_account_group_documents_container_name
     else:
-        return 'personal', storage_account_user_documents_container_name
+        return 'personal', raw_doc.get('blob_container') or storage_account_user_documents_container_name
 
 def get_blob_name(raw_doc, workspace_type):
     """
     Determine the correct blob name based on workspace type
     """
+    _, blob_name = get_document_blob_storage_info(raw_doc)
+    if blob_name:
+        return blob_name
+
     if workspace_type == 'public':
         return f"{raw_doc['public_workspace_id']}/{raw_doc['file_name']}"
     elif workspace_type == 'group':
