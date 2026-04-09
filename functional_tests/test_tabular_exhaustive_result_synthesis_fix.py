@@ -2,13 +2,13 @@
 # test_tabular_exhaustive_result_synthesis_fix.py
 """
 Functional test for tabular exhaustive-result synthesis retry.
-Version: 0.241.006
+Version: 0.241.007
 Implemented in: 0.241.006
 
 This test ensures exhaustive tabular requests retry when successful analytical
-tool calls already returned the full matching result set or only a partial
-slice, but the synthesis response still behaves as though only schema samples
-are available.
+tool calls already returned the full matching result set or only a partial row
+or distinct-value slice, but the synthesis response still behaves as though
+only schema samples are available.
 """
 
 import ast
@@ -178,10 +178,54 @@ def test_exhaustive_tabular_retry_detects_partial_result_slice():
         return False
 
 
+def test_result_coverage_summary_marks_partial_distinct_value_slices():
+    """Verify distinct-value counts below the available total mark partial coverage."""
+    print('🔍 Testing tabular result coverage summary for partial distinct-value slices...')
+
+    try:
+        helpers, _ = load_helpers()
+        get_tabular_result_coverage_summary = helpers['get_tabular_result_coverage_summary']
+
+        invocations = [
+            SimpleNamespace(
+                function_name='get_distinct_tabular_values',
+                parameters={
+                    'filename': 'sp800-53r5-control-catalog.xlsx',
+                    'column': 'Control Identifier',
+                    'max_values': '25',
+                },
+                result=json.dumps({
+                    'filename': 'sp800-53r5-control-catalog.xlsx',
+                    'selected_sheet': 'SP 800-53 Revision 5',
+                    'column': 'Control Identifier',
+                    'distinct_count': 1189,
+                    'returned_values': 25,
+                    'values': ['AC-1', 'AC-2'],
+                }),
+                error_message=None,
+            )
+        ]
+
+        coverage_summary = get_tabular_result_coverage_summary(invocations)
+
+        assert coverage_summary['has_full_result_coverage'] is False, coverage_summary
+        assert coverage_summary['has_partial_result_coverage'] is True, coverage_summary
+
+        print('✅ Tabular result coverage summary marks partial distinct-value slices')
+        return True
+
+    except Exception as exc:
+        print(f'❌ Test failed: {exc}')
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 if __name__ == '__main__':
     tests = [
         test_exhaustive_tabular_retry_detects_full_result_access_gap,
         test_exhaustive_tabular_retry_detects_partial_result_slice,
+        test_result_coverage_summary_marks_partial_distinct_value_slices,
     ]
     results = []
 

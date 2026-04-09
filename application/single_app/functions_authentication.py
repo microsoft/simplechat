@@ -385,7 +385,7 @@ def get_video_indexer_managed_identity_token(settings, video_id=None):
     rg       = settings["video_indexer_resource_group"]
     sub      = settings["video_indexer_subscription_id"]
     acct     = settings["video_indexer_account_name"]
-    api_ver  = settings.get("video_indexer_arm_api_version", "2021-11-10-preview")
+    api_ver  = settings.get("video_indexer_arm_api_version", DEFAULT_VIDEO_INDEXER_ARM_API_VERSION)
     
     debug_print(f"[VIDEO INDEXER AUTH] Settings extracted - Subscription: {sub}, Resource Group: {rg}, Account: {acct}, API Version: {api_ver}")
     
