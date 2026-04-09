@@ -29,6 +29,12 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Added functional and UI regression coverage for the guarded prompt-role path so future changes do not reintroduce the same startup failure.
     *   (Ref: `group_workspaces.html`, `test_group_workspace_prompt_role_ui_guard.py`, `test_group_workspace_prompt_role_containers_ui.py`)
 
+*   **Audio and Video Enhanced Citation Badge Consistency**
+    *   Fixed blob-backed audio and video documents showing Standard citations in workspace details even when Enhanced Citations was enabled and the same files already opened through the enhanced citation experience on the chat page.
+    *   Document metadata now persists and normalizes the `enhanced_citations` flag from blob-backed storage state so existing media uploads and new uploads both render the correct Enhanced badge across workspace and chat flows.
+    *   Added regression coverage and fix documentation for the metadata normalization path.
+    *   (Ref: `functions_documents.py`, `route_enhanced_citations.py`, `test_media_enhanced_citations_metadata_flag.py`, `MEDIA_ENHANCED_CITATION_BADGE_FIX.md`)
+
 #### User Interface Enhancements
 
 *   **AI Voice Conversations Setup Guide**
