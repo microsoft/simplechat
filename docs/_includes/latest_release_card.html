@@ -39,9 +39,6 @@
 
     <div class="latest-release-card-actions">
       <a class="btn btn-primary btn-sm" href="{{ feature.url | relative_url }}">{{ feature.cta_label | default: 'Read guide' }}</a>
-      {% if primary_image %}
-        <a class="btn btn-outline-secondary btn-sm" href="{{ primary_image | relative_url }}" target="_blank" rel="noopener">Open image</a>
-      {% endif %}
     </div>
   </div>
 </article>
