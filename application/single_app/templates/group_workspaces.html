@@ -664,8 +664,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
         <!-- Button to open modal -->
         <div
-          class="mb-3 d-none"
           id="create-group-prompt-section"
+          class="mb-3 d-none"
         >
           <button id="create-group-prompt-btn" class="btn btn-success btn-sm">
             New Prompt
@@ -4411,17 +4411,19 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const canManage = ["Owner", "Admin", "PromptManager"].includes(
       userRoleInActiveGroup
     );
-    const createPromptSection = document.getElementById(
+    const createGroupPromptSection = document.getElementById(
       "create-group-prompt-section"
     );
-    const roleWarning = document.getElementById("group-prompts-role-warning");
+    const groupPromptsRoleWarning = document.getElementById(
+      "group-prompts-role-warning"
+    );
 
-    if (createPromptSection) {
-      createPromptSection.classList.toggle("d-none", !canManage);
+    if (!createGroupPromptSection || !groupPromptsRoleWarning) {
+      return;
     }
-    if (roleWarning) {
-      roleWarning.classList.toggle("d-none", canManage);
-    }
+
+    createGroupPromptSection.classList.toggle("d-none", !canManage);
+    groupPromptsRoleWarning.classList.toggle("d-none", canManage);
   }
 
   // — Expose & initial load —

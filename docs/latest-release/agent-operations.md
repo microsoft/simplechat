@@ -1,5 +1,5 @@
 ---
-layout: page
+layout: latest-release-feature
 title: "Agent Operations"
 description: "How agent and action workflows are easier to browse, manage, and validate"
 section: "Latest Release"

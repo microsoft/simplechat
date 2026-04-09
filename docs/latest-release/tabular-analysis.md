@@ -1,5 +1,5 @@
 ---
-layout: page
+layout: latest-release-feature
 title: "Tabular Analysis"
 description: "How CSV and spreadsheet workflows support grounded exploration and follow-up analysis"
 section: "Latest Release"

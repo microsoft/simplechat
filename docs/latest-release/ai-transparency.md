@@ -1,5 +1,5 @@
 ---
-layout: page
+layout: latest-release-feature
 title: "AI Transparency"
 description: "How processing-thought visibility gives users clearer feedback during response generation"
 section: "Latest Release"

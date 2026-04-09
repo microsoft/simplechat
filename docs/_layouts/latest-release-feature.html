@@ -1,0 +1,100 @@
+---
+layout: default
+---
+
+{% assign feature_key = page.name | split: '.' | first %}
+{% assign feature_meta = site.data.latest_release_features.lookup[feature_key] %}
+{% assign accent = feature_meta.accent | default: 'blue' %}
+
+<article class="page-content latest-release-page latest-release-feature-page">
+  <section class="latest-release-hero latest-release-accent--{{ accent }}">
+    <div class="latest-release-hero-copy">
+      <div class="latest-release-breadcrumb">
+        <a href="{{ '/latest-release/' | relative_url }}"><i class="bi bi-arrow-left"></i> Latest Release Highlights</a>
+      </div>
+
+      <div class="latest-release-pill-row">
+        <span class="latest-release-pill">{{ feature_meta.release_label | default: 'Latest Release' }}</span>
+        {% if feature_meta.release_version %}
+          <span class="latest-release-subtle">v{{ feature_meta.release_version }}</span>
+        {% endif %}
+      </div>
+
+      <h1 class="latest-release-hero-title">{{ page.title }}</h1>
+      <p class="latest-release-hero-description">{{ feature_meta.summary | default: page.description }}</p>
+
+      <div class="latest-release-hero-actions">
+        <a href="{{ '/latest-release/' | relative_url }}" class="btn btn-primary btn-sm">Back to all highlights</a>
+      </div>
+    </div>
+
+    <div class="latest-release-hero-art">
+      <div class="latest-release-icon-orb" aria-hidden="true">
+        <i class="bi {{ feature_meta.icon | default: 'bi-stars' }}"></i>
+      </div>
+    </div>
+  </section>
+
+  {% if feature_meta.images and feature_meta.images.size > 0 %}
+  <section class="latest-release-gallery-section">
+    <div class="latest-release-section-header">
+      <div>
+        <div class="latest-release-section-kicker">Visual tour</div>
+        <h2>Screenshots</h2>
+        <p>These screenshots come from the same app-side Latest Features gallery used in the product experience.</p>
+      </div>
+      <span class="latest-release-section-badge">{{ feature_meta.images.size }} image{% if feature_meta.images.size != 1 %}s{% endif %}</span>
+    </div>
+
+    <div class="latest-release-thumbnail-gallery">
+      {% for image in feature_meta.images %}
+      <button
+        type="button"
+        class="latest-release-thumbnail-trigger"
+        data-latest-feature-image-src="{{ image.path | relative_url }}"
+        data-latest-feature-image-title="{{ image.title | default: image.label | default: page.title }}"
+        data-latest-feature-image-caption="{{ image.caption | default: 'Click outside the popup to close it.' }}"
+        aria-label="View {{ image.title | default: image.label | default: page.title }} image"
+      >
+        <span class="latest-release-thumbnail-card">
+          <img class="latest-release-thumbnail-media" src="{{ image.path | relative_url }}" alt="{{ image.alt | default: image.title | default: page.title }}" />
+          <span class="latest-release-thumbnail-title">{{ image.label | default: image.title }}</span>
+          <span class="latest-release-thumbnail-meta">Click to enlarge</span>
+        </span>
+      </button>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <div class="latest-release-feature-content">
+    <div class="latest-release-rich-content">
+      {{ content }}
+    </div>
+  </div>
+
+  {% if feature_meta.images and feature_meta.images.size > 0 %}
+  <div class="modal fade latest-feature-image-modal" id="latestFeatureImageModal" tabindex="-1" aria-labelledby="latestFeatureImageModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-xl">
+      <div class="modal-content">
+        <div class="modal-header">
+          <div>
+            <h5 class="modal-title mb-1" id="latestFeatureImageModalLabel">Latest Feature Preview</h5>
+            <small class="latest-feature-image-modal-caption" id="latestFeatureImageModalCaption">Click outside the popup to close it.</small>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body pt-2">
+          <div class="latest-feature-image-frame">
+            <img id="latestFeatureImageModalImage" src="" alt="Latest feature preview" />
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</article>
+
+{% if feature_meta.images and feature_meta.images.size > 0 %}
+<script src="{{ '/assets/js/latest-release.js' | relative_url }}"></script>
+{% endif %}

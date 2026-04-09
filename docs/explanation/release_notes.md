@@ -4,6 +4,26 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.241.006)**
+
+#### Bug Fixes
+
+*   **Agent Output Token Defaults and Foundry Limit Enforcement**
+    *   Fixed stale agent output-token defaults so new and normalized agents now use `-1` to defer to the provider or model default instead of silently reintroducing older fixed caps.
+    *   Azure AI Foundry agent execution now also honors saved output-token settings in both classic Foundry agent runs and new Foundry Responses-based runs, so configured limits are enforced consistently instead of only being stored in agent configuration.
+    *   (Ref: `functions_global_agents.py`, `agent.schema.json`, `foundry_agent_runtime.py`, `test_foundry_token_limit_defaults.py`)
+
+*   **Tabular Exhaustive Result Synthesis Retry**
+    *   Fixed exhaustive tabular questions such as "list all" requests so the workflow no longer stops at an answer that claims only sample rows or workbook metadata are available after analytical tool calls already returned the full matching result set.
+    *   General tabular analysis now detects full versus partial result coverage from tool metadata, retries incomplete synthesis when necessary, and adds stronger prompt guidance so the final answer uses the returned analytical results directly.
+    *   (Ref: `route_backend_chats.py`, `test_tabular_exhaustive_result_synthesis_fix.py`, `TABULAR_EXHAUSTIVE_RESULT_SYNTHESIS_FIX.md`)
+
+*   **Group Workspace Documents and Prompts Load Recovery**
+    *   Fixed a Group Workspace page-load regression where active-group initialization could fail on a missing prompt-role UI container and stop the rest of the page from rendering correctly.
+    *   Group document and prompt content now continue loading even if the prompt permission banner or create-button container is unavailable during startup, preventing blank content areas caused by a JavaScript null-reference error.
+    *   Added functional and UI regression coverage for the guarded prompt-role path so future changes do not reintroduce the same startup failure.
+    *   (Ref: `group_workspaces.html`, `test_group_workspace_prompt_role_ui_guard.py`, `test_group_workspace_prompt_role_containers_ui.py`)
+    
 ### **(v0.241.002)**
 
 #### Bug Fixes

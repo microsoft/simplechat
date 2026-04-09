@@ -1,5 +1,5 @@
 ---
-layout: page
+layout: latest-release-feature
 title: "Background Chat"
 description: "How long-running chat requests can finish in the background while you keep working"
 section: "Latest Release"
