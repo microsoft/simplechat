@@ -3922,7 +3922,7 @@ def get_tabular_result_coverage_summary(invocations):
         if total_matches is not None and returned_rows is not None:
             if returned_rows >= total_matches:
                 coverage_summary['has_full_result_coverage'] = True
-            elif returned_rows < total_matches:
+            else:
                 coverage_summary['has_partial_result_coverage'] = True
 
         distinct_count = parse_tabular_result_count(result_payload.get('distinct_count'))
@@ -3930,7 +3930,7 @@ def get_tabular_result_coverage_summary(invocations):
         if distinct_count is not None and returned_values is not None:
             if returned_values >= distinct_count:
                 coverage_summary['has_full_result_coverage'] = True
-            elif returned_values < distinct_count:
+            else:
                 coverage_summary['has_partial_result_coverage'] = True
 
         if result_payload.get('full_rows_included') or result_payload.get('full_values_included'):
