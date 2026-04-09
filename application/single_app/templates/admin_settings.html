@@ -5719,19 +5719,25 @@
                                 value="{{ settings.video_index_timeout or 600 }}">
                         </div>
                     </div>
+                </div>
 
                     <!-- AI Voice Chat Card -->
                     <div class="card p-4 mb-4 border-primary shadow-sm" id="ai-voice-chat-section">
-                        <div class="d-flex align-items-center mb-3">
-                            <div class="bg-primary text-white rounded-circle p-3 me-3" style="width: 50px; height: 50px; display: flex; align-items: center; justify-content: center;">
-                                <i class="bi bi-mic-fill fs-4"></i>
+                        <div class="d-flex align-items-center justify-content-between mb-3">
+                            <div class="d-flex align-items-center">
+                                <div class="bg-primary text-white rounded-circle p-3 me-3" style="width: 50px; height: 50px; display: flex; align-items: center; justify-content: center;">
+                                    <i class="bi bi-mic-fill fs-4"></i>
+                                </div>
+                                <div>
+                                    <h4 class="mb-1">
+                                        <i class="bi bi-soundwave me-2"></i>AI Voice Conversations
+                                    </h4>
+                                    <p class="text-muted mb-0 small">Transform your AI experience with natural voice interactions</p>
+                                </div>
                             </div>
-                            <div>
-                                <h4 class="mb-1">
-                                    <i class="bi bi-soundwave me-2"></i>AI Voice Conversations
-                                </h4>
-                                <p class="text-muted mb-0 small">Transform your AI experience with natural voice interactions</p>
-                            </div>
+                            <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#speechServiceInfoModal">
+                                <i class="bi bi-info-circle me-1"></i>Setup Guide
+                            </button>
                         </div>
 
                         <div class="alert alert-info mb-4" id="speech_service_shared_alert">
@@ -5850,12 +5856,48 @@
                         </div>
 
                         <div class="mb-3{% if settings.speech_service_authentication_type != 'managed_identity' %} d-none{% endif %}" id="speech_service_resource_id_container">
+                            <div class="alert alert-secondary py-2 mb-3">
+                                <strong>Resource ID builder:</strong> If the full ARM resource ID is hard to find in the portal, enter the subscription ID, resource group, and Speech resource name below. Simple Chat can build the resource ID for you.
+                            </div>
+
+                            <div class="row g-3 mb-3">
+                                <div class="col-md-6">
+                                    <label for="speech_service_subscription_id" class="form-label">Speech Subscription ID</label>
+                                    <input type="text" class="form-control"
+                                        id="speech_service_subscription_id" name="speech_service_subscription_id"
+                                        value="{{ settings.speech_service_subscription_id or '' }}"
+                                        placeholder="12345678-1234-1234-1234-123456789abc">
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="speech_service_resource_group" class="form-label">Speech Resource Group</label>
+                                    <input type="text" class="form-control"
+                                        id="speech_service_resource_group" name="speech_service_resource_group"
+                                        value="{{ settings.speech_service_resource_group or '' }}"
+                                        placeholder="rg-speech-prod">
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="speech_service_resource_name" class="form-label">Speech Resource Name</label>
+                                    <input type="text" class="form-control"
+                                        id="speech_service_resource_name" name="speech_service_resource_name"
+                                        value="{{ settings.speech_service_resource_name or '' }}"
+                                        placeholder="my-speech-resource">
+                                    <div class="form-text">If you use a custom-domain Speech endpoint, this is usually the first part of that hostname.</div>
+                                </div>
+                                <div class="col-md-6 d-flex align-items-end">
+                                    <button type="button" class="btn btn-outline-secondary w-100" id="build_speech_resource_id_btn">
+                                        Build Resource ID
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="form-text mb-2" id="speech_resource_id_builder_status">Provide Subscription ID, Resource Group, and Speech Resource Name to auto-build the ARM resource ID.</div>
+
                             <label for="speech_service_resource_id" class="form-label">Speech Resource ID</label>
                             <input type="text" class="form-control"
                                 id="speech_service_resource_id" name="speech_service_resource_id"
                                 value="{{ settings.speech_service_resource_id or '' }}"
                                 placeholder="/subscriptions/<subscription>/resourceGroups/<resource-group>/providers/Microsoft.CognitiveServices/accounts/<speech-resource>">
-                            <div class="form-text">Required for Voice Responses when using Managed Identity. You can copy this from the Speech resource Overview page or from <code>az cognitiveservices account show --query id</code>.</div>
+                            <div class="form-text">Required for Voice Responses when using Managed Identity. You can paste the full value manually, or let the fields above build it for you.</div>
                         </div>
 
                         <div class="mb-3">
@@ -5915,7 +5957,6 @@
                         </small>
                     </p>
                 </div>
-            </div>
             </div>
 
             <div class="tab-pane fade" id="send-feedback" role="tabpanel" aria-labelledby="send-feedback-tab" data-app-version="{{ config['VERSION'] }}">
@@ -6206,6 +6247,9 @@
 
         <!-- Video Indexer Info Modal -->
         {% include '_video_indexer_info.html' %}
+
+        <!-- Speech Service Info Modal -->
+        {% include '_speech_service_info.html' %}
 
         <!-- Web Search Foundry Info Modal -->
         {% include '_web_search_foundry_info.html' %}

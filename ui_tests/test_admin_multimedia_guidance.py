@@ -2,11 +2,11 @@
 """
 UI test for admin multimedia guidance and shared Speech controls.
 
-Version: 0.241.007
-Implemented in: 0.241.007
+Version: 0.241.010
+Implemented in: 0.241.010
 
-This test ensures the Search & Extract admin tab exposes the new Video Indexer
-cloud selector and the shared Speech managed-identity fields.
+This test ensures the Search & Extract admin tab exposes the Video Indexer
+cloud selector, the AI Voice setup guide, and the shared Speech managed-identity fields.
 """
 
 import os
@@ -76,6 +76,7 @@ def test_admin_multimedia_guidance(playwright):
         modal_trigger.click()
         expect(page.locator("#videoIndexerInfoModal")).to_be_visible()
         expect(page.locator("#videoIndexerInfoModal")).to_contain_text("App Service system-assigned managed identity")
+        page.locator('#videoIndexerInfoModal button[data-bs-dismiss="modal"]').click()
 
         tts_toggle = page.locator("#enable_text_to_speech")
         if not tts_toggle.is_checked():
@@ -85,6 +86,20 @@ def test_admin_multimedia_guidance(playwright):
         page.locator("#speech_service_authentication_type").select_option("managed_identity")
         expect(page.locator("#speech_service_resource_id_container")).to_be_visible()
         expect(page.locator("#speech_service_key_container")).not_to_be_visible()
+
+        page.locator("#speech_service_subscription_id").fill("12345678-1234-1234-1234-123456789abc")
+        page.locator("#speech_service_resource_group").fill("rg-speech-prod")
+        page.locator("#speech_service_resource_name").fill("my-speech-resource")
+        expect(page.locator("#speech_service_resource_id")).to_have_value(
+            "/subscriptions/12345678-1234-1234-1234-123456789abc/resourceGroups/rg-speech-prod/providers/Microsoft.CognitiveServices/accounts/my-speech-resource"
+        )
+
+        page.locator('[data-bs-target="#speechServiceInfoModal"]').click()
+        expect(page.locator("#speechServiceInfoModal")).to_be_visible()
+        expect(page.locator("#speechServiceInfoModal")).to_contain_text("Cognitive Services Speech User")
+        expect(page.locator("#speechServiceInfoModal")).to_contain_text("Generate Custom Domain Name")
+        expect(page.locator("#speechServiceInfoModal")).to_contain_text("Keys and Endpoint")
+        expect(page.locator("#speechServiceInfoModal")).to_contain_text("my-speech-resource")
     finally:
         context.close()
         browser.close()

@@ -1994,8 +1994,110 @@ function setupToggles() {
     }
 
     const speechAuthType = document.getElementById('speech_service_authentication_type');
+    const speechEndpointInput = document.getElementById('speech_service_endpoint');
     const speechKeyContainer = document.getElementById('speech_service_key_container');
     const speechResourceIdContainer = document.getElementById('speech_service_resource_id_container');
+    const speechResourceIdInput = document.getElementById('speech_service_resource_id');
+    const speechSubscriptionInput = document.getElementById('speech_service_subscription_id');
+    const speechResourceGroupInput = document.getElementById('speech_service_resource_group');
+    const speechResourceNameInput = document.getElementById('speech_service_resource_name');
+    const buildSpeechResourceIdButton = document.getElementById('build_speech_resource_id_btn');
+    const speechResourceIdBuilderStatus = document.getElementById('speech_resource_id_builder_status');
+
+    function inferSpeechResourceNameFromEndpoint(endpointValue) {
+        const trimmedValue = (endpointValue || '').trim();
+        if (!trimmedValue) {
+            return '';
+        }
+
+        try {
+            const parsedUrl = new URL(trimmedValue);
+            const hostName = parsedUrl.hostname.toLowerCase();
+            const supportedSuffixes = [
+                '.cognitiveservices.azure.com',
+                '.cognitiveservices.azure.us'
+            ];
+
+            for (const suffix of supportedSuffixes) {
+                if (hostName.endsWith(suffix)) {
+                    const resourceName = hostName.slice(0, -suffix.length);
+                    if (resourceName && !resourceName.includes('.')) {
+                        return resourceName;
+                    }
+                }
+            }
+        } catch (error) {
+            return '';
+        }
+
+        return '';
+    }
+
+    function setSpeechResourceIdBuilderStatus(message) {
+        if (speechResourceIdBuilderStatus) {
+            speechResourceIdBuilderStatus.textContent = message;
+        }
+    }
+
+    function buildSpeechResourceIdFromFields() {
+        const subscriptionId = speechSubscriptionInput?.value?.trim() || '';
+        const resourceGroup = speechResourceGroupInput?.value?.trim() || '';
+        const resourceName = speechResourceNameInput?.value?.trim() || '';
+
+        if (!subscriptionId || !resourceGroup || !resourceName) {
+            return '';
+        }
+
+        return `/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.CognitiveServices/accounts/${resourceName}`;
+    }
+
+    function syncSpeechResourceIdBuilder(force) {
+        if (!speechResourceIdInput) {
+            return '';
+        }
+
+        if (speechResourceNameInput && !speechResourceNameInput.value.trim()) {
+            const inferredResourceName = inferSpeechResourceNameFromEndpoint(speechEndpointInput?.value || '');
+            if (inferredResourceName) {
+                speechResourceNameInput.value = inferredResourceName;
+            }
+        }
+
+        const builtResourceId = buildSpeechResourceIdFromFields();
+        const currentValue = speechResourceIdInput.value.trim();
+        const previousGeneratedValue = speechResourceIdInput.dataset.generatedValue || '';
+        const wasGenerated = speechResourceIdInput.dataset.generated === 'true' || currentValue === '' || currentValue === previousGeneratedValue;
+
+        if (builtResourceId) {
+            speechResourceIdInput.dataset.generatedValue = builtResourceId;
+            if (force || wasGenerated) {
+                speechResourceIdInput.value = builtResourceId;
+                speechResourceIdInput.dataset.generated = 'true';
+            }
+            setSpeechResourceIdBuilderStatus('Resource ID can be generated from the helper fields. You can still override it manually if needed.');
+            return builtResourceId;
+        }
+
+        const missingParts = [];
+        if (!speechSubscriptionInput?.value?.trim()) {
+            missingParts.push('Subscription ID');
+        }
+        if (!speechResourceGroupInput?.value?.trim()) {
+            missingParts.push('Resource Group');
+        }
+        if (!speechResourceNameInput?.value?.trim()) {
+            missingParts.push('Speech Resource Name');
+        }
+
+        speechResourceIdInput.dataset.generatedValue = '';
+        if (speechResourceIdInput.dataset.generated === 'true' && !currentValue) {
+            speechResourceIdInput.dataset.generated = 'false';
+        }
+
+        setSpeechResourceIdBuilderStatus(`To auto-build the resource ID, provide: ${missingParts.join(', ')}.`);
+        return '';
+    }
+
     if (speechAuthType) {
         const updateSpeechAuthFields = function () {
             const usingKeyAuth = this.value === 'key';
@@ -2007,6 +2109,34 @@ function setupToggles() {
         speechAuthType.addEventListener('change', function () {
             updateSpeechAuthFields.call(this);
             markFormAsModified();
+        });
+    }
+
+    if (speechResourceIdInput) {
+        syncSpeechResourceIdBuilder(false);
+        speechResourceIdInput.addEventListener('input', function () {
+            const builtResourceId = buildSpeechResourceIdFromFields();
+            this.dataset.generated = builtResourceId && this.value.trim() === builtResourceId ? 'true' : 'false';
+        });
+    }
+
+    [speechEndpointInput, speechSubscriptionInput, speechResourceGroupInput, speechResourceNameInput].forEach((element) => {
+        if (!element) {
+            return;
+        }
+
+        element.addEventListener('input', () => {
+            syncSpeechResourceIdBuilder(false);
+            markFormAsModified();
+        });
+    });
+
+    if (buildSpeechResourceIdButton) {
+        buildSpeechResourceIdButton.addEventListener('click', () => {
+            const builtResourceId = syncSpeechResourceIdBuilder(true);
+            if (builtResourceId) {
+                markFormAsModified();
+            }
         });
     }
 
@@ -4732,6 +4862,9 @@ function setupWalkthroughFieldListeners() {
             {selector: '#enable_text_to_speech', event: 'change'},
             {selector: '#speech_service_endpoint', event: 'input'},
             {selector: '#speech_service_authentication_type', event: 'change'},
+            {selector: '#speech_service_subscription_id', event: 'input'},
+            {selector: '#speech_service_resource_group', event: 'input'},
+            {selector: '#speech_service_resource_name', event: 'input'},
             {selector: '#speech_service_key', event: 'input'},
             {selector: '#speech_service_location', event: 'input'},
             {selector: '#speech_service_resource_id', event: 'input'}

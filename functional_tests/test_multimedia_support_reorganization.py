@@ -2,13 +2,14 @@
 # test_multimedia_support_reorganization.py
 """
 Functional test for multimedia support reorganization and shared speech guidance.
-Version: 0.241.007
-Implemented in: 0.241.007
+Version: 0.241.010
+Implemented in: 0.241.010
 
 This test ensures that:
 1. Multimedia Support remains in the Search and Extract tab
 2. The Video Indexer modal reflects the managed-identity-only ARM setup
-3. Shared Speech and Video Indexer settings are accessible in the current admin UI
+3. The AI Voice setup guide is integrated with the shared Speech settings
+4. Shared Speech and Video Indexer settings are accessible in the current admin UI
 """
 
 import os
@@ -112,6 +113,64 @@ def test_video_indexer_modal():
         return False
 
 
+def test_speech_service_modal():
+    """Test that the AI Voice configuration modal is properly integrated."""
+    print("🔍 Testing AI Voice configuration modal...")
+
+    try:
+        modal_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            '..', 'application', 'single_app', 'templates', '_speech_service_info.html'
+        )
+
+        if not os.path.exists(modal_path):
+            print("❌ Speech Service modal template file not found")
+            return False
+
+        with open(modal_path, 'r', encoding='utf-8') as file_handle:
+            modal_content = file_handle.read()
+
+        required_elements = [
+            'id="speechServiceInfoModal"',
+            'Azure AI Voice Conversations Configuration Guide',
+            'Cognitive Services Speech User',
+            'custom-domain Speech endpoint',
+            'Generate Custom Domain Name',
+            'Keys and Endpoint',
+            'updateSpeechServiceModalInfo()'
+        ]
+
+        for element in required_elements:
+            if element not in modal_content:
+                print(f"❌ Missing Speech modal element: {element}")
+                return False
+
+        admin_settings_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            '..', 'application', 'single_app', 'templates', 'admin_settings.html'
+        )
+
+        with open(admin_settings_path, 'r', encoding='utf-8') as file_handle:
+            admin_content = file_handle.read()
+
+        if '_speech_service_info.html' not in admin_content:
+            print("❌ Speech Service modal not included in admin_settings.html")
+            return False
+
+        if 'data-bs-target="#speechServiceInfoModal"' not in admin_content:
+            print("❌ Speech Service modal trigger button not found")
+            return False
+
+        print("✅ AI Voice configuration modal properly integrated")
+        return True
+
+    except Exception as exc:
+        print(f"❌ Test failed: {exc}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def test_multimedia_settings_preserved():
     """Test that all multimedia settings are preserved in the new location."""
     print("🔍 Testing multimedia settings preservation...")
@@ -150,6 +209,9 @@ def test_multimedia_settings_preserved():
             'id="enable_text_to_speech"',
             'id="speech_service_endpoint"',
             'id="speech_service_location"',
+            'id="speech_service_subscription_id"',
+            'id="speech_service_resource_group"',
+            'id="speech_service_resource_name"',
             'id="speech_service_locale"',
             'id="speech_service_authentication_type"',
             'id="speech_service_resource_id"',
@@ -188,11 +250,11 @@ def test_version_update():
         with open(config_path, 'r', encoding='utf-8') as file_handle:
             content = file_handle.read()
 
-        if 'VERSION = "0.241.007"' not in content:
-            print("❌ Version not updated to 0.241.007")
+        if 'VERSION = "0.241.010"' not in content:
+            print("❌ Version not updated to 0.241.010")
             return False
 
-        print("✅ Version successfully updated to 0.241.007")
+        print("✅ Version successfully updated to 0.241.010")
         return True
 
     except Exception as exc:
@@ -206,6 +268,7 @@ if __name__ == "__main__":
     tests = [
         test_multimedia_support_move,
         test_video_indexer_modal,
+        test_speech_service_modal,
         test_multimedia_settings_preserved,
         test_version_update,
     ]

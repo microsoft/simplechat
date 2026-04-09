@@ -1334,6 +1334,9 @@ def register_route_frontend_admin_settings(app):
                 # Audio file settings with Azure speech service
                 'speech_service_endpoint': form_data.get('speech_service_endpoint', '').strip(),
                 'speech_service_location': form_data.get('speech_service_location', '').strip(),
+                'speech_service_subscription_id': form_data.get('speech_service_subscription_id', '').strip(),
+                'speech_service_resource_group': form_data.get('speech_service_resource_group', '').strip(),
+                'speech_service_resource_name': form_data.get('speech_service_resource_name', '').strip(),
                 'speech_service_resource_id': form_data.get('speech_service_resource_id', '').strip(),
                 'speech_service_locale': form_data.get('speech_service_locale', '').strip(),
                 'speech_service_authentication_type': form_data.get('speech_service_authentication_type', 'key'),
