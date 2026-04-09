@@ -12,7 +12,7 @@ import pandas
 
 from functions_authentication import login_required, user_required, get_current_user_id
 from functions_settings import get_settings, enabled_required
-from functions_documents import get_document_metadata, get_document_blob_storage_info
+from functions_documents import get_document_metadata
 from functions_group import get_user_groups
 from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
 from swagger_wrapper import swagger_route, get_auth_security
@@ -90,15 +90,13 @@ def register_enhanced_citations_routes(app):
                 return doc_response, status_code
 
             raw_doc = doc_response.get_json()
-            _, blob_path = get_document_blob_storage_info(raw_doc)
-
             return jsonify({
                 "id": raw_doc.get("id"),
                 "document_id": raw_doc.get("id"),
                 "file_name": raw_doc.get("file_name"),
                 "version": raw_doc.get("version"),
                 "is_current_version": raw_doc.get("is_current_version"),
-                "enhanced_citations": bool(blob_path),
+                "enhanced_citations": bool(raw_doc.get("enhanced_citations", False)),
             }), 200
 
         except Exception as e:
