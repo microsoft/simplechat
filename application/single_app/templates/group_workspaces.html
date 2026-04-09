@@ -324,25 +324,27 @@ app_settings.app_title }} {% endblock %} {% block head %}
               Group Actions
             </button>
           </li>
+        {% endif %}
+      {% endif %}
+      {% if settings.enable_semantic_kernel and settings.allow_group_custom_endpoints and settings.enable_multi_model_endpoints %}
+        <li class="nav-item" role="presentation">
+          <button
+            class="nav-link"
+            id="group-endpoints-tab-btn"
+            data-bs-toggle="tab"
+            data-bs-target="#group-endpoints-tab"
+            type="button"
+            role="tab"
+            aria-controls="group-endpoints-tab"
+            aria-selected="false"
+          >
+            Group Endpoints
+          </button>
+        </li>
       {% endif %}
     {% endif %}
-    {% if settings.enable_semantic_kernel and settings.allow_group_custom_endpoints and settings.enable_multi_model_endpoints %}
-      <li class="nav-item" role="presentation">
-        <button
-          class="nav-link"
-          id="group-endpoints-tab-btn"
-          data-bs-toggle="tab"
-          data-bs-target="#group-endpoints-tab"
-          type="button"
-          role="tab"
-          aria-controls="group-endpoints-tab"
-          aria-selected="false"
-        >
-          Group Endpoints
-        </button>
-      </li>
-    {% endif %}
   </ul>
+    
 
   <!-- Tab Panes -->
   <div class="tab-content" id="groupWorkspaceTabContent">
@@ -818,7 +820,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
       <div id="group-agents-error"></div>
     </div>
     <!-- End GROUP AGENTS TAB -->
-    {% endif %}
 
     {% if settings.enable_semantic_kernel and settings.allow_group_plugins %}
     <!-- ============= GROUP ACTIONS TAB ============= -->
@@ -4115,6 +4116,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
   // — Fetch & render group prompts —
   function fetchGroupPrompts() {
+    if (!groupPromptsTableBody || !groupPromptsPagination) {
+      return;
+    }
+
     groupPromptsTableBody.innerHTML = `
       <tr class="table-loading-row">
         <td colspan="2">

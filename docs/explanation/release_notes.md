@@ -8,6 +8,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### Bug Fixes
 
+*   **Speech and Video Indexer Setup Guidance Alignment**
+    *   Fixed stale admin guidance around Azure AI Video Indexer and shared Azure Speech configuration so managed-identity setup no longer points admins toward legacy Video Indexer API keys or incomplete Speech instructions.
+    *   The admin experience now reflects the shared Speech resource model, adds Speech Resource ID helper fields, and keeps managed-identity voice-response requirements aligned with runtime behavior.
+    *   (Ref: `admin_settings.html`, `admin_settings.js`, `route_backend_tts.py`, `functions_documents.py`, shared Speech and Video Indexer guidance)
+
 *   **Agent Output Token Defaults and Foundry Limit Enforcement**
     *   Fixed stale agent output-token defaults so new and normalized agents now use `-1` to defer to the provider or model default instead of silently reintroducing older fixed caps.
     *   Azure AI Foundry agent execution now also honors saved output-token settings in both classic Foundry agent runs and new Foundry Responses-based runs, so configured limits are enforced consistently instead of only being stored in agent configuration.
@@ -23,6 +28,13 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Group document and prompt content now continue loading even if the prompt permission banner or create-button container is unavailable during startup, preventing blank content areas caused by a JavaScript null-reference error.
     *   Added functional and UI regression coverage for the guarded prompt-role path so future changes do not reintroduce the same startup failure.
     *   (Ref: `group_workspaces.html`, `test_group_workspace_prompt_role_ui_guard.py`, `test_group_workspace_prompt_role_containers_ui.py`)
+
+#### User Interface Enhancements
+
+*   **AI Voice Conversations Setup Guide**
+    *   Added an in-app Setup Guide modal to the AI Voice Conversations admin card so admins can configure Azure Speech without leaving Admin Settings.
+    *   The guide includes a live snapshot of the current Speech configuration, explains key versus managed-identity authentication, and now walks admins through enabling the required custom domain in Azure portal before verifying the endpoint on Keys and Endpoint.
+    *   (Ref: `admin_settings.html`, `_speech_service_info.html`, `azure_speech_managed_identity_manul_setup.md`, `test_admin_multimedia_guidance.py`)
     
 ### **(v0.241.002)**
 
