@@ -3890,12 +3890,95 @@ def is_tabular_access_limited_analysis(analysis_text):
         'do not have direct access',
         "don't have",
         'do not have',
+        "doesn't include the full",
+        'does not include the full',
+        'only sample rows',
+        'only workbook metadata',
+        'only sample rows and workbook metadata',
+        'cannot accurately list all',
+        'cannot accurately list them',
+        'from the current evidence',
+        'from the evidence provided',
         'visible excerpt you provided',
         'if those tool-backed results exist',
         'allow me to query again',
         'can outline what i would retrieve',
     )
     return any(phrase in normalized_analysis for phrase in inaccessible_phrases)
+
+
+def get_tabular_result_coverage_summary(invocations):
+    """Return whether successful analytical tool calls produced full or partial result coverage."""
+    coverage_summary = {
+        'has_full_result_coverage': False,
+        'has_partial_result_coverage': False,
+    }
+
+    for invocation in invocations or []:
+        result_payload = get_tabular_invocation_result_payload(invocation) or {}
+
+        total_matches = parse_tabular_result_count(result_payload.get('total_matches'))
+        returned_rows = parse_tabular_result_count(result_payload.get('returned_rows'))
+        if total_matches is not None and returned_rows is not None:
+            if returned_rows >= total_matches:
+                coverage_summary['has_full_result_coverage'] = True
+            else:
+                coverage_summary['has_partial_result_coverage'] = True
+
+        distinct_count = parse_tabular_result_count(result_payload.get('distinct_count'))
+        returned_values = parse_tabular_result_count(result_payload.get('returned_values'))
+        if distinct_count is not None and returned_values is not None:
+            if returned_values >= distinct_count:
+                coverage_summary['has_full_result_coverage'] = True
+            else:
+                coverage_summary['has_partial_result_coverage'] = True
+
+        if result_payload.get('full_rows_included') or result_payload.get('full_values_included'):
+            coverage_summary['has_full_result_coverage'] = True
+        if result_payload.get('sample_rows_limited') or result_payload.get('values_limited'):
+            coverage_summary['has_partial_result_coverage'] = True
+
+        if (
+            coverage_summary['has_full_result_coverage']
+            and coverage_summary['has_partial_result_coverage']
+        ):
+            break
+
+    return coverage_summary
+
+
+def build_tabular_success_execution_gap_messages(user_question, analysis_text, invocations):
+    """Return retry guidance when a successful tabular analysis still produced an incomplete answer."""
+    coverage_summary = get_tabular_result_coverage_summary(invocations)
+    has_full_result_coverage = coverage_summary['has_full_result_coverage']
+    has_partial_result_coverage = coverage_summary['has_partial_result_coverage']
+    wants_exhaustive_results = question_requests_tabular_exhaustive_results(user_question)
+    execution_gap_messages = []
+
+    if is_tabular_access_limited_analysis(analysis_text):
+        if wants_exhaustive_results and has_full_result_coverage:
+            execution_gap_messages.append(
+                'Previous attempt still claimed only sample rows or workbook metadata were available even though successful analytical tool calls returned the full matching result set. Answer directly from those returned rows and list the full results the user asked for.'
+            )
+        elif has_full_result_coverage:
+            execution_gap_messages.append(
+                'Previous attempt still claimed the requested data was unavailable even though successful analytical tool calls returned the full matching result set. Use the returned rows and answer directly.'
+            )
+        else:
+            execution_gap_messages.append(
+                'Previous attempt still claimed the requested data was unavailable even though analytical tool calls succeeded. Use the returned rows and answer directly.'
+            )
+
+    if (
+        wants_exhaustive_results
+        and has_partial_result_coverage
+        and not has_full_result_coverage
+    ):
+        execution_gap_messages.append(
+            'The user asked for a full list, but previous analytical calls returned only a partial slice. Rerun the relevant analytical call with a higher max_rows or max_values before answering.'
+        )
+
+    return execution_gap_messages
 
 
 def _select_likely_workbook_sheet(sheet_names, question_text, per_sheet=None, score_match_fn=None):
@@ -4408,7 +4491,8 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     "12. Summarize concrete found records sheet-by-sheet using the tool results, not schema placeholders.\n"
                     "13. For count or percentage questions involving a cohort defined on one sheet and facts on another, prefer get_distinct_values, count_rows, filter_rows_by_related_values, or count_rows_by_related_values over manually counting sampled rows.\n"
                     "14. Use normalize_match=true when matching names, owners, assignees, engineers, or similar entity-text columns across worksheets.\n"
-                    "15. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report."
+                    "15. If a successful tool result reports returned_rows == total_matches or returned_values == distinct_count, treat that as the full matching result set. Do not claim that only sample rows or workbook metadata are available in that case.\n"
+                    "16. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report."
                 )
 
             return (
@@ -4461,8 +4545,9 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 "22. For identifier-based workbook questions, locate the identifier on the correct sheet before explaining downstream calculations.\n"
                 "23. For peak, busiest, highest, or lowest questions, use grouped functions and inspect the highest_group, highest_value, lowest_group, and lowest_value summary fields.\n"
                 "24. Return only computed findings and name the strongest drivers clearly.\n"
-                "25. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report.\n"
-                "26. When using query_tabular_data, use simple DataFrame.query() syntax with backticked column names for columns containing spaces. Avoid method calls such as .str.lower(), .astype(...), or other Python expressions that DataFrame.query() may reject."
+                "25. If a successful tool result reports returned_rows == total_matches or returned_values == distinct_count, treat that as the full matching result set. Do not claim that only sample rows or workbook metadata are available in that case.\n"
+                "26. Do not mention hypothetical follow-up analyses, parser errors, or failed attempts unless the user explicitly asked about failures and you have actual tool error output to report.\n"
+                "27. When using query_tabular_data, use simple DataFrame.query() syntax with backticked column names for columns containing spaces. Avoid method calls such as .str.lower(), .astype(...), or other Python expressions that DataFrame.query() may reject."
             )
 
         baseline_invocations = plugin_logger.get_invocations_for_conversation(
@@ -4631,10 +4716,19 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                         previous_tool_error_messages = []
                         previous_failed_call_parameters = []
                         previous_discovery_feedback_messages = []
+                        execution_gap_messages = []
+                        selected_sheets = []
+                        coverage_summary = get_tabular_result_coverage_summary(
+                            successful_analytical_invocations
+                        )
+                        retry_gap_messages = build_tabular_success_execution_gap_messages(
+                            user_question,
+                            analysis,
+                            successful_analytical_invocations,
+                        )
 
                         if entity_lookup_mode:
                             selected_sheets = get_tabular_invocation_selected_sheets(successful_analytical_invocations)
-                            execution_gap_messages = []
 
                             # Cross-sheet results ("ALL (cross-sheet search)") already span
                             # the entire workbook — no execution gap for sheet coverage.
@@ -4648,24 +4742,24 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                                     f"Previous attempt only queried worksheet(s): {rendered_selected_sheets}. The question asks for related records across worksheets, so query additional relevant sheets explicitly with sheet_name."
                                 )
 
-                            if is_tabular_access_limited_analysis(analysis):
-                                execution_gap_messages.append(
-                                    'Previous attempt still claimed the requested data was unavailable even though analytical tool calls succeeded. Use the returned rows and answer directly.'
-                                )
+                        execution_gap_messages.extend(retry_gap_messages)
 
-                            if execution_gap_messages and attempt_number < 3:
-                                previous_execution_gap_messages = execution_gap_messages
-                                log_event(
-                                    f"[Tabular SK Analysis] Attempt {attempt_number} entity lookup was incomplete despite successful tool calls; retrying",
-                                    extra={
-                                        'selected_sheets': selected_sheets,
-                                        'execution_gaps': previous_execution_gap_messages,
-                                        'successful_tool_count': len(successful_analytical_invocations),
-                                    },
-                                    level=logging.WARNING,
-                                )
-                                baseline_invocation_count = len(invocations_after)
-                                continue
+                        if execution_gap_messages and attempt_number < 3:
+                            previous_execution_gap_messages = execution_gap_messages
+                            log_event(
+                                f"[Tabular SK Analysis] Attempt {attempt_number} analysis was incomplete despite successful tool calls; retrying",
+                                extra={
+                                    'selected_sheets': selected_sheets,
+                                    'execution_gaps': previous_execution_gap_messages,
+                                    'successful_tool_count': len(successful_analytical_invocations),
+                                    'has_full_result_coverage': coverage_summary.get('has_full_result_coverage', False),
+                                    'has_partial_result_coverage': coverage_summary.get('has_partial_result_coverage', False),
+                                    'entity_lookup_mode': entity_lookup_mode,
+                                },
+                                level=logging.WARNING,
+                            )
+                            baseline_invocation_count = len(invocations_after)
+                            continue
 
                         previous_execution_gap_messages = []
                         log_event(

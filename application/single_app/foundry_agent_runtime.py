@@ -64,6 +64,14 @@ class FoundryAgentInvocationError(RuntimeError):
     """Raised when the Foundry agent invocation cannot be completed."""
 
 
+def _normalize_max_completion_tokens(value: Any) -> Optional[int]:
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        return None
+    return normalized if normalized > 0 else None
+
+
 class AzureAIFoundryChatCompletionAgent:
     """Lightweight wrapper so Foundry agents behave like SK chat agents."""
 
@@ -107,6 +115,7 @@ class AzureAIFoundryChatCompletionAgent:
                     global_settings=self._global_settings,
                     message_history=history,
                     metadata=metadata,
+                    max_completion_tokens=self.max_completion_tokens,
                 )
             )
         except RuntimeError:
@@ -145,6 +154,7 @@ class AzureAIFoundryChatCompletionAgent:
             global_settings=self._global_settings,
             message_history=list(messages),
             metadata={},
+            max_completion_tokens=self.max_completion_tokens,
         )
         self.last_run_citations = result.citations
         self.last_run_model = result.model
@@ -194,6 +204,7 @@ class AzureAIFoundryNewChatCompletionAgent:
                 global_settings=self._global_settings,
                 message_history=history,
                 metadata=metadata,
+                max_completion_tokens=self.max_completion_tokens,
             )
         )
         self.last_run_citations = result.citations
@@ -211,6 +222,7 @@ class AzureAIFoundryNewChatCompletionAgent:
             global_settings=self._global_settings,
             message_history=list(messages),
             metadata={},
+            max_completion_tokens=self.max_completion_tokens,
         ):
             if stream_message.metadata:
                 citations = stream_message.metadata.get("citations")
@@ -228,6 +240,7 @@ async def execute_foundry_agent(
     global_settings: Dict[str, Any],
     message_history: List[ChatMessageContent],
     metadata: Dict[str, Any],
+    max_completion_tokens: Optional[int] = None,
 ) -> FoundryAgentInvocationResult:
     """Invoke a Foundry agent using Semantic Kernel's AzureAIAgent abstraction."""
 
@@ -248,15 +261,20 @@ async def execute_foundry_agent(
         endpoint=endpoint,
         api_version=api_version,
     )
+    resolved_max_completion_tokens = _normalize_max_completion_tokens(max_completion_tokens)
 
     try:
         definition = await client.agents.get_agent(agent_id)
         azure_agent = AzureAIAgent(client=client, definition=definition)
         responses = []
-        async for response in azure_agent.invoke(
-            messages=message_history,
-            metadata={k: str(v) for k, v in metadata.items() if v is not None},
-        ):
+        invoke_kwargs = {
+            "messages": message_history,
+            "metadata": {k: str(v) for k, v in metadata.items() if v is not None},
+        }
+        if resolved_max_completion_tokens is not None:
+            invoke_kwargs["max_completion_tokens"] = resolved_max_completion_tokens
+
+        async for response in azure_agent.invoke(**invoke_kwargs):
             responses.append(response)
 
         if not responses:
@@ -299,6 +317,7 @@ async def execute_foundry_agent(
                 "endpoint": endpoint,
                 "model": model_value,
                 "message_length": len(text or ""),
+                "max_completion_tokens": resolved_max_completion_tokens,
             },
         )
 
@@ -321,6 +340,7 @@ async def execute_new_foundry_agent(
     global_settings: Dict[str, Any],
     message_history: List[ChatMessageContent],
     metadata: Dict[str, Any],
+    max_completion_tokens: Optional[int] = None,
 ) -> FoundryAgentInvocationResult:
     """Invoke the new Foundry application runtime through its Responses protocol endpoint."""
 
@@ -343,7 +363,12 @@ async def execute_new_foundry_agent(
         f"{endpoint.rstrip('/')}/applications/{quote(application_name, safe='')}/"
         "protocols/openai/responses"
     )
-    payload = _build_new_foundry_request_payload(message_history, metadata, stream=False)
+    payload = _build_new_foundry_request_payload(
+        message_history,
+        metadata,
+        stream=False,
+        max_output_tokens=_normalize_max_completion_tokens(max_completion_tokens),
+    )
     headers = {
         "Authorization": f"Bearer {token.token}",
         "Content-Type": "application/json",
@@ -376,6 +401,7 @@ async def execute_new_foundry_agent(
                 "endpoint": endpoint,
                 "model": result.model,
                 "message_length": len(result.message),
+                "max_output_tokens": payload.get("max_output_tokens"),
             },
         )
 
@@ -390,6 +416,7 @@ async def execute_new_foundry_agent_stream(
     global_settings: Dict[str, Any],
     message_history: List[ChatMessageContent],
     metadata: Dict[str, Any],
+    max_completion_tokens: Optional[int] = None,
 ) -> AsyncIterator[FoundryAgentStreamMessage]:
     """Stream a new Foundry application response through the Responses API."""
 
@@ -413,7 +440,12 @@ async def execute_new_foundry_agent_stream(
         "protocols/openai/responses"
     )
     debug_print(f"Invoking new Foundry application '{application_name}' at {endpoint} with streaming to url {url} with api-version {responses_api_version}")
-    payload = _build_new_foundry_request_payload(message_history, metadata, stream=True)
+    payload = _build_new_foundry_request_payload(
+        message_history,
+        metadata,
+        stream=True,
+        max_output_tokens=_normalize_max_completion_tokens(max_completion_tokens),
+    )
     headers = {
         "Authorization": f"Bearer {token.token}",
         "Content-Type": "application/json",
@@ -692,6 +724,7 @@ def _build_new_foundry_request_payload(
     message_history: List[ChatMessageContent],
     metadata: Dict[str, Any],
     stream: bool = False,
+    max_output_tokens: Optional[int] = None,
 ) -> Dict[str, Any]:
     input_items: List[Dict[str, Any]] = []
     for message in message_history:
@@ -733,6 +766,8 @@ def _build_new_foundry_request_payload(
     }
     if normalized_metadata:
         payload["metadata"] = normalized_metadata
+    if max_output_tokens is not None:
+        payload["max_output_tokens"] = max_output_tokens
     return payload
 
 

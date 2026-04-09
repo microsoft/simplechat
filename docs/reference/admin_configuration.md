@@ -112,17 +112,23 @@ Control document workspace features and capabilities.
 #### Multimedia Support
 **Video Processing (Azure Video Indexer)**
 - **Enable/Disable**: Toggle video file support
+- **Cloud / Endpoint Mode**: Choose Azure Public, Azure Government, or Custom Endpoint
+- **Resource Group**: Azure resource group containing the Video Indexer resource
+- **Subscription ID**: Azure subscription GUID for the Video Indexer resource
+- **Account Name**: Video Indexer resource name
 - **Account ID**: Video Indexer account identifier
 - **Location**: Geographic location of Video Indexer account
-- **API Key**: Authentication key for Video Indexer
-- **API Endpoint**: Video Indexer service endpoint
+- **API Endpoint**: Derived from the selected cloud mode unless Custom Endpoint is selected
+- **Authentication Model**: App Service system-assigned managed identity with `Contributor` on the Video Indexer resource
 - **Timeout Settings**: Processing timeout limits
 
 **Audio Processing (Azure Speech Service)**
-- **Enable/Disable**: Toggle audio file support
+- **Shared Service**: The same Speech configuration is used for audio uploads, speech-to-text input, and text-to-speech
 - **Endpoint**: Speech service endpoint URL
 - **Region**: Azure region for Speech service
-- **API Key**: Authentication key for Speech service
+- **Locale**: Default transcription locale
+- **Authentication Type**: Key or Managed Identity
+- **Speech Resource ID**: Required for managed-identity text-to-speech
 
 #### Metadata Extraction
 - **Enable/Disable**: Toggle AI-powered metadata extraction
@@ -312,6 +318,8 @@ Guidelines:
 - ✅ Enable Content Safety for production deployments
 - ✅ Implement proper RBAC role assignments
 - ✅ Monitor access to admin settings
+- ✅ Use managed identity, not API keys, for Azure Video Indexer in the current Simple Chat setup
+- ✅ Use the Speech custom-domain endpoint for managed identity and add the Speech Resource ID when enabling managed-identity voice responses
 
 ### Performance
 - ✅ Test all service connections after configuration

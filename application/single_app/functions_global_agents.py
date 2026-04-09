@@ -51,7 +51,7 @@ def ensure_default_global_agent_exists():
                 ),
                 "actions_to_load": [],
                 "other_settings": {},
-                "max_completion_tokens": 4096
+                "max_completion_tokens": -1
             }
             save_global_agent(default_agent)
             log_event(

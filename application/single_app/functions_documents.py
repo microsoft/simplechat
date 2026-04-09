@@ -94,6 +94,27 @@ def get_document_blob_storage_info(document_item, user_id=None, group_id=None, p
     )
 
 
+def _has_persisted_blob_reference(document_item):
+    if not document_item:
+        return False
+
+    if document_item.get("blob_path"):
+        return True
+
+    return (
+        document_item.get("blob_path_mode") == ARCHIVED_REVISION_BLOB_PATH_MODE
+        and bool(document_item.get("archived_blob_path"))
+    )
+
+
+def _normalize_document_enhanced_citations(document_item):
+    if not document_item:
+        return document_item
+
+    document_item["enhanced_citations"] = _has_persisted_blob_reference(document_item)
+    return document_item
+
+
 def get_document_blob_delete_targets(document_item, user_id=None, group_id=None, public_workspace_id=None):
     targets = []
     seen = set()
@@ -317,7 +338,9 @@ def select_current_documents(documents):
 
     current_documents = []
     for family_documents in families.values():
-        current_documents.append(_choose_current_document(family_documents))
+        current_documents.append(
+            _normalize_document_enhanced_citations(_choose_current_document(family_documents))
+        )
 
     return current_documents
 
@@ -666,6 +689,7 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 "status": status,
                 "percentage_complete": 0,
                 "document_classification": carried_forward.get("document_classification", "None"),
+                "enhanced_citations": False,
                 "type": "document_metadata",
                 "public_workspace_id": public_workspace_id,
                 "user_id": user_id,
@@ -697,6 +721,7 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 "status": status,
                 "percentage_complete": 0,
                 "document_classification": carried_forward.get("document_classification", "None"),
+                "enhanced_citations": False,
                 "type": "document_metadata",
                 "group_id": group_id,
                 "blob_container": _get_blob_container_name(group_id=group_id),
@@ -728,6 +753,7 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 "status": status,
                 "percentage_complete": 0,
                 "document_classification": carried_forward.get("document_classification", "None"),
+                "enhanced_citations": False,
                 "type": "document_metadata",
                 "user_id": user_id,
                 "blob_container": _get_blob_container_name(),
@@ -823,7 +849,7 @@ def get_document_metadata(document_id, user_id, group_id=None, public_workspace_
             user_id=public_workspace_id if is_public_workspace else (group_id if is_group else user_id),
             content=f"Document metadata retrieved: {document_items}."
         )
-        return document_items[0] if document_items else None
+        return _normalize_document_enhanced_citations(document_items[0]) if document_items else None
 
     except Exception as e:
         print(f"Error retrieving document metadata: {repr(e)}\nTraceback:\n{traceback.format_exc()}")
@@ -2775,7 +2801,7 @@ def get_document(user_id, document_id, group_id=None, public_workspace_id=None):
         if not document_results:
             return jsonify({'error': 'Document not found or access denied'}), 404
 
-        return jsonify(document_results[0]), 200
+        return jsonify(_normalize_document_enhanced_citations(document_results[0])), 200
 
     except Exception as e:
         return jsonify({'error': f'Error retrieving document: {str(e)}'}), 500
@@ -2863,7 +2889,7 @@ def get_document_version(user_id, document_id, version, group_id=None, public_wo
         if not document_results:
             return jsonify({'error': 'Document version not found'}), 404
 
-        return jsonify(document_results[0]), 200
+        return jsonify(_normalize_document_enhanced_citations(document_results[0])), 200
 
     except Exception as e:
         return jsonify({'error': f'Error retrieving document version: {str(e)}'}), 500
@@ -4158,6 +4184,7 @@ def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_c
         current_document["blob_container"] = storage_account_container_name
         current_document["blob_path"] = blob_path
         current_document["blob_path_mode"] = CURRENT_ALIAS_BLOB_PATH_MODE
+        current_document["enhanced_citations"] = True
         if current_document.get("archived_blob_path") is None:
             current_document["archived_blob_path"] = None
         cosmos_container.upsert_item(current_document)
@@ -6240,6 +6267,34 @@ def _get_speech_config(settings, endpoint: str, locale: str):
 
     speech_config.speech_recognition_language = locale
     print(f"[Debug] Speech config obtained successfully", flush=True)
+    return speech_config
+
+
+def get_speech_synthesis_config(settings, endpoint: str, location: str):
+    """Get speech synthesis config for either key or managed identity auth."""
+    auth_type = settings.get("speech_service_authentication_type")
+
+    if auth_type == "managed_identity":
+        resource_id = (settings.get("speech_service_resource_id") or "").strip()
+        if not location:
+            raise ValueError("Speech service location is required for text-to-speech with managed identity.")
+        if not resource_id:
+            raise ValueError("Speech service resource ID is required for text-to-speech with managed identity.")
+
+        credential = DefaultAzureCredential()
+        token = credential.get_token(cognitive_services_scope)
+        authorization_token = f"aad#{resource_id}#{token.token}"
+        speech_config = speechsdk.SpeechConfig(auth_token=authorization_token, region=location)
+    else:
+        key = (settings.get("speech_service_key") or "").strip()
+        if not endpoint:
+            raise ValueError("Speech service endpoint is required for text-to-speech.")
+        if not key:
+            raise ValueError("Speech service key is required for text-to-speech when using key authentication.")
+
+        speech_config = speechsdk.SpeechConfig(endpoint=endpoint, subscription=key)
+
+    print(f"[Debug] Speech synthesis config obtained successfully", flush=True)
     return speech_config
 
 def process_audio_document(

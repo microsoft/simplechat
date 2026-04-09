@@ -36,7 +36,7 @@ The walkthrough covers these key configuration areas in order:
 6. **Azure AI Search** (Required if workspaces enabled) - Configure search indexing
 7. **Document Intelligence** (Required if workspaces enabled) - Configure document processing
 8. **Video Support** (Optional, workspace-dependent) - Configure video file processing
-9. **Audio Support** (Optional, workspace-dependent) - Configure audio file processing
+9. **Shared Speech Service** (Optional) - Configure the shared Speech resource used for audio uploads, voice input, and voice responses
 10. **Content Safety** (Optional) - Configure content filtering
 11. **User Feedback & Archiving** (Optional) - Enable feedback and conversation archiving
 12. **Enhanced Features** (Optional) - Enhanced citations and image generation
@@ -131,12 +131,14 @@ Key configuration sections include:
   - Support for Direct or APIM routing
   - Test connection
 - **Multimedia Support** (Video/Audio uploads):
-  - **Video Files**: Configure Azure Video Indexer using Managed Identity authentication
-    - Resource Group, Subscription ID, Account Name, Location, Account ID
-    - API Endpoint, ARM API Version, Timeout
-  - **Audio Files**: Configure Speech Service
-    - Endpoint, Location/Region, Locale
-    - Key/Managed Identity authentication
+  - **Video Files**: Configure Azure Video Indexer with the App Service system-assigned managed identity
+    - Cloud / Endpoint Mode, Resource Group, Subscription ID, Account Name, Location, Account ID
+    - Effective API Endpoint, ARM API Version, Timeout
+    - Video Indexer API keys are not used by the current setup flow
+  - **Shared Speech Service**: One Speech resource powers audio uploads, speech-to-text input, and text-to-speech
+    - Endpoint, Location/Region, Locale, Authentication Type
+    - Key authentication uses the Speech key
+    - Managed identity uses the custom-domain Speech endpoint; voice responses also require the Speech Resource ID
 
 ### 7. Agents
 - **Agents Configuration**:
@@ -189,7 +191,7 @@ The Admin Settings page supports two navigation layouts:
 - **APIM vs Direct**: When using Azure API Management (APIM), you'll need to manually specify model names as automatic model fetching is not available
 - **Managed Identity**: When using Managed Identity authentication, ensure your Service Principal has the appropriate roles assigned:
   - **Azure OpenAI**: Cognitive Services OpenAI User role
-  - **Speech Service**: Cognitive Services Speech Contributor role (requires custom domain name on endpoint)
-  - **Video Indexer**: Appropriate Video Indexer roles for your account
+  - **Speech Service**: Start with `Cognitive Services Speech User`; add `Cognitive Services Speech Contributor` if transcription operations still require it. Managed identity also requires the custom-domain Speech endpoint, and text-to-speech needs the Speech Resource ID.
+  - **Video Indexer**: Grant the App Service system-assigned managed identity `Contributor` on the Video Indexer resource. If Azure asks for a user-assigned managed identity during Video Indexer resource creation, that identity is for the Video Indexer resource itself, not for Simple Chat runtime calls.
 - **Dependencies**: The walkthrough will alert you if required services aren't configured when you enable dependent features (e.g., workspaces require embeddings, AI Search, and Document Intelligence)
 - **Required vs Optional**: The walkthrough clearly indicates which settings are required vs optional based on your configuration choices
