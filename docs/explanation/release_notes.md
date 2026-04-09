@@ -18,6 +18,12 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   General tabular analysis now detects full versus partial result coverage from tool metadata, retries incomplete synthesis when necessary, and adds stronger prompt guidance so the final answer uses the returned analytical results directly.
     *   (Ref: `route_backend_chats.py`, `test_tabular_exhaustive_result_synthesis_fix.py`, `TABULAR_EXHAUSTIVE_RESULT_SYNTHESIS_FIX.md`)
 
+*   **Group Workspace Documents and Prompts Load Recovery**
+    *   Fixed a Group Workspace page-load regression where active-group initialization could fail on a missing prompt-role UI container and stop the rest of the page from rendering correctly.
+    *   Group document and prompt content now continue loading even if the prompt permission banner or create-button container is unavailable during startup, preventing blank content areas caused by a JavaScript null-reference error.
+    *   Added functional and UI regression coverage for the guarded prompt-role path so future changes do not reintroduce the same startup failure.
+    *   (Ref: `group_workspaces.html`, `test_group_workspace_prompt_role_ui_guard.py`, `test_group_workspace_prompt_role_containers_ui.py`)
+    
 ### **(v0.241.002)**
 
 #### Bug Fixes
