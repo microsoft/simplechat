@@ -25,15 +25,10 @@ jobs:
       uses: tj-actions/changed-files@v46.0.1
       with:
         files_yaml: |
-          code:
-            - 'application/single_app/**/*.py'
-            - 'application/single_app/**/*.js'
-            - 'application/single_app/**/*.html'
-            - 'application/single_app/**/*.css'
+          application:
+            - 'application/**'
           release_notes:
             - 'docs/explanation/release_notes.md'
-          config:
-            - 'application/single_app/config.py'
             
     - name: Check for feature/fix keywords in PR
       id: check-keywords
@@ -66,8 +61,7 @@ jobs:
     - name: Determine if release notes update is required
       id: require-notes
       env:
-        CODE_CHANGED: ${{ steps.changed-files.outputs.code_any_changed }}
-        CONFIG_CHANGED: ${{ steps.changed-files.outputs.config_any_changed }}
+        APPLICATION_CHANGED: ${{ steps.changed-files.outputs.application_any_changed }}
         RELEASE_NOTES_CHANGED: ${{ steps.changed-files.outputs.release_notes_any_changed }}
         HAS_FEATURE: ${{ steps.check-keywords.outputs.has_feature }}
         HAS_FIX: ${{ steps.check-keywords.outputs.has_fix }}
@@ -76,8 +70,7 @@ jobs:
         echo "================================"
         echo "📋 PR Analysis Summary"
         echo "================================"
-        echo "Code files changed: $CODE_CHANGED"
-        echo "Config changed: $CONFIG_CHANGED"
+        echo "Application files changed: $APPLICATION_CHANGED"
         echo "Release notes updated: $RELEASE_NOTES_CHANGED"
         echo "Feature keywords found: $HAS_FEATURE"
         echo "Fix keywords found: $HAS_FIX"
@@ -88,15 +81,14 @@ jobs:
         needs_notes="false"
         reason=""
         
-        if [[ "$HAS_FEATURE" == "true" ]]; then
-          needs_notes="true"
-          reason="Feature-related keywords detected in PR title/body"
-        elif [[ "$HAS_FIX" == "true" ]]; then
-          needs_notes="true"
-          reason="Fix-related keywords detected in PR title/body"
-        elif [[ "$CODE_CHANGED" == "true" && "$CONFIG_CHANGED" == "true" ]]; then
-          needs_notes="true"
-          reason="Both code and config.py were modified"
+        if [[ "$APPLICATION_CHANGED" == "true" ]]; then
+          if [[ "$HAS_FEATURE" == "true" ]]; then
+            needs_notes="true"
+            reason="Feature-related keywords detected and files under application/ changed"
+          elif [[ "$HAS_FIX" == "true" ]]; then
+            needs_notes="true"
+            reason="Fix-related keywords detected and files under application/ changed"
+          fi
         fi
         
         echo "needs_notes=$needs_notes" >> $GITHUB_OUTPUT
@@ -104,11 +96,11 @@ jobs:
         
     - name: Validate release notes update
       env:
-        CODE_CHANGED: ${{ steps.changed-files.outputs.code_any_changed }}
+        APPLICATION_CHANGED: ${{ steps.changed-files.outputs.application_any_changed }}
         RELEASE_NOTES_CHANGED: ${{ steps.changed-files.outputs.release_notes_any_changed }}
         NEEDS_NOTES: ${{ steps.require-notes.outputs.needs_notes }}
         REASON: ${{ steps.require-notes.outputs.reason }}
-        CODE_FILES: ${{ steps.changed-files.outputs.code_all_changed_files }}
+        APPLICATION_FILES: ${{ steps.changed-files.outputs.application_all_changed_files }}
       run: |
         echo ""
         
@@ -122,8 +114,8 @@ jobs:
           echo "This PR appears to contain changes that should be documented"
           echo "in the release notes (docs/explanation/release_notes.md)."
           echo ""
-          echo "📁 Code files changed:"
-          echo "$CODE_FILES" | tr ' ' '\n' | sed 's/^/   - /'
+          echo "📁 Application files changed:"
+          echo "$APPLICATION_FILES" | tr ' ' '\n' | sed 's/^/   - /'
           echo ""
           echo "💡 Please consider adding an entry to release_notes.md describing:"
           echo "   • New features added"
@@ -138,8 +130,8 @@ jobs:
           exit 0
         elif [[ "$RELEASE_NOTES_CHANGED" == "true" ]]; then
           echo "✅ Release notes have been updated - great job!"
-        elif [[ "$CODE_CHANGED" != "true" ]]; then
-          echo "ℹ️  No significant code changes detected - release notes update not required."
+        elif [[ "$APPLICATION_CHANGED" != "true" ]]; then
+          echo "ℹ️  No files under application/ changed - release notes update not required."
         else
           echo "ℹ️  Changes appear to be minor - release notes update optional."
         fi
