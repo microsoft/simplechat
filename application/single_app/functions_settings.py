@@ -372,6 +372,7 @@ def get_settings(use_cosmos=False, include_source=False):
         # Audio file settings with Azure speech service
         "speech_service_endpoint": '',
         "speech_service_location": '',
+        "speech_service_resource_id": '',
         "speech_service_locale": "en-US",
         "speech_service_key": "",
         "speech_service_authentication_type": "key",  # 'key' or 'managed_identity'

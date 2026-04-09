@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide explains the critical difference between key-based and managed identity authentication when configuring Azure Speech Service, and the required steps to enable managed identity properly.
+This guide explains the critical difference between key-based and managed identity authentication when configuring Azure Speech Service, and the required steps to enable managed identity properly. In Simple Chat, the same Speech configuration is shared across audio uploads, speech-to-text chat input, and text-to-speech voice responses.
 
 ## Authentication Methods: Regional vs. Resource-Specific Endpoints
 
@@ -73,6 +73,8 @@ Headers:
 2. Azure validates your managed identity Bearer token against that resource's RBAC
 3. If your App Service MI has `Cognitive Services Speech User` role → authorized
 4. The request proceeds to your dedicated Speech resource instance
+
+For some transcription operations, you may also need `Cognitive Services Speech Contributor`. Start with `Speech User`, then add `Speech Contributor` if transcription still fails after endpoint and identity configuration are correct.
 
 ---
 
@@ -146,13 +148,13 @@ MI_PRINCIPAL_ID=$(az webapp identity show \
   --resource-group <resource-group-name> \
   --query principalId -o tsv)
 
-# Assign Cognitive Services Speech User role (data-plane read access)
+# Assign Cognitive Services Speech User role (baseline data-plane access)
 az role assignment create \
   --assignee $MI_PRINCIPAL_ID \
   --role "Cognitive Services Speech User" \
   --scope $SPEECH_RESOURCE_ID
 
-# Assign Cognitive Services Speech Contributor role (if needed for write operations)
+# Assign Cognitive Services Speech Contributor role (if transcription operations still require it)
 az role assignment create \
   --assignee $MI_PRINCIPAL_ID \
   --role "Cognitive Services Speech Contributor" \
@@ -175,16 +177,20 @@ In the Admin Settings → Search & Extract → Multimedia Support section:
 | Setting | Value | Example |
 |---------|-------|---------|
 | **Enable Audio File Support** | ✅ Checked | |
+| **Enable Speech-to-Text Input** | Optional | |
+| **Enable Text-to-Speech** | Optional | |
 | **Speech Service Endpoint** | Resource-specific endpoint (with custom subdomain) | `https://simplechat6-dev-speech.cognitiveservices.azure.com` |
 | **Speech Service Location** | Azure region | `eastus2` |
 | **Speech Service Locale** | Language locale for transcription | `en-US` |
 | **Authentication Type** | Managed Identity | |
 | **Speech Service Key** | (Leave empty when using MI) | |
+| **Speech Resource ID** | Required when using managed identity for text-to-speech | `/subscriptions/.../providers/Microsoft.CognitiveServices/accounts/<speech-resource-name>` |
 
 **Critical**: 
 - Endpoint must be the resource-specific URL (custom subdomain)
 - Do NOT use the regional endpoint for managed identity
 - Remove trailing slash from endpoint: ✅ `https://..azure.com` ❌ `https://..azure.com/`
+- If text-to-speech is enabled with managed identity, set the full Speech Resource ID in Admin Settings
 
 ### Step 4: Test Audio Upload
 
@@ -227,6 +233,14 @@ In the Admin Settings → Search & Extract → Multimedia Support section:
 **Cause**: Missing RBAC role assignments
 
 **Solution**: Assign required roles using Step 2 above
+
+### Error: Text-to-speech fails with MI but transcription works
+
+**Symptom**: Audio uploads or speech-to-text input succeed, but `/api/chat/tts` fails when authentication type is Managed Identity.
+
+**Cause**: Text-to-speech managed identity also requires the Speech Resource ID in addition to the custom-domain endpoint and region.
+
+**Solution**: Populate **Speech Resource ID** in Admin Settings and verify the App Service managed identity has the required RBAC role(s).
 
 ### Key auth works but MI fails
 

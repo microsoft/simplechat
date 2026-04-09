@@ -737,30 +737,46 @@
                             <strong>Required:</strong> Video support configuration is required if workspaces are enabled.
                         </div>
                         
-                        <p class="mb-3">Use the <strong>Video Support</strong> settings in the Workspaces tab to enable and configure video file processing.</p>
+                        <p class="mb-3">Use the <strong>Video Support</strong> settings on the Search &amp; Extract tab to enable video uploads, choose the correct cloud, and supply the ARM account details SimpleChat needs for managed identity access.</p>
                         
                         <ul class="list-group mb-4">
                             <li class="list-group-item d-flex justify-content-between align-items-center">
-                                <span>Video Indexer Endpoint</span>
+                                <span>Cloud / Endpoint Mode</span>
                                 <span id="video-endpoint-badge" class="badge bg-danger">Required</span>
                             </li>
                             <li class="list-group-item d-flex justify-content-between align-items-center">
-                                <span>Video Indexer API Key</span>
-                                <span class="badge bg-secondary">Optional</span>
+                                <span>Resource Group</span>
+                                <span class="badge bg-danger">Required</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Subscription ID</span>
+                                <span class="badge bg-danger">Required</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Account Name</span>
+                                <span class="badge bg-danger">Required</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Account ID and Location</span>
+                                <span class="badge bg-danger">Required</span>
                             </li>
                         </ul>
+
+                        <div class="alert alert-info">
+                            <strong>Managed identity only:</strong> Video Indexer API keys are not used by the current setup. The App Service system-assigned managed identity must have <strong>Contributor</strong> on the Video Indexer resource.
+                        </div>
                     </div>
 
                     <!-- Step 9: Audio File Support -->
                     <div id="walkthrough-step-9" class="walkthrough-step" style="display: none;">
-                        <h4>9. Enable Audio File Support</h4>
-                        <p class="text-muted">Configure support for audio file processing.</p>
+                        <h4>9. Configure Shared Speech Service</h4>
+                        <p class="text-muted">Configure the Azure Speech resource shared by audio uploads, voice input, and voice responses.</p>
                         
                         <div id="audio-support-requirement-alert" class="alert alert-danger">
-                            <strong>Required:</strong> Audio support configuration is required if workspaces are enabled.
+                            <strong>Required:</strong> Configure Speech Service settings when any speech feature is enabled.
                         </div>
                         
-                        <p class="mb-3">Use the <strong>Audio Support</strong> settings on the Search & Extract tab to enable and configure audio file processing.</p>
+                        <p class="mb-3">Use the shared <strong>Azure Speech Service</strong> section on the Search &amp; Extract tab to configure the one Speech resource used by audio uploads, voice input, and voice responses.</p>
                         
                         <ul class="list-group mb-4">
                             <li class="list-group-item d-flex justify-content-between align-items-center">
@@ -771,10 +787,14 @@
                                 <span>Authentication</span>
                                 <span id="speech-auth-badge" class="badge bg-danger">Required</span>
                             </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Speech Resource ID</span>
+                                <span class="badge bg-secondary">Required for managed identity voice responses</span>
+                            </li>
                         </ul>
                         
                         <div class="alert alert-info">
-                            <strong>Note:</strong> If using Managed Identity authentication ensure the Service Principal has been assigned the Cognitive Services Speech Contributor role on the Azure Speech Service and that the Speech endpoint is configured with a custom domain name.
+                            <strong>Note:</strong> All three speech features share the same Speech Service section. For managed identity, use a custom-domain endpoint. Start with the <strong>Cognitive Services Speech User</strong> role; add <strong>Cognitive Services Speech Contributor</strong> if transcription operations still return authorization errors. Voice responses also require the Speech Resource ID because of a Speech SDK requirement.
                             
                             <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When a Cognitive Service has a custom domain name, the endpoint will typically look like https://<resource-name>.cognitiveservices.azure.<com or us> instead of https://<location>.cognitiveservices.azure.<com or us>"></i>
                         </div>
@@ -5560,29 +5580,83 @@
                         </div>
                     </div>
 
+                    {% set public_video_indexer_endpoint = "https://api.videoindexer.ai" %}
+                    {% set government_video_indexer_endpoint = "https://api.videoindexer.ai.azure.us" %}
+                    {% set configured_video_indexer_endpoint = settings.video_indexer_endpoint or default_video_indexer_endpoint %}
+                    {% if configured_video_indexer_endpoint == government_video_indexer_endpoint %}
+                        {% set video_indexer_cloud = "usgovernment" %}
+                    {% elif configured_video_indexer_endpoint == public_video_indexer_endpoint %}
+                        {% set video_indexer_cloud = "public" %}
+                    {% else %}
+                        {% set video_indexer_cloud = "custom" %}
+                    {% endif %}
+                    {% if azure_environment == "usgovernment" %}
+                        {% set azure_environment_label = "Azure Government" %}
+                    {% elif azure_environment == "custom" %}
+                        {% set azure_environment_label = "Custom Cloud" %}
+                    {% else %}
+                        {% set azure_environment_label = "Azure Public / Commercial" %}
+                    {% endif %}
+
                     <!-- Video Indexer Configuration (collapsible) -->
-                    <div id="video_indexer_settings" class="border-top pt-3"
-                            {% if not settings.enable_video_file_support %}style="display: none;"{% endif %}>
+                    <div id="video_indexer_settings" class="border-top pt-3{% if not settings.enable_video_file_support %} d-none{% endif %}">
                         <h5 class="mb-3">
                             <i class="bi bi-gear-fill me-2"></i>Azure Video Indexer Configuration
                         </h5>
                         <p class="text-muted small mb-3">Connect to your Azure Video Indexer resource for advanced video processing and content extraction.</p>
                         
                         <div class="alert alert-info">
-                            <strong><i class="bi bi-info-circle"></i> Prerequisites:</strong>
+                            <strong><i class="bi bi-info-circle"></i> Identity overview:</strong>
                             <ul class="mb-0 mt-2">
-                                <li>App Service must have System-assigned Managed Identity enabled</li>
-                                <li>Managed Identity must have <strong>Contributor</strong> role on the Video Indexer resource</li>
+                                <li>Video Indexer can use its own managed identity to reach the linked Storage account during account creation.</li>
+                                <li>SimpleChat authenticates to Video Indexer with the <strong>App Service system-assigned managed identity</strong>.</li>
+                                <li>The App Service managed identity must have <strong>Contributor</strong> on the Video Indexer resource.</li>
                                 <li>See <a href="https://learn.microsoft.com/azure/azure-video-indexer/connect-to-azure" target="_blank">Azure Video Indexer documentation</a> for setup details</li>
                             </ul>
                         </div>
 
                         <div class="mb-3">
-                            <label for="video_indexer_endpoint" class="form-label">API Endpoint</label>
-                            <input type="text" class="form-control"
-                                id="video_indexer_endpoint" name="video_indexer_endpoint"
-                                value="{{ settings.video_indexer_endpoint or 'https://api.videoindexer.ai' }}">
-                            <div class="form-text">Default: https://api.videoindexer.ai</div>
+                            <label for="video_indexer_cloud" class="form-label">Cloud / Endpoint Mode</label>
+                            <select
+                                class="form-select"
+                                id="video_indexer_cloud"
+                                data-public-endpoint="{{ public_video_indexer_endpoint }}"
+                                data-government-endpoint="{{ government_video_indexer_endpoint }}"
+                                data-runtime-cloud="{{ azure_environment }}"
+                            >
+                                <option value="public" {% if video_indexer_cloud == 'public' %}selected{% endif %}>Azure Public / Commercial</option>
+                                <option value="usgovernment" {% if video_indexer_cloud == 'usgovernment' %}selected{% endif %}>Azure Government</option>
+                                <option value="custom" {% if video_indexer_cloud == 'custom' %}selected{% endif %}>Custom Endpoint</option>
+                            </select>
+                            <div class="form-text">Choose the endpoint family that matches your deployed cloud. Use Custom only when you need a non-standard Video Indexer endpoint.</div>
+                        </div>
+
+                        <div class="alert alert-secondary py-2">
+                            <strong>Current App Service environment:</strong> {{ azure_environment_label }}. This selector saves the Video Indexer API endpoint. If you are switching between Azure Public, Azure Government, or a custom cloud, update <code>AZURE_ENVIRONMENT</code> in your App Service configuration as well.
+                        </div>
+
+                        <div class="alert alert-warning py-2 mb-3 d-none" id="video_indexer_cloud_mismatch_alert">
+                            The selected Video Indexer cloud does not match this app's current <code>AZURE_ENVIRONMENT</code>. Update the App Service configuration if you are moving to a different cloud.
+                        </div>
+
+                        <input type="hidden" id="video_indexer_endpoint" name="video_indexer_endpoint" value="{{ configured_video_indexer_endpoint }}" />
+
+                        <div class="mb-3{% if video_indexer_cloud != 'custom' %} d-none{% endif %}" id="video_indexer_custom_endpoint_group">
+                            <label for="video_indexer_custom_endpoint" class="form-label">Custom API Endpoint</label>
+                            <input
+                                type="text"
+                                class="form-control"
+                                id="video_indexer_custom_endpoint"
+                                value="{% if video_indexer_cloud == 'custom' %}{{ configured_video_indexer_endpoint }}{% endif %}"
+                                placeholder="https://your-video-indexer-endpoint.example.com"
+                            />
+                            <div class="form-text">Only required when using a custom cloud or non-standard Video Indexer endpoint.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="video_indexer_endpoint_display" class="form-label">Effective API Endpoint</label>
+                            <input type="text" class="form-control" id="video_indexer_endpoint_display" value="{{ configured_video_indexer_endpoint }}" readonly />
+                            <div class="form-text">Saved endpoint value used for Video Indexer API calls.</div>
                         </div>
 
                         <div class="mb-3">
@@ -5634,8 +5708,8 @@
                             <label for="video_indexer_arm_api_version" class="form-label">ARM API Version</label>
                             <input type="text" class="form-control"
                                 id="video_indexer_arm_api_version" name="video_indexer_arm_api_version"
-                                value="{{ settings.video_indexer_arm_api_version or '2024-01-01' }}">
-                            <div class="form-text">Default: 2024-01-01</div>
+                                value="{{ settings.video_indexer_arm_api_version or default_video_indexer_arm_api_version }}">
+                            <div class="form-text">Default for {{ azure_environment_label }}: {{ default_video_indexer_arm_api_version }}</div>
                         </div>
 
                         <div class="mb-3">
@@ -5660,9 +5734,9 @@
                             </div>
                         </div>
 
-                        <div class="alert alert-info mb-4">
+                        <div class="alert alert-info mb-4" id="speech_service_shared_alert">
                             <i class="bi bi-lightbulb-fill me-2"></i>
-                            <strong>Create a Complete Voice Experience:</strong> Enable both features together for seamless two-way voice conversations—speak your questions and hear AI responses aloud. Perfect for hands-free workflows, accessibility, and natural interactions.
+                            <strong>One Speech resource, three features:</strong> Audio file uploads, Voice Input, and Voice Responses all use the same Azure Speech Service section below. Configure the Speech resource once, then turn on whichever speech features you need.
                         </div>
 
                         <!-- Audio File Support -->
@@ -5748,12 +5822,15 @@
                         </div>
 
                         <!-- Speech Service Configuration (collapsible) -->
-                        <div id="audio_service_settings" class="border-top pt-3"
-                                {% if not (settings.enable_audio_file_support or settings.enable_speech_to_text_input or settings.enable_text_to_speech) %}style="display: none;"{% endif %}>
+                        <div id="audio_service_settings" class="border-top pt-3{% if not (settings.enable_audio_file_support or settings.enable_speech_to_text_input or settings.enable_text_to_speech) %} d-none{% endif %}">
                             <h5 class="mb-3">
                                 <i class="bi bi-gear-fill me-2"></i>Azure Speech Service Configuration
                             </h5>
-                            <p class="text-muted small mb-3">Connect to your Azure Speech Service for audio transcription, voice input, and text-to-speech capabilities.</p>
+                            <p class="text-muted small mb-3">Configure the shared Azure Speech resource used by audio transcription, voice input, and text-to-speech.</p>
+
+                        <div class="alert alert-info py-2">
+                            <strong>Shared configuration:</strong> These settings apply to all enabled speech features. If you use managed identity and also enable Voice Responses, fill in the Speech Resource ID field so the Speech SDK can authenticate synthesis requests.
+                        </div>
 
                         <div class="mb-3">
                             <label for="speech_service_endpoint" class="form-label">Endpoint</label>
@@ -5761,6 +5838,7 @@
                                 id="speech_service_endpoint" name="speech_service_endpoint"
                                 value="{{ settings.speech_service_endpoint or '' }}"
                                 placeholder="https://<location or custom domain>.cognitiveservices.azure.<com or us>/">
+                            <div class="form-text">Use the resource-specific custom-domain endpoint when selecting Managed Identity.</div>
                         </div>
 
                         <div class="mb-3">
@@ -5768,6 +5846,16 @@
                             <input type="text" class="form-control"
                                 id="speech_service_location" name="speech_service_location"
                                 value="{{ settings.speech_service_location or '' }}">
+                            <div class="form-text">Required for speech recognition locale defaults and for text-to-speech when using Managed Identity.</div>
+                        </div>
+
+                        <div class="mb-3{% if settings.speech_service_authentication_type != 'managed_identity' %} d-none{% endif %}" id="speech_service_resource_id_container">
+                            <label for="speech_service_resource_id" class="form-label">Speech Resource ID</label>
+                            <input type="text" class="form-control"
+                                id="speech_service_resource_id" name="speech_service_resource_id"
+                                value="{{ settings.speech_service_resource_id or '' }}"
+                                placeholder="/subscriptions/<subscription>/resourceGroups/<resource-group>/providers/Microsoft.CognitiveServices/accounts/<speech-resource>">
+                            <div class="form-text">Required for Voice Responses when using Managed Identity. You can copy this from the Speech resource Overview page or from <code>az cognitiveservices account show --query id</code>.</div>
                         </div>
 
                         <div class="mb-3">
@@ -5790,7 +5878,7 @@
                                 </option>
                             </select>
                         </div>
-                        <div class="mb-3" id="speech_service_key_container" {% if settings.speech_service_authentication_type == 'managed_identity' %}style="display: none;"{% endif %}>
+                        <div class="mb-3{% if settings.speech_service_authentication_type == 'managed_identity' %} d-none{% endif %}" id="speech_service_key_container">
                             <label for="speech_service_key" class="form-label">
                                 API Key
                             </label>
@@ -5810,6 +5898,11 @@
                                     Show
                                 </button>
                             </div>
+                            <div class="form-text">Required only when Authentication Type is set to Key.</div>
+                        </div>
+
+                        <div class="alert alert-secondary mt-3 mb-0">
+                            <strong>Managed identity roles:</strong> Start with <strong>Cognitive Services Speech User</strong>. If fast transcription or other write-style speech operations still return authorization errors, add <strong>Cognitive Services Speech Contributor</strong>. Managed identity also requires a custom-domain endpoint.
                         </div>
 
                     </div>

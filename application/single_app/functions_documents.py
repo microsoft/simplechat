@@ -6242,6 +6242,34 @@ def _get_speech_config(settings, endpoint: str, locale: str):
     print(f"[Debug] Speech config obtained successfully", flush=True)
     return speech_config
 
+
+def get_speech_synthesis_config(settings, endpoint: str, location: str):
+    """Get speech synthesis config for either key or managed identity auth."""
+    auth_type = settings.get("speech_service_authentication_type")
+
+    if auth_type == "managed_identity":
+        resource_id = (settings.get("speech_service_resource_id") or "").strip()
+        if not location:
+            raise ValueError("Speech service location is required for text-to-speech with managed identity.")
+        if not resource_id:
+            raise ValueError("Speech service resource ID is required for text-to-speech with managed identity.")
+
+        credential = DefaultAzureCredential()
+        token = credential.get_token(cognitive_services_scope)
+        authorization_token = f"aad#{resource_id}#{token.token}"
+        speech_config = speechsdk.SpeechConfig(auth_token=authorization_token, region=location)
+    else:
+        key = (settings.get("speech_service_key") or "").strip()
+        if not endpoint:
+            raise ValueError("Speech service endpoint is required for text-to-speech.")
+        if not key:
+            raise ValueError("Speech service key is required for text-to-speech when using key authentication.")
+
+        speech_config = speechsdk.SpeechConfig(endpoint=endpoint, subscription=key)
+
+    print(f"[Debug] Speech synthesis config obtained successfully", flush=True)
+    return speech_config
+
 def process_audio_document(
     document_id: str,
     user_id: str,
