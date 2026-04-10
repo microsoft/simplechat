@@ -1,13 +1,14 @@
 # test_docs_showcase_pages.py
 """
 UI test for docs showcase pages.
-Version: 0.241.009
-Implemented in: 0.241.009
+Version: 0.241.010
+Implemented in: 0.241.010
 
 This test ensures that the redesigned docs landing pages, reference guides,
 how-to guides, tutorials, and troubleshooting pages render the shared
 latest-release-style hero and page-specific content blocks at desktop and
-mobile viewport sizes.
+mobile viewport sizes, and that features page preview images open in the
+shared popup modal.
 """
 
 import os
@@ -26,9 +27,10 @@ VIEWPORTS = [
 PAGES = [
     pytest.param("/", "Simple Chat Documentation", ".latest-release-note-panel", id="home"),
     pytest.param("/setup_instructions/", "Getting Started", "nav.page-navigation", id="getting-started"),
-    pytest.param("/features/", "Features", ".latest-release-card-image img", id="features"),
+    pytest.param("/features/", "Features", "[data-latest-feature-image-src] img", id="features"),
     pytest.param("/faqs/", "FAQ", ".latest-release-archive-panel", id="faq"),
     pytest.param("/about/", "About Simple Chat", "h2:has-text('Built as an open repo')", id="about"),
+    pytest.param("/contributing/", "Working in the repo", "h2:has-text('Contribution workflow')", id="contributing"),
     pytest.param("/admin_configuration/", "Admin Configuration", "img[src*='admin_settings_page.png']", id="admin-config"),
     pytest.param("/application_scaling/", "Application Scaling", "img[src*='scale-cosmos.png']", id="scaling"),
     pytest.param("/application_workflows/", "Application Workflows", "img[src*='workflow-content_safety.png']", id="workflows"),
@@ -104,6 +106,11 @@ def test_docs_showcase_pages(playwright, viewport, path, heading, specific_selec
         expect(page.locator(".latest-release-hero-actions .btn").first).to_be_visible()
         expect(page.locator(".latest-release-card-grid").first).to_be_visible()
         expect(page.locator(specific_selector).first).to_be_visible()
+
+        if path == "/features/":
+            page.locator("[data-latest-feature-image-src]").first.click()
+            expect(page.locator("#latestFeatureImageModal")).to_be_visible()
+            expect(page.locator("#latestFeatureImageModalLabel")).to_have_text("Architecture overview")
     finally:
         context.close()
         browser.close()

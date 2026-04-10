@@ -264,9 +264,16 @@ Simple Chat starts with a grounded chat experience, then expands through optiona
   <div class="latest-release-card-grid">
     <article class="latest-release-card latest-release-accent--slate">
       <div class="latest-release-card-shell">
-        <a class="latest-release-card-image" href="{{ '/images/architecture.png' | relative_url }}">
+        <button
+          type="button"
+          class="latest-release-card-image latest-release-thumbnail-trigger"
+          data-latest-feature-image-src="{{ '/images/architecture.png' | relative_url }}"
+          data-latest-feature-image-title="Architecture overview"
+          data-latest-feature-image-caption="Architecture diagram showing how App Service, Azure OpenAI, AI Search, Cosmos DB, and storage fit together."
+          aria-label="Open architecture overview image"
+        >
           <img src="{{ '/images/architecture.png' | relative_url }}" alt="Architecture diagram for Simple Chat on Azure." />
-        </a>
+        </button>
         <h3 class="latest-release-card-title">Architecture overview</h3>
         <p class="latest-release-card-summary">Use this diagram when you need to explain how App Service, Azure OpenAI, AI Search, Cosmos DB, and storage fit together.</p>
       </div>
@@ -274,9 +281,16 @@ Simple Chat starts with a grounded chat experience, then expands through optiona
 
     <article class="latest-release-card latest-release-accent--blue">
       <div class="latest-release-card-shell">
-        <a class="latest-release-card-image" href="{{ '/images/admin_settings_page.png' | relative_url }}">
+        <button
+          type="button"
+          class="latest-release-card-image latest-release-thumbnail-trigger"
+          data-latest-feature-image-src="{{ '/images/admin_settings_page.png' | relative_url }}"
+          data-latest-feature-image-title="Admin configuration surface"
+          data-latest-feature-image-caption="Admin Settings page showing the central control surface for branding, models, workspaces, and optional feature packs."
+          aria-label="Open admin configuration surface image"
+        >
           <img src="{{ '/images/admin_settings_page.png' | relative_url }}" alt="Admin settings page for Simple Chat." />
-        </a>
+        </button>
         <h3 class="latest-release-card-title">Admin configuration surface</h3>
         <p class="latest-release-card-summary">Most optional features are exposed through the admin settings experience, which keeps rollout decisions in one operational surface.</p>
       </div>

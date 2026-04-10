@@ -98,4 +98,25 @@ layout: default
       </nav>
     {% endif %}
   </div>
+
+  <div class="modal fade latest-feature-image-modal" id="latestFeatureImageModal" tabindex="-1" aria-labelledby="latestFeatureImageModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-xl">
+      <div class="modal-content">
+        <div class="modal-header">
+          <div>
+            <h5 class="modal-title mb-1" id="latestFeatureImageModalLabel">Image Preview</h5>
+            <small class="latest-feature-image-modal-caption" id="latestFeatureImageModalCaption">Click outside the popup to close it.</small>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body pt-2">
+          <div class="latest-feature-image-frame">
+            <img id="latestFeatureImageModalImage" src="" alt="Image preview" />
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 </article>
+
+<script src="{{ '/assets/js/latest-release.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
