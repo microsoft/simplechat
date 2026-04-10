@@ -104,6 +104,53 @@ def _build_primary_context_from_scope_selection(
     return None
 
 
+def _extract_document_id_from_search_result(doc):
+    """Resolve a stable parent document ID from a search result."""
+    document_id = str(doc.get('document_id') or '').strip()
+    if document_id:
+        return document_id
+
+    chunk_identifier = str(doc.get('id') or '').strip()
+    if not chunk_identifier:
+        return None
+
+    if '_' in chunk_identifier:
+        return '_'.join(chunk_identifier.split('_')[:-1])
+
+    return chunk_identifier
+
+
+def _build_last_grounded_document_refs(document_map):
+    """Build the exact reusable grounded document set for the latest search-backed turn."""
+    grounded_refs = []
+
+    for document_id, doc_info in document_map.items():
+        scope_info = doc_info.get('scope') or {}
+        scope_type = scope_info.get('scope')
+        scope_id = scope_info.get('id')
+        if not document_id or not scope_type or not scope_id:
+            continue
+
+        ref = {
+            'document_id': document_id,
+            'scope': scope_type,
+            'scope_id': scope_id,
+            'file_name': doc_info.get('file_name'),
+            'classification': doc_info.get('classification'),
+        }
+
+        if scope_type == 'group':
+            ref['group_id'] = scope_id
+        elif scope_type == 'public':
+            ref['public_workspace_id'] = scope_id
+        else:
+            ref['user_id'] = scope_id
+
+        grounded_refs.append(ref)
+
+    return grounded_refs
+
+
 def collect_conversation_metadata(user_message, conversation_id, user_id, active_group_id=None, 
                                 document_scope=None, selected_document_id=None, model_deployment=None,
                                 hybrid_search_enabled=False, 
@@ -179,20 +226,17 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
             chunk_id = doc.get('id')
             doc_scope_result = _determine_document_scope(doc, user_id, active_group_id)
             classification = doc.get('document_classification', 'None')
-            
-            if chunk_id:
-                # Extract document ID from chunk ID (assumes format: doc_id_chunkNumber)
-                if '_' in chunk_id:
-                    document_id = '_'.join(chunk_id.split('_')[:-1])  # Remove last part (chunk number)
-                else:
-                    document_id = chunk_id  # Use full ID if no underscore
+            document_id = _extract_document_id_from_search_result(doc)
+
+            if document_id and chunk_id:
                 
                 # Initialize document entry if not exists
                 if document_id not in document_map:
                     document_map[document_id] = {
                         'scope': doc_scope_result,
                         'chunk_ids': [],
-                        'classification': classification
+                        'classification': classification,
+                        'file_name': doc.get('file_name') or doc.get('title') or 'Unknown Document'
                     }
                 
                 # Add chunk ID to this document
@@ -537,6 +581,9 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
             }
             current_tags[semantic_key] = semantic_tag    # Update the tags array
     conversation_item['tags'] = list(current_tags.values())
+
+    if document_map:
+        conversation_item['last_grounded_document_refs'] = _build_last_grounded_document_refs(document_map)
 
     # --- Scope Lock Logic ---
     current_scope_locked = conversation_item.get('scope_locked')

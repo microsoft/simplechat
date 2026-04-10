@@ -14,6 +14,8 @@ let activeStreamingServerMessageId = null;
 // ---------------------------------------------------------------------------
 function getThoughtIcon(stepType) {
     const iconMap = {
+        'history_context': 'bi-diagram-3',
+        'fact_memory': 'bi-journal-bookmark',
         'search': 'bi-search',
         'tabular_analysis': 'bi-table',
         'web_search': 'bi-globe',

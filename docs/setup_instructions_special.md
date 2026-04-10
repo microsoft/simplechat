@@ -4,7 +4,7 @@
 - [How to use Managed Identity](#how-to-use-managed-identity)
 - [Enterprise Networking](#enterprise-networking)
 
-- [Return to Main](../README.md)
+- [Return to Setup Instructions](./setup_instructions.md)
 
 
 ## Azure Government Configuration
@@ -31,7 +31,7 @@ To run the application in Azure Government cloud:
 
 ## How to use Managed Identity
 
-> <a href="#simple-chat---setup-instructions" style="text-decoration: none;">Return to top</a>
+> <a href="#simple-chat---special-setup-instructions" style="text-decoration: none;">Return to top</a>
 
 Using Managed Identity allows the App Service to authenticate to other Azure resources securely without needing to store secrets (like API keys or connection strings) in Application Settings.
 
@@ -80,14 +80,15 @@ Using Managed Identity allows the App Service to authenticate to other Azure res
    | Document Intelligence | Cognitive Services User             | Allows using the DI service for analysis.                    |
    | Content Safety        | Azure AI Developer      | Allows using the CS service for analysis. (Role name might vary slightly, check portal) |
    | Azure Storage Account | Storage Blob Data Contributor       | Required for Enhanced Citations if using Managed Identity. Allows reading/writing blobs. |
-   | Azure Speech Service  | Cognitive Services Speech Contributor             | Allows using the Speech service for transcription.           |
-   | Video Indexer         | (Handled via VI resource settings)  | VI typically uses its own Managed Identity to access associated Storage/Media Services. Check VI docs. |
+   | Azure Speech Service  | Cognitive Services Speech User (plus Speech Contributor if needed) | Use the custom-domain endpoint for managed identity. Add `Cognitive Services Speech Contributor` if transcription operations still require it. Managed-identity text-to-speech also needs the Speech Resource ID in Admin Settings. |
+   | Video Indexer         | Contributor on the Video Indexer resource | Grant the App Service system-assigned managed identity `Contributor` on the Video Indexer resource. Video Indexer resource creation may also ask for a separate user-assigned managed identity for its own storage/media integration. |
 
 3. **Configure Application to Use Managed Identity**:
 
    - Update the **Application settings** in the App Service (or .env before upload) **OR** use the toggles in the **Admin Settings UI** where available.
    - **Cosmos DB**: Set AZURE_COSMOS_AUTHENTICATION_TYPE="managed_identity" in Application Settings. Remove AZURE_COSMOS_KEY and AZURE_COSMOS_CONNECTION_STRING.
    - **Other Services (OpenAI, Search, DI, CS, Storage)**: Check the **Admin Settings UI** first. Most sections (GPT, Embeddings, Image Gen, Citations, Safety, Search & Extract) have toggles or dropdowns to select "Managed Identity" as the authentication method. Using the UI toggle is preferred as it handles the backend configuration. If UI options aren't present or for overrides, you might need specific environment variables like AZURE_OPENAI_USE_MANAGED_IDENTITY="True", but rely on the UI where possible.
+   - **Speech and Video Indexer**: In Search & Extract → Multimedia Support, the Speech section is shared by audio uploads, speech-to-text input, and text-to-speech. Video Indexer uses the App Service managed identity and the cloud/end-point selector rather than a Video Indexer API key.
 
 ## Enterprise Networking
 > <a href="#simple-chat---special-setup-instructions" style="text-decoration: none;">Return to top</a>

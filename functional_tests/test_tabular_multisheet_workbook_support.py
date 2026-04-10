@@ -224,8 +224,9 @@ def test_route_uses_analytical_filters_and_lookup_guidance():
         _, route_content = load_tabular_route_helpers()
 
         checks = {
-            'lookup_value is advertised first': 'AVAILABLE FUNCTIONS: lookup_value' in route_content,
-            'discovery tools are disabled for analysis': 'Discovery functions are not available in this analysis run because schema context is already pre-loaded.' in route_content,
+            'lookup_value remains advertised for analysis': 'lookup_value' in route_content,
+            'discovery iteration is allowed for multi-sheet analysis': 'Workbook discovery is available through describe_tabular_file.' in route_content,
+            'discovery-only analysis is rejected': 'Discovery-only results do NOT complete the analysis.' in route_content,
             'prompt includes likely worksheet hints': 'LIKELY WORKSHEET HINTS:' in route_content,
             'analysis function filters are configured': 'included_functions' in route_content,
             'retry attempts require analytical function use': 'FunctionChoiceBehavior.Required(' in route_content,

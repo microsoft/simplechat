@@ -8,6 +8,7 @@ Werkzeug==3.1.6
 requests==2.33.0
 openai==1.109.1
 docx2txt==0.8
+olefile==0.47
 Markdown==3.8.1
 bleach==6.1.0
 azure-cosmos==4.9.0

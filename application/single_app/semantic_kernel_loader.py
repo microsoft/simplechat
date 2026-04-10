@@ -44,6 +44,7 @@ from functions_group_actions import get_group_actions
 from functions_group import assert_group_role, get_group_model_endpoints, require_active_group
 from functions_personal_actions import get_personal_actions, ensure_migration_complete as ensure_actions_migration_complete
 from functions_personal_agents import get_personal_agents, ensure_migration_complete as ensure_agents_migration_complete
+from functions_agent_payload import can_agent_use_default_multi_endpoint_model
 from semantic_kernel_plugins.plugin_loader import discover_plugins
 from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
 from functions_agent_scope import find_agent_by_scope
@@ -348,12 +349,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
                 )
         return None
 
-    def resolve_multi_endpoint_agent_config():
-        endpoint_id = (agent.get("model_endpoint_id") or "").strip()
-        model_id = (agent.get("model_id") or "").strip()
-        if not endpoint_id or not model_id:
-            return None
-
+    def get_agent_model_endpoint_candidates():
         endpoints = []
         if is_group_agent:
             if allow_custom_agent_endpoints:
@@ -369,7 +365,13 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
                 ])
         endpoints.extend([{**endpoint, "_endpoint_scope": "global"} for endpoint in (settings.get("model_endpoints", []) or [])])
 
-        endpoint_cfg = next((e for e in endpoints if e.get("id") == endpoint_id), None)
+        return endpoints
+
+    def resolve_multi_endpoint_agent_binding(endpoint_candidates, endpoint_id, model_id):
+        if not endpoint_id or not model_id:
+            return None
+
+        endpoint_cfg = next((e for e in endpoint_candidates if e.get("id") == endpoint_id), None)
         if not endpoint_cfg or not endpoint_cfg.get("enabled", True):
             return None
 
@@ -402,6 +404,52 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
             "auth": auth,
             "model": model_cfg,
         }
+
+    def resolve_multi_endpoint_agent_config():
+        endpoint_candidates = get_agent_model_endpoint_candidates()
+        endpoint_id = (agent.get("model_endpoint_id") or "").strip()
+        model_id = (agent.get("model_id") or "").strip()
+
+        if endpoint_id and model_id:
+            bound_config = resolve_multi_endpoint_agent_binding(
+                endpoint_candidates,
+                endpoint_id,
+                model_id,
+            )
+            if bound_config:
+                return bound_config
+            debug_print(
+                f"[SK Loader] Saved multi-endpoint binding is unavailable for agent '{agent.get('name')}'. Falling back to default model selection."
+            )
+        elif endpoint_id or model_id:
+            debug_print(
+                f"[SK Loader] Incomplete multi-endpoint binding for agent '{agent.get('name')}'. Falling back to default model selection."
+            )
+
+        if not can_agent_use_default_multi_endpoint_model(agent):
+            return None
+
+        default_selection = settings.get("default_model_selection", {}) or {}
+        default_endpoint_id = str(default_selection.get("endpoint_id") or "").strip()
+        default_model_id = str(default_selection.get("model_id") or "").strip()
+        if not default_endpoint_id or not default_model_id:
+            return None
+
+        default_config = resolve_multi_endpoint_agent_binding(
+            endpoint_candidates,
+            default_endpoint_id,
+            default_model_id,
+        )
+        if default_config:
+            debug_print(
+                f"[SK Loader] Using saved admin default multi-endpoint model for agent '{agent.get('name')}'."
+            )
+            return default_config
+
+        debug_print(
+            f"[SK Loader] Saved admin default multi-endpoint model could not be resolved for agent '{agent.get('name')}'."
+        )
+        return None
 
     def resolve_foundry_endpoint_config():
         foundry_settings_key = "new_foundry" if agent_type == "new_foundry" else "azure_ai_foundry"

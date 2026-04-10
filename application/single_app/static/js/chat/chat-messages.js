@@ -448,6 +448,8 @@ function createCitationsHtml(
                  data-tool-name="${escapeHtml(cite.tool_name || '')}"
                  data-tool-args="${escapeHtml(toolArgs)}"
                  data-tool-result="${escapeHtml(toolResult)}"
+                 data-artifact-id="${escapeHtml(cite.artifact_id || '')}"
+                 data-conversation-id="${escapeHtml(window.currentConversationId || '')}"
                  title="Agent tool: ${escapeHtml(displayText)} - Click to view details">
                   <i class="bi bi-cpu me-1"></i>${escapeHtml(displayText)}
               </a>`;
@@ -2448,6 +2450,46 @@ function toggleMessageMetadata(messageDiv, messageId) {
  * Load message metadata into the drawer for AI/image/file messages
  */
 function loadMessageMetadataForDisplay(messageId, container) {
+  function renderHistoryContextRefRow(label, refs) {
+    if (!Array.isArray(refs) || refs.length === 0) {
+      return `<div class="mb-2"><span class="text-muted">${label}:</span> <span class="ms-2 text-muted">none</span></div>`;
+    }
+
+    return `
+      <div class="mb-2">
+        <div><span class="text-muted">${label}:</span></div>
+        <div class="ms-3 mt-1 text-break" style="white-space: pre-wrap; word-break: break-word;">${escapeHtml(refs.join(', '))}</div>
+      </div>
+    `;
+  }
+
+  function renderHistoryContextSection(historyContext) {
+    if (!historyContext || typeof historyContext !== 'object') {
+      return '';
+    }
+
+    let sectionHtml = '<div class="mb-3">';
+    sectionHtml += '<div class="fw-bold mb-2"><i class="bi bi-clock-history me-2"></i>History Context</div>';
+    sectionHtml += '<div class="ms-3 small">';
+    sectionHtml += `<div class="mb-1"><span class="text-muted">Path:</span> <code class="ms-2">${escapeHtml(String(historyContext.path || 'unknown'))}</code></div>`;
+    sectionHtml += `<div class="mb-1"><span class="text-muted">Stored Messages:</span> <span class="ms-2 badge bg-secondary">${Number(historyContext.stored_total_messages || 0)}</span></div>`;
+    sectionHtml += `<div class="mb-1"><span class="text-muted">History Limit:</span> <span class="ms-2 badge bg-secondary">${Number(historyContext.history_limit || 0)}</span></div>`;
+    sectionHtml += `<div class="mb-1"><span class="text-muted">Older Messages:</span> <span class="ms-2 badge bg-secondary">${Number(historyContext.older_message_count || 0)}</span></div>`;
+    sectionHtml += `<div class="mb-1"><span class="text-muted">Recent Selected:</span> <span class="ms-2 badge bg-info">${Number(historyContext.recent_message_count || 0)}</span></div>`;
+    sectionHtml += `<div class="mb-1"><span class="text-muted">Final API Messages:</span> <span class="ms-2 badge bg-primary">${Number(historyContext.final_api_message_count || 0)}</span></div>`;
+    sectionHtml += `<div class="mb-1"><span class="text-muted">Summary Requested:</span> <span class="ms-2 badge ${historyContext.summary_requested ? 'bg-warning text-dark' : 'bg-secondary'}">${historyContext.summary_requested ? 'Yes' : 'No'}</span></div>`;
+    sectionHtml += `<div class="mb-1"><span class="text-muted">Summary Used:</span> <span class="ms-2 badge ${historyContext.summary_used ? 'bg-success' : 'bg-secondary'}">${historyContext.summary_used ? 'Yes' : 'No'}</span></div>`;
+    sectionHtml += `<div class="mb-2"><span class="text-muted">Default System Prompt:</span> <span class="ms-2 badge ${historyContext.default_system_prompt_inserted ? 'bg-success' : 'bg-secondary'}">${historyContext.default_system_prompt_inserted ? 'Inserted' : 'Not inserted'}</span></div>`;
+    sectionHtml += renderHistoryContextRefRow('Recent Refs', historyContext.selected_recent_message_refs);
+    sectionHtml += renderHistoryContextRefRow('Summarized Refs', historyContext.summarized_message_refs);
+    sectionHtml += renderHistoryContextRefRow('Skipped Inactive', historyContext.skipped_inactive_message_refs);
+    sectionHtml += renderHistoryContextRefRow('Skipped Masked', historyContext.skipped_masked_message_refs);
+    sectionHtml += renderHistoryContextRefRow('Final API Refs', historyContext.final_api_source_refs);
+    sectionHtml += '</div></div>';
+
+    return sectionHtml;
+  }
+
   fetch(`/api/message/${messageId}/metadata`)
     .then(response => {
       if (!response.ok) {
@@ -2471,6 +2513,7 @@ function loadMessageMetadataForDisplay(messageId, container) {
         active_thread: metadata.active_thread,
         thread_attempt: metadata.thread_attempt
       };
+      const historyContext = metadata.metadata?.history_context || null;
       
       if (threadInfo.thread_id) {
         html += '<div class="mb-3">';
@@ -2532,6 +2575,10 @@ function loadMessageMetadataForDisplay(messageId, container) {
         }
         
         html += '</div></div>';
+      }
+
+      if (metadata.role === 'assistant' && historyContext) {
+        html += renderHistoryContextSection(historyContext);
       }
       
       html += '</div>';

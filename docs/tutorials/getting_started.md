@@ -43,7 +43,7 @@ Follow the prompts to select your subscription, region, and provide required con
 
 ### Option B: Other Deployment Methods
 
-For more deployment options, see our [deployment reference](../reference/deploy/).
+For more deployment options, see our [deployment reference](../reference/deploy/index.md).
 
 ## Step 2: Initial Configuration
 

@@ -131,6 +131,46 @@ def is_new_foundry_agent(agent: Dict[str, Any]) -> bool:
     return False
 
 
+def get_agent_model_binding(agent: Dict[str, Any]) -> Dict[str, str]:
+    """Return normalized saved model binding fields for an agent."""
+    if not isinstance(agent, dict):
+        return {
+            "endpoint_id": "",
+            "model_id": "",
+            "provider": "",
+        }
+
+    return {
+        "endpoint_id": str(agent.get("model_endpoint_id") or "").strip(),
+        "model_id": str(agent.get("model_id") or "").strip(),
+        "provider": str(agent.get("model_provider") or "").strip().lower(),
+    }
+
+
+def has_complete_agent_model_binding(agent: Dict[str, Any]) -> bool:
+    """Return True when the agent stores both endpoint and model identifiers."""
+    binding = get_agent_model_binding(agent)
+    return bool(binding["endpoint_id"] and binding["model_id"])
+
+
+def has_agent_custom_connection_override(agent: Dict[str, Any]) -> bool:
+    """Return True when a local agent stores explicit legacy connection values."""
+    if not isinstance(agent, dict):
+        return False
+
+    has_direct_fields = any(str(agent.get(field) or "").strip() for field in _GPT_FIELDS)
+    apim_enabled = agent.get("enable_agent_gpt_apim") in [True, 1, "true", "True"]
+    has_apim_fields = apim_enabled and any(
+        str(agent.get(field) or "").strip() for field in _APIM_FIELDS
+    )
+    return bool(has_direct_fields or has_apim_fields)
+
+
+def can_agent_use_default_multi_endpoint_model(agent: Dict[str, Any]) -> bool:
+    """Return True when a local agent should inherit the saved admin default model."""
+    return not is_azure_ai_foundry_agent(agent) and not has_agent_custom_connection_override(agent)
+
+
 def _normalize_text_fields(payload: Dict[str, Any]) -> None:
     for field in _TEXT_FIELDS:
         value = payload.get(field)

@@ -203,6 +203,73 @@ def log_admin_feedback_email_submission(
         debug_print(f"[Admin Feedback] Failed to log feedback email submission for user {user_id}")
 
 
+def log_user_support_feedback_email_submission(
+    user_id: str,
+    user_email: str,
+    feedback_type: str,
+    reporter_name: str,
+    reporter_email: str,
+    organization: str,
+    details: str,
+    recipient_email: str,
+    source: str = 'support_menu'
+) -> None:
+    """Log a user-initiated support feedback email draft event."""
+
+    feedback_metadata = {
+        'feedback_type': feedback_type,
+        'details_length': len(details or ''),
+        **_build_contact_metadata(reporter_name, reporter_email, organization),
+    }
+
+    try:
+        timestamp = datetime.utcnow().isoformat()
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'partitionKey': user_id,
+            'user_id': user_id,
+            'timestamp': timestamp,
+            'activity_type': 'user_support_feedback_email_submission',
+            'submission_channel': 'mailto',
+            'recipient_email': recipient_email,
+            'source': source,
+            'feedback_submission': feedback_metadata,
+        }
+
+        cosmos_activity_logs_container.create_item(body=activity_record)
+
+        log_event(
+            message='[Support Feedback] Mailto draft prepared',
+            extra={
+                'user_id': user_id,
+                'activity_type': 'user_support_feedback_email_submission',
+                'submission_channel': 'mailto',
+                'recipient_email': recipient_email,
+                'source': source,
+                **feedback_metadata,
+            },
+            level=logging.INFO
+        )
+        debug_print(f"[Support Feedback] Logged support feedback email submission for user {user_id}")
+
+    except Exception:
+        log_event(
+            message='[Support Feedback] Failed to record support feedback mailto draft',
+            extra={
+                'user_id': user_id,
+                'feedback_type': feedback_type,
+                'activity_type': 'user_support_feedback_email_submission',
+                'recipient_email': recipient_email,
+                'source': source,
+                'details_length': len(details or ''),
+                **_build_contact_metadata(reporter_name, reporter_email, organization),
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
+        debug_print(f"[Support Feedback] Failed to log support feedback email submission for user {user_id}")
+
+
 def log_admin_release_notifications_registration(
     user_id: str,
     admin_email: str,

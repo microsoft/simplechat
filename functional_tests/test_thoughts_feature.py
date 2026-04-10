@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Processing Thoughts feature.
-Version: 0.239.003
+Version: 0.241.004
 Implemented in: 0.239.003
 
 This test ensures that the Processing Thoughts feature is properly implemented
@@ -78,6 +78,7 @@ def test_thoughts_route_module():
             'user_required decorator': 'user_required' in content,
             'get_auth_security import': 'get_auth_security' in content,
             'enable_thoughts check': 'enable_thoughts' in content,
+            'enable_thoughts missing-key default on': "settings.get('enable_thoughts', True)" in content,
             'returns enabled flag': "'enabled'" in content or '"enabled"' in content,
         }
 
@@ -178,7 +179,7 @@ def test_thoughts_frontend_module():
 
 
 def test_thoughts_chat_messages_integration():
-    """Test that chat-messages.js integrates thought polling and toggle."""
+    """Test that chat-messages.js integrates thoughts toggle rendering."""
     print("\nTesting chat-messages.js thoughts integration...")
     try:
         messages_file = os.path.join(
@@ -191,12 +192,10 @@ def test_thoughts_chat_messages_integration():
 
         checks = {
             'chat-thoughts import': 'chat-thoughts' in content,
-            'startThoughtPolling import': 'startThoughtPolling' in content,
-            'stopThoughtPolling import': 'stopThoughtPolling' in content,
             'createThoughtsToggleHtml import': 'createThoughtsToggleHtml' in content,
             'attachThoughtsToggleListener import': 'attachThoughtsToggleListener' in content,
-            'startThoughtPolling call': 'startThoughtPolling(' in content,
-            'stopThoughtPolling call': 'stopThoughtPolling(' in content,
+            'createThoughtsToggleHtml call': 'createThoughtsToggleHtml(' in content,
+            'attachThoughtsToggleListener call': 'attachThoughtsToggleListener(' in content,
         }
 
         all_passed = True
@@ -214,7 +213,7 @@ def test_thoughts_chat_messages_integration():
 
 
 def test_thoughts_streaming_integration():
-    """Test that chat-streaming.js handles thought SSE events."""
+    """Test that chat-streaming.js handles thought SSE events and polling cleanup."""
     print("\nTesting chat-streaming.js thought event handling...")
     try:
         streaming_file = os.path.join(
@@ -227,8 +226,10 @@ def test_thoughts_streaming_integration():
 
         checks = {
             'handleStreamingThought import': 'handleStreamingThought' in content,
+            'stopThoughtPolling import': 'stopThoughtPolling' in content,
             'thought type check': "'thought'" in content or '"thought"' in content,
             'handleStreamingThought call': 'handleStreamingThought(' in content,
+            'stopThoughtPolling call': 'stopThoughtPolling(' in content,
         }
 
         all_passed = True
@@ -312,19 +313,28 @@ def test_thoughts_admin_settings():
 
 
 def test_thoughts_settings_default():
-    """Test that functions_settings.py includes enable_thoughts default."""
+    """Test that thoughts default to enabled in settings and trackers."""
     print("\nTesting functions_settings.py default setting...")
     try:
         settings_file = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
             'application', 'single_app', 'functions_settings.py'
         )
+        tracker_file = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            'application', 'single_app', 'functions_thoughts.py'
+        )
 
         with open(settings_file, 'r', encoding='utf-8') as f:
-            content = f.read()
+            settings_content = f.read()
+
+        with open(tracker_file, 'r', encoding='utf-8') as f:
+            tracker_content = f.read()
 
         checks = {
-            'enable_thoughts in defaults': 'enable_thoughts' in content,
+            'enable_thoughts in defaults': 'enable_thoughts' in settings_content,
+            'enable_thoughts default true': "'enable_thoughts': True" in settings_content,
+            'ThoughtTracker missing-key default on': "settings.get('enable_thoughts', True)" in tracker_content,
         }
 
         all_passed = True
@@ -478,7 +488,7 @@ def test_thoughts_app_registration():
 if __name__ == "__main__":
     print("=" * 60)
     print("Processing Thoughts Feature - Functional Tests")
-    print("Version: 0.239.003")
+    print("Version: 0.241.004")
     print("=" * 60)
 
     tests = [

@@ -2,11 +2,12 @@
 #!/usr/bin/env python3
 """
 Functional test for default model selection fallback.
-Version: 0.239.200
-Implemented in: 0.239.200
+Version: 0.240.073
+Implemented in: 0.240.071
 
 This test ensures default model selection is surfaced in admin settings
-and used for fallback streaming GPT initialization when agent requests omit model info.
+and used for fallback GPT initialization when legacy agents omit or lose
+multi-endpoint model bindings.
 """
 
 import os
@@ -28,10 +29,18 @@ def test_default_model_selection_wiring():
     chat_path = os.path.join(
         repo_root, "application", "single_app", "route_backend_chats.py"
     )
+    loader_path = os.path.join(
+        repo_root, "application", "single_app", "semantic_kernel_loader.py"
+    )
+    config_path = os.path.join(
+        repo_root, "application", "single_app", "config.py"
+    )
 
     admin_template = read_file_text(admin_template_path)
     admin_route = read_file_text(admin_route_path)
     chat_route = read_file_text(chat_path)
+    loader_content = read_file_text(loader_path)
+    config_content = read_file_text(config_path)
 
     assert "default_model_selection_json" in admin_template, (
         "Expected default model selection input in admin settings template."
@@ -47,6 +56,15 @@ def test_default_model_selection_wiring():
     )
     assert "settings.get('default_model_selection'" in chat_route, (
         "Expected streaming model resolution to read the saved default model selection."
+    )
+    assert 'can_agent_use_default_multi_endpoint_model' in loader_content, (
+        "Expected the shared agent loader to gate default-model fallback to inherited agents."
+    )
+    assert 'Using saved admin default multi-endpoint model for agent' in loader_content, (
+        "Expected the shared agent loader to use the saved admin default model when agent bindings are missing or stale."
+    )
+    assert 'VERSION = "0.240.073"' in config_content, (
+        "Expected config.py version 0.240.073 after the loader fallback and migration UI updates."
     )
 
     print("✅ Default model selection wiring verified.")

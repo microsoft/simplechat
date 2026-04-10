@@ -205,7 +205,7 @@ def test_entity_lookup_primary_sheet_hint_prefers_anchor_entity_sheet():
         assert likely_sheet == 'Taxpayers', likely_sheet
         assert relevant_sheets[0] == 'Taxpayers', relevant_sheets
         assert relevant_sheets.index('Taxpayers') < relevant_sheets.index('Notices'), relevant_sheets
-        assert 'begin with filter_rows or query_tabular_data without sheet_name so the plugin can perform a cross-sheet discovery search' in route_content, route_content
+        assert 'begin with search_rows, filter_rows, or query_tabular_data without sheet_name so the plugin can perform a cross-sheet discovery search' in route_content, route_content
         assert 'Do not start with aggregate_column, group_by_aggregate, or group_by_datetime_component until you have located the relevant entity rows.' in route_content, route_content
 
         print('✅ Entity-lookup primary worksheet hinting passed')

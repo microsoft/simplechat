@@ -299,7 +299,7 @@ def register_route_frontend_authentication(app):
                 "error": "token_exchange_failed",
                 "error_description": "An unexpected error occurred during token exchange."
             }), 500
-          
+        
     @app.route('/logout/local')
     @swagger_route(security=get_auth_security())
     def local_logout():

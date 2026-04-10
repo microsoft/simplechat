@@ -11,6 +11,13 @@ from functions_logging import *
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta, timezone
 from admin_settings_int_utils import safe_int_with_source
+from support_menu_config import (
+    get_support_latest_feature_catalog,
+    get_support_latest_feature_release_groups,
+    get_support_latest_feature_release_groups_for_settings,
+    has_visible_support_latest_features,
+    normalize_support_latest_features_visibility,
+)
 
 ALLOWED_PIL_IMAGE_UPLOAD_FORMATS = ('PNG', 'JPEG')
 
@@ -62,10 +69,7 @@ def register_route_frontend_admin_settings(app):
         if 'multi_endpoint_migration_notice' not in settings or not isinstance(settings.get('multi_endpoint_migration_notice'), dict):
             settings['multi_endpoint_migration_notice'] = {
                 'enabled': False,
-                'message': (
-                    'Multi-endpoint has been enabled and your existing AI endpoint was migrated. '
-                    'Agents using the default connection may need to be updated to select a new model endpoint.'
-                ),
+                'message': '',
                 'created_at': None
             }
 
@@ -111,6 +115,25 @@ def register_route_frontend_admin_settings(app):
                 {"label": "Acceptable Use Policy", "url": "https://example.com/policy"},
                 {"label": "Prompt Ideas", "url": "https://example.com/prompts"}
             ]
+        if 'enable_support_menu' not in settings:
+            settings['enable_support_menu'] = False
+        if 'support_menu_name' not in settings:
+            settings['support_menu_name'] = 'Support'
+        if 'enable_support_send_feedback' not in settings:
+            settings['enable_support_send_feedback'] = True
+        if 'support_feedback_recipient_email' not in settings:
+            settings['support_feedback_recipient_email'] = ''
+        if 'enable_support_latest_features' not in settings:
+            settings['enable_support_latest_features'] = True
+        if 'enable_support_latest_feature_documentation_links' not in settings:
+            settings['enable_support_latest_feature_documentation_links'] = False
+        settings['support_latest_features_visibility'] = normalize_support_latest_features_visibility(
+            settings.get('support_latest_features_visibility', {})
+        )
+        settings['support_latest_features_has_visible_items'] = has_visible_support_latest_features(settings)
+        settings['support_feedback_recipient_configured'] = bool(
+            str(settings.get('support_feedback_recipient_email') or '').strip()
+        )
 
         # --- End Refined Default Checks ---
 
@@ -344,10 +367,16 @@ def register_route_frontend_admin_settings(app):
                 'admin_settings.html',
                 app_settings=settings_for_template,
                 settings=settings_for_template,
+                azure_environment=AZURE_ENVIRONMENT,
+                default_video_indexer_endpoint=video_indexer_endpoint,
+                default_video_indexer_arm_api_version=DEFAULT_VIDEO_INDEXER_ARM_API_VERSION,
                 user_settings=user_settings,
                 update_available=update_available,
                 latest_version=latest_version,
                 download_url=download_url,
+                support_latest_feature_catalog=get_support_latest_feature_catalog(),
+                support_latest_feature_release_groups=get_support_latest_feature_release_groups(),
+                support_latest_feature_release_groups_preview=get_support_latest_feature_release_groups_for_settings(settings),
                 chunk_size_defaults=get_chunk_size_defaults(),
                 chunk_size_settings=settings.get('chunk_size', {}),
                 chunk_size_cap=get_chunk_size_cap(settings),
@@ -530,6 +559,33 @@ def register_route_frontend_admin_settings(app):
                 # Keep existing external links from the database instead of overwriting with bad data
                 parsed_external_links = settings.get('external_links', []) # Fallback to existing
 
+            enable_support_menu = form_data.get('enable_support_menu') == 'on'
+            support_menu_name = form_data.get('support_menu_name', 'Support').strip()
+            if not support_menu_name:
+                support_menu_name = 'Support'
+
+            enable_support_send_feedback = form_data.get('enable_support_send_feedback') == 'on'
+            support_feedback_recipient_email = form_data.get('support_feedback_recipient_email', '').strip()
+            if enable_support_send_feedback and not support_feedback_recipient_email:
+                flash('Support Send Feedback requires a recipient email. The Send Feedback entry was disabled.', 'warning')
+                enable_support_send_feedback = False
+            elif support_feedback_recipient_email and '@' not in support_feedback_recipient_email:
+                flash('Support feedback recipient email must be a valid email address. The Send Feedback entry was disabled.', 'warning')
+                support_feedback_recipient_email = ''
+                enable_support_send_feedback = False
+
+            enable_support_latest_features = form_data.get('enable_support_latest_features') == 'on'
+            enable_support_latest_feature_documentation_links = (
+                form_data.get('enable_support_latest_feature_documentation_links') == 'on'
+            )
+            support_latest_features_visibility = {}
+            for feature in get_support_latest_feature_catalog():
+                field_name = f"support_latest_feature_{feature['id']}"
+                support_latest_features_visibility[feature['id']] = form_data.get(field_name) == 'on'
+            support_latest_features_visibility = normalize_support_latest_features_visibility(
+                support_latest_features_visibility
+            )
+
             # Enhanced Citations...
             enable_enhanced_citations = form_data.get('enable_enhanced_citations') == 'on'
             office_docs_storage_account_blob_endpoint = form_data.get('office_docs_storage_account_blob_endpoint', '').strip()
@@ -591,12 +647,11 @@ def register_route_frontend_admin_settings(app):
             should_migrate_endpoints = enable_multi_model_endpoints and not existing_multi_endpoints_enabled
             migration_notice = settings.get('multi_endpoint_migration_notice', {
                 'enabled': False,
-                'message': (
-                    'Multi-endpoint has been enabled and your existing AI endpoint was migrated. '
-                    'Agents using the default connection may need to be updated to select a new model endpoint.'
-                ),
+                'message': '',
                 'created_at': None
             })
+            migration_notice['enabled'] = False
+            migration_notice['message'] = ''
             migrated_at = settings.get('multi_endpoint_migrated_at')
 
             if should_migrate_endpoints and not parsed_model_endpoints:
@@ -662,7 +717,6 @@ def register_route_frontend_admin_settings(app):
 
 
                 migrated_at = datetime.now(timezone.utc).isoformat()
-                migration_notice['enabled'] = True
                 migration_notice['created_at'] = migrated_at
 
             parsed_model_endpoints = merge_model_endpoints_with_existing(parsed_model_endpoints, existing_model_endpoints)
@@ -1162,6 +1216,15 @@ def register_route_frontend_admin_settings(app):
                 'external_links_force_menu': external_links_force_menu,
                 'external_links': parsed_external_links, # Store the PARSED LIST
 
+                # *** Support Menu ***
+                'enable_support_menu': enable_support_menu,
+                'support_menu_name': support_menu_name,
+                'enable_support_send_feedback': enable_support_send_feedback,
+                'support_feedback_recipient_email': support_feedback_recipient_email,
+                'enable_support_latest_features': enable_support_latest_features,
+                'enable_support_latest_feature_documentation_links': enable_support_latest_feature_documentation_links,
+                'support_latest_features_visibility': support_latest_features_visibility,
+
                 # Enhanced Citations
                 'enable_enhanced_citations': enable_enhanced_citations,
                 'enable_enhanced_citations_mount': form_data.get('enable_enhanced_citations_mount') == 'on' and enable_enhanced_citations,
@@ -1265,12 +1328,16 @@ def register_route_frontend_admin_settings(app):
                 'video_indexer_resource_group': form_data.get('video_indexer_resource_group', '').strip(),
                 'video_indexer_subscription_id': form_data.get('video_indexer_subscription_id', '').strip(),
                 'video_indexer_account_name': form_data.get('video_indexer_account_name', '').strip(),
-                'video_indexer_arm_api_version': form_data.get('video_indexer_arm_api_version', '2024-01-01').strip(),
+                'video_indexer_arm_api_version': form_data.get('video_indexer_arm_api_version', DEFAULT_VIDEO_INDEXER_ARM_API_VERSION).strip(),
                 'video_index_timeout': int(form_data.get('video_index_timeout', 600)),
 
                 # Audio file settings with Azure speech service
                 'speech_service_endpoint': form_data.get('speech_service_endpoint', '').strip(),
                 'speech_service_location': form_data.get('speech_service_location', '').strip(),
+                'speech_service_subscription_id': form_data.get('speech_service_subscription_id', '').strip(),
+                'speech_service_resource_group': form_data.get('speech_service_resource_group', '').strip(),
+                'speech_service_resource_name': form_data.get('speech_service_resource_name', '').strip(),
+                'speech_service_resource_id': form_data.get('speech_service_resource_id', '').strip(),
                 'speech_service_locale': form_data.get('speech_service_locale', '').strip(),
                 'speech_service_authentication_type': form_data.get('speech_service_authentication_type', 'key'),
                 'speech_service_key': form_data.get('speech_service_key', '').strip(),

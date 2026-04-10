@@ -403,6 +403,7 @@ async function chatWithGroupAgent(agentName) {
 
     const payloadData = {
       selected_agent: {
+        id: agent.id || null,
         name: agentName,
         display_name: agent.display_name || agent.displayName || agentName,
         is_global: !!agent.is_global,

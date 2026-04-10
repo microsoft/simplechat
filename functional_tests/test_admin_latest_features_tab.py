@@ -2,8 +2,8 @@
 # test_admin_latest_features_tab.py
 """
 Functional test for admin Latest Features tab.
-Version: 0.240.003
-Implemented in: 0.240.002
+Version: 0.241.002
+Implemented in: 0.240.074; 0.240.085; 0.241.002
 
 This test ensures that the Admin Settings page exposes the Latest Features tab,
 renders the expected grouped cards, uses the saved feature screenshots, and
@@ -21,7 +21,7 @@ REPO_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, '..'))
 ADMIN_TEMPLATE = os.path.join(REPO_ROOT, 'application', 'single_app', 'templates', 'admin_settings.html')
 SIDEBAR_TEMPLATE = os.path.join(REPO_ROOT, 'application', 'single_app', 'templates', '_sidebar_nav.html')
 ADMIN_JS = os.path.join(REPO_ROOT, 'application', 'single_app', 'static', 'js', 'admin', 'admin_settings.js')
-FEATURE_DOC = os.path.join(REPO_ROOT, 'docs', 'explanation', 'features', 'LATEST_FEATURES_ADMIN_TAB.md')
+FEATURE_DOC = os.path.join(REPO_ROOT, 'docs', 'explanation', 'features', 'v0.241.002', 'LATEST_FEATURES_ADMIN_TAB.md')
 FEATURE_IMAGE_DIR = os.path.join(REPO_ROOT, 'application', 'single_app', 'static', 'images', 'features')
 
 
@@ -40,22 +40,52 @@ def test_latest_features_template_structure():
         'id="latest-features-tab"',
         'data-bs-target="#latest-features"',
         'id="latest-features"',
+        'id="latest-features-release-notifications-card"',
         'id="latest-features-guided-tutorials-card"',
         'id="latest-features-background-chat-card"',
+        'id="latest-features-model-selection-card"',
         'id="latest-features-tabular-card"',
+        'id="latest-features-citation-improvements-card"',
+        'id="latest-features-document-versioning-card"',
         'id="latest-features-export-card"',
         'id="latest-features-agent-ops-card"',
         'id="latest-features-thoughts-card"',
+        'id="latest-features-fact-memory-card"',
         'id="latest-features-deployment-card"',
         'id="latest-features-redis-card"',
         'id="latest-features-send-feedback-card"',
+        'id="latest-features-support-menu-card"',
+        'id="latest-features-previous-release-card"',
+        'id="latestFeaturesPreviousRelease"',
         'id="latestFeatureImageModal"',
         'class="latest-feature-image-frame"',
         'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/guided_tutorials_chat.png\') }}"',
         'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/background_completion_notifications-01.png\') }}"',
         'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/background_completion_notifications-02.png\') }}"',
+        'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/model_selection_multi_endpoint_admin.png\') }}"',
+        'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/agent_default_model_review_summary.png\') }}"',
+        'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/agent_default_model_review_action.png\') }}"',
+        'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/citation_improvements_history_replay.png\') }}"',
+        'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/document_revision_workspace.png\') }}"',
+        'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/facts_memory_view_profile.png\') }}"',
+        'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/fact_memory_management.png\') }}"',
+        'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/facts_citation_and_thoughts.png\') }}"',
         'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/gunicorn_startup_guidance.png\') }}"',
-        'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/redis_key_vault.png\') }}"'
+        'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/redis_key_vault.png\') }}"',
+        'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/support_menu_entry.png\') }}"',
+        'data-latest-feature-image-src="{{ url_for(\'static\', filename=\'images/features/enable_support_menu_for_end_users.png\') }}"',
+        'Admin-only workflow:',
+        "release_group.id == 'previous_release'",
+        '<i class="bi bi-clock-history me-2"></i>{{ release_group.label }}',
+        'Keeping them here gives admins a simple N and N-1 view',
+        'Shared with Users',
+        'Hidden from Users',
+        '{% if feature.images %}',
+        'data-latest-feature-image-src="{{ url_for(\'static\', filename=image.path) }}"',
+        '{{ image.label }}',
+        'Review Modal Action',
+        'General > User-Facing Latest Features',
+        'General Tab Feature Sharing'
     ]
 
     missing_markers = [marker for marker in required_markers if marker not in template_content]
@@ -63,6 +93,7 @@ def test_latest_features_template_structure():
         raise AssertionError(f'Missing Latest Features template markers: {missing_markers}')
 
     assert template_content.count('id="latest-features" role="tabpanel"') == 1, 'Latest Features tab pane should appear exactly once'
+    assert template_content.index('id="latest-features-release-notifications-card"') < template_content.index('id="latest-features-deployment-card"'), 'Release notifications explainer should stay at the top of the Latest Features list'
 
     print('✅ Latest Features tab structure is present')
     return True
@@ -181,10 +212,17 @@ def test_latest_features_sidebar_navigation():
     required_markers = [
         'data-tab="latest-features"',
         'id="latest-features-submenu"',
+        'data-section="latest-features-release-notifications-card"',
         'data-section="latest-features-guided-tutorials-card"',
+        'data-section="latest-features-model-selection-card"',
         'data-section="latest-features-tabular-card"',
+        'data-section="latest-features-citation-improvements-card"',
+        'data-section="latest-features-document-versioning-card"',
         'data-section="latest-features-thoughts-card"',
-        'data-section="latest-features-deployment-card"'
+        'data-section="latest-features-fact-memory-card"',
+        'data-section="latest-features-deployment-card"',
+        'data-section="latest-features-support-menu-card"',
+        'data-section="latest-features-previous-release-card"'
     ]
 
     missing_markers = [marker for marker in required_markers if marker not in sidebar_content]
@@ -193,6 +231,7 @@ def test_latest_features_sidebar_navigation():
 
     latest_features_index = sidebar_content.index('data-tab="latest-features"')
     general_index = sidebar_content.index('data-tab="general"')
+    assert sidebar_content.index('data-section="latest-features-release-notifications-card"') < sidebar_content.index('data-section="latest-features-guided-tutorials-card"'), 'Release notifications explainer should stay first in the Latest Features submenu'
     assert latest_features_index < general_index, 'Latest Features should appear before General in the admin sidebar'
     assert '<span class="badge bg-warning text-dark text-uppercase ms-2">New</span>' in sidebar_content, 'Sidebar Latest Features item should include a New badge'
 
@@ -242,20 +281,33 @@ def test_latest_features_supporting_assets():
     assert os.path.isdir(FEATURE_IMAGE_DIR), 'Missing placeholder image directory for Latest Features'
 
     doc_content = read_text(FEATURE_DOC)
-    assert 'Version Updated: 0.240.003' in doc_content, 'Feature documentation version header missing or incorrect'
+    assert 'Version Updated: 0.241.002' in doc_content, 'Feature documentation version header missing or incorrect'
+    assert 'Previous Release Features' in doc_content, 'Feature documentation should describe the previous release grouping'
 
     required_images = [
+        'agent_default_model_review_action.png',
+        'agent_default_model_review_summary.png',
         'agent_action_grid_view.png',
         'background_completion_notifications-01.png',
         'background_completion_notifications-02.png',
+        'citation_improvements_amplified_results.png',
+        'citation_improvements_history_replay.png',
         'conversation_summary_card.png',
+        'document_revision_delete_compare.png',
+        'document_revision_workspace.png',
+        'enable_support_menu_for_end_users.png',
+        'facts_citation_and_thoughts.png',
+        'facts_memory_view_profile.png',
+        'fact_memory_management.png',
         'guided_tutorials_chat.png',
         'guided_tutorials_workspace.png',
         'gunicorn_startup_guidance.png',
+        'model_selection_multi_endpoint_admin.png',
         'pdf_export_option.png',
         'per_message_export_menu.png',
         'redis_key_vault.png',
         'sql_test_connection.png',
+        'support_menu_entry.png',
         'tabular_analysis_enhanced_citations.png',
         'thoughts_visibility.png'
     ]

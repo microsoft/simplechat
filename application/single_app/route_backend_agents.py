@@ -4,13 +4,25 @@ import re
 import uuid
 import logging
 import builtins
-from flask import Blueprint, jsonify, request, current_app
+from flask import Blueprint, jsonify, request, current_app, session
+from config import (
+    cosmos_global_agents_container,
+    cosmos_group_agents_container,
+    cosmos_personal_agents_container,
+)
 from semantic_kernel_loader import get_agent_orchestration_types
-from functions_settings import get_settings, update_settings, get_user_settings, update_user_settings
+from functions_settings import get_settings, update_settings, get_user_settings, update_user_settings, sanitize_model_endpoints_for_frontend
 from functions_global_agents import get_global_agents, save_global_agent, delete_global_agent
 from functions_personal_agents import get_personal_agents, ensure_migration_complete, save_personal_agent, delete_personal_agent
 from functions_group import require_active_group, assert_group_role
-from functions_agent_payload import sanitize_agent_payload, AgentPayloadError
+from functions_agent_payload import (
+    AgentPayloadError,
+    can_agent_use_default_multi_endpoint_model,
+    get_agent_model_binding,
+    has_agent_custom_connection_override,
+    is_azure_ai_foundry_agent,
+    sanitize_agent_payload,
+)
 from functions_group_agents import (
     get_group_agents,
     get_group_agent,
@@ -28,6 +40,7 @@ from functions_activity_logging import (
     log_agent_creation,
     log_agent_update,
     log_agent_deletion,
+    log_general_admin_action,
 )
 
 bpa = Blueprint('admin_agents', __name__)
@@ -117,6 +130,387 @@ def _find_matching_user_selected_agent(candidates, requested_agent):
         )
 
     return None
+
+
+def _strip_cosmos_metadata(document):
+    if not isinstance(document, dict):
+        return {}
+    return {key: value for key, value in document.items() if not str(key).startswith('_')}
+
+
+def _format_model_provider_label(provider):
+    normalized_provider = str(provider or '').strip().lower()
+    if normalized_provider == 'aifoundry':
+        return 'Foundry (classic)'
+    if normalized_provider == 'new_foundry':
+        return 'New Foundry'
+    return 'Azure OpenAI'
+
+
+def _summarize_model_binding(endpoint_candidates, binding):
+    endpoint_id = str(binding.get('endpoint_id') or '').strip()
+    model_id = str(binding.get('model_id') or '').strip()
+    provider = str(binding.get('provider') or '').strip().lower()
+
+    if not endpoint_id and not model_id:
+        return {
+            'valid': False,
+            'state': 'missing',
+            'endpoint_id': '',
+            'model_id': '',
+            'provider': provider,
+            'label': 'Not set',
+        }
+
+    if not endpoint_id or not model_id:
+        return {
+            'valid': False,
+            'state': 'incomplete',
+            'endpoint_id': endpoint_id,
+            'model_id': model_id,
+            'provider': provider,
+            'label': 'Incomplete saved model selection',
+        }
+
+    endpoint_cfg = next((candidate for candidate in endpoint_candidates if candidate.get('id') == endpoint_id), None)
+    if not endpoint_cfg:
+        return {
+            'valid': False,
+            'state': 'endpoint_missing',
+            'endpoint_id': endpoint_id,
+            'model_id': model_id,
+            'provider': provider,
+            'label': f'Missing endpoint: {endpoint_id}',
+        }
+
+    if not endpoint_cfg.get('enabled', True):
+        return {
+            'valid': False,
+            'state': 'endpoint_disabled',
+            'endpoint_id': endpoint_id,
+            'model_id': model_id,
+            'provider': provider,
+            'label': f'Disabled endpoint: {endpoint_cfg.get("name") or endpoint_id}',
+        }
+
+    models = endpoint_cfg.get('models', []) or []
+    model_cfg = next((model for model in models if model.get('id') == model_id), None)
+    if not model_cfg:
+        return {
+            'valid': False,
+            'state': 'model_missing',
+            'endpoint_id': endpoint_id,
+            'model_id': model_id,
+            'provider': provider,
+            'label': f'Missing model: {model_id}',
+        }
+
+    if not model_cfg.get('enabled', True):
+        return {
+            'valid': False,
+            'state': 'model_disabled',
+            'endpoint_id': endpoint_id,
+            'model_id': model_id,
+            'provider': provider,
+            'label': f'Disabled model: {model_cfg.get("displayName") or model_id}',
+        }
+
+    resolved_provider = str(endpoint_cfg.get('provider') or provider or '').strip().lower()
+    endpoint_name = endpoint_cfg.get('name') or endpoint_cfg.get('connection', {}).get('endpoint') or endpoint_id
+    model_name = model_cfg.get('displayName') or model_cfg.get('deploymentName') or model_cfg.get('modelName') or model_id
+    scope_name = str(endpoint_cfg.get('scope') or '').strip().title()
+    scope_prefix = f'{scope_name} - ' if scope_name else ''
+
+    return {
+        'valid': True,
+        'state': 'valid',
+        'endpoint_id': endpoint_id,
+        'model_id': model_id,
+        'provider': resolved_provider,
+        'label': f'{scope_prefix}{endpoint_name} / {model_name} ({_format_model_provider_label(resolved_provider)})',
+    }
+
+
+def _binding_matches_default_model(binding_summary, default_model_info):
+    return bool(
+        binding_summary.get('valid')
+        and default_model_info.get('valid')
+        and binding_summary.get('endpoint_id') == default_model_info.get('endpoint_id')
+        and binding_summary.get('model_id') == default_model_info.get('model_id')
+    )
+
+
+def _build_agent_migration_key(scope, scope_id, agent_id, agent_name):
+    scope_value = str(scope or '').strip()
+    scope_id_value = str(scope_id or '').strip()
+    agent_id_value = str(agent_id or agent_name or '').strip()
+    return f'{scope_value}:{scope_id_value}:{agent_id_value}'
+
+
+def _clear_legacy_agent_connection_override(agent):
+    if not isinstance(agent, dict):
+        return agent
+
+    for field_name in (
+        'azure_openai_gpt_endpoint',
+        'azure_openai_gpt_key',
+        'azure_openai_gpt_deployment',
+        'azure_openai_gpt_api_version',
+        'azure_agent_apim_gpt_endpoint',
+        'azure_agent_apim_gpt_subscription_key',
+        'azure_agent_apim_gpt_deployment',
+        'azure_agent_apim_gpt_api_version',
+    ):
+        agent[field_name] = ''
+
+    agent['enable_agent_gpt_apim'] = False
+    return agent
+
+
+def _build_default_model_info(settings):
+    default_selection = settings.get('default_model_selection', {}) or {}
+    default_endpoint_id = str(default_selection.get('endpoint_id') or '').strip()
+    default_model_id = str(default_selection.get('model_id') or '').strip()
+    default_provider = str(default_selection.get('provider') or '').strip().lower()
+    binding = {
+        'endpoint_id': default_endpoint_id,
+        'model_id': default_model_id,
+        'provider': default_provider,
+    }
+
+    if not default_endpoint_id or not default_model_id:
+        return {
+            'configured': False,
+            'valid': False,
+            'endpoint_id': default_endpoint_id,
+            'model_id': default_model_id,
+            'provider': default_provider,
+            'state': 'missing',
+            'label': 'No default model selected',
+        }
+
+    binding_summary = _summarize_model_binding(build_combined_model_endpoints(settings), binding)
+    return {
+        'configured': True,
+        'valid': binding_summary['valid'],
+        'endpoint_id': default_endpoint_id,
+        'model_id': default_model_id,
+        'provider': binding_summary.get('provider') or default_provider,
+        'state': binding_summary['state'],
+        'label': binding_summary['label'] if binding_summary['valid'] else 'Saved default model is no longer available',
+    }
+
+
+def _load_all_agent_records_for_default_migration():
+    records = []
+
+    global_agents = list(
+        cosmos_global_agents_container.query_items(
+            query='SELECT * FROM c',
+            enable_cross_partition_query=True,
+        )
+    )
+    for agent in global_agents:
+        cleaned = _strip_cosmos_metadata(agent)
+        cleaned['is_global'] = True
+        cleaned['is_group'] = False
+        cleaned.setdefault('agent_type', 'local')
+        records.append({
+            'scope': 'global',
+            'scope_id': '',
+            'scope_label': 'Global',
+            'agent': cleaned,
+        })
+
+    group_agents = list(
+        cosmos_group_agents_container.query_items(
+            query='SELECT * FROM c',
+            enable_cross_partition_query=True,
+        )
+    )
+    for agent in group_agents:
+        cleaned = _strip_cosmos_metadata(agent)
+        group_id = str(cleaned.get('group_id') or '').strip()
+        cleaned['is_global'] = False
+        cleaned['is_group'] = True
+        cleaned.setdefault('agent_type', 'local')
+        records.append({
+            'scope': 'group',
+            'scope_id': group_id,
+            'scope_label': group_id or 'Unknown group',
+            'agent': cleaned,
+        })
+
+    personal_agents = list(
+        cosmos_personal_agents_container.query_items(
+            query='SELECT * FROM c',
+            enable_cross_partition_query=True,
+        )
+    )
+    for agent in personal_agents:
+        cleaned = _strip_cosmos_metadata(agent)
+        user_id = str(cleaned.get('user_id') or '').strip()
+        cleaned['is_global'] = False
+        cleaned['is_group'] = False
+        cleaned.setdefault('agent_type', 'local')
+        records.append({
+            'scope': 'personal',
+            'scope_id': user_id,
+            'scope_label': user_id or 'Unknown user',
+            'agent': cleaned,
+        })
+
+    return records
+
+
+def _get_endpoint_candidates_for_agent(settings, record, cache):
+    scope = record['scope']
+    scope_id = record['scope_id']
+
+    if scope == 'group' and scope_id:
+        cache_key = f'group:{scope_id}'
+        if cache_key not in cache:
+            cache[cache_key] = build_combined_model_endpoints(settings, group_id=scope_id)
+        return cache[cache_key]
+
+    if scope == 'personal' and scope_id:
+        cache_key = f'personal:{scope_id}'
+        if cache_key not in cache:
+            cache[cache_key] = build_combined_model_endpoints(settings, user_id=scope_id)
+        return cache[cache_key]
+
+    if 'global' not in cache:
+        cache['global'] = build_combined_model_endpoints(settings)
+    return cache['global']
+
+
+def _classify_agent_for_default_model_migration(record, settings, default_model_info, endpoint_cache):
+    agent = record['agent']
+    endpoint_candidates = _get_endpoint_candidates_for_agent(settings, record, endpoint_cache)
+    binding = get_agent_model_binding(agent)
+    binding_summary = _summarize_model_binding(endpoint_candidates, binding)
+    agent_name = str(agent.get('name') or '').strip() or 'Unnamed agent'
+    display_name = str(agent.get('display_name') or '').strip() or agent_name
+    agent_id = str(agent.get('id') or '').strip()
+    agent_type = str(agent.get('agent_type') or 'local').strip().lower() or 'local'
+    selection_key = _build_agent_migration_key(record['scope'], record['scope_id'], agent_id, agent_name)
+    selected_by_default = False
+    can_force_migrate = False
+    migration_action = 'none'
+
+    if is_azure_ai_foundry_agent(agent):
+        migration_status = 'manual_review'
+        reason = 'Foundry agents are managed separately and cannot be rebound from this tool.'
+    elif binding_summary['valid'] and _binding_matches_default_model(binding_summary, default_model_info):
+        migration_status = 'already_migrated'
+        reason = 'Agent is already bound to the saved default model.'
+    elif has_agent_custom_connection_override(agent):
+        migration_status = 'manual_review'
+        if default_model_info['valid']:
+            can_force_migrate = True
+            migration_action = 'force_override_to_default'
+            reason = 'Agent has explicit custom connection values. Select it in review to override those settings and bind it to the saved default model.'
+        else:
+            reason = 'Save a valid default model before overriding explicit custom connection values.'
+    elif binding_summary['valid']:
+        migration_status = 'manual_review'
+        if default_model_info['valid']:
+            can_force_migrate = True
+            migration_action = 'rebind_to_default'
+            reason = 'Agent is already bound to a different model than the saved default. Select it in review to rebind it intentionally.'
+        else:
+            reason = 'Save a valid default model before rebinding agents to a new default.'
+    elif default_model_info['valid'] and can_agent_use_default_multi_endpoint_model(agent):
+        migration_status = 'ready_to_migrate'
+        reason = 'Agent uses inherited/default routing and can be bound to the saved admin default model.'
+        selected_by_default = True
+        migration_action = 'apply_default'
+    else:
+        migration_status = 'needs_default_model'
+        reason = 'Save a valid default model before migrating inherited agents.'
+
+    return {
+        'scope': record['scope'],
+        'scope_id': record['scope_id'],
+        'scope_label': record['scope_label'],
+        'agent_id': agent_id,
+        'agent_name': agent_name,
+        'agent_display_name': display_name,
+        'agent_type': agent_type,
+        'migration_status': migration_status,
+        'reason': reason,
+        'current_binding_state': binding_summary['state'],
+        'current_binding_label': binding_summary['label'],
+        'selection_key': selection_key,
+        'selected_by_default': selected_by_default,
+        'can_force_migrate': can_force_migrate,
+        'migration_action': migration_action,
+        'can_select': bool(selected_by_default or can_force_migrate),
+        'can_migrate': bool(selected_by_default or can_force_migrate),
+        '_raw_agent': agent,
+    }
+
+
+def _build_default_model_agent_migration_preview(settings):
+    default_model_info = _build_default_model_info(settings)
+    endpoint_cache = {}
+    records = [
+        _classify_agent_for_default_model_migration(record, settings, default_model_info, endpoint_cache)
+        for record in _load_all_agent_records_for_default_migration()
+    ]
+
+    status_order = {
+        'ready_to_migrate': 0,
+        'manual_review': 1,
+        'needs_default_model': 2,
+        'already_migrated': 3,
+    }
+    scope_order = {
+        'global': 0,
+        'group': 1,
+        'personal': 2,
+    }
+    records.sort(
+        key=lambda record: (
+            status_order.get(record['migration_status'], 99),
+            scope_order.get(record['scope'], 99),
+            record['scope_label'].lower(),
+            record['agent_display_name'].lower(),
+        )
+    )
+
+    summary = {
+        'total_agents': len(records),
+        'ready_to_migrate': sum(record['migration_status'] == 'ready_to_migrate' for record in records),
+        'needs_default_model': sum(record['migration_status'] == 'needs_default_model' for record in records),
+        'manual_review': sum(record['migration_status'] == 'manual_review' for record in records),
+        'already_migrated': sum(record['migration_status'] == 'already_migrated' for record in records),
+        'selectable_override': sum(record['migration_status'] == 'manual_review' and record['can_force_migrate'] for record in records),
+        'selected_by_default': sum(record['selected_by_default'] for record in records),
+        'selectable_total': sum(record['can_select'] for record in records),
+    }
+    summary['pending_action'] = summary['ready_to_migrate'] + summary['needs_default_model'] + summary['selectable_override']
+
+    return {
+        'default_model': default_model_info,
+        'summary': summary,
+        'agents': [{key: value for key, value in record.items() if key != '_raw_agent'} for record in records],
+        'records': records,
+        'migration_notice_enabled': bool((settings.get('multi_endpoint_migration_notice', {}) or {}).get('enabled', False)),
+    }
+
+
+def _maybe_disable_multi_endpoint_migration_notice(settings, preview):
+    if preview['summary']['ready_to_migrate'] or preview['summary']['needs_default_model']:
+        return False
+
+    notice = settings.get('multi_endpoint_migration_notice', {}) or {}
+    if not notice.get('enabled', False):
+        return False
+
+    notice['enabled'] = False
+    update_settings({'multi_endpoint_migration_notice': notice})
+    return True
 
 # === AGENT GUID GENERATION ENDPOINT ===
 @bpa.route('/api/agents/generate_id', methods=['GET'])
@@ -538,6 +932,7 @@ def set_user_selected_agent():
         "group_name": matched_agent.get('group_name')
     }
     settings_to_update['selected_agent'] = agent
+    settings_to_update['enable_agents'] = True
     update_user_settings(user_id, settings_to_update)
     log_event("User selected agent set", extra={"user_id": user_id, "selected_agent": agent})
     return jsonify({'success': True})
@@ -634,6 +1029,162 @@ def list_agents():
     except Exception as e:
         log_event(f"Error listing agents: {e}", level=logging.ERROR)
         return jsonify({'error': 'Failed to list agents.'}), 500
+
+
+@bpa.route('/api/admin/agents/default-model-migration/preview', methods=['GET'])
+@swagger_route(
+    security=get_auth_security()
+)
+@login_required
+@admin_required
+def preview_default_model_agent_migration():
+    settings = get_settings()
+    if not settings.get('enable_semantic_kernel', False):
+        return jsonify({'error': 'Enable Agents before using default-model review.'}), 400
+    if not settings.get('enable_multi_model_endpoints', False):
+        return jsonify({'error': 'Multi-endpoint model management is not enabled.'}), 400
+
+    preview = _build_default_model_agent_migration_preview(settings)
+    return jsonify({key: value for key, value in preview.items() if key != 'records'})
+
+
+@bpa.route('/api/admin/agents/default-model-migration/run', methods=['POST'])
+@swagger_route(
+    security=get_auth_security()
+)
+@login_required
+@admin_required
+def run_default_model_agent_migration():
+    settings = get_settings()
+    if not settings.get('enable_semantic_kernel', False):
+        return jsonify({'error': 'Enable Agents before using default-model review.'}), 400
+    if not settings.get('enable_multi_model_endpoints', False):
+        return jsonify({'error': 'Multi-endpoint model management is not enabled.'}), 400
+
+    request_data = request.get_json(silent=True) or {}
+    requested_keys = []
+    for value in request_data.get('selected_agent_keys', []) or []:
+        key = str(value or '').strip()
+        if key and key not in requested_keys:
+            requested_keys.append(key)
+
+    preview = _build_default_model_agent_migration_preview(settings)
+    default_model = preview['default_model']
+    if not default_model['valid']:
+        return jsonify({
+            'error': 'A saved default model is required before migrating agents.',
+            'preview': {key: value for key, value in preview.items() if key != 'records'},
+        }), 400
+
+    selectable_records = {
+        record['selection_key']: record
+        for record in preview['records']
+        if record.get('can_select')
+    }
+
+    invalid_requested_keys = [key for key in requested_keys if key not in selectable_records]
+    if invalid_requested_keys:
+        return jsonify({
+            'error': 'One or more selected agents cannot be migrated to the saved default model.',
+            'invalid_selected_agent_keys': invalid_requested_keys,
+            'preview': {key: value for key, value in preview.items() if key != 'records'},
+        }), 400
+
+    if requested_keys:
+        candidates = [selectable_records[key] for key in requested_keys]
+    else:
+        candidates = [record for record in preview['records'] if record.get('selected_by_default')]
+
+    if not candidates:
+        return jsonify({
+            'error': 'Select at least one eligible agent to migrate.',
+            'preview': {key: value for key, value in preview.items() if key != 'records'},
+        }), 400
+
+    migrated_by_scope = {
+        'global': 0,
+        'group': 0,
+        'personal': 0,
+    }
+    failures = []
+    admin_user_id = str(get_current_user_id() or '')
+    admin_profile = session.get('user', {}) or {}
+    admin_email = admin_profile.get('preferred_username', admin_profile.get('email', 'unknown'))
+    override_count = sum(record.get('migration_status') == 'manual_review' for record in candidates)
+
+    for record in candidates:
+        scope = record['scope']
+        scope_id = record['scope_id']
+        agent = dict(record['_raw_agent'])
+        if record.get('migration_action') == 'force_override_to_default':
+            agent = _clear_legacy_agent_connection_override(agent)
+        agent['model_endpoint_id'] = default_model['endpoint_id']
+        agent['model_id'] = default_model['model_id']
+        agent['model_provider'] = default_model['provider']
+
+        try:
+            if scope == 'global':
+                result = save_global_agent(agent, user_id=admin_user_id)
+            elif scope == 'group':
+                result = save_group_agent(scope_id, agent, user_id=admin_user_id)
+            else:
+                result = save_personal_agent(scope_id, agent, actor_user_id=admin_user_id)
+
+            if not result:
+                raise ValueError('Agent save did not return a result.')
+
+            migrated_by_scope[scope] += 1
+        except Exception as exc:
+            log_event(
+                f"Default-model migration failed for agent {record['agent_name']}: {exc}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            failures.append({
+                'scope': scope,
+                'scope_id': scope_id,
+                'agent_id': record['agent_id'],
+                'agent_name': record['agent_name'],
+                'error': str(exc),
+            })
+
+    migrated_count = sum(migrated_by_scope.values())
+    if migrated_count:
+        setattr(builtins, 'kernel_reload_needed', True)
+
+    refreshed_settings = get_settings()
+    refreshed_preview = _build_default_model_agent_migration_preview(refreshed_settings)
+    notice_cleared = _maybe_disable_multi_endpoint_migration_notice(refreshed_settings, refreshed_preview)
+    if notice_cleared:
+        refreshed_settings = get_settings()
+        refreshed_preview = _build_default_model_agent_migration_preview(refreshed_settings)
+
+    log_general_admin_action(
+        admin_user_id=admin_user_id,
+        admin_email=admin_email,
+        action='Applied saved default model to selected agents',
+        description=f'Applied the saved default model endpoint to {migrated_count} selected agents.',
+        additional_context={
+            'migrated_by_scope': migrated_by_scope,
+            'failed_count': len(failures),
+            'selected_agent_count': len(candidates),
+            'override_count': override_count,
+            'default_model_endpoint_id': default_model['endpoint_id'],
+            'default_model_id': default_model['model_id'],
+            'notice_cleared': notice_cleared,
+        },
+    )
+
+    return jsonify({
+        'success': len(failures) == 0,
+        'selected_agent_count': len(candidates),
+        'migrated_count': migrated_count,
+        'override_count': override_count,
+        'migrated_by_scope': migrated_by_scope,
+        'failed': failures,
+        'notice_cleared': notice_cleared,
+        'preview': {key: value for key, value in refreshed_preview.items() if key != 'records'},
+    })
 
 @bpa.route('/api/admin/agents', methods=['POST'])
 @swagger_route(

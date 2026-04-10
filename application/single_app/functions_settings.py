@@ -5,6 +5,22 @@ from functions_appinsights import log_event
 import app_settings_cache
 import inspect
 import copy
+from support_menu_config import (
+    get_default_support_latest_features_visibility,
+    has_visible_support_latest_features,
+    normalize_support_latest_features_visibility,
+)
+
+
+def is_tabular_processing_enabled(settings):
+    """Tabular processing is available whenever enhanced citations is enabled."""
+    return bool((settings or {}).get('enable_enhanced_citations', False))
+import copy
+from support_menu_config import (
+    get_default_support_latest_features_visibility,
+    has_visible_support_latest_features,
+    normalize_support_latest_features_visibility,
+)
 
 
 def is_tabular_processing_enabled(settings):
@@ -106,10 +122,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'multi_endpoint_migrated_at': None,
         'multi_endpoint_migration_notice': {
             'enabled': False,
-            'message': (
-                'Multi-endpoint has been enabled and your existing AI endpoint was migrated. '
-                'Agents using the default connection may need to be updated to select a new model endpoint.'
-            ),
+                'message': '',
             'created_at': None
         },
         'azure_apim_gpt_endpoint': '',
@@ -207,6 +220,15 @@ def get_settings(use_cosmos=False, include_source=False):
             {"label": "Prompt Ideas", "url": "https://example.com/prompts"}
         ],
 
+        # Support Menu
+        'enable_support_menu': False,
+        'support_menu_name': 'Support',
+        'enable_support_send_feedback': True,
+        'support_feedback_recipient_email': '',
+        'enable_support_latest_features': True,
+        'enable_support_latest_feature_documentation_links': False,
+        'support_latest_features_visibility': get_default_support_latest_features_visibility(),
+
         # Enhanced Citations
         'enable_enhanced_citations': False,
         'enable_enhanced_citations_mount': False,
@@ -240,7 +262,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_conversation_archiving': False,
 
         # Processing Thoughts
-        'enable_thoughts': False,
+        'enable_thoughts': True,
 
         # Search and Extract
         'azure_ai_search_endpoint': '',
@@ -350,6 +372,10 @@ def get_settings(use_cosmos=False, include_source=False):
         # Audio file settings with Azure speech service
         "speech_service_endpoint": '',
         "speech_service_location": '',
+        "speech_service_subscription_id": '',
+        "speech_service_resource_group": '',
+        "speech_service_resource_name": '',
+        "speech_service_resource_id": '',
         "speech_service_locale": "en-US",
         "speech_service_key": "",
         "speech_service_authentication_type": "key",  # 'key' or 'managed_identity'
@@ -1028,6 +1054,9 @@ def get_user_settings(user_id):
 
         if 'personal_model_endpoints' not in doc['settings']:
             doc['settings']['personal_model_endpoints'] = []
+        if 'showTutorialButtons' not in doc['settings']:
+            doc['settings']['showTutorialButtons'] = True
+            updated = True
         
         # Try to update email/display_name if missing and available in session
         user = session.get("user", {})
@@ -1069,6 +1098,7 @@ def get_user_settings(user_id):
         display_name = user.get("name")
         doc = {"id": user_id, "settings": {}}
         doc["settings"]["personal_model_endpoints"] = []
+        doc["settings"]["showTutorialButtons"] = True
         if email:
             doc["email"] = email
         if display_name:
@@ -1295,6 +1325,8 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
     sanitized = {}
 
     for k, v in full_settings.items():
+        if k == 'support_feedback_recipient_email':
+            continue
         if any(term in k.lower() for term in sensitive_terms):
             continue
         if k in ('model_endpoints', 'personal_model_endpoints') and isinstance(v, list):
@@ -1318,6 +1350,21 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
         sanitized['custom_logo_dark_base64'] = bool(full_settings.get('custom_logo_dark_base64'))
     if 'custom_favicon_base64' in full_settings:
         sanitized['custom_favicon_base64'] = bool(full_settings.get('custom_favicon_base64'))
+
+    if 'support_latest_features_visibility' in full_settings or 'enable_support_latest_features' in full_settings:
+        sanitized['support_latest_features_visibility'] = normalize_support_latest_features_visibility(
+            full_settings.get('support_latest_features_visibility', {})
+        )
+        sanitized['support_latest_features_has_visible_items'] = has_visible_support_latest_features(full_settings)
+        sanitized['support_feedback_recipient_configured'] = bool(
+            str(full_settings.get('support_feedback_recipient_email') or '').strip()
+        )
+
+    if isinstance(sanitized.get('multi_endpoint_migration_notice'), dict):
+        sanitized['multi_endpoint_migration_notice'] = {
+            **sanitized['multi_endpoint_migration_notice'],
+            'enabled': False,
+        }
 
     return sanitized
 

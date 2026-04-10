@@ -4,6 +4,8 @@ from config import *
 from functions_authentication import *
 from functions_documents import *
 from functions_settings import *
+from functions_group import get_user_groups
+from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
 from utils_cache import invalidate_personal_search_cache
 from functions_debug import *
 from functions_activity_logging import log_document_upload, log_document_metadata_update_transaction
@@ -13,6 +15,102 @@ import requests
 from flask import current_app
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_debug import debug_print
+
+
+def _extract_citation_document_id(chunk, citation_id):
+    document_id = (chunk or {}).get('document_id') if isinstance(chunk, dict) else None
+    if document_id:
+        return str(document_id)
+
+    if citation_id and '_' in citation_id:
+        return citation_id.rsplit('_', 1)[0]
+
+    return citation_id
+
+
+def _try_get_document_json(user_id, document_id, group_id=None, public_workspace_id=None):
+    try:
+        doc_response, status_code = get_document(
+            user_id,
+            document_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
+    except Exception:
+        return None
+
+    if status_code != 200:
+        return None
+
+    if isinstance(doc_response, dict):
+        return doc_response
+
+    get_json = getattr(doc_response, 'get_json', None)
+    if callable(get_json):
+        return get_json()
+
+    return None
+
+
+def _find_accessible_citation_document(user_id, document_id, scope_name):
+    if not user_id or not document_id:
+        return None
+
+    settings = get_settings()
+
+    if scope_name == 'personal':
+        if not settings.get('enable_user_workspace', False):
+            return None
+        return _try_get_document_json(user_id, document_id)
+
+    if scope_name == 'group':
+        if not settings.get('enable_group_workspaces', False):
+            return None
+
+        try:
+            user_groups = get_user_groups(user_id)
+        except Exception:
+            return None
+
+        for group in user_groups:
+            group_id = group.get('id')
+            if not group_id:
+                continue
+
+            document_json = _try_get_document_json(
+                user_id,
+                document_id,
+                group_id=group_id,
+            )
+            if document_json:
+                return document_json
+
+        return None
+
+    if scope_name == 'public':
+        if not settings.get('enable_public_workspaces', False):
+            return None
+
+        try:
+            workspace_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
+        except Exception:
+            return None
+
+        for workspace_id in workspace_ids:
+            if not workspace_id:
+                continue
+
+            document_json = _try_get_document_json(
+                user_id,
+                document_id,
+                public_workspace_id=workspace_id,
+            )
+            if document_json:
+                return document_json
+
+        return None
+
+    return None
 
 def register_route_backend_documents(app):
     @app.route('/api/get_file_content', methods=['POST'])
@@ -428,40 +526,27 @@ def register_route_backend_documents(app):
         # Combine conditions into the WHERE clause
         where_clause = " AND ".join(query_conditions)
 
-        # --- 3) First query: get total count based on filters ---
-        try:
-            count_query_str = f"SELECT VALUE COUNT(1) FROM c WHERE {where_clause}"
-            # debug_print(f"Count Query: {count_query_str}") # Optional Debugging
-            # debug_print(f"Count Params: {query_params}")    # Optional Debugging
-            count_items = list(cosmos_user_documents_container.query_items(
-                query=count_query_str,
-                parameters=query_params,
-                enable_cross_partition_query=True # May be needed if user_id is not partition key
-            ))
-            total_count = count_items[0] if count_items else 0
-
-        except Exception as e:
-            debug_print(f"Error executing count query: {e}") # Log the error
-            return jsonify({"error": f"Error counting documents: {str(e)}"}), 500
-
-
-        # --- 4) Second query: fetch the page of data based on filters ---
+        # --- 3) Query matching documents, then collapse to current revisions before paginating ---
         try:
             offset = (page - 1) * page_size
             data_query_str = f"""
                 SELECT *
                 FROM c
                 WHERE {where_clause}
-                ORDER BY c.{sort_by} {sort_order}
-                OFFSET {offset} LIMIT {page_size}
             """
-            # debug_print(f"Data Query: {data_query_str}") # Optional Debugging
-            # debug_print(f"Data Params: {query_params}")    # Optional Debugging
-            docs = list(cosmos_user_documents_container.query_items(
+            matching_docs = list(cosmos_user_documents_container.query_items(
                 query=data_query_str,
                 parameters=query_params,
-                enable_cross_partition_query=True # May be needed if user_id is not partition key
+                enable_cross_partition_query=True
             ))
+
+            current_docs = sort_documents(
+                select_current_documents(matching_docs),
+                sort_by=sort_by,
+                sort_order=sort_order,
+            )
+            total_count = len(current_docs)
+            docs = current_docs[offset:offset + page_size]
 
             # Add shared_approval_status and owner_id for each doc
             for doc in docs:
@@ -469,7 +554,6 @@ def register_route_backend_documents(app):
                 if doc.get("user_id") == user_id:
                     doc["shared_approval_status"] = "owner"
                 else:
-                    # Find entry for this user in shared_user_ids
                     status = None
                     for entry in doc.get("shared_user_ids", []):
                         if entry.startswith(f"{user_id},"):
@@ -477,7 +561,7 @@ def register_route_backend_documents(app):
                             break
                     doc["shared_approval_status"] = status or "none"
         except Exception as e:
-            debug_print(f"Error executing data query: {e}") # Log the error
+            debug_print(f"Error executing data query: {e}")
             return jsonify({"error": f"Error fetching documents: {str(e)}"}), 500
 
         
@@ -673,15 +757,21 @@ def register_route_backend_documents(app):
         user_id = get_current_user_id()
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
+
+        delete_mode = request.args.get('delete_mode', 'all_versions')
+        if delete_mode not in {'all_versions', 'current_only'}:
+            return jsonify({'error': 'Invalid delete mode'}), 400
         
         try:
-            delete_document(user_id, document_id)
-            delete_document_chunks(document_id)
+            delete_result = delete_document_revision(user_id, document_id, delete_mode=delete_mode)
             
             # Invalidate search cache since document was deleted
             invalidate_personal_search_cache(user_id)
             
-            return jsonify({'message': 'Document deleted successfully'}), 200
+            return jsonify({
+                'message': 'Document deleted successfully',
+                **delete_result,
+            }), 200
         except Exception as e:
             return jsonify({'error': f'Error deleting document: {str(e)}'}), 500
     
@@ -733,53 +823,40 @@ def register_route_backend_documents(app):
         if not citation_id:
             return jsonify({"error": "Missing citation_id"}), 400
 
-        try:
-            search_client_user = CLIENTS['search_client_user']
-            chunk = search_client_user.get_document(key=citation_id)
-            
-            # Check if user owns the document or if document is shared with user
-            chunk_user_id = chunk.get("user_id")
-            chunk_shared_user_ids = chunk.get("shared_user_ids", [])
-            
-            # Allow access if user is owner or in shared_user_ids (prefix match)
-            is_shared = any(
-                entry == user_id or entry.startswith(f"{user_id},")
-                for entry in chunk_shared_user_ids
-            )
-            if chunk_user_id != user_id and not is_shared:
-                return jsonify({"error": "Unauthorized access to citation"}), 403
-
+        def build_citation_response(chunk):
             return jsonify({
                 "cited_text": chunk.get("chunk_text", ""),
                 "file_name": chunk.get("file_name", ""),
                 "page_number": chunk.get("chunk_sequence", 0)
             }), 200
 
+        def get_citation_for_scope(search_client, scope_name):
+            chunk = search_client.get_document(key=citation_id)
+            document_id = _extract_citation_document_id(chunk, citation_id)
+            accessible_document = _find_accessible_citation_document(user_id, document_id, scope_name)
+
+            if not accessible_document:
+                return jsonify({"error": "Unauthorized access to citation"}), 403
+
+            return build_citation_response(chunk)
+
+        try:
+            search_client_user = CLIENTS['search_client_user']
+            return get_citation_for_scope(search_client_user, 'personal')
+
         except ResourceNotFoundError:
             pass
 
         try:
             search_client_group = CLIENTS['search_client_group']
-            group_chunk = search_client_group.get_document(key=citation_id)
-
-            return jsonify({
-                "cited_text": group_chunk.get("chunk_text", ""),
-                "file_name": group_chunk.get("file_name", ""),
-                "page_number": group_chunk.get("chunk_sequence", 0)
-            }), 200
+            return get_citation_for_scope(search_client_group, 'group')
 
         except ResourceNotFoundError:
             pass
         
         try:
             search_client_public = CLIENTS['search_client_public']
-            public_chunk = search_client_public.get_document(key=citation_id)
-
-            return jsonify({
-                "cited_text": public_chunk.get("chunk_text", ""),
-                "file_name": public_chunk.get("file_name", ""),
-                "page_number": public_chunk.get("chunk_sequence", 0)
-            }), 200
+            return get_citation_for_scope(search_client_public, 'public')
         
         except ResourceNotFoundError:
             return jsonify({"error": "Citation not found in user, group, or public docs"}), 404

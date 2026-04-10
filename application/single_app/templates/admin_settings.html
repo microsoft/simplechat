@@ -737,30 +737,46 @@
                             <strong>Required:</strong> Video support configuration is required if workspaces are enabled.
                         </div>
                         
-                        <p class="mb-3">Use the <strong>Video Support</strong> settings in the Workspaces tab to enable and configure video file processing.</p>
+                        <p class="mb-3">Use the <strong>Video Support</strong> settings on the Search &amp; Extract tab to enable video uploads, choose the correct cloud, and supply the ARM account details SimpleChat needs for managed identity access.</p>
                         
                         <ul class="list-group mb-4">
                             <li class="list-group-item d-flex justify-content-between align-items-center">
-                                <span>Video Indexer Endpoint</span>
+                                <span>Cloud / Endpoint Mode</span>
                                 <span id="video-endpoint-badge" class="badge bg-danger">Required</span>
                             </li>
                             <li class="list-group-item d-flex justify-content-between align-items-center">
-                                <span>Video Indexer API Key</span>
-                                <span class="badge bg-secondary">Optional</span>
+                                <span>Resource Group</span>
+                                <span class="badge bg-danger">Required</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Subscription ID</span>
+                                <span class="badge bg-danger">Required</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Account Name</span>
+                                <span class="badge bg-danger">Required</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Account ID and Location</span>
+                                <span class="badge bg-danger">Required</span>
                             </li>
                         </ul>
+
+                        <div class="alert alert-info">
+                            <strong>Managed identity only:</strong> Video Indexer API keys are not used by the current setup. The App Service system-assigned managed identity must have <strong>Contributor</strong> on the Video Indexer resource.
+                        </div>
                     </div>
 
                     <!-- Step 9: Audio File Support -->
                     <div id="walkthrough-step-9" class="walkthrough-step" style="display: none;">
-                        <h4>9. Enable Audio File Support</h4>
-                        <p class="text-muted">Configure support for audio file processing.</p>
+                        <h4>9. Configure Shared Speech Service</h4>
+                        <p class="text-muted">Configure the Azure Speech resource shared by audio uploads, voice input, and voice responses.</p>
                         
                         <div id="audio-support-requirement-alert" class="alert alert-danger">
-                            <strong>Required:</strong> Audio support configuration is required if workspaces are enabled.
+                            <strong>Required:</strong> Configure Speech Service settings when any speech feature is enabled.
                         </div>
                         
-                        <p class="mb-3">Use the <strong>Audio Support</strong> settings on the Search & Extract tab to enable and configure audio file processing.</p>
+                        <p class="mb-3">Use the shared <strong>Azure Speech Service</strong> section on the Search &amp; Extract tab to configure the one Speech resource used by audio uploads, voice input, and voice responses.</p>
                         
                         <ul class="list-group mb-4">
                             <li class="list-group-item d-flex justify-content-between align-items-center">
@@ -771,10 +787,14 @@
                                 <span>Authentication</span>
                                 <span id="speech-auth-badge" class="badge bg-danger">Required</span>
                             </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Speech Resource ID</span>
+                                <span class="badge bg-secondary">Required for managed identity voice responses</span>
+                            </li>
                         </ul>
                         
                         <div class="alert alert-info">
-                            <strong>Note:</strong> If using Managed Identity authentication ensure the Service Principal has been assigned the Cognitive Services Speech Contributor role on the Azure Speech Service and that the Speech endpoint is configured with a custom domain name.
+                            <strong>Note:</strong> All three speech features share the same Speech Service section. For managed identity, use a custom-domain endpoint. Start with the <strong>Cognitive Services Speech User</strong> role; add <strong>Cognitive Services Speech Contributor</strong> if transcription operations still return authorization errors. Voice responses also require the Speech Resource ID because of a Speech SDK requirement.
                             
                             <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When a Cognitive Service has a custom domain name, the endpoint will typically look like https://<resource-name>.cognitiveservices.azure.<com or us> instead of https://<location>.cognitiveservices.azure.<com or us>"></i>
                         </div>
@@ -1008,6 +1028,18 @@
                 <p class="text-muted">
                     Configure AI agents and actions for enhanced functionality. Agents provide AI-driven task automation while Actions extend functionality with custom tools and integrations.
                 </p>
+
+                <div class="alert alert-info d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3" role="alert">
+                    <div>
+                        <strong>Agent model lifecycle review lives in AI Models.</strong>
+                        <div class="small mt-1">
+                            Use AI Models to review inherited agents, selectively override explicit agent model choices, and move agents to newer default models as costs or model releases change.
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-outline-primary btn-sm align-self-start" data-open-admin-tab="#ai-models">
+                        <i class="bi bi-box-arrow-up-right me-1"></i>Open AI Models
+                    </button>
+                </div>
                 
                 <div class="alert alert-warning mb-3" role="alert">
                     <strong>Note:</strong> All changes to global agents and actions require a restart of the web app to take effect.
@@ -1631,6 +1663,110 @@
                     </div>
                 </div>
 
+                <div class="card p-3 mb-3" id="support-menu-section">
+                    <h5>
+                        <i class="bi bi-life-preserver me-2"></i>Support
+                    </h5>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="enable_support_menu" name="enable_support_menu"
+                            {% if settings.enable_support_menu %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_support_menu">
+                            Enable Support Menu for End Users
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Display a Support menu in navigation for signed-in users with the User role."></i>
+                    </div>
+                    <p class="text-muted small">When enabled, users can access Support destinations like Send Feedback and Latest Features directly from navigation.</p>
+
+                    <div id="support_menu_settings" {% if not settings.enable_support_menu %}style="display: none;"{% endif %}>
+                        <div class="mb-3">
+                            <label for="support_menu_name" class="form-label">Menu Name</label>
+                            <input type="text" class="form-control" id="support_menu_name" name="support_menu_name"
+                                   value="{{ settings.support_menu_name or 'Support' }}" placeholder="Support">
+                            <small class="form-text text-muted">This name will appear in user navigation as the Support menu title.</small>
+                        </div>
+
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" id="enable_support_send_feedback" name="enable_support_send_feedback"
+                                {% if settings.enable_support_send_feedback %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="enable_support_send_feedback">
+                                Enable Send Feedback Destination
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to prepare support feedback emails that route to your internal recipient."></i>
+                        </div>
+
+                        <div class="mb-3" id="support_feedback_recipient_group" {% if not settings.enable_support_send_feedback %}style="display: none;"{% endif %}>
+                            <label for="support_feedback_recipient_email" class="form-label">Support Recipient Email</label>
+                            <input type="email" class="form-control" id="support_feedback_recipient_email" name="support_feedback_recipient_email"
+                                   value="{{ settings.support_feedback_recipient_email or '' }}" placeholder="support@contoso.com">
+                            <small class="form-text text-muted">User Send Feedback drafts will be addressed to this internal email address.</small>
+                        </div>
+
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" id="enable_support_latest_features" name="enable_support_latest_features"
+                                {% if settings.enable_support_latest_features %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="enable_support_latest_features">
+                                Enable Latest Features Destination
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Show a user-facing Latest Features page from the Support menu."></i>
+                        </div>
+
+                        <div id="support_latest_features_settings" {% if not settings.enable_support_latest_features %}style="display: none;"{% endif %}>
+                            <h6 class="mt-3">User-Facing Latest Features</h6>
+                            <p class="text-muted small">Choose which recent features are shared on the user Latest Features page. Deployment and Redis start unchecked because they are mainly admin-facing rollout and infrastructure topics.</p>
+                            <div class="form-check form-switch mb-3">
+                                <input class="form-check-input" type="checkbox" id="enable_support_latest_feature_documentation_links" name="enable_support_latest_feature_documentation_links"
+                                    {% if settings.enable_support_latest_feature_documentation_links %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="enable_support_latest_feature_documentation_links">
+                                    Show Simple Chat Documentation Guide Links
+                                </label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Show public documentation guide buttons alongside the in-app Latest Features shortcuts. This is disabled by default."></i>
+                                <small class="form-text text-muted d-block mt-1">When enabled, user-facing Latest Features cards can show public guide buttons in addition to the direct in-app shortcuts.</small>
+                            </div>
+                            {% for release_group in support_latest_feature_release_groups %}
+                            {% set checklist_collapse_id = release_group.collapse_id ~ 'Checklist' %}
+                            <div class="card border-0 bg-body-tertiary mb-3">
+                                <div class="card-body p-3">
+                                    <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-3">
+                                        <div>
+                                            <h6 class="mb-1">{{ release_group.label }}{% if release_group.release_version %}<span class="badge bg-light text-dark ms-2">v{{ release_group.release_version }}</span>{% endif %}</h6>
+                                            <p class="text-muted small mb-0">{{ release_group.description }}</p>
+                                        </div>
+                                        {% if not release_group.default_expanded %}
+                                        <button
+                                            type="button"
+                                            class="btn btn-sm btn-outline-secondary"
+                                            data-bs-toggle="collapse"
+                                            data-bs-target="#{{ checklist_collapse_id }}"
+                                            aria-expanded="false"
+                                            aria-controls="{{ checklist_collapse_id }}"
+                                        >
+                                            Show {{ release_group.label }}
+                                        </button>
+                                        {% endif %}
+                                    </div>
+                                    <div {% if not release_group.default_expanded %}class="collapse mt-3" id="{{ checklist_collapse_id }}"{% else %}class="mt-3"{% endif %}>
+                                        <div class="row g-2">
+                                            {% for feature in release_group.features %}
+                                            <div class="col-md-6">
+                                                <div class="form-check border rounded p-3 h-100">
+                                                    <input class="form-check-input" type="checkbox" id="support_latest_feature_{{ feature.id }}" name="support_latest_feature_{{ feature.id }}"
+                                                        {% if settings.support_latest_features_visibility.get(feature.id, true) %}checked{% endif %}>
+                                                    <label class="form-check-label ms-2" for="support_latest_feature_{{ feature.id }}">
+                                                        <span class="fw-semibold d-block">{{ feature.title }}</span>
+                                                        <span class="text-muted small">{{ feature.summary }}</span>
+                                                    </label>
+                                                </div>
+                                            </div>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+
                 <div class="card p-3 mb-3" id="external-links-section">
                     <h5>
                         <i class="bi bi-box-arrow-up-right me-2"></i>External Links
@@ -1777,6 +1913,35 @@
                 </p>
                 <div class="alert alert-primary" role="alert">
                     This tab is intentionally curated. It groups related improvements together and mirrors a small number of high-impact settings so admins can enable them from the same overview.
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-release-notifications-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-megaphone me-2"></i>Registered / Unregistered Badge
+                            </h5>
+                            <p class="text-muted mb-0">The badge next to the Admin Settings version number shows whether this admin instance is registered for latest release and community call notifications.</p>
+                        </div>
+                        <a href="#latestFeaturesReleaseNotifications" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesReleaseNotifications">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesReleaseNotifications">
+                        <div class="card card-body">
+                            <div class="alert alert-secondary mb-3" role="alert">
+                                Admin-only explainer: this badge belongs to Admin Settings only and does not need to appear in the user-facing Latest Features pages.
+                            </div>
+                            <p class="mb-2">Use this badge as the quick status check for whether your environment is already registered to receive SimpleChat release updates.</p>
+                            <ul class="mb-0">
+                                <li><strong>Unregistered</strong> means this environment has not saved release notification registration details yet.</li>
+                                <li><strong>Registered</strong> means the environment already has saved contact details for release and community call notifications.</li>
+                                <li>Clicking the badge opens the registration modal where admins can add or edit the name, email, and organization for this instance.</li>
+                                <li>Submitting the form opens a prefilled email draft to <strong>simplechat@microsoft.com</strong> and stores the registration details back in Admin Settings.</li>
+                                <li>The badge lives beside the version number at the top of Admin Settings so admins can confirm status without hunting through tabs.</li>
+                            </ul>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="card p-3 mb-3 latest-feature-card" id="latest-features-deployment-card">
@@ -1936,6 +2101,83 @@
                     </div>
                 </div>
 
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-model-selection-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-cpu me-2"></i>Multi-Endpoint GPT Selection
+                            </h5>
+                            <p class="text-muted mb-0">Admins can expose multiple GPT choices across Azure OpenAI and Azure AI Foundry, set a saved default fallback model, and now review agent rebinding in a modal before applying changes.</p>
+                        </div>
+                        <a href="#latestFeaturesModelSelection" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesModelSelection">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesModelSelection">
+                        <div class="card card-body">
+                            <p class="mb-2">This is the high-value admin control for teams that want broader GPT choice without locking every workflow to a single deployment.</p>
+                            <ul class="mb-3">
+                                <li>Configure multiple model endpoints and choose which GPT deployments are available to users.</li>
+                                <li>Set a default fallback model so summarization, agent requests, and other background flows still resolve a usable GPT when an explicit selection is missing.</li>
+                                <li>Use the admin-only Agent Default Model Review modal to inspect inherited agents, search and filter large agent sets, and explicitly choose which review rows should be overridden to the saved default.</li>
+                            </ul>
+                            <div class="alert alert-info mb-3" role="alert">
+                                <strong>Admin-only workflow:</strong> The review modal is intended for administrators who need to standardize agents on a new default model, control cost, or intentionally replace older explicit bindings as new models are released.
+                            </div>
+                            <div class="alert alert-secondary mb-3" role="alert">
+                                Review endpoint and fallback configuration in the <a href="#ai-models" onclick="switchTab(event, 'ai-models-tab')">AI Models</a> tab.
+                            </div>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/model_selection_multi_endpoint_admin.png') }}"
+                                    data-latest-feature-image-title="Admin Multi-Endpoint Model Management"
+                                    data-latest-feature-image-caption="Admin endpoint table showing Azure OpenAI and Foundry model endpoints with configured GPT choices."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/model_selection_multi_endpoint_admin.png') }}" alt="Admin multi-endpoint model management screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Admin Endpoint Table</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/agent_default_model_review_summary.png') }}"
+                                    data-latest-feature-image-title="Agent Default Model Review Summary"
+                                    data-latest-feature-image-caption="AI Models summary card showing recommended agents, explicit override candidates, and the saved default model before opening the review modal."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/agent_default_model_review_summary.png') }}" alt="Agent default model review summary screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Review Summary Card</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/agent_default_model_review_action.png') }}"
+                                    data-latest-feature-image-title="Agent Default Model Review Modal"
+                                    data-latest-feature-image-caption="Admin modal for searching, filtering, and selecting the exact agents that should adopt the saved default model."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/agent_default_model_review_action.png') }}" alt="Agent default model review modal screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Review Modal Action</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="card p-3 mb-3 latest-feature-card" id="latest-features-tabular-card">
                     <div class="latest-feature-header">
                         <div class="latest-feature-copy">
@@ -2061,6 +2303,122 @@
                                         <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/tabular_analysis_enhanced_citations.png') }}" alt="Tabular analysis enhanced citations screenshot">
                                         <div class="latest-feature-thumbnail-body">
                                             <div class="latest-feature-thumbnail-title">Tabular Analysis Preview</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-citation-improvements-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-journal-text me-2"></i>Citation Improvements
+                            </h5>
+                            <p class="text-muted mb-0">Conversation history citation replay and citation amplification keep more grounded evidence available across follow-up turns without making the chat history unwieldy.</p>
+                        </div>
+                        <a href="#latestFeaturesCitationImprovements" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesCitationImprovements">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesCitationImprovements">
+                        <div class="card card-body">
+                            <p class="mb-2">These improvements make follow-up questions more reliable because the system can reuse prior grounded evidence instead of relying only on the assistant's last prose response.</p>
+                            <ul class="mb-3">
+                                <li>Conversation history citations carry forward prior citation summaries so later prompts can reuse earlier grounded results.</li>
+                                <li>Citation amplification keeps richer supporting payloads available for inspection and export while keeping prompt history compact.</li>
+                                <li>This is especially useful for larger or tabular outputs where users often ask multiple follow-up questions against the same evidence chain.</li>
+                            </ul>
+                            <div class="alert alert-secondary mb-3" role="alert">
+                                These improvements complement the <a href="#citation" onclick="switchTab(event, 'citation-tab')">Citations</a> configuration and the enhanced-citation storage flow.
+                            </div>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/citation_improvements_history_replay.png') }}"
+                                    data-latest-feature-image-title="Conversation History Citation Replay"
+                                    data-latest-feature-image-caption="Follow-up chat where prior citation summaries are replayed into the next turn's reasoning context."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/citation_improvements_history_replay.png') }}" alt="Conversation history citation replay screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">History Citation Replay</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/citation_improvements_amplified_results.png') }}"
+                                    data-latest-feature-image-title="Citation Amplification Details"
+                                    data-latest-feature-image-caption="Expanded citation detail showing amplified supporting evidence and fuller artifact-backed results."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/citation_improvements_amplified_results.png') }}" alt="Citation amplification details screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Amplified Citation Detail</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-document-versioning-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-files me-2"></i>Document Revisioning and Management
+                            </h5>
+                            <p class="text-muted mb-0">Uploading a document with the same name now creates a new revision instead of overwriting the previous file, while older versions remain available for traceability and later analysis.</p>
+                        </div>
+                        <a href="#latestFeaturesDocumentVersioning" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesDocumentVersioning">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesDocumentVersioning">
+                        <div class="card card-body">
+                            <p class="mb-2">This improves both document management and citation integrity for long-lived conversations that span multiple document updates.</p>
+                            <ul class="mb-3">
+                                <li>Same-name uploads create a revision family with an incremented current version instead of destroying prior history.</li>
+                                <li>Previous versions are retained for analysis or comparison, while workspace and search views focus on the current revision by default.</li>
+                                <li>Older conversations can still resolve citations against the correct historical document version.</li>
+                                <li>Updated revisions inherit document classifications and tags so admins do not have to reapply metadata after every refresh.</li>
+                            </ul>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/document_revision_workspace.png') }}"
+                                    data-latest-feature-image-title="Current Revision in Workspace"
+                                    data-latest-feature-image-caption="Workspace document list showing the current revision state for same-name uploads."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/document_revision_workspace.png') }}" alt="Document revision workspace screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Current Revision View</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/document_revision_delete_compare.png') }}"
+                                    data-latest-feature-image-title="Revision Actions and Comparison"
+                                    data-latest-feature-image-caption="Version-aware actions such as comparison, analysis of previous revisions, or current-versus-all-versions deletion choices."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/document_revision_delete_compare.png') }}" alt="Document revision actions screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Revision Actions</div>
                                             <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
                                         </div>
                                     </div>
@@ -2257,6 +2615,81 @@
                     </div>
                 </div>
 
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-fact-memory-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-journal-bookmark me-2"></i>Fact Memory
+                            </h5>
+                            <p class="text-muted mb-0">Users can now save Instructions and Facts on their profile so the assistant can apply durable preferences every time and recall relevant personal context only when needed.</p>
+                        </div>
+                        <a href="#latestFeaturesFactMemory" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesFactMemory">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesFactMemory">
+                        <div class="card card-body">
+                            <p class="mb-2">Fact Memory gives users a compact profile experience for managing two distinct memory types: always-on Instructions and relevance-based Facts.</p>
+                            <ul class="mb-3">
+                                <li>Instructions act like stable user preferences and are applied on every prompt unless the current message overrides them.</li>
+                                <li>Facts are recalled only when relevant and now appear as dedicated thought and citation entries in chat.</li>
+                                <li>The profile page includes a compact add flow plus a popup manager for search, paging, edit, retag, and delete actions.</li>
+                                <li>Admins can choose whether this announcement is visible on the user-facing Latest Features page from <strong>General > User-Facing Latest Features</strong>.</li>
+                            </ul>
+                            <div class="alert alert-secondary mb-3" role="alert">
+                                Use the <a href="#general" onclick="switchTab(event, 'general-tab')">General</a> tab when you want to show or hide the Fact Memory announcement for end users.
+                            </div>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/facts_memory_view_profile.png') }}"
+                                    data-latest-feature-image-title="Fact Memory on Profile"
+                                    data-latest-feature-image-caption="Profile page section for adding saved instructions and facts and opening the manager modal."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/facts_memory_view_profile.png') }}" alt="Profile fact memory section screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Profile Entry Point</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/fact_memory_management.png') }}"
+                                    data-latest-feature-image-title="Manage Fact Memories"
+                                    data-latest-feature-image-caption="Compact popup manager showing saved instructions and facts with search, paging, edit, and type controls."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/fact_memory_management.png') }}" alt="Fact memory management modal screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Memory Manager</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/facts_citation_and_thoughts.png') }}"
+                                    data-latest-feature-image-title="Instruction Memory and Fact Recall in Chat"
+                                    data-latest-feature-image-caption="Chat response showing instruction memory and fact recall surfaced as dedicated thoughts and citations."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/facts_citation_and_thoughts.png') }}" alt="Chat fact memory thoughts and citations screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Chat Recall</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="card p-3 mb-3 latest-feature-card" id="latest-features-redis-card">
                     <div class="latest-feature-header">
                         <div class="latest-feature-copy">
@@ -2408,6 +2841,155 @@
                         </div>
                     </div>
                 </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-support-menu-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-life-preserver me-2"></i>Support Menu
+                            </h5>
+                            <p class="text-muted mb-0">Support can now expose user-facing Latest Features and Send Feedback workflows directly in everyday navigation.</p>
+                        </div>
+                        <a href="#latestFeaturesSupportMenu" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesSupportMenu">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesSupportMenu">
+                        <div class="card card-body">
+                            <div class="alert alert-success mb-3" role="alert">
+                                Support is now configurable from the General tab so admins can choose exactly what users see.
+                            </div>
+                            <ul class="mb-3">
+                                <li>Admins can enable or disable the Support menu and rename it for user navigation.</li>
+                                <li>Send Feedback now routes users to an internal recipient email address defined by admins.</li>
+                                <li>The user-facing Latest Features page can be curated feature-by-feature so teams only share the items they want visible.</li>
+                                <li>The General tab now includes a dedicated User-Facing Latest Features checklist so admins can quickly confirm which announcements will be visible to end users.</li>
+                            </ul>
+                            <a href="#general" onclick="switchTab(event, 'general-tab')" class="btn btn-outline-primary align-self-start mb-3">
+                                <i class="bi bi-gear me-1"></i>Open General Settings
+                            </a>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/support_menu_entry.png') }}"
+                                    data-latest-feature-image-title="User Support Menu Entry"
+                                    data-latest-feature-image-caption="User-facing Support menu entry exposing Latest Features and Send Feedback."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/support_menu_entry.png') }}" alt="Support menu entry screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Support Menu Entry</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/enable_support_menu_for_end_users.png') }}"
+                                    data-latest-feature-image-title="User-Facing Latest Features in General Settings"
+                                    data-latest-feature-image-caption="General tab Support settings showing Enable Support Menu for End Users and the User-Facing Latest Features checklist that controls what gets shared."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/enable_support_menu_for_end_users.png') }}" alt="User-facing latest features checklist in general settings screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">General Tab Feature Sharing</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {% for release_group in support_latest_feature_release_groups_preview %}
+                {% if release_group.id == 'previous_release' %}
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-previous-release-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-clock-history me-2"></i>{{ release_group.label }}
+                            </h5>
+                            <p class="text-muted mb-0">{{ release_group.description }}</p>
+                        </div>
+                        <a href="#latestFeaturesPreviousRelease" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesPreviousRelease">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesPreviousRelease">
+                        <div class="card card-body">
+                            <div class="alert alert-secondary mb-3" role="alert">
+                                These were the headline user-facing items in the earlier v{{ release_group.release_version }} release set. Keeping them here gives admins a simple N and N-1 view without mixing older items into the current release list.
+                            </div>
+                            <div class="row g-3">
+                                {% for feature in release_group.features %}
+                                <div class="col-xl-6">
+                                    <div class="border rounded p-3 h-100 bg-body-tertiary">
+                                        <div class="d-flex flex-column gap-3 h-100">
+                                            <div class="d-flex align-items-start justify-content-between gap-3">
+                                                <div>
+                                                    <h6 class="mb-1"><i class="bi {{ feature.icon }} me-2"></i>{{ feature.title }}</h6>
+                                                    <p class="text-muted small mb-0">{{ feature.summary }}</p>
+                                                </div>
+                                                <span class="badge {% if settings.support_latest_features_visibility.get(feature.id, true) %}bg-success{% else %}bg-secondary{% endif %}">
+                                                    {% if settings.support_latest_features_visibility.get(feature.id, true) %}Shared with Users{% else %}Hidden from Users{% endif %}
+                                                </span>
+                                            </div>
+                                            <p class="small mb-0">{{ feature.details }}</p>
+                                            {% if feature.guidance %}
+                                            <ul class="small mb-0">
+                                                {% for tip in feature.guidance %}
+                                                <li>{{ tip }}</li>
+                                                {% endfor %}
+                                            </ul>
+                                            {% endif %}
+                                            {% if feature.images %}
+                                            <div class="latest-feature-gallery">
+                                                {% for image in feature.images %}
+                                                <button
+                                                    type="button"
+                                                    class="latest-feature-thumbnail-trigger"
+                                                    data-latest-feature-image-src="{{ url_for('static', filename=image.path) }}"
+                                                    data-latest-feature-image-title="{{ image.title }}"
+                                                    data-latest-feature-image-caption="{{ image.caption }}"
+                                                >
+                                                    <div class="latest-feature-thumbnail-card h-100">
+                                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename=image.path) }}" alt="{{ image.alt }}">
+                                                        <div class="latest-feature-thumbnail-body">
+                                                            <div class="latest-feature-thumbnail-title">{{ image.label }}</div>
+                                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                                        </div>
+                                                    </div>
+                                                </button>
+                                                {% endfor %}
+                                            </div>
+                                            {% endif %}
+                                            {% if feature.actions %}
+                                            <div class="d-flex flex-wrap gap-2 mt-auto pt-2">
+                                                {% for action in feature.actions %}
+                                                <a
+                                                    class="btn btn-outline-primary btn-sm"
+                                                    href="{% if action.href %}{{ action.href }}{% else %}{{ url_for(action.endpoint) }}{% if action.fragment %}#{{ action.fragment }}{% endif %}{% endif %}"
+                                                    {% if action.is_external %}target="_blank" rel="noopener noreferrer"{% endif %}
+                                                >
+                                                    <i class="bi {{ action.icon }} me-1"></i>{{ action.label }}
+                                                </a>
+                                                {% endfor %}
+                                            </div>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            <p class="text-muted small mb-0 mt-3">Visibility still comes from <strong>General &gt; User-Facing Latest Features</strong>, so admins can keep previous release content available without promoting every item forever.</p>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+                {% endfor %}
             </div>
 
             
@@ -2432,10 +3014,130 @@
                     </div>
                     {% endif %}
 
-                    <div id="multi-endpoint-warning" class="alert alert-warning {% if not settings.multi_endpoint_migration_notice.enabled %}d-none{% endif %}">
-                        <i class="bi bi-exclamation-triangle me-2"></i>
-                        <span>{{ settings.multi_endpoint_migration_notice.message }}</span>
+                    {% if settings.enable_semantic_kernel %}
+                    <div id="agent-default-model-migration-panel" class="border rounded p-3 mt-3">
+                        <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
+                            <div>
+                                <h6 class="mb-1"><i class="bi bi-arrow-repeat me-2"></i>Agent Default Model Review</h6>
+                                <p class="text-muted small mb-0">
+                                    Review local agents in a modal, bulk-bind inherited agents to the saved default model endpoint, and explicitly override selected agent model choices when you need to manage cost or move to newer models.
+                                </p>
+                            </div>
+                            <div class="d-flex flex-wrap gap-2">
+                                <button type="button" class="btn btn-outline-primary btn-sm" id="preview-agent-default-model-migration-btn">
+                                    <i class="bi bi-search me-1"></i>Review And Select Agents
+                                </button>
+                            </div>
+                        </div>
+                        <div id="agent-default-model-migration-status" class="form-text mt-2">
+                            {% if settings.enable_multi_model_endpoints %}
+                            Save your AI model settings before reviewing or migrating agents.
+                            {% else %}
+                            Enable multi-endpoint model management to review and rebind agents to a saved default model.
+                            {% endif %}
+                        </div>
+                        <div id="agent-default-model-migration-callout" class="alert alert-info d-none mt-3 mb-0" role="alert"></div>
                     </div>
+
+                    <div id="agent-default-model-migration-results" class="d-none mt-3">
+                        <div class="d-flex flex-wrap gap-2 mb-3">
+                            <span class="badge text-bg-primary" id="agent-default-model-ready-count">Ready: 0</span>
+                            <span class="badge text-bg-warning" id="agent-default-model-needs-default-count">Needs Default: 0</span>
+                            <span class="badge text-bg-secondary" id="agent-default-model-manual-count">Manual Review: 0</span>
+                            <span class="badge text-bg-success" id="agent-default-model-migrated-count">Already Migrated: 0</span>
+                        </div>
+                        <div class="small text-muted mb-2" id="agent-default-model-current-label"></div>
+                        <div class="small text-muted">
+                            Open the review modal to search, filter, and selectively rebind agents to the saved default model.
+                        </div>
+                    </div>
+
+                    <div class="modal fade" id="agentDefaultModelMigrationModal" tabindex="-1" aria-labelledby="agentDefaultModelMigrationModalLabel" aria-hidden="true">
+                        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+                            <div class="modal-content">
+                                <div class="modal-header">
+                                    <div>
+                                        <h5 class="modal-title" id="agentDefaultModelMigrationModalLabel">Agent Default Model Review</h5>
+                                        <p class="text-muted small mb-0">
+                                            Search, filter, and explicitly choose which agents should adopt the saved default model. Manual review rows are never selected automatically.
+                                        </p>
+                                    </div>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <div class="row g-2 mb-3">
+                                        <div class="col-lg-5">
+                                            <label for="agent-default-model-migration-search" class="form-label small mb-1">Search Agents</label>
+                                            <input type="search" class="form-control form-control-sm" id="agent-default-model-migration-search" placeholder="Search by scope, agent name, binding, or reason" />
+                                        </div>
+                                        <div class="col-lg-3">
+                                            <label for="agent-default-model-migration-filter" class="form-label small mb-1">Filter</label>
+                                            <select class="form-select form-select-sm" id="agent-default-model-migration-filter">
+                                                <option value="all">All Agents</option>
+                                                <option value="selected">Selected</option>
+                                                <option value="ready_to_migrate">Ready</option>
+                                                <option value="manual_review">Manual Review</option>
+                                                <option value="needs_default_model">Needs Default</option>
+                                                <option value="already_migrated">Already On Default</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-lg-4">
+                                            <label class="form-label small mb-1">Selection Tools</label>
+                                            <div class="d-flex flex-wrap gap-2">
+                                                <button type="button" class="btn btn-outline-primary btn-sm" id="select-ready-agent-default-model-migration-btn">Select Recommended</button>
+                                                <button type="button" class="btn btn-outline-secondary btn-sm" id="select-manual-agent-default-model-migration-btn">Add Review Overrides</button>
+                                                <button type="button" class="btn btn-outline-danger btn-sm" id="clear-agent-default-model-migration-selection-btn">Clear</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="small text-muted mb-3" id="agent-default-model-migration-selection-summary">No agents selected.</div>
+                                    <div class="table-responsive">
+                                        <table class="table table-sm table-bordered align-middle">
+                                            <thead>
+                                                <tr>
+                                                    <th style="width: 80px;">Select</th>
+                                                    <th>Scope</th>
+                                                    <th>Agent</th>
+                                                    <th>Status</th>
+                                                    <th>Current Binding</th>
+                                                    <th>Reason</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="agent-default-model-migration-tbody">
+                                                <tr>
+                                                    <td colspan="6" class="text-center text-muted py-3">Run a review to load migration candidates.</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                                <div class="modal-footer d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2">
+                                    <div class="small text-muted">
+                                        Review overrides are for intentional changes when you want to replace an agent's explicit model or legacy custom connection with the saved default model.
+                                    </div>
+                                    <div class="d-flex gap-2">
+                                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+                                        <button type="button" class="btn btn-primary" id="run-agent-default-model-migration-btn">Apply Saved Default To Selected</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    {% else %}
+                    <div id="agent-default-model-migration-disabled-state" class="alert alert-info mt-3" role="alert">
+                        <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
+                            <div>
+                                <h6 class="mb-1"><i class="bi bi-info-circle me-2"></i>Agent Default Model Review</h6>
+                                <p class="small mb-0">
+                                    Enable Agents first to use default-model review in AI Models. Once enabled, admins can use it to move inherited agents to new defaults, selectively override explicit agent model choices, and manage costs as models evolve.
+                                </p>
+                            </div>
+                            <button type="button" class="btn btn-outline-primary btn-sm align-self-start" data-open-admin-tab="#agents">
+                                <i class="bi bi-box-arrow-up-right me-1"></i>Open Agents Settings
+                            </button>
+                        </div>
+                    </div>
+                    {% endif %}
 
                     <div id="default-model-selection-wrapper" class="mt-3">
                         <label for="default-model-selection" class="form-label">Default model for fallbacks</label>
@@ -4878,29 +5580,83 @@
                         </div>
                     </div>
 
+                    {% set public_video_indexer_endpoint = "https://api.videoindexer.ai" %}
+                    {% set government_video_indexer_endpoint = "https://api.videoindexer.ai.azure.us" %}
+                    {% set configured_video_indexer_endpoint = settings.video_indexer_endpoint or default_video_indexer_endpoint %}
+                    {% if configured_video_indexer_endpoint == government_video_indexer_endpoint %}
+                        {% set video_indexer_cloud = "usgovernment" %}
+                    {% elif configured_video_indexer_endpoint == public_video_indexer_endpoint %}
+                        {% set video_indexer_cloud = "public" %}
+                    {% else %}
+                        {% set video_indexer_cloud = "custom" %}
+                    {% endif %}
+                    {% if azure_environment == "usgovernment" %}
+                        {% set azure_environment_label = "Azure Government" %}
+                    {% elif azure_environment == "custom" %}
+                        {% set azure_environment_label = "Custom Cloud" %}
+                    {% else %}
+                        {% set azure_environment_label = "Azure Public / Commercial" %}
+                    {% endif %}
+
                     <!-- Video Indexer Configuration (collapsible) -->
-                    <div id="video_indexer_settings" class="border-top pt-3"
-                            {% if not settings.enable_video_file_support %}style="display: none;"{% endif %}>
+                    <div id="video_indexer_settings" class="border-top pt-3{% if not settings.enable_video_file_support %} d-none{% endif %}">
                         <h5 class="mb-3">
                             <i class="bi bi-gear-fill me-2"></i>Azure Video Indexer Configuration
                         </h5>
                         <p class="text-muted small mb-3">Connect to your Azure Video Indexer resource for advanced video processing and content extraction.</p>
                         
                         <div class="alert alert-info">
-                            <strong><i class="bi bi-info-circle"></i> Prerequisites:</strong>
+                            <strong><i class="bi bi-info-circle"></i> Identity overview:</strong>
                             <ul class="mb-0 mt-2">
-                                <li>App Service must have System-assigned Managed Identity enabled</li>
-                                <li>Managed Identity must have <strong>Contributor</strong> role on the Video Indexer resource</li>
+                                <li>Video Indexer can use its own managed identity to reach the linked Storage account during account creation.</li>
+                                <li>SimpleChat authenticates to Video Indexer with the <strong>App Service system-assigned managed identity</strong>.</li>
+                                <li>The App Service managed identity must have <strong>Contributor</strong> on the Video Indexer resource.</li>
                                 <li>See <a href="https://learn.microsoft.com/azure/azure-video-indexer/connect-to-azure" target="_blank">Azure Video Indexer documentation</a> for setup details</li>
                             </ul>
                         </div>
 
                         <div class="mb-3">
-                            <label for="video_indexer_endpoint" class="form-label">API Endpoint</label>
-                            <input type="text" class="form-control"
-                                id="video_indexer_endpoint" name="video_indexer_endpoint"
-                                value="{{ settings.video_indexer_endpoint or 'https://api.videoindexer.ai' }}">
-                            <div class="form-text">Default: https://api.videoindexer.ai</div>
+                            <label for="video_indexer_cloud" class="form-label">Cloud / Endpoint Mode</label>
+                            <select
+                                class="form-select"
+                                id="video_indexer_cloud"
+                                data-public-endpoint="{{ public_video_indexer_endpoint }}"
+                                data-government-endpoint="{{ government_video_indexer_endpoint }}"
+                                data-runtime-cloud="{{ azure_environment }}"
+                            >
+                                <option value="public" {% if video_indexer_cloud == 'public' %}selected{% endif %}>Azure Public / Commercial</option>
+                                <option value="usgovernment" {% if video_indexer_cloud == 'usgovernment' %}selected{% endif %}>Azure Government</option>
+                                <option value="custom" {% if video_indexer_cloud == 'custom' %}selected{% endif %}>Custom Endpoint</option>
+                            </select>
+                            <div class="form-text">Choose the endpoint family that matches your deployed cloud. Use Custom only when you need a non-standard Video Indexer endpoint.</div>
+                        </div>
+
+                        <div class="alert alert-secondary py-2">
+                            <strong>Current App Service environment:</strong> {{ azure_environment_label }}. This selector saves the Video Indexer API endpoint. If you are switching between Azure Public, Azure Government, or a custom cloud, update <code>AZURE_ENVIRONMENT</code> in your App Service configuration as well.
+                        </div>
+
+                        <div class="alert alert-warning py-2 mb-3 d-none" id="video_indexer_cloud_mismatch_alert">
+                            The selected Video Indexer cloud does not match this app's current <code>AZURE_ENVIRONMENT</code>. Update the App Service configuration if you are moving to a different cloud.
+                        </div>
+
+                        <input type="hidden" id="video_indexer_endpoint" name="video_indexer_endpoint" value="{{ configured_video_indexer_endpoint }}" />
+
+                        <div class="mb-3{% if video_indexer_cloud != 'custom' %} d-none{% endif %}" id="video_indexer_custom_endpoint_group">
+                            <label for="video_indexer_custom_endpoint" class="form-label">Custom API Endpoint</label>
+                            <input
+                                type="text"
+                                class="form-control"
+                                id="video_indexer_custom_endpoint"
+                                value="{% if video_indexer_cloud == 'custom' %}{{ configured_video_indexer_endpoint }}{% endif %}"
+                                placeholder="https://your-video-indexer-endpoint.example.com"
+                            />
+                            <div class="form-text">Only required when using a custom cloud or non-standard Video Indexer endpoint.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="video_indexer_endpoint_display" class="form-label">Effective API Endpoint</label>
+                            <input type="text" class="form-control" id="video_indexer_endpoint_display" value="{{ configured_video_indexer_endpoint }}" readonly />
+                            <div class="form-text">Saved endpoint value used for Video Indexer API calls.</div>
                         </div>
 
                         <div class="mb-3">
@@ -4952,8 +5708,8 @@
                             <label for="video_indexer_arm_api_version" class="form-label">ARM API Version</label>
                             <input type="text" class="form-control"
                                 id="video_indexer_arm_api_version" name="video_indexer_arm_api_version"
-                                value="{{ settings.video_indexer_arm_api_version or '2024-01-01' }}">
-                            <div class="form-text">Default: 2024-01-01</div>
+                                value="{{ settings.video_indexer_arm_api_version or default_video_indexer_arm_api_version }}">
+                            <div class="form-text">Default for {{ azure_environment_label }}: {{ default_video_indexer_arm_api_version }}</div>
                         </div>
 
                         <div class="mb-3">
@@ -4963,24 +5719,30 @@
                                 value="{{ settings.video_index_timeout or 600 }}">
                         </div>
                     </div>
+                </div>
 
                     <!-- AI Voice Chat Card -->
                     <div class="card p-4 mb-4 border-primary shadow-sm" id="ai-voice-chat-section">
-                        <div class="d-flex align-items-center mb-3">
-                            <div class="bg-primary text-white rounded-circle p-3 me-3" style="width: 50px; height: 50px; display: flex; align-items: center; justify-content: center;">
-                                <i class="bi bi-mic-fill fs-4"></i>
+                        <div class="d-flex align-items-center justify-content-between mb-3">
+                            <div class="d-flex align-items-center">
+                                <div class="bg-primary text-white rounded-circle p-3 me-3" style="width: 50px; height: 50px; display: flex; align-items: center; justify-content: center;">
+                                    <i class="bi bi-mic-fill fs-4"></i>
+                                </div>
+                                <div>
+                                    <h4 class="mb-1">
+                                        <i class="bi bi-soundwave me-2"></i>AI Voice Conversations
+                                    </h4>
+                                    <p class="text-muted mb-0 small">Transform your AI experience with natural voice interactions</p>
+                                </div>
                             </div>
-                            <div>
-                                <h4 class="mb-1">
-                                    <i class="bi bi-soundwave me-2"></i>AI Voice Conversations
-                                </h4>
-                                <p class="text-muted mb-0 small">Transform your AI experience with natural voice interactions</p>
-                            </div>
+                            <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#speechServiceInfoModal">
+                                <i class="bi bi-info-circle me-1"></i>Setup Guide
+                            </button>
                         </div>
 
-                        <div class="alert alert-info mb-4">
+                        <div class="alert alert-info mb-4" id="speech_service_shared_alert">
                             <i class="bi bi-lightbulb-fill me-2"></i>
-                            <strong>Create a Complete Voice Experience:</strong> Enable both features together for seamless two-way voice conversations—speak your questions and hear AI responses aloud. Perfect for hands-free workflows, accessibility, and natural interactions.
+                            <strong>One Speech resource, three features:</strong> Audio file uploads, Voice Input, and Voice Responses all use the same Azure Speech Service section below. Configure the Speech resource once, then turn on whichever speech features you need.
                         </div>
 
                         <!-- Audio File Support -->
@@ -5066,12 +5828,15 @@
                         </div>
 
                         <!-- Speech Service Configuration (collapsible) -->
-                        <div id="audio_service_settings" class="border-top pt-3"
-                                {% if not (settings.enable_audio_file_support or settings.enable_speech_to_text_input or settings.enable_text_to_speech) %}style="display: none;"{% endif %}>
+                        <div id="audio_service_settings" class="border-top pt-3{% if not (settings.enable_audio_file_support or settings.enable_speech_to_text_input or settings.enable_text_to_speech) %} d-none{% endif %}">
                             <h5 class="mb-3">
                                 <i class="bi bi-gear-fill me-2"></i>Azure Speech Service Configuration
                             </h5>
-                            <p class="text-muted small mb-3">Connect to your Azure Speech Service for audio transcription, voice input, and text-to-speech capabilities.</p>
+                            <p class="text-muted small mb-3">Configure the shared Azure Speech resource used by audio transcription, voice input, and text-to-speech.</p>
+
+                        <div class="alert alert-info py-2">
+                            <strong>Shared configuration:</strong> These settings apply to all enabled speech features. If you use managed identity and also enable Voice Responses, fill in the Speech Resource ID field so the Speech SDK can authenticate synthesis requests.
+                        </div>
 
                         <div class="mb-3">
                             <label for="speech_service_endpoint" class="form-label">Endpoint</label>
@@ -5079,6 +5844,7 @@
                                 id="speech_service_endpoint" name="speech_service_endpoint"
                                 value="{{ settings.speech_service_endpoint or '' }}"
                                 placeholder="https://<location or custom domain>.cognitiveservices.azure.<com or us>/">
+                            <div class="form-text">Use the resource-specific custom-domain endpoint when selecting Managed Identity.</div>
                         </div>
 
                         <div class="mb-3">
@@ -5086,6 +5852,52 @@
                             <input type="text" class="form-control"
                                 id="speech_service_location" name="speech_service_location"
                                 value="{{ settings.speech_service_location or '' }}">
+                            <div class="form-text">Required for speech recognition locale defaults and for text-to-speech when using Managed Identity.</div>
+                        </div>
+
+                        <div class="mb-3{% if settings.speech_service_authentication_type != 'managed_identity' %} d-none{% endif %}" id="speech_service_resource_id_container">
+                            <div class="alert alert-secondary py-2 mb-3">
+                                <strong>Resource ID builder:</strong> If the full ARM resource ID is hard to find in the portal, enter the subscription ID, resource group, and Speech resource name below. Simple Chat can build the resource ID for you.
+                            </div>
+
+                            <div class="row g-3 mb-3">
+                                <div class="col-md-6">
+                                    <label for="speech_service_subscription_id" class="form-label">Speech Subscription ID</label>
+                                    <input type="text" class="form-control"
+                                        id="speech_service_subscription_id" name="speech_service_subscription_id"
+                                        value="{{ settings.speech_service_subscription_id or '' }}"
+                                        placeholder="12345678-1234-1234-1234-123456789abc">
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="speech_service_resource_group" class="form-label">Speech Resource Group</label>
+                                    <input type="text" class="form-control"
+                                        id="speech_service_resource_group" name="speech_service_resource_group"
+                                        value="{{ settings.speech_service_resource_group or '' }}"
+                                        placeholder="rg-speech-prod">
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="speech_service_resource_name" class="form-label">Speech Resource Name</label>
+                                    <input type="text" class="form-control"
+                                        id="speech_service_resource_name" name="speech_service_resource_name"
+                                        value="{{ settings.speech_service_resource_name or '' }}"
+                                        placeholder="my-speech-resource">
+                                    <div class="form-text">If you use a custom-domain Speech endpoint, this is usually the first part of that hostname.</div>
+                                </div>
+                                <div class="col-md-6 d-flex align-items-end">
+                                    <button type="button" class="btn btn-outline-secondary w-100" id="build_speech_resource_id_btn">
+                                        Build Resource ID
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="form-text mb-2" id="speech_resource_id_builder_status">Provide Subscription ID, Resource Group, and Speech Resource Name to auto-build the ARM resource ID.</div>
+
+                            <label for="speech_service_resource_id" class="form-label">Speech Resource ID</label>
+                            <input type="text" class="form-control"
+                                id="speech_service_resource_id" name="speech_service_resource_id"
+                                value="{{ settings.speech_service_resource_id or '' }}"
+                                placeholder="/subscriptions/<subscription>/resourceGroups/<resource-group>/providers/Microsoft.CognitiveServices/accounts/<speech-resource>">
+                            <div class="form-text">Required for Voice Responses when using Managed Identity. You can paste the full value manually, or let the fields above build it for you.</div>
                         </div>
 
                         <div class="mb-3">
@@ -5108,7 +5920,7 @@
                                 </option>
                             </select>
                         </div>
-                        <div class="mb-3" id="speech_service_key_container" {% if settings.speech_service_authentication_type == 'managed_identity' %}style="display: none;"{% endif %}>
+                        <div class="mb-3{% if settings.speech_service_authentication_type == 'managed_identity' %} d-none{% endif %}" id="speech_service_key_container">
                             <label for="speech_service_key" class="form-label">
                                 API Key
                             </label>
@@ -5128,6 +5940,11 @@
                                     Show
                                 </button>
                             </div>
+                            <div class="form-text">Required only when Authentication Type is set to Key.</div>
+                        </div>
+
+                        <div class="alert alert-secondary mt-3 mb-0">
+                            <strong>Managed identity roles:</strong> Start with <strong>Cognitive Services Speech User</strong>. If fast transcription or other write-style speech operations still return authorization errors, add <strong>Cognitive Services Speech Contributor</strong>. Managed identity also requires a custom-domain endpoint.
                         </div>
 
                     </div>
@@ -5140,7 +5957,6 @@
                         </small>
                     </p>
                 </div>
-            </div>
             </div>
 
             <div class="tab-pane fade" id="send-feedback" role="tabpanel" aria-labelledby="send-feedback-tab" data-app-version="{{ config['VERSION'] }}">
@@ -5432,6 +6248,9 @@
         <!-- Video Indexer Info Modal -->
         {% include '_video_indexer_info.html' %}
 
+        <!-- Speech Service Info Modal -->
+        {% include '_speech_service_info.html' %}
+
         <!-- Web Search Foundry Info Modal -->
         {% include '_web_search_foundry_info.html' %}
 
@@ -5578,7 +6397,6 @@
     window.enableMultiModelEndpoints = {{ 'true' if settings.enable_multi_model_endpoints else 'false' }};
     window.modelEndpoints = {{ settings.model_endpoints|default([], true)|tojson|safe }};
     window.defaultModelSelection = {{ settings.default_model_selection|default({}, true)|tojson|safe }};
-    window.multiEndpointMigrationNotice = {{ settings.multi_endpoint_migration_notice|default({}, true)|tojson|safe }};
 
     if (!Array.isArray(window.gptSelected)) {
         window.gptSelected = [];
@@ -5603,9 +6421,6 @@
     }
     if (!window.defaultModelSelection || typeof window.defaultModelSelection !== "object" || Array.isArray(window.defaultModelSelection)) {
         window.defaultModelSelection = {};
-    }
-    if (!window.multiEndpointMigrationNotice || typeof window.multiEndpointMigrationNotice !== "object" || Array.isArray(window.multiEndpointMigrationNotice)) {
-        window.multiEndpointMigrationNotice = {};
     }
 
     // *** NEW: Classification Data ***

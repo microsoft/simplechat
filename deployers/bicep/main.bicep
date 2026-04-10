@@ -209,7 +209,6 @@ param deployVideoIndexerService bool
 var rgName = '${appName}-${environment}-rg'
 var requiredTags = { application: appName, environment: environment, 'azd-env-name': azdEnvironmentName }
 var tags = union(requiredTags, specialTags)
-var isPublicCloud = scCloudEnvironment == 'public'
 var isUsGovernmentCloud = scCloudEnvironment == 'usgovernment'
 var acrCloudSuffix = az.environment().suffixes.acrLoginServer
 var acrName = toLower('${appName}${environment}acr')

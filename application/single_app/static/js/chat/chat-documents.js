@@ -34,6 +34,7 @@ const scopeSearchInput = document.getElementById("scope-search-input");
 export let personalDocs = [];
 export let groupDocs = [];
 export let publicDocs = [];
+const citationMetadataCache = new Map();
 
 // Items removed from the DOM by tag filtering (stored so they can be re-added)
 // Each entry: { element, nextSibling }
@@ -856,7 +857,44 @@ export function getDocumentMetadata(docId) {
   if (publicMatch) {
     return publicMatch;
   }
+  const cachedMatch = citationMetadataCache.get(docId);
+  if (cachedMatch) {
+    return cachedMatch;
+  }
   return null; // Not found in any list
+}
+
+export async function fetchDocumentMetadata(docId) {
+  if (!docId) {
+    return null;
+  }
+
+  const existingMetadata = getDocumentMetadata(docId);
+  if (existingMetadata) {
+    return existingMetadata;
+  }
+
+  try {
+    const response = await fetch(`/api/enhanced_citations/document_metadata?doc_id=${encodeURIComponent(docId)}`, {
+      credentials: 'same-origin',
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const metadata = await response.json();
+    if (metadata && metadata.id) {
+      citationMetadataCache.set(metadata.id, metadata);
+    }
+    if (metadata && metadata.document_id) {
+      citationMetadataCache.set(metadata.document_id, metadata);
+    }
+    return metadata;
+  } catch (error) {
+    console.warn('Error fetching citation document metadata:', error);
+    return null;
+  }
 }
 
 /* ---------------------------------------------------------------------------
@@ -1034,6 +1072,7 @@ export async function loadTagsForScope() {
   // Clear existing options in both hidden select and custom dropdown
   chatTagsFilter.innerHTML = '';
   if (tagsDropdownItems) tagsDropdownItems.innerHTML = '';
+  resetTagSelectionState();
 
   try {
     const scopes = getEffectiveScopes();
@@ -1244,6 +1283,24 @@ function hideTagsDropdown() {
   }
 }
 
+function resetTagSelectionState() {
+  if (chatTagsFilter) {
+    Array.from(chatTagsFilter.options).forEach(option => {
+      option.selected = false;
+    });
+  }
+
+  if (tagsDropdownItems) {
+    tagsDropdownItems.querySelectorAll('.tag-checkbox').forEach(checkbox => {
+      checkbox.checked = false;
+    });
+  }
+
+  tagsSearchController?.resetFilter();
+  syncTagsDropdownButtonText();
+  filterDocumentsBySelectedTags();
+}
+
 /* ---------------------------------------------------------------------------
    Sync Tags Dropdown Button Text with Selection State
 --------------------------------------------------------------------------- */
@@ -1264,6 +1321,74 @@ function syncTagsDropdownButtonText() {
   } else {
     textEl.textContent = `${count} tags selected`;
   }
+}
+
+
+export async function ensureSearchDocumentsVisible() {
+  if (!searchDocumentsBtn || !searchDocumentsContainer) {
+    return false;
+  }
+
+  searchDocumentsBtn.classList.add('active');
+  searchDocumentsContainer.style.display = 'block';
+
+  if (scopeLocked === true) {
+    rebuildScopeDropdownWithLock();
+  } else {
+    buildScopeDropdown();
+  }
+
+  await loadAllDocs();
+  await loadTagsForScope();
+
+  try {
+    const dropdownInstance = bootstrap.Dropdown.getInstance(docDropdownButton);
+    if (dropdownInstance) {
+      dropdownInstance.update();
+    }
+  } catch (err) {
+    console.error('Error updating document dropdown:', err);
+  }
+
+  handleDocumentSelectChange();
+  return true;
+}
+
+
+function openDropdown(buttonElement) {
+  if (!buttonElement) {
+    return false;
+  }
+
+  try {
+    bootstrap.Dropdown.getOrCreateInstance(buttonElement, {
+      autoClose: 'outside'
+    }).show();
+    buttonElement.focus();
+    return true;
+  } catch (err) {
+    console.error('Error opening dropdown:', err);
+    return false;
+  }
+}
+
+
+export function openScopeDropdown() {
+  return openDropdown(scopeDropdownButton);
+}
+
+
+export function openTagsDropdown() {
+  if (!tagsDropdown || !tagsDropdownButton) {
+    return false;
+  }
+
+  if (tagsDropdown.style.display === 'none' && (!tagsDropdownItems || !tagsDropdownItems.children.length)) {
+    return false;
+  }
+
+  showTagsDropdown();
+  return openDropdown(tagsDropdownButton);
 }
 
 /* ---------------------------------------------------------------------------
@@ -1484,27 +1609,7 @@ if (searchDocumentsBtn) {
     if (!searchDocumentsContainer) return;
 
     if (this.classList.contains("active")) {
-      searchDocumentsContainer.style.display = "block";
-      // Build the scope dropdown on first open (respect lock state)
-      if (scopeLocked === true) {
-        rebuildScopeDropdownWithLock();
-      } else {
-        buildScopeDropdown();
-      }
-      // Ensure initial population and state is correct when opening
-      loadAllDocs().then(() => {
-        // Load tags for the currently selected scope
-        loadTagsForScope();
-        // Update Bootstrap Popper positioning if dropdown was already initialized
-        try {
-          const dropdownInstance = bootstrap.Dropdown.getInstance(docDropdownButton);
-          if (dropdownInstance) {
-            dropdownInstance.update();
-          }
-        } catch (err) {
-          console.error("Error updating dropdown:", err);
-        }
-      });
+      ensureSearchDocumentsVisible();
     } else {
       searchDocumentsContainer.style.display = "none";
     }

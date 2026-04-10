@@ -1,0 +1,100 @@
+---
+layout: default
+---
+
+{% assign feature_data = site.data.latest_release_features %}
+
+<article class="page-content latest-release-page latest-release-index-page">
+  <section class="latest-release-hero latest-release-accent--blue latest-release-hero--index">
+    <div class="latest-release-hero-copy">
+      <span class="latest-release-pill">Docs + In-App Highlights</span>
+      <h1 class="latest-release-hero-title">{{ page.title }}</h1>
+      <p class="latest-release-hero-description">{{ page.description }}</p>
+      <div class="latest-release-hero-actions">
+        <a href="{{ '/features/' | relative_url }}" class="btn btn-primary btn-sm">Browse feature docs</a>
+        <a href="{{ '/explanation/release_notes/' | relative_url }}" class="btn btn-outline-secondary btn-sm">Release notes</a>
+      </div>
+    </div>
+    <div class="latest-release-hero-art" aria-hidden="true">
+      <div class="latest-release-hero-stack">
+        <span><i class="bi bi-stars"></i></span>
+        <span><i class="bi bi-window-stack"></i></span>
+        <span><i class="bi bi-journal-richtext"></i></span>
+      </div>
+    </div>
+  </section>
+
+  <div class="latest-release-index-content">
+    {{ content }}
+
+    <section class="latest-release-section">
+      <div class="latest-release-section-header">
+        <div>
+          <div class="latest-release-section-kicker">Current release</div>
+          <h2>{{ feature_data.current_release.label }}</h2>
+          <p>{{ feature_data.current_release.description }}</p>
+        </div>
+        <span class="latest-release-section-badge">{{ feature_data.current_release.badge }}</span>
+      </div>
+
+      <div class="latest-release-card-grid">
+        {% for slug in feature_data.current_release.slugs %}
+          {% assign feature = feature_data.lookup[slug] %}
+          {% include latest_release_card.html feature=feature badge=feature_data.current_release.badge %}
+        {% endfor %}
+      </div>
+    </section>
+
+    {% for group in feature_data.previous_release_groups %}
+      <details class="latest-release-archive-panel">
+        <summary>
+          <span class="latest-release-archive-summary-copy">
+            <span class="latest-release-section-kicker">Archive</span>
+            <strong>{{ group.label }}</strong>
+            <small>{{ group.description }}</small>
+          </span>
+
+          <span class="latest-release-archive-toggle">
+            <span class="latest-release-archive-version">v{{ group.release_version }}</span>
+            <span class="latest-release-archive-toggle-text">Show highlights</span>
+          </span>
+        </summary>
+
+        <div class="latest-release-archive-body">
+          <div class="latest-release-card-grid">
+            {% for slug in group.slugs %}
+              {% assign feature = feature_data.lookup[slug] %}
+              {% include latest_release_card.html feature=feature badge=group.badge %}
+            {% endfor %}
+          </div>
+
+          {% if group.highlights %}
+            <div class="latest-release-note-panel">
+              <h3>Additional highlights from v{{ group.release_version }}</h3>
+              <ul>
+                {% for item in group.highlights %}
+                  <li>{{ item }}</li>
+                {% endfor %}
+              </ul>
+            </div>
+          {% endif %}
+
+          {% if group.bug_fixes %}
+            <div class="latest-release-note-panel latest-release-note-panel--subtle">
+              <h3>Bug fixes kept for reference</h3>
+              <ul>
+                {% for item in group.bug_fixes %}
+                  <li>{{ item }}</li>
+                {% endfor %}
+              </ul>
+            </div>
+          {% endif %}
+        </div>
+      </details>
+    {% endfor %}
+
+    <div class="latest-release-footer-note">
+      For deeper technical detail, use the <a href="{{ '/explanation/release_notes/' | relative_url }}">Release Notes</a> alongside the feature guides above.
+    </div>
+  </div>
+</article>

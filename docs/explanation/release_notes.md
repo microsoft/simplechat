@@ -1,12 +1,113 @@
 <!-- BEGIN release_notes.md BLOCK -->
 
-This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.240.001, and the per-version entries continue immediately after it.
+This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.240.002, and the per-version entries continue immediately after it.
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
-### **(v0.240.016)**
+### **(v0.241.006)**
 
 #### New Features
+
+*   **Microsoft Teams App Integration with SSO**
+    *   Added full Microsoft Teams application support with Single Sign-On (SSO) using the On-Behalf-Of (OBO) flow. Users embedded in Teams are automatically authenticated without a separate login.
+    *   New `/auth/teams/token-exchange` backend endpoint exchanges Teams SSO tokens for access tokens via MSAL OBO flow, with session persistence and activity logging.
+    *   New `login.html` template with Teams SDK detection, automatic SSO authentication, consent-required handling, and graceful fallback to standard Azure AD login.
+    *   Teams manifest template (`manifest.template.json`) with SSO-ready `webApplicationInfo`, static tab, and valid domain configuration.
+    *   New environment variables: `TEAMS_FRAME_ANCESTORS`, `CUSTOM_TEAMS_ORIGINS`, and `ENABLE_TEAMS_SSO` for configurable Teams SSO behaviour.
+    *   Content Security Policy `frame-ancestors` directive now dynamically includes Teams domains via `TEAMS_FRAME_ANCESTORS` setting.
+    *   Session cookies updated to `SameSite=None`, `Secure=True`, `HttpOnly=True` to support cross-origin Teams iframe embedding.
+    *   (Ref: `route_frontend_authentication.py`, `login.html`, `config.py`, `app.py`, `manifest.template.json`, Teams SSO, OBO flow)
+
+*   **Teams App Manifest and Icons**
+    *   Added Teams app package files: `manifest.template.json`, `color.png` (192×192), and `outline.png` (32×32) under `application/teams_app/`.
+    *   Template manifest includes placeholders for hostname, client ID, and Application ID URI for easy customisation per deployment.
+    *   (Ref: `application/teams_app/`, Teams app packaging)
+
+*   **Teams App Configuration Documentation**
+    *   Comprehensive how-to guide covering Azure AD app registration for Teams SSO, pre-authorised Teams client IDs, environment variables, manifest configuration, testing steps, and troubleshooting.
+    *   (Ref: `docs/how-to/teams_app.md`)
+
+#### Bug Fixes
+
+*   **Bicep ACR Suffix Hardcoded Value Fix**
+    *   Replaced hardcoded ACR cloud suffix (`'.azurecr.io'` / `'.azurecr.us'`) with the dynamic `az.environment().suffixes.acrLoginServer` built-in, improving support for sovereign and custom Azure environments.
+    *   (Ref: `deployers/bicep/main.bicep`, ACR suffix, sovereign cloud support)
+
+*   **Speech and Video Indexer Setup Guidance Alignment**
+    *   Fixed stale admin guidance around Azure AI Video Indexer and shared Azure Speech configuration so managed-identity setup no longer points admins toward legacy Video Indexer API keys or incomplete Speech instructions.
+    *   The admin experience now reflects the shared Speech resource model, adds Speech Resource ID helper fields, and keeps managed-identity voice-response requirements aligned with runtime behavior.
+    *   (Ref: `admin_settings.html`, `admin_settings.js`, `route_backend_tts.py`, `functions_documents.py`, shared Speech and Video Indexer guidance)
+
+*   **Agent Output Token Defaults and Foundry Limit Enforcement**
+    *   Fixed stale agent output-token defaults so new and normalized agents now use `-1` to defer to the provider or model default instead of silently reintroducing older fixed caps.
+    *   Azure AI Foundry agent execution now also honors saved output-token settings in both classic Foundry agent runs and new Foundry Responses-based runs, so configured limits are enforced consistently instead of only being stored in agent configuration.
+    *   (Ref: `functions_global_agents.py`, `agent.schema.json`, `foundry_agent_runtime.py`, `test_foundry_token_limit_defaults.py`)
+
+*   **Tabular Exhaustive Result Synthesis Retry**
+    *   Fixed exhaustive tabular questions such as "list all" requests so the workflow no longer stops at an answer that claims only sample rows or workbook metadata are available after analytical tool calls already returned the full matching result set.
+    *   General tabular analysis now detects full versus partial result coverage from tool metadata, retries incomplete synthesis when necessary, and adds stronger prompt guidance so the final answer uses the returned analytical results directly.
+    *   (Ref: `route_backend_chats.py`, `test_tabular_exhaustive_result_synthesis_fix.py`, `TABULAR_EXHAUSTIVE_RESULT_SYNTHESIS_FIX.md`)
+
+*   **Group Workspace Documents and Prompts Load Recovery**
+    *   Fixed a Group Workspace page-load regression where active-group initialization could fail on a missing prompt-role UI container and stop the rest of the page from rendering correctly.
+    *   Group document and prompt content now continue loading even if the prompt permission banner or create-button container is unavailable during startup, preventing blank content areas caused by a JavaScript null-reference error.
+    *   Added functional and UI regression coverage for the guarded prompt-role path so future changes do not reintroduce the same startup failure.
+    *   (Ref: `group_workspaces.html`, `test_group_workspace_prompt_role_ui_guard.py`, `test_group_workspace_prompt_role_containers_ui.py`)
+
+*   **Audio and Video Enhanced Citation Badge Consistency**
+    *   Fixed blob-backed audio and video documents showing Standard citations in workspace details even when Enhanced Citations was enabled and the same files already opened through the enhanced citation experience on the chat page.
+    *   Document metadata now persists and normalizes the `enhanced_citations` flag from blob-backed storage state so existing media uploads and new uploads both render the correct Enhanced badge across workspace and chat flows.
+    *   Added regression coverage and fix documentation for the metadata normalization path.
+    *   (Ref: `functions_documents.py`, `route_enhanced_citations.py`, `test_media_enhanced_citations_metadata_flag.py`, `MEDIA_ENHANCED_CITATION_BADGE_FIX.md`)
+
+#### User Interface Enhancements
+
+*   **AI Voice Conversations Setup Guide**
+    *   Added an in-app Setup Guide modal to the AI Voice Conversations admin card so admins can configure Azure Speech without leaving Admin Settings.
+    *   The guide includes a live snapshot of the current Speech configuration, explains key versus managed-identity authentication, and now walks admins through enabling the required custom domain in Azure portal before verifying the endpoint on Keys and Endpoint.
+    *   (Ref: `admin_settings.html`, `_speech_service_info.html`, `azure_speech_managed_identity_manul_setup.md`, `test_admin_multimedia_guidance.py`)
+    
+### **(v0.241.002)**
+
+#### Bug Fixes
+
+*   **Support Pages Respect Custom Application Titles**
+    *   Fixed user-facing Support copy so Latest Features, Previous Release Features, and Send Feedback no longer fall back to the default `SimpleChat` name in customized deployments.
+    *   Support feedback email drafts now also use the configured application title, keeping the user-facing support flow consistent with branded environments.
+    *   (Ref: `support_menu_config.py`, `support_send_feedback.html`, `route_backend_settings.py`, support application-title personalization)
+
+*   **Streaming Retry and Edit Thought Tracking**
+    *   Fixed retry and edit requests in streaming chat when they fall back to the compatibility bridge and continue through the legacy `/api/chat` path.
+    *   Assistant response tracking is now initialized for both new-message and retry/edit flows before content safety runs, preventing compatibility-mode failures caused by an uninitialized `ThoughtTracker`.
+    *   (Ref: `route_backend_chats.py`, `ThoughtTracker`, `/api/chat/stream`, `/api/chat`, retry/edit compatibility bridge)
+
+*   **Streaming Retry and Edit Multi-Endpoint Model Resolution**
+    *   Fixed streaming retry and edit requests that route through the compatibility bridge so they no longer fail during AI model initialization in multi-endpoint environments.
+    *   The compatibility path now reuses the in-app multi-endpoint GPT resolver and Foundry fallback helpers instead of depending on script-only helper functions that were not available inside the Flask runtime.
+    *   (Ref: `route_backend_chats.py`, `/api/chat/stream`, `/api/chat`, multi-endpoint model resolution, Foundry fallback helpers)
+
+*   **Profile Fact Memory Script Deduplication**
+    *   Fixed a profile-page load failure where duplicate inline Fact Memory and tutorial script blocks could trigger browser parse errors such as `Identifier 'factMemorySearchInput' has already been declared`.
+    *   Removed duplicated profile sections, modal markup, and shadowing helper definitions so Fact Memory, tutorial preferences, and retention settings now initialize from one canonical script path.
+    *   Added source-level and UI regression coverage so duplicate profile blocks and page-load JavaScript errors are caught earlier.
+    *   (Ref: `profile.html`, `test_profile_fact_memory_script_dedup.py`, `test_profile_fact_memory_editor.py`, profile page script initialization)
+
+### **(v0.241.001)**
+
+#### New Features
+
+*   **Fact Memory Instructions and Facts**
+    *   Added a clearer Fact Memory experience that distinguishes always-on Instructions from relevance-based Facts on the profile page and in chat-time recall.
+    *   Chat responses now surface saved-memory usage more clearly through separate Instruction Memory and Fact Memory Recall thoughts and citations.
+    *   Admin Settings Latest Features and the user-facing Support > Latest Features page now include Fact Memory guidance and screenshots, and admins can show or hide that announcement from General > User-Facing Latest Features.
+    *   (Ref: `semantic_kernel_fact_memory_store.py`, `route_backend_chats.py`, `route_frontend_profile.py`, `profile.html`, `support_menu_config.py`, `admin_settings.html`, `latest_features.html`, fact memory guidance and latest-features coverage)
+
+*   **Support Menu and User-Facing Latest Features**
+    *   Added a configurable Support menu for signed-in app users so teams can expose Latest Features and Send Feedback directly in everyday navigation.
+    *   Admins can rename the Support menu, control the internal feedback-recipient email address, and choose exactly which latest-feature cards are shared with end users from the General tab.
+    *   The user-facing Latest Features page now mirrors the available admin screenshots more closely, includes clearer guidance about why each feature matters, and adds direct links into Chat, Personal Workspace, or Support destinations where users can try the feature.
+    *   The Admin Settings Latest Features tab now also calls out the General-tab User-Facing Latest Features checklist so admins can see where feature sharing is configured.
+    *   (Ref: `support_menu_config.py`, `route_frontend_support.py`, `latest_features.html`, `support_send_feedback.html`, `admin_settings.html`, `test_support_menu_user_feature.py`, support menu configuration and user-facing latest features)
 
 *   **MultiGPT Endpoint Management**
     *   Added multi-endpoint model management so admins can define multiple global model endpoints and users can add personal or group-scoped endpoints when those workspace features are enabled.
@@ -248,10 +349,19 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### Bug Fixes
 
-*   **Bicep ACR Suffix Hardcoded Value Fix**
-    *   Replaced hardcoded ACR cloud suffix (`'.azurecr.io'` / `'.azurecr.us'`) with the dynamic `az.environment().suffixes.acrLoginServer` built-in, improving support for sovereign and custom Azure environments.
-    *   (Ref: `deployers/bicep/main.bicep`, ACR suffix, sovereign cloud support)
+*   **Chat History Citation Replay Improvements**
+    *   Fixed follow-up prompts so prior assistant turns can reuse stored citation results, including tabular tool outputs, instead of relying only on the visible assistant message text.
+    *   Assistant history replay now hydrates stored citation artifacts and deduplicates repeated cross-sheet tabular calls so later file results, such as Licensing workbook values, remain available to the next turn.
+    *   History-context diagnostics remain available in message metadata and optional debug citations, while the thoughts timeline stays compact.
+    *   (Ref: `route_backend_chats.py`, `functions_message_artifacts.py`, `chat-thoughts.js`, `chat-messages.js`, `test_chat_stream_history_context_fix.py`, `CHAT_STREAM_HISTORY_CONTEXT_FIX.md`)
 
+*   **Document Revision Visibility and Storage Preservation**
+    *   Fixed same-name document uploads so new revisions now inherit the previous document's editable metadata, including classification, tags, title, abstract, keywords, publication date, authors, and sharing state.
+    *   Workspace lists and chat search now only use the current revision, while older revisions remain retained for future comparison work instead of staying active in normal workspace flows.
+    *   Document deletion now offers a choice between deleting only the current revision or deleting all stored revisions for that document family.
+    *   Blob storage now preserves older source files by keeping the active document at the existing alias path and archiving prior current revisions into a revision-family hierarchy before the alias path is overwritten.
+    *   (Ref: document revision families, current-only workspace visibility, hybrid blob alias plus archived revision storage, `functions_documents.py`, `functions_search.py`, `route_enhanced_citations.py`, workspace/group/public document flows)
+    
 *   **Python Runtime Dependency Refresh and Supply-Chain Hardening**
     *   Continued the requirements hardening work from `v0.240.014` by tightening the main application runtime to exact package pins, reducing dependency drift across local development, CI, and Azure deployments to help mitigate supply-chain exposure.
     *   Upgraded the Flask runtime stack to `Flask==3.1.3` and `Werkzeug==3.1.6`, and updated the shared `Markup` import path to `markupsafe` so the app starts correctly with Flask 3's package boundary changes.
@@ -268,6 +378,13 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Updated `deep_merge_dicts()` to return a boolean `changed` flag and wired `get_settings()` to call `upsert_item()` when `settings_changed` is `True`, so missing default keys correctly trigger persistence back to Cosmos DB.
     *   Added a functional regression test to validate the merge detection and persistence markers.
     *   (Ref: `application/single_app/functions_settings.py`, `application/single_app/config.py`, `functional_tests/test_settings_deep_merge_persistence_fix.py`)
+
+*   **Legacy Office Binary Upload Support**
+    *   Added native OLE-based support for older Word `.doc` and PowerPoint `.ppt` files instead of relying on OOXML-only assumptions during processing.
+    *   Legacy `.doc` uploads now extract available metadata and follow the same shared document-processing workflow used for richer Office files, so enhanced citations and final metadata extraction stay consistent when those features are enabled.
+    *   Legacy `.ppt` uploads now extract slide text and available summary metadata from the OLE presentation streams while keeping the same enhanced-citation and final-metadata workflow used by `.pptx` uploads.
+    *   `.pptx` uploads now also populate presentation metadata such as title, author, subject, and keywords during the initial metadata update when metadata extraction is enabled.
+    *   (Ref: `functions_content.py`, `functions_documents.py`, `test_legacy_doc_ole_extraction.py`, `test_legacy_ppt_ole_extraction.py`, legacy Office OLE support and metadata parity)
     
 *   **Pillow PSD Upload Hardening**
     *   Updated the application to use `pillow==12.1.1`, moving the app off the vulnerable Pillow range for specially crafted PSD image parsing.
@@ -351,6 +468,12 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Tabular Preview `max_rows` Parameter Validation**
     *   The `max_rows` query parameter on `/api/enhanced_citations/tabular_preview` was parsed with bare `int()`, causing a 500 error on non-integer input. Switched to Flask's `request.args.get(..., type=int)` which silently falls back to the default on invalid input, matching the pattern used by other endpoints.
     *   (Ref: `route_enhanced_citations.py`)
+
+*   **Streaming Chat Post-Finalization JSON Sanitization**
+    *   Fixed a repeatable late-stream failure where assistant responses could appear nearly complete and then end with a `Stream interrupted` warning during final persistence.
+    *   Normalized non-finite numeric values from citation payloads before assistant messages, assistant artifacts, and terminal chat payloads are written, preventing Cosmos DB from rejecting invalid JSON.
+    *   This improves reliability for streaming chat, compatibility streaming, and the standard JSON response path when tool or search citations include sparse or tabular numeric values.
+    *   (Ref: `functions_message_artifacts.py`, `route_backend_chats.py`, `test_chat_post_stream_json_sanitization.py`, post-stream citation sanitization)
 
 *   **On-Demand Summary Generation — Content Normalization Fix**
     *   Fixed the `POST /api/conversations/<id>/summary` endpoint failing with an error when generating summaries from the conversation details modal.

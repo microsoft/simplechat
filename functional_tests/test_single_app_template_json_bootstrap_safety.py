@@ -2,7 +2,7 @@
 # test_single_app_template_json_bootstrap_safety.py
 """
 Functional test for single_app template JSON bootstrap safety.
-Version: 0.240.020
+Version: 0.240.073
 Implemented in: 0.240.020
 
 This test ensures the workspace and admin templates emit bootstrapped JSON as
@@ -64,7 +64,6 @@ TEMPLATE_CASES = {
             "window.imageAll      = {{ settings.image_gen_model.all|default([], true)|tojson|safe }};",
             "window.modelEndpoints = {{ settings.model_endpoints|default([], true)|tojson|safe }};",
             "window.defaultModelSelection = {{ settings.default_model_selection|default({}, true)|tojson|safe }};",
-            "window.multiEndpointMigrationNotice = {{ settings.multi_endpoint_migration_notice|default({}, true)|tojson|safe }};",
             "window.classificationCategories = {{ settings.document_classification_categories|default([], true)|tojson(indent=None)|safe }};",
             "window.externalLinks = {{ settings.external_links|default([], true)|tojson(indent=None)|safe }};",
         ],
@@ -77,7 +76,6 @@ TEMPLATE_CASES = {
             "window.imageAll      = JSON.parse('{{ settings.image_gen_model.all|tojson()|safe }}' || '[]');",
             "window.modelEndpoints = JSON.parse('{{ settings.model_endpoints|tojson()|safe }}' || '[]');",
             "window.defaultModelSelection = JSON.parse('{{ settings.default_model_selection|tojson()|safe }}' || '{}');",
-            "window.multiEndpointMigrationNotice = JSON.parse('{{ settings.multi_endpoint_migration_notice|tojson()|safe }}' || '{}');",
             "let categoriesStr = '{{ settings.document_classification_categories|tojson(indent=None)|safe }}';",
             "window.classificationCategories = JSON.parse(categoriesStr);",
             "let externalLinksStr = '{{ settings.external_links|tojson(indent=None)|safe }}';",
@@ -91,7 +89,7 @@ def test_single_app_templates_bootstrap_json_with_direct_literals():
     """Verify single_app templates bootstrap JSON with direct Jinja literals."""
     config_content = CONFIG_FILE.read_text(encoding="utf-8")
 
-    assert 'VERSION = "0.240.020"' in config_content, "Expected config.py version 0.240.020"
+    assert 'VERSION = "0.240.073"' in config_content, "Expected config.py version 0.240.073"
 
     failures = []
     for template_name, case in TEMPLATE_CASES.items():

@@ -6,8 +6,9 @@ Version: 0.239.114
 Implemented in: 0.239.111
 
 This test ensures that discovery-only tabular tool calls are not accepted as
-completed analysis for analytical questions, and that the tabular SK pass is
-restricted to analytical tools on retry attempts.
+completed analysis for analytical questions, and that multi-sheet workbook
+analysis may use discovery as an intermediate step while still requiring
+analytical tools before completion.
 """
 
 import ast
@@ -58,7 +59,8 @@ def test_discovery_only_calls_trigger_retry_guardrails():
         _, route_content = load_tabular_route_helpers()
 
         checks = {
-            'prompt disables discovery tools in analysis pass': 'Discovery functions are not available in this analysis run because schema context is already pre-loaded.' in route_content,
+            'prompt allows workbook discovery for multi-sheet analysis': 'Workbook discovery is available through describe_tabular_file.' in route_content,
+            'prompt rejects discovery-only completion': 'Discovery-only results do NOT complete the analysis.' in route_content,
             'analysis run filters callable functions': 'included_functions' in route_content,
             'retry path requires analytical tools': 'FunctionChoiceBehavior.Required(' in route_content,
             'retry logging mentions discovery tools': 'used only discovery tool(s)' in route_content,
