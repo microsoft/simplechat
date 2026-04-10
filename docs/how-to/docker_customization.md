@@ -1,6 +1,57 @@
-# Docker Customization
+---
+layout: showcase-page
+title: "Docker Customization"
+permalink: /how-to/docker_customization/
+menubar: docs_menu
+accent: slate
+eyebrow: "How-To Guide"
+description: "Customize the container image when you need private trust anchors, enterprise TLS compatibility, or pip configuration changes during Docker build."
+hero_icons:
+  - bi-box-seam
+  - bi-shield-lock
+  - bi-tools
+hero_pills:
+  - Container builds only
+  - Private CA support
+  - pip configuration override
+hero_links:
+  - label: "AZD deployment"
+    url: /reference/deploy/azd-cli_deploy/
+    style: primary
+  - label: "Special setup scenarios"
+    url: /setup_instructions_special/
+    style: secondary
+---
 
-Updated in version: 0.240.006
+Use Docker customization when the default container image is correct for the application but not quite correct for the network or package-install environment you need to run inside.
+
+<section class="latest-release-card-grid">
+    <article class="latest-release-card">
+        <div class="latest-release-card-icon"><i class="bi bi-shield-lock"></i></div>
+        <h2>Private certificate authorities</h2>
+        <p>Add internal root or intermediate certificates when outbound HTTPS calls rely on enterprise PKI or TLS interception infrastructure.</p>
+    </article>
+    <article class="latest-release-card">
+        <div class="latest-release-card-icon"><i class="bi bi-box-seam"></i></div>
+        <h2>Rebuild the image</h2>
+        <p>Changes in the customization folders only take effect after the Simple Chat container image is rebuilt and redeployed.</p>
+    </article>
+    <article class="latest-release-card">
+        <div class="latest-release-card-icon"><i class="bi bi-download"></i></div>
+        <h2>Customize pip behavior</h2>
+        <p>Use the repo-level pip configuration when package installation needs custom indexes, mirrors, or enterprise network settings during build.</p>
+    </article>
+    <article class="latest-release-card">
+        <div class="latest-release-card-icon"><i class="bi bi-check2-square"></i></div>
+        <h2>Validate from the container</h2>
+        <p>Confirm the trust bundle and network behavior from inside the running container instead of assuming the image build succeeded.</p>
+    </article>
+</section>
+
+<div class="latest-release-note-panel">
+    <h2>This guide applies to container-based deployments</h2>
+    <p>The certificate and pip-customization steps here affect images built from the repo Dockerfile. Native Python App Service deployments need different host- or app-level configuration for certificate trust and package resolution.</p>
+</div>
 
 ## Custom Certificate Authorities
 

@@ -1,0 +1,101 @@
+---
+layout: default
+---
+
+{% assign accent = page.accent | default: 'blue' %}
+
+<article class="page-content latest-release-page docs-showcase-page latest-release-accent--{{ accent }}">
+  <section class="latest-release-hero">
+    <div class="latest-release-hero-copy">
+      {% if page.breadcrumb and page.breadcrumb.url and page.breadcrumb.label %}
+        <div class="latest-release-breadcrumb">
+          <a href="{{ page.breadcrumb.url | relative_url }}"><i class="bi bi-arrow-left"></i> {{ page.breadcrumb.label }}</a>
+        </div>
+      {% endif %}
+
+      {% if page.eyebrow or page.hero_version %}
+        <div class="latest-release-pill-row">
+          {% if page.eyebrow %}
+            <span class="latest-release-pill">{{ page.eyebrow }}</span>
+          {% endif %}
+          {% if page.hero_version %}
+            <span class="latest-release-subtle">{{ page.hero_version }}</span>
+          {% endif %}
+        </div>
+      {% endif %}
+
+      <h1 class="latest-release-hero-title">{{ page.title }}</h1>
+
+      {% if page.description %}
+        <p class="latest-release-hero-description">{{ page.description }}</p>
+      {% endif %}
+
+      {% if page.hero_pills %}
+        <div class="latest-release-pill-row">
+          {% for pill in page.hero_pills %}
+            <span class="latest-release-pill">{{ pill }}</span>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      {% if page.hero_links %}
+        <div class="latest-release-hero-actions">
+          {% for link in page.hero_links %}
+            {% assign button_class = 'btn-outline-secondary' %}
+            {% if link.style == 'primary' %}
+              {% assign button_class = 'btn-primary' %}
+            {% elsif link.style == 'secondary' %}
+              {% assign button_class = 'btn-secondary' %}
+            {% endif %}
+            <a href="{{ link.url | relative_url }}" class="btn {{ button_class }} btn-sm">{{ link.label }}</a>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </div>
+
+    <div class="latest-release-hero-art" aria-hidden="true">
+      {% if page.hero_icons and page.hero_icons.size > 1 %}
+        <div class="latest-release-hero-stack">
+          {% for icon in page.hero_icons limit: 3 %}
+            <span><i class="bi {{ icon }}"></i></span>
+          {% endfor %}
+        </div>
+      {% else %}
+        {% assign hero_icon = page.hero_icon %}
+        {% if hero_icon == nil and page.hero_icons and page.hero_icons.size > 0 %}
+          {% assign hero_icon = page.hero_icons[0] %}
+        {% endif %}
+        <div class="latest-release-icon-orb">
+          <i class="bi {{ hero_icon | default: 'bi-stars' }}"></i>
+        </div>
+      {% endif %}
+    </div>
+  </section>
+
+  <div class="latest-release-feature-content">
+    <div class="latest-release-rich-content">
+      {{ content }}
+    </div>
+
+    {% if page.show_nav and page.nav_links %}
+      <nav class="page-navigation mt-5">
+        <div class="row">
+          {% if page.nav_links.prev %}
+            <div class="col-md-6">
+              <a href="{{ page.nav_links.prev.url | relative_url }}" class="btn btn-outline-primary">
+                <i class="bi bi-arrow-left me-2"></i>{{ page.nav_links.prev.title }}
+              </a>
+            </div>
+          {% endif %}
+          {% if page.nav_links.next %}
+            <div class="col-md-6 text-end">
+              <a href="{{ page.nav_links.next.url | relative_url }}" class="btn btn-outline-primary">
+                {{ page.nav_links.next.title }}<i class="bi bi-arrow-right ms-2"></i>
+              </a>
+            </div>
+          {% endif %}
+        </div>
+      </nav>
+    {% endif %}
+  </div>
+</article>

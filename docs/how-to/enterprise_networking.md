@@ -1,6 +1,45 @@
-# How to Configure Enterprise Networking
+---
+layout: showcase-page
+title: "Enterprise Networking"
+permalink: /how-to/enterprise_networking/
+menubar: docs_menu
+accent: teal
+eyebrow: "How-To Guide"
+description: "Use private endpoints, VNets, and private DNS to move Simple Chat into an enterprise network boundary without losing deployment or service connectivity."
+hero_icons: ["bi-diagram-3", "bi-shield-lock", "bi-hdd-network"]
+hero_pills: ["Private endpoints across services", "DNS and route-all matter", "Deployment runner connectivity first"]
+hero_links: [{ label: "Special setup scenarios", url: "/setup_instructions_special/", style: "primary" }, { label: "Managed identity guide", url: "/how-to/use_managed_identity/", style: "secondary" }]
+---
 
-This guide walks you through setting up Simple Chat with enterprise-grade network security using Azure Private Endpoints, Virtual Networks, and Private DNS. This configuration ensures all traffic stays on the Microsoft backbone and never traverses the public internet.
+Enterprise networking changes the deployment story as much as the runtime story. The main job is to keep the deployment runner, App Service, and Azure dependencies all able to reach one another while you progressively close off public access.
+
+<section class="latest-release-card-grid">
+      <article class="latest-release-card">
+            <div class="latest-release-card-icon"><i class="bi bi-map"></i></div>
+            <h2>Plan the VNet shape first</h2>
+            <p>Subnet design, delegation, and IP planning should be settled before you start placing private endpoints or integrating App Service.</p>
+      </article>
+      <article class="latest-release-card">
+            <div class="latest-release-card-icon"><i class="bi bi-hdd-network"></i></div>
+            <h2>Private-endpoint every dependency</h2>
+            <p>Cosmos DB, Azure OpenAI, Search, Storage, and other services need a consistent private-connectivity plan rather than one-off exceptions.</p>
+      </article>
+      <article class="latest-release-card">
+            <div class="latest-release-card-icon"><i class="bi bi-diagram-2"></i></div>
+            <h2>DNS and route-all are part of the feature</h2>
+            <p>Private DNS zones and VNet routing are what make private endpoints usable from the app, not optional polish you add later.</p>
+      </article>
+      <article class="latest-release-card">
+            <div class="latest-release-card-icon"><i class="bi bi-door-closed"></i></div>
+            <h2>Disable public access last</h2>
+            <p>Only shut off public paths after validating name resolution, App Service connectivity, and deployment-runner reachability.</p>
+      </article>
+</section>
+
+<div class="latest-release-note-panel">
+      <h2>Start with the deployment runner question</h2>
+      <p>Before you touch private endpoints, decide whether the machine running the deployment can already resolve and reach the private network path. That answer determines whether you leave <code>allowedIpAddresses</code> blank or temporarily allow a public egress IP during rollout.</p>
+</div>
 
 ## Overview
 

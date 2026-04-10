@@ -1,22 +1,55 @@
-# Document Classification Tutorial
+---
+layout: showcase-page
+title: "Document Classification Tutorial"
+permalink: /tutorials/classifying_documents/
+menubar: docs_menu
+accent: emerald
+eyebrow: "Tutorial 4"
+description: "Build a classification scheme that helps users organize content, filter retrieval, and support real workflows instead of just adding labels for decoration."
+hero_icons:
+  - bi-tags
+  - bi-funnel
+  - bi-grid-3x3-gap
+hero_pills:
+  - Better organization
+  - Better filtering
+  - Better context for AI responses
+hero_links:
+  - label: Tutorial index
+    url: /tutorials/
+    style: primary
+  - label: Admin configuration
+    url: /admin_configuration/
+    style: secondary
+show_nav: true
+nav_links:
+   prev:
+      title: Uploading and Managing Documents
+      url: /tutorials/uploading_documents/
+   next:
+      title: How-to Guides
+      url: /how-to/
+---
 
-Document classification helps you organize, categorize, and manage your content in Simple Chat. This tutorial will guide you through setting up and using classification schemes to improve your document organization and discovery.
+Classification works when the categories reflect how your organization actually handles content. This tutorial focuses on making the labels operational, not decorative.
 
-## What You'll Learn
-
-By the end of this tutorial, you'll:
-- Understand the benefits of document classification
-- Set up classification categories as an admin
-- Apply classifications when uploading documents
-- Use classifications to organize and filter content
-- Create workflows that leverage document types
-- Understand how classifications improve AI responses
-
-## Prerequisites
-
-- Simple Chat deployed with admin access
-- Some documents already uploaded (recommended)
-- Understanding of your organization's document types
+<section class="latest-release-card-grid">
+   <article class="latest-release-card">
+      <div class="latest-release-card-icon"><i class="bi bi-list-check"></i></div>
+      <h2>Plan the scheme</h2>
+      <p>Choose categories that match departments, document types, sensitivity, or project flows your users already recognize.</p>
+   </article>
+   <article class="latest-release-card">
+      <div class="latest-release-card-icon"><i class="bi bi-sliders"></i></div>
+      <h2>Configure and apply</h2>
+      <p>Enable classification as an admin, expose the categories to users, and make classification part of the upload flow.</p>
+   </article>
+   <article class="latest-release-card">
+      <div class="latest-release-card-icon"><i class="bi bi-chat-quote"></i></div>
+      <h2>Use the context</h2>
+      <p>Once documents are classified, filtering, search, routing, and chat context become more predictable and more useful.</p>
+   </article>
+</section>
 
 ## What Is Document Classification?
 
