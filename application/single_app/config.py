@@ -235,16 +235,6 @@ elif AZURE_ENVIRONMENT == "usgovernment":
     if ENABLE_TEAMS_SSO and not TEAMS_FRAME_ANCESTORS:
         # In US Government, we need to restrict the frame ancestors to the specific Teams domains to allow the SSO flow to work, since we can't rely on the frontend to validate the origin against the public Teams domains.
         TEAMS_FRAME_ANCESTORS = "https://teams.microsoft.us https://*.teams.microsoft.us"
-
-elif AZURE_ENVIRONMENT == "custom":
-    resource_manager = CUSTOM_RESOURCE_MANAGER_URL_VALUE
-    authority = CUSTOM_IDENTITY_URL_VALUE
-    video_indexer_endpoint = os.getenv("CUSTOM_VIDEO_INDEXER_ENDPOINT", "https://api.videoindexer.ai")
-    credential_scopes=[resource_manager + "/.default"]
-    cognitive_services_scope = CUSTOM_COGNITIVE_SERVICES_URL_VALUE  
-    search_resource_manager = CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE
-    KEY_VAULT_DOMAIN = os.getenv("KEY_VAULT_DOMAIN", ".vault.azure.net")
-
 else:
     OIDC_METADATA_URL = f"https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration"
     resource_manager = "https://management.azure.com"
