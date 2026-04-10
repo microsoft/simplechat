@@ -10,6 +10,10 @@ Built with modularity in mind, the application offers a suite of powerful **opti
 
 The application utilizes **Azure Cosmos DB** for storing conversations, metadata, and settings, and is secured using **Azure Active Directory (Entra ID)** for authentication and fine-grained Role-Based Access Control (RBAC) via App Roles. Designed for enterprise use, it runs reliably on **Azure App Service** and supports deployment in both **Azure Commercial** and **Azure Government** cloud environments, offering a versatile tool for knowledge discovery, content generation, and collaborative AI-powered tasks within a secure, customizable, and Azure-native framework.
 
+## Contributing
+
+If you want to contribute code, documentation, or fixes to Simple Chat, see the [Contributing guide](./contributing.md) for the fork workflow, target branch guidance, pull request expectations, and local development references.
+
 ## Features
 
 - **Chat with AI**: Interact with an AI model based on Azure OpenAI’s GPT and Thinking models.
