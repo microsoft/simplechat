@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide explains the critical difference between key-based and managed identity authentication when configuring Azure Speech Service, and the required steps to enable managed identity properly.
+This guide explains the critical difference between key-based and managed identity authentication when configuring Azure Speech Service, and the required steps to enable managed identity properly. In Simple Chat, the same Speech configuration is shared across audio uploads, speech-to-text chat input, and text-to-speech voice responses.
 
 ## Authentication Methods: Regional vs. Resource-Specific Endpoints
 
@@ -74,6 +74,8 @@ Headers:
 3. If your App Service MI has `Cognitive Services Speech User` role → authorized
 4. The request proceeds to your dedicated Speech resource instance
 
+For some transcription operations, you may also need `Cognitive Services Speech Contributor`. Start with `Speech User`, then add `Speech Contributor` if transcription still fails after endpoint and identity configuration are correct.
+
 ---
 
 ## Required Setup for Managed Identity
@@ -84,13 +86,32 @@ Headers:
 2. **System-assigned or user-assigned managed identity** on your App Service
 3. **RBAC role assignments** on the Speech resource
 
-### Step 1: Enable Custom Subdomain on Speech Resource
+### Step 1: Turn On the Custom Domain on the Speech Resource
 
 **Why needed**: By default, Speech resources use the regional endpoint and do NOT have custom subdomains. Managed identity requires the resource-specific endpoint.
 
-**How to enable**:
+#### Azure portal walkthrough
+
+1. Go to the Azure portal and open your **Azure AI Speech** resource.
+2. In the left pane under **Resource Management**, select **Networking**.
+3. Open the **Firewalls and virtual networks** tab.
+4. Select **Generate Custom Domain Name**.
+5. Enter a globally unique custom domain name. The final endpoint will look like `https://<custom-name>.cognitiveservices.azure.com`.
+6. Select **Save**.
+7. After the update finishes, open **Keys and Endpoint** and confirm the resource endpoint now starts with `https://<custom-name>.cognitiveservices.azure.com`.
+
+**Important notes**:
+- Custom subdomain name must be **globally unique** across Azure
+- Usually use the same name as your resource: `<resource-name>`
+- **One-way operation**: Cannot be disabled once enabled
+- Microsoft Learn recommends trying the change on a test resource first if the production Speech resource already has many Speech Studio models or projects
+
+#### Azure CLI alternative
+
+If you prefer CLI instead of the portal:
 
 ```bash
+az account set --subscription <subscription-id>
 az cognitiveservices account update \
   --name <speech-resource-name> \
   --resource-group <resource-group-name> \
@@ -100,19 +121,22 @@ az cognitiveservices account update \
 **Example**:
 
 ```bash
+az account set --subscription <subscription-id>
 az cognitiveservices account update \
   --name simplechat6-dev-speech \
   --resource-group sc-simplechat6-dev-rg \
   --custom-domain simplechat6-dev-speech
 ```
 
-**Important notes**:
-- Custom subdomain name must be **globally unique** across Azure
-- Usually use the same name as your resource: `<resource-name>`
-- **One-way operation**: Cannot be disabled once enabled
-- After enabling, the resource's endpoint property changes from regional to resource-specific
+#### Verify the custom domain is enabled
 
-**Verify custom subdomain is enabled**:
+Portal verification:
+
+1. Open the Speech resource.
+2. Go to **Keys and Endpoint**.
+3. Confirm the endpoint now starts with `https://<custom-name>.cognitiveservices.azure.com` instead of `https://<region>.api.cognitive.microsoft.com`.
+
+CLI verification:
 
 ```bash
 az cognitiveservices account show \
@@ -146,13 +170,13 @@ MI_PRINCIPAL_ID=$(az webapp identity show \
   --resource-group <resource-group-name> \
   --query principalId -o tsv)
 
-# Assign Cognitive Services Speech User role (data-plane read access)
+# Assign Cognitive Services Speech User role (baseline data-plane access)
 az role assignment create \
   --assignee $MI_PRINCIPAL_ID \
   --role "Cognitive Services Speech User" \
   --scope $SPEECH_RESOURCE_ID
 
-# Assign Cognitive Services Speech Contributor role (if needed for write operations)
+# Assign Cognitive Services Speech Contributor role (if transcription operations still require it)
 az role assignment create \
   --assignee $MI_PRINCIPAL_ID \
   --role "Cognitive Services Speech Contributor" \
@@ -172,19 +196,30 @@ az role assignment list \
 
 In the Admin Settings → Search & Extract → Multimedia Support section:
 
+- Use the **Setup Guide** button on the **AI Voice Conversations** card if you want an in-app walkthrough while filling the Speech fields.
+
 | Setting | Value | Example |
 |---------|-------|---------|
 | **Enable Audio File Support** | ✅ Checked | |
+| **Enable Speech-to-Text Input** | Optional | |
+| **Enable Text-to-Speech** | Optional | |
 | **Speech Service Endpoint** | Resource-specific endpoint (with custom subdomain) | `https://simplechat6-dev-speech.cognitiveservices.azure.com` |
 | **Speech Service Location** | Azure region | `eastus2` |
 | **Speech Service Locale** | Language locale for transcription | `en-US` |
 | **Authentication Type** | Managed Identity | |
+| **Speech Subscription ID** | Optional helper for building the ARM resource ID in the Admin UI | `12345678-1234-1234-1234-123456789abc` |
+| **Speech Resource Group** | Optional helper for building the ARM resource ID in the Admin UI | `rg-speech-prod` |
+| **Speech Resource Name** | Optional helper for building the ARM resource ID in the Admin UI | `my-speech-resource` |
 | **Speech Service Key** | (Leave empty when using MI) | |
+| **Speech Resource ID** | Required when using managed identity for text-to-speech | `/subscriptions/.../providers/Microsoft.CognitiveServices/accounts/<speech-resource-name>` |
 
 **Critical**: 
 - Endpoint must be the resource-specific URL (custom subdomain)
 - Do NOT use the regional endpoint for managed identity
+- If you have not created the custom domain yet, use the Azure portal walkthrough in Step 1 before saving the Speech endpoint in Admin Settings
 - Remove trailing slash from endpoint: ✅ `https://..azure.com` ❌ `https://..azure.com/`
+- If text-to-speech is enabled with managed identity, set the full Speech Resource ID in Admin Settings
+- If you do not know the full resource ID, the Admin Settings page can build it from Subscription ID, Resource Group, and Speech Resource Name
 
 ### Step 4: Test Audio Upload
 
@@ -227,6 +262,14 @@ In the Admin Settings → Search & Extract → Multimedia Support section:
 **Cause**: Missing RBAC role assignments
 
 **Solution**: Assign required roles using Step 2 above
+
+### Error: Text-to-speech fails with MI but transcription works
+
+**Symptom**: Audio uploads or speech-to-text input succeed, but `/api/chat/tts` fails when authentication type is Managed Identity.
+
+**Cause**: Text-to-speech managed identity also requires the Speech Resource ID in addition to the custom-domain endpoint and region.
+
+**Solution**: Populate **Speech Resource ID** in Admin Settings and verify the App Service managed identity has the required RBAC role(s).
 
 ### Key auth works but MI fails
 

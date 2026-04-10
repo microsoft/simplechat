@@ -6,6 +6,7 @@ from functions_debug import debug_print
 
 # Default redirect path for OAuth consent flow (must match your Azure AD app registration)
 REDIRECT_PATH = getattr(globals(), 'REDIRECT_PATH', '/getAToken')
+REQUESTED_SCOPES_SESSION_KEY = "requested_oauth_scopes"
 #REDIRECT_PATH = getattr(globals(), 'REDIRECT_PATH', '/.auth/login/aad/callback')
 
 def build_front_door_urls(front_door_url):
@@ -63,18 +64,93 @@ def _build_msal_app(cache=None, authority_override=None):
     )
 
 
+def _normalize_scopes(scopes=None):
+    """Return a de-duplicated scope list while preserving the original order."""
+    normalized_scopes = []
+    for scope in scopes or SCOPE:
+        if isinstance(scope, str) and scope and scope not in normalized_scopes:
+            normalized_scopes.append(scope)
+    return normalized_scopes or list(SCOPE)
+
+
+def set_requested_oauth_scopes(scopes=None):
+    """Persist the scopes required for the next interactive OAuth callback."""
+    session[REQUESTED_SCOPES_SESSION_KEY] = _normalize_scopes(scopes)
+
+
+def get_requested_oauth_scopes(clear_after_read=False):
+    """Return the currently requested OAuth scopes, optionally clearing them."""
+    stored_scopes = _normalize_scopes(session.get(REQUESTED_SCOPES_SESSION_KEY))
+    if clear_after_read:
+        session.pop(REQUESTED_SCOPES_SESSION_KEY, None)
+    return stored_scopes
+
+
+def clear_requested_oauth_scopes():
+    """Clear any interactive OAuth scope request state from the session."""
+    session.pop(REQUESTED_SCOPES_SESSION_KEY, None)
+
+
+def _build_redirect_url(host_url):
+    """Build the absolute redirect URL used for interactive OAuth flows."""
+    normalized_host_url = host_url.rstrip('/')
+    if not (
+        normalized_host_url.startswith('http://localhost')
+        or normalized_host_url.startswith('http://127.0.0.1')
+    ):
+        if not normalized_host_url.startswith('https://'):
+            normalized_host_url = 'https://' + normalized_host_url.split('://', 1)[-1]
+    return normalized_host_url + REDIRECT_PATH
+
+
+def _build_plugin_auth_response(
+    msal_app,
+    user_info,
+    scopes,
+    error,
+    message,
+    error_code=None,
+    error_description=None,
+    prompt=None,
+):
+    """Create a structured interactive authentication response for plugin callers."""
+    required_scopes = _normalize_scopes(scopes)
+    set_requested_oauth_scopes(required_scopes)
+
+    redirect_url = _build_redirect_url(request.host_url)
+    debug_print(f"[Auth] Redirect URL for {user_info.get('oid')}: {redirect_url}")
+    consent_url = get_consent_url(
+        msal_app=msal_app,
+        scopes=required_scopes,
+        redirect_uri=redirect_url,
+        prompt=prompt,
+    )
+    debug_print(f"[Auth] Interactive auth URL generated for scopes {required_scopes}")
+
+    return {
+        "error": error,
+        "message": message,
+        "consent_url": consent_url,
+        "auth_url": consent_url,
+        "scopes": required_scopes,
+        "error_code": error_code,
+        "error_description": error_description,
+    }
+
+
 # Helper: Generate a consent URL for user to grant permissions
-def get_consent_url(msal_app=None, scopes=None, redirect_uri=None, state=None, prompt="consent"):
+def get_consent_url(msal_app=None, scopes=None, redirect_uri=None, state=None, prompt=None):
     msal_app = _build_msal_app() if msal_app is None else msal_app
-    required_scopes = scopes or SCOPE
+    required_scopes = _normalize_scopes(scopes)
     # Use a default redirect URI if not provided
     redirect_uri = redirect_uri or REDIRECT_PATH
-    auth_url = msal_app.get_authorization_request_url(
-        required_scopes,
-        redirect_uri=redirect_uri,
-        state=state,
-        prompt=prompt
-    )
+    auth_request_kwargs = {
+        "redirect_uri": redirect_uri,
+        "state": state,
+    }
+    if prompt:
+        auth_request_kwargs["prompt"] = prompt
+    auth_url = msal_app.get_authorization_request_url(required_scopes, **auth_request_kwargs)
     return auth_url
 
 def get_valid_access_token(scopes=None):
@@ -87,7 +163,7 @@ def get_valid_access_token(scopes=None):
         debug_print("get_valid_access_token: No user in session.")
         return None # User not logged in
 
-    required_scopes = scopes or SCOPE # Use default SCOPE if none provided
+    required_scopes = _normalize_scopes(scopes) # Use default SCOPE if none provided
 
     msal_app = _build_msal_app(cache=_load_cache(), authority_override=get_graph_authority())
     user_info = session.get("user", {})
@@ -159,7 +235,7 @@ def get_valid_access_token_for_plugins(scopes=None):
             "error_description": "No user in session."
         }
 
-    required_scopes = scopes or SCOPE # Use default SCOPE if none provided
+    required_scopes = _normalize_scopes(scopes) # Use default SCOPE if none provided
 
     msal_app = _build_msal_app(cache=_load_cache(), authority_override=get_graph_authority())
     user_info = session.get("user", {})
@@ -195,51 +271,55 @@ def get_valid_access_token_for_plugins(scopes=None):
 
     if result and "access_token" in result:
         debug_print(f"get_valid_access_token: Token acquired silently for scopes: {required_scopes}")
+        clear_requested_oauth_scopes()
         return {"access_token": result['access_token']}
 
     # If we reach here, it means silent acquisition failed
-    debug_print("get_valid_access_token: acquire_token_silent failed. Needs re-authentication or received invalid grants.")
-    if result is None: # Assume invalid grants or no token
-        debug_print("result is None: get_valid_access_token: Consent required.")
-        host_url = request.host_url.rstrip('/')
-        # Only enforce https if not localhost or 127.0.0.1
-        if not (host_url.startswith('http://localhost') or host_url.startswith('http://127.0.0.1')):
-            if not host_url.startswith('https://'):
-                host_url = 'https://' + host_url.split('://', 1)[-1]
-        redirect_url = host_url + REDIRECT_PATH
-        logging.debug(f"Redirect URL for {user_info.get('oid')}: {redirect_url}")
-        consent_url = get_consent_url(msal_app=msal_app ,scopes=required_scopes, redirect_uri=redirect_url)
-        logging.debug(f"Consent URL: {consent_url}")
-        return {
-            "error": "consent_required",
-            "message": "User consent is required to access this resource. Present to the user so the consent url opens in a new tab.",
-            "consent_url": consent_url,
-            "scopes": required_scopes,
-            "error_code": None,
-            "error_description": "No token result; interactive authentication required."
-        }
+    debug_print("[Auth] acquire_token_silent_with_error failed. Evaluating interactive auth requirements.")
+    if result is None:
+        debug_print("[Auth] Silent token lookup returned no result. Interactive sign-in is required.")
+        return _build_plugin_auth_response(
+            msal_app,
+            user_info,
+            required_scopes,
+            error="interactive_auth_required",
+            message=(
+                "Interactive sign-in is required to access this Microsoft Graph resource. "
+                "If the permission is already granted, the auth flow should complete without prompting for consent."
+            ),
+            error_description="No token result; interactive authentication required.",
+        )
 
     error_code = result.get('error') if result else None
     error_desc = result.get('error_description') if result else None
-    debug_print(f"MSAL Error: {error_code}, Description: {error_desc}")
+    debug_print(f"[Auth] MSAL Error: {error_code}, Description: {error_desc}")
 
     if error_code == "invalid_grant" and error_desc and ("AADSTS65001" in error_desc or "consent_required" in error_desc):
-        host_url = request.host_url.rstrip('/')
-        if not (host_url.startswith('http://localhost') or host_url.startswith('http://127.0.0.1')):
-            if not host_url.startswith('https://'):
-                host_url = 'https://' + host_url.split('://', 1)[-1]
-        redirect_url = host_url + REDIRECT_PATH
-        logging.debug(f"Redirect URL for {user_info.get('oid')}: {redirect_url}")
-        consent_url = get_consent_url(msal_app=msal_app ,scopes=required_scopes, redirect_uri=redirect_url)
-        logging.debug(f"Consent URL: {consent_url}")
-        return {
-            "error": "consent_required",
-            "message": "User consent is required to access this resource. Present to the user so the consent url opens in a new tab.",
-            "consent_url": consent_url,
-            "scopes": required_scopes,
-            "error_code": error_code,
-            "error_description": error_desc
-        }
+        debug_print("[Auth] Entra explicitly reported missing consent for the requested scopes.")
+        return _build_plugin_auth_response(
+            msal_app,
+            user_info,
+            required_scopes,
+            error="consent_required",
+            message="User consent is required to access this Microsoft Graph resource.",
+            error_code=error_code,
+            error_description=error_desc,
+            prompt="consent",
+        )
+    if error_code in {"interaction_required", "login_required"}:
+        debug_print("[Auth] Entra requested an interactive sign-in without requiring new consent.")
+        return _build_plugin_auth_response(
+            msal_app,
+            user_info,
+            required_scopes,
+            error="interactive_auth_required",
+            message=(
+                "Interactive sign-in is required to refresh this Microsoft Graph session. "
+                "If permissions are already granted, the auth flow should complete without another consent prompt."
+            ),
+            error_code=error_code,
+            error_description=error_desc,
+        )
     else:
         return {
             "error": "token_acquisition_failed",
@@ -305,7 +385,7 @@ def get_video_indexer_managed_identity_token(settings, video_id=None):
     rg       = settings["video_indexer_resource_group"]
     sub      = settings["video_indexer_subscription_id"]
     acct     = settings["video_indexer_account_name"]
-    api_ver  = settings.get("video_indexer_arm_api_version", "2021-11-10-preview")
+    api_ver  = settings.get("video_indexer_arm_api_version", DEFAULT_VIDEO_INDEXER_ARM_API_VERSION)
     
     debug_print(f"[VIDEO INDEXER AUTH] Settings extracted - Subscription: {sub}, Resource Group: {rg}, Account: {acct}, API Version: {api_ver}")
     

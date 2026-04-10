@@ -760,6 +760,57 @@
                                             </h6>
                                         </div>
                                         <div class="card-body">
+                                            <div class="row g-2 align-items-end mb-3">
+                                                <div class="col-xl-2 col-lg-3 col-md-4">
+                                                    <label for="tokenUserFilter" class="form-label small mb-1">User</label>
+                                                    <select class="form-select form-select-sm" id="tokenUserFilter">
+                                                        <option value="all">All users</option>
+                                                    </select>
+                                                </div>
+                                                <div class="col-xl-2 col-lg-3 col-md-4">
+                                                    <label for="tokenWorkspaceTypeFilter" class="form-label small mb-1">Workspace</label>
+                                                    <select class="form-select form-select-sm" id="tokenWorkspaceTypeFilter">
+                                                        <option value="all">All workspaces</option>
+                                                    </select>
+                                                </div>
+                                                <div class="col-xl-2 col-lg-3 col-md-4 d-none" id="tokenGroupFilterContainer">
+                                                    <label for="tokenGroupFilter" class="form-label small mb-1">Group</label>
+                                                    <select class="form-select form-select-sm" id="tokenGroupFilter">
+                                                        <option value="all">All groups</option>
+                                                    </select>
+                                                </div>
+                                                <div class="col-xl-2 col-lg-3 col-md-4 d-none" id="tokenPublicWorkspaceFilterContainer">
+                                                    <label for="tokenPublicWorkspaceFilter" class="form-label small mb-1">Public Workspace</label>
+                                                    <select class="form-select form-select-sm" id="tokenPublicWorkspaceFilter">
+                                                        <option value="all">All public workspaces</option>
+                                                    </select>
+                                                </div>
+                                                <div class="col-xl-2 col-lg-3 col-md-4">
+                                                    <label for="tokenModelFilter" class="form-label small mb-1">Model</label>
+                                                    <select class="form-select form-select-sm" id="tokenModelFilter">
+                                                        <option value="all">All models</option>
+                                                    </select>
+                                                </div>
+                                                <div class="col-xl-2 col-lg-3 col-md-4">
+                                                    <label for="tokenTypeFilter" class="form-label small mb-1">Token Type</label>
+                                                    <select class="form-select form-select-sm" id="tokenTypeFilter">
+                                                        <option value="all">All token types</option>
+                                                    </select>
+                                                </div>
+                                                <div class="col-xl-2 col-lg-3 col-md-4">
+                                                    <div class="d-flex gap-2">
+                                                        <button type="button" class="btn btn-primary btn-sm w-100" id="tokenApplyFiltersBtn">
+                                                            <i class="bi bi-funnel me-1"></i>Apply
+                                                        </button>
+                                                        <button type="button" class="btn btn-outline-secondary btn-sm" id="tokenResetFiltersBtn" aria-label="Reset token filters">
+                                                            <i class="bi bi-arrow-counterclockwise"></i>
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="small text-muted mb-3">
+                                                Token filters apply to the token chart and token export data only.
+                                            </div>
                                             <div class="chart-container" style="height: 300px; position: relative;">
                                                 <canvas id="tokensChart"></canvas>
                                             </div>
@@ -3993,11 +4044,6 @@ window.GroupManager = {
         }
     },
 
-    // Alias for backward compatibility
-    refreshGroups: function() {
-        return this.loadGroups();
-    },
-    
     // CSV Bulk Upload Functions
     downloadCsvExample: function() {
         const csvContent = `userId,displayName,email,role

@@ -16,6 +16,16 @@ let enableDocumentClassification = window.enableDocumentClassification || false;
 let externalLinks = window.externalLinks || [];
 let enableExternalLinks = window.enableExternalLinks || false;
 let externalLinksMenuName = window.externalLinksMenuName || 'External Links';
+let releaseNotificationsRegistration = window.releaseNotificationsRegistration || {
+    registered: false,
+    name: '',
+    email: '',
+    organization: '',
+    registeredAt: '',
+    updatedAt: '',
+    recipientEmail: 'simplechat@microsoft.com',
+    appVersion: ''
+};
 
 // Track whether form has been modified since last save
 let formModified = false;
@@ -32,12 +42,50 @@ const externalLinksTbody = document.getElementById('external-links-tbody');
 const addExternalLinkBtn = document.getElementById('add-external-link-btn');
 const externalLinksJsonInput = document.getElementById('external_links_json');
 
+const enableSupportMenuToggle = document.getElementById('enable_support_menu');
+const supportMenuSettingsDiv = document.getElementById('support_menu_settings');
+const enableSupportSendFeedbackToggle = document.getElementById('enable_support_send_feedback');
+const supportFeedbackRecipientGroup = document.getElementById('support_feedback_recipient_group');
+const enableSupportLatestFeaturesToggle = document.getElementById('enable_support_latest_features');
+const supportLatestFeaturesSettingsDiv = document.getElementById('support_latest_features_settings');
+
 const adminForm = document.getElementById('admin-settings-form');
 const saveButton = document.getElementById('floating-save-btn') || (adminForm ? adminForm.querySelector('button[type="submit"]') : null);
 const enableGroupWorkspacesToggle = document.getElementById('enable_group_workspaces');
 const createGroupPermissionSettingDiv = document.getElementById('create_group_permission_setting');
 
+function setupAdminFormAutofillMetadata() {
+    if (!adminForm) {
+        return;
+    }
+
+    adminForm.setAttribute('autocomplete', 'off');
+    adminForm.setAttribute('data-lpignore', 'true');
+    adminForm.setAttribute('data-1p-ignore', 'true');
+    adminForm.setAttribute('data-bwignore', 'true');
+
+    adminForm.querySelectorAll('input, select, textarea').forEach(field => {
+        if (!field.hasAttribute('autocomplete')) {
+            field.setAttribute('autocomplete', 'off');
+        }
+
+        if (!field.hasAttribute('data-lpignore')) {
+            field.setAttribute('data-lpignore', 'true');
+        }
+
+        if (!field.hasAttribute('data-1p-ignore')) {
+            field.setAttribute('data-1p-ignore', 'true');
+        }
+
+        if (!field.hasAttribute('data-bwignore')) {
+            field.setAttribute('data-bwignore', 'true');
+        }
+    });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+    setupAdminFormAutofillMetadata();
+
     // --- Existing Setup ---
     renderGPTModels();
     renderEmbeddingModels();
@@ -56,10 +104,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
     activateTabFromHash(); // Keep tab activation logic
 
+    setupLatestFeaturesMirrors();
+    setupLatestFeatureImageModal();
+    setupSendFeedbackForms();
+    setupReleaseNotificationsRegistration();
+
     document.querySelectorAll('.nav-link').forEach(tab => {
         tab.addEventListener('click', function () {
             history.pushState(null, null, this.getAttribute('data-bs-target'));
         });
+    });
+
+    document.addEventListener('click', function (event) {
+        const trigger = event.target.closest('[data-open-admin-tab]');
+        if (!trigger) {
+            return;
+        }
+
+        event.preventDefault();
+        openAdminSettingsTab(trigger.getAttribute('data-open-admin-tab'));
     });
 
     window.addEventListener("popstate", activateTabFromHash);
@@ -69,6 +132,12 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // --- NEW: External Links Setup ---
     setupExternalLinks(); // Initialize external links section
+
+    // --- NEW: Support Menu Setup ---
+    setupSupportMenuSettings();
+
+    // --- NEW: Chunk size controls ---
+    setupChunkSizeControls();
     
     // --- Setup form change tracking ---
     setupFormChangeTracking();
@@ -886,6 +955,50 @@ function updateClassificationJsonInput() {
     return "[]";
 }
 
+function setupSupportMenuSettings() {
+    if (enableSupportMenuToggle) {
+        enableSupportMenuToggle.addEventListener('change', toggleSupportMenuSettingsVisibility);
+    }
+
+    if (enableSupportSendFeedbackToggle) {
+        enableSupportSendFeedbackToggle.addEventListener('change', toggleSupportFeedbackRecipientVisibility);
+    }
+
+    if (enableSupportLatestFeaturesToggle) {
+        enableSupportLatestFeaturesToggle.addEventListener('change', toggleSupportLatestFeaturesVisibility);
+    }
+
+    toggleSupportMenuSettingsVisibility();
+}
+
+
+function toggleSupportMenuSettingsVisibility() {
+    if (supportMenuSettingsDiv && enableSupportMenuToggle) {
+        supportMenuSettingsDiv.style.display = enableSupportMenuToggle.checked ? 'block' : 'none';
+    }
+
+    toggleSupportFeedbackRecipientVisibility();
+    toggleSupportLatestFeaturesVisibility();
+}
+
+
+function toggleSupportFeedbackRecipientVisibility() {
+    if (supportFeedbackRecipientGroup && enableSupportMenuToggle && enableSupportSendFeedbackToggle) {
+        supportFeedbackRecipientGroup.style.display = (
+            enableSupportMenuToggle.checked && enableSupportSendFeedbackToggle.checked
+        ) ? 'block' : 'none';
+    }
+}
+
+
+function toggleSupportLatestFeaturesVisibility() {
+    if (supportLatestFeaturesSettingsDiv && enableSupportMenuToggle && enableSupportLatestFeaturesToggle) {
+        supportLatestFeaturesSettingsDiv.style.display = (
+            enableSupportMenuToggle.checked && enableSupportLatestFeaturesToggle.checked
+        ) ? 'block' : 'none';
+    }
+}
+
 // --- *** NEW: External Links Functions *** ---
 
 /**
@@ -1211,6 +1324,69 @@ function updateExternalLinksJsonInput() {
     return "[]";
 }
 
+function setupChunkSizeControls() {
+    const overrideToggle = document.getElementById('enable_chunk_size_override');
+    const fieldsContainer = document.getElementById('chunk-size-fields');
+    const capWarning = document.getElementById('chunk-size-cap-warning');
+    const capWarningText = document.getElementById('chunk-size-cap-warning-text');
+    const capInput = document.getElementById('chunk_size_cap');
+    const chunkInputs = document.querySelectorAll('.chunk-size-input');
+
+    if (!overrideToggle || !fieldsContainer || !chunkInputs || chunkInputs.length === 0) {
+        return;
+    }
+
+    const capValue = capInput ? parseInt(capInput.value, 10) : null;
+
+    const updateCapWarning = () => {
+        if (!capValue || Number.isNaN(capValue)) {
+            if (capWarning) capWarning.classList.add('d-none');
+            return;
+        }
+
+        const exceeding = [];
+        chunkInputs.forEach(input => {
+            const raw = parseInt(input.value || '0', 10);
+            if (!Number.isNaN(raw) && raw > capValue) {
+                exceeding.push(input.dataset.label || input.name || 'A chunk size');
+            }
+        });
+
+        if (capWarning && capWarningText) {
+            if (exceeding.length > 0 && overrideToggle.checked) {
+                capWarningText.textContent = `${exceeding.join(', ')} will be reduced to ${capValue} because of the cap.`;
+                capWarning.classList.remove('d-none');
+            } else {
+                capWarning.classList.add('d-none');
+            }
+        }
+    };
+
+    const updateVisibility = (suppressChange = false) => {
+        const enabled = overrideToggle.checked;
+        fieldsContainer.classList.toggle('d-none', !enabled);
+        if (!enabled && capWarning) {
+            capWarning.classList.add('d-none');
+        } else {
+            updateCapWarning();
+        }
+        if (!suppressChange) {
+            markFormAsModified();
+        }
+    };
+
+    overrideToggle.addEventListener('change', updateVisibility);
+    chunkInputs.forEach(input => {
+        input.addEventListener('input', () => {
+            updateCapWarning();
+            markFormAsModified();
+        });
+    });
+
+    // Initial state
+    updateVisibility(true);
+}
+
 function setupToggles() {
     // --- Enable Agents (Semantic Kernel) Toggle ---
     const agentsMainContent = document.getElementById('agents-main-content');
@@ -1270,6 +1446,14 @@ function setupToggles() {
                 if (textToggle) textToggle.checked = !!settings.enable_text_plugin;
                 if (embeddingToggle) embeddingToggle.checked = !!settings.enable_default_embedding_model_plugin;
                 if (factMemoryToggle) factMemoryToggle.checked = !!settings.enable_fact_memory_plugin;
+                const depNote = document.getElementById('tabular-processing-dependency-note');
+                if (depNote) {
+                    const tabularEnabled = !!settings.enable_tabular_processing_plugin;
+                    depNote.textContent = tabularEnabled
+                        ? 'Enabled automatically because Enhanced Citations is enabled'
+                        : 'Enhanced Citations must be enabled to use tabular processing';
+                    depNote.className = tabularEnabled ? 'text-muted d-block ms-4' : 'text-danger d-block ms-4';
+                }
                 if (allowUserPluginsToggle) allowUserPluginsToggle.checked = !!settings.allow_user_plugins;
                 if (allowGroupPluginsToggle) allowGroupPluginsToggle.checked = !!settings.allow_group_plugins;
             } catch (err) {
@@ -1385,9 +1569,9 @@ function setupToggles() {
 
     // --- Agent Settings Toggles (corrected) ---
     const allowUserAgentsToggle = document.getElementById('toggle-allow-user-agents');
-    const allowUserCustomAgentEndpointsToggle = document.getElementById('toggle-allow-user-custom-agent-endpoints');
+    const allowUserCustomAgentEndpointsToggle = document.getElementById('toggle-allow-user-custom-endpoints');
     const allowGroupAgentsToggle = document.getElementById('toggle-allow-group-agents');
-    const allowGroupCustomAgentEndpointsToggle = document.getElementById('toggle-allow-group-custom-agent-endpoints');
+    const allowGroupCustomAgentEndpointsToggle = document.getElementById('toggle-allow-group-custom-endpoints');
     let agentSettingsFeedbackDiv = document.getElementById('agent-settings-feedback');
     if (!agentSettingsFeedbackDiv) {
         agentSettingsFeedbackDiv = document.createElement('div');
@@ -1414,9 +1598,9 @@ function setupToggles() {
             if (!resp.ok) throw new Error('Failed to fetch agent settings');
             const settings = await resp.json();
             if (allowUserAgentsToggle) allowUserAgentsToggle.checked = !!settings.allow_user_agents;
-            if (allowUserCustomAgentEndpointsToggle) allowUserCustomAgentEndpointsToggle.checked = !!settings.allow_user_custom_agent_endpoints;
+            if (allowUserCustomAgentEndpointsToggle) allowUserCustomAgentEndpointsToggle.checked = !!settings.allow_user_custom_endpoints;
             if (allowGroupAgentsToggle) allowGroupAgentsToggle.checked = !!settings.allow_group_agents;
-            if (allowGroupCustomAgentEndpointsToggle) allowGroupCustomAgentEndpointsToggle.checked = !!settings.allow_group_custom_agent_endpoints;
+            if (allowGroupCustomAgentEndpointsToggle) allowGroupCustomAgentEndpointsToggle.checked = !!settings.allow_group_custom_endpoints;
         } catch (err) {
             showAgentSettingsFeedback('Error loading agent settings: ' + err.message, 'danger');
         }
@@ -1430,9 +1614,9 @@ function setupToggles() {
     function saveAgentSetting(settingName, value) {
         const toggleMap = {
             'allow_user_agents': allowUserAgentsToggle,
-            'allow_user_custom_agent_endpoints': allowUserCustomAgentEndpointsToggle,
+            'allow_user_custom_endpoints': allowUserCustomAgentEndpointsToggle,
             'allow_group_agents': allowGroupAgentsToggle,
-            'allow_group_custom_agent_endpoints': allowGroupCustomAgentEndpointsToggle
+            'allow_group_custom_endpoints': allowGroupCustomAgentEndpointsToggle
         };
         const toggle = toggleMap[settingName];
         if (toggle) toggle.disabled = true;
@@ -1464,7 +1648,7 @@ function setupToggles() {
     }
     if (allowUserCustomAgentEndpointsToggle) {
         allowUserCustomAgentEndpointsToggle.addEventListener('change', () => {
-            saveAgentSetting('allow_user_custom_agent_endpoints', allowUserCustomAgentEndpointsToggle.checked);
+            saveAgentSetting('allow_user_custom_endpoints', allowUserCustomAgentEndpointsToggle.checked);
         });
     }
     if (allowGroupAgentsToggle) {
@@ -1474,7 +1658,7 @@ function setupToggles() {
     }
     if (allowGroupCustomAgentEndpointsToggle) {
         allowGroupCustomAgentEndpointsToggle.addEventListener('change', () => {
-            saveAgentSetting('allow_group_custom_agent_endpoints', allowGroupCustomAgentEndpointsToggle.checked);
+            saveAgentSetting('allow_group_custom_endpoints', allowGroupCustomAgentEndpointsToggle.checked);
         });
     }
 
@@ -1535,6 +1719,16 @@ function setupToggles() {
         redisSettingsDiv.style.display = enableRedisCache.checked ? 'block' : 'none';
         enableRedisCache.addEventListener('change', function () {
             redisSettingsDiv.style.display = this.checked ? 'block' : 'none';
+        });
+    }
+
+    const enableIdleTimeoutToggle = document.getElementById('enable_idle_timeout');
+    const idleTimeoutSettingsDiv = document.getElementById('idle_timeout_settings');
+    if (enableIdleTimeoutToggle && idleTimeoutSettingsDiv) {
+        idleTimeoutSettingsDiv.classList.toggle('d-none', !enableIdleTimeoutToggle.checked);
+        enableIdleTimeoutToggle.addEventListener('change', function () {
+            idleTimeoutSettingsDiv.classList.toggle('d-none', !this.checked);
+            markFormAsModified();
         });
     }
 
@@ -1800,11 +1994,149 @@ function setupToggles() {
     }
 
     const speechAuthType = document.getElementById('speech_service_authentication_type');
+    const speechEndpointInput = document.getElementById('speech_service_endpoint');
+    const speechKeyContainer = document.getElementById('speech_service_key_container');
+    const speechResourceIdContainer = document.getElementById('speech_service_resource_id_container');
+    const speechResourceIdInput = document.getElementById('speech_service_resource_id');
+    const speechSubscriptionInput = document.getElementById('speech_service_subscription_id');
+    const speechResourceGroupInput = document.getElementById('speech_service_resource_group');
+    const speechResourceNameInput = document.getElementById('speech_service_resource_name');
+    const buildSpeechResourceIdButton = document.getElementById('build_speech_resource_id_btn');
+    const speechResourceIdBuilderStatus = document.getElementById('speech_resource_id_builder_status');
+
+    function inferSpeechResourceNameFromEndpoint(endpointValue) {
+        const trimmedValue = (endpointValue || '').trim();
+        if (!trimmedValue) {
+            return '';
+        }
+
+        try {
+            const parsedUrl = new URL(trimmedValue);
+            const hostName = parsedUrl.hostname.toLowerCase();
+            const supportedSuffixes = [
+                '.cognitiveservices.azure.com',
+                '.cognitiveservices.azure.us'
+            ];
+
+            for (const suffix of supportedSuffixes) {
+                if (hostName.endsWith(suffix)) {
+                    const resourceName = hostName.slice(0, -suffix.length);
+                    if (resourceName && !resourceName.includes('.')) {
+                        return resourceName;
+                    }
+                }
+            }
+        } catch (error) {
+            return '';
+        }
+
+        return '';
+    }
+
+    function setSpeechResourceIdBuilderStatus(message) {
+        if (speechResourceIdBuilderStatus) {
+            speechResourceIdBuilderStatus.textContent = message;
+        }
+    }
+
+    function buildSpeechResourceIdFromFields() {
+        const subscriptionId = speechSubscriptionInput?.value?.trim() || '';
+        const resourceGroup = speechResourceGroupInput?.value?.trim() || '';
+        const resourceName = speechResourceNameInput?.value?.trim() || '';
+
+        if (!subscriptionId || !resourceGroup || !resourceName) {
+            return '';
+        }
+
+        return `/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.CognitiveServices/accounts/${resourceName}`;
+    }
+
+    function syncSpeechResourceIdBuilder(force) {
+        if (!speechResourceIdInput) {
+            return '';
+        }
+
+        if (speechResourceNameInput && !speechResourceNameInput.value.trim()) {
+            const inferredResourceName = inferSpeechResourceNameFromEndpoint(speechEndpointInput?.value || '');
+            if (inferredResourceName) {
+                speechResourceNameInput.value = inferredResourceName;
+            }
+        }
+
+        const builtResourceId = buildSpeechResourceIdFromFields();
+        const currentValue = speechResourceIdInput.value.trim();
+        const previousGeneratedValue = speechResourceIdInput.dataset.generatedValue || '';
+        const wasGenerated = speechResourceIdInput.dataset.generated === 'true' || currentValue === '' || currentValue === previousGeneratedValue;
+
+        if (builtResourceId) {
+            speechResourceIdInput.dataset.generatedValue = builtResourceId;
+            if (force || wasGenerated) {
+                speechResourceIdInput.value = builtResourceId;
+                speechResourceIdInput.dataset.generated = 'true';
+            }
+            setSpeechResourceIdBuilderStatus('Resource ID can be generated from the helper fields. You can still override it manually if needed.');
+            return builtResourceId;
+        }
+
+        const missingParts = [];
+        if (!speechSubscriptionInput?.value?.trim()) {
+            missingParts.push('Subscription ID');
+        }
+        if (!speechResourceGroupInput?.value?.trim()) {
+            missingParts.push('Resource Group');
+        }
+        if (!speechResourceNameInput?.value?.trim()) {
+            missingParts.push('Speech Resource Name');
+        }
+
+        speechResourceIdInput.dataset.generatedValue = '';
+        if (speechResourceIdInput.dataset.generated === 'true' && !currentValue) {
+            speechResourceIdInput.dataset.generated = 'false';
+        }
+
+        setSpeechResourceIdBuilderStatus(`To auto-build the resource ID, provide: ${missingParts.join(', ')}.`);
+        return '';
+    }
+
     if (speechAuthType) {
+        const updateSpeechAuthFields = function () {
+            const usingKeyAuth = this.value === 'key';
+            setSectionVisibility(speechKeyContainer, usingKeyAuth);
+            setSectionVisibility(speechResourceIdContainer, !usingKeyAuth);
+        };
+
+        updateSpeechAuthFields.call(speechAuthType);
         speechAuthType.addEventListener('change', function () {
-            document.getElementById('speech_service_key_container').style.display =
-                (this.value === 'key') ? 'block' : 'none';
+            updateSpeechAuthFields.call(this);
             markFormAsModified();
+        });
+    }
+
+    if (speechResourceIdInput) {
+        syncSpeechResourceIdBuilder(false);
+        speechResourceIdInput.addEventListener('input', function () {
+            const builtResourceId = buildSpeechResourceIdFromFields();
+            this.dataset.generated = builtResourceId && this.value.trim() === builtResourceId ? 'true' : 'false';
+        });
+    }
+
+    [speechEndpointInput, speechSubscriptionInput, speechResourceGroupInput, speechResourceNameInput].forEach((element) => {
+        if (!element) {
+            return;
+        }
+
+        element.addEventListener('input', () => {
+            syncSpeechResourceIdBuilder(false);
+            markFormAsModified();
+        });
+    });
+
+    if (buildSpeechResourceIdButton) {
+        buildSpeechResourceIdButton.addEventListener('click', () => {
+            const builtResourceId = syncSpeechResourceIdBuilder(true);
+            if (builtResourceId) {
+                markFormAsModified();
+            }
         });
     }
 
@@ -1866,30 +2198,11 @@ function setupToggles() {
     // Redis auth type dropdown logic
     const redisAuthType = document.getElementById('redis_auth_type');
     if (redisAuthType) {
-        const redisKeyContainer = document.getElementById('redis_key_container');
-        const redisKeyLabel = document.getElementById('redis_key_label');
-
-        // Helper to update the label text based on auth type
-        function updateRedisKeyLabel(authTypeValue) {
-            if (!redisKeyLabel) return;
-            redisKeyLabel.textContent = authTypeValue === 'key_vault' ? 'Key Vault Secret Name' : 'Redis Access Key';
-        }
-
-        // Set initial state on load
-        if (redisKeyContainer) {
-            redisKeyContainer.classList.toggle('d-none', !(redisAuthType.value === 'key' || redisAuthType.value === 'key_vault'));
-        }
-        updateRedisKeyLabel(redisAuthType.value);
+        updateRedisCanonicalAuthVisibility(redisAuthType.value);
 
         redisAuthType.addEventListener('change', function () {
-            if (redisKeyContainer) {
-                redisKeyContainer.classList.toggle('d-none', !(this.value === 'key' || this.value === 'key_vault'));
-            }
-            const redisKeyVaultHint = document.getElementById('redis_key_vault_hint');
-            if (redisKeyVaultHint) {
-                redisKeyVaultHint.classList.toggle('d-none', this.value !== 'key_vault');
-            }
-            updateRedisKeyLabel(this.value);
+            updateRedisCanonicalAuthVisibility(this.value);
+            updateRedisMirrorVisibility(this.value);
             markFormAsModified();
         });
     }
@@ -2545,19 +2858,703 @@ function setupTestButtons() {
     }
 }
 
+function setupLatestFeaturesMirrors() {
+    const canonicalThoughts = document.getElementById('enable_thoughts');
+    const mirroredThoughts = document.getElementById('latest_features_enable_thoughts');
+
+    if (canonicalThoughts && mirroredThoughts) {
+        mirroredThoughts.checked = canonicalThoughts.checked;
+
+        canonicalThoughts.addEventListener('change', () => {
+            mirroredThoughts.checked = canonicalThoughts.checked;
+        });
+
+        mirroredThoughts.addEventListener('change', () => {
+            canonicalThoughts.checked = mirroredThoughts.checked;
+            markFormAsModified();
+        });
+    }
+
+    const canonicalEnhancedCitations = document.getElementById('enable_enhanced_citations');
+    const mirroredEnhancedCitations = document.getElementById('latest_features_enable_enhanced_citations');
+    const canonicalOfficeAuthType = document.getElementById('office_docs_authentication_type');
+    const mirroredOfficeAuthType = document.getElementById('latest_features_office_docs_authentication_type');
+    const canonicalOfficeConnString = document.getElementById('office_docs_storage_account_url');
+    const mirroredOfficeConnString = document.getElementById('latest_features_office_docs_storage_account_url');
+    const canonicalOfficeBlobEndpoint = document.getElementById('office_docs_storage_account_blob_endpoint');
+    const mirroredOfficeBlobEndpoint = document.getElementById('latest_features_office_docs_storage_account_blob_endpoint');
+    const canonicalTabularPreviewLimit = document.getElementById('tabular_preview_max_blob_size_mb');
+    const mirroredTabularPreviewLimit = document.getElementById('latest_features_tabular_preview_max_blob_size_mb');
+    const canonicalRedisToggle = document.getElementById('enable_redis_cache');
+    const mirroredRedisToggle = document.getElementById('latest_features_enable_redis_cache');
+    const canonicalRedisUrl = document.getElementById('redis_url');
+    const mirroredRedisUrl = document.getElementById('latest_features_redis_url');
+    const canonicalRedisAuthType = document.getElementById('redis_auth_type');
+    const mirroredRedisAuthType = document.getElementById('latest_features_redis_auth_type');
+    const canonicalRedisKey = document.getElementById('redis_key');
+    const mirroredRedisKey = document.getElementById('latest_features_redis_key');
+
+    if (canonicalEnhancedCitations && mirroredEnhancedCitations) {
+        mirroredEnhancedCitations.checked = canonicalEnhancedCitations.checked;
+        updateLatestFeaturesEnhancedCitationMirror();
+
+        canonicalEnhancedCitations.addEventListener('change', () => {
+            mirroredEnhancedCitations.checked = canonicalEnhancedCitations.checked;
+            updateLatestFeaturesEnhancedCitationMirror();
+        });
+
+        mirroredEnhancedCitations.addEventListener('change', () => {
+            canonicalEnhancedCitations.checked = mirroredEnhancedCitations.checked;
+            toggleEnhancedCitation(mirroredEnhancedCitations.checked);
+            updateLatestFeaturesEnhancedCitationMirror();
+            markFormAsModified();
+        });
+    }
+
+    if (canonicalOfficeAuthType && mirroredOfficeAuthType) {
+        mirroredOfficeAuthType.value = canonicalOfficeAuthType.value;
+        updateOfficeStorageMirrorVisibility(canonicalOfficeAuthType.value);
+
+        canonicalOfficeAuthType.addEventListener('change', () => {
+            mirroredOfficeAuthType.value = canonicalOfficeAuthType.value;
+            updateOfficeStorageMirrorVisibility(canonicalOfficeAuthType.value);
+        });
+
+        mirroredOfficeAuthType.addEventListener('change', () => {
+            canonicalOfficeAuthType.value = mirroredOfficeAuthType.value;
+            updateOfficeStorageCanonicalVisibility(mirroredOfficeAuthType.value);
+            updateOfficeStorageMirrorVisibility(mirroredOfficeAuthType.value);
+            markFormAsModified();
+        });
+    }
+
+    syncMirroredField(canonicalOfficeConnString, mirroredOfficeConnString);
+    syncMirroredField(canonicalOfficeBlobEndpoint, mirroredOfficeBlobEndpoint);
+    syncMirroredField(canonicalTabularPreviewLimit, mirroredTabularPreviewLimit);
+
+    if (canonicalRedisToggle && mirroredRedisToggle) {
+        mirroredRedisToggle.checked = canonicalRedisToggle.checked;
+        updateLatestFeaturesRedisMirror();
+
+        canonicalRedisToggle.addEventListener('change', () => {
+            mirroredRedisToggle.checked = canonicalRedisToggle.checked;
+            updateLatestFeaturesRedisMirror();
+        });
+
+        mirroredRedisToggle.addEventListener('change', () => {
+            canonicalRedisToggle.checked = mirroredRedisToggle.checked;
+            updateRedisCanonicalCacheVisibility(mirroredRedisToggle.checked);
+            updateLatestFeaturesRedisMirror();
+            markFormAsModified();
+        });
+    }
+
+    if (canonicalRedisAuthType && mirroredRedisAuthType) {
+        mirroredRedisAuthType.value = canonicalRedisAuthType.value;
+        updateRedisCanonicalAuthVisibility(canonicalRedisAuthType.value);
+        updateRedisMirrorVisibility(canonicalRedisAuthType.value);
+
+        canonicalRedisAuthType.addEventListener('change', () => {
+            mirroredRedisAuthType.value = canonicalRedisAuthType.value;
+            updateRedisMirrorVisibility(canonicalRedisAuthType.value);
+        });
+
+        mirroredRedisAuthType.addEventListener('change', () => {
+            canonicalRedisAuthType.value = mirroredRedisAuthType.value;
+            updateRedisCanonicalAuthVisibility(mirroredRedisAuthType.value);
+            updateRedisMirrorVisibility(mirroredRedisAuthType.value);
+            markFormAsModified();
+        });
+    }
+
+    syncMirroredField(canonicalRedisUrl, mirroredRedisUrl);
+    syncMirroredField(canonicalRedisKey, mirroredRedisKey);
+}
+
+function syncMirroredField(canonicalField, mirroredField, eventName = 'input') {
+    if (!canonicalField || !mirroredField) {
+        return;
+    }
+
+    mirroredField.value = canonicalField.value;
+
+    canonicalField.addEventListener(eventName, () => {
+        mirroredField.value = canonicalField.value;
+    });
+
+    mirroredField.addEventListener(eventName, () => {
+        canonicalField.value = mirroredField.value;
+        markFormAsModified();
+    });
+}
+
+function updateLatestFeaturesEnhancedCitationMirror() {
+    const canonicalEnhancedCitations = document.getElementById('enable_enhanced_citations');
+    const mirroredEnhancedCitations = document.getElementById('latest_features_enable_enhanced_citations');
+    const mirroredContainer = document.getElementById('latest_features_enhanced_citation_settings');
+    const canonicalOfficeAuthType = document.getElementById('office_docs_authentication_type');
+    const mirroredOfficeAuthType = document.getElementById('latest_features_office_docs_authentication_type');
+
+    if (!canonicalEnhancedCitations || !mirroredEnhancedCitations || !mirroredContainer) {
+        return;
+    }
+
+    mirroredEnhancedCitations.checked = canonicalEnhancedCitations.checked;
+    mirroredContainer.classList.toggle('d-none', !canonicalEnhancedCitations.checked);
+
+    if (canonicalOfficeAuthType && mirroredOfficeAuthType) {
+        mirroredOfficeAuthType.value = canonicalOfficeAuthType.value;
+        updateOfficeStorageMirrorVisibility(canonicalOfficeAuthType.value);
+    }
+}
+
+function updateLatestFeaturesRedisMirror() {
+    const canonicalRedisToggle = document.getElementById('enable_redis_cache');
+    const mirroredRedisToggle = document.getElementById('latest_features_enable_redis_cache');
+    const mirroredContainer = document.getElementById('latest_features_redis_settings');
+    const canonicalRedisAuthType = document.getElementById('redis_auth_type');
+    const mirroredRedisAuthType = document.getElementById('latest_features_redis_auth_type');
+
+    if (!canonicalRedisToggle || !mirroredRedisToggle || !mirroredContainer) {
+        return;
+    }
+
+    mirroredRedisToggle.checked = canonicalRedisToggle.checked;
+    mirroredContainer.classList.toggle('d-none', !canonicalRedisToggle.checked);
+
+    if (canonicalRedisAuthType && mirroredRedisAuthType) {
+        mirroredRedisAuthType.value = canonicalRedisAuthType.value;
+        updateRedisMirrorVisibility(canonicalRedisAuthType.value);
+    }
+}
+
+function updateOfficeStorageCanonicalVisibility(authTypeValue) {
+    const connStrGroup = document.getElementById('office_docs_storage_conn_str_group');
+    const urlGroup = document.getElementById('office_docs_storage_url_group');
+
+    if (connStrGroup) {
+        connStrGroup.style.display = authTypeValue === 'managed_identity' ? 'none' : '';
+    }
+
+    if (urlGroup) {
+        urlGroup.style.display = authTypeValue === 'managed_identity' ? '' : 'none';
+    }
+}
+
+function updateOfficeStorageMirrorVisibility(authTypeValue) {
+    const connStrGroup = document.getElementById('latest_features_office_docs_storage_conn_str_group');
+    const urlGroup = document.getElementById('latest_features_office_docs_storage_url_group');
+
+    if (connStrGroup) {
+        connStrGroup.classList.toggle('d-none', authTypeValue === 'managed_identity');
+    }
+
+    if (urlGroup) {
+        urlGroup.classList.toggle('d-none', authTypeValue !== 'managed_identity');
+    }
+}
+
+function getRedisKeyLabelText(authTypeValue) {
+    return authTypeValue === 'key_vault' ? 'Key Vault Secret Name' : 'Redis Access Key';
+}
+
+function updateRedisCanonicalCacheVisibility(isEnabled) {
+    const redisSettingsDiv = document.getElementById('redis_cache_settings');
+
+    if (redisSettingsDiv) {
+        redisSettingsDiv.style.display = isEnabled ? 'block' : 'none';
+    }
+}
+
+function updateRedisCanonicalAuthVisibility(authTypeValue) {
+    const redisKeyContainer = document.getElementById('redis_key_container');
+    const redisKeyLabel = document.getElementById('redis_key_label');
+    const redisKeyVaultHint = document.getElementById('redis_key_vault_hint');
+
+    if (redisKeyContainer) {
+        redisKeyContainer.classList.toggle('d-none', !(authTypeValue === 'key' || authTypeValue === 'key_vault'));
+    }
+
+    if (redisKeyLabel) {
+        redisKeyLabel.textContent = getRedisKeyLabelText(authTypeValue);
+    }
+
+    if (redisKeyVaultHint) {
+        redisKeyVaultHint.classList.toggle('d-none', authTypeValue !== 'key_vault');
+    }
+}
+
+function updateRedisMirrorVisibility(authTypeValue) {
+    const redisKeyContainer = document.getElementById('latest_features_redis_key_container');
+    const redisKeyLabel = document.getElementById('latest_features_redis_key_label');
+    const redisKeyVaultHint = document.getElementById('latest_features_redis_key_vault_hint');
+
+    if (redisKeyContainer) {
+        redisKeyContainer.classList.toggle('d-none', !(authTypeValue === 'key' || authTypeValue === 'key_vault'));
+    }
+
+    if (redisKeyLabel) {
+        redisKeyLabel.textContent = getRedisKeyLabelText(authTypeValue);
+    }
+
+    if (redisKeyVaultHint) {
+        redisKeyVaultHint.classList.toggle('d-none', authTypeValue !== 'key_vault');
+    }
+}
+
 function toggleEnhancedCitation(isEnabled) {
     const container = document.getElementById('enhanced_citation_settings');
-    if (!container) return;
-    container.style.display = isEnabled ? 'block' : 'none';
+    if (container) {
+        container.style.display = isEnabled ? 'block' : 'none';
+    }
+
+    const mirroredContainer = document.getElementById('latest_features_enhanced_citation_settings');
+    if (mirroredContainer) {
+        mirroredContainer.classList.toggle('d-none', !isEnabled);
+    }
+}
+
+
+function setupSendFeedbackForms() {
+    const feedbackForms = document.querySelectorAll('.admin-send-feedback-form');
+    feedbackForms.forEach(form => {
+        const submitButton = form.querySelector('.admin-send-feedback-submit');
+        if (!submitButton) {
+            return;
+        }
+
+        submitButton.addEventListener('click', event => {
+            event.preventDefault();
+            submitAdminFeedbackForm(form);
+        });
+    });
+}
+
+
+function setupReleaseNotificationsRegistration() {
+    const statusBadge = document.getElementById('release-notifications-status-badge');
+    const modalElement = document.getElementById('releaseNotificationsModal');
+    const readView = document.getElementById('release-notifications-read-view');
+    const editView = document.getElementById('release-notifications-edit-view');
+    const editButton = document.getElementById('release-notifications-edit-btn');
+    const cancelEditButton = document.getElementById('release-notifications-cancel-edit-btn');
+    const submitButton = document.getElementById('release-notifications-submit-btn');
+
+    if (!statusBadge || !modalElement || !readView || !editView || !editButton || !cancelEditButton || !submitButton) {
+        return;
+    }
+
+    modalElement.addEventListener('show.bs.modal', () => {
+        clearStatusAlert(document.getElementById('release-notifications-status'));
+        populateReleaseNotificationsModal();
+        if (releaseNotificationsRegistration.registered) {
+            showReleaseNotificationsReadView();
+        } else {
+            showReleaseNotificationsEditView();
+        }
+    });
+
+    editButton.addEventListener('click', () => {
+        clearStatusAlert(document.getElementById('release-notifications-status'));
+        showReleaseNotificationsEditView();
+    });
+
+    cancelEditButton.addEventListener('click', () => {
+        clearStatusAlert(document.getElementById('release-notifications-status'));
+        populateReleaseNotificationsModal();
+        if (releaseNotificationsRegistration.registered) {
+            showReleaseNotificationsReadView();
+        } else {
+            showReleaseNotificationsEditView();
+        }
+    });
+
+    submitButton.addEventListener('click', submitReleaseNotificationsRegistration);
+}
+
+
+function populateReleaseNotificationsModal() {
+    const nameInput = document.getElementById('release_notifications_modal_name');
+    const emailInput = document.getElementById('release_notifications_modal_email');
+    const orgInput = document.getElementById('release_notifications_modal_org');
+
+    if (nameInput) {
+        nameInput.value = releaseNotificationsRegistration.name || '';
+    }
+    if (emailInput) {
+        emailInput.value = releaseNotificationsRegistration.email || '';
+    }
+    if (orgInput) {
+        orgInput.value = releaseNotificationsRegistration.organization || '';
+    }
+
+    const readName = document.getElementById('release-notifications-read-name');
+    const readEmail = document.getElementById('release-notifications-read-email');
+    const readOrg = document.getElementById('release-notifications-read-org');
+    const readRegisteredAt = document.getElementById('release-notifications-read-registered-at');
+    const readUpdatedAt = document.getElementById('release-notifications-read-updated-at');
+
+    if (readName) {
+        readName.textContent = releaseNotificationsRegistration.name || '-';
+    }
+    if (readEmail) {
+        readEmail.textContent = releaseNotificationsRegistration.email || '-';
+    }
+    if (readOrg) {
+        readOrg.textContent = releaseNotificationsRegistration.organization || '-';
+    }
+    if (readRegisteredAt) {
+        readRegisteredAt.textContent = formatIsoDateTime(releaseNotificationsRegistration.registeredAt);
+    }
+    if (readUpdatedAt) {
+        readUpdatedAt.textContent = formatIsoDateTime(releaseNotificationsRegistration.updatedAt);
+    }
+}
+
+
+function showReleaseNotificationsReadView() {
+    const readView = document.getElementById('release-notifications-read-view');
+    const editView = document.getElementById('release-notifications-edit-view');
+    const editButton = document.getElementById('release-notifications-edit-btn');
+    const cancelEditButton = document.getElementById('release-notifications-cancel-edit-btn');
+    const submitButton = document.getElementById('release-notifications-submit-btn');
+
+    readView.classList.remove('d-none');
+    editView.classList.add('d-none');
+    editButton.classList.remove('d-none');
+    cancelEditButton.classList.add('d-none');
+    submitButton.classList.add('d-none');
+}
+
+
+function showReleaseNotificationsEditView() {
+    const readView = document.getElementById('release-notifications-read-view');
+    const editView = document.getElementById('release-notifications-edit-view');
+    const editButton = document.getElementById('release-notifications-edit-btn');
+    const cancelEditButton = document.getElementById('release-notifications-cancel-edit-btn');
+    const submitButton = document.getElementById('release-notifications-submit-btn');
+
+    readView.classList.add('d-none');
+    editView.classList.remove('d-none');
+    editButton.classList.add('d-none');
+    cancelEditButton.classList.toggle('d-none', !releaseNotificationsRegistration.registered);
+    submitButton.classList.remove('d-none');
+}
+
+
+async function submitReleaseNotificationsRegistration() {
+    const statusAlert = document.getElementById('release-notifications-status');
+    const submitButton = document.getElementById('release-notifications-submit-btn');
+    const nameInput = document.getElementById('release_notifications_modal_name');
+    const emailInput = document.getElementById('release_notifications_modal_email');
+    const orgInput = document.getElementById('release_notifications_modal_org');
+
+    const name = nameInput?.value.trim() || '';
+    const email = emailInput?.value.trim() || '';
+    const organization = orgInput?.value.trim() || '';
+
+    if (!name || !email || !organization) {
+        setStatusAlert(statusAlert, 'Please complete name, email, and organization before submitting registration.', 'danger');
+        showToast('Please complete the registration form first.', 'warning');
+        return;
+    }
+
+    if (!email.includes('@')) {
+        setStatusAlert(statusAlert, 'Please enter a valid email address.', 'danger');
+        showToast('Please enter a valid email address.', 'warning');
+        return;
+    }
+
+    submitButton.disabled = true;
+
+    try {
+        const response = await fetch('/api/admin/settings/release_notifications_registration', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                name,
+                email,
+                organization
+            })
+        });
+
+        const result = await response.json();
+        if (!response.ok) {
+            throw new Error(result.error || 'Unable to prepare the registration email draft.');
+        }
+
+        releaseNotificationsRegistration = {
+            ...releaseNotificationsRegistration,
+            registered: true,
+            name,
+            email,
+            organization,
+            registeredAt: result.registeredAt || releaseNotificationsRegistration.registeredAt,
+            updatedAt: result.updatedAt || releaseNotificationsRegistration.updatedAt
+        };
+        syncReleaseNotificationsHiddenInputs();
+        updateReleaseNotificationsBadge();
+        populateReleaseNotificationsModal();
+        showReleaseNotificationsReadView();
+
+        const mailtoUrl = buildReleaseNotificationsMailtoUrl({
+            recipientEmail: result.recipientEmail || releaseNotificationsRegistration.recipientEmail,
+            subjectLine: result.subjectLine || '[SimpleChat Registration] Release and Community Call Notifications',
+            name,
+            email,
+            organization,
+            registeredAt: releaseNotificationsRegistration.registeredAt,
+            updatedAt: releaseNotificationsRegistration.updatedAt
+        });
+
+        setStatusAlert(statusAlert, 'Registration saved. Your local email client should open next.', 'success');
+        showToast('Release notifications registration prepared.', 'success');
+        window.location.href = mailtoUrl;
+    } catch (error) {
+        setStatusAlert(statusAlert, error.message || 'Unable to prepare the registration email draft.', 'danger');
+        showToast(error.message || 'Unable to prepare the registration email draft.', 'danger');
+    } finally {
+        submitButton.disabled = false;
+    }
+}
+
+
+function buildReleaseNotificationsMailtoUrl({
+    recipientEmail,
+    subjectLine,
+    name,
+    email,
+    organization,
+    registeredAt,
+    updatedAt
+}) {
+    const bodyLines = [
+        'Registration submission to receive the latest release updates and community call notifications.',
+        '',
+        `Name: ${name}`,
+        `Email: ${email}`,
+        `Organization: ${organization}`,
+        `App Version: ${releaseNotificationsRegistration.appVersion || 'Unknown'}`,
+        `Registered At: ${registeredAt || 'Pending'}`,
+    ];
+
+    return `mailto:${recipientEmail}?subject=${encodeURIComponent(subjectLine)}&body=${encodeURIComponent(bodyLines.join('\n'))}`;
+}
+
+
+function syncReleaseNotificationsHiddenInputs() {
+    const registeredInput = document.getElementById('release_notifications_registered');
+    const nameInput = document.getElementById('release_notifications_name');
+    const emailInput = document.getElementById('release_notifications_email');
+    const orgInput = document.getElementById('release_notifications_org');
+    const registeredAtInput = document.getElementById('release_notifications_registered_at');
+    const updatedAtInput = document.getElementById('release_notifications_updated_at');
+
+    if (registeredInput) {
+        registeredInput.value = releaseNotificationsRegistration.registered ? 'true' : 'false';
+    }
+    if (nameInput) {
+        nameInput.value = releaseNotificationsRegistration.name || '';
+    }
+    if (emailInput) {
+        emailInput.value = releaseNotificationsRegistration.email || '';
+    }
+    if (orgInput) {
+        orgInput.value = releaseNotificationsRegistration.organization || '';
+    }
+    if (registeredAtInput) {
+        registeredAtInput.value = releaseNotificationsRegistration.registeredAt || '';
+    }
+    if (updatedAtInput) {
+        updatedAtInput.value = releaseNotificationsRegistration.updatedAt || '';
+    }
+}
+
+
+function updateReleaseNotificationsBadge() {
+    const statusBadge = document.getElementById('release-notifications-status-badge');
+    if (!statusBadge) {
+        return;
+    }
+
+    statusBadge.dataset.registered = releaseNotificationsRegistration.registered ? 'true' : 'false';
+    statusBadge.textContent = releaseNotificationsRegistration.registered ? 'Registered' : 'Unregistered';
+    statusBadge.classList.toggle('bg-success', releaseNotificationsRegistration.registered);
+    statusBadge.classList.toggle('bg-secondary', !releaseNotificationsRegistration.registered);
+}
+
+
+function formatIsoDateTime(value) {
+    if (!value) {
+        return '-';
+    }
+
+    const parsedDate = new Date(value);
+    if (Number.isNaN(parsedDate.getTime())) {
+        return value;
+    }
+
+    return parsedDate.toLocaleString();
+}
+
+
+async function submitAdminFeedbackForm(form) {
+    const feedbackType = form.dataset.feedbackType;
+    const feedbackLabel = form.dataset.feedbackLabel || 'Feedback';
+    const inputs = form.querySelectorAll('input[type="text"], input[type="email"], textarea');
+    const nameInput = inputs[0];
+    const emailInput = inputs[1];
+    const organizationInput = inputs[2];
+    const detailsInput = inputs[3];
+    const statusAlert = form.querySelector('.admin-send-feedback-status');
+    const submitButton = form.querySelector('.admin-send-feedback-submit');
+
+    const reporterName = nameInput?.value.trim() || '';
+    const reporterEmail = emailInput?.value.trim() || '';
+    const organization = organizationInput?.value.trim() || '';
+    const details = detailsInput?.value.trim() || '';
+
+    if (!reporterName || !reporterEmail || !organization || !details) {
+        setStatusAlert(statusAlert, 'Please complete name, email, organization, and details before opening the email draft.', 'danger');
+        showToast('Please complete the Send Feedback form first.', 'warning');
+        return;
+    }
+
+    if (!reporterEmail.includes('@')) {
+        setStatusAlert(statusAlert, 'Please enter a valid email address.', 'danger');
+        showToast('Please enter a valid email address.', 'warning');
+        return;
+    }
+
+    submitButton.disabled = true;
+
+    try {
+        const response = await fetch('/api/admin/settings/send_feedback_email', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                feedbackType,
+                reporterName,
+                reporterEmail,
+                organization,
+                details
+            })
+        });
+
+        const result = await response.json();
+        if (!response.ok) {
+            throw new Error(result.error || 'Unable to prepare the feedback email draft.');
+        }
+
+        const mailtoUrl = buildAdminFeedbackMailtoUrl({
+            recipientEmail: result.recipientEmail,
+            subjectLine: result.subjectLine,
+            feedbackLabel,
+            reporterName,
+            reporterEmail,
+            organization,
+            details
+        });
+
+        setStatusAlert(
+            statusAlert,
+            'Email draft prepared. Your local email client should open next.',
+            'success'
+        );
+        showToast(`${feedbackLabel} email draft prepared.`, 'success');
+        window.location.href = mailtoUrl;
+    } catch (error) {
+        setStatusAlert(statusAlert, error.message || 'Unable to prepare the feedback email draft.', 'danger');
+        showToast(error.message || 'Unable to prepare the feedback email draft.', 'danger');
+    } finally {
+        submitButton.disabled = false;
+    }
+}
+
+
+function buildAdminFeedbackMailtoUrl({
+    recipientEmail,
+    subjectLine,
+    feedbackLabel,
+    reporterName,
+    reporterEmail,
+    organization,
+    details
+}) {
+    const sendFeedbackPane = document.getElementById('send-feedback');
+    const appVersion = sendFeedbackPane?.dataset.appVersion || '';
+    const bodyLines = [
+        `Feedback Type: ${feedbackLabel}`,
+        `Name: ${reporterName}`,
+        `Email: ${reporterEmail}`,
+        `Organization: ${organization}`,
+        `App Version: ${appVersion || 'Unknown'}`,
+        ''
+    ];
+
+    bodyLines.push('Details:');
+    bodyLines.push(details);
+
+    return `mailto:${recipientEmail}?subject=${encodeURIComponent(subjectLine)}&body=${encodeURIComponent(bodyLines.join('\n'))}`;
+}
+
+
+function setStatusAlert(statusAlert, message, variant) {
+    if (!statusAlert) {
+        return;
+    }
+
+    statusAlert.className = `alert alert-${variant} admin-send-feedback-status`;
+    statusAlert.textContent = message;
+    statusAlert.classList.remove('d-none');
+}
+
+
+function updateSendFeedbackStatus(statusAlert, message, variant) {
+    setStatusAlert(statusAlert, message, variant);
+}
+
+
+function clearStatusAlert(statusAlert) {
+    if (!statusAlert) {
+        return;
+    }
+
+    statusAlert.className = 'alert d-none admin-send-feedback-status';
+    statusAlert.textContent = '';
 }
 
 
 function switchTab(event, tabButtonId) {
     event.preventDefault();
     const triggerEl = document.getElementById(tabButtonId);
-    const tabObj = new bootstrap.Tab(triggerEl);
-    tabObj.show();
-  }
+    if (triggerEl) {
+        const tabObj = new bootstrap.Tab(triggerEl);
+        tabObj.show();
+        return;
+    }
+
+    const inferredTabId = tabButtonId.replace(/-tab$/, '');
+    if (typeof window.showAdminTab === 'function') {
+        window.showAdminTab(inferredTabId);
+
+        const navLink = document.querySelector(`.admin-nav-tab[data-tab="${inferredTabId}"]`);
+        if (navLink) {
+            document.querySelectorAll('.admin-nav-tab, .admin-nav-section').forEach(link => {
+                link.classList.remove('active');
+            });
+            navLink.classList.add('active');
+        }
+    }
+}
+
+window.switchTab = switchTab;
 
 function togglePassword(btnId, inputId) {
     const btn = document.getElementById(btnId);
@@ -2575,29 +3572,104 @@ function togglePassword(btnId, inputId) {
     }
 }
 
+function setSectionVisibility(element, visible) {
+    if (!element) {
+        return;
+    }
+
+    element.classList.toggle('d-none', !visible);
+}
+
 // --- Video Indexer Settings toggle ---
 const videoSupportToggle = document.getElementById('enable_video_file_support');
-const videoIndexerDiv    = document.getElementById('video_indexer_settings');
+const videoIndexerDiv = document.getElementById('video_indexer_settings');
+const videoIndexerCloudSelect = document.getElementById('video_indexer_cloud');
+const videoIndexerEndpointInput = document.getElementById('video_indexer_endpoint');
+const videoIndexerEndpointDisplay = document.getElementById('video_indexer_endpoint_display');
+const videoIndexerCustomEndpointGroup = document.getElementById('video_indexer_custom_endpoint_group');
+const videoIndexerCustomEndpointInput = document.getElementById('video_indexer_custom_endpoint');
+const videoIndexerCloudMismatchAlert = document.getElementById('video_indexer_cloud_mismatch_alert');
+
+function updateVideoIndexerEndpointSelection() {
+    if (!videoIndexerCloudSelect || !videoIndexerEndpointInput) {
+        return;
+    }
+
+    const selectedCloud = videoIndexerCloudSelect.value;
+    const publicEndpoint = videoIndexerCloudSelect.dataset.publicEndpoint || 'https://api.videoindexer.ai';
+    const governmentEndpoint = videoIndexerCloudSelect.dataset.governmentEndpoint || 'https://api.videoindexer.ai.azure.us';
+    const runtimeCloud = videoIndexerCloudSelect.dataset.runtimeCloud || 'public';
+
+    let endpointValue = publicEndpoint;
+    if (selectedCloud === 'usgovernment') {
+        endpointValue = governmentEndpoint;
+    } else if (selectedCloud === 'custom') {
+        endpointValue = videoIndexerCustomEndpointInput?.value?.trim() || '';
+    }
+
+    videoIndexerEndpointInput.value = endpointValue;
+
+    if (videoIndexerEndpointDisplay) {
+        videoIndexerEndpointDisplay.value = endpointValue;
+    }
+
+    setSectionVisibility(videoIndexerCustomEndpointGroup, selectedCloud === 'custom');
+    setSectionVisibility(videoIndexerCloudMismatchAlert, selectedCloud !== runtimeCloud);
+
+    if (typeof updateVideoIndexerModalInfo === 'function') {
+        updateVideoIndexerModalInfo();
+    }
+}
+
 if (videoSupportToggle && videoIndexerDiv) {
-  // on load
-  videoIndexerDiv.style.display = videoSupportToggle.checked ? 'block' : 'none';
-  // on change
-  videoSupportToggle.addEventListener('change', () => {
-    videoIndexerDiv.style.display = videoSupportToggle.checked ? 'block' : 'none';
-    markFormAsModified();
-  });
+    setSectionVisibility(videoIndexerDiv, videoSupportToggle.checked);
+    videoSupportToggle.addEventListener('change', () => {
+        setSectionVisibility(videoIndexerDiv, videoSupportToggle.checked);
+        markFormAsModified();
+    });
+}
+
+if (videoIndexerCloudSelect) {
+    updateVideoIndexerEndpointSelection();
+    videoIndexerCloudSelect.addEventListener('change', () => {
+        updateVideoIndexerEndpointSelection();
+        markFormAsModified();
+    });
+}
+
+if (videoIndexerCustomEndpointInput) {
+    videoIndexerCustomEndpointInput.addEventListener('input', () => {
+        updateVideoIndexerEndpointSelection();
+        markFormAsModified();
+    });
 }
 
 // --- Speech Service Settings toggle ---
-const audioSupportToggle  = document.getElementById('enable_audio_file_support');
-const audioServiceDiv     = document.getElementById('audio_service_settings');
-if (audioSupportToggle && audioServiceDiv) {
-  // initial visibility
-  audioServiceDiv.style.display = audioSupportToggle.checked ? 'block' : 'none';
-  audioSupportToggle.addEventListener('change', () => {
-    audioServiceDiv.style.display = audioSupportToggle.checked ? 'block' : 'none';
-    markFormAsModified();
-  });
+const audioSupportToggle = document.getElementById('enable_audio_file_support');
+const speechToTextToggle = document.getElementById('enable_speech_to_text_input');
+const textToSpeechToggle = document.getElementById('enable_text_to_speech');
+const audioServiceDiv = document.getElementById('audio_service_settings');
+
+function areAnySpeechFeaturesEnabled() {
+    return [audioSupportToggle, speechToTextToggle, textToSpeechToggle].some((toggle) => Boolean(toggle?.checked));
+}
+
+function updateSpeechServiceSettingsVisibility() {
+    setSectionVisibility(audioServiceDiv, areAnySpeechFeaturesEnabled());
+}
+
+if (audioServiceDiv) {
+    updateSpeechServiceSettingsVisibility();
+    [audioSupportToggle, speechToTextToggle, textToSpeechToggle].forEach((toggle) => {
+        if (!toggle) {
+            return;
+        }
+
+        toggle.addEventListener('change', () => {
+            updateSpeechServiceSettingsVisibility();
+            markFormAsModified();
+        });
+    });
 }
 
 // Metadata Extraction UI
@@ -2636,12 +3708,12 @@ function populateExtractionModels() {
 }
 
 if (extractToggle) {
-  // show/hide the model dropdown
-  extractModelDiv.style.display = extractToggle.checked ? 'block' : 'none';
-  extractToggle.addEventListener('change', () => {
+    // show/hide the model dropdown
     extractModelDiv.style.display = extractToggle.checked ? 'block' : 'none';
-    markFormAsModified();
-  });
+    extractToggle.addEventListener('change', () => {
+        extractModelDiv.style.display = extractToggle.checked ? 'block' : 'none';
+        markFormAsModified();
+    });
 }
 
 // Multi-Modal Vision UI
@@ -2650,232 +3722,232 @@ const visionModelDiv = document.getElementById('multimodal_vision_model_settings
 const visionSelect = document.getElementById('multimodal_vision_model');
 
 function populateVisionModels() {
-  if (!visionSelect) return;
+    if (!visionSelect) return;
   
-  // remember previously chosen value
-  const prev = visionSelect.getAttribute('data-prev') || '';
+    // remember previously chosen value
+    const prev = visionSelect.getAttribute('data-prev') || '';
 
-  // clear out old options (except the placeholder)
-  visionSelect.innerHTML = '<option value="">Select a vision-capable model...</option>';
+    // clear out old options (except the placeholder)
+    visionSelect.innerHTML = '<option value="">Select a vision-capable model...</option>';
 
-  if (document.getElementById('enable_gpt_apim').checked) {
-    // use comma-separated APIM deployments
-    const text = document.getElementById('azure_apim_gpt_deployment').value || '';
-    text.split(',')
-        .map(s => s.trim())
-        .filter(s => s)
-        .forEach(d => {
-          const opt = new Option(d, d);
-          visionSelect.add(opt);
+    if (document.getElementById('enable_gpt_apim').checked) {
+        // use comma-separated APIM deployments
+        const text = document.getElementById('azure_apim_gpt_deployment').value || '';
+        text.split(',')
+                .map(s => s.trim())
+                .filter(s => s)
+                .forEach(d => {
+                    const opt = new Option(d, d);
+                    visionSelect.add(opt);
+                });
+    } else {
+        // use direct GPT selected deployments - filter for vision-capable models
+        (window.gptSelected || []).forEach(m => {
+            // Only include models with vision capabilities
+            // Vision-enabled models per Azure OpenAI docs:
+            // - o-series reasoning models (o1, o3, etc.)
+            // - GPT-5 series
+            // - GPT-4.1 series
+            // - GPT-4.5
+            // - GPT-4o series (gpt-4o, gpt-4o-mini)
+            // - GPT-4 vision models (gpt-4-vision, gpt-4-turbo-vision)
+            const modelNameLower = (m.modelName || '').toLowerCase();
+            const isVisionCapable =
+                modelNameLower.includes('vision') ||
+                modelNameLower.includes('gpt-4o') ||
+                modelNameLower.includes('gpt-4.1') ||
+                modelNameLower.includes('gpt-4.5') ||
+                modelNameLower.includes('gpt-5') ||
+                modelNameLower.match(/^o\d+/) ||
+                modelNameLower.includes('o1-') ||
+                modelNameLower.includes('o3-');
+
+            if (isVisionCapable) {
+                const label = `${m.deploymentName} (${m.modelName})`;
+                const opt = new Option(label, m.deploymentName);
+                visionSelect.add(opt);
+            }
         });
-  } else {
-    // use direct GPT selected deployments - filter for vision-capable models
-    (window.gptSelected || []).forEach(m => {
-      // Only include models with vision capabilities
-      // Vision-enabled models per Azure OpenAI docs:
-      // - o-series reasoning models (o1, o3, etc.)
-      // - GPT-5 series
-      // - GPT-4.1 series
-      // - GPT-4.5
-      // - GPT-4o series (gpt-4o, gpt-4o-mini)
-      // - GPT-4 vision models (gpt-4-vision, gpt-4-turbo-vision)
-      const modelNameLower = (m.modelName || '').toLowerCase();
-      const isVisionCapable = 
-        modelNameLower.includes('vision') ||           // gpt-4-vision, gpt-4-turbo-vision
-        modelNameLower.includes('gpt-4o') ||           // gpt-4o, gpt-4o-mini
-        modelNameLower.includes('gpt-4.1') ||          // gpt-4.1 series
-        modelNameLower.includes('gpt-4.5') ||          // gpt-4.5
-        modelNameLower.includes('gpt-5') ||            // gpt-5 series
-        modelNameLower.match(/^o\d+/) ||               // o1, o3, etc. (o-series)
-        modelNameLower.includes('o1-') ||              // o1-preview, o1-mini
-        modelNameLower.includes('o3-');                // o3-mini, etc.
-      
-      if (isVisionCapable) {
-        const label = `${m.deploymentName} (${m.modelName})`;
-        const opt = new Option(label, m.deploymentName);
-        visionSelect.add(opt);
-      }
-    });
-  }
+    }
 
-  // restore previous
-  if (prev) {
-    visionSelect.value = prev;
-  }
+    // restore previous
+    if (prev) {
+        visionSelect.value = prev;
+    }
 }
 
 if (visionToggle && visionModelDiv) {
-  // show/hide the model dropdown
-  visionModelDiv.style.display = visionToggle.checked ? 'block' : 'none';
-  visionToggle.addEventListener('change', () => {
+    // show/hide the model dropdown
     visionModelDiv.style.display = visionToggle.checked ? 'block' : 'none';
-    markFormAsModified();
-  });
+    visionToggle.addEventListener('change', () => {
+        visionModelDiv.style.display = visionToggle.checked ? 'block' : 'none';
+        markFormAsModified();
+    });
 }
 
 // Listen for vision model selection changes
 if (visionSelect) {
-  visionSelect.addEventListener('change', () => {
-    // Update data-prev to remember the selection
-    visionSelect.setAttribute('data-prev', visionSelect.value);
-    markFormAsModified();
-  });
+    visionSelect.addEventListener('change', () => {
+        // Update data-prev to remember the selection
+        visionSelect.setAttribute('data-prev', visionSelect.value);
+        markFormAsModified();
+    });
 }
 
-// when APIM‐toggle flips, repopulate
+// when APIM-toggle flips, repopulate
 const apimToggle = document.getElementById('enable_gpt_apim');
 if (apimToggle) {
-  apimToggle.addEventListener('change', () => {
-    populateExtractionModels();
-    populateVisionModels();
-  });
+    apimToggle.addEventListener('change', () => {
+        populateExtractionModels();
+        populateVisionModels();
+    });
 }
 
 // on load, stash previous & populate
 document.addEventListener('DOMContentLoaded', () => {
-  if (extractSelect) {
-    extractSelect.setAttribute('data-prev', extractSelect.value);
-    populateExtractionModels();
-  }
-  if (visionSelect) {
-    visionSelect.setAttribute('data-prev', visionSelect.value);
-    populateVisionModels();
-  }
+    if (extractSelect) {
+        extractSelect.setAttribute('data-prev', extractSelect.value);
+        populateExtractionModels();
+    }
+    if (visionSelect) {
+        visionSelect.setAttribute('data-prev', visionSelect.value);
+        populateVisionModels();
+    }
 });
 
 
 document.addEventListener('DOMContentLoaded', () => {
-    ['user','group','public'].forEach(type => {
-      const warnDiv     = document.getElementById(`index-warning-${type}`);
-      const missingSpan = document.getElementById(`missing-fields-${type}`);
-      const fixBtn      = document.getElementById(`fix-${type}-index-btn`);
+        ['user','group','public'].forEach(type => {
+            const warnDiv = document.getElementById(`index-warning-${type}`);
+            const missingSpan = document.getElementById(`missing-fields-${type}`);
+            const fixBtn = document.getElementById(`fix-${type}-index-btn`);
   
-      // 1) check for missing fields
-      fetch('/api/admin/settings/check_index_fields', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        credentials: 'same-origin',
-        body: JSON.stringify({ indexType: type })
-      })
-      .then(r => {
-        if (!r.ok) {
-          return r.json().then(errorData => {
-            throw new Error(errorData.error || `HTTP ${r.status}: ${r.statusText}`);
-          });
-        }
-        return r.json();
-      })
-      .then(response => {
-        if (response.autoFixed) {
-          // Fields were automatically fixed
-          console.log(`✅ Auto-fixed ${type} index: added ${response.fieldsAdded.length} field(s):`, response.fieldsAdded.join(', '));
-          if (warnDiv) {
-            warnDiv.className = 'alert alert-success';
-            missingSpan.textContent = `Automatically added ${response.fieldsAdded.length} field(s): ${response.fieldsAdded.join(', ')}`;
-            warnDiv.style.display = 'block';
-            if (fixBtn) fixBtn.style.display = 'none';
-            
-            // Hide success message after 5 seconds
-            setTimeout(() => {
-              warnDiv.style.display = 'none';
-            }, 5000);
-          }
-        } else if (response.autoFixFailed) {
-          // Auto-fix failed, show manual button
-          console.warn(`Auto-fix failed for ${type} index:`, response.error);
-          missingSpan.textContent = response.missingFields.join(', ') + ' (Auto-fix failed - please fix manually)';
-          warnDiv.className = 'alert alert-warning';
-          warnDiv.style.display = 'block';
-          if (fixBtn) {
-            fixBtn.textContent = `Fix ${type} Index Fields`;
-            fixBtn.style.display = 'inline-block';
-          }
-        } else if (response.missingFields && response.missingFields.length > 0) {
-          // Missing fields but auto-fix was disabled
-          missingSpan.textContent = response.missingFields.join(', ');
-          warnDiv.className = 'alert alert-warning';
-          warnDiv.style.display = 'block';
-          if (fixBtn) {
-            fixBtn.textContent = `Fix ${type} Index Fields`;
-            fixBtn.style.display = 'inline-block';
-          }
-        } else if (response.indexExists) {
-          // Index exists and is complete
-          if (warnDiv) warnDiv.style.display = 'none';
-          console.log(`${type} index is properly configured`);
-        }
-      })
-      .catch(err => {
-        console.warn(`Checking ${type} index fields:`, err.message);
+            // 1) check for missing fields
+            fetch('/api/admin/settings/check_index_fields', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                credentials: 'same-origin',
+                body: JSON.stringify({ indexType: type })
+            })
+            .then(r => {
+                if (!r.ok) {
+                    return r.json().then(errorData => {
+                        throw new Error(errorData.error || `HTTP ${r.status}: ${r.statusText}`);
+                    });
+                }
+                return r.json();
+            })
+            .then(response => {
+                if (response.autoFixed) {
+                    // Fields were automatically fixed
+                    console.log(`✅ Auto-fixed ${type} index: added ${response.fieldsAdded.length} field(s):`, response.fieldsAdded.join(', '));
+                    if (warnDiv) {
+                        warnDiv.className = 'alert alert-success';
+                        missingSpan.textContent = `Automatically added ${response.fieldsAdded.length} field(s): ${response.fieldsAdded.join(', ')}`;
+                        warnDiv.style.display = 'block';
+                        if (fixBtn) fixBtn.style.display = 'none';
+
+                        // Hide success message after 5 seconds
+                        setTimeout(() => {
+                            warnDiv.style.display = 'none';
+                        }, 5000);
+                    }
+                } else if (response.autoFixFailed) {
+                    // Auto-fix failed, show manual button
+                    console.warn(`Auto-fix failed for ${type} index:`, response.error);
+                    missingSpan.textContent = response.missingFields.join(', ') + ' (Auto-fix failed - please fix manually)';
+                    warnDiv.className = 'alert alert-warning';
+                    warnDiv.style.display = 'block';
+                    if (fixBtn) {
+                        fixBtn.textContent = `Fix ${type} Index Fields`;
+                        fixBtn.style.display = 'inline-block';
+                    }
+                } else if (response.missingFields && response.missingFields.length > 0) {
+                    // Missing fields but auto-fix was disabled
+                    missingSpan.textContent = response.missingFields.join(', ');
+                    warnDiv.className = 'alert alert-warning';
+                    warnDiv.style.display = 'block';
+                    if (fixBtn) {
+                        fixBtn.textContent = `Fix ${type} Index Fields`;
+                        fixBtn.style.display = 'inline-block';
+                    }
+                } else if (response.indexExists) {
+                    // Index exists and is complete
+                    if (warnDiv) warnDiv.style.display = 'none';
+                    console.log(`${type} index is properly configured`);
+                }
+            })
+            .catch(err => {
+                console.warn(`Checking ${type} index fields:`, err.message);
         
-        // Check if this is an index not found error
-        if (err.message.includes('does not exist yet') || err.message.includes('not found')) {
-          // Show a different message for missing index
-          if (warnDiv && missingSpan && fixBtn) {
-            missingSpan.textContent = `Index "${type}" does not exist yet`;
-            warnDiv.style.display = 'block';
-            fixBtn.textContent = `Create ${type} Index`;
-            fixBtn.style.display = 'inline-block';
-            fixBtn.dataset.action = 'create';
-          }
-        } else if (err.message.includes('not configured')) {
-          // Azure AI Search not configured
-          if (warnDiv && missingSpan) {
-            missingSpan.textContent = 'Azure AI Search not configured';
-            warnDiv.style.display = 'block';
-            if (fixBtn) fixBtn.style.display = 'none';
-          }
-        } else {
-          // Hide the warning div for other errors
-          if (warnDiv) warnDiv.style.display = 'none';
-        }
-      });
-  
-      // 2) wire up the “fix” button
-      fixBtn.addEventListener('click', () => {
-        fixBtn.disabled = true;
-        const action = fixBtn.dataset.action || 'fix';
-        const endpoint = action === 'create' ? '/api/admin/settings/create_index' : '/api/admin/settings/fix_index_fields';
-        const actionText = action === 'create' ? 'Creating' : 'Fixing';
-        
-        fixBtn.textContent = `${actionText}...`;
-        
-        fetch(endpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          credentials: 'same-origin',
-          body: JSON.stringify({ indexType: type })
-        })
-        .then(r => {
-          if (!r.ok) {
-            return r.json().then(errorData => {
-              throw new Error(errorData.error || `HTTP ${r.status}: ${r.statusText}`);
+                // Check if this is an index not found error
+                if (err.message.includes('does not exist yet') || err.message.includes('not found')) {
+                    // Show a different message for missing index
+                    if (warnDiv && missingSpan && fixBtn) {
+                        missingSpan.textContent = `Index "${type}" does not exist yet`;
+                        warnDiv.style.display = 'block';
+                        fixBtn.textContent = `Create ${type} Index`;
+                        fixBtn.style.display = 'inline-block';
+                        fixBtn.dataset.action = 'create';
+                    }
+                } else if (err.message.includes('not configured')) {
+                    // Azure AI Search not configured
+                    if (warnDiv && missingSpan) {
+                        missingSpan.textContent = 'Azure AI Search not configured';
+                        warnDiv.style.display = 'block';
+                        if (fixBtn) fixBtn.style.display = 'none';
+                    }
+                } else {
+                    // Hide the warning div for other errors
+                    if (warnDiv) warnDiv.style.display = 'none';
+                }
             });
-          }
-          return r.json();
-        })
-        .then(resp => {
-          if (resp.status === 'success') {
-            alert(resp.message || `Successfully ${action === 'create' ? 'created' : 'fixed'} ${type} index!`);
-            window.location.reload();
-          } else {
-            alert(`Failed to ${action} ${type} index: ${resp.error}`);
-            fixBtn.disabled = false;
-            fixBtn.textContent = `${action === 'create' ? 'Create' : 'Fix'} ${type} Index`;
-          }
-        })
-        .catch(err => {
-          alert(`Error ${action === 'create' ? 'creating' : 'fixing'} ${type} index: ${err.message || err}`);
-          fixBtn.disabled = false;
-          fixBtn.textContent = `${action === 'create' ? 'Create' : 'Fix'} ${type} Index`;
+  
+            // 2) wire up the fix button
+            fixBtn.addEventListener('click', () => {
+                fixBtn.disabled = true;
+                const action = fixBtn.dataset.action || 'fix';
+                const endpoint = action === 'create' ? '/api/admin/settings/create_index' : '/api/admin/settings/fix_index_fields';
+                const actionText = action === 'create' ? 'Creating' : 'Fixing';
+        
+                fixBtn.textContent = `${actionText}...`;
+        
+                fetch(endpoint, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ indexType: type })
+                })
+                .then(r => {
+                    if (!r.ok) {
+                        return r.json().then(errorData => {
+                            throw new Error(errorData.error || `HTTP ${r.status}: ${r.statusText}`);
+                        });
+                    }
+                    return r.json();
+                })
+                .then(resp => {
+                    if (resp.status === 'success') {
+                        alert(resp.message || `Successfully ${action === 'create' ? 'created' : 'fixed'} ${type} index!`);
+                        window.location.reload();
+                    } else {
+                        alert(`Failed to ${action} ${type} index: ${resp.error}`);
+                        fixBtn.disabled = false;
+                        fixBtn.textContent = `${action === 'create' ? 'Create' : 'Fix'} ${type} Index`;
+                    }
+                })
+                .catch(err => {
+                    alert(`Error ${action === 'create' ? 'creating' : 'fixing'} ${type} index: ${err.message || err}`);
+                    fixBtn.disabled = false;
+                    fixBtn.textContent = `${action === 'create' ? 'Create' : 'Fix'} ${type} Index`;
+                });
+            });
         });
-      });
     });
-  });
   
 
 togglePassword('toggle_gpt_key', 'azure_openai_gpt_key');
@@ -2897,10 +3969,12 @@ togglePassword('toggle_audio_files_key', 'audio_files_key');
 togglePassword('toggle_office_conn_str', 'office_docs_storage_account_blob_endpoint');
 togglePassword('toggle_video_conn_str', 'video_files_storage_account_url');
 togglePassword('toggle_audio_conn_str', 'audio_files_storage_account_url');
-togglePassword('toggle_video_indexer_api_key', 'video_indexer_api_key');
 togglePassword('toggle_speech_service_key', 'speech_service_key');
 togglePassword('toggle_redis_key', 'redis_key');
 togglePassword('toggle_azure_apim_redis_subscription_key', 'azure_apim_redis_subscription_key');
+togglePassword('toggle_latest_features_office_conn_str', 'latest_features_office_docs_storage_account_url');
+togglePassword('toggle_latest_features_office_url', 'latest_features_office_docs_storage_account_blob_endpoint');
+togglePassword('toggle_latest_features_redis_key', 'latest_features_redis_key');
 
 /**
  * Checks if this is a first-time setup based on critical settings
@@ -3188,6 +4262,9 @@ function calculateAvailableWalkthroughSteps() {
     
     const videoEnabled = document.getElementById('enable_video_file_support')?.checked || false;
     const audioEnabled = document.getElementById('enable_audio_file_support')?.checked || false;
+    const speechToTextEnabled = document.getElementById('enable_speech_to_text_input')?.checked || false;
+    const textToSpeechEnabled = document.getElementById('enable_text_to_speech')?.checked || false;
+    const speechFeaturesEnabled = audioEnabled || speechToTextEnabled || textToSpeechEnabled;
     
     const availableSteps = [1, 2, 3, 4]; // Base steps always available
     
@@ -3198,10 +4275,10 @@ function calculateAvailableWalkthroughSteps() {
         if (videoEnabled) {
             availableSteps.push(8); // Video support
         }
-        
-        if (audioEnabled) {
-            availableSteps.push(9); // Audio support
-        }
+    }
+
+    if (speechFeaturesEnabled) {
+        availableSteps.push(9); // Shared Speech Service
     }
     
     // Optional steps always available
@@ -3261,8 +4338,10 @@ function findNextApplicableStep(currentStep) {
                 
             case 9: // Audio support
                 const audioEnabled = document.getElementById('enable_audio_file_support')?.checked || false;
-                if (!workspacesEnabled || !audioEnabled) {
-                    // Skip this step if workspaces not enabled or audio not enabled
+                const speechToTextEnabled = document.getElementById('enable_speech_to_text_input')?.checked || false;
+                const textToSpeechEnabled = document.getElementById('enable_text_to_speech')?.checked || false;
+                if (!(audioEnabled || speechToTextEnabled || textToSpeechEnabled)) {
+                    // Skip this step if no speech features are enabled
                     nextStep++;
                     continue;
                 }
@@ -3528,25 +4607,48 @@ function isStepComplete(stepNumber) {
             const videoEndpoint = document.getElementById('video_indexer_endpoint')?.value;
             const videoLocation = document.getElementById('video_indexer_location')?.value;
             const videoAccountId = document.getElementById('video_indexer_account_id')?.value;
-            
-            return videoLocation && videoAccountId && videoEndpoint;
+            const videoResourceGroup = document.getElementById('video_indexer_resource_group')?.value;
+            const videoSubscriptionId = document.getElementById('video_indexer_subscription_id')?.value;
+            const videoAccountName = document.getElementById('video_indexer_account_name')?.value;
+
+            return Boolean(
+                videoLocation &&
+                videoAccountId &&
+                videoEndpoint &&
+                videoResourceGroup &&
+                videoSubscriptionId &&
+                videoAccountName
+            );
             
         case 9: // Audio support
             const audioEnabled = document.getElementById('enable_audio_file_support').checked || false;
+            const speechToTextEnabled = document.getElementById('enable_speech_to_text_input')?.checked || false;
+            const textToSpeechEnabled = document.getElementById('enable_text_to_speech')?.checked || false;
+            const speechFeaturesEnabled = audioEnabled || speechToTextEnabled || textToSpeechEnabled;
             
-            // If workspaces not enabled or audio not enabled, it's always complete
-            if (!workspacesEnabled || !audioEnabled) return true;
+            // If no speech features are enabled, it's always complete
+            if (!speechFeaturesEnabled) return true;
             
             // Otherwise check settings
             const speechEndpoint = document.getElementById('speech_service_endpoint')?.value;
             const authType = document.getElementById('speech_service_authentication_type').value;
             const key = document.getElementById('speech_service_key').value;
-            
-            if (!speechEndpoint || (authType === 'key' && !key)) {
-                 return false;
-            } else {
-                return true;
+            const speechLocation = document.getElementById('speech_service_location')?.value;
+            const speechResourceId = document.getElementById('speech_service_resource_id')?.value;
+
+            if (!speechEndpoint) {
+                return false;
             }
+
+            if (authType === 'key') {
+                return Boolean(key);
+            }
+
+            if (textToSpeechEnabled) {
+                return Boolean(speechLocation && speechResourceId);
+            }
+
+            return true;
             
         case 10: // Content safety - always complete (optional)
         case 11: // User feedback and archiving - always complete (optional)
@@ -3746,14 +4848,26 @@ function setupWalkthroughFieldListeners() {
         ],
         8: [ // Video settings
             {selector: '#enable_video_file_support', event: 'change'},
+            {selector: '#video_indexer_cloud', event: 'change'},
+            {selector: '#video_indexer_custom_endpoint', event: 'input'},
             {selector: '#video_indexer_location', event: 'input'},
             {selector: '#video_indexer_account_id', event: 'input'},
-            {selector: '#video_indexer_api_key', event: 'input'}
+            {selector: '#video_indexer_resource_group', event: 'input'},
+            {selector: '#video_indexer_subscription_id', event: 'input'},
+            {selector: '#video_indexer_account_name', event: 'input'}
         ],
         9: [ // Audio settings
             {selector: '#enable_audio_file_support', event: 'change'},
+            {selector: '#enable_speech_to_text_input', event: 'change'},
+            {selector: '#enable_text_to_speech', event: 'change'},
             {selector: '#speech_service_endpoint', event: 'input'},
-            {selector: '#speech_service_key', event: 'input'}
+            {selector: '#speech_service_authentication_type', event: 'change'},
+            {selector: '#speech_service_subscription_id', event: 'input'},
+            {selector: '#speech_service_resource_group', event: 'input'},
+            {selector: '#speech_service_resource_name', event: 'input'},
+            {selector: '#speech_service_key', event: 'input'},
+            {selector: '#speech_service_location', event: 'input'},
+            {selector: '#speech_service_resource_id', event: 'input'}
         ]
     };
     
@@ -3844,11 +4958,12 @@ function checkOptionalFeaturesEnabled(stepNumber) {
                 return endpoint && key;
             }
         
-        case 11: // User feedback and archiving
-            // Check if feedback is enabled
+        case 11: // User feedback, archiving, and thoughts
+            // Check if feedback, archiving, or thoughts is enabled
             const feedbackEnabled = document.getElementById('enable_user_feedback')?.checked;
             const archivingEnabled = document.getElementById('enable_conversation_archiving')?.checked;
-            return feedbackEnabled || archivingEnabled;
+            const thoughtsEnabled = document.getElementById('enable_thoughts')?.checked;
+            return feedbackEnabled || archivingEnabled || thoughtsEnabled;
             
         case 12: // Enhanced citations and image generation
             // Check if enhanced citations or image generation is enabled
@@ -3934,7 +5049,7 @@ function setupFormChangeTracking() {
     updateSaveButtonState();
     
     // Add event listeners to all form inputs, selects, and textareas
-    const formElements = adminForm.querySelectorAll('input, select, textarea');
+    const formElements = adminForm.querySelectorAll('input:not([data-ignore-settings-change="true"]), select:not([data-ignore-settings-change="true"]), textarea:not([data-ignore-settings-change="true"])');
     formElements.forEach(element => {
         // For checkboxes and radios, listen for change event
         if (element.type === 'checkbox' || element.type === 'radio') {
@@ -3961,6 +5076,9 @@ function markFormAsModified() {
     updateSaveButtonState();
 }
 
+window.markFormAsModified = markFormAsModified;
+window.isAdminSettingsFormModified = () => formModified;
+
 /**
  * Update the save button appearance based on form state
  */
@@ -3981,3 +5099,53 @@ function updateSaveButtonState() {
         saveButton.innerHTML = '<i class="bi bi-floppy"></i> Save Settings';
     }
 }
+
+function setupLatestFeatureImageModal() {
+    const modalElement = document.getElementById('latestFeatureImageModal');
+    const modalImage = document.getElementById('latestFeatureImageModalImage');
+    const modalTitle = document.getElementById('latestFeatureImageModalLabel');
+    const modalCaption = document.getElementById('latestFeatureImageModalCaption');
+    const imageTriggers = document.querySelectorAll('[data-latest-feature-image-src]');
+
+    if (!modalElement || !modalImage || !modalTitle || !modalCaption || imageTriggers.length === 0) {
+        return;
+    }
+
+    const imageModal = bootstrap.Modal.getOrCreateInstance(modalElement);
+
+    imageTriggers.forEach(trigger => {
+        trigger.addEventListener('click', () => {
+            const imageSrc = trigger.dataset.latestFeatureImageSrc;
+            const imageTitle = trigger.dataset.latestFeatureImageTitle || 'Latest Feature Preview';
+            const imageCaption = trigger.dataset.latestFeatureImageCaption || 'Click outside the popup to close it.';
+            const imageAlt = trigger.querySelector('img')?.getAttribute('alt') || imageTitle;
+
+            if (!imageSrc) {
+                return;
+            }
+
+            modalImage.src = imageSrc;
+            modalImage.alt = imageAlt;
+            modalTitle.textContent = imageTitle;
+            modalCaption.textContent = imageCaption;
+            imageModal.show();
+        });
+    });
+
+    modalElement.addEventListener('hidden.bs.modal', () => {
+        modalImage.src = '';
+        modalImage.alt = 'Latest feature preview';
+    });
+}
+
+function openAdminSettingsTab(targetHash) {
+    if (!targetHash) {
+        return;
+    }
+
+    const normalizedHash = targetHash.startsWith('#') ? targetHash : `#${targetHash}`;
+    history.pushState(null, null, normalizedHash);
+    activateTabFromHash();
+}
+
+window.openAdminSettingsTab = openAdminSettingsTab;

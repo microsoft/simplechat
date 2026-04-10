@@ -1,0 +1,484 @@
+{% extends "base.html" %}
+
+{% block title %}
+  Latest Features - {{ app_settings.app_title }}
+{% endblock %}
+
+{% block head %}
+<style>
+  .support-feature-card {
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 1rem;
+  }
+
+  .support-feature-thumbnail-trigger {
+    appearance: none;
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    display: block;
+    max-width: 100%;
+    padding: 0;
+    text-align: left;
+  }
+
+  .support-feature-thumbnail-trigger:focus-visible {
+    outline: 2px solid #0d6efd;
+    outline-offset: 0.35rem;
+    border-radius: 1rem;
+  }
+
+  .support-feature-thumbnail-card {
+    display: block;
+  }
+
+  .support-feature-gallery {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    max-width: 520px;
+  }
+
+  .support-feature-gallery .support-feature-thumbnail-trigger {
+    flex: 0 1 240px;
+  }
+
+  .support-feature-copy-block {
+    max-width: 58rem;
+  }
+
+  .support-feature-media {
+    display: block;
+    width: 240px;
+    max-width: 100%;
+    border-radius: 0.85rem;
+    object-fit: cover;
+    background: linear-gradient(135deg, #f8f9fa, #eef2f7);
+    border: 1px solid rgba(0, 0, 0, 0.06);
+    box-shadow: 0 0.7rem 1.6rem rgba(15, 23, 42, 0.08);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .support-feature-thumbnail-trigger:hover .support-feature-media,
+  .support-feature-thumbnail-trigger:focus-visible .support-feature-media {
+    transform: translateY(-2px);
+    box-shadow: 0 0.9rem 1.8rem rgba(15, 23, 42, 0.14);
+  }
+
+  .support-feature-thumbnail-meta {
+    color: #6c757d;
+    display: block;
+    font-size: 0.9rem;
+    margin-top: 0.55rem;
+  }
+
+  .support-feature-thumbnail-title {
+    display: block;
+    font-weight: 600;
+    margin-top: 0.55rem;
+  }
+
+  .support-feature-sections {
+    display: grid;
+    gap: 1rem;
+    margin-top: 1.25rem;
+  }
+
+  .support-feature-callout {
+    background: linear-gradient(135deg, rgba(13, 110, 253, 0.06), rgba(13, 110, 253, 0.02));
+    border: 1px solid rgba(13, 110, 253, 0.12);
+    border-radius: 0.9rem;
+    padding: 1rem 1.1rem;
+  }
+
+  .support-feature-section-title {
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    margin-bottom: 0.45rem;
+    text-transform: uppercase;
+  }
+
+  .support-feature-guidance-list {
+    margin-bottom: 0;
+    padding-left: 1.2rem;
+  }
+
+  .support-feature-guidance-list li + li {
+    margin-top: 0.4rem;
+  }
+
+  .support-feature-action-grid {
+    display: grid;
+    gap: 0.85rem;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  }
+
+  .support-feature-action-card {
+    background: #ffffff;
+    border: 1px solid rgba(13, 110, 253, 0.12);
+    border-radius: 0.9rem;
+    color: inherit;
+    display: block;
+    min-height: 100%;
+    padding: 0.95rem 1rem;
+    text-decoration: none;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  }
+
+  .support-feature-action-card:hover,
+  .support-feature-action-card:focus-visible {
+    border-color: rgba(13, 110, 253, 0.28);
+    box-shadow: 0 0.75rem 1.5rem rgba(15, 23, 42, 0.08);
+    color: inherit;
+    transform: translateY(-1px);
+  }
+
+  .support-feature-action-card:focus-visible {
+    outline: 2px solid #0d6efd;
+    outline-offset: 0.2rem;
+  }
+
+  .support-feature-action-label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 0.35rem;
+  }
+
+  .support-feature-action-description {
+    color: #6c757d;
+    display: block;
+    font-size: 0.92rem;
+    line-height: 1.45;
+  }
+
+  .support-feature-passive-note {
+    border-top: 1px dashed rgba(108, 117, 125, 0.35);
+    color: #6c757d;
+    font-size: 0.94rem;
+    margin-top: 1rem;
+    padding-top: 0.9rem;
+  }
+
+  .support-feature-release-panel {
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 1rem;
+    margin-top: 1.5rem;
+    padding: 1rem 1rem 1.1rem;
+  }
+
+  .support-feature-release-heading {
+    align-items: center;
+    display: flex;
+    gap: 1rem;
+    justify-content: space-between;
+  }
+
+  .support-feature-release-toggle {
+    flex-shrink: 0;
+  }
+
+  .support-feature-release-version {
+    color: #6c757d;
+    font-size: 0.9rem;
+    margin-top: 0.25rem;
+  }
+
+  .support-feature-release-body {
+    margin-top: 1rem;
+  }
+
+  .support-feature-icon {
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 0.75rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #fff3cd;
+    color: #8a5a00;
+    flex-shrink: 0;
+  }
+
+  .latest-feature-image-modal .modal-dialog {
+    max-width: min(1100px, calc(100vw - 2rem));
+  }
+
+  .latest-feature-image-modal .modal-content {
+    background: linear-gradient(180deg, rgba(25, 33, 52, 0.98), rgba(14, 20, 34, 0.98));
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 1rem;
+    box-shadow: 0 1.4rem 3rem rgba(0, 0, 0, 0.38);
+    color: #f8f9fa;
+    overflow: hidden;
+  }
+
+  .latest-feature-image-modal .modal-header {
+    background: rgba(255, 255, 255, 0.03);
+    border-color: rgba(248, 249, 250, 0.12);
+  }
+
+  .latest-feature-image-modal .modal-body {
+    background: radial-gradient(circle at top, rgba(96, 165, 250, 0.08), transparent 45%), rgba(12, 18, 30, 0.92);
+    padding: 1rem 1.2rem 1.2rem;
+  }
+
+  .latest-feature-image-modal-caption {
+    color: rgba(248, 250, 252, 0.9);
+    font-size: 0.98rem;
+  }
+
+  .latest-feature-image-modal .btn-close {
+    filter: invert(1) grayscale(100%) brightness(200%);
+  }
+
+  .latest-feature-image-frame {
+    background: linear-gradient(180deg, rgba(30, 41, 59, 0.9), rgba(15, 23, 42, 0.88));
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    border-radius: 1rem;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    padding: 0.9rem;
+  }
+
+  .latest-feature-image-modal img {
+    background: rgba(248, 250, 252, 0.98);
+    border-radius: 0.9rem;
+    box-shadow: 0 0.8rem 2rem rgba(0, 0, 0, 0.24);
+    display: block;
+    max-height: 75vh;
+    object-fit: contain;
+    width: 100%;
+  }
+
+  [data-bs-theme="dark"] .latest-feature-image-modal .modal-content {
+    background: linear-gradient(180deg, rgba(26, 32, 44, 0.99), rgba(10, 14, 24, 0.99));
+    border-color: rgba(148, 163, 184, 0.22);
+    box-shadow: 0 1.5rem 3.2rem rgba(0, 0, 0, 0.55);
+  }
+
+  [data-bs-theme="dark"] .latest-feature-image-modal .modal-body {
+    background: radial-gradient(circle at top, rgba(59, 130, 246, 0.12), transparent 42%), rgba(8, 12, 20, 0.96);
+  }
+
+  [data-bs-theme="dark"] .latest-feature-image-frame {
+    background: linear-gradient(180deg, rgba(17, 24, 39, 0.96), rgba(30, 41, 59, 0.92));
+    border-color: rgba(96, 165, 250, 0.18);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 0.75rem 1.8rem rgba(0, 0, 0, 0.28);
+  }
+
+  [data-bs-theme="dark"] .support-feature-callout {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.14), rgba(59, 130, 246, 0.05));
+    border-color: rgba(96, 165, 250, 0.22);
+  }
+
+  [data-bs-theme="dark"] .support-feature-action-card {
+    background: rgba(15, 23, 42, 0.78);
+    border-color: rgba(96, 165, 250, 0.22);
+  }
+
+  [data-bs-theme="dark"] .support-feature-action-card:hover,
+  [data-bs-theme="dark"] .support-feature-action-card:focus-visible {
+    border-color: rgba(147, 197, 253, 0.4);
+    box-shadow: 0 0.9rem 1.8rem rgba(2, 6, 23, 0.4);
+  }
+
+  [data-bs-theme="dark"] .support-feature-action-description,
+  [data-bs-theme="dark"] .support-feature-passive-note {
+    color: rgba(226, 232, 240, 0.8);
+  }
+
+  [data-bs-theme="dark"] .support-feature-release-panel {
+    border-color: rgba(148, 163, 184, 0.18);
+  }
+
+  @media (max-width: 767.98px) {
+    .support-feature-release-heading {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .support-feature-release-toggle {
+      width: 100%;
+    }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+{% macro render_support_feature_card(feature) %}
+<div class="col-12">
+  <div class="card support-feature-card shadow-sm h-100">
+    <div class="card-body p-4">
+      <div class="d-flex flex-column flex-xl-row gap-4 align-items-start">
+        {% if feature.images %}
+        <div class="support-feature-gallery">
+          {% for image in feature.images %}
+          <button
+            type="button"
+            class="support-feature-thumbnail-trigger"
+            data-latest-feature-image-src="{{ url_for('static', filename=image.path) }}"
+            data-latest-feature-image-title="{{ image.title }}"
+            data-latest-feature-image-caption="{{ image.caption }}"
+            aria-label="View {{ image.title }} image"
+          >
+            <span class="support-feature-thumbnail-card">
+              <img class="support-feature-media" src="{{ url_for('static', filename=image.path) }}" alt="{{ image.alt }}" />
+              <span class="support-feature-thumbnail-title">{{ image.label }}</span>
+              <span class="support-feature-thumbnail-meta">Click to enlarge</span>
+            </span>
+          </button>
+          {% endfor %}
+        </div>
+        {% elif feature.image %}
+        <button
+          type="button"
+          class="support-feature-thumbnail-trigger"
+          data-latest-feature-image-src="{{ url_for('static', filename=feature.image) }}"
+          data-latest-feature-image-title="{{ feature.title }}"
+          data-latest-feature-image-caption="{{ feature.summary }}"
+          aria-label="View {{ feature.title }} image"
+        >
+          <span class="support-feature-thumbnail-card">
+            <img class="support-feature-media" src="{{ url_for('static', filename=feature.image) }}" alt="{{ feature.image_alt }}" />
+            <span class="support-feature-thumbnail-title">{{ feature.title }}</span>
+            <span class="support-feature-thumbnail-meta">Click to enlarge</span>
+          </span>
+        </button>
+        {% endif %}
+        <div class="flex-grow-1 support-feature-copy-block">
+          <div class="d-flex align-items-center gap-3 mb-3">
+            <span class="support-feature-icon">
+              <i class="bi {{ feature.icon }}"></i>
+            </span>
+            <div>
+              <h4 class="mb-1">{{ feature.title }}</h4>
+              <p class="text-muted mb-0">{{ feature.summary }}</p>
+            </div>
+          </div>
+          <p class="mb-0">{{ feature.details }}</p>
+
+          <div class="support-feature-sections">
+            <div class="support-feature-callout">
+              <div class="support-feature-section-title">Why It Matters</div>
+              <p class="mb-0">{{ feature.why }}</p>
+            </div>
+
+            {% if feature.guidance %}
+            <div>
+              <div class="support-feature-section-title">How To Try It</div>
+              <ul class="support-feature-guidance-list">
+                {% for tip in feature.guidance %}
+                <li>{{ tip }}</li>
+                {% endfor %}
+              </ul>
+            </div>
+            {% endif %}
+
+            {% if feature.actions %}
+            <div>
+              <div class="support-feature-section-title">Open The Right Page</div>
+              <div class="support-feature-action-grid">
+                {% for action in feature.actions %}
+                <a
+                  class="support-feature-action-card"
+                  href="{% if action.href %}{{ action.href }}{% else %}{{ url_for(action.endpoint) }}{% if action.fragment %}#{{ action.fragment }}{% endif %}{% endif %}"
+                  {% if action.is_external %}target="_blank" rel="noopener noreferrer"{% endif %}
+                >
+                  <span class="support-feature-action-label"><i class="bi {{ action.icon }} me-2"></i>{{ action.label }}</span>
+                  <span class="support-feature-action-description">{{ action.description }}</span>
+                </a>
+                {% endfor %}
+              </div>
+            </div>
+            {% if feature.id == 'guided_tutorials' %}
+            <p class="support-feature-passive-note mb-0">Guided tutorial buttons are shown by default. If you want them out of the way after onboarding, use the profile shortcut above to hide or restore them for your own account.</p>
+            {% endif %}
+            {% else %}
+            <p class="support-feature-passive-note mb-0">{{ feature.passive_note or 'This is mostly a behind-the-scenes improvement managed by your admins. You will usually notice it through a smoother experience rather than a new user control.' }}</p>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endmacro %}
+
+<div class="container py-4">
+  <div class="d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-3 mb-4">
+    <div>
+      <h2 class="mb-1">Latest Features</h2>
+      <p class="text-muted mb-0">A curated view of recent updates your admins have chosen to share with end users.</p>
+    </div>
+    <span class="badge bg-warning text-dark text-uppercase align-self-start align-self-lg-center">New</span>
+  </div>
+
+  {% if support_latest_features or support_previous_release_feature_groups %}
+  {% if support_latest_features %}
+  <div class="row g-3">
+    {% for feature in support_latest_features %}
+    {{ render_support_feature_card(feature) }}
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% for release_group in support_previous_release_feature_groups %}
+  <section class="support-feature-release-panel" aria-labelledby="{{ release_group.collapse_id }}Heading">
+    <div class="support-feature-release-heading">
+      <div>
+        <h3 class="h5 mb-1" id="{{ release_group.collapse_id }}Heading">{{ release_group.label }}</h3>
+        <p class="text-muted mb-0">{{ release_group.description }}</p>
+        {% if release_group.release_version %}
+        <div class="support-feature-release-version">Based on the v{{ release_group.release_version }} release.</div>
+        {% endif %}
+      </div>
+      <button
+        type="button"
+        class="btn btn-outline-secondary support-feature-release-toggle"
+        data-bs-toggle="collapse"
+        data-bs-target="#{{ release_group.collapse_id }}"
+        aria-expanded="false"
+        aria-controls="{{ release_group.collapse_id }}"
+      >
+        Show {{ release_group.label }}
+      </button>
+    </div>
+    <div class="collapse support-feature-release-body" id="{{ release_group.collapse_id }}">
+      <div class="row g-3">
+        {% for feature in release_group.features %}
+        {{ render_support_feature_card(feature) }}
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+  {% endfor %}
+  {% else %}
+  <div class="alert alert-info" role="alert">
+    Your admins have not shared any Latest Features announcements right now.
+  </div>
+  {% endif %}
+</div>
+
+<div class="modal fade latest-feature-image-modal" id="latestFeatureImageModal" tabindex="-1" aria-labelledby="latestFeatureImageModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-xl">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div>
+          <h5 class="modal-title mb-1" id="latestFeatureImageModalLabel">Latest Feature Preview</h5>
+          <small class="latest-feature-image-modal-caption" id="latestFeatureImageModalCaption">Click outside the popup to close it.</small>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body pt-2">
+        <div class="latest-feature-image-frame">
+          <img id="latestFeatureImageModalImage" src="" alt="Latest feature preview" />
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="{{ url_for('static', filename='js/support/latest_features.js') }}"></script>
+{% endblock %}

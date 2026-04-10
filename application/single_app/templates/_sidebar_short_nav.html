@@ -1,5 +1,9 @@
 {# Sidebar Navigation Partial - Short version without brand/logo #}
-<div id="sidebar-nav" class="d-flex flex-column bg-light border-end sidebar-expanded" style="width: 260px; min-width: 220px; position: fixed; left: 0; top: {% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}102px{% else %}58px{% endif %}; height: calc(100vh - {% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}102px{% else %}62px{% endif %}); z-index: 1040; transition: transform 0.3s ease;">
+<div id="sidebar-nav" class="d-flex flex-column bg-light border-end sidebar-expanded" style="width: var(--sidebar-width, 260px); min-width: var(--sidebar-min-width, 220px); position: fixed; left: 0; top: {% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}102px{% else %}58px{% endif %}; height: calc(100vh - {% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}102px{% else %}62px{% endif %}); z-index: 1040; transition: transform 0.3s ease;">
+
+  <div id="sidebar-resize-handle" class="sidebar-resize-handle" aria-label="Resize sidebar" role="separator" tabindex="0">
+    <i class="bi bi-grip-vertical"></i>
+  </div>
   
   <div id="sidebar-content" class="flex-grow-1 d-flex flex-column" style="padding-bottom: 80px; overflow-y: auto;">
     <ul class="nav flex-column">
@@ -17,6 +21,42 @@
         </li>
       {% endif %}
     </ul>
+
+    <!-- Support Menu Section - Only show when a signed-in app user can access at least one support destination -->
+    {% set support_menu_role_allowed = session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
+    {% if support_menu_role_allowed and app_settings.enable_support_menu %}
+    {% set show_support_latest_features = app_settings.enable_support_latest_features and app_settings.support_latest_features_has_visible_items %}
+    {% set show_support_send_feedback = app_settings.enable_support_send_feedback and app_settings.support_feedback_recipient_configured %}
+    {% if show_support_latest_features or show_support_send_feedback %}
+    <div class="overflow-auto">
+      <div id="support-menu-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;">
+        <span class="nav-text">{{ app_settings.support_menu_name or 'Support' }}</span>
+        <i id="support-menu-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;"></i>
+      </div>
+      <div id="support-menu-links-section">
+        <ul class="nav flex-column mb-2">
+          {% if show_support_latest_features %}
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center" href="{{ url_for('support_latest_features') }}">
+              <i class="bi bi-lightning-charge me-2" style="font-size: 0.8em;"></i>
+              <span class="nav-text">Latest Features</span>
+              <span class="badge bg-warning text-dark text-uppercase ms-2">New</span>
+            </a>
+          </li>
+          {% endif %}
+          {% if show_support_send_feedback %}
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center" href="{{ url_for('support_send_feedback') }}">
+              <i class="bi bi-envelope-paper me-2" style="font-size: 0.8em;"></i>
+              <span class="nav-text">Send Feedback</span>
+            </a>
+          </li>
+          {% endif %}
+        </ul>
+      </div>
+    </div>
+    {% endif %}
+    {% endif %}
 
     <!-- Conversations Section - Only show on chats page -->
     {% if request.endpoint == 'chats' %}
@@ -174,6 +214,18 @@
   <script>
     // Collapsible Conversations Section (for chats page)
     document.addEventListener('DOMContentLoaded', function() {
+      var supportMenuToggle = document.getElementById('support-menu-toggle');
+      var supportMenuSection = document.getElementById('support-menu-links-section');
+      var supportMenuCaret = document.getElementById('support-menu-caret');
+      var supportMenuCollapsed = false;
+      if (supportMenuToggle && supportMenuSection && supportMenuCaret) {
+        supportMenuToggle.addEventListener('click', function() {
+          supportMenuCollapsed = !supportMenuCollapsed;
+          supportMenuSection.style.display = supportMenuCollapsed ? 'none' : '';
+          supportMenuCaret.style.transform = supportMenuCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
+        });
+      }
+
       var conversationsToggle = document.getElementById('conversations-toggle');
       var conversationsContainer = document.getElementById('conversations-list-container');
       var conversationsCaret = document.getElementById('conversations-caret');
@@ -252,8 +304,8 @@
       
       /* Fixed user account section */
       #sidebar-user-account {
-        width: 260px;
-        min-width: 220px;
+        width: var(--sidebar-width, 260px);
+        min-width: var(--sidebar-min-width, 220px);
         transition: inherit;
         backdrop-filter: blur(10px);
         -webkit-backdrop-filter: blur(10px);

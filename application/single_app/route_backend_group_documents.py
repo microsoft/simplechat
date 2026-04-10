@@ -277,34 +277,26 @@ def register_route_backend_group_documents(app):
 
         where_clause = " AND ".join(query_conditions)
 
-        # --- 3) Get total count ---
-        try:
-            count_query_str = f"SELECT VALUE COUNT(1) FROM c WHERE {where_clause}"
-            count_items = list(cosmos_group_documents_container.query_items(
-                query=count_query_str,
-                parameters=query_params,
-                enable_cross_partition_query=True
-            ))
-            total_count = count_items[0] if count_items else 0
-        except Exception as e:
-            print(f"Error executing count query for group: {e}")
-            return jsonify({"error": f"Error counting documents: {str(e)}"}), 500
-
-        # --- 4) Get paginated data ---
+        # --- 3) Query matching documents, then collapse to current revisions before paginating ---
         try:
             offset = (page - 1) * page_size
             data_query_str = f"""
                 SELECT *
                 FROM c
                 WHERE {where_clause}
-                ORDER BY c.{sort_by} {sort_order}
-                OFFSET {offset} LIMIT {page_size}
             """
-            docs = list(cosmos_group_documents_container.query_items(
+            matching_docs = list(cosmos_group_documents_container.query_items(
                 query=data_query_str,
                 parameters=query_params,
                 enable_cross_partition_query=True
             ))
+            current_docs = sort_documents(
+                select_current_documents(matching_docs),
+                sort_by=sort_by,
+                sort_order=sort_order,
+            )
+            total_count = len(current_docs)
+            docs = current_docs[offset:offset + page_size]
         except Exception as e:
             print(f"Error fetching group documents: {e}")
             return jsonify({"error": f"Error fetching documents: {str(e)}"}), 500
@@ -570,14 +562,25 @@ def register_route_backend_group_documents(app):
         if role not in ["Owner", "Admin", "DocumentManager"]:
             return jsonify({'error': 'You do not have permission to delete documents in this group'}), 403
 
+        delete_mode = request.args.get('delete_mode', 'all_versions')
+        if delete_mode not in {'all_versions', 'current_only'}:
+            return jsonify({'error': 'Invalid delete mode'}), 400
+
         try:
-            delete_document(user_id=user_id, document_id=document_id, group_id=active_group_id)
-            delete_document_chunks(document_id=document_id, group_id=active_group_id)
+            delete_result = delete_document_revision(
+                user_id=user_id,
+                document_id=document_id,
+                delete_mode=delete_mode,
+                group_id=active_group_id,
+            )
             
             # Invalidate group search cache since document was deleted
             invalidate_group_search_cache(active_group_id)
             
-            return jsonify({'message': 'Group document deleted successfully'}), 200
+            return jsonify({
+                'message': 'Group document deleted successfully',
+                **delete_result,
+            }), 200
         except Exception as e:
             return jsonify({'error': f'Error deleting group document: {str(e)}'}), 500
 

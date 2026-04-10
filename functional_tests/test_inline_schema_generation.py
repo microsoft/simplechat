@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Inline Schema Generation Test
-Version: 0.230.041
-Implemented in: 0.230.041
+Version: 0.239.149
+Implemented in: 0.239.149
 
 This test validates that OpenAPI schemas are now generated inline directly 
 from actual route implementations, eliminating hardcoded and outdated parameters 
@@ -11,6 +11,7 @@ like 'bing_search', and ensuring accuracy with the real route code.
 
 import sys
 import os
+import inspect
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'application', 'single_app'))
 
 def test_inline_schema_generation():
@@ -33,7 +34,7 @@ def test_inline_schema_generation():
         chat_func = None
         for rule in test_app.url_map.iter_rules():
             if '/api/chat' in rule.rule and 'POST' in rule.methods:
-                chat_func = test_app.view_functions.get(rule.endpoint)
+                chat_func = inspect.unwrap(test_app.view_functions.get(rule.endpoint))
                 break
         
         if not chat_func:
@@ -48,11 +49,21 @@ def test_inline_schema_generation():
         if not schema:
             print("❌ No schema generated from chat_api function")
             return False
+
+        json_schema = (
+            schema
+            .get('content', {})
+            .get('application/json', {})
+            .get('schema', {})
+        )
+        if not json_schema:
+            print("❌ JSON request body schema not found in generated request body")
+            return False
             
-        print(f"✅ Generated schema from actual route: {len(schema.get('properties', {}))} properties")
+        print(f"✅ Generated schema from actual route: {len(json_schema.get('properties', {}))} properties")
         
         # Verify the schema contains actual parameters from the route
-        properties = schema.get('properties', {})
+        properties = json_schema.get('properties', {})
         
         expected_fields = [
             'message', 'conversation_id', 'hybrid_search', 'selected_document_id', 
@@ -81,7 +92,7 @@ def test_inline_schema_generation():
             print("✅ Correctly excluded 'bing_search' - not found in actual route")
         
         # Verify message is required
-        required_fields = schema.get('required', [])
+        required_fields = json_schema.get('required', [])
         if 'message' in required_fields:
             print("✅ 'message' correctly identified as required")
         else:
@@ -109,4 +120,144 @@ def test_inline_schema_generation():
         print(f"   Required Fields: {len(required_fields)}")
         print(f"   Properties Generated: {len(properties)}")
         
-        return len(found_fields) >= 8  # Should find most of the expected fields\n        \n        for field in expected_fields:\n            if field in properties:\n                found_fields.append(field)\n                print(f\"  ✅ {field}: {properties[field].get('type')} - {properties[field].get('description', 'No description')[:50]}\")\n            else:\n                missing_fields.append(field)\n        \n        if missing_fields:\n            print(f\"⚠️  Missing fields that should be detected: {missing_fields}\")\n        \n        # Verify bing_search is NOT in the schema (since it's not in the actual route)\n        if 'bing_search' in properties:\n            print(\"❌ ERROR: 'bing_search' found in schema but it's not in the actual route!\")\n            return False\n        else:\n            print(\"✅ Correctly excluded 'bing_search' - not found in actual route\")\n        \n        # Verify message is required\n        required_fields = schema.get('required', [])\n        if 'message' in required_fields:\n            print(\"✅ 'message' correctly identified as required\")\n        else:\n            print(\"⚠️  'message' should be required\")\n        \n        # Check for proper type inference\n        message_def = properties.get('message', {})\n        if message_def.get('type') == 'string' and message_def.get('minLength') == 1:\n            print(\"✅ 'message' has correct type and validation\")\n        \n        conversation_id_def = properties.get('conversation_id', {})\n        if conversation_id_def.get('format') == 'uuid' and conversation_id_def.get('nullable'):\n            print(\"✅ 'conversation_id' correctly identified as nullable UUID\")\n        \n        # Verify doc_scope enum\n        doc_scope_def = properties.get('doc_scope', {})\n        if 'enum' in doc_scope_def:\n            enum_values = doc_scope_def['enum']\n            print(f\"✅ 'doc_scope' has enum values: {enum_values}\")\n            if 'personal' in enum_values:\n                print(\"✅ 'personal' correctly included in doc_scope enum\")\n        \n        print(f\"📊 Schema Analysis Summary:\")\n        print(f\"   Found Fields: {len(found_fields)}\")\n        print(f\"   Required Fields: {len(required_fields)}\")\n        print(f\"   Properties Generated: {len(properties)}\")\n        \n        return len(found_fields) >= 8  # Should find most of the expected fields\n        \n    except Exception as e:\n        print(f\"❌ Test failed: {e}\")\n        import traceback\n        traceback.print_exc()\n        return False\n\ndef test_no_hardcoded_schemas():\n    \"\"\"Test that we're no longer using hardcoded schema references.\"\"\"\n    print(\"\\n🔍 Testing Elimination of Hardcoded Schemas...\")\n    \n    try:\n        # Read the swagger_wrapper.py to verify hardcoded schemas are removed\n        wrapper_file = os.path.join(os.path.dirname(__file__), '..', 'application', 'single_app', 'swagger_wrapper.py')\n        \n        with open(wrapper_file, 'r', encoding='utf-8') as f:\n            content = f.read()\n        \n        # Check that we're no longer generating large hardcoded schema blocks\n        hardcoded_indicators = [\n            '\"ChatRequest\": {',\n            '\"DocumentUpdateRequest\": {',\n            'bing_search',  # This outdated parameter should not appear\n        ]\n        \n        found_hardcoded = []\n        for indicator in hardcoded_indicators:\n            if indicator in content:\n                found_hardcoded.append(indicator)\n        \n        if found_hardcoded:\n            print(f\"⚠️  Still found some hardcoded schema indicators: {found_hardcoded}\")\n        else:\n            print(\"✅ No hardcoded schema blocks found\")\n        \n        # Check for inline generation indicators\n        inline_indicators = [\n            '_analyze_function_request_body',\n            'inline schema',\n            '_infer_field_definition',\n            'Generated inline schema'\n        ]\n        \n        found_inline = []\n        for indicator in inline_indicators:\n            if indicator in content:\n                found_inline.append(indicator)\n                print(f\"✅ Found inline generation: {indicator}\")\n        \n        if len(found_inline) >= 3:\n            print(\"✅ Inline schema generation properly implemented\")\n            return True\n        else:\n            print(f\"❌ Missing inline generation indicators: expected >= 3, found {len(found_inline)}\")\n            return False\n        \n    except Exception as e:\n        print(f\"❌ Test failed: {e}\")\n        return False\n\ndef test_enhanced_field_inference():\n    \"\"\"Test the enhanced field definition inference.\"\"\"\n    print(\"\\n🔍 Testing Enhanced Field Inference...\")\n    \n    try:\n        from swagger_wrapper import _infer_field_definition, _extract_doc_scope_enum_from_source\n        \n        # Test field inference for different types\n        test_cases = [\n            ('message', 'string with minLength'),\n            ('conversation_id', 'uuid format with nullable'),\n            ('hybrid_search', 'boolean with default false'),\n            ('doc_scope', 'string with enum'),\n            ('top_n', 'integer with minimum'),\n        ]\n        \n        sample_source = \"\"\"\n        data = request.get_json()\n        message = data.get('message')\n        conversation_id = data.get('conversation_id')\n        hybrid_search = data.get('hybrid_search')\n        doc_scope = data.get('doc_scope')\n        top_n = data.get('top_n')\n        \"\"\"\n        \n        all_passed = True\n        for field_name, expected_type in test_cases:\n            definition = _infer_field_definition(field_name, sample_source)\n            \n            print(f\"Field '{field_name}': {definition}\")\n            \n            # Basic validation\n            if 'type' not in definition:\n                print(f\"❌ '{field_name}' missing type\")\n                all_passed = False\n            elif 'description' not in definition:\n                print(f\"❌ '{field_name}' missing description\")\n                all_passed = False\n            else:\n                print(f\"✅ '{field_name}' properly defined\")\n        \n        # Test doc_scope enum extraction\n        enum_values = _extract_doc_scope_enum_from_source(sample_source)\n        print(f\"Doc scope enum values: {enum_values}\")\n        \n        if len(enum_values) >= 3:  # Should have at least user, group, all, personal\n            print(\"✅ Doc scope enum extraction working\")\n        else:\n            print(\"⚠️  Doc scope enum extraction may need improvement\")\n        \n        return all_passed\n        \n    except Exception as e:\n        print(f\"❌ Enhanced field inference test failed: {e}\")\n        import traceback\n        traceback.print_exc()\n        return False\n\nif __name__ == \"__main__\":\n    print(\"🧪 Running Inline Schema Generation Tests...\")\n    print(f\"🎯 Goal: Eliminate hardcoded schemas and generate from actual routes\")\n    \n    test1_result = test_inline_schema_generation()\n    test2_result = test_no_hardcoded_schemas()\n    test3_result = test_enhanced_field_inference()\n    \n    all_passed = test1_result and test2_result and test3_result\n    \n    print(f\"\\n📋 Test Results:\")\n    print(f\"   Inline Schema Generation: {'✅ PASS' if test1_result else '❌ FAIL'}\")\n    print(f\"   Hardcoded Schema Elimination: {'✅ PASS' if test2_result else '❌ FAIL'}\")\n    print(f\"   Enhanced Field Inference: {'✅ PASS' if test3_result else '❌ FAIL'}\")\n    print(f\"   Overall: {'✅ ALL TESTS PASSED' if all_passed else '❌ SOME TESTS FAILED'}\")\n    \n    if all_passed:\n        print(\"\\n🎉 Inline schema generation is working perfectly!\")\n        print(\"📈 Schemas are now generated directly from actual route implementations\")\n        print(\"🚫 Eliminated outdated parameters like 'bing_search'\")\n        print(\"⚡ No more hardcoded schema references - everything is dynamic and accurate\")\n    else:\n        print(\"\\n❌ Some tests failed - review implementation\")\n    \n    sys.exit(0 if all_passed else 1)
+        return len(found_fields) >= 8  # Should find most of the expected fields
+
+    except Exception as e:
+        print(f"❌ Test failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_no_hardcoded_schemas():
+    """Test that we're no longer using hardcoded schema references."""
+    print("\n🔍 Testing Elimination of Hardcoded Schemas...")
+
+    try:
+        wrapper_file = os.path.join(os.path.dirname(__file__), '..', 'application', 'single_app', 'swagger_wrapper.py')
+
+        with open(wrapper_file, 'r', encoding='utf-8') as file_handle:
+            content = file_handle.read()
+
+        hardcoded_indicators = [
+            '"ChatRequest": {',
+            '"DocumentUpdateRequest": {',
+            'bing_search',
+        ]
+
+        found_hardcoded = []
+        for indicator in hardcoded_indicators:
+            if indicator in content:
+                found_hardcoded.append(indicator)
+
+        if found_hardcoded:
+            print(f"⚠️  Still found some hardcoded schema indicators: {found_hardcoded}")
+        else:
+            print("✅ No hardcoded schema blocks found")
+
+        inline_indicators = [
+            '_analyze_function_request_body',
+            'inline schema',
+            '_infer_field_definition',
+            'Generated inline schema'
+        ]
+
+        found_inline = []
+        for indicator in inline_indicators:
+            if indicator in content:
+                found_inline.append(indicator)
+                print(f"✅ Found inline generation: {indicator}")
+
+        if len(found_inline) >= 3:
+            print("✅ Inline schema generation properly implemented")
+            return True
+
+        print(f"❌ Missing inline generation indicators: expected >= 3, found {len(found_inline)}")
+        return False
+
+    except Exception as e:
+        print(f"❌ Test failed: {e}")
+        return False
+
+
+def test_enhanced_field_inference():
+    """Test the enhanced field definition inference."""
+    print("\n🔍 Testing Enhanced Field Inference...")
+
+    try:
+        from swagger_wrapper import _infer_field_definition, _extract_doc_scope_enum_from_source
+
+        test_cases = [
+            ('message', 'string with minLength'),
+            ('conversation_id', 'uuid format with nullable'),
+            ('hybrid_search', 'boolean with default false'),
+            ('doc_scope', 'string with enum'),
+            ('top_n', 'integer with minimum'),
+        ]
+
+        sample_source = """
+        data = request.get_json()
+        message = data.get('message')
+        conversation_id = data.get('conversation_id')
+        hybrid_search = data.get('hybrid_search')
+        doc_scope = data.get('doc_scope')
+        top_n = data.get('top_n')
+        """
+
+        all_passed = True
+        for field_name, _expected_type in test_cases:
+            definition = _infer_field_definition(field_name, sample_source)
+
+            print(f"Field '{field_name}': {definition}")
+
+            if 'type' not in definition:
+                print(f"❌ '{field_name}' missing type")
+                all_passed = False
+            elif 'description' not in definition:
+                print(f"❌ '{field_name}' missing description")
+                all_passed = False
+            else:
+                print(f"✅ '{field_name}' properly defined")
+
+        enum_values = _extract_doc_scope_enum_from_source(sample_source)
+        print(f"Doc scope enum values: {enum_values}")
+
+        if len(enum_values) >= 3:
+            print("✅ Doc scope enum extraction working")
+        else:
+            print("⚠️  Doc scope enum extraction may need improvement")
+
+        return all_passed
+
+    except Exception as e:
+        print(f"❌ Enhanced field inference test failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+if __name__ == "__main__":
+    print("🧪 Running Inline Schema Generation Tests...")
+    print("🎯 Goal: Eliminate hardcoded schemas and generate from actual routes")
+
+    test1_result = test_inline_schema_generation()
+    test2_result = test_no_hardcoded_schemas()
+    test3_result = test_enhanced_field_inference()
+
+    all_passed = test1_result and test2_result and test3_result
+
+    print("\n📋 Test Results:")
+    print(f"   Inline Schema Generation: {'✅ PASS' if test1_result else '❌ FAIL'}")
+    print(f"   Hardcoded Schema Elimination: {'✅ PASS' if test2_result else '❌ FAIL'}")
+    print(f"   Enhanced Field Inference: {'✅ PASS' if test3_result else '❌ FAIL'}")
+    print(f"   Overall: {'✅ ALL TESTS PASSED' if all_passed else '❌ SOME TESTS FAILED'}")
+
+    if all_passed:
+        print("\n🎉 Inline schema generation is working perfectly!")
+        print("📈 Schemas are now generated directly from actual route implementations")
+        print("🚫 Eliminated outdated parameters like 'bing_search'")
+        print("⚡ No more hardcoded schema references - everything is dynamic and accurate")
+    else:
+        print("\n❌ Some tests failed - review implementation")
+
+    sys.exit(0 if all_passed else 1)

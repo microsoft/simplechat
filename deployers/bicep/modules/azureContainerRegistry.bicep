@@ -7,10 +7,6 @@ param tags object
 param enableDiagLogging bool
 param logAnalyticsId string
 
-param keyVault string
-param authenticationType string
-param configureApplicationPermissions bool
-
 param enablePrivateNetworking bool
 param allowedIpAddresses array = []
 
@@ -30,24 +26,13 @@ resource acr 'Microsoft.ContainerRegistry/registries@2025-04-01' = {
   properties: {
     adminUserEnabled: true
     publicNetworkAccess: 'Enabled'  // configuration is set in post provision step in azure.yaml with post deployment script
+    networkRuleBypassOptions: enablePrivateNetworking ? 'AzureServices' : 'None'
     networkRuleSet: enablePrivateNetworking ? {
-      defaultAction: 'Deny'
+      defaultAction: 'Allow'
       ipRules: allowedIpAddresses
     } : null
   }
   tags: tags
-}
-
-//=========================================================
-// store container registry keys in key vault if using key authentication and configure app permissions = true
-//=========================================================
-module containerRegistrySecret 'keyVault-Secrets.bicep' = if (authenticationType == 'key' && configureApplicationPermissions) {
-  name: 'storeContainerRegistrySecret'
-  params: {
-    keyVaultName: keyVault
-    secretName: 'container-registry-key'
-    secretValue: acr.listCredentials().passwords[0].value
-  }
 }
 
 // configure diagnostic settings for azure container registry

@@ -17,9 +17,10 @@ import { escapeHtml, isColorLight, addTargetBlankToExternalLinks } from "./chat-
 import { showToast } from "./chat-toast.js";
 import { autoplayTTSIfEnabled } from "./chat-tts.js";
 import { saveUserSetting } from "./chat-layout.js";
-import { isStreamingEnabled, sendMessageWithStreaming } from "./chat-streaming.js";
+import { sendMessageWithStreaming } from "./chat-streaming.js";
 import { getCurrentReasoningEffort, isReasoningEffortEnabled } from './chat-reasoning.js';
 import { areAgentsEnabled } from './chat-agents.js';
+import { createThoughtsToggleHtml, attachThoughtsToggleListener } from './chat-thoughts.js';
 
 // Conditionally import TTS if enabled
 let ttsModule = null;
@@ -372,9 +373,12 @@ function createCitationsHtml(
     hybridCitations.forEach((cite, index) => {
       const citationId =
         cite.citation_id || `${cite.chunk_id}_${cite.page_number || index}`; // Fallback ID
-      const displayText = `${escapeHtml(cite.file_name)}, Page ${
-        cite.page_number || "N/A"
-      }`;
+      const locationLabel = cite.location_label || (cite.sheet_name ? 'Sheet' : 'Page');
+      const locationValue = cite.location_value || cite.sheet_name || cite.page_number || 'N/A';
+      const displayText = `${escapeHtml(cite.file_name)}, ${escapeHtml(locationLabel)}: ${escapeHtml(locationValue)}`;
+      const sheetNameAttribute = cite.sheet_name
+        ? `data-sheet-name="${escapeHtml(cite.sheet_name)}"`
+        : '';
 
       // Check if this is a metadata citation
       const isMetadata = cite.metadata_type ? true : false;
@@ -385,6 +389,7 @@ function createCitationsHtml(
               <a href="#"
                  class="btn btn-sm citation-button hybrid-citation-link ${isMetadata ? 'metadata-citation' : ''}"
                  data-citation-id="${escapeHtml(citationId)}"
+                  ${sheetNameAttribute}
                  data-is-metadata="${isMetadata}"
                  data-metadata-type="${escapeHtml(metadataType)}"
                  data-metadata-content="${escapeHtml(metadataContent)}"
@@ -443,6 +448,8 @@ function createCitationsHtml(
                  data-tool-name="${escapeHtml(cite.tool_name || '')}"
                  data-tool-args="${escapeHtml(toolArgs)}"
                  data-tool-result="${escapeHtml(toolResult)}"
+                 data-artifact-id="${escapeHtml(cite.artifact_id || '')}"
+                 data-conversation-id="${escapeHtml(window.currentConversationId || '')}"
                  title="Agent tool: ${escapeHtml(displayText)} - Click to view details">
                   <i class="bi bi-cpu me-1"></i>${escapeHtml(displayText)}
               </a>`;
@@ -463,7 +470,7 @@ export function loadMessages(conversationId) {
   // Clear search highlights when loading a different conversation
   clearSearchHighlight();
   
-  fetch(`/conversation/${conversationId}/messages`)
+  return fetch(`/conversation/${conversationId}/messages`)
     .then((response) => response.json())
     .then((data) => {
       const chatbox = document.getElementById("chatbox");
@@ -754,11 +761,13 @@ export function appendMessage(
 
     const metadataContainerId = `metadata-${messageId || Date.now()}`;
     const metadataContainerHtml = `<div class="metadata-container mt-2 pt-2 border-top" id="${metadataContainerId}" style="display: none;"><div class="text-muted">Loading metadata...</div></div>`;
-    
+
+    const thoughtsHtml = createThoughtsToggleHtml(messageId);
+
     const footerContentHtml = `<div class="message-footer d-flex justify-content-between align-items-center mt-2">
       <div class="d-flex align-items-center">${copyAndFeedbackHtml}</div>
       <div class="d-flex align-items-center"></div>
-      <div class="d-flex align-items-center gap-2">${citationToggleHtml}<button class="btn btn-sm btn-link text-muted metadata-info-btn" data-message-id="${messageId}" title="Show metadata" aria-expanded="false" aria-controls="${metadataContainerId}">
+      <div class="d-flex align-items-center gap-2">${thoughtsHtml.toggleHtml}${citationToggleHtml}<button class="btn btn-sm btn-link text-muted metadata-info-btn" data-message-id="${messageId}" title="Show metadata" aria-expanded="false" aria-controls="${metadataContainerId}">
         <i class="bi bi-info-circle"></i>
       </button></div>
     </div>`;
@@ -771,6 +780,7 @@ export function appendMessage(
                     <div class="message-sender">${senderLabel}</div>
                     ${mainMessageHtml}
                     ${citationContentContainerHtml}
+                    ${thoughtsHtml.containerHtml}
                     ${metadataContainerHtml}
                     ${footerContentHtml}
                 </div>
@@ -827,6 +837,9 @@ export function appendMessage(
         }
       });
     }
+
+    // Attach thoughts toggle listener
+    attachThoughtsToggleListener(messageDiv, messageId, currentConversationId);
     
     const maskBtn = messageDiv.querySelector(".mask-btn");
     if (maskBtn) {
@@ -1394,7 +1407,7 @@ export function sendMessage() {
   if (!currentConversationId) {
     createNewConversation(() => {
       actuallySendMessage(combinedMessage);
-    });
+    }, { preserveSelections: true });
   } else {
     actuallySendMessage(combinedMessage);
   }
@@ -1420,13 +1433,18 @@ export function actuallySendMessage(finalMessageToSend) {
   userInput.style.height = "";
   // Update send button visibility after clearing input
   updateSendButtonVisibility();
-  
-  // Only show loading indicator if NOT using streaming (streaming creates its own placeholder)
-  if (!isStreamingEnabled()) {
-    showLoadingIndicatorInChatbox();
-  }
 
-  const modelDeployment = modelSelect?.value;
+  let modelDeployment = modelSelect?.value;
+  let modelId = null;
+  let modelEndpointId = null;
+  let modelProvider = null;
+  if (window.appSettings?.enable_multi_model_endpoints && modelSelect) {
+    const selectedOption = modelSelect.options[modelSelect.selectedIndex];
+    modelId = selectedOption?.dataset?.modelId || selectedOption?.value || null;
+    modelEndpointId = selectedOption?.dataset?.endpointId || null;
+    modelProvider = selectedOption?.dataset?.provider || null;
+    modelDeployment = selectedOption?.dataset?.deploymentName || null;
+  }
 
   // ... (keep existing logic for hybridSearchEnabled, selectedDocumentId, classificationsToSend, imageGenEnabled)
   let hybridSearchEnabled = false;
@@ -1564,278 +1582,23 @@ export function actuallySendMessage(finalMessageToSend) {
     chat_type: chat_type,
     active_group_ids: finalGroupIds,
     active_group_id: finalGroupId,
+    active_public_workspace_ids: scopes.publicWorkspaceIds,
     active_public_workspace_id: finalPublicWorkspaceId,
     model_deployment: modelDeployment,
+    model_id: modelId,
+    model_endpoint_id: modelEndpointId,
+    model_provider: modelProvider,
     prompt_info: promptInfo,
     agent_info: agentInfo,
     reasoning_effort: getCurrentReasoningEffort()
   };
-  
-  // Check if streaming is enabled (but not for image generation)
-  const agentsEnabled = typeof areAgentsEnabled === 'function' && areAgentsEnabled();
-  if (isStreamingEnabled() && !imageGenEnabled) {
-    const streamInitiated = sendMessageWithStreaming(
-      messageData, 
-      tempUserMessageId, 
-      currentConversationId
-    );
-    if (streamInitiated) {
-      return; // Streaming handles the rest
-    }
-    // If streaming failed to initiate, fall through to regular fetch
-  }
-  
-  // Regular non-streaming fetch
-  fetch("/api/chat", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    credentials: "same-origin",
-    body: JSON.stringify(messageData),
-  })
-    .then((response) => {
-      if (!response.ok) {
-        // Handle non-OK responses, try to parse JSON error
-        return response
-          .json()
-          .then((errData) => {
-            // Throw an error object including the status and parsed data
-            const error = new Error(
-              errData.error || `HTTP error! status: ${response.status}`
-            );
-            error.status = response.status;
-            error.data = errData; // Attach full error data
-            throw error;
-          })
-          .catch(() => {
-            // If JSON parsing fails, throw a generic error
-            throw new Error(`HTTP error! status: ${response.status}`);
-          });
-      }
-      return response.json(); // Parse JSON for successful responses
-    })
-    .then((data) => {
-      // Only successful responses reach here
-      hideLoadingIndicatorInChatbox();
+  sendMessageWithStreaming(
+    messageData,
+    tempUserMessageId,
+    currentConversationId
+  );
 
-      console.log("--- Data received from /api/chat ---");
-      console.log("Full data object:", data);
-      console.log(
-        `data.augmented: ${data.augmented} (Type: ${typeof data.augmented})`
-      );
-      console.log("data.hybrid_citations:", data.hybrid_citations);
-      console.log("data.web_search_citations:", data.web_search_citations);
-      console.log("data.agent_citations:", data.agent_citations);
-      console.log(`data.message_id: ${data.message_id}`);
-      console.log(`data.user_message_id: ${data.user_message_id}`);
-      console.log(`tempUserMessageId: ${tempUserMessageId}`);
-
-      // Update the user message with the real message ID
-      if (data.user_message_id) {
-        console.log(`🔄 Calling updateUserMessageId(${tempUserMessageId}, ${data.user_message_id})`);
-        updateUserMessageId(tempUserMessageId, data.user_message_id);
-      } else {
-        console.warn(`⚠️ No user_message_id in response! User message will keep temporary ID: ${tempUserMessageId}`);
-      }
-
-      if (data.reply) {
-        // *** Pass the new fields to appendMessage ***
-        appendMessage(
-          "AI",
-          data.reply,
-          data.model_deployment_name,
-          data.message_id,
-          data.augmented, // Pass augmented flag
-          data.hybrid_citations, // Pass hybrid citations
-          data.web_search_citations, // Pass web citations
-          data.agent_citations, // Pass agent citations
-          data.agent_display_name, // Pass agent display name
-          data.agent_name, // Pass agent name
-          null, // fullMessageObject
-          true // isNewMessage - trigger autoplay for new responses
-        );
-      }
-      // Show kernel fallback notice if present
-      if (data.kernel_fallback_notice) {
-        showToast(data.kernel_fallback_notice, 'warning');
-      }
-      if (data.image_url) {
-        // Assuming image messages don't have citations in this flow
-        appendMessage(
-          "image",
-          data.image_url,
-          data.model_deployment_name,
-          null, // messageId
-          false, // augmented
-          [], // hybridCitations
-          [], // webCitations
-          [], // agentCitations
-          data.agent_display_name, // Pass agent display name
-          data.agent_name // Pass agent name
-        );
-      }
-
-      if (data.reload_messages && currentConversationId) {
-        console.log("Reload flag received from backend - refreshing messages.");
-        loadMessages(currentConversationId);
-      }
-
-      // Update conversation list item and header if needed
-      if (data.conversation_id) {
-        currentConversationId = data.conversation_id; // Update current ID
-        const convoItem = document.querySelector(
-          `.conversation-item[data-conversation-id="${currentConversationId}"]`
-        );
-        if (convoItem) {
-          let updated = false;
-          // Update Title
-          if (
-            data.conversation_title &&
-            convoItem.getAttribute("data-conversation-title") !==
-              data.conversation_title
-          ) {
-            convoItem.setAttribute(
-              "data-conversation-title",
-              data.conversation_title
-            );
-            const titleEl = convoItem.querySelector(".conversation-title");
-            if (titleEl) titleEl.textContent = data.conversation_title;
-            
-            // Update sidebar conversation title in real-time
-            updateSidebarConversationTitle(currentConversationId, data.conversation_title);
-            
-            updated = true;
-          }
-          // Update Classifications
-          if (data.classification) {
-            // Check if API returned classification
-            const currentClassificationJson =
-              convoItem.dataset.classifications || "[]";
-            const newClassificationJson = JSON.stringify(data.classification);
-            if (currentClassificationJson !== newClassificationJson) {
-              convoItem.dataset.classifications = newClassificationJson;
-              updated = true;
-            }
-          }
-          // Update Timestamp (optional, could be done on load)
-          const dateEl = convoItem.querySelector("small");
-          if (dateEl)
-            dateEl.textContent = new Date().toLocaleString([], {
-              dateStyle: "short",
-              timeStyle: "short",
-            });
-
-          if (updated) {
-            selectConversation(currentConversationId); // Re-select to update header
-          }
-        } else {
-          // New conversation case
-          console.log('[sendMessage] New conversation created, adding to list without reload');
-          addConversationToList(
-            currentConversationId,
-            data.conversation_title,
-            data.classification || []
-          );
-          // Don't call selectConversation here - messages are already displayed
-          // Just update the current conversation ID and title
-          window.currentConversationId = currentConversationId;
-          document.getElementById("current-conversation-title").textContent = data.conversation_title || "New Conversation";
-          console.log('[sendMessage] New conversation setup complete, conversation ID:', currentConversationId);
-        }
-      }
-
-      // Apply scope lock if document search was used
-      if (data.augmented && currentConversationId) {
-        fetch(`/api/conversations/${currentConversationId}/metadata`, { credentials: 'same-origin' })
-          .then(r => r.json())
-          .then(metadata => {
-            if (metadata.scope_locked === true && metadata.locked_contexts) {
-              applyScopeLock(metadata.locked_contexts, metadata.scope_locked);
-            }
-          })
-          .catch(err => console.warn('Failed to fetch scope lock metadata:', err));
-      }
-    })
-    .catch((error) => {
-      hideLoadingIndicatorInChatbox();
-      console.error("Error sending message:", error);
-
-      // Display specific error messages based on status or content
-      if (error.status === 403 && error.data) {
-        // Check for status and data from thrown error
-        const categories = (error.data.triggered_categories || [])
-          .map((catObj) => `${catObj.category} (severity=${catObj.severity})`)
-          .join(", ");
-        const reasonMsg = Array.isArray(error.data.reason)
-          ? error.data.reason.join(", ")
-          : error.data.reason;
-
-        appendMessage(
-          "safety", // Use 'safety' sender type
-          `Your message was blocked by Content Safety.\n\n` +
-            `**Categories triggered**: ${categories}\n` +
-            `**Reason**: ${reasonMsg}`,
-          null, // No model name for safety message
-          error.data.message_id, // Use message_id if provided in error
-          false, // augmented
-          [], // hybridCitations
-          [], // webCitations
-          [], // agentCitations
-          null, // agentDisplayName
-          null // agentName
-        );
-      } else {
-        // Show specific embedding error if present, or if status is 500 (embedding backend error)
-        const errMsg = (error.message || "").toLowerCase();
-        
-        // Handle image generation content safety errors
-        if (errMsg.includes("safety system") || errMsg.includes("moderation_blocked") || errMsg.includes("content safety")) {
-          appendMessage(
-            "safety", // Use 'safety' sender type
-            `**Image Generation Blocked by Content Safety**\n\n` +
-            `Your image generation request was blocked by Azure OpenAI's content safety system. ` +
-            `Please try a different prompt that doesn't involve potentially harmful, violent, or illicit content.\n\n` +
-            `**Error**: ${error.message || "Content safety violation"}`,
-            null, // No model name for safety message
-            null, // No message ID for error
-            false, // augmented
-            [], // hybridCitations
-            [], // webCitations
-            [], // agentCitations
-            null, // agentDisplayName
-            null // agentName
-          );
-        } else if (errMsg.includes("embedding") || error.status === 500) {
-          appendMessage(
-            "Error",
-            "There was an issue with the embedding process. Please check with an admin on embedding configuration.",
-            null, // No model name for error message
-            null, // No message ID for error
-            false, // augmented
-            [], // hybridCitations
-            [], // webCitations
-            [], // agentCitations
-            null, // agentDisplayName
-            null // agentName
-          );
-        } else {
-          // General error message
-          appendMessage(
-            "Error",
-            `Could not get a response. ${error.message || ""}`,
-            null, // No model name for error message
-            null, // No message ID for error
-            false, // augmented
-            [], // hybridCitations
-            [], // webCitations
-            [], // agentCitations
-            null, // agentDisplayName
-            null // agentName
-          );
-        }
-      }
-    });
+  return;
 }
 
 function attachCodeBlockCopyButtons(parentElement) {
@@ -2615,8 +2378,15 @@ document.addEventListener('DOMContentLoaded', function() {
 if (modelSelect) {
   modelSelect.addEventListener("change", function() {
     const selectedModel = modelSelect.value;
-    console.log(`Saving preferred model: ${selectedModel}`);
-    saveUserSetting({ 'preferredModelDeployment': selectedModel });
+    if (window.appSettings?.enable_multi_model_endpoints) {
+      const selectedOption = modelSelect.options[modelSelect.selectedIndex];
+      const selectionKey = selectedOption?.dataset?.selectionKey || selectedModel;
+      console.log(`Saving preferred model ID: ${selectionKey}`);
+      saveUserSetting({ preferredModelId: selectionKey });
+    } else {
+      console.log(`Saving preferred model deployment: ${selectedModel}`);
+      saveUserSetting({ preferredModelDeployment: selectedModel });
+    }
   });
 }
 
@@ -2696,6 +2466,46 @@ function toggleMessageMetadata(messageDiv, messageId) {
  * Load message metadata into the drawer for AI/image/file messages
  */
 function loadMessageMetadataForDisplay(messageId, container) {
+  function renderHistoryContextRefRow(label, refs) {
+    if (!Array.isArray(refs) || refs.length === 0) {
+      return `<div class="mb-2"><span class="text-muted">${label}:</span> <span class="ms-2 text-muted">none</span></div>`;
+    }
+
+    return `
+      <div class="mb-2">
+        <div><span class="text-muted">${label}:</span></div>
+        <div class="ms-3 mt-1 text-break" style="white-space: pre-wrap; word-break: break-word;">${escapeHtml(refs.join(', '))}</div>
+      </div>
+    `;
+  }
+
+  function renderHistoryContextSection(historyContext) {
+    if (!historyContext || typeof historyContext !== 'object') {
+      return '';
+    }
+
+    let sectionHtml = '<div class="mb-3">';
+    sectionHtml += '<div class="fw-bold mb-2"><i class="bi bi-clock-history me-2"></i>History Context</div>';
+    sectionHtml += '<div class="ms-3 small">';
+    sectionHtml += `<div class="mb-1"><span class="text-muted">Path:</span> <code class="ms-2">${escapeHtml(String(historyContext.path || 'unknown'))}</code></div>`;
+    sectionHtml += `<div class="mb-1"><span class="text-muted">Stored Messages:</span> <span class="ms-2 badge bg-secondary">${Number(historyContext.stored_total_messages || 0)}</span></div>`;
+    sectionHtml += `<div class="mb-1"><span class="text-muted">History Limit:</span> <span class="ms-2 badge bg-secondary">${Number(historyContext.history_limit || 0)}</span></div>`;
+    sectionHtml += `<div class="mb-1"><span class="text-muted">Older Messages:</span> <span class="ms-2 badge bg-secondary">${Number(historyContext.older_message_count || 0)}</span></div>`;
+    sectionHtml += `<div class="mb-1"><span class="text-muted">Recent Selected:</span> <span class="ms-2 badge bg-info">${Number(historyContext.recent_message_count || 0)}</span></div>`;
+    sectionHtml += `<div class="mb-1"><span class="text-muted">Final API Messages:</span> <span class="ms-2 badge bg-primary">${Number(historyContext.final_api_message_count || 0)}</span></div>`;
+    sectionHtml += `<div class="mb-1"><span class="text-muted">Summary Requested:</span> <span class="ms-2 badge ${historyContext.summary_requested ? 'bg-warning text-dark' : 'bg-secondary'}">${historyContext.summary_requested ? 'Yes' : 'No'}</span></div>`;
+    sectionHtml += `<div class="mb-1"><span class="text-muted">Summary Used:</span> <span class="ms-2 badge ${historyContext.summary_used ? 'bg-success' : 'bg-secondary'}">${historyContext.summary_used ? 'Yes' : 'No'}</span></div>`;
+    sectionHtml += `<div class="mb-2"><span class="text-muted">Default System Prompt:</span> <span class="ms-2 badge ${historyContext.default_system_prompt_inserted ? 'bg-success' : 'bg-secondary'}">${historyContext.default_system_prompt_inserted ? 'Inserted' : 'Not inserted'}</span></div>`;
+    sectionHtml += renderHistoryContextRefRow('Recent Refs', historyContext.selected_recent_message_refs);
+    sectionHtml += renderHistoryContextRefRow('Summarized Refs', historyContext.summarized_message_refs);
+    sectionHtml += renderHistoryContextRefRow('Skipped Inactive', historyContext.skipped_inactive_message_refs);
+    sectionHtml += renderHistoryContextRefRow('Skipped Masked', historyContext.skipped_masked_message_refs);
+    sectionHtml += renderHistoryContextRefRow('Final API Refs', historyContext.final_api_source_refs);
+    sectionHtml += '</div></div>';
+
+    return sectionHtml;
+  }
+
   fetch(`/api/message/${messageId}/metadata`)
     .then(response => {
       if (!response.ok) {
@@ -2719,6 +2529,7 @@ function loadMessageMetadataForDisplay(messageId, container) {
         active_thread: metadata.active_thread,
         thread_attempt: metadata.thread_attempt
       };
+      const historyContext = metadata.metadata?.history_context || null;
       
       if (threadInfo.thread_id) {
         html += '<div class="mb-3">';
@@ -2780,6 +2591,10 @@ function loadMessageMetadataForDisplay(messageId, container) {
         }
         
         html += '</div></div>';
+      }
+
+      if (metadata.role === 'assistant' && historyContext) {
+        html += renderHistoryContextSection(historyContext);
       }
       
       html += '</div>';
