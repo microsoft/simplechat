@@ -1,0 +1,40 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.25/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.25",
+  "version": "1.0.0",
+  "id": "APP_ID",
+  "name": {
+    "short": "Simple Chat",
+    "full": "Simple Chat App"
+  },
+  "description": {
+    "short": "AI Chat",
+    "full": "A Simple AI chat app for Microsoft Teams."
+  },
+  "developer": {
+    "name": "Your Name",
+    "websiteUrl": "https://example.com",
+    "privacyUrl": "https://example.com/privacy",
+    "termsOfUseUrl": "https://example.com/terms"
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "accentColor": "#FFFFFF",
+  "staticTabs": [
+    {
+      "entityId": "main",
+      "name": "Simple Chat",
+      "contentUrl": "https://HOSTNAME/login?teams=true",
+      "websiteUrl": "https://HOSTNAME",
+      "scopes": ["personal"]
+    }
+  ],
+  "permissions": ["identity"],
+  "validDomains": ["HOSTNAME"],
+  "webApplicationInfo": {
+    "id": "CLIENT_ID",
+    "resource": "api://HOSTNAME/CLIENT_ID"
+  }
+}

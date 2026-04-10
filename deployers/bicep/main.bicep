@@ -58,6 +58,12 @@ param enterpriseAppServicePrincipalId string
 @secure()
 param enterpriseAppClientSecret string
 
+@description('''Enable Single Sign-On (SSO) for Microsoft Teams when users access the application through the Teams client.
+- If true, the application will attempt to use the Teams SSO flow for authentication when accessed from within Teams.
+- If false, the application will not attempt to use Teams SSO and will fall back to standard authentication flows.
+- Default is false''')
+param enableTeamsSso bool = false
+
 //----------------
 // configurations
 @description('''Authentication type for resources that support Managed Identity or Key authentication.
@@ -203,9 +209,8 @@ param deployVideoIndexerService bool
 var rgName = '${appName}-${environment}-rg'
 var requiredTags = { application: appName, environment: environment, 'azd-env-name': azdEnvironmentName }
 var tags = union(requiredTags, specialTags)
-var isPublicCloud = scCloudEnvironment == 'public'
 var isUsGovernmentCloud = scCloudEnvironment == 'usgovernment'
-var acrCloudSuffix = isPublicCloud ? '.azurecr.io' : '.azurecr.us'
+var acrCloudSuffix = az.environment().suffixes.acrLoginServer
 var acrName = toLower('${appName}${environment}acr')
 var containerRegistry = '${acrName}${acrCloudSuffix}'
 var containerImageName = '${containerRegistry}/${imageName}'
@@ -524,6 +529,7 @@ module appService 'modules/appService.bicep' = {
     appInsightsName: applicationInsights.outputs.appInsightsName
     enterpriseAppClientId: enterpriseAppClientId
     enterpriseAppClientSecret: enterpriseAppClientSecret
+    enableTeamsSso: enableTeamsSso
     authenticationType: authenticationType
     keyVaultUri: keyVault.outputs.keyVaultUri
 
@@ -628,7 +634,6 @@ module setPermissions 'modules/setPermissions.bicep' = if (configureApplicationP
   name: 'setPermissions'
   scope: rg
   params: {
-
     webAppName: appService.outputs.name
     authenticationType: authenticationType
     enterpriseAppServicePrincipalId: enterpriseAppServicePrincipalId
@@ -696,8 +701,6 @@ module privateNetworking 'modules/privateNetworking.bicep' = if (enablePrivateNe
 //=========================================================
 // output values
 //=========================================================
-
-
 // output values required for postprovision script in azure.yaml
 output var_acrName string = toLower('${appName}${environment}acr')
 output var_authenticationType string = toLower(authenticationType)

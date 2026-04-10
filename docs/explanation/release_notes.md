@@ -6,7 +6,32 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 ### **(v0.241.006)**
 
+#### New Features
+
+*   **Microsoft Teams App Integration with SSO**
+    *   Added full Microsoft Teams application support with Single Sign-On (SSO) using the On-Behalf-Of (OBO) flow. Users embedded in Teams are automatically authenticated without a separate login.
+    *   New `/auth/teams/token-exchange` backend endpoint exchanges Teams SSO tokens for access tokens via MSAL OBO flow, with session persistence and activity logging.
+    *   New `login.html` template with Teams SDK detection, automatic SSO authentication, consent-required handling, and graceful fallback to standard Azure AD login.
+    *   Teams manifest template (`manifest.template.json`) with SSO-ready `webApplicationInfo`, static tab, and valid domain configuration.
+    *   New environment variables: `TEAMS_FRAME_ANCESTORS`, `CUSTOM_TEAMS_ORIGINS`, and `ENABLE_TEAMS_SSO` for configurable Teams SSO behaviour.
+    *   Content Security Policy `frame-ancestors` directive now dynamically includes Teams domains via `TEAMS_FRAME_ANCESTORS` setting.
+    *   Session cookies updated to `SameSite=None`, `Secure=True`, `HttpOnly=True` to support cross-origin Teams iframe embedding.
+    *   (Ref: `route_frontend_authentication.py`, `login.html`, `config.py`, `app.py`, `manifest.template.json`, Teams SSO, OBO flow)
+
+*   **Teams App Manifest and Icons**
+    *   Added Teams app package files: `manifest.template.json`, `color.png` (192×192), and `outline.png` (32×32) under `application/teams_app/`.
+    *   Template manifest includes placeholders for hostname, client ID, and Application ID URI for easy customisation per deployment.
+    *   (Ref: `application/teams_app/`, Teams app packaging)
+
+*   **Teams App Configuration Documentation**
+    *   Comprehensive how-to guide covering Azure AD app registration for Teams SSO, pre-authorised Teams client IDs, environment variables, manifest configuration, testing steps, and troubleshooting.
+    *   (Ref: `docs/how-to/teams_app.md`)
+
 #### Bug Fixes
+
+*   **Bicep ACR Suffix Hardcoded Value Fix**
+    *   Replaced hardcoded ACR cloud suffix (`'.azurecr.io'` / `'.azurecr.us'`) with the dynamic `az.environment().suffixes.acrLoginServer` built-in, improving support for sovereign and custom Azure environments.
+    *   (Ref: `deployers/bicep/main.bicep`, ACR suffix, sovereign cloud support)
 
 *   **Speech and Video Indexer Setup Guidance Alignment**
     *   Fixed stale admin guidance around Azure AI Video Indexer and shared Azure Speech configuration so managed-identity setup no longer points admins toward legacy Video Indexer API keys or incomplete Speech instructions.
@@ -302,7 +327,26 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   For SQL action types, the redundant additional fields UI in Step 4 is hidden entirely since all SQL configuration is already handled in Step 3.
     *   Step 5 (Summary) no longer shows the raw additional fields JSON dump for SQL types, since that data is already shown in the SQL Database Configuration summary card.
     *   (Ref: `_plugin_modal.html`, `plugin_modal_stepper.js`)
-    
+
+*   **Microsoft Teams App Integration with SSO**
+    *   Added full Microsoft Teams application support with Single Sign-On (SSO) using the On-Behalf-Of (OBO) flow. Users embedded in Teams are automatically authenticated without a separate login.
+    *   New `/auth/teams/token-exchange` backend endpoint exchanges Teams SSO tokens for access tokens via MSAL OBO flow, with session persistence and activity logging.
+    *   New `login.html` template with Teams SDK detection, automatic SSO authentication, consent-required handling, and graceful fallback to standard Azure AD login.
+    *   Teams manifest template (`manifest.template.json`) with SSO-ready `webApplicationInfo`, static tab, and valid domain configuration.
+    *   New environment variables: `TEAMS_FRAME_ANCESTORS`, `CUSTOM_TEAMS_ORIGINS`, and `ENABLE_TEAMS_SSO` for configurable Teams SSO behaviour.
+    *   Content Security Policy `frame-ancestors` directive now dynamically includes Teams domains via `TEAMS_FRAME_ANCESTORS` setting.
+    *   Session cookies updated to `SameSite=None`, `Secure=True`, `HttpOnly=True` to support cross-origin Teams iframe embedding.
+    *   (Ref: `route_frontend_authentication.py`, `login.html`, `config.py`, `app.py`, `manifest.template.json`, Teams SSO, OBO flow)
+
+*   **Teams App Manifest and Icons**
+    *   Added Teams app package files: `manifest.template.json`, `color.png` (192×192), and `outline.png` (32×32) under `application/teams_app/`.
+    *   Template manifest includes placeholders for hostname, client ID, and Application ID URI for easy customisation per deployment.
+    *   (Ref: `application/teams_app/`, Teams app packaging)
+
+*   **Teams App Configuration Documentation**
+    *   Comprehensive how-to guide covering Azure AD app registration for Teams SSO, pre-authorised Teams client IDs, environment variables, manifest configuration, testing steps, and troubleshooting.
+    *   (Ref: `docs/how-to/teams_app.md`)
+
 #### Bug Fixes
 
 *   **Chat History Citation Replay Improvements**
@@ -2222,8 +2266,6 @@ The update introduces "Workspaces," allowing users and groups to store both **do
 #### 7. **Architecture Diagram Updates**
 
 - Updated `architecture.vsdx` and `architecture.png` to align with the new authentication flow and container usage.
-
-------
 
 #### How to Use / Test the New Features
 

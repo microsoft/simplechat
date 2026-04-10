@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign In - {{ app_settings.app_title or 'SimpleChat' }}</title>
+    <link href="{{ url_for('static', filename='css/bootstrap.min.css') }}" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/bootstrap-icons.min.css') }}">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .login-container {
+            text-align: center;
+            max-width: 420px;
+            width: 100%;
+            padding: 3rem;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+        .logo-section {
+            margin-bottom: 2rem;
+        }
+        .logo-section img {
+            max-width: 120px;
+            max-height: 120px;
+            margin-bottom: 1rem;
+        }
+        .app-title {
+            font-size: 1.75rem;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 0.5rem;
+        }
+        .spinner-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 200px;
+        }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #6264a7;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1.5rem;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .status-message {
+            color: #666;
+            font-size: 1.1rem;
+            margin-bottom: 0.5rem;
+        }
+        .status-detail {
+            color: #999;
+            font-size: 0.9rem;
+        }
+        .error-section {
+        }
+        .error-icon {
+            font-size: 3rem;
+            color: #d13438;
+            margin-bottom: 1rem;
+        }
+        .error-title {
+            color: #d13438;
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+        .error-message {
+            color: #666;
+            margin-bottom: 1.5rem;
+            padding: 1rem;
+            background: #fef2f2;
+            border-radius: 6px;
+            border-left: 4px solid #d13438;
+        }
+        .btn-primary-custom {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            padding: 0.75rem 2rem;
+            font-weight: 500;
+            border-radius: 6px;
+        }
+        .btn-primary-custom:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <!-- Logo and Title -->
+        <div class="logo-section">
+            {% if app_settings.show_logo %}
+                {% if app_settings.custom_logo_base64 %}
+                    <img src="data:image/png;base64,{{ app_settings.custom_logo_base64 }}" alt="Logo" />
+                {% else %}
+                    <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Logo" />
+                {% endif %}
+            {% endif %}
+            {% if not app_settings.hide_app_title %}
+                <h1 class="app-title">{{ app_settings.app_title or 'SimpleChat' }}</h1>
+            {% endif %}
+        </div>
+
+        <!-- Loading Section -->
+        <div id="loading-section" class="spinner-container">
+            <div class="spinner"></div>
+            <div class="status-message" id="status-message">Signing in...</div>
+            <div class="status-detail" id="status-detail">Please wait while we authenticate you.</div>
+        </div>
+        
+        <!-- Error Section -->
+        <div id="error-section" class="error-section d-none">
+            <div class="error-icon">
+                <i class="bi bi-exclamation-circle-fill"></i>
+            </div>
+            <div class="error-title">Authentication Error</div>
+            <div class="error-message" id="error-message"></div>
+            <button id="standard-login-btn" class="btn btn-primary-custom">
+                <i class="bi bi-microsoft me-2"></i>Sign in with Microsoft
+            </button>
+        </div>
+    </div>
+
+    <!-- Teams SDK - Local copy for disconnected environments -->
+    <script src="{{ url_for('static', filename='js/MicrosoftTeams.min.js') }}"></script>
+    
+    <script>
+        const ENABLE_TEAMS_SSO = {{ enable_teams_sso|tojson }};
+        const CLIENT_ID = {{ client_id|tojson }};
+        const CUSTOM_TEAMS_ORIGINS = {{ custom_teams_origins|tojson }};
+
+        function updateStatus(message, detail = '') {
+            document.getElementById('status-message').textContent = message;
+            document.getElementById('status-detail').textContent = detail;
+        }
+
+        async function detectAndAuthenticate() {
+            try {
+                updateStatus('Detecting environment...', 'Checking if running in Microsoft Teams');
+                
+                // Try to initialize Teams SDK
+                if (CUSTOM_TEAMS_ORIGINS && CUSTOM_TEAMS_ORIGINS.length > 0) {
+                    await microsoftTeams.app.initialize(CUSTOM_TEAMS_ORIGINS);
+                } else {
+                    await microsoftTeams.app.initialize();
+                }
+                
+                // Check if we're actually in Teams
+                updateStatus('Teams detected', 'Retrieving Teams context');
+                const context = await microsoftTeams.app.getContext();
+                
+                if (context && ENABLE_TEAMS_SSO) {
+                    console.log('Teams context detected:', context);
+                    console.log('Attempting Teams SSO authentication...');
+                    await authenticateWithTeams();
+                } else {
+                    console.log('Teams context detected but SSO not enabled');
+                    redirectToStandardLogin();
+                }
+                
+            } catch (error) {
+                // Not in Teams context or initialization failed
+                console.log('Not in Teams context:', error.message);
+                redirectToStandardLogin();
+            }
+        }
+
+        async function authenticateWithTeams() {
+            try {
+                updateStatus('Authenticating with Teams...', 'Requesting authentication token');
+                
+                // Get Teams SSO token
+                const authToken = await microsoftTeams.authentication.getAuthToken({
+                    resources: [CLIENT_ID],
+                    silent: false
+                });
+                
+                console.log('Teams token acquired, exchanging for access token...');
+                updateStatus('Exchanging token...', 'Validating credentials');
+
+                // Exchange the Teams token for access token
+                const response = await fetch('/auth/teams/token-exchange', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ token: authToken })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    console.log('Teams authentication successful');
+                    updateStatus('Success!', 'Redirecting to application...');
+                    
+                    // Redirect to main app
+                    setTimeout(() => {
+                        window.location.href = '/chats';
+                    }, 500);
+                } else {
+                    throw new Error(result.error_description || result.error || 'Authentication failed');
+                }
+
+            } catch (error) {
+                console.error('Teams authentication error:', error);
+                
+                // Check if this is a consent error
+                if (error.message && (
+                    error.message.includes('consent') || 
+                    error.message.includes('AADSTS') ||
+                    error.message.includes('consent_required') ||
+                    error.message.includes('interaction_required')
+                )) {
+                    showError(
+                        'Additional permissions required. You will be redirected to grant consent.',
+                        'Consent Required'
+                    );
+                    // Redirect to consent flow
+                    setTimeout(() => {
+                        redirectToStandardLogin();
+                    }, 3000);
+                } else {
+                    showError(
+                        error.message || 'An unexpected error occurred during Teams authentication. Falling back to standard login.',
+                        'Authentication Failed'
+                    );
+                    
+                    // Fall back to standard login
+                    setTimeout(() => {
+                        redirectToStandardLogin();
+                    }, 3000);
+                }
+            }
+        }
+
+        function redirectToStandardLogin() {
+            console.log('Redirecting to standard Azure AD login flow');
+            updateStatus('Redirecting...', 'Using standard authentication');
+            
+            // Set teams=false parameter to explicitly indicate fallback to standard Azure AD flow
+            // This tells the backend to skip Teams SSO detection and use standard authentication
+            window.location.href = '{{ url_for("login") }}?teams=false';
+        }
+
+        function showError(message, title = 'Authentication Error') {
+            document.getElementById('loading-section').classList.add('d-none');
+            document.getElementById('error-section').classList.remove('d-none');
+            
+            const errorTitleElement = document.querySelector('.error-title');
+            if (errorTitleElement) {
+                errorTitleElement.textContent = title;
+            }
+            
+            document.getElementById('error-message').textContent = message;
+            document.getElementById('standard-login-btn').onclick = redirectToStandardLogin;
+        }
+
+        // Start the detection and authentication process
+        console.log('Login page loaded, starting authentication...');
+        console.log('Teams SSO enabled:', ENABLE_TEAMS_SSO);
+        detectAndAuthenticate();
+    </script>
+</body>
+</html>

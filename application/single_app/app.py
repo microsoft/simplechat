@@ -20,6 +20,7 @@ if sys.platform == 'win32':
         sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'strict')
 
 import app_settings_cache
+from functions_appinsights import *
 from config import *
 from semantic_kernel import Kernel
 from semantic_kernel_loader import initialize_semantic_kernel
@@ -31,7 +32,6 @@ from functions_content import *
 from functions_documents import *
 from functions_search import *
 from functions_settings import *
-from functions_appinsights import *
 from functions_activity_logging import *
 
 import threading
@@ -101,6 +101,13 @@ executor.init_app(app)
 app.config['SESSION_TYPE'] = SESSION_TYPE
 app.config['VERSION'] = VERSION
 app.config['SECRET_KEY'] = SECRET_KEY
+
+if ENABLE_TEAMS_SSO:
+    app.config.update(
+        SESSION_COOKIE_SECURE=True,        # required if you use SameSite=None
+        SESSION_COOKIE_SAMESITE="None",
+        SESSION_COOKIE_HTTPONLY=True,
+    )
 
 # Ensure filesystem session directory (when used) points to a writable path inside container.
 if SESSION_TYPE == 'filesystem':

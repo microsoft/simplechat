@@ -1,7 +1,7 @@
 # route_frontend_authentication.py
 
-from unittest import result
 from config import *
+from functions_appinsights import log_event
 from functions_authentication import _build_msal_app, _load_cache, _save_cache, clear_requested_oauth_scopes, get_requested_oauth_scopes
 from functions_debug import debug_print
 from swagger_wrapper import swagger_route, get_auth_security
@@ -32,6 +32,23 @@ def register_route_frontend_authentication(app):
     @app.route('/login')
     @swagger_route(security=get_auth_security())
     def login():
+        # Check if this is a Teams context (via query parameter)
+        # teams=true: Attempt Teams SSO detection
+        # teams=false: Skip Teams SSO, use standard Azure AD flow
+        # No parameter: Default to Teams SSO detection (for backward compatibility)
+        teams_param = request.args.get('teams', 'true')
+        is_teams = teams_param == 'true'
+        
+        if is_teams and ENABLE_TEAMS_SSO:
+            # Render a page that will detect Teams and handle SSO
+            from functions_settings import get_settings, sanitize_settings_for_user
+            settings = get_settings()
+            return render_template('login.html', 
+                                 client_id=CLIENT_ID,
+                                 enable_teams_sso=is_teams,
+                                 custom_teams_origins=CUSTOM_TEAMS_ORIGINS,
+                                 app_settings=sanitize_settings_for_user(settings))
+        
         # Clear potentially stale cache/user info before starting new login
         session.pop("user", None)
         session.pop("token_cache", None)
@@ -212,6 +229,77 @@ def register_route_frontend_authentication(app):
 
         return jsonify(result, 200)
 
+    @app.route('/auth/teams/token-exchange', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    def teams_token_exchange():
+        """
+        Exchange a Teams SSO token for an access token using On-Behalf-Of (OBO) flow.
+        This endpoint receives the Teams SSO token from the frontend and exchanges it
+        for tokens that can access Microsoft Graph and other APIs.
+        """
+        try:
+            # Feature gate: only allow token exchange when Teams SSO is enabled
+            if not ENABLE_TEAMS_SSO:
+                return jsonify({"error": "teams_sso_disabled"}), 404
+
+            data = request.get_json()
+            teams_token = data.get('token') or {}
+            
+            if not teams_token:
+                return jsonify({"error": "No token provided"}), 400
+            
+            # Build MSAL app
+            msal_app = _build_msal_app(cache=_load_cache())
+            
+            # Use OBO flow to exchange the Teams token
+            result = msal_app.acquire_token_on_behalf_of(
+                user_assertion=teams_token,
+                scopes=SCOPE
+            )
+            
+            if "error" in result:
+                error_description = result.get("error_description", result.get("error"))
+                log_event(f"Teams token exchange failure: {error_description}", exceptionTraceback=True)
+                return jsonify({
+                    "error": result.get("error"),
+                    "error_description": error_description
+                }), 400
+            
+            # Store user identity info from ID token claims
+            session["user"] = result.get("id_token_claims")
+            
+            # Save the token cache to session
+            _save_cache(msal_app.token_cache)
+            
+            user_name = session['user'].get('name', 'Unknown')
+            log_event(f"Teams SSO: User {user_name} authenticated successfully.")
+            
+            # Log the login activity
+            try:
+                from functions_activity_logging import log_user_login
+                user_id = session['user'].get('oid') or session['user'].get('sub')
+                if user_id:
+                    log_user_login(user_id, 'teams_sso')
+            except Exception as e:
+                debug_print(f"Could not log Teams login activity: {e}")
+            
+            # Return success with user info
+            return jsonify({
+                "success": True,
+                "user": {
+                    "name": user_name,
+                    "email": session['user'].get('preferred_username'),
+                    "id": session['user'].get('oid')
+                }
+            }), 200
+            
+        except Exception as e:            
+            debug_print(f"Teams token exchange error: {str(e)}")
+            return jsonify({
+                "error": "token_exchange_failed",
+                "error_description": "An unexpected error occurred during token exchange."
+            }), 500
+        
     @app.route('/logout/local')
     @swagger_route(security=get_auth_security())
     def local_logout():
