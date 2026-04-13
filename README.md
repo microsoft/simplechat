@@ -12,6 +12,10 @@ The application utilizes **Azure Cosmos DB** for storing conversations, metadata
 
 [Simple Chat Documentation | Simple Chat Documentation](https://microsoft.github.io/simplechat/)
 
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for the fork-based workflow, target branch guidance, and local development references for SimpleChat contributors.
+
 ## Quick Deploy
 
 [Detailed deployment Guide](./deployers/bicep/README.md)
