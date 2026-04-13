@@ -1,6 +1,45 @@
-# ServiceNow Asset Management Agent Setup Guide
+---
+layout: showcase-page
+title: "ServiceNow Asset Management Setup"
+permalink: /how-to/agents/ServiceNow/servicenow_asset_management_setup/
+menubar: docs_menu
+accent: orange
+eyebrow: "How-To Guide"
+description: "Set up a ServiceNow asset-management agent with separate actions for querying, creating, updating, and deleting records in the `alm_asset` table."
+hero_icons: ["bi-pc-display-horizontal", "bi-database-gear", "bi-arrow-repeat"]
+hero_pills: ["Four-action asset workflow", "Direct `alm_asset` table operations", "Query-first pattern for update and delete"]
+hero_links: [{ label: "ServiceNow guides", url: "/how-to/agents/ServiceNow/", style: "primary" }, { label: "OAuth setup", url: "/how-to/agents/ServiceNow/servicenow_oauth_setup/", style: "secondary" }]
+---
 
-This guide walks through setting up a complete ServiceNow Asset Management agent with separate actions for querying, creating, updating, and deleting assets.
+This guide is for teams that want a dedicated asset-management agent instead of overloading a general ServiceNow support agent. It keeps query, create, update, and delete actions separate so each operation is easier to govern and debug.
+
+<section class="latest-release-card-grid">
+   <article class="latest-release-card">
+      <div class="latest-release-card-icon"><i class="bi bi-list-check"></i></div>
+      <h2>Four actions, one agent</h2>
+      <p>Query, create, update, and delete are modeled as separate actions so permissions, behavior, and troubleshooting stay explicit.</p>
+   </article>
+   <article class="latest-release-card">
+      <div class="latest-release-card-icon"><i class="bi bi-hdd-stack"></i></div>
+      <h2>Direct asset record scope</h2>
+      <p>This setup works directly against the `alm_asset` table for actual hardware asset records rather than request or stockroom workflows.</p>
+   </article>
+   <article class="latest-release-card">
+      <div class="latest-release-card-icon"><i class="bi bi-key"></i></div>
+      <h2>Shared authentication</h2>
+      <p>All four actions use the same ServiceNow integration user and bearer token, which simplifies action setup while keeping the service account dedicated.</p>
+   </article>
+   <article class="latest-release-card">
+      <div class="latest-release-card-icon"><i class="bi bi-exclamation-triangle"></i></div>
+      <h2>Query before mutating</h2>
+      <p>Updates and deletes should always resolve the `sys_id` first, then perform the mutation. That two-call pattern is the safety boundary for this setup.</p>
+   </article>
+</section>
+
+<div class="latest-release-note-panel">
+   <h2>Use this when assets are the real business object</h2>
+   <p>If your workflow is about formal requests, transfers, or stock operations, build separate actions for those tables instead. This guide is intentionally narrower and better for that reason.</p>
+</div>
 
 ## Overview
 

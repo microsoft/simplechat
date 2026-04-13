@@ -1,22 +1,55 @@
-# Create Your First Agent
+---
+layout: showcase-page
+title: "Create Your First Agent"
+permalink: /tutorials/first_agent/
+menubar: docs_menu
+accent: violet
+eyebrow: "Tutorial 2"
+description: "Create a focused agent, connect it to the right knowledge scope, and test whether its behavior matches the role you intended."
+hero_icons:
+  - bi-person-badge
+  - bi-lightning-charge
+  - bi-chat-dots
+hero_pills:
+  - Define the role clearly
+  - Scope the knowledge correctly
+  - Test and refine behavior
+hero_links:
+  - label: Tutorial index
+    url: /tutorials/
+    style: primary
+  - label: Review admin configuration
+    url: /admin_configuration/
+    style: secondary
+show_nav: true
+nav_links:
+   prev:
+      title: Getting Started with Simple Chat
+      url: /tutorials/getting_started/
+   next:
+      title: Uploading and Managing Documents
+      url: /tutorials/uploading_documents/
+---
 
-Agents in Simple Chat allow you to create specialized AI assistants with custom behavior, knowledge, and capabilities. This tutorial will guide you through creating your first agent from scratch.
+Agents are most useful when they are specific. This tutorial shows how to define that specificity in instructions, data access, and testing rather than relying on a generic assistant prompt.
 
-## What You'll Learn
-
-By the end of this tutorial, you'll:
-- Understand what agents are and how they work
-- Create a custom agent with specialized knowledge
-- Configure agent behavior and personality
-- Test your agent with real conversations
-- Understand how agents use workspaces and documents
-
-## Prerequisites
-
-- Simple Chat already deployed and configured
-- Basic familiarity with the Simple Chat interface
-- Completed [Getting Started tutorial](getting_started) (recommended)
-- Some documents uploaded to work with
+<section class="latest-release-card-grid">
+   <article class="latest-release-card">
+      <div class="latest-release-card-icon"><i class="bi bi-bullseye"></i></div>
+      <h2>Focus the role</h2>
+      <p>Give the agent a clear purpose, a clear audience, and a response style that fits the work you expect it to do.</p>
+   </article>
+   <article class="latest-release-card">
+      <div class="latest-release-card-icon"><i class="bi bi-folder-check"></i></div>
+      <h2>Attach the right knowledge</h2>
+      <p>Choose only the workspaces and documents that support the role so retrieval stays relevant and the agent does not wander.</p>
+   </article>
+   <article class="latest-release-card">
+      <div class="latest-release-card-icon"><i class="bi bi-arrow-repeat"></i></div>
+      <h2>Refine quickly</h2>
+      <p>Test realistic prompts, tighten the instructions, and repeat until the behavior is consistently useful.</p>
+   </article>
+</section>
 
 ## What Are Agents?
 

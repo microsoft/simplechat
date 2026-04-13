@@ -1,14 +1,51 @@
-# explanation/running_simplechat_locally.md
 ---
-layout: libdoc/page
-title: Running Simple Chat Locally
+layout: showcase-page
+title: "Running Simple Chat Locally"
+permalink: /explanation/running_simplechat_locally/
+menubar: docs_menu
+accent: blue
+eyebrow: "Explanation"
+description: "Use the repo-local Python 3.12 environment and the Flask debug loop for everyday development, then move to Linux-compatible runtimes only when Gunicorn validation matters."
+hero_icons: ["bi-laptop", "bi-terminal", "bi-code-square"]
+hero_pills: ["Python 3.12 local venv", "Flask debug loop first", "Gunicorn validation only when needed"]
+hero_links: [{ label: "Explanation index", url: "/explanation/", style: "primary" }, { label: "Azure production runtime", url: "/explanation/running_simplechat_azure_production/", style: "secondary" }]
 order: 140
 category: Explanation
 ---
 
+Local development is intentionally simpler than Azure production. The goal is fast editing and debugging, not pretending every laptop is a production host.
+
+<section class="latest-release-card-grid">
+	<article class="latest-release-card">
+		<div class="latest-release-card-icon"><i class="bi bi-box"></i></div>
+		<h2>Use a repo-local virtual environment</h2>
+		<p>Create a Python 3.12 `.venv` in the repo and point VS Code at it before you install dependencies or run the app.</p>
+	</article>
+	<article class="latest-release-card">
+		<div class="latest-release-card-icon"><i class="bi bi-bug"></i></div>
+		<h2>Prefer `python app.py` for normal work</h2>
+		<p>The Flask debug loop is the default developer path because it keeps iteration fast and avoids unnecessary production-runtime complexity.</p>
+	</article>
+	<article class="latest-release-card">
+		<div class="latest-release-card-icon"><i class="bi bi-windows"></i></div>
+		<h2>Windows is supported for development</h2>
+		<p>On Windows, keep using the local Python flow for day-to-day work and move to Docker or WSL2 only when Linux-specific runtime behavior needs testing.</p>
+	</article>
+	<article class="latest-release-card">
+		<div class="latest-release-card-icon"><i class="bi bi-diagram-2"></i></div>
+		<h2>Test Gunicorn separately</h2>
+		<p>Use a Linux-compatible environment when you specifically need worker, thread, timeout, or streaming behavior that mirrors production more closely.</p>
+	</article>
+</section>
+
+<div class="latest-release-note-panel">
+	<h2>Do not overfit local startup to production</h2>
+	<p>The repo deliberately separates the everyday developer loop from the production hosting model. That keeps local work straightforward and makes production-specific validation more explicit.</p>
+</div>
+
 This guide explains the recommended local developer workflow for Simple Chat.
 
-Current documentation version: 0.241.002
+Current documentation version: 0.241.009
 
 ## VS Code Python 3.12 Setup
 
