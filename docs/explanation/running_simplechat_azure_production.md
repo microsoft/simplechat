@@ -1,14 +1,51 @@
-# explanation/running_simplechat_azure_production.md
 ---
-layout: libdoc/page
-title: Running Simple Chat in Azure Production
+layout: showcase-page
+title: "Running Simple Chat in Azure Production"
+permalink: /explanation/running_simplechat_azure_production/
+menubar: docs_menu
+accent: emerald
+eyebrow: "Explanation"
+description: "Use the deployment model first, then choose the right Azure production startup pattern for web workers and scheduler work."
+hero_icons: ["bi-cloud-check", "bi-box-seam", "bi-gear-wide-connected"]
+hero_pills: ["Container App Service by default", "Native Python is a separate path", "Separate scheduler work when scaling"]
+hero_links: [{ label: "Deployment reference", url: "/reference/deploy/", style: "primary" }, { label: "Running locally", url: "/explanation/running_simplechat_locally/", style: "secondary" }]
 order: 150
 category: Explanation
 ---
 
+Production startup guidance only makes sense after you identify the deployment model. In this repo, most Azure deployment paths are container-based, and that changes the startup-command conversation immediately.
+
+<section class="latest-release-card-grid">
+	<article class="latest-release-card">
+		<div class="latest-release-card-icon"><i class="bi bi-box-seam"></i></div>
+		<h2>Repo deployers are container-first</h2>
+		<p>AZD, Bicep, Terraform, and Azure CLI paths all assume the container image is what App Service runs in production.</p>
+	</article>
+	<article class="latest-release-card">
+		<div class="latest-release-card-icon"><i class="bi bi-play-circle"></i></div>
+		<h2>Container entrypoint already starts Gunicorn</h2>
+		<p>For the supported container paths, App Service does not need a second native Python startup command layered on top.</p>
+	</article>
+	<article class="latest-release-card">
+		<div class="latest-release-card-icon"><i class="bi bi-filetype-py"></i></div>
+		<h2>Native Python is intentional, not default</h2>
+		<p>If you choose a native Python App Service deployment, you need to manage startup behavior explicitly and treat it as a different operating model.</p>
+	</article>
+	<article class="latest-release-card">
+		<div class="latest-release-card-icon"><i class="bi bi-arrow-repeat"></i></div>
+		<h2>Scheduler work deserves its own plan</h2>
+		<p>Once you scale workers or instances, background task isolation becomes part of production correctness, not a tuning detail.</p>
+	</article>
+</section>
+
+<div class="latest-release-note-panel">
+	<h2>The key split</h2>
+	<p>If the site runs the repo container image, let the image entrypoint launch Gunicorn. If the site runs native Python directly, set the startup command yourself. Most confusion in Azure production comes from mixing those two models.</p>
+</div>
+
 This guide explains the supported production startup patterns for Simple Chat in Azure.
 
-Current documentation version: 0.241.002
+Current documentation version: 0.241.009
 
 ## Default Azure Production Model in This Repo
 

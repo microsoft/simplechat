@@ -1,25 +1,64 @@
-# Simple Chat - Manual Setup Instructions
+---
+layout: showcase-page
+title: "Manual Setup"
+permalink: /setup_instructions_manual/
+menubar: docs_menu
+accent: slate
+eyebrow: "Deployment Reference"
+description: "Use the manual path when you need direct control over Azure resources, identity wiring, environment variables, and deployment mechanics."
+hero_icons:
+  - bi-terminal
+  - bi-cloud-check
+  - bi-tools
+hero_pills:
+  - Direct Azure provisioning
+  - Explicit identity setup
+  - Best for controlled enterprise rollouts
+hero_links:
+  - label: Back to getting started
+    url: /setup_instructions/
+    style: primary
+  - label: Special setup scenarios
+    url: /setup_instructions_special/
+    style: secondary
+show_nav: true
+nav_links:
+  prev:
+    title: Getting Started
+    url: /setup_instructions/
+  next:
+    title: Special Setup Scenarios
+    url: /setup_instructions_special/
+---
+This guide is for teams that need to provision every dependency themselves, integrate with existing standards, or understand the full deployment surface before they automate it.
 
-- [Provision Azure Resources](#provision-azure-resources)
-- [Application-Specific Configuration Steps](#application-specific-configuration-steps)
-  - [Setting Up Authentication (Azure AD / Entra ID)](#setting-up-authentication-azure-ad--entra-id)
-  - [Grant App Registration Access to Azure OpenAI (for Model Fetching)](#grant-app-registration-access-to-azure-openai-for-model-fetching)
-  - [Clone the Repository](#clone-the-repository)
-  - [Configure Environment Variables (`.env` File)](#configure-environment-variables-env-file)
-  - [Alternate Method: Update App Settings via JSON (Advanced)](#alternate-method-update-app-settings-via-json-advanced)
-  - [Initializing Indexes in Azure AI Search](#initializing-indexes-in-azure-ai-search)
-- [Installing and Deploying the Application Code](#installing-and-deploying-the-application-code)
-  - [Deploying via VS Code (Recommended for Simplicity)](#deploying-via-vs-code-recommended-for-simplicity)
-  - [Deploying via Azure CLI (Zip Deploy)](#deploying-via-azure-cli-zip-deploy)
-- [Running the Application](#running-the-application)
-- [Upgrading the Application](#upgrading-the-application)
-  - [Using Deployment Slots (Recommended for Production/Staging)](#using-deployment-slots-recommended-for-productionstaging)
-  - [Using Direct Deployment to Production (Simpler, for Dev/Test or Low Impact Changes)](#using-direct-deployment-to-production-simpler-for-devtest-or-low-impact-changes)
-  - [Automate via CI/CD](#automate-via-cicd)
-- [Return to Setup Instructions](./setup_instructions.md)
+<section class="latest-release-card-grid">
+    <article class="latest-release-card">
+        <div class="latest-release-card-icon"><i class="bi bi-cloud-plus"></i></div>
+        <h2>Provision Azure resources</h2>
+        <p>Stand up App Service, Azure OpenAI, Search, Cosmos DB, Document Intelligence, and the optional services needed for your chosen feature set.</p>
+    </article>
+    <article class="latest-release-card">
+        <div class="latest-release-card-icon"><i class="bi bi-person-lock"></i></div>
+        <h2>Configure identity and auth</h2>
+        <p>Set up the Entra app registration, App Service authentication, Graph permissions, app roles, and any managed identity access the runtime requires.</p>
+    </article>
+    <article class="latest-release-card">
+        <div class="latest-release-card-icon"><i class="bi bi-code-square"></i></div>
+        <h2>Deploy application code</h2>
+        <p>Clone the repo, populate settings, initialize search indexes, and deploy through VS Code or Azure CLI depending on your workflow.</p>
+    </article>
+    <article class="latest-release-card">
+        <div class="latest-release-card-icon"><i class="bi bi-arrow-repeat"></i></div>
+        <h2>Run and upgrade safely</h2>
+        <p>Use deployment slots or another controlled promotion flow when you move from dev/test installs into production operations.</p>
+    </article>
+</section>
 
-
-> <a href="#simple-chat---manual-setup-instructions" style="text-decoration: none;">Return to top</a>
+<div class="latest-release-note-panel">
+    <h2>How to use this page</h2>
+    <p>Read it top to bottom the first time. After that, treat it as a reference for the specific step you are automating or verifying.</p>
+</div>
 
 ## Provision Azure Resources
 

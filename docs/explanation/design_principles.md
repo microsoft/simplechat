@@ -1,10 +1,47 @@
-# explanation/design_principles.md
 ---
-layout: libdoc/page
-title: Design Principles
+layout: showcase-page
+title: "Design Principles"
+permalink: /explanation/design_principles/
+menubar: docs_menu
+accent: teal
+eyebrow: "Explanation"
+description: "These principles explain the recurring design choices in Simple Chat across security, extensibility, operability, and user experience."
+hero_icons: ["bi-compass", "bi-shield-lock", "bi-people"]
+hero_pills: ["Security by default", "Enterprise-ready design", "Configuration over reinvention"]
+hero_links: [{ label: "Explanation index", url: "/explanation/", style: "primary" }, { label: "Architecture", url: "/explanation/architecture/", style: "secondary" }]
 order: 120
 category: Explanation
 ---
+
+These principles are the shortest explanation for why the product sometimes feels opinionated. They describe what the repo optimizes for when flexibility and operational safety pull in different directions.
+
+<section class="latest-release-card-grid">
+	<article class="latest-release-card">
+		<div class="latest-release-card-icon"><i class="bi bi-shield-lock"></i></div>
+		<h2>Security first</h2>
+		<p>Identity, least privilege, private connectivity, and managed identities are built into the architecture instead of layered on later.</p>
+	</article>
+	<article class="latest-release-card">
+		<div class="latest-release-card-icon"><i class="bi bi-person-check"></i></div>
+		<h2>User-centered execution</h2>
+		<p>The platform tries to keep high-value paths understandable for end users and manageable for administrators at the same time.</p>
+	</article>
+	<article class="latest-release-card">
+		<div class="latest-release-card-icon"><i class="bi bi-building-check"></i></div>
+		<h2>Enterprise readiness</h2>
+		<p>Scalability, auditability, compliance, and integration boundaries are treated as core product concerns rather than future hardening tasks.</p>
+	</article>
+	<article class="latest-release-card">
+		<div class="latest-release-card-icon"><i class="bi bi-sliders"></i></div>
+		<h2>Configuration over code edits</h2>
+		<p>Many capabilities are designed to be enabled, disabled, or tuned through admin settings so rollout changes do not require constant redeployment.</p>
+	</article>
+</section>
+
+<div class="latest-release-note-panel">
+	<h2>Why this page helps</h2>
+	<p>When two implementation options both look reasonable, these principles are the tie-breakers. They also explain why many docs pages emphasize identity, service dependencies, and rollout order as much as feature behavior.</p>
+</div>
 
 
 Simple Chat is built on a set of core design principles that guide architectural decisions, feature development, and operational practices. Understanding these principles helps explain why certain choices were made and how to extend the system effectively.

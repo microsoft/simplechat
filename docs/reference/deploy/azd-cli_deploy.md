@@ -1,13 +1,65 @@
 ---
-layout: page
+layout: showcase-page
 title: "Azure Developer CLI Deployment"
-description: "Deploy Simple Chat with azd up"
-section: "Reference"
+permalink: /reference/deploy/azd-cli_deploy/
+menubar: docs_menu
+accent: emerald
+eyebrow: "Deployment Reference"
+description: "Deploy Simple Chat with Azure Developer CLI when you want the repo's most current, end-to-end supported rollout path."
+hero_icons:
+  - bi-rocket-takeoff
+  - bi-cloud-arrow-up
+  - bi-box-seam
+hero_pills:
+  - Recommended deployment path
+  - Provision and deploy together
+  - Container-based runtime
+hero_links:
+  - label: "Getting Started"
+    url: /setup_instructions/
+    style: primary
+  - label: "Upgrade paths"
+    url: /how-to/upgrade_paths/
+    style: secondary
+nav_links:
+  prev:
+    title: "Deployment Reference"
+    url: /reference/deploy/
+  next:
+    title: "Azure CLI with PowerShell"
+    url: /reference/deploy/azurecli_powershell_deploy/
+show_nav: true
 ---
 
-# Azure Developer CLI Deployment
+Azure Developer CLI handles the cleanest end-to-end deployment flow in this repo. Use it when you want infrastructure provisioning, environment configuration, and application deployment to stay in one documented path.
 
-Azure Developer CLI (azd) provides the fastest and most automated way to deploy Simple Chat. This method handles resource provisioning, configuration, and application deployment with minimal manual steps.
+<section class="latest-release-card-grid">
+    <article class="latest-release-card">
+        <div class="latest-release-card-icon"><i class="bi bi-diagram-3"></i></div>
+        <h2>Provision infrastructure</h2>
+        <p>AZD drives the Bicep templates for the required Azure resources instead of making you stitch together the provisioning steps manually.</p>
+    </article>
+    <article class="latest-release-card">
+        <div class="latest-release-card-icon"><i class="bi bi-sliders2"></i></div>
+        <h2>Capture environment choices</h2>
+        <p>Subscription, region, environment naming, and optional environment settings all stay tied to the AZD environment instead of scattered across ad hoc scripts.</p>
+    </article>
+    <article class="latest-release-card">
+        <div class="latest-release-card-icon"><i class="bi bi-box-seam"></i></div>
+        <h2>Deploy the app</h2>
+        <p>The current path is container-based App Service, so the image runtime and startup behavior are handled by the deployment model rather than a native Python startup command.</p>
+    </article>
+    <article class="latest-release-card">
+        <div class="latest-release-card-icon"><i class="bi bi-graph-up-arrow"></i></div>
+        <h2>Inspect and iterate</h2>
+        <p>Use AZD commands for logs, monitoring, environment inspection, and upgrade decisions without switching to a separate deployment toolset midstream.</p>
+    </article>
+</section>
+
+<div class="latest-release-note-panel">
+    <h2>Startup command rule for this path</h2>
+    <p>The repo's AZD workflow deploys a container-based App Service. Do not add a native Python App Service startup command unless you intentionally move away from the container runtime later.</p>
+</div>
 
 ## Overview
 

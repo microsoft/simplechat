@@ -1,62 +1,176 @@
 ---
-layout: page
+layout: showcase-page
 title: "Simple Chat Documentation"
-description: "Welcome to the official documentation for Simple Chat - a comprehensive platform for AI-powered conversations and document intelligence."
+description: "Azure-native documentation for deploying, operating, and extending Simple Chat with the same polished visual language as the latest-release experience."
+section: "Overview"
+accent: blue
+eyebrow: "Docs Overview"
+hero_icons:
+  - bi-house-fill
+  - bi-stars
+  - bi-rocket-takeoff
+hero_pills:
+  - Azure OpenAI
+  - Retrieval-Augmented Generation
+  - Enterprise controls
+hero_links:
+  - label: "Start with deployment"
+    url: /setup_instructions/
+    style: primary
+  - label: "Explore features"
+    url: /features/
+    style: outline
 ---
 
-The **Simple Chat Application** is a comprehensive, web-based platform designed to facilitate secure and context-aware interactions with generative AI models, specifically leveraging **Azure OpenAI**. Its central feature is **Retrieval-Augmented Generation (RAG)**, which significantly enhances AI interactions by allowing users to ground conversations in their own data. Users can upload personal ("Your Workspace") or shared group ("Group Workspaces") documents, which are processed using **Azure AI Document Intelligence**, chunked intelligently based on content type, vectorized via **Azure OpenAI Embeddings**, and indexed into **Azure AI Search** for efficient hybrid retrieval (semantic + keyword).
+Simple Chat gives teams an Azure-native way to deploy, ground, govern, and extend AI experiences without stitching together a separate chat app, search layer, and admin plane.
 
-Built with modularity in mind, the application offers a suite of powerful **optional features** that can be enabled via administrative settings. These include integrating **Azure AI Content Safety** for governance, providing **Image Generation** capabilities (DALL-E), processing **Video** (via Azure Video Indexer) and **Audio** (via Azure Speech Service) files for RAG, implementing **Document Classification** schemes, collecting **User Feedback**, enabling **Conversation Archiving** for compliance, extracting **AI-driven Metadata**, and offering **Enhanced Citations** linked directly to source documents stored in Azure Storage.
+<section class="latest-release-section">
+  <div class="latest-release-section-header">
+    <div>
+      <div class="latest-release-section-kicker">Start here</div>
+      <h2>Four pages that cover the full path</h2>
+      <p>Use these entry points when you want to get from deployment decisions to daily usage without hunting through the entire docs tree.</p>
+    </div>
+    <span class="latest-release-section-badge">Core docs</span>
+  </div>
 
-The application utilizes **Azure Cosmos DB** for storing conversations, metadata, and settings, and is secured using **Azure Active Directory (Entra ID)** for authentication and fine-grained Role-Based Access Control (RBAC) via App Roles. Designed for enterprise use, it runs reliably on **Azure App Service** and supports deployment in both **Azure Commercial** and **Azure Government** cloud environments, offering a versatile tool for knowledge discovery, content generation, and collaborative AI-powered tasks within a secure, customizable, and Azure-native framework.
+  <div class="latest-release-card-grid">
+    <article class="latest-release-card latest-release-accent--emerald">
+      <div class="latest-release-card-shell">
+        <div class="latest-release-card-top">
+          <span class="latest-release-card-icon" aria-hidden="true"><i class="bi bi-rocket-takeoff"></i></span>
+          <span class="latest-release-card-badge">Deployment</span>
+        </div>
+        <h3 class="latest-release-card-title"><a href="{{ '/setup_instructions/' | relative_url }}">Getting Started</a></h3>
+        <p class="latest-release-card-summary">Pick the right deployment path, line up prerequisites, and follow the repo's recommended order of operations.</p>
+        <div class="latest-release-card-actions">
+          <a class="btn btn-primary btn-sm" href="{{ '/setup_instructions/' | relative_url }}">Open guide</a>
+        </div>
+      </div>
+    </article>
 
-## Features
+    <article class="latest-release-card latest-release-accent--orange">
+      <div class="latest-release-card-shell">
+        <div class="latest-release-card-top">
+          <span class="latest-release-card-icon" aria-hidden="true"><i class="bi bi-grid-3x3-gap"></i></span>
+          <span class="latest-release-card-badge">Capabilities</span>
+        </div>
+        <h3 class="latest-release-card-title"><a href="{{ '/features/' | relative_url }}">Features</a></h3>
+        <p class="latest-release-card-summary">See the core workspace experience, optional feature packs, platform services, and supported file types in one place.</p>
+        <div class="latest-release-card-actions">
+          <a class="btn btn-primary btn-sm" href="{{ '/features/' | relative_url }}">Browse features</a>
+        </div>
+      </div>
+    </article>
 
-- **Chat with AI**: Interact with an AI model based on Azure OpenAI’s GPT and Thinking models.
+    <article class="latest-release-card latest-release-accent--slate">
+      <div class="latest-release-card-shell">
+        <div class="latest-release-card-top">
+          <span class="latest-release-card-icon" aria-hidden="true"><i class="bi bi-question-circle"></i></span>
+          <span class="latest-release-card-badge">Troubleshooting</span>
+        </div>
+        <h3 class="latest-release-card-title"><a href="{{ '/faqs/' | relative_url }}">FAQ</a></h3>
+        <p class="latest-release-card-summary">Jump straight to the issues teams hit most often around networking, auth, uploads, search, and model configuration.</p>
+        <div class="latest-release-card-actions">
+          <a class="btn btn-primary btn-sm" href="{{ '/faqs/' | relative_url }}">Read answers</a>
+        </div>
+      </div>
+    </article>
 
-- **RAG with Hybrid Search**: Upload documents and perform hybrid searches (vector + keyword), retrieving relevant information from your files to augment AI responses.
+    <article class="latest-release-card latest-release-accent--teal">
+      <div class="latest-release-card-shell">
+        <div class="latest-release-card-top">
+          <span class="latest-release-card-icon" aria-hidden="true"><i class="bi bi-stars"></i></span>
+          <span class="latest-release-card-badge">Current release</span>
+        </div>
+        <h3 class="latest-release-card-title"><a href="{{ '/latest-release/' | relative_url }}">Latest Release Highlights</a></h3>
+        <p class="latest-release-card-summary">Review the newest user-facing work with curated summaries, screenshots, and links into the deeper feature documentation.</p>
+        <div class="latest-release-card-actions">
+          <a class="btn btn-primary btn-sm" href="{{ '/latest-release/' | relative_url }}">See highlights</a>
+        </div>
+      </div>
+    </article>
+  </div>
+</section>
 
-- **Document Management**: Upload, store, and manage multiple versions of documents—personal ("Your Workspace") or group-level ("Group Workspaces").
+<section class="latest-release-section">
+  <div class="latest-release-section-header">
+    <div>
+      <div class="latest-release-section-kicker">Why teams use it</div>
+      <h2>One application, multiple working modes</h2>
+      <p>Simple Chat is opinionated about the hard parts: identity, grounding, document processing, and admin controls are already wired together.</p>
+    </div>
+    <span class="latest-release-section-badge">Azure-native</span>
+  </div>
 
-- **Group Management**: Create and join groups to share access to group-specific documents, enabling collaboration with Role-Based Access Control (RBAC).
+  <div class="latest-release-card-grid">
+    <article class="latest-release-card latest-release-accent--blue">
+      <div class="latest-release-card-shell">
+        <div class="latest-release-card-top">
+          <span class="latest-release-card-icon" aria-hidden="true"><i class="bi bi-chat-dots"></i></span>
+          <span class="latest-release-card-badge">Chat + grounding</span>
+        </div>
+        <h3 class="latest-release-card-title">Context-aware AI conversations</h3>
+        <p class="latest-release-card-summary">Use Azure OpenAI with hybrid retrieval over personal, group, and public workspace content so responses stay tied to your own data.</p>
+      </div>
+    </article>
 
-- **Ephemeral (Single-Convo) Documents**: Upload temporary documents available only during the current chat session, without persistent storage in Azure AI Search.
+    <article class="latest-release-card latest-release-accent--emerald">
+      <div class="latest-release-card-shell">
+        <div class="latest-release-card-top">
+          <span class="latest-release-card-icon" aria-hidden="true"><i class="bi bi-folder2-open"></i></span>
+          <span class="latest-release-card-badge">Documents</span>
+        </div>
+        <h3 class="latest-release-card-title">Document pipelines that stay searchable</h3>
+        <p class="latest-release-card-summary">Ingest PDFs, Office files, images, audio, and video through Azure AI services, then retrieve them with citations and optional metadata enrichment.</p>
+      </div>
+    </article>
 
-- **Conversation Archiving (Optional)**: Retain copies of user conversations—even after deletion from the UI—in a dedicated Cosmos DB container for audit, compliance, or legal requirements.
+    <article class="latest-release-card latest-release-accent--orange">
+      <div class="latest-release-card-shell">
+        <div class="latest-release-card-top">
+          <span class="latest-release-card-icon" aria-hidden="true"><i class="bi bi-shield-check"></i></span>
+          <span class="latest-release-card-badge">Governance</span>
+        </div>
+        <h3 class="latest-release-card-title">Controls for enterprise rollouts</h3>
+        <p class="latest-release-card-summary">Layer on Entra ID roles, content safety, feedback review, conversation archiving, and operational logging without rebuilding the app.</p>
+      </div>
+    </article>
+  </div>
+</section>
 
-- **Content Safety (Optional)**: Integrate Azure AI Content Safety to review every user message *before* it reaches AI models, search indexes, or image generation services. Enforce custom filters and compliance policies, with an optional `SafetyAdmin` role for viewing violations.
+<section class="latest-release-section">
+  <div class="latest-release-section-header">
+    <div>
+      <div class="latest-release-section-kicker">Architecture</div>
+      <h2>What sits behind the experience</h2>
+      <p>The platform runs on Azure App Service and composes search, storage, document processing, and conversation state into a single application surface.</p>
+    </div>
+    <span class="latest-release-section-badge">Reference view</span>
+  </div>
 
-- **Feedback System (Optional)**: Allow users to rate AI responses (thumbs up/down) and provide contextual comments on negative feedback. Includes user and admin dashboards, governed by an optional `FeedbackAdmin` role.
+  <div class="latest-release-note-panel latest-release-accent--slate">
+    <h3>Platform at a glance</h3>
+    <p>Core application state lives in Azure Cosmos DB, document retrieval runs through Azure AI Search, ingestion is handled by Azure AI Document Intelligence and related media services, and authentication uses Entra ID. That combination makes it practical to run Simple Chat as a governed internal tool instead of a demo-only sample.</p>
+  </div>
 
-- **Bing Web Search (Optional)**: Augment AI responses with live Bing search results, providing up-to-date information. Configurable via Admin Settings.
+  <div class="mt-3">
+    <img src="{{ '/images/architecture.png' | relative_url }}" alt="Architecture diagram showing Simple Chat running on Azure App Service with Azure OpenAI, AI Search, Cosmos DB, and storage services." />
+  </div>
+</section>
 
-- **Image Generation (Optional)**: Enable on-demand image creation using Azure OpenAI's DALL-E models, controlled via Admin Settings.
+<section class="latest-release-section">
+  <div class="latest-release-section-header">
+    <div>
+      <div class="latest-release-section-kicker">Contribute</div>
+      <h2>Working in the repo</h2>
+      <p>The docs, app, and deployers are all maintained together, so the contributor guide is the fastest way to align with the expected workflow.</p>
+    </div>
+    <span class="latest-release-section-badge">Collaboration</span>
+  </div>
 
-- **Video Extraction (Optional)**: Utilize Azure Video Indexer to transcribe speech and perform Optical Character Recognition (OCR) on video frames. Segments are timestamp-chunked for precise retrieval and enhanced citations linking back to the video timecode.
-
-- **Audio Extraction (Optional)**: Leverage Azure Speech Service to transcribe audio files into timestamped text chunks, making audio content searchable and enabling enhanced citations linked to audio timecodes.
-
-- **Document Classification (Optional)**: Admins define custom classification types and associated colors. Users tag uploaded documents with these labels, which flow through to AI conversations, providing lineage and insight into data sensitivity or type.
-
-- **Enhanced Citation (Optional)**: Store processed, chunked files in Azure Storage (organized into user- and document-scoped folders). Display interactive citations in the UI—showing page numbers or timestamps—that link directly to the source document preview.
-
-- **Metadata Extraction (Optional)**: Apply an AI model (configurable GPT model via Admin Settings) to automatically generate keywords, two-sentence summaries, and infer author/date for uploaded documents. Allows manual override for richer search context.
-
-- **File Processing Logs (Optional)**: Enable verbose logging for all ingestion pipelines (workspaces and ephemeral chat uploads) to aid in debugging, monitoring, and auditing file processing steps.
-
-- **Redis Cache (Optional)**: Integrate Azure Cache for Redis to provide a distributed, high-performance session store. This enables true horizontal scaling and high availability by decoupling user sessions from individual app instances.
-
-- **Authentication & RBAC**: Secure access via Azure Active Directory (Entra ID) using MSAL. Supports Managed Identities for Azure service authentication, group-based controls, and custom application roles (`Admin`, `User`, `CreateGroup`, `SafetyAdmin`, `FeedbackAdmin`).
-
-- **Supported File Types**:
-
-  -   Text: `txt`, `md`, `html`, `json`
-
-  *   Documents: `pdf`, `docx`, `pptx`, `xlsx`, `xlsm`, `xls`, `csv`
-  *   Images: `jpg`, `jpeg`, `png`, `bmp`, `tiff`, `tif`, `heif`
-  *   Video: `mp4`, `mov`, `avi`, `wmv`, `mkv`, `webm`
-  *   Audio: `mp3`, `wav`, `ogg`, `aac`, `flac`, `m4a`
-
-## Architecture-diagram
-
-![Architecture](./images/architecture.png)
+  <div class="latest-release-note-panel latest-release-accent--teal">
+    <h3>Want to make changes?</h3>
+    <p>Use the <a href="{{ '/contributing/' | relative_url }}">Contributing guide</a> for the fork-based workflow, target branch expectations, and local development references before you start editing code or docs.</p>
+  </div>
+</section>

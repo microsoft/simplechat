@@ -1,7 +1,48 @@
-# ServiceNow Integration Guide
+---
+layout: showcase-page
+title: "ServiceNow Integration"
+permalink: /how-to/agents/ServiceNow/servicenow_integration/
+menubar: docs_menu
+accent: blue
+eyebrow: "How-To Guide"
+description: "Configure the standard single-agent ServiceNow integration for incident management and read-only knowledge-base search in Simple Chat."
+hero_icons: ["bi-life-preserver", "bi-plug", "bi-search"]
+hero_pills: ["Single-agent support pattern", "Incident management + KB search", "Global or group-scoped rollout"]
+hero_links: [{ label: "ServiceNow guides", url: "/how-to/agents/ServiceNow/", style: "primary" }, { label: "OAuth setup", url: "/how-to/agents/ServiceNow/servicenow_oauth_setup/", style: "secondary" }]
+---
+
+This is the default ServiceNow pattern for most teams. It gives you one support-focused agent backed by modular OpenAPI actions so users can manage incidents and search KB content without splitting responsibilities across multiple agents.
+
+<section class="latest-release-card-grid">
+  <article class="latest-release-card">
+    <div class="latest-release-card-icon"><i class="bi bi-person-workspace"></i></div>
+    <h2>One agent for standard support work</h2>
+    <p>Keep the operating model simple when the main need is incident CRUD plus read-only knowledge search.</p>
+  </article>
+  <article class="latest-release-card">
+    <div class="latest-release-card-icon"><i class="bi bi-braces"></i></div>
+    <h2>Two OpenAPI actions</h2>
+    <p>Incident management and KB search stay as separate actions even though one agent uses both, which keeps the API surfaces clearer.</p>
+  </article>
+  <article class="latest-release-card">
+    <div class="latest-release-card-icon"><i class="bi bi-shield-check"></i></div>
+    <h2>Scope by governance needs</h2>
+    <p>Global, group, and personal scope are all possible, but most enterprise setups should choose scope based on who is allowed to operate against ServiceNow.</p>
+  </article>
+  <article class="latest-release-card">
+    <div class="latest-release-card-icon"><i class="bi bi-check2-square"></i></div>
+    <h2>Test the flow end to end</h2>
+    <p>Validation is not just API access. You should confirm incident queries, creates, updates, and KB search all work with the agent behavior you expect.</p>
+  </article>
+</section>
+
+<div class="latest-release-note-panel">
+  <h2>Start here unless permissions force you elsewhere</h2>
+  <p>If one support-facing agent is enough, use this guide. Move to the OAuth guide for production authentication, or the two-agent guide only when KB publishing and support operations need separate permissions and tokens.</p>
+</div>
 
 **Version:** 0.237.005  
-**Implemented in version:**0.237.005
+**Implemented in version:** 0.237.005
 
 ## Overview
 

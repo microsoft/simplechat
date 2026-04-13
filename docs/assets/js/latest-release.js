@@ -14,7 +14,9 @@ function setupLatestFeatureImageModal() {
     const imageModal = bootstrap.Modal.getOrCreateInstance(modalElement);
 
     imageTriggers.forEach((trigger) => {
-        trigger.addEventListener('click', () => {
+        trigger.addEventListener('click', (event) => {
+            event.preventDefault();
+
             const imageSrc = trigger.dataset.latestFeatureImageSrc;
             const imageTitle = trigger.dataset.latestFeatureImageTitle || 'Latest Feature Preview';
             const imageCaption = trigger.dataset.latestFeatureImageCaption || 'Click outside the popup to close it.';
