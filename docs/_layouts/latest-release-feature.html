@@ -96,5 +96,5 @@ layout: default
 </article>
 
 {% if feature_meta.images and feature_meta.images.size > 0 %}
-<script src="{{ '/assets/js/latest-release.js' | relative_url }}"></script>
+<script src="{{ '/assets/js/latest-release.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 {% endif %}

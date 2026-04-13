@@ -1,8 +1,59 @@
-# Azure Speech Service with Managed Identity Manual Setup
+---
+layout: showcase-page
+title: "Azure Speech Managed Identity Setup"
+permalink: /how-to/azure_speech_managed_identity_manul_setup/
+menubar: docs_menu
+accent: blue
+eyebrow: "How-To Guide"
+description: "Configure Azure Speech for managed identity correctly by using the resource-specific endpoint, the right RBAC roles, and the matching Admin Settings fields."
+hero_icons:
+  - bi-mic
+  - bi-person-badge
+  - bi-globe2
+hero_pills:
+  - Custom subdomain required
+  - Regional endpoint fails with MI
+  - Speech User role first
+hero_links:
+  - label: "Managed identity guide"
+    url: /how-to/use_managed_identity/
+    style: primary
+  - label: "Admin configuration"
+    url: /reference/admin_configuration/
+    style: secondary
+---
 
-## Overview
+Speech is the place where managed identity setup becomes very specific. The most important rule is simple: the regional endpoint that works with keys is not enough for managed identity. You need the resource-specific custom-subdomain endpoint so Azure can evaluate RBAC against the correct Speech resource.
 
-This guide explains the critical difference between key-based and managed identity authentication when configuring Azure Speech Service, and the required steps to enable managed identity properly. In Simple Chat, the same Speech configuration is shared across audio uploads, speech-to-text chat input, and text-to-speech voice responses.
+<section class="latest-release-card-grid">
+    <article class="latest-release-card">
+        <div class="latest-release-card-icon"><i class="bi bi-globe2"></i></div>
+        <h2>Use the resource-specific endpoint</h2>
+        <p>Managed identity needs the custom-subdomain Speech endpoint, not the shared regional gateway endpoint used by key-based authentication.</p>
+    </article>
+    <article class="latest-release-card">
+        <div class="latest-release-card-icon"><i class="bi bi-shield-check"></i></div>
+        <h2>Grant RBAC on the Speech resource</h2>
+        <p>Start with <code>Cognitive Services Speech User</code> and add <code>Cognitive Services Speech Contributor</code> only if the specific transcription flow still needs it.</p>
+    </article>
+    <article class="latest-release-card">
+        <div class="latest-release-card-icon"><i class="bi bi-sliders"></i></div>
+        <h2>Fill the matching admin fields</h2>
+        <p>Endpoint, region, locale, authentication type, and resource ID all need to align with the Speech resource you are actually authorizing.</p>
+    </article>
+    <article class="latest-release-card">
+        <div class="latest-release-card-icon"><i class="bi bi-check2-square"></i></div>
+        <h2>Test with a real audio workflow</h2>
+        <p>Validate with upload, transcription, and optional text-to-speech scenarios rather than stopping at a configuration save.</p>
+    </article>
+</section>
+
+<div class="latest-release-note-panel">
+    <h2>The endpoint format is the root-cause difference</h2>
+    <p>With key authentication, the regional endpoint can infer the target resource from the key. With managed identity, Azure needs the hostname itself to identify the specific Speech resource so it can evaluate RBAC. That is why the custom subdomain is mandatory here.</p>
+</div>
+
+## Authentication Methods: Regional vs. Resource-Specific Endpoints
 
 ## Authentication Methods: Regional vs. Resource-Specific Endpoints
 

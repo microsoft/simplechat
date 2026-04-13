@@ -1,21 +1,52 @@
-# Getting Started with Simple Chat
+---
+layout: showcase-page
+title: "Getting Started with Simple Chat"
+permalink: /tutorials/getting_started/
+menubar: docs_menu
+accent: blue
+eyebrow: "Tutorial 1"
+description: "Deploy the app, enable a workspace, upload one document, and ask the first retrieval-backed question."
+hero_icons:
+  - bi-rocket-takeoff
+  - bi-cloud-arrow-up
+  - bi-chat-left-text
+hero_pills:
+  - First deployment
+  - First workspace
+  - First grounded conversation
+hero_links:
+  - label: Deployment reference
+    url: /setup_instructions/
+    style: primary
+  - label: Tutorial index
+    url: /tutorials/
+    style: secondary
+show_nav: true
+nav_links:
+   next:
+      title: Create Your First Agent
+      url: /tutorials/first_agent/
+---
 
-Welcome! This tutorial will walk you through your first experience with Simple Chat - from deployment to having your first AI-powered conversation with your own documents.
+This tutorial is the shortest useful path into the product. You will deploy Simple Chat, wire the essentials, add one document, and prove the retrieval loop works.
 
-## What You'll Learn
-
-By the end of this tutorial, you'll:
-- Deploy Simple Chat to Azure
-- Set up your first workspace  
-- Upload a document
-- Have a conversation that uses your document for context
-- Understand the basic navigation and features
-
-## Prerequisites
-
-- An Azure subscription with permissions to create resources
-- Basic familiarity with Azure portal
-- A document you'd like to chat with (PDF, Word doc, or text file)
+<section class="latest-release-card-grid">
+   <article class="latest-release-card">
+      <div class="latest-release-card-icon"><i class="bi bi-check2-square"></i></div>
+      <h2>You will do</h2>
+      <p>Deploy the app, enable a workspace, upload a document, and run a cited conversation against your own content.</p>
+   </article>
+   <article class="latest-release-card">
+      <div class="latest-release-card-icon"><i class="bi bi-list-task"></i></div>
+      <h2>You need</h2>
+      <p>An Azure subscription with resource permissions, basic Azure familiarity, and a sample document you can safely upload.</p>
+   </article>
+   <article class="latest-release-card">
+      <div class="latest-release-card-icon"><i class="bi bi-arrow-right-circle"></i></div>
+      <h2>After this</h2>
+      <p>Move on to agents once the base chat and retrieval loop is working end to end.</p>
+   </article>
+</section>
 
 ## Step 1: Deploy Simple Chat
 

@@ -7,6 +7,9 @@ gem "github-pages", group: :jekyll_plugins
 gem "webrick", "~> 1.8"
 gem "json", ">= 2.19.2"
 
+# Security override for transitive GitHub Pages/Jekyll dependency
+gem "addressable", ">= 2.9.0"
+
 # Jekyll plugins for enhanced functionality
 group :jekyll_plugins do
   gem "jekyll-feed"

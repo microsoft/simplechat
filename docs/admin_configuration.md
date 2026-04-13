@@ -1,10 +1,59 @@
-# Simple Chat - Admin Configuration
+---
+layout: showcase-page
+title: Admin Configuration
+permalink: /admin_configuration/
+menubar: docs_menu
+accent: violet
+eyebrow: Central Control Surface
+description: Admin Settings turns a raw deployment into an operating environment by centralizing branding, model routing, workspace policy, safety controls, scale features, and logging.
+hero_icons:
+  - bi-gear
+  - bi-sliders2-vertical
+  - bi-shield-check
+hero_pills:
+  - Guided setup walkthrough included
+  - Model and workspace configuration in one UI
+  - Logging, safety, and scale controls available
+hero_links:
+  - label: Getting started guide
+    url: /setup_instructions/
+    style: primary
+  - label: Manual setup reference
+    url: /setup_instructions_manual/
+    style: secondary
+---
 
-[Return to Main](../README.md)
+Once the application is running and you sign in with the Admin role, the Admin Settings page becomes the main place to configure the product without editing environment variables directly.
 
-Once the application is running and you log in as a user assigned the Admin role, you can access the **Admin Settings** page. This UI provides a centralized location to configure most application features and service connections.
+<section class="latest-release-card-grid">
+  <article class="latest-release-card">
+    <div class="latest-release-card-icon"><i class="bi bi-brush"></i></div>
+    <h2>General</h2>
+    <p>Brand the app, tune appearance, manage landing-page content, and control global behavior such as file limits and system prompts.</p>
+  </article>
+  <article class="latest-release-card">
+    <div class="latest-release-card-icon"><i class="bi bi-cpu"></i></div>
+    <h2>Models and retrieval</h2>
+    <p>Configure GPT, embeddings, image generation, Azure AI Search, Document Intelligence, and enhanced citations from the same settings surface.</p>
+  </article>
+  <article class="latest-release-card">
+    <div class="latest-release-card-icon"><i class="bi bi-people"></i></div>
+    <h2>Workspaces and agents</h2>
+    <p>Enable personal, group, and public workspaces, define classification behavior, and manage agent and action capabilities.</p>
+  </article>
+  <article class="latest-release-card">
+    <div class="latest-release-card-icon"><i class="bi bi-speedometer"></i></div>
+    <h2>Safety, scale, and logging</h2>
+    <p>Turn on Content Safety, Redis, Front Door, Application Insights logging, and other controls that matter once the deployment grows up.</p>
+  </article>
+</section>
 
-![alt text](./images/admin_settings_page.png)
+<div class="latest-release-note-panel">
+  <h2>Best starting point</h2>
+  <p>The Setup Walkthrough is the fastest way to move a fresh environment from partially configured to usable. It guides admins through the critical dependencies in the right order and skips steps that do not apply.</p>
+</div>
+
+![Admin Settings page](./images/admin_settings_page.png)
 
 ## Setup Walkthrough
 

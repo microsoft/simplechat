@@ -1,4 +1,45 @@
-# ServiceNow Two-Agent Setup Guide (Advanced KB Management)
+---
+layout: showcase-page
+title: "ServiceNow Two-Agent Setup"
+permalink: /how-to/agents/ServiceNow/two_agent_setup/
+menubar: docs_menu
+accent: teal
+eyebrow: "How-To Guide"
+description: "Use a split-agent ServiceNow design when incident handling and knowledge-base management need different roles, users, and approval boundaries."
+hero_icons: ["bi-people", "bi-journal-richtext", "bi-shield-lock"]
+hero_pills: ["Separate support and KB permissions", "Distinct integration users and tokens", "Approval-aware KB management"]
+hero_links: [{ label: "ServiceNow guides", url: "/how-to/agents/ServiceNow/", style: "primary" }, { label: "OAuth setup", url: "/how-to/agents/ServiceNow/servicenow_oauth_setup/", style: "secondary" }]
+---
+
+Use this pattern only when separation really helps. The value is not having more agents. The value is keeping support operations and KB publishing under different permission boundaries so governance and audit trails stay cleaner.
+
+<section class="latest-release-card-grid">
+   <article class="latest-release-card">
+      <div class="latest-release-card-icon"><i class="bi bi-life-preserver"></i></div>
+      <h2>Support agent stays narrow</h2>
+      <p>The first agent handles incidents and read-only KB search so day-to-day support work stays fast and low risk.</p>
+   </article>
+   <article class="latest-release-card">
+      <div class="latest-release-card-icon"><i class="bi bi-journal-plus"></i></div>
+      <h2>KB manager agent owns publishing</h2>
+      <p>The second agent handles KB creation and publication workflows, which is where broader permissions and approval logic usually belong.</p>
+   </article>
+   <article class="latest-release-card">
+      <div class="latest-release-card-icon"><i class="bi bi-key"></i></div>
+      <h2>Separate users and tokens</h2>
+      <p>Each agent gets its own ServiceNow integration user and bearer token so audit trails and least-privilege boundaries stay explicit.</p>
+   </article>
+   <article class="latest-release-card">
+      <div class="latest-release-card-icon"><i class="bi bi-diagram-2"></i></div>
+      <h2>Workflow rules still apply</h2>
+      <p>If your ServiceNow KB approval flow requires portal interaction, the agent design must acknowledge that instead of pretending the API can bypass it.</p>
+   </article>
+</section>
+
+<div class="latest-release-note-panel">
+   <h2>Only choose this if one agent is not enough</h2>
+   <p>If the standard single-agent integration covers your needs, it is the better default. The split-agent design exists for governance, approval, and permission-boundary reasons, not because two agents are inherently better.</p>
+</div>
 
 **Version:** 0.237.005 
 **Implemented in version:** 0.237.005

@@ -1,6 +1,57 @@
-# Upgrade Paths
+---
+layout: showcase-page
+title: "Upgrade Paths"
+permalink: /how-to/upgrade_paths/
+menubar: docs_menu
+accent: emerald
+eyebrow: "How-To Guide"
+description: "Choose the right upgrade method based on whether your deployment is native Python App Service or one of the repo's container-based deployment paths."
+hero_icons:
+  - bi-arrow-repeat
+  - bi-box-seam
+  - bi-cloud-arrow-up
+hero_pills:
+  - Deployment model first
+  - Container and native paths differ
+  - Validate before closing the release
+hero_links:
+  - label: "Deployment reference"
+    url: /reference/deploy/
+    style: primary
+  - label: "Manual deployment notes"
+    url: /reference/deploy/manual_deploy/
+    style: secondary
+---
 
-Use this guide when you already have SimpleChat deployed and want to update the application without rediscovering the initial deployment steps.
+The first upgrade decision is not which command to run. It is whether your existing site is running as native Python App Service or as one of the repo's container-based deployment models. That single distinction drives startup handling, rollout mechanics, and rollback choices.
+
+<section class="latest-release-card-grid">
+    <article class="latest-release-card">
+        <div class="latest-release-card-icon"><i class="bi bi-filetype-py"></i></div>
+        <h2>Native Python upgrades</h2>
+        <p>Use VS Code deploy, ZIP deploy, or deployment slots when the app code is deployed directly to App Service instead of through a container image.</p>
+    </article>
+    <article class="latest-release-card">
+        <div class="latest-release-card-icon"><i class="bi bi-box-seam"></i></div>
+        <h2>Container upgrades</h2>
+        <p>Use <code>azd deploy</code> for routine code updates when infrastructure is unchanged and reserve <code>azd up</code> for combined app-plus-infrastructure releases.</p>
+    </article>
+    <article class="latest-release-card">
+        <div class="latest-release-card-icon"><i class="bi bi-tag"></i></div>
+        <h2>Image-only rollouts</h2>
+        <p>Teams already managing App Service against ACR can use image-tag promotion or restart-based rollout strategies without reprovisioning infrastructure.</p>
+    </article>
+    <article class="latest-release-card">
+        <div class="latest-release-card-icon"><i class="bi bi-check2-square"></i></div>
+        <h2>Validation is part of the upgrade</h2>
+        <p>Checking startup behavior, dependency installation, and app health after release is not optional. It is part of the upgrade path itself.</p>
+    </article>
+</section>
+
+<div class="latest-release-note-panel">
+    <h2>Figure out the runtime model before you change anything</h2>
+    <p>If you skip the deployment-model check, you can apply the wrong startup-command guidance, wrong release command, or wrong rollback assumption. That is the most common way an upgrade guide becomes misleading.</p>
+</div>
 
 ## Choose the Right Upgrade Path
 
