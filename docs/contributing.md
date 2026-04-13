@@ -1,140 +1,110 @@
 ---
-layout: showcase-page
-title: "Working in the repo"
+layout: page
+title: "Contributing"
+description: "How developers should contribute to Simple Chat"
+section: "Overview"
 permalink: /contributing/
-menubar: docs_menu
-accent: sky
-eyebrow: "Contribute"
-description: "The docs, app, and deployers are all maintained together, so the contributor guide is the fastest way to align with the expected workflow."
-hero_icons:
-  - bi-git
-  - bi-journal-code
-  - bi-check2-square
-hero_pills:
-  - Docs, app, and deployers live together
-  - Target the right branch first
-  - Validate the surface you touched
-hero_links:
-  - label: Return to docs home
-    url: /
-    style: primary
-  - label: Review setup paths
-    url: /setup_instructions/
-    style: secondary
 ---
 
-Simple Chat is maintained as one repo, which means a change in the app usually pulls docs, deployers, or tests along with it. The safest contribution pattern is to start from the branch flow, keep the change scoped, and run the validation closest to the surface you changed.
+# Contributing to Simple Chat
 
-<section class="latest-release-card-grid">
-    <article class="latest-release-card">
-        <div class="latest-release-card-icon"><i class="bi bi-window-stack"></i></div>
-        <h2>Application surface</h2>
-        <p>The Flask app lives under <code>application/single_app/</code>, with route modules, Jinja templates, static assets, and service integrations all in the same deployment unit.</p>
-    </article>
-    <article class="latest-release-card">
-        <div class="latest-release-card-icon"><i class="bi bi-book"></i></div>
-        <h2>Docs site</h2>
-        <p>The public documentation is the Jekyll site under <code>docs/</code>. If you touch user-visible behavior, expect to update docs or screenshots alongside the code.</p>
-    </article>
-    <article class="latest-release-card">
-        <div class="latest-release-card-icon"><i class="bi bi-cloud-arrow-up"></i></div>
-        <h2>Deployers</h2>
-        <p>Azure deployment assets sit under <code>deployers/</code> and cover AZD, Bicep, Terraform, and Azure CLI driven paths. Infrastructure-facing changes should stay aligned across those entry points.</p>
-    </article>
-    <article class="latest-release-card">
-        <div class="latest-release-card-icon"><i class="bi bi-bezier2"></i></div>
-        <h2>Regression coverage</h2>
-        <p>Behavior checks are split across <code>functional_tests/</code> and <code>ui_tests/</code>. Browser-facing changes should leave behind an updated UI regression, not just a visual review.</p>
-    </article>
-</section>
+This page mirrors the repository root contribution guide and should stay aligned with the root `CONTRIBUTING.md` file.
 
-## Contribution workflow
+## Contribution Flow
 
-<div class="latest-release-note-panel">
-    <h2>Use the real upstream branch names</h2>
-    <p>The current shared branch flow is <strong>Development → Staging → main</strong>. In this repo the upstream branch names are capitalized as <code>Development</code> and <code>Staging</code>, so keep that exact casing when you create branches, compare refs, or document automation.</p>
-</div>
+SimpleChat contributions should be made through a fork-based workflow.
 
-1. Start your work from <code>Development</code> unless a maintainer asks you to branch elsewhere.
-2. Keep the change focused on one feature, fix, or docs sweep so the review stays readable.
-3. Open pull requests into <code>Development</code> for normal feature and fix work.
-4. Treat promotion into <code>Staging</code> and then <code>main</code> as release flow, not day-to-day feature branching.
-5. If you touch workflow automation, verify branch comparisons carefully because older workflow logic may still use lowercase strings even though the upstream branches are capitalized.
+1. Fork the repository.
+2. Clone your fork locally.
+3. Add the main SimpleChat repository as `upstream`.
+4. Create a new branch from the upstream `Development` branch.
+5. Make your changes in that new branch.
+6. Push the branch to your fork.
+7. Open a pull request from your fork branch back to the main SimpleChat repository's `Development` branch.
 
-## Local setup before you edit
+Do not open contributor pull requests directly to `Staging` or `main`. The repository uses a staged promotion flow: `Development` -> `Staging` -> `main`.
+Use the branch names exactly as written here. In this repository, `Development` and `Staging` are capitalized.
+After a contribution is merged into `Development`, the SimpleChat team handles promotion forward.
 
-Use the deployment and setup docs when you need a full environment, but keep these contributor shortcuts handy for day-to-day repo work.
+<!-- Optional image placeholder:
+Add a branch-flow diagram here later if you want a visual version of the process.
 
-### Docs preview
+Example:
+![SimpleChat contribution flow](./images/contribution-flow.png)
+-->
 
-Build the Jekyll site before you send a docs or screenshot-heavy pull request:
+## Suggested Git Commands
 
-```powershell
-cd docs
-bundle exec jekyll build
-bundle exec jekyll serve --host 127.0.0.1 --port 4000
+Use whatever Git workflow you prefer, but this is the expected starting point:
+
+```bash
+git clone <your-fork-url>
+cd simplechat
+git remote add upstream <simplechat-upstream-url>
+git fetch upstream
+git switch -c feature/my-change upstream/Development
 ```
 
-Open the site at <code>http://127.0.0.1:4000/simplechat/</code>. The repo uses a Jekyll <code>baseurl</code>, so the local path includes <code>/simplechat/</code> unless you intentionally override it.
+When you are ready to publish your work:
 
-### UI regression for docs pages
-
-If your change affects docs rendering, layout, links, images, or JavaScript behavior, run the docs UI suite against the local Jekyll server:
-
-```powershell
-cd ..
-$env:SIMPLECHAT_DOCS_BASE_URL = "http://127.0.0.1:4000/simplechat"
-python -m pytest ui_tests/test_docs_showcase_pages.py
+```bash
+git push -u origin feature/my-change
 ```
 
-### App and backend validation
+If your branch falls behind, sync it from `upstream/Development` before opening or updating the pull request.
 
-For application changes, run the narrowest relevant validation instead of skipping straight to a broad full-repo test pass.
+## Local Development
 
-<section class="latest-release-card-grid">
-    <article class="latest-release-card">
-        <div class="latest-release-card-icon"><i class="bi bi-sliders"></i></div>
-        <h2>Targeted functional tests</h2>
-        <p>Add or update focused scripts in <code>functional_tests/</code> when you fix a bug, ship a feature, or change an integration path.</p>
-    </article>
-    <article class="latest-release-card">
-        <div class="latest-release-card-icon"><i class="bi bi-layout-text-window"></i></div>
-        <h2>UI coverage</h2>
-        <p>When templates, CSS, or browser-side JavaScript change, update the Playwright coverage in <code>ui_tests/</code> so the behavior is reproducible in CI and local review.</p>
-    </article>
-    <article class="latest-release-card">
-        <div class="latest-release-card-icon"><i class="bi bi-link-45deg"></i></div>
-        <h2>Cross-file changes</h2>
-        <p>If a feature spans app code, docs, and deployers, keep the terminology and defaults aligned. This repo is easier to review when one pull request closes the loop instead of leaving follow-up drift.</p>
-    </article>
-</section>
+Before contributing, make sure you can run SimpleChat locally.
 
-## Pull request checklist
+Recommended local setup in VS Code uses a repo-local `.venv` with Python 3.12.
 
-Before you open a PR, confirm the basics:
+From the repo root in PowerShell:
 
-- The branch target is <code>Development</code> for normal contribution work.
-- The description explains the user-visible impact, not just the implementation.
-- Docs, screenshots, release notes, or test coverage were updated when the change affected them.
-- Validation commands were run for the surfaces you changed.
-- The diff stays scoped to the task instead of bundling unrelated cleanup.
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install --upgrade pip
+pip install -r application/single_app/requirements.txt
+Set-Location application/single_app
+$env:FLASK_DEBUG = "1"
+python app.py
+```
 
-## Related references
+For the full local workflow, environment guidance, and notes about Docker, WSL2, and Gunicorn validation, see:
 
-<section class="latest-release-card-grid">
-    <article class="latest-release-card">
-        <div class="latest-release-card-icon"><i class="bi bi-rocket-takeoff"></i></div>
-        <h2>Deployment setup</h2>
-        <p><a href="{{ '/setup_instructions/' | relative_url }}">Getting Started</a> is the fastest path if you need a full environment instead of a docs-only or code-only edit.</p>
-    </article>
-    <article class="latest-release-card">
-        <div class="latest-release-card-icon"><i class="bi bi-journal-richtext"></i></div>
-        <h2>Release traceability</h2>
-        <p>Use the <a href="{{ '/explanation/release_notes/' | relative_url }}">release notes</a> and explanation docs when your change needs a durable record beyond the PR.</p>
-    </article>
-    <article class="latest-release-card">
-        <div class="latest-release-card-icon"><i class="bi bi-question-circle"></i></div>
-        <h2>Operational follow-up</h2>
-        <p>If a change affects administrators or deployment operators, link the matching reference or how-to page in the PR so reviewers can verify the end-to-end story.</p>
-    </article>
-</section>
+- [Setup Instructions](./setup_instructions.md)
+- [Manual Setup](./setup_instructions_manual.md)
+- [Running Simple Chat Locally](./explanation/running_simplechat_locally.md)
+
+## Pull Request Expectations
+
+Keep pull requests focused and easy to review.
+
+- Base your work on `Development`, not `main`.
+- Keep unrelated refactors out of the same pull request.
+- Explain what changed, why it changed, and how you tested it.
+- Include screenshots or short recordings for UI changes when helpful.
+- Call out any configuration, schema, security, or deployment impact.
+- Update documentation when user-facing behavior or setup steps change.
+
+## Tests and Validation
+
+Before opening a pull request, run the tests that match your change.
+
+- Add or update functional tests for bug fixes and new features when appropriate.
+- Run relevant tests from `functional_tests/` and `ui_tests/` when your change affects those areas.
+- If you change Flask routes, keep the existing Swagger route decorator pattern intact.
+
+Pull requests are reviewed by the SimpleChat team and go through repository validation. Depending on the files changed, that can include Python syntax checks, release-note validation, Swagger route validation, and additional maintainer review. Maintainers may also run additional security or AI-assisted review before merge.
+
+## Security and Repo Conventions
+
+- Never commit secrets, keys, or environment-specific credentials.
+- Review the repository [SECURITY.md](https://github.com/microsoft/simplechat/blob/main/SECURITY.md) before submitting security-sensitive changes.
+- Follow the repository's existing structure and conventions instead of introducing broad cleanup changes.
+- If you use AI-assisted tooling while contributing, also review the repository guidance in [CLAUDE.md](https://github.com/microsoft/simplechat/blob/main/CLAUDE.md) and [.github/copilot-instructions.md](https://github.com/microsoft/simplechat/blob/main/.github/copilot-instructions.md).
+
+## Need Help?
+
+If you are unsure about the right target branch or how to structure a change, open a draft pull request against `Development` and explain the question in the description. That gives the maintainers a concrete starting point for feedback.
