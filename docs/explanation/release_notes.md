@@ -4,6 +4,16 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.241.007)**
+
+#### New Features
+
+*   **Core Document Search And Summarization**
+    *   Added a shared backend document search service with a dedicated authenticated API for hybrid search, ordered document-chunk retrieval, and on-demand document summarization.
+    *   Added an always-loaded Semantic Kernel core plugin so every agent and model-only kernel session can search accessible workspace documents, pull full ordered chunk windows for a document, and run hierarchical summarization with optional focus and target-length guidance.
+    *   The new summarization flow can now work across the whole document instead of relying only on distilled top search hits, which improves long-document summarization and creates a reusable foundation for future document comparison workflows.
+    *   (Ref: `functions_search.py`, `functions_search_service.py`, `functions_documents.py`, `route_backend_search.py`, `document_search_plugin.py`, `semantic_kernel_loader.py`)
+
 ### **(v0.241.006)**
 
 #### Bug Fixes

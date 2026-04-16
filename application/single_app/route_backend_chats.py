@@ -6935,24 +6935,12 @@ def register_route_backend_chats(app):
                     )
                 try:
                     # Prepare search arguments
-                    # Set default and maximum values for top_n
-                    default_top_n = 12
-                    max_top_n = 500  # Reasonable cap to prevent excessive resource usage
-                    
-                    # Process top_n_results if provided
-                    if top_n_results is not None:
-                        try:
-                            top_n = int(top_n_results)
-                            # Ensure top_n is within reasonable bounds
-                            if top_n < 1:
-                                top_n = default_top_n
-                            elif top_n > max_top_n:
-                                top_n = max_top_n
-                        except (ValueError, TypeError):
-                            # If conversion fails, use default
-                            top_n = default_top_n
-                    else:
-                        top_n = default_top_n
+                    default_top_n = SEARCH_DEFAULT_TOP_N
+                    top_n = normalize_search_top_n(
+                        top_n_results,
+                        default_top_n=SEARCH_DEFAULT_TOP_N,
+                        max_top_n=SEARCH_MAX_TOP_N,
+                    )
                     
                     search_args = {
                         "query": search_query,

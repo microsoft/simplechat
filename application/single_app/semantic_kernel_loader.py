@@ -22,6 +22,7 @@ from semantic_kernel_plugins.text_plugin import TextPlugin
 from semantic_kernel.functions.kernel_plugin import KernelPlugin
 from semantic_kernel_plugins.embedding_model_plugin import EmbeddingModelPlugin
 from semantic_kernel_plugins.fact_memory_plugin import FactMemoryPlugin
+from semantic_kernel_plugins.document_search_plugin import DocumentSearchPlugin
 from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
 from functions_settings import get_settings, get_user_settings, is_tabular_processing_enabled
 from foundry_agent_runtime import (
@@ -792,6 +793,13 @@ def load_fact_memory_plugin(kernel: Kernel):
         description="Provides functions for managing persistent facts."
     )
 
+def load_document_search_plugin(kernel: Kernel):
+    kernel.add_plugin(
+        DocumentSearchPlugin(),
+        plugin_name="document_search",
+        description="Provides hybrid document search, exhaustive chunk retrieval, and hierarchical document summarization."
+    )
+
 def load_embedding_model_plugin(kernel: Kernel, settings):
     embedding_endpoint = settings.get('azure_openai_embedding_endpoint')
     embedding_key = settings.get('azure_openai_embedding_key')
@@ -823,6 +831,12 @@ def load_core_plugins_only(kernel: Kernel, settings):
     if settings.get('enable_fact_memory_plugin', True):
         load_fact_memory_plugin(kernel)
         log_event("[SK Loader] Loaded Fact Memory plugin.", level=logging.INFO)
+
+    try:
+        load_document_search_plugin(kernel)
+        log_event("[SK Loader] Loaded Document Search plugin.", level=logging.INFO)
+    except Exception as e:
+        log_event(f"[SK Loader] Failed to load Document Search plugin: {e}", level=logging.WARNING)
 
     if settings.get('enable_math_plugin', True):
         load_math_plugin(kernel)
@@ -1691,6 +1705,12 @@ def load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="glob
             log_event("[SK Loader] Loaded Fact Memory Plugin.", level=logging.INFO)
         except Exception as e:
             log_event(f"[SK Loader] Failed to load Fact Memory Plugin: {e}", level=logging.WARNING)
+
+    try:
+        load_document_search_plugin(kernel)
+        log_event("[SK Loader] Loaded Document Search Plugin.", level=logging.INFO)
+    except Exception as e:
+        log_event(f"[SK Loader] Failed to load Document Search Plugin: {e}", level=logging.WARNING)
 
     # Register Tabular Processing Plugin if enabled (requires enhanced citations)
     if is_tabular_processing_enabled(settings):

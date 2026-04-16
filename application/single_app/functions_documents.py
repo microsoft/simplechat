@@ -2573,49 +2573,13 @@ def get_document_metadata_for_citations(document_id, user_id=None, group_id=None
         return None
 
 def get_all_chunks(document_id, user_id, group_id=None, public_workspace_id=None):
-    is_group = group_id is not None
-    is_public_workspace = public_workspace_id is not None
-
-    # For personal documents, first check if user has access (owner or shared)
-    if not is_group and not is_public_workspace:
-        # Check if user has access to this document
-        if not is_document_shared_with_user(document_id, user_id):
-            print(f"User {user_id} does not have access to document {document_id}")
-            return []
-    elif is_group:
-        # For group documents, check if group has access (owner or shared)
-        if not is_document_shared_with_group(document_id, group_id):
-            print(f"Group {group_id} does not have access to document {document_id}")
-            return []
-
-    search_client = CLIENTS["search_client_public"] if is_public_workspace else CLIENTS["search_client_group"] if is_group else CLIENTS["search_client_user"]
-    filter_expr = (
-        f"document_id eq '{document_id}' and public_workspace_id eq '{public_workspace_id}'"
-        if is_public_workspace else
-        f"document_id eq '{document_id}' and (group_id eq '{group_id}' or shared_group_ids/any(g: g eq '{group_id}'))"
-        if is_group else
-        f"document_id eq '{document_id}'"  # For personal documents, just filter by document_id since access is already verified
-    )
-
-    select_fields = [
-        "id",
-        "chunk_text",
-        "chunk_id",
-        "file_name",
-        "public_workspace_id" if is_public_workspace else ("group_id" if is_group else "user_id"),
-        "version",
-        "chunk_sequence",
-        "upload_date"
-    ]
-
     try:
-        results = search_client.search(
-            search_text="*",
-            filter=filter_expr,
-            select=",".join(select_fields)
+        return get_ordered_document_chunks(
+            document_id=document_id,
+            user_id=user_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
         )
-        return results
-
     except Exception as e:
         print(f"Error retrieving chunks for document {document_id}: {e}")
         raise
@@ -2723,6 +2687,134 @@ def chunk_pdf(input_pdf_path: str, max_pages: int = 500) -> list:
 
     return chunks
 
+
+def get_document_record(user_id, document_id, group_id=None, public_workspace_id=None):
+    """Return a document record when the caller has access to it, otherwise None."""
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    cosmos_container = _get_documents_container(
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+
+    try:
+        document_item = cosmos_container.read_item(
+            item=document_id,
+            partition_key=document_id,
+        )
+    except CosmosResourceNotFoundError:
+        return None
+    except Exception as e:
+        print(f"Error retrieving document record {document_id}: {e}")
+        return None
+
+    if is_public_workspace:
+        if document_item.get('public_workspace_id') != public_workspace_id:
+            return None
+        return _normalize_document_enhanced_citations(document_item)
+
+    if is_group:
+        shared_group_ids = document_item.get('shared_group_ids', [])
+        if (
+            document_item.get('group_id') != group_id
+            and not any(str(entry).startswith(f"{group_id},") for entry in shared_group_ids)
+        ):
+            return None
+        return _normalize_document_enhanced_citations(document_item)
+
+    shared_user_ids = document_item.get('shared_user_ids', [])
+    if (
+        document_item.get('user_id') != user_id
+        and not any(str(entry).startswith(f"{user_id},") for entry in shared_user_ids)
+    ):
+        return None
+
+    return _normalize_document_enhanced_citations(document_item)
+
+
+def get_ordered_document_chunks(document_id, user_id, group_id=None, public_workspace_id=None, max_chunks=None):
+    """Return ordered chunk records for a document after access has been verified."""
+    document_item = get_document_record(
+        user_id=user_id,
+        document_id=document_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+
+    if not document_item:
+        return []
+
+    search_client = _get_search_client(
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    select_fields = [
+        'id',
+        'document_id',
+        'chunk_text',
+        'chunk_id',
+        'file_name',
+        'user_id',
+        'group_id',
+        'public_workspace_id',
+        'version',
+        'chunk_sequence',
+        'page_number',
+        'upload_date',
+        'document_classification',
+        'document_tags',
+        'author',
+        'chunk_keywords',
+        'title',
+        'chunk_summary',
+    ]
+    search_kwargs = {
+        'search_text': '*',
+        'filter': f"document_id eq '{document_id}'",
+        'select': ','.join(select_fields),
+    }
+    if max_chunks is not None:
+        search_kwargs['top'] = max(1, int(max_chunks))
+
+    try:
+        results = list(search_client.search(**search_kwargs))
+    except Exception as e:
+        print(f"Error retrieving chunks for document {document_id}: {e}")
+        raise
+
+    ordered_chunks = []
+    for result in results:
+        ordered_chunks.append({
+            'id': result.get('id'),
+            'document_id': result.get('document_id'),
+            'chunk_text': result.get('chunk_text', ''),
+            'chunk_id': result.get('chunk_id'),
+            'file_name': result.get('file_name'),
+            'user_id': result.get('user_id'),
+            'group_id': result.get('group_id'),
+            'public_workspace_id': result.get('public_workspace_id'),
+            'version': result.get('version'),
+            'chunk_sequence': result.get('chunk_sequence', 0),
+            'page_number': result.get('page_number'),
+            'upload_date': result.get('upload_date'),
+            'document_classification': result.get('document_classification'),
+            'document_tags': result.get('document_tags', []),
+            'author': result.get('author'),
+            'chunk_keywords': result.get('chunk_keywords'),
+            'title': result.get('title'),
+            'chunk_summary': result.get('chunk_summary'),
+        })
+
+    ordered_chunks.sort(
+        key=lambda chunk: (
+            _safe_int(chunk.get('page_number')) if chunk.get('page_number') is not None else 10**9,
+            _safe_int(chunk.get('chunk_sequence')),
+            str(chunk.get('id') or ''),
+        )
+    )
+    return ordered_chunks
+
 def get_documents(user_id, group_id=None, public_workspace_id=None):
     try:       
         documents = _query_accessible_documents(
@@ -2736,72 +2828,18 @@ def get_documents(user_id, group_id=None, public_workspace_id=None):
         return jsonify({'error': f'Error retrieving documents: {str(e)}'}), 500
 
 def get_document(user_id, document_id, group_id=None, public_workspace_id=None):
-    is_group = group_id is not None
-    is_public_workspace = public_workspace_id is not None
-
-    # Choose the correct cosmos_container and query parameters
-    if is_public_workspace:
-        cosmos_container = cosmos_public_documents_container
-    elif is_group:
-        cosmos_container = cosmos_group_documents_container
-    else:
-        cosmos_container = cosmos_user_documents_container
-
-    if is_public_workspace:
-        query = """
-            SELECT TOP 1 * 
-            FROM c
-            WHERE c.id = @document_id 
-                AND c.public_workspace_id = @public_workspace_id
-            ORDER BY c.version DESC
-        """
-        parameters = [
-            {"name": "@document_id", "value": document_id},
-            {"name": "@public_workspace_id", "value": public_workspace_id}
-        ]
-    elif is_group:
-        query = """
-            SELECT TOP 1 *
-            FROM c
-            WHERE c.id = @document_id
-                AND (c.group_id = @group_id OR ARRAY_CONTAINS(c.shared_group_ids, @group_id))
-            ORDER BY c.version DESC
-        """
-        parameters = [
-            {"name": "@document_id", "value": document_id},
-            {"name": "@group_id", "value": group_id}
-        ]
-    else:
-        query = """
-            SELECT TOP 1 *
-            FROM c
-            WHERE c.id = @document_id
-                AND (
-                    c.user_id = @user_id
-                    OR ARRAY_CONTAINS(c.shared_user_ids, @user_id)
-                    OR EXISTS(SELECT VALUE s FROM s IN c.shared_user_ids WHERE STARTSWITH(s, @user_id_prefix))
-                )
-            ORDER BY c.version DESC
-        """
-        parameters = [
-            {"name": "@document_id", "value": document_id},
-            {"name": "@user_id", "value": user_id},
-            {"name": "@user_id_prefix", "value": f"{user_id},"}
-        ]
-
     try:
-        document_results = list(
-            cosmos_container.query_items(
-                query=query, 
-                parameters=parameters, 
-                enable_cross_partition_query=True
-            )
+        document_record = get_document_record(
+            user_id=user_id,
+            document_id=document_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
         )
 
-        if not document_results:
+        if not document_record:
             return jsonify({'error': 'Document not found or access denied'}), 404
 
-        return jsonify(_normalize_document_enhanced_citations(document_results[0])), 200
+        return jsonify(document_record), 200
 
     except Exception as e:
         return jsonify({'error': f'Error retrieving document: {str(e)}'}), 500

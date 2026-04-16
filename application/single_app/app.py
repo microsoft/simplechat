@@ -54,6 +54,7 @@ from route_frontend_support import *
 from route_frontend_notifications import *
 
 from route_backend_chats import *
+from route_backend_search import *
 from route_backend_conversations import *
 from route_backend_documents import *
 from route_backend_groups import *
@@ -872,6 +873,9 @@ register_route_frontend_notifications(app)
 
 # ------------------- API Chat Routes --------------------
 register_route_backend_chats(app)
+
+# ------------------- API Search Routes ------------------
+register_route_backend_search(app)
 
 # ------------------- API Conversation Routes ------------
 register_route_backend_conversations(app)

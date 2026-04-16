@@ -14,3 +14,7 @@ category: Version History
 ## Admin Experience Features
 
 - [AI Voice Conversations Setup Guide](AI_VOICE_CONVERSATIONS_SETUP_GUIDE.md)
+
+## Versioned Features
+
+- [Core Document Search And Summarization](v0.241.007/CORE_DOCUMENT_SEARCH_AND_SUMMARIZATION.md)
