@@ -1609,6 +1609,34 @@ a.citation-link:hover {
   font-size: 0.85rem;
   color: #495057;
 }
+.collaboration-mentions-block {
+  margin-bottom: 0.5rem;
+}
+.collaboration-mentions-label {
+  margin-bottom: 0.25rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #146c43;
+}
+.collaboration-mentions-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.collaboration-mention-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.18rem 0.55rem;
+  border-radius: 999px;
+  background-color: rgba(25, 135, 84, 0.12);
+  color: #146c43;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+.collaboration-mention-chip-current-user {
+  background-color: rgba(13, 110, 253, 0.15);
+  color: #0a58ca;
+}
 
 .collaboration-mention-menu {
   position: absolute;
@@ -1625,6 +1653,17 @@ a.citation-link:hover {
 .collaboration-mention-menu .list-group-item.active {
   background-color: #0d6efd;
   border-color: #0d6efd;
+[data-bs-theme="dark"] .collaboration-mentions-label {
+  color: #8dd7a3;
+}
+[data-bs-theme="dark"] .collaboration-mention-chip {
+  background-color: rgba(73, 167, 97, 0.2);
+  color: #d9f3e2;
+}
+[data-bs-theme="dark"] .collaboration-mention-chip-current-user {
+  background-color: rgba(84, 141, 255, 0.25);
+  color: #d7e4ff;
+}
 }
 
 .collaboration-participant-results {

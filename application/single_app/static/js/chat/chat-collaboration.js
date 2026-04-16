@@ -4,6 +4,7 @@ import { appendMessage, updateSendButtonVisibility, updateUserMessageId, userInp
 import { applyConversationMetadataUpdate } from './chat-conversations.js';
 import { loadUserSettings, saveUserSetting } from './chat-layout.js';
 import { showToast } from './chat-toast.js';
+import { sendMessageWithStreaming } from './chat-streaming.js';
 
 const RECENT_COLLABORATORS_KEY = 'recentCollaborators';
 const MAX_RECENT_COLLABORATORS = 12;
@@ -39,6 +40,7 @@ const promptedPendingInviteConversationIds = new Set();
 const seenCollaborationEventKeys = new Set();
 const collaborationMessageCache = new Map();
 const collaborationConversationCache = new Map();
+const collaborationMarkReadRequests = new Map();
 
 function isCollaborationEnabled() {
     return Boolean(window.appSettings?.enable_collaborative_conversations);
@@ -65,6 +67,43 @@ function isCollaborationConversation(conversationId) {
 function getConversationChatType(conversationId) {
     const item = getConversationDomItem(conversationId);
     return item?.getAttribute('data-chat-type') || null;
+}
+
+function markCollaborationConversationRead(conversationId, options = {}) {
+    const { suppressErrorToast = false } = options;
+    if (!conversationId) {
+        return Promise.resolve(null);
+    }
+
+    if (collaborationMarkReadRequests.has(conversationId)) {
+        return collaborationMarkReadRequests.get(conversationId);
+    }
+
+    const request = fetch(`/api/collaboration/conversations/${conversationId}/mark-read`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+    })
+        .then(async response => {
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok || payload.success === false) {
+                throw new Error(payload.error || 'Failed to clear shared conversation notifications');
+            }
+            return payload;
+        })
+        .catch(error => {
+            if (!suppressErrorToast) {
+                showToast(`Failed to clear shared conversation notifications: ${error.message}`, 'danger');
+            }
+            throw error;
+        })
+        .finally(() => {
+            collaborationMarkReadRequests.delete(conversationId);
+        });
+
+    collaborationMarkReadRequests.set(conversationId, request);
+    return request;
 }
 
 function setConversationDataset(conversationId, metadata = {}) {
@@ -233,13 +272,22 @@ async function loadMentionSuggestions(conversationId, query = '') {
         limit: DEFAULT_SUGGESTION_LIMIT,
     });
     const inviteSuggestions = collaboratorSuggestions
-        .map(collaborator => normalizeCollaborator(collaborator))
+        .map(collaborator => {
+            const normalizedCollaborator = normalizeCollaborator(collaborator);
+            if (!normalizedCollaborator) {
+                return null;
+            }
+
+            return {
+                ...normalizedCollaborator,
+                source: collaborator.source || 'local',
+            };
+        })
         .filter(Boolean)
         .filter(collaborator => !seenUserIds.has(collaborator.user_id))
         .map(collaborator => ({
             ...collaborator,
             action: 'invite',
-            source: collaborator.source || 'local',
         }));
 
     return [...participantSuggestions, ...inviteSuggestions];
@@ -388,10 +436,13 @@ function replyToMessage(message = {}) {
     userInput?.focus();
 }
 
-function getPendingMessageContext() {
+function getPendingMessageContext(options = {}) {
     const conversationId = window.chatConversations?.getCurrentConversationId?.();
     const mentionedParticipants = extractMentionedParticipantsFromMessage(userInput?.value || '', conversationId);
-    if (!activeReplyContext && mentionedParticipants.length === 0) {
+    const invocationTarget = options.invocationTarget && typeof options.invocationTarget === 'object'
+        ? options.invocationTarget
+        : null;
+    if (!activeReplyContext && mentionedParticipants.length === 0 && !invocationTarget) {
         return null;
     }
 
@@ -404,6 +455,10 @@ function getPendingMessageContext() {
     if (mentionedParticipants.length > 0) {
         metadata.mentioned_participants = mentionedParticipants;
         metadata.mentioned_user_ids = mentionedParticipants.map(participant => participant.user_id);
+    }
+    if (invocationTarget) {
+        metadata.ai_invocation_target = { ...invocationTarget };
+        metadata.explicit_ai_invocation = true;
     }
 
     return {
@@ -423,6 +478,24 @@ function cacheCollaborationMessage(message = {}) {
         metadata: message.metadata || {},
         sender: message.sender || {},
     });
+}
+
+function removeCollaborationMessage(messageId) {
+    const normalizedMessageId = String(messageId || '').trim();
+    if (!normalizedMessageId) {
+        return;
+    }
+
+    collaborationMessageCache.delete(normalizedMessageId);
+
+    const messageElement = document.querySelector(`[data-message-id="${normalizedMessageId}"]`);
+    if (messageElement) {
+        messageElement.remove();
+    }
+
+    if (activeReplyContext?.message_id === normalizedMessageId) {
+        clearReplyTarget({ focusComposer: false });
+    }
 }
 
 function clearMessageCache() {
@@ -451,7 +524,7 @@ function buildEventKey(eventEnvelope = {}) {
     return [
         eventEnvelope.conversation_id || payload.conversation?.id || '',
         eventEnvelope.event_type || '',
-        payload.message?.id || payload.participant?.user_id || payload.user?.user_id || payload.deleted_by_user_id || '',
+        payload.message?.id || payload.message_id || payload.participant?.user_id || payload.user?.user_id || payload.deleted_by_user_id || '',
         eventEnvelope.occurred_at || '',
     ].join('|');
 }
@@ -620,6 +693,18 @@ function updateComposerAvailability(metadata = null) {
 function resolveMessageSenderType(message) {
     if (message.role === 'assistant') {
         return 'AI';
+    }
+
+    if (message.role === 'image') {
+        return 'image';
+    }
+
+    if (message.role === 'file') {
+        return 'File';
+    }
+
+    if (message.role === 'safety') {
+        return 'safety';
     }
 
     const senderUserId = message.sender?.user_id || message.metadata?.sender?.user_id || null;
@@ -797,6 +882,7 @@ function handleConversationEvent(eventEnvelope = {}) {
 
     if (eventEnvelope.event_type === 'collaboration.message.created' && payload.message) {
         const senderUserId = String(payload.message?.sender?.user_id || payload.message?.metadata?.sender?.user_id || '').trim();
+        const shouldClearNotifications = Boolean(senderUserId && senderUserId !== getCurrentUserId());
         if (senderUserId && senderUserId !== getCurrentUserId() && isCurrentUserMentioned(payload.message)) {
             const senderName = normalizeCollaborator(payload.message.sender || payload.message.metadata?.sender || {})?.display_name || 'A participant';
             showToast(`${senderName} tagged you in a shared message.`, 'info');
@@ -805,14 +891,32 @@ function handleConversationEvent(eventEnvelope = {}) {
         const decoratedMessage = decorateReplyMessage(payload.message);
         cacheCollaborationMessage(payload.message);
         if (reconcilePendingCollaborativeUserMessage(payload.message)) {
+            if (shouldClearNotifications) {
+                void markCollaborationConversationRead(eventEnvelope.conversation_id || payload.message.conversation_id, {
+                    suppressErrorToast: true,
+                }).catch(() => {});
+            }
             return;
         }
         renderCollaborationMessage(decoratedMessage, { isNewMessage: true });
+        if (shouldClearNotifications) {
+            void markCollaborationConversationRead(eventEnvelope.conversation_id || payload.message.conversation_id, {
+                suppressErrorToast: true,
+            }).catch(() => {});
+        }
         return;
     }
 
     if (eventEnvelope.event_type === 'collaboration.typing.updated') {
         handleTypingEvent(payload);
+        return;
+    }
+
+    if (eventEnvelope.event_type === 'collaboration.message.deleted' && payload.message_id) {
+        removeCollaborationMessage(payload.message_id);
+        if (payload.deleted_by_user_id && payload.deleted_by_user_id !== getCurrentUserId()) {
+            showToast('A shared message was deleted.', 'info');
+        }
         return;
     }
 
@@ -941,10 +1045,15 @@ async function fetchCollaborationConversationList() {
 }
 
 async function activateConversation(conversationId, metadata = null) {
-    const conversationMetadata = metadata || await fetchConversationMetadata(conversationId);
+    const conversationMetadata = metadata
+        ? cacheCollaborationConversation(metadata)
+        : await fetchConversationMetadata(conversationId);
     updateComposerAvailability(conversationMetadata);
     clearReplyTarget({ focusComposer: false });
     await loadConversationMessages(conversationId);
+    markCollaborationConversationRead(conversationId, { suppressErrorToast: true }).catch(error => {
+        console.warn('Failed to clear shared conversation notifications:', error);
+    });
     subscribeToConversationEvents(conversationId);
 
     if (conversationMetadata.can_accept_invite && !promptedPendingInviteConversationIds.has(conversationId)) {
@@ -1003,6 +1112,51 @@ async function sendCollaborativeMessage(messageText, tempMessageId = null) {
     setTypingState(false, { force: true });
     clearReplyTarget();
     return payload;
+}
+
+async function sendCollaborativeAiMessage(messageText, tempMessageId = null, messageData = {}, pendingContext = null) {
+    const conversationId = window.chatConversations?.getCurrentConversationId?.();
+    if (!conversationId) {
+        throw new Error('No collaborative conversation is active.');
+    }
+
+    const mentionedParticipants = extractMentionedParticipantsFromMessage(messageText, conversationId);
+    const invocationTarget = pendingContext?.metadata?.ai_invocation_target || null;
+    const requestBody = {
+        ...messageData,
+        content: messageText,
+        reply_to_message_id: activeReplyContext?.message_id || null,
+        mentioned_participants: mentionedParticipants,
+        invocation_target: invocationTarget,
+    };
+
+    sendMessageWithStreaming(
+        requestBody,
+        tempMessageId,
+        conversationId,
+        {
+            endpoint: `/api/collaboration/conversations/${encodeURIComponent(conversationId)}/stream`,
+            allowRecovery: false,
+            onError: (errorMessage, errorData = null) => {
+                if (errorData?.user_message_id && tempMessageId) {
+                    updateUserMessageId(tempMessageId, errorData.user_message_id);
+                }
+
+                if (errorData?.message_persisted === true) {
+                    return;
+                }
+
+                const tempMessage = document.querySelector(`[data-message-id="${tempMessageId}"]`);
+                if (tempMessage) {
+                    tempMessage.remove();
+                }
+            },
+        },
+    );
+
+    setTypingState(false, { force: true });
+    clearReplyTarget();
+    return { started: true };
 }
 
 function setTypingState(isTyping, options = {}) {
@@ -1103,7 +1257,7 @@ function renderMentionMenu(results, mentionState) {
     }
 
     if (!Array.isArray(results) || results.length === 0) {
-        mentionMenu.innerHTML = '<div class="list-group-item text-muted small">No local collaborators found.</div>';
+        mentionMenu.innerHTML = '<div class="list-group-item text-muted small">No participants or collaborators found.</div>';
         mentionMenu.classList.remove('d-none');
         activeMentionState = {
             ...mentionState,
@@ -1309,7 +1463,7 @@ async function addParticipantToConversation(conversationId, collaborator) {
         }),
     });
 
-    const normalizedConversation = normalizeCollaborationConversation(payload.conversation || {});
+    const normalizedConversation = cacheCollaborationConversation(payload.conversation || {});
     await rememberRecentCollaborator(collaborator);
 
     if (window.chatConversations?.loadConversations) {
@@ -1556,9 +1710,11 @@ window.chatCollaboration = {
     removeParticipant,
     replyToMessage,
     respondToInvite,
+    sendCollaborativeAiMessage,
     sendCollaborativeMessage,
     updateParticipantRole,
     canUseParticipantFlow,
+    markConversationRead: markCollaborationConversationRead,
 };
 
 if (document.readyState === 'loading') {

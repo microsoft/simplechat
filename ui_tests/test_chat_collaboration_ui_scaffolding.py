@@ -1,8 +1,8 @@
 # test_chat_collaboration_ui_scaffolding.py
 """
 UI test for chat collaboration scaffolding.
-Version: 0.241.014
-Implemented in: 0.241.014
+Version: 0.241.019
+Implemented in: 0.241.019
 
 This test ensures the authenticated chats page loads the collaboration UI
 containers needed for participant management and @-mention suggestions without
@@ -162,6 +162,241 @@ def test_chat_collaboration_ui_scaffolding(playwright):
                 }
 
                 message.remove();
+            }
+        """)
+
+        page.evaluate("""
+            () => {
+                const mentionContainer = document.createElement('div');
+                mentionContainer.className = 'collaboration-mentions-block';
+                mentionContainer.innerHTML = `
+                    <div class="collaboration-mentions-label">Tagged</div>
+                    <div class="collaboration-mentions-list">
+                        <span class="collaboration-mention-chip collaboration-mention-chip-current-user">@Owner User</span>
+                    </div>
+                `;
+                document.body.appendChild(mentionContainer);
+
+                const mentionChip = mentionContainer.querySelector('.collaboration-mention-chip');
+                const styles = window.getComputedStyle(mentionChip);
+                if (styles.borderRadius === '0px') {
+                    throw new Error('Expected mention chips to be visibly pill-shaped.');
+                }
+                if (styles.display !== 'inline-flex') {
+                    throw new Error(`Expected mention chips to use inline-flex but received ${styles.display}.`);
+                }
+
+                mentionContainer.remove();
+            }
+        """)
+
+        page.evaluate("""
+            () => {
+                window.currentUser = { id: 'owner-user-001' };
+                const originalGetCurrentConversationId = window.chatConversations.getCurrentConversationId;
+                const originalUserInputValue = document.getElementById('user-input').value;
+                const mockConversationId = 'mock-shared-ai-context';
+                const mockConversationItem = document.createElement('div');
+                mockConversationItem.className = 'conversation-item';
+                mockConversationItem.dataset.conversationId = mockConversationId;
+                mockConversationItem.dataset.conversationKind = 'collaborative';
+                document.body.appendChild(mockConversationItem);
+                document.getElementById('user-input').value = 'Summarize the selected workspace';
+                window.chatConversations.getCurrentConversationId = () => mockConversationId;
+
+                try {
+                    const context = window.chatCollaboration.getPendingMessageContext({
+                        invocationTarget: {
+                            target_type: 'model',
+                            display_name: 'GPT-4.1',
+                            mention_text: '@GPT-4.1',
+                            source_mode: 'workspace'
+                        }
+                    });
+
+                    if (!context?.metadata?.ai_invocation_target) {
+                        throw new Error('Expected shared pending message context to include ai_invocation_target metadata.');
+                    }
+                    if (context.metadata.ai_invocation_target.mention_text !== '@GPT-4.1') {
+                        throw new Error('Expected shared pending message context to preserve the invocation chip text.');
+                    }
+                    if (context.metadata.explicit_ai_invocation !== true) {
+                        throw new Error('Expected shared pending message context to mark explicit AI invocation.');
+                    }
+                } finally {
+                    window.chatConversations.getCurrentConversationId = originalGetCurrentConversationId;
+                    document.getElementById('user-input').value = originalUserInputValue;
+                    mockConversationItem.remove();
+                }
+            }
+        """)
+
+        page.evaluate("""
+            async () => {
+                const mockConversationId = 'mock-shared-conversation-read-state';
+                const originalFetch = window.fetch;
+                const originalEventSource = window.EventSource;
+                const fetchedUrls = [];
+
+                window.fetch = async (url, options) => {
+                    const requestUrl = String(url || '');
+                    fetchedUrls.push(requestUrl);
+
+                    if (requestUrl.includes(`/api/collaboration/conversations/${mockConversationId}/messages`)) {
+                        return new Response(JSON.stringify({ messages: [] }), {
+                            status: 200,
+                            headers: { 'Content-Type': 'application/json' }
+                        });
+                    }
+
+                    if (requestUrl.includes(`/api/collaboration/conversations/${mockConversationId}/mark-read`)) {
+                        return new Response(JSON.stringify({
+                            success: true,
+                            conversation_id: mockConversationId,
+                            notifications_marked_read: 1
+                        }), {
+                            status: 200,
+                            headers: { 'Content-Type': 'application/json' }
+                        });
+                    }
+
+                    return originalFetch(url, options);
+                };
+
+                window.EventSource = class MockEventSource {
+                    constructor(url) {
+                        this.url = url;
+                        this.onmessage = null;
+                        this.onerror = null;
+                    }
+
+                    close() {}
+                };
+
+                try {
+                    await window.chatCollaboration.activateConversation(mockConversationId, {
+                        id: mockConversationId,
+                        title: 'Shared notification state',
+                        conversation_kind: 'collaborative',
+                        chat_type: 'personal_multi_user',
+                        can_post_messages: true,
+                        participants: []
+                    });
+
+                    if (!fetchedUrls.some(url => url.includes(`/api/collaboration/conversations/${mockConversationId}/mark-read`))) {
+                        throw new Error('Expected collaboration activation to clear shared notifications via mark-read.');
+                    }
+                } finally {
+                    window.fetch = originalFetch;
+                    window.EventSource = originalEventSource;
+                    window.chatCollaboration.deactivateConversation();
+                }
+            }
+        """)
+
+        page.evaluate("""
+            async () => {
+                const mockConversationId = 'mock-shared-ai-stream';
+                const originalFetch = window.fetch;
+                const originalGetCurrentConversationId = window.chatConversations.getCurrentConversationId;
+                const fetchedUrls = [];
+                const encoder = new TextEncoder();
+
+                const mockConversationItem = document.createElement('div');
+                mockConversationItem.className = 'conversation-item';
+                mockConversationItem.dataset.conversationId = mockConversationId;
+                mockConversationItem.dataset.conversationKind = 'collaborative';
+                document.body.appendChild(mockConversationItem);
+
+                window.chatConversations.getCurrentConversationId = () => mockConversationId;
+                window.currentConversationId = mockConversationId;
+
+                window.fetch = async (url, options) => {
+                    const requestUrl = String(url || '');
+                    fetchedUrls.push(requestUrl);
+
+                    if (requestUrl.includes(`/api/collaboration/conversations/${mockConversationId}/stream`)) {
+                        const payload = {
+                            done: true,
+                            conversation_id: mockConversationId,
+                            conversation_title: 'Shared AI Stream',
+                            message_id: 'assistant-shared-response',
+                            user_message_id: 'shared-user-message',
+                            full_content: 'Shared AI response',
+                            augmented: true,
+                            hybrid_citations: [],
+                            web_search_citations: [],
+                            agent_citations: [],
+                            model_deployment_name: 'gpt-4.1',
+                            image_url: null,
+                            reload_messages: false
+                        };
+                        const stream = new ReadableStream({
+                            start(controller) {
+                                controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+                                controller.close();
+                            }
+                        });
+                        return new Response(stream, {
+                            status: 200,
+                            headers: { 'Content-Type': 'text/event-stream' }
+                        });
+                    }
+
+                    if (requestUrl.includes('/api/conversations/')) {
+                        return new Response(JSON.stringify({ success: true }), {
+                            status: 200,
+                            headers: { 'Content-Type': 'application/json' }
+                        });
+                    }
+
+                    return originalFetch(url, options);
+                };
+
+                try {
+                    await window.chatCollaboration.sendCollaborativeAiMessage(
+                        'Summarize the workspace',
+                        'temp_user_stream_test',
+                        {
+                            message: 'Summarize the workspace',
+                            conversation_id: mockConversationId,
+                            hybrid_search: true,
+                            web_search_enabled: false,
+                            image_generation: false,
+                            prompt_info: null,
+                            agent_info: null,
+                            model_deployment: 'gpt-4.1'
+                        },
+                        {
+                            metadata: {
+                                ai_invocation_target: {
+                                    target_type: 'model',
+                                    display_name: 'GPT-4.1',
+                                    mention_text: '@GPT-4.1',
+                                    source_mode: 'workspace'
+                                }
+                            }
+                        }
+                    );
+
+                    await new Promise(resolve => window.setTimeout(resolve, 50));
+
+                    if (!fetchedUrls.some(url => url.includes(`/api/collaboration/conversations/${mockConversationId}/stream`))) {
+                        throw new Error('Expected shared AI send to call the collaboration stream endpoint.');
+                    }
+
+                    if (!document.querySelector('[data-message-id="assistant-shared-response"]')) {
+                        throw new Error('Expected shared AI streaming to render the final assistant message.');
+                    }
+                } finally {
+                    window.fetch = originalFetch;
+                    window.chatConversations.getCurrentConversationId = originalGetCurrentConversationId;
+                    mockConversationItem.remove();
+                    const renderedAssistant = document.querySelector('[data-message-id="assistant-shared-response"]');
+                    if (renderedAssistant) {
+                        renderedAssistant.remove();
+                    }
+                }
             }
         """)
 

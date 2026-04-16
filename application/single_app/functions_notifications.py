@@ -32,6 +32,10 @@ NOTIFICATION_TYPES = {
         'icon': 'bi-file-earmark-check',
         'color': 'success'
     },
+    'collaboration_message_received': {
+        'icon': 'bi-people-fill',
+        'color': 'info'
+    },
     'chat_response_complete': {
         'icon': 'bi-chat-dots',
         'color': 'success'
@@ -395,6 +399,54 @@ def create_chat_response_notification(
     )
 
 
+def create_collaboration_message_notification(
+    user_id,
+    conversation_id,
+    message_id,
+    conversation_title='',
+    sender_display_name='',
+    message_preview='',
+    chat_type='',
+    group_id=None,
+    mentioned_user=False,
+):
+    """Create a personal notification when another participant posts in a shared conversation."""
+    normalized_title = str(conversation_title or '').strip() or 'Shared Conversation'
+    normalized_sender = str(sender_display_name or '').strip() or 'A participant'
+    normalized_preview = str(message_preview or '').strip()
+    if len(normalized_preview) > 160:
+        normalized_preview = f"{normalized_preview[:157]}..."
+
+    notification_title = f"New shared message in {normalized_title}"
+    if mentioned_user:
+        notification_title = f"{normalized_sender} tagged you in {normalized_title}"
+
+    notification_message = normalized_preview or f"{normalized_sender} posted in {normalized_title}."
+
+    return create_notification(
+        user_id=user_id,
+        notification_type='collaboration_message_received',
+        title=notification_title,
+        message=notification_message,
+        link_url=f'/chats?conversationId={conversation_id}',
+        link_context={
+            'workspace_type': 'group' if str(chat_type or '').strip().lower().startswith('group') else 'personal',
+            'conversation_id': conversation_id,
+            'group_id': group_id,
+            'conversation_kind': 'collaborative',
+        },
+        metadata={
+            'conversation_id': conversation_id,
+            'message_id': message_id,
+            'sender_display_name': normalized_sender,
+            'mentioned_user': bool(mentioned_user),
+            'conversation_kind': 'collaborative',
+            'chat_type': chat_type,
+            'group_id': group_id,
+        }
+    )
+
+
 def get_user_notifications(user_id, page=1, per_page=20, include_read=True, include_dismissed=False, user_roles=None):
     """
     Fetch notifications visible to a user from personal, group, and public workspace scopes.
@@ -670,6 +722,46 @@ def mark_chat_response_notifications_read_for_conversation(user_id, conversation
     except Exception as e:
         debug_print(
             f"Error marking chat response notifications as read for conversation {conversation_id}: {e}"
+        )
+        return 0
+
+
+def mark_collaboration_message_notifications_read_for_conversation(user_id, conversation_id):
+    """Mark personal collaboration-message notifications read for a conversation."""
+    try:
+        query = """
+            SELECT * FROM c
+            WHERE c.user_id = @user_id
+            AND c.notification_type = @notification_type
+            AND c.metadata.conversation_id = @conversation_id
+        """
+        params = [
+            {'name': '@user_id', 'value': user_id},
+            {'name': '@notification_type', 'value': 'collaboration_message_received'},
+            {'name': '@conversation_id', 'value': conversation_id},
+        ]
+
+        notifications = list(cosmos_notifications_container.query_items(
+            query=query,
+            parameters=params,
+            partition_key=user_id
+        ))
+
+        marked_count = 0
+        for notification in notifications:
+            read_by = notification.get('read_by', [])
+            if user_id in read_by:
+                continue
+
+            read_by.append(user_id)
+            notification['read_by'] = read_by
+            cosmos_notifications_container.upsert_item(notification)
+            marked_count += 1
+
+        return marked_count
+    except Exception as e:
+        debug_print(
+            f"Error marking collaboration notifications as read for conversation {conversation_id}: {e}"
         )
         return 0
 

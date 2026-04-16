@@ -3,6 +3,7 @@
 """Persistence, authorization, and serialization helpers for collaborative conversations."""
 
 from copy import deepcopy
+import uuid
 
 from config import *
 from collaboration_models import (
@@ -15,6 +16,7 @@ from collaboration_models import (
     MEMBERSHIP_STATUS_DECLINED,
     MEMBERSHIP_STATUS_PENDING,
     MEMBERSHIP_STATUS_REMOVED,
+    MESSAGE_KIND_AI_REQUEST,
     MESSAGE_KIND_HUMAN,
     PERSONAL_MULTI_USER_CHAT_TYPE,
     add_personal_pending_participants,
@@ -26,6 +28,7 @@ from collaboration_models import (
     build_personal_collaboration_conversation,
     ensure_group_participant_record,
     get_collaboration_user_state_doc_id,
+    normalize_collaboration_user,
     refresh_personal_participant_indexes,
     remove_personal_participant,
     utc_now_iso,
@@ -38,6 +41,7 @@ from functions_group import (
     get_user_groups,
 )
 from functions_message_artifacts import filter_assistant_artifact_items
+from functions_notifications import create_collaboration_message_notification
 from functions_thoughts import delete_thoughts_for_conversation, get_thoughts_for_message
 
 
@@ -83,6 +87,27 @@ def get_collaboration_message(message_id):
     if not items:
         raise CosmosResourceNotFoundError(message='Collaborative message not found')
     return items[0]
+
+
+def get_collaboration_message_by_source_message(conversation_id, source_message_id):
+    normalized_conversation_id = str(conversation_id or '').strip()
+    normalized_source_message_id = str(source_message_id or '').strip()
+    if not normalized_conversation_id or not normalized_source_message_id:
+        return None
+
+    query = (
+        'SELECT TOP 1 * FROM c WHERE c.conversation_id = @conversation_id '
+        'AND c.metadata.source_message_id = @source_message_id'
+    )
+    items = list(cosmos_collaboration_messages_container.query_items(
+        query=query,
+        parameters=[
+            {'name': '@conversation_id', 'value': normalized_conversation_id},
+            {'name': '@source_message_id', 'value': normalized_source_message_id},
+        ],
+        partition_key=normalized_conversation_id,
+    ))
+    return items[0] if items else None
 
 
 def get_personal_collaboration_participant(conversation_doc, participant_user_id):
@@ -274,6 +299,91 @@ def resolve_collaboration_mentions(conversation_doc, raw_mentions):
         })
 
     return normalized_mentions
+
+
+def _get_group_collaboration_notification_recipient_ids(conversation_doc, sender_user_id):
+    scope = conversation_doc.get('scope', {}) if isinstance(conversation_doc, dict) else {}
+    group_id = str(scope.get('group_id') or '').strip()
+    if not group_id:
+        return []
+
+    group_doc = find_group_by_id(group_id)
+    if not group_doc:
+        return []
+
+    recipient_ids = set()
+    owner_user_id = str((group_doc.get('owner') or {}).get('id') or '').strip()
+    if owner_user_id:
+        recipient_ids.add(owner_user_id)
+
+    for member in list(group_doc.get('users', []) or []):
+        member_user_id = str(member.get('userId') or '').strip()
+        if member_user_id:
+            recipient_ids.add(member_user_id)
+
+    normalized_sender_user_id = str(sender_user_id or '').strip()
+    if normalized_sender_user_id:
+        recipient_ids.discard(normalized_sender_user_id)
+
+    return sorted(recipient_ids)
+
+
+def list_collaboration_notification_recipient_ids(conversation_doc, sender_user_id):
+    if is_group_collaboration_conversation(conversation_doc):
+        return _get_group_collaboration_notification_recipient_ids(conversation_doc, sender_user_id)
+
+    accepted_participant_ids = set(conversation_doc.get('accepted_participant_ids', []) or [])
+    normalized_sender_user_id = str(sender_user_id or '').strip()
+    if normalized_sender_user_id:
+        accepted_participant_ids.discard(normalized_sender_user_id)
+
+    return sorted(user_id for user_id in accepted_participant_ids if str(user_id or '').strip())
+
+
+def create_collaboration_message_notifications(conversation_doc, message_doc):
+    """Fan out personal inbox notifications for recipients of a shared message."""
+    if not conversation_doc or not message_doc:
+        return []
+
+    metadata = message_doc.get('metadata', {}) if isinstance(message_doc, dict) else {}
+    sender = normalize_collaboration_user(metadata.get('sender') or {}) or {}
+    sender_user_id = str(sender.get('user_id') or '').strip()
+    recipient_ids = list_collaboration_notification_recipient_ids(conversation_doc, sender_user_id)
+    if not recipient_ids:
+        return []
+
+    mentioned_user_ids = {
+        str(participant.get('user_id') or '').strip()
+        for participant in list(metadata.get('mentioned_participants', []) or [])
+        if str(participant.get('user_id') or '').strip()
+    }
+    scope = conversation_doc.get('scope', {}) if isinstance(conversation_doc, dict) else {}
+    created_notifications = []
+
+    for recipient_user_id in recipient_ids:
+        try:
+            notification_doc = create_collaboration_message_notification(
+                user_id=recipient_user_id,
+                conversation_id=message_doc.get('conversation_id'),
+                message_id=message_doc.get('id'),
+                conversation_title=conversation_doc.get('title'),
+                sender_display_name=sender.get('display_name'),
+                message_preview=message_doc.get('content'),
+                chat_type=conversation_doc.get('chat_type'),
+                group_id=scope.get('group_id'),
+                mentioned_user=recipient_user_id in mentioned_user_ids,
+            )
+            if notification_doc:
+                created_notifications.append(notification_doc)
+        except Exception as exc:
+            log_event(
+                f'[Collaboration Notifications] Failed to create notification for conversation {message_doc.get("conversation_id")}: {exc}',
+                level=logging.WARNING,
+                exceptionTraceback=True,
+                debug_only=True,
+            )
+
+    return created_notifications
 
 
 def build_collaboration_message_metadata_payload(message_doc, conversation_doc):
@@ -980,6 +1090,8 @@ def persist_collaboration_message(
     content,
     reply_to_message_id=None,
     mentioned_participants=None,
+    message_kind=MESSAGE_KIND_HUMAN,
+    extra_metadata=None,
 ):
     conversation_id = conversation_doc.get('id')
     message_doc = build_collaboration_message_doc(
@@ -988,12 +1100,32 @@ def persist_collaboration_message(
         content=content,
         reply_to_message_id=reply_to_message_id,
         mentioned_participants=mentioned_participants,
-        message_kind=MESSAGE_KIND_HUMAN,
+        message_kind=message_kind,
         timestamp=utc_now_iso(),
     )
 
+    if isinstance(extra_metadata, dict) and extra_metadata:
+        message_doc['metadata'] = {
+            **dict(message_doc.get('metadata', {}) or {}),
+            **extra_metadata,
+        }
+
+    return _save_collaboration_message_doc(conversation_doc, message_doc)
+
+
+def _save_collaboration_message_doc(conversation_doc, message_doc):
+    sender_summary = normalize_collaboration_user(
+        ((message_doc or {}).get('metadata', {}) or {}).get('sender') or {},
+    )
+
     if is_group_collaboration_conversation(conversation_doc):
-        ensure_group_participant_record(conversation_doc, sender_user, joined_at=message_doc.get('timestamp'))
+        sender_user_id = str((sender_summary or {}).get('user_id') or '').strip()
+        if sender_user_id and sender_user_id != 'assistant' and str(message_doc.get('role') or '').strip().lower() == 'user':
+            ensure_group_participant_record(
+                conversation_doc,
+                sender_summary,
+                joined_at=message_doc.get('timestamp'),
+            )
 
     cosmos_collaboration_messages_container.upsert_item(message_doc)
 
@@ -1009,6 +1141,189 @@ def persist_collaboration_message(
 
     cosmos_collaboration_conversations_container.upsert_item(conversation_doc)
     return message_doc, conversation_doc
+
+
+def ensure_collaboration_source_conversation(conversation_doc, current_user):
+    normalized_current_user = normalize_collaboration_user(current_user)
+    if not normalized_current_user:
+        raise PermissionError('User not authenticated')
+
+    source_conversation_id = str((conversation_doc or {}).get('source_conversation_id') or '').strip()
+    source_conversation_doc = None
+    source_updated = False
+
+    if source_conversation_id:
+        try:
+            source_conversation_doc = cosmos_conversations_container.read_item(
+                item=source_conversation_id,
+                partition_key=source_conversation_id,
+            )
+        except CosmosResourceNotFoundError:
+            source_conversation_doc = None
+            source_conversation_id = ''
+
+    timestamp = utc_now_iso()
+    if source_conversation_doc is None:
+        source_conversation_id = str(uuid.uuid4())
+        source_conversation_doc = {
+            'id': source_conversation_id,
+            'user_id': str((conversation_doc or {}).get('created_by_user_id') or normalized_current_user.get('user_id') or '').strip(),
+            'last_updated': timestamp,
+            'title': str((conversation_doc or {}).get('title') or 'Collaborative Conversation').strip() or 'Collaborative Conversation',
+            'context': list((conversation_doc or {}).get('context', []) or []),
+            'tags': list((conversation_doc or {}).get('tags', []) or []),
+            'strict': bool((conversation_doc or {}).get('strict', False)),
+            'chat_type': 'group' if is_group_collaboration_conversation(conversation_doc) else 'personal_single_user',
+            'scope_locked': bool((conversation_doc or {}).get('scope_locked', False)),
+            'locked_contexts': list((conversation_doc or {}).get('locked_contexts', []) or []),
+            'classification': list((conversation_doc or {}).get('classification', []) or []),
+            'summary': (conversation_doc or {}).get('summary'),
+            'conversation_kind': 'collaboration_source',
+            'collaboration_conversation_id': (conversation_doc or {}).get('id'),
+            'is_hidden': True,
+        }
+        source_updated = True
+    else:
+        synchronized_values = {
+            'title': str((conversation_doc or {}).get('title') or source_conversation_doc.get('title') or 'Collaborative Conversation').strip() or 'Collaborative Conversation',
+            'context': list((conversation_doc or {}).get('context', []) or source_conversation_doc.get('context', []) or []),
+            'tags': list((conversation_doc or {}).get('tags', []) or source_conversation_doc.get('tags', []) or []),
+            'strict': bool((conversation_doc or {}).get('strict', source_conversation_doc.get('strict', False))),
+            'scope_locked': bool((conversation_doc or {}).get('scope_locked', source_conversation_doc.get('scope_locked', False))),
+            'locked_contexts': list((conversation_doc or {}).get('locked_contexts', []) or source_conversation_doc.get('locked_contexts', []) or []),
+            'classification': list((conversation_doc or {}).get('classification', []) or source_conversation_doc.get('classification', []) or []),
+            'summary': (conversation_doc or {}).get('summary', source_conversation_doc.get('summary')),
+            'conversation_kind': 'collaboration_source',
+            'collaboration_conversation_id': (conversation_doc or {}).get('id'),
+            'is_hidden': True,
+        }
+        for field_name, field_value in synchronized_values.items():
+            if source_conversation_doc.get(field_name) != field_value:
+                source_conversation_doc[field_name] = field_value
+                source_updated = True
+
+    if source_updated:
+        source_conversation_doc['last_updated'] = timestamp
+        cosmos_conversations_container.upsert_item(source_conversation_doc)
+
+    if str((conversation_doc or {}).get('source_conversation_id') or '').strip() != source_conversation_id:
+        conversation_doc['source_conversation_id'] = source_conversation_id
+        cosmos_collaboration_conversations_container.upsert_item(conversation_doc)
+
+    return source_conversation_doc, conversation_doc
+
+
+def mirror_source_message_to_collaboration(
+    conversation_doc,
+    source_message_doc,
+    default_sender_user,
+    reply_to_message_id=None,
+    extra_metadata=None,
+):
+    source_message_id = str((source_message_doc or {}).get('id') or '').strip()
+    if not source_message_id:
+        raise ValueError('source_message_doc.id is required')
+
+    existing_message = get_collaboration_message_by_source_message(
+        (conversation_doc or {}).get('id'),
+        source_message_id,
+    )
+    if existing_message:
+        return existing_message, conversation_doc, False
+
+    collaboration_message = build_collaboration_message_doc_from_legacy(
+        (conversation_doc or {}).get('id'),
+        source_message_doc,
+        default_sender_user,
+    )
+    if not collaboration_message:
+        return None, conversation_doc, False
+
+    source_role = str((source_message_doc or {}).get('role') or '').strip().lower()
+    source_metadata = (source_message_doc or {}).get('metadata', {}) if isinstance((source_message_doc or {}).get('metadata'), dict) else {}
+    message_metadata = collaboration_message.setdefault('metadata', {})
+    message_metadata.setdefault('source_message_id', source_message_id)
+    message_metadata.setdefault('source_conversation_id', str((conversation_doc or {}).get('source_conversation_id') or '').strip() or None)
+    message_metadata.setdefault('source_thought_user_id', str((default_sender_user or {}).get('user_id') or (conversation_doc or {}).get('created_by_user_id') or '').strip())
+
+    if isinstance(extra_metadata, dict) and extra_metadata:
+        message_metadata.update(extra_metadata)
+
+    if reply_to_message_id:
+        collaboration_message['reply_to_message_id'] = str(reply_to_message_id or '').strip() or None
+
+    if source_role == 'image' and not bool(source_metadata.get('is_user_upload')):
+        collaboration_message['role'] = 'image'
+        collaboration_message['content'] = str((source_message_doc or {}).get('content') or '')
+        message_metadata['last_message_preview'] = '[Generated image]'
+
+    return (*_save_collaboration_message_doc(conversation_doc, collaboration_message), True)
+
+
+def _refresh_collaboration_conversation_message_summary(conversation_doc):
+    conversation_id = str((conversation_doc or {}).get('id') or '').strip()
+    if not conversation_id:
+        raise ValueError('conversation_id is required')
+
+    remaining_messages = list_collaboration_messages(conversation_id)
+    conversation_doc['message_count'] = len(remaining_messages)
+
+    if remaining_messages:
+        last_message_doc = remaining_messages[-1]
+        last_message_timestamp = last_message_doc.get('timestamp') or utc_now_iso()
+        conversation_doc['last_message_at'] = last_message_timestamp
+        conversation_doc['last_message_preview'] = (
+            (last_message_doc.get('metadata') or {}).get('last_message_preview') or ''
+        )
+        conversation_doc['updated_at'] = last_message_timestamp
+    else:
+        conversation_doc['last_message_at'] = None
+        conversation_doc['last_message_preview'] = ''
+        conversation_doc['updated_at'] = utc_now_iso()
+
+    cosmos_collaboration_conversations_container.upsert_item(conversation_doc)
+    return conversation_doc
+
+
+def delete_collaboration_message(conversation_id, message_id, current_user_id):
+    conversation_doc = get_collaboration_conversation(conversation_id)
+    access_context = assert_user_can_participate_in_collaboration_conversation(
+        current_user_id,
+        conversation_doc,
+    )
+    message_doc = get_collaboration_message(message_id)
+
+    if str(message_doc.get('conversation_id') or '').strip() != str(conversation_id or '').strip():
+        raise LookupError('Collaborative message not found in this conversation')
+
+    metadata = message_doc.get('metadata', {}) if isinstance(message_doc, dict) else {}
+    sender_user_id = str(
+        ((metadata.get('sender') or {}).get('user_id'))
+        or ((metadata.get('user_info') or {}).get('user_id'))
+        or ''
+    ).strip()
+    normalized_current_user_id = str(current_user_id or '').strip()
+
+    can_delete_message = sender_user_id == normalized_current_user_id
+    if not can_delete_message and is_personal_collaboration_conversation(conversation_doc):
+        actor_role = get_personal_collaboration_role(
+            conversation_doc,
+            normalized_current_user_id,
+            user_state=access_context.get('user_state'),
+        )
+        can_delete_message = actor_role in PERSONAL_COLLABORATION_MANAGER_ROLES
+    elif not can_delete_message and is_group_collaboration_conversation(conversation_doc):
+        can_delete_message = access_context.get('group_role') in ('Owner', 'Admin', 'DocumentManager')
+
+    if not can_delete_message:
+        raise PermissionError('You can only delete your own shared messages')
+
+    cosmos_collaboration_messages_container.delete_item(
+        item=message_id,
+        partition_key=conversation_id,
+    )
+    updated_conversation_doc = _refresh_collaboration_conversation_message_summary(conversation_doc)
+    return message_doc, updated_conversation_doc
 
 
 def update_personal_collaboration_title(conversation_id, current_user_id, new_title):

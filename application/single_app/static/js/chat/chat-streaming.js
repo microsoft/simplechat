@@ -388,11 +388,12 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
 }
 
 export function sendMessageWithStreaming(messageData, tempUserMessageId, currentConversationId, options = {}) {
+    const { endpoint = '/api/chat/stream' } = options;
     const tempAiMessageId = createStreamingPlaceholder('Streaming...');
     const recoveryConversationId = currentConversationId || messageData?.conversation_id || window.currentConversationId || null;
 
     return consumeStreamingResponse(
-        signal => fetch('/api/chat/stream', {
+        signal => fetch(endpoint, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -517,8 +518,21 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData) {
     // Remove the temporary streaming message
     messageElement.remove();
 
+    const existingFinalMessage = finalData.message_id
+        ? document.querySelector(`[data-message-id="${finalData.message_id}"]`)
+        : null;
+
     if (finalData.kernel_fallback_notice) {
         showToast(finalData.kernel_fallback_notice, 'warning');
+    }
+
+    if (existingFinalMessage) {
+        if (finalData.conversation_id) {
+            markConversationRead(finalData.conversation_id, { force: true, suppressErrorToast: true }).catch(error => {
+                console.warn('Failed to clear unread state after live streaming completion:', error);
+            });
+        }
+        return;
     }
 
     if (finalData.image_url) {
