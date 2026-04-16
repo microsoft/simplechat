@@ -554,6 +554,218 @@ export function loadMessages(conversationId) {
     });
 }
 
+const collaboratorProfileImageCache = new Map();
+
+function stripHtmlTags(value) {
+  const tempElement = document.createElement("div");
+  tempElement.innerHTML = String(value ?? "");
+  return tempElement.textContent || tempElement.innerText || "";
+}
+
+function buildPlainTextPreview(value, maxLength = 160) {
+  const normalizedValue = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (!normalizedValue) {
+    return "No message content";
+  }
+  if (normalizedValue.length <= maxLength) {
+    return normalizedValue;
+  }
+  return `${normalizedValue.slice(0, maxLength - 3)}...`;
+}
+
+function getMessageSenderUserId(fullMessageObject = null) {
+  const senderUserId = String(
+    fullMessageObject?.sender?.user_id || fullMessageObject?.metadata?.sender?.user_id || ""
+  ).trim();
+  return senderUserId || null;
+}
+
+function getMessageSenderDisplayName(fullMessageObject = null, fallbackLabel = "Participant") {
+  const senderDisplayName = String(
+    fullMessageObject?.sender?.display_name
+      || fullMessageObject?.metadata?.sender?.display_name
+      || fallbackLabel
+  ).trim();
+  return senderDisplayName || fallbackLabel;
+}
+
+function getInitials(name) {
+  const words = String(name ?? "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (words.length === 0) {
+    return "?";
+  }
+
+  return words
+    .slice(0, 2)
+    .map(word => word.charAt(0).toUpperCase())
+    .join("");
+}
+
+function createCollaboratorAvatarHtml(fullMessageObject, senderLabel) {
+  const senderUserId = getMessageSenderUserId(fullMessageObject);
+  const cachedProfileImage = senderUserId ? collaboratorProfileImageCache.get(senderUserId) : null;
+  const altText = `${senderLabel} Avatar`;
+
+  if (cachedProfileImage) {
+    return `<img src="${cachedProfileImage}" alt="${escapeHtml(altText)}" class="avatar collaborator-avatar" data-avatar-user-id="${escapeHtml(senderUserId || "")}" />`;
+  }
+
+  return `
+    <div class="avatar avatar-initials collaborator-avatar" data-avatar-user-id="${escapeHtml(senderUserId || "")}" aria-label="${escapeHtml(altText)}">
+      ${escapeHtml(getInitials(senderLabel))}
+    </div>`;
+}
+
+function hydrateCollaboratorAvatar(messageDiv, senderUserId, senderLabel) {
+  if (!messageDiv || !senderUserId) {
+    return;
+  }
+
+  const avatarElement = messageDiv.querySelector(".collaborator-avatar");
+  if (!avatarElement) {
+    return;
+  }
+
+  const cachedProfileImage = collaboratorProfileImageCache.get(senderUserId);
+  if (cachedProfileImage) {
+    if (avatarElement.tagName === "IMG") {
+      avatarElement.src = cachedProfileImage;
+      avatarElement.alt = `${senderLabel} Avatar`;
+    } else {
+      const imageElement = document.createElement("img");
+      imageElement.src = cachedProfileImage;
+      imageElement.alt = `${senderLabel} Avatar`;
+      imageElement.className = "avatar collaborator-avatar";
+      imageElement.dataset.avatarUserId = senderUserId;
+      avatarElement.replaceWith(imageElement);
+    }
+    return;
+  }
+
+  fetch(`/api/user/profile-image/${encodeURIComponent(senderUserId)}`, {
+    credentials: "same-origin",
+  })
+    .then(response => {
+      if (!response.ok) {
+        throw new Error("Failed to load user profile image");
+      }
+      return response.json();
+    })
+    .then(userData => {
+      const profileImage = String(userData?.profile_image || "").trim();
+      if (!profileImage) {
+        return;
+      }
+
+      collaboratorProfileImageCache.set(senderUserId, profileImage);
+      if (avatarElement.tagName === "IMG") {
+        avatarElement.src = profileImage;
+        avatarElement.alt = `${senderLabel} Avatar`;
+      } else {
+        const imageElement = document.createElement("img");
+        imageElement.src = profileImage;
+        imageElement.alt = `${senderLabel} Avatar`;
+        imageElement.className = "avatar collaborator-avatar";
+        imageElement.dataset.avatarUserId = senderUserId;
+        avatarElement.replaceWith(imageElement);
+      }
+    })
+    .catch(() => {
+      console.debug("Could not load profile image for collaborator:", senderUserId);
+    });
+}
+
+function buildReplyContextFromMessage(message = null) {
+  if (!message) {
+    return null;
+  }
+
+  const messageId = String(message.id || "").trim();
+  if (!messageId) {
+    return null;
+  }
+
+  return {
+    message_id: messageId,
+    sender_display_name: getMessageSenderDisplayName(
+      message,
+      message.role === "assistant" ? "AI" : "Participant"
+    ),
+    content_preview: buildPlainTextPreview(
+      message.content || message.metadata?.last_message_preview || ""
+    ),
+  };
+}
+
+function resolveReplyContextFromDom(messageId) {
+  if (!messageId) {
+    return null;
+  }
+
+  const replyElement = document.querySelector(`[data-message-id="${messageId}"]`);
+  if (!replyElement) {
+    return null;
+  }
+
+  const senderDisplayName = String(
+    replyElement.dataset.replySenderName
+      || replyElement.querySelector(".message-sender")?.textContent
+      || "Participant"
+  )
+    .replace(/\s+/g, " ")
+    .trim();
+  const contentPreview = String(
+    replyElement.dataset.replyPreviewText
+      || buildPlainTextPreview(replyElement.querySelector(".message-text")?.textContent || "")
+  ).trim();
+
+  return {
+    message_id: messageId,
+    sender_display_name: senderDisplayName || "Participant",
+    content_preview: contentPreview || "No message content",
+  };
+}
+
+function resolveReplyContext(fullMessageObject = null) {
+  const replyMessageContext = buildReplyContextFromMessage(fullMessageObject?.reply_message);
+  if (replyMessageContext) {
+    return replyMessageContext;
+  }
+
+  const metadataReplyContext = fullMessageObject?.metadata?.reply_context;
+  if (metadataReplyContext) {
+    return {
+      message_id: String(metadataReplyContext.message_id || "").trim(),
+      sender_display_name: String(metadataReplyContext.sender_display_name || "Participant").trim() || "Participant",
+      content_preview: buildPlainTextPreview(metadataReplyContext.content_preview || ""),
+    };
+  }
+
+  const replyToMessageId = String(fullMessageObject?.reply_to_message_id || "").trim();
+  if (!replyToMessageId) {
+    return null;
+  }
+
+  return resolveReplyContextFromDom(replyToMessageId);
+}
+
+function renderReplyQuoteHtml(fullMessageObject = null) {
+  const replyContext = resolveReplyContext(fullMessageObject);
+  if (!replyContext) {
+    return "";
+  }
+
+  return `
+    <div class="collaboration-quote-block" data-reply-to-message-id="${escapeHtml(replyContext.message_id || "")}">
+      <div class="collaboration-quote-label">Replying to ${escapeHtml(replyContext.sender_display_name || "Participant")}</div>
+      <div class="collaboration-quote-text">${escapeHtml(replyContext.content_preview || "No message content")}</div>
+    </div>`;
+}
+
 export function appendMessage(
   sender,
   messageContent,
@@ -576,6 +788,7 @@ export function appendMessage(
 
   let avatarImg = "";
   let avatarAltText = "";
+  let avatarHtml = "";
   let messageClass = ""; // <<< ENSURE THIS IS DECLARED HERE
   let senderLabel = "";
   let messageContentHtml = "";
@@ -779,6 +992,9 @@ export function appendMessage(
                     ${footerContentHtml}
                 </div>
             </div>`;
+
+              messageDiv.dataset.replySenderName = stripHtmlTags(senderLabel).replace(/\s+/g, " ").trim() || "AI";
+              messageDiv.dataset.replyPreviewText = buildPlainTextPreview(messageContent);
 
     messageDiv.classList.add(messageClass); // Add AI message class
     chatbox.appendChild(messageDiv); // Append AI message
@@ -1046,7 +1262,7 @@ export function appendMessage(
         || fullMessageObject?.metadata?.sender?.display_name
         || "Participant";
       avatarAltText = `${senderLabel} Avatar`;
-      avatarImg = "/static/images/user-avatar.png";
+      avatarHtml = createCollaboratorAvatarHtml(fullMessageObject, senderLabel);
       const sanitizedCollaboratorHtml = DOMPurify.sanitize(
         marked.parse(escapeHtml(messageContent))
       );
@@ -1132,6 +1348,9 @@ export function appendMessage(
     // Create message footer for user, image, and file messages
     let messageFooterHtml = "";
     let metadataContainerHtml = "";
+    const replyQuoteHtml = (sender === "You" || sender === "Collaborator")
+      ? renderReplyQuoteHtml(fullMessageObject)
+      : "";
     if (sender === "You") {
       const metadataContainerId = `metadata-${messageId || Date.now()}`;
       const isMasked = fullMessageObject?.metadata?.masked || (fullMessageObject?.metadata?.masked_ranges && fullMessageObject.metadata.masked_ranges.length > 0);
@@ -1177,6 +1396,22 @@ export function appendMessage(
           </div>
         </div>`;
       metadataContainerHtml = `<div class="metadata-container mt-2 pt-2 border-top" id="${metadataContainerId}" style="display: none;"><div class="text-muted">Loading metadata...</div></div>`;
+    } else if (sender === "Collaborator") {
+      messageFooterHtml = `
+        <div class="message-footer d-flex justify-content-between align-items-center mt-2">
+          <div class="d-flex align-items-center gap-2">
+            <div class="dropdown">
+              <button class="btn btn-sm btn-link text-muted" type="button" data-bs-toggle="dropdown" data-bs-boundary="viewport" data-bs-reference="parent" aria-expanded="false" title="More actions">
+                <i class="bi bi-three-dots"></i>
+              </button>
+              <ul class="dropdown-menu dropdown-menu-start">
+                <li><a class="dropdown-item dropdown-reply-btn" href="#" data-message-id="${messageId}"><i class="bi bi-reply me-2"></i>Reply</a></li>
+              </ul>
+            </div>
+          </div>
+          <div class="d-flex align-items-center"></div>
+          <div class="d-flex align-items-center"></div>
+        </div>`;
     } else if (sender === "image" || sender === "File") {
       // Image and file messages get mask button on left, metadata button on right side
       const metadataContainerId = `metadata-${messageId || Date.now()}`;
@@ -1224,9 +1459,11 @@ export function appendMessage(
               sender === "You" || sender === "File" ? "flex-row-reverse" : ""
             }">
                 ${
-                  avatarImg
-                    ? `<img src="${avatarImg}" alt="${avatarAltText}" class="avatar">`
-                    : ""
+                  avatarHtml
+                    ? avatarHtml
+                    : avatarImg
+                      ? `<img src="${avatarImg}" alt="${avatarAltText}" class="avatar">`
+                      : ""
                 }
                 <div class="message-bubble">
                     <div class="message-sender">
@@ -1234,11 +1471,17 @@ export function appendMessage(
                         ${fullMessageObject?.metadata?.edited ? '<span class="badge bg-secondary ms-2">Edited</span>' : ''}
                         ${fullMessageObject?.metadata?.retried ? '<span class="badge bg-info ms-2">Retried</span>' : ''}
                     </div>
+                    ${replyQuoteHtml}
                     <div class="message-text">${messageContentHtml}</div>
                     ${metadataContainerHtml}
                     ${messageFooterHtml}
                 </div>
             </div>`;
+
+    messageDiv.dataset.replySenderName = stripHtmlTags(senderLabel).replace(/\s+/g, " ").trim() || "Participant";
+    if (typeof messageContent === "string") {
+      messageDiv.dataset.replyPreviewText = buildPlainTextPreview(messageContent);
+    }
 
     // Append and scroll (common actions for non-AI)
     chatbox.appendChild(messageDiv);
@@ -1264,6 +1507,11 @@ export function appendMessage(
       } else {
         console.log('No metadata found for user message:', messageId, 'fullMessageObject:', fullMessageObject);
       }
+    }
+
+    if (sender === "Collaborator") {
+      attachCollaboratorMessageEventListeners(messageDiv, fullMessageObject, messageContent);
+      hydrateCollaboratorAvatar(messageDiv, getMessageSenderUserId(fullMessageObject), senderLabel);
     }
 
     // Add event listener for image info button (uploaded images)
@@ -1426,7 +1674,8 @@ export function actuallySendMessage(finalMessageToSend) {
 
   if (isCollaborativeConversation) {
     const tempUserMessageId = `temp_user_${Date.now()}`;
-    appendMessage("You", finalMessageToSend, null, tempUserMessageId);
+    const pendingCollaborativeContext = window.chatCollaboration?.getPendingMessageContext?.() || null;
+    appendMessage("You", finalMessageToSend, null, tempUserMessageId, false, [], [], [], null, null, pendingCollaborativeContext);
     userInput.value = "";
     userInput.style.height = "";
     updateSendButtonVisibility();
@@ -1934,6 +2183,51 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
   if (carouselNextBtn) {
     carouselNextBtn.addEventListener("click", () => {
       handleCarouselClick(messageId, 'next');
+    });
+  }
+}
+
+function attachCollaboratorMessageEventListeners(messageDiv, fullMessageObject, messageContent) {
+  const dropdownReplyBtn = messageDiv.querySelector(".dropdown-reply-btn");
+  if (dropdownReplyBtn) {
+    dropdownReplyBtn.addEventListener("click", e => {
+      e.preventDefault();
+      const currentMessageId = messageDiv.getAttribute("data-message-id");
+      window.chatCollaboration?.replyToMessage?.({
+        ...(fullMessageObject || {}),
+        id: currentMessageId,
+        content: messageContent,
+        sender: fullMessageObject?.sender || fullMessageObject?.metadata?.sender || {
+          display_name: messageDiv.dataset.replySenderName || "Participant",
+        },
+      });
+    });
+  }
+
+  const dropdownToggle = messageDiv.querySelector(".message-footer .dropdown button[data-bs-toggle='dropdown']");
+  const dropdownMenu = messageDiv.querySelector(".message-footer .dropdown-menu");
+  if (dropdownToggle && dropdownMenu) {
+    dropdownToggle.addEventListener("show.bs.dropdown", () => {
+      const localChatbox = document.getElementById("chatbox");
+      if (localChatbox) {
+        dropdownMenu.remove();
+        localChatbox.appendChild(dropdownMenu);
+
+        const rect = dropdownToggle.getBoundingClientRect();
+        const chatboxRect = localChatbox.getBoundingClientRect();
+        dropdownMenu.style.position = "absolute";
+        dropdownMenu.style.top = `${rect.bottom - chatboxRect.top + localChatbox.scrollTop + 2}px`;
+        dropdownMenu.style.left = `${rect.left - chatboxRect.left}px`;
+        dropdownMenu.style.zIndex = "9999";
+      }
+    });
+
+    dropdownToggle.addEventListener("hidden.bs.dropdown", () => {
+      const dropdown = messageDiv.querySelector(".message-footer .dropdown");
+      if (dropdown && dropdownMenu.parentElement !== dropdown) {
+        dropdownMenu.remove();
+        dropdown.appendChild(dropdownMenu);
+      }
     });
   }
 }

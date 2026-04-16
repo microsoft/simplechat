@@ -14,6 +14,7 @@ from functions_authentication import *
 from functions_collaboration import (
     assert_user_can_participate_in_collaboration_conversation,
     assert_user_can_view_collaboration_conversation,
+    build_collaboration_message_metadata_payload,
     create_group_collaboration_conversation_record,
     create_personal_collaboration_conversation_record,
     delete_personal_collaboration_conversation,
@@ -28,6 +29,7 @@ from functions_collaboration import (
     persist_collaboration_message,
     record_personal_invite_response,
     remove_personal_collaboration_member,
+    resolve_collaboration_mentions,
     serialize_collaboration_conversation,
     serialize_collaboration_message,
     toggle_personal_collaboration_hide,
@@ -902,11 +904,16 @@ def register_route_backend_collaboration(app):
 
             conversation_doc = get_collaboration_conversation(conversation_id)
             assert_user_can_participate_in_collaboration_conversation(current_user['user_id'], conversation_doc)
+            mentioned_participants = resolve_collaboration_mentions(
+                conversation_doc,
+                data.get('mentioned_participants'),
+            )
             message_doc, updated_conversation_doc = persist_collaboration_message(
                 conversation_doc,
                 current_user,
                 message_content,
                 reply_to_message_id=reply_to_message_id,
+                mentioned_participants=mentioned_participants,
             )
             serialized_message = serialize_collaboration_message(message_doc)
             serialized_conversation = serialize_collaboration_conversation(

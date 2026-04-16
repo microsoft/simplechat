@@ -1,8 +1,8 @@
 # test_chat_collaboration_ui_scaffolding.py
 """
 UI test for chat collaboration scaffolding.
-Version: 0.241.012
-Implemented in: 0.241.012
+Version: 0.241.014
+Implemented in: 0.241.014
 
 This test ensures the authenticated chats page loads the collaboration UI
 containers needed for participant management and @-mention suggestions without
@@ -59,6 +59,7 @@ def test_chat_collaboration_ui_scaffolding(playwright):
 
         expect(page.locator('#chatbox')).to_be_visible()
         expect(page.locator('#user-input')).to_be_visible()
+        expect(page.locator('#collaboration-reply-preview')).to_have_count(1)
         expect(page.locator('#collaboration-mention-menu')).to_have_count(1)
         expect(page.locator('#collaboration-mention-menu')).to_have_class('list-group collaboration-mention-menu d-none')
         expect(page.locator('#collaboration-participant-modal')).to_have_count(1)
@@ -113,6 +114,54 @@ def test_chat_collaboration_ui_scaffolding(playwright):
                     modalInstance.hide();
                     mockConversationItem.remove();
                 }
+            }
+        """)
+
+        page.evaluate("""
+            () => {
+                const replyPreview = document.getElementById('collaboration-reply-preview');
+                window.chatCollaboration.replyToMessage({
+                    id: 'mock-reply-message',
+                    content: 'Please look at the updated shared reply workflow.',
+                    sender: {
+                        user_id: 'member-user-002',
+                        display_name: 'Member User'
+                    }
+                });
+
+                if (!replyPreview || replyPreview.classList.contains('d-none')) {
+                    throw new Error('Reply preview did not become visible after selecting Reply.');
+                }
+            }
+        """)
+        expect(page.locator('#collaboration-reply-preview')).not_to_have_class('collaboration-reply-preview d-none')
+        expect(page.locator('#collaboration-reply-preview-label')).to_contain_text('Replying to Member User')
+        expect(page.locator('#collaboration-reply-preview-text')).to_contain_text('updated shared reply workflow')
+        page.click('#collaboration-reply-cancel-btn')
+        expect(page.locator('#collaboration-reply-preview')).to_have_class('collaboration-reply-preview d-none')
+
+        page.evaluate("""
+            () => {
+                const message = document.createElement('div');
+                message.className = 'message collaborator-message';
+                message.innerHTML = `
+                    <div class="message-content">
+                        <img src="/static/images/user-avatar.png" alt="Collaborator Avatar" class="avatar collaborator-avatar" />
+                        <div class="message-bubble">Shared message</div>
+                    </div>
+                `;
+                document.body.appendChild(message);
+
+                const avatar = message.querySelector('.avatar');
+                const styles = window.getComputedStyle(avatar);
+                if (styles.flexShrink !== '0') {
+                    throw new Error(`Expected collaborator avatar flex-shrink to be 0 but received ${styles.flexShrink}.`);
+                }
+                if (styles.minWidth !== '30px') {
+                    throw new Error(`Expected collaborator avatar min-width to be 30px but received ${styles.minWidth}.`);
+                }
+
+                message.remove();
             }
         """)
 

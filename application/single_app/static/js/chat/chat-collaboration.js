@@ -17,11 +17,17 @@ const participantConversationIdInput = document.getElementById('collaboration-pa
 const confirmModalEl = document.getElementById('collaboration-confirm-modal');
 const confirmMessageEl = document.getElementById('collaboration-confirm-message');
 const confirmAddBtn = document.getElementById('collaboration-confirm-add-btn');
+const replyPreviewEl = document.getElementById('collaboration-reply-preview');
+const replyPreviewLabelEl = document.getElementById('collaboration-reply-preview-label');
+const replyPreviewTextEl = document.getElementById('collaboration-reply-preview-text');
+const replyCancelBtn = document.getElementById('collaboration-reply-cancel-btn');
 const sendBtn = document.getElementById('send-btn');
 
 let cachedUserSettingsPromise = null;
 let activeCollaborativeConversationId = null;
 let activeCollaborationEventSource = null;
+let activeSubscriptionStartedAt = 0;
+let activeReplyContext = null;
 let typingUsers = new Map();
 let lastTypingState = false;
 let typingStopHandle = null;
@@ -30,6 +36,9 @@ let activeMentionState = null;
 let pendingParticipantConfirmation = null;
 const notifiedPendingInviteConversationIds = new Set();
 const promptedPendingInviteConversationIds = new Set();
+const seenCollaborationEventKeys = new Set();
+const collaborationMessageCache = new Map();
+const collaborationConversationCache = new Map();
 
 function isCollaborationEnabled() {
     return Boolean(window.appSettings?.enable_collaborative_conversations);
@@ -120,6 +129,24 @@ function normalizeCollaborator(rawUser) {
 }
 
 function normalizeCollaborationConversation(rawConversation = {}) {
+    const normalizedParticipants = Array.isArray(rawConversation.participants)
+        ? rawConversation.participants
+            .map(participant => {
+                const normalizedParticipant = normalizeCollaborator(participant);
+                if (!normalizedParticipant) {
+                    return null;
+                }
+
+                return {
+                    ...participant,
+                    ...normalizedParticipant,
+                    role: String(participant?.role || '').trim(),
+                    status: String(participant?.status || '').trim().toLowerCase(),
+                };
+            })
+            .filter(Boolean)
+        : [];
+
     return {
         ...rawConversation,
         conversation_kind: rawConversation.conversation_kind || 'collaborative',
@@ -127,10 +154,168 @@ function normalizeCollaborationConversation(rawConversation = {}) {
         classification: Array.isArray(rawConversation.classification) ? rawConversation.classification : [],
         tags: Array.isArray(rawConversation.tags) ? rawConversation.tags : [],
         context: Array.isArray(rawConversation.context) ? rawConversation.context : [],
+        participants: normalizedParticipants,
         is_pinned: Boolean(rawConversation.is_pinned),
         is_hidden: Boolean(rawConversation.is_hidden),
         has_unread_assistant_response: Boolean(rawConversation.has_unread_assistant_response),
     };
+}
+
+function cacheCollaborationConversation(rawConversation = {}) {
+    const normalizedConversation = normalizeCollaborationConversation(rawConversation);
+    if (!normalizedConversation.id) {
+        return normalizedConversation;
+    }
+
+    collaborationConversationCache.set(normalizedConversation.id, normalizedConversation);
+    return normalizedConversation;
+}
+
+function getCachedCollaborationConversation(conversationId) {
+    if (!conversationId) {
+        return null;
+    }
+
+    return collaborationConversationCache.get(conversationId) || null;
+}
+
+function getConversationParticipants(conversationId, options = {}) {
+    const currentUserId = getCurrentUserId();
+    const conversation = getCachedCollaborationConversation(conversationId);
+    const participants = Array.isArray(conversation?.participants) ? conversation.participants : [];
+
+    return participants.filter(participant => {
+        const participantUserId = String(participant?.user_id || '').trim();
+        if (!participantUserId) {
+            return false;
+        }
+        if (!options.includeCurrentUser && participantUserId === currentUserId) {
+            return false;
+        }
+
+        const participantStatus = String(participant?.status || '').trim().toLowerCase();
+        return !participantStatus || participantStatus === 'accepted';
+    });
+}
+
+function escapeRegExp(value) {
+    return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function matchesMentionQuery(collaborator, query = '') {
+    const normalizedQuery = String(query || '').trim().toLowerCase();
+    if (!normalizedQuery) {
+        return true;
+    }
+
+    const haystack = `${collaborator?.display_name || ''} ${collaborator?.email || ''}`.trim().toLowerCase();
+    return haystack.includes(normalizedQuery);
+}
+
+function buildMentionSuggestionsFromParticipants(conversationId, query = '') {
+    return getConversationParticipants(conversationId).filter(participant => matchesMentionQuery(participant, query)).map(participant => ({
+        ...participant,
+        action: 'tag',
+        source: 'participant',
+    }));
+}
+
+async function loadMentionSuggestions(conversationId, query = '') {
+    const participantSuggestions = buildMentionSuggestionsFromParticipants(conversationId, query);
+    const seenUserIds = new Set(participantSuggestions.map(participant => participant.user_id));
+
+    if (!canUseParticipantFlow(conversationId)) {
+        return participantSuggestions;
+    }
+
+    const collaboratorSuggestions = await searchLocalCollaborators(query, {
+        recentOnly: false,
+        limit: DEFAULT_SUGGESTION_LIMIT,
+    });
+    const inviteSuggestions = collaboratorSuggestions
+        .map(collaborator => normalizeCollaborator(collaborator))
+        .filter(Boolean)
+        .filter(collaborator => !seenUserIds.has(collaborator.user_id))
+        .map(collaborator => ({
+            ...collaborator,
+            action: 'invite',
+            source: collaborator.source || 'local',
+        }));
+
+    return [...participantSuggestions, ...inviteSuggestions];
+}
+
+function replaceComposerMention(mentionState, replacementText) {
+    if (!userInput || !mentionState) {
+        return;
+    }
+
+    const beforeMention = userInput.value.slice(0, mentionState.startIndex);
+    const afterMention = userInput.value.slice(mentionState.endIndex);
+    const trailingSpacer = afterMention.startsWith(' ') || !afterMention ? '' : ' ';
+    const nextValue = `${beforeMention}${replacementText} ${trailingSpacer}${afterMention}`.replace(/\s{2,}/g, ' ');
+    const nextCaretIndex = beforeMention.length + replacementText.length + 1;
+
+    userInput.value = nextValue;
+    userInput.setSelectionRange(nextCaretIndex, nextCaretIndex);
+    updateSendButtonVisibility();
+    hideMentionMenu();
+    userInput.focus();
+}
+
+function insertParticipantMention(collaborator, mentionState) {
+    const normalizedCollaborator = normalizeCollaborator(collaborator);
+    if (!normalizedCollaborator) {
+        return;
+    }
+
+    replaceComposerMention(mentionState, `@${normalizedCollaborator.display_name}`);
+}
+
+function extractMentionedParticipantsFromMessage(messageText, conversationId) {
+    const normalizedMessageText = String(messageText || '');
+    if (!normalizedMessageText.trim()) {
+        return [];
+    }
+
+    const participants = getConversationParticipants(conversationId, { includeCurrentUser: true })
+        .slice()
+        .sort((left, right) => String(right?.display_name || '').length - String(left?.display_name || '').length);
+
+    const mentionedParticipants = [];
+    const seenUserIds = new Set();
+    participants.forEach(participant => {
+        const displayName = String(participant?.display_name || '').trim();
+        if (!displayName || seenUserIds.has(participant.user_id)) {
+            return;
+        }
+
+        const mentionPattern = new RegExp(`(^|\\s)@${escapeRegExp(displayName)}(?=$|\\s|[.,!?;:])`, 'i');
+        if (!mentionPattern.test(normalizedMessageText)) {
+            return;
+        }
+
+        seenUserIds.add(participant.user_id);
+        mentionedParticipants.push({
+            user_id: participant.user_id,
+            display_name: participant.display_name,
+            email: participant.email || '',
+        });
+    });
+
+    return mentionedParticipants;
+}
+
+function isCurrentUserMentioned(message = {}) {
+    const currentUserId = getCurrentUserId();
+    if (!currentUserId) {
+        return false;
+    }
+
+    const mentionedUserIds = Array.isArray(message?.metadata?.mentioned_user_ids)
+        ? message.metadata.mentioned_user_ids.map(userId => String(userId || '').trim())
+        : [];
+    return mentionedUserIds.includes(currentUserId);
 }
 
 function escapeHtml(value) {
@@ -140,6 +325,148 @@ function escapeHtml(value) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+}
+
+function buildMessagePreview(content, maxLength = 140) {
+    const plainText = String(content ?? '').replace(/\s+/g, ' ').trim();
+    if (!plainText) {
+        return 'No message content';
+    }
+    if (plainText.length <= maxLength) {
+        return plainText;
+    }
+    return `${plainText.slice(0, maxLength - 3)}...`;
+}
+
+function buildReplyContext(message = {}) {
+    const sender = normalizeCollaborator(message.sender || message.metadata?.sender || {}) || {};
+    return {
+        message_id: String(message.id || '').trim(),
+        sender_display_name: sender.display_name || 'Participant',
+        content_preview: buildMessagePreview(message.content || ''),
+    };
+}
+
+function renderReplyPreview() {
+    if (!replyPreviewEl || !replyPreviewLabelEl || !replyPreviewTextEl) {
+        return;
+    }
+
+    if (!activeReplyContext) {
+        replyPreviewEl.classList.add('d-none');
+        replyPreviewLabelEl.textContent = '';
+        replyPreviewTextEl.textContent = '';
+        return;
+    }
+
+    replyPreviewLabelEl.textContent = `Replying to ${activeReplyContext.sender_display_name || 'Participant'}`;
+    replyPreviewTextEl.textContent = activeReplyContext.content_preview || 'No message content';
+    replyPreviewEl.classList.remove('d-none');
+}
+
+function clearReplyTarget(options = {}) {
+    activeReplyContext = null;
+    renderReplyPreview();
+    if (options.focusComposer !== false) {
+        userInput?.focus();
+    }
+}
+
+function replyToMessage(message = {}) {
+    const messageId = String(message.id || '').trim();
+    if (!messageId) {
+        return;
+    }
+
+    if (!canPostMessages(window.chatConversations?.getCurrentConversationId?.())) {
+        showToast('Accept the invite before replying in this shared conversation.', 'warning');
+        return;
+    }
+
+    activeReplyContext = buildReplyContext(message);
+    renderReplyPreview();
+    userInput?.focus();
+}
+
+function getPendingMessageContext() {
+    const conversationId = window.chatConversations?.getCurrentConversationId?.();
+    const mentionedParticipants = extractMentionedParticipantsFromMessage(userInput?.value || '', conversationId);
+    if (!activeReplyContext && mentionedParticipants.length === 0) {
+        return null;
+    }
+
+    const metadata = {};
+    if (activeReplyContext) {
+        metadata.reply_context = {
+            ...activeReplyContext,
+        };
+    }
+    if (mentionedParticipants.length > 0) {
+        metadata.mentioned_participants = mentionedParticipants;
+        metadata.mentioned_user_ids = mentionedParticipants.map(participant => participant.user_id);
+    }
+
+    return {
+        reply_to_message_id: activeReplyContext?.message_id || null,
+        metadata,
+    };
+}
+
+function cacheCollaborationMessage(message = {}) {
+    const messageId = String(message.id || '').trim();
+    if (!messageId) {
+        return;
+    }
+
+    collaborationMessageCache.set(messageId, {
+        ...message,
+        metadata: message.metadata || {},
+        sender: message.sender || {},
+    });
+}
+
+function clearMessageCache() {
+    collaborationMessageCache.clear();
+}
+
+function decorateReplyMessage(message = {}) {
+    const replyToMessageId = String(message.reply_to_message_id || '').trim();
+    if (!replyToMessageId) {
+        return message;
+    }
+
+    const replyMessage = collaborationMessageCache.get(replyToMessageId);
+    if (!replyMessage) {
+        return message;
+    }
+
+    return {
+        ...message,
+        reply_message: replyMessage,
+    };
+}
+
+function buildEventKey(eventEnvelope = {}) {
+    const payload = eventEnvelope.payload || {};
+    return [
+        eventEnvelope.conversation_id || payload.conversation?.id || '',
+        eventEnvelope.event_type || '',
+        payload.message?.id || payload.participant?.user_id || payload.user?.user_id || payload.deleted_by_user_id || '',
+        eventEnvelope.occurred_at || '',
+    ].join('|');
+}
+
+function isReplayEvent(eventEnvelope = {}) {
+    if (!activeSubscriptionStartedAt) {
+        return false;
+    }
+
+    const occurredAt = Date.parse(eventEnvelope.occurred_at || '');
+    if (Number.isNaN(occurredAt)) {
+        return false;
+    }
+
+    return occurredAt < (activeSubscriptionStartedAt - 1000);
 }
 
 async function getCachedUserSettings() {
@@ -385,9 +712,14 @@ async function loadConversationMessages(conversationId) {
 
     chatbox.innerHTML = '';
     clearTypingState();
+    clearMessageCache();
 
     const messages = Array.isArray(payload.messages) ? payload.messages : [];
-    messages.forEach(message => renderCollaborationMessage(message));
+    messages.forEach(message => {
+        const decoratedMessage = decorateReplyMessage(message);
+        renderCollaborationMessage(decoratedMessage);
+        cacheCollaborationMessage(message);
+    });
     return messages;
 }
 
@@ -419,6 +751,8 @@ function disconnectConversationEvents() {
         activeCollaborationEventSource = null;
     }
 
+    activeSubscriptionStartedAt = 0;
+
     if (typingStopHandle) {
         window.clearTimeout(typingStopHandle);
         typingStopHandle = null;
@@ -439,6 +773,18 @@ function handleConversationEvent(eventEnvelope = {}) {
         return;
     }
 
+    const eventKey = buildEventKey(eventEnvelope);
+    if (eventKey && seenCollaborationEventKeys.has(eventKey)) {
+        return;
+    }
+    if (eventKey) {
+        seenCollaborationEventKeys.add(eventKey);
+    }
+
+    if (isReplayEvent(eventEnvelope)) {
+        return;
+    }
+
     const payload = eventEnvelope.payload || {};
     if (payload.conversation) {
         const normalizedConversation = normalizeCollaborationConversation(payload.conversation);
@@ -450,10 +796,12 @@ function handleConversationEvent(eventEnvelope = {}) {
     }
 
     if (eventEnvelope.event_type === 'collaboration.message.created' && payload.message) {
+        const decoratedMessage = decorateReplyMessage(payload.message);
+        cacheCollaborationMessage(payload.message);
         if (reconcilePendingCollaborativeUserMessage(payload.message)) {
             return;
         }
-        renderCollaborationMessage(payload.message, { isNewMessage: true });
+        renderCollaborationMessage(decoratedMessage, { isNewMessage: true });
         return;
     }
 
@@ -506,6 +854,7 @@ function subscribeToConversationEvents(conversationId) {
 
     disconnectConversationEvents();
     activeCollaborativeConversationId = conversationId;
+    activeSubscriptionStartedAt = Date.now();
     activeCollaborationEventSource = new EventSource(`/api/collaboration/conversations/${encodeURIComponent(conversationId)}/events`);
     activeCollaborationEventSource.onmessage = event => {
         if (!event?.data) {
@@ -588,6 +937,7 @@ async function fetchCollaborationConversationList() {
 async function activateConversation(conversationId, metadata = null) {
     const conversationMetadata = metadata || await fetchConversationMetadata(conversationId);
     updateComposerAvailability(conversationMetadata);
+    clearReplyTarget({ focusComposer: false });
     await loadConversationMessages(conversationId);
     subscribeToConversationEvents(conversationId);
 
@@ -607,6 +957,7 @@ async function activateConversation(conversationId, metadata = null) {
 function deactivateConversation() {
     disconnectConversationEvents();
     updateComposerAvailability(null);
+    clearReplyTarget({ focusComposer: false });
     hideMentionMenu();
 }
 
@@ -623,6 +974,7 @@ async function sendCollaborativeMessage(messageText, tempMessageId = null) {
         },
         body: JSON.stringify({
             content: messageText,
+            reply_to_message_id: activeReplyContext?.message_id || null,
         }),
     });
 
@@ -633,12 +985,14 @@ async function sendCollaborativeMessage(messageText, tempMessageId = null) {
     }
 
     if (payload.message) {
+        cacheCollaborationMessage(payload.message);
         if (!reconcilePendingCollaborativeUserMessage(payload.message, tempMessageId)) {
-            renderCollaborationMessage(payload.message, { isNewMessage: true });
+            renderCollaborationMessage(decorateReplyMessage(payload.message), { isNewMessage: true });
         }
     }
 
     setTypingState(false, { force: true });
+    clearReplyTarget();
     return payload;
 }
 
@@ -1078,6 +1432,10 @@ function handleComposerInput() {
 
 function handleComposerKeydown(event) {
     if (!activeMentionState || mentionMenu?.classList.contains('d-none')) {
+        if (event.key === 'Escape' && activeReplyContext) {
+            clearReplyTarget();
+            return true;
+        }
         return false;
     }
 
@@ -1145,6 +1503,12 @@ function initializeUi() {
         });
     }
 
+    if (replyCancelBtn) {
+        replyCancelBtn.addEventListener('click', () => {
+            clearReplyTarget();
+        });
+    }
+
     document.addEventListener('click', event => {
         if (!mentionMenu || mentionMenu.classList.contains('d-none')) {
             return;
@@ -1159,15 +1523,18 @@ function initializeUi() {
 
 window.chatCollaboration = {
     activateConversation,
+    clearReplyTarget,
     deactivateConversation,
     fetchCollaborationConversationList,
     fetchConversationMetadata,
+    getPendingMessageContext,
     handleComposerBlur,
     handleComposerInput,
     handleComposerKeydown,
     isCollaborationConversation,
     openParticipantPicker,
     removeParticipant,
+    replyToMessage,
     respondToInvite,
     sendCollaborativeMessage,
     updateParticipantRole,

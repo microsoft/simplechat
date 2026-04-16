@@ -493,6 +493,7 @@ def build_collaboration_message_doc(
     sender_user,
     content,
     reply_to_message_id=None,
+    mentioned_participants=None,
     message_kind=MESSAGE_KIND_HUMAN,
     message_id=None,
     timestamp=None,
@@ -514,6 +515,36 @@ def build_collaboration_message_doc(
     else:
         role = 'user'
 
+    normalized_mentions = []
+    seen_mentioned_user_ids = set()
+    for raw_participant in mentioned_participants or []:
+        mentioned_user = normalize_collaboration_user(raw_participant)
+        if not mentioned_user:
+            continue
+
+        mentioned_user_id = mentioned_user['user_id']
+        if mentioned_user_id in seen_mentioned_user_ids:
+            continue
+
+        seen_mentioned_user_ids.add(mentioned_user_id)
+        normalized_mentions.append(mentioned_user)
+
+    metadata = {
+        'sender': normalized_sender,
+        'user_info': {
+            'user_id': normalized_sender['user_id'],
+            'display_name': normalized_sender['display_name'],
+            'email': normalized_sender['email'],
+            'username': normalized_sender['user_id'],
+            'timestamp': normalized_timestamp,
+        },
+        'explicit_ai_invocation': normalized_message_kind == MESSAGE_KIND_AI_REQUEST,
+        'last_message_preview': _truncate_preview(normalized_content),
+    }
+    if normalized_mentions:
+        metadata['mentioned_participants'] = normalized_mentions
+        metadata['mentioned_user_ids'] = [participant['user_id'] for participant in normalized_mentions]
+
     return {
         'id': _clean_string(message_id) or f'{normalized_conversation_id}_{uuid.uuid4().hex}',
         'conversation_id': normalized_conversation_id,
@@ -522,11 +553,7 @@ def build_collaboration_message_doc(
         'content': normalized_content,
         'reply_to_message_id': _clean_string(reply_to_message_id) or None,
         'timestamp': normalized_timestamp,
-        'metadata': {
-            'sender': normalized_sender,
-            'explicit_ai_invocation': normalized_message_kind == MESSAGE_KIND_AI_REQUEST,
-            'last_message_preview': _truncate_preview(normalized_content),
-        },
+        'metadata': metadata,
     }
 
 
@@ -594,8 +621,13 @@ def build_collaboration_message_doc_from_legacy(
         timestamp=legacy_message.get('timestamp'),
     )
 
-    collaboration_message['metadata']['source_message_id'] = _clean_string(legacy_message.get('id')) or None
-    collaboration_message['metadata']['source_role'] = legacy_role or None
+    collaboration_metadata = collaboration_message.get('metadata', {})
+    collaboration_message['metadata'] = {
+        **dict(legacy_metadata),
+        **collaboration_metadata,
+        'source_message_id': _clean_string(legacy_message.get('id')) or None,
+        'source_role': legacy_role or None,
+    }
     if legacy_role == 'image':
         collaboration_message['metadata']['legacy_image_url'] = _clean_string(legacy_message.get('content')) or None
     if legacy_role == 'file':
@@ -612,6 +644,8 @@ def build_collaboration_message_doc_from_legacy(
         'extracted_text',
         'vision_analysis',
         'filename',
+        'prompt',
+        'is_table',
     ):
         if optional_key in legacy_message:
             collaboration_message[optional_key] = legacy_message.get(optional_key)

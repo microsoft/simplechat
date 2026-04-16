@@ -7,6 +7,7 @@ from functions_debug import debug_print
 from functions_chat import sort_messages_by_thread
 from functions_collaboration import (
     assert_user_can_view_collaboration_conversation,
+    build_collaboration_message_metadata_payload,
     get_collaboration_conversation,
     get_collaboration_message,
 )
@@ -266,9 +267,7 @@ def register_route_frontend_conversations(app):
                     conversation,
                     allow_pending=True,
                 )
-                if message.get('role', '') == 'user':
-                    return jsonify(message.get('metadata', {}))
-                return jsonify(message)
+                return jsonify(build_collaboration_message_metadata_payload(message, conversation))
                 
             message = messages[0]
             

@@ -2,6 +2,8 @@
 
 """Persistence, authorization, and serialization helpers for collaborative conversations."""
 
+from copy import deepcopy
+
 from config import *
 from collaboration_models import (
     COLLABORATION_KIND,
@@ -122,6 +124,261 @@ def serialize_collaboration_message(message_doc):
         'agent_display_name': message_doc.get('agent_display_name'),
         'agent_name': message_doc.get('agent_name'),
     }
+
+
+def _get_collaboration_source_message(message_doc):
+    metadata = message_doc.get('metadata', {}) if isinstance(message_doc, dict) else {}
+    source_message_id = str(metadata.get('source_message_id') or '').strip()
+    if not source_message_id:
+        return None
+
+    query = 'SELECT TOP 1 * FROM c WHERE c.id = @message_id'
+    items = list(cosmos_messages_container.query_items(
+        query=query,
+        parameters=[{'name': '@message_id', 'value': source_message_id}],
+        enable_cross_partition_query=True,
+    ))
+    return items[0] if items else None
+
+
+def _get_collaboration_display_role(message_doc):
+    metadata = message_doc.get('metadata', {}) if isinstance(message_doc, dict) else {}
+    source_role = str(metadata.get('source_role') or '').strip().lower()
+    if source_role == 'safety':
+        return 'assistant'
+    if source_role in ('assistant', 'image', 'file'):
+        return source_role
+
+    role = str(message_doc.get('role') or '').strip().lower()
+    return role or 'user'
+
+
+def _build_collaboration_chat_context(conversation_doc, message_doc):
+    scope = conversation_doc.get('scope', {}) if isinstance(conversation_doc, dict) else {}
+    chat_type = str(conversation_doc.get('chat_type') or '').strip().lower()
+    chat_scope = 'group' if chat_type == GROUP_MULTI_USER_CHAT_TYPE else 'personal'
+    return {
+        'conversation_id': message_doc.get('conversation_id') or conversation_doc.get('id'),
+        'chat_type': chat_scope,
+        'workspace_context': chat_scope,
+        'group_id': scope.get('group_id'),
+        'group_name': scope.get('group_name'),
+        'conversation_title': conversation_doc.get('title'),
+    }
+
+
+def _build_collaboration_mentions(message_doc):
+    metadata = message_doc.get('metadata', {}) if isinstance(message_doc, dict) else {}
+    mentions = []
+    seen_user_ids = set()
+    for raw_participant in list(metadata.get('mentioned_participants', []) or []):
+        participant = normalize_collaboration_user(raw_participant)
+        if not participant:
+            continue
+
+        participant_user_id = participant['user_id']
+        if participant_user_id in seen_user_ids:
+            continue
+
+        seen_user_ids.add(participant_user_id)
+        mentions.append(participant)
+    return mentions
+
+
+def _build_collaboration_reply_context(message_doc):
+    reply_to_message_id = str(message_doc.get('reply_to_message_id') or '').strip()
+    if not reply_to_message_id:
+        return None
+
+    try:
+        reply_message_doc = get_collaboration_message(reply_to_message_id)
+    except CosmosResourceNotFoundError:
+        return {
+            'message_id': reply_to_message_id,
+        }
+
+    reply_metadata = reply_message_doc.get('metadata', {}) if isinstance(reply_message_doc, dict) else {}
+    reply_sender = normalize_collaboration_user(reply_metadata.get('sender') or {}) or {
+        'user_id': '',
+        'display_name': 'Participant',
+        'email': '',
+    }
+    reply_preview = str(reply_message_doc.get('content') or '').strip()
+    if len(reply_preview) > 160:
+        reply_preview = f'{reply_preview[:157]}...'
+
+    return {
+        'message_id': reply_message_doc.get('id') or reply_to_message_id,
+        'sender_display_name': reply_sender.get('display_name') or 'Participant',
+        'content_preview': reply_preview or 'No message content',
+    }
+
+
+def _build_collaboration_generation_details(message_doc, source_message_doc=None):
+    generation_details = {}
+    for field_name, value in {
+        'selected_model': message_doc.get('model_deployment_name') or (source_message_doc or {}).get('model_deployment_name'),
+        'agent_name': message_doc.get('agent_name') or (source_message_doc or {}).get('agent_name'),
+        'agent_display_name': message_doc.get('agent_display_name') or (source_message_doc or {}).get('agent_display_name'),
+        'augmented': message_doc.get('augmented') if 'augmented' in message_doc else (source_message_doc or {}).get('augmented'),
+    }.items():
+        if value not in (None, '', []):
+            generation_details[field_name] = value
+
+    hybrid_citations = list(message_doc.get('hybrid_citations', []) or (source_message_doc or {}).get('hybrid_citations', []) or [])
+    web_search_citations = list(message_doc.get('web_search_citations', []) or (source_message_doc or {}).get('web_search_citations', []) or [])
+    agent_citations = list(message_doc.get('agent_citations', []) or (source_message_doc or {}).get('agent_citations', []) or [])
+
+    if hybrid_citations:
+        generation_details['document_citation_count'] = len(hybrid_citations)
+    if web_search_citations:
+        generation_details['web_citation_count'] = len(web_search_citations)
+    if agent_citations:
+        generation_details['agent_citation_count'] = len(agent_citations)
+
+    return generation_details
+
+
+def resolve_collaboration_mentions(conversation_doc, raw_mentions):
+    normalized_mentions = []
+    if not isinstance(raw_mentions, list):
+        return normalized_mentions
+
+    accepted_participants = {}
+    for participant in list((conversation_doc or {}).get('participants', []) or []):
+        participant_user_id = str(participant.get('user_id') or '').strip()
+        participant_status = str(participant.get('status') or '').strip().lower()
+        if not participant_user_id or participant_status != MEMBERSHIP_STATUS_ACCEPTED:
+            continue
+        accepted_participants[participant_user_id] = participant
+
+    seen_user_ids = set()
+    for raw_participant in raw_mentions:
+        candidate = normalize_collaboration_user(raw_participant)
+        if not candidate:
+            continue
+
+        candidate_user_id = candidate['user_id']
+        if candidate_user_id in seen_user_ids:
+            continue
+
+        participant = accepted_participants.get(candidate_user_id)
+        if not participant:
+            continue
+
+        seen_user_ids.add(candidate_user_id)
+        normalized_mentions.append({
+            'user_id': candidate_user_id,
+            'display_name': str(participant.get('display_name') or candidate.get('display_name') or '').strip() or 'Unknown User',
+            'email': str(participant.get('email') or candidate.get('email') or '').strip(),
+        })
+
+    return normalized_mentions
+
+
+def build_collaboration_message_metadata_payload(message_doc, conversation_doc):
+    source_message_doc = _get_collaboration_source_message(message_doc)
+    message_metadata = deepcopy(message_doc.get('metadata', {}) if isinstance(message_doc.get('metadata'), dict) else {})
+    source_metadata = deepcopy(source_message_doc.get('metadata', {}) if isinstance((source_message_doc or {}).get('metadata'), dict) else {})
+    merged_metadata = {
+        **source_metadata,
+        **message_metadata,
+    }
+
+    chat_context = _build_collaboration_chat_context(conversation_doc, message_doc)
+    mentions = _build_collaboration_mentions(message_doc)
+    reply_context = _build_collaboration_reply_context(message_doc)
+    display_role = _get_collaboration_display_role(message_doc)
+    sender_summary = normalize_collaboration_user(merged_metadata.get('sender') or {}) or {
+        'user_id': '',
+        'display_name': 'Unknown User',
+        'email': '',
+    }
+    generation_details = _build_collaboration_generation_details(message_doc, source_message_doc=source_message_doc)
+    collaboration_section = {
+        'conversation_kind': conversation_doc.get('conversation_kind'),
+        'conversation_title': conversation_doc.get('title'),
+        'chat_type': conversation_doc.get('chat_type'),
+        'participant_count': int(conversation_doc.get('participant_count', 0) or 0),
+        'message_kind': message_doc.get('message_kind'),
+        'display_role': display_role,
+    }
+
+    merged_metadata['chat_context'] = {
+        **chat_context,
+        **dict(merged_metadata.get('chat_context', {}) or {}),
+    }
+    merged_metadata['collaboration'] = {
+        **dict(merged_metadata.get('collaboration', {}) or {}),
+        **collaboration_section,
+    }
+    merged_metadata['user_info'] = {
+        **dict(merged_metadata.get('user_info', {}) or {}),
+        'user_id': sender_summary.get('user_id'),
+        'display_name': sender_summary.get('display_name'),
+        'email': sender_summary.get('email'),
+        'username': sender_summary.get('user_id'),
+        'timestamp': message_doc.get('timestamp'),
+    }
+    merged_metadata['message_details'] = {
+        'message_id': message_doc.get('id'),
+        'conversation_id': message_doc.get('conversation_id'),
+        'role': message_doc.get('role'),
+        'display_role': display_role,
+        'message_kind': message_doc.get('message_kind'),
+        'timestamp': message_doc.get('timestamp'),
+        'source_role': merged_metadata.get('source_role'),
+        'explicit_ai_invocation': bool(merged_metadata.get('explicit_ai_invocation', False)),
+    }
+
+    if mentions:
+        merged_metadata['mentions'] = mentions
+    if reply_context:
+        merged_metadata['reply_context'] = reply_context
+    if generation_details:
+        merged_metadata['generation_details'] = generation_details
+
+    if display_role == 'file':
+        merged_metadata['file_details'] = {
+            'filename': message_doc.get('filename') or (source_message_doc or {}).get('filename') or merged_metadata.get('legacy_filename'),
+            'source_message_id': merged_metadata.get('source_message_id'),
+            'is_table': (source_message_doc or {}).get('is_table'),
+        }
+    if display_role == 'image':
+        merged_metadata['image_details'] = {
+            'filename': message_doc.get('filename') or (source_message_doc or {}).get('filename') or merged_metadata.get('legacy_filename'),
+            'image_url': merged_metadata.get('legacy_image_url') or (source_message_doc or {}).get('content'),
+            'is_user_upload': bool(merged_metadata.get('is_user_upload', False)),
+            'extracted_text': message_doc.get('extracted_text') or (source_message_doc or {}).get('extracted_text'),
+            'vision_analysis': message_doc.get('vision_analysis') or (source_message_doc or {}).get('vision_analysis'),
+        }
+
+    if str(message_doc.get('role') or '').strip().lower() != 'assistant':
+        return merged_metadata
+
+    payload = deepcopy(source_message_doc or {})
+    payload.update({
+        'id': message_doc.get('id'),
+        'conversation_id': message_doc.get('conversation_id'),
+        'role': display_role,
+        'message_kind': message_doc.get('message_kind'),
+        'content': message_doc.get('content'),
+        'timestamp': message_doc.get('timestamp'),
+        'model_deployment_name': message_doc.get('model_deployment_name') or payload.get('model_deployment_name'),
+        'augmented': message_doc.get('augmented') if 'augmented' in message_doc else payload.get('augmented'),
+        'hybrid_citations': deepcopy(message_doc.get('hybrid_citations', []) or payload.get('hybrid_citations', []) or []),
+        'web_search_citations': deepcopy(message_doc.get('web_search_citations', []) or payload.get('web_search_citations', []) or []),
+        'agent_citations': deepcopy(message_doc.get('agent_citations', []) or payload.get('agent_citations', []) or []),
+        'agent_display_name': message_doc.get('agent_display_name') or payload.get('agent_display_name'),
+        'agent_name': message_doc.get('agent_name') or payload.get('agent_name'),
+        'filename': message_doc.get('filename') or payload.get('filename') or merged_metadata.get('legacy_filename'),
+        'prompt': message_doc.get('prompt') or payload.get('prompt'),
+        'is_table': message_doc.get('is_table') if 'is_table' in message_doc else payload.get('is_table'),
+        'extracted_text': message_doc.get('extracted_text') or payload.get('extracted_text'),
+        'vision_analysis': message_doc.get('vision_analysis') or payload.get('vision_analysis'),
+    })
+    payload['metadata'] = merged_metadata
+    return payload
 
 
 def serialize_collaboration_conversation(conversation_doc, current_user_id, user_state=None):
@@ -717,13 +974,20 @@ def list_collaboration_messages(conversation_id):
     ))
 
 
-def persist_collaboration_message(conversation_doc, sender_user, content, reply_to_message_id=None):
+def persist_collaboration_message(
+    conversation_doc,
+    sender_user,
+    content,
+    reply_to_message_id=None,
+    mentioned_participants=None,
+):
     conversation_id = conversation_doc.get('id')
     message_doc = build_collaboration_message_doc(
         conversation_id=conversation_id,
         sender_user=sender_user,
         content=content,
         reply_to_message_id=reply_to_message_id,
+        mentioned_participants=mentioned_participants,
         message_kind=MESSAGE_KIND_HUMAN,
         timestamp=utc_now_iso(),
     )
