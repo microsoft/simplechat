@@ -787,7 +787,7 @@ function handleConversationEvent(eventEnvelope = {}) {
 
     const payload = eventEnvelope.payload || {};
     if (payload.conversation) {
-        const normalizedConversation = normalizeCollaborationConversation(payload.conversation);
+        const normalizedConversation = cacheCollaborationConversation(payload.conversation);
         setConversationDataset(normalizedConversation.id, normalizedConversation);
         applyConversationMetadataUpdate(normalizedConversation.id, normalizedConversation);
         if (!['collaboration.message.created', 'collaboration.typing.updated'].includes(eventEnvelope.event_type)) {
@@ -796,6 +796,12 @@ function handleConversationEvent(eventEnvelope = {}) {
     }
 
     if (eventEnvelope.event_type === 'collaboration.message.created' && payload.message) {
+        const senderUserId = String(payload.message?.sender?.user_id || payload.message?.metadata?.sender?.user_id || '').trim();
+        if (senderUserId && senderUserId !== getCurrentUserId() && isCurrentUserMentioned(payload.message)) {
+            const senderName = normalizeCollaborator(payload.message.sender || payload.message.metadata?.sender || {})?.display_name || 'A participant';
+            showToast(`${senderName} tagged you in a shared message.`, 'info');
+        }
+
         const decoratedMessage = decorateReplyMessage(payload.message);
         cacheCollaborationMessage(payload.message);
         if (reconcilePendingCollaborativeUserMessage(payload.message)) {
@@ -874,7 +880,7 @@ function subscribeToConversationEvents(conversationId) {
 
 async function fetchConversationMetadata(conversationId) {
     const payload = await fetchJson(`/api/collaboration/conversations/${conversationId}`);
-    const normalizedConversation = normalizeCollaborationConversation(payload.conversation || {});
+    const normalizedConversation = cacheCollaborationConversation(payload.conversation || {});
     setConversationDataset(conversationId, normalizedConversation);
     applyConversationMetadataUpdate(conversationId, normalizedConversation);
     return normalizedConversation;
@@ -929,7 +935,7 @@ async function fetchCollaborationConversationList() {
 
     const payload = await fetchJson('/api/collaboration/conversations?include_pending=true');
     const conversations = Array.isArray(payload.conversations) ? payload.conversations : [];
-    const normalizedConversations = conversations.map(conversation => normalizeCollaborationConversation(conversation));
+    const normalizedConversations = conversations.map(conversation => cacheCollaborationConversation(conversation));
     notifyPendingInvites(normalizedConversations);
     return normalizedConversations;
 }
@@ -967,6 +973,8 @@ async function sendCollaborativeMessage(messageText, tempMessageId = null) {
         return null;
     }
 
+    const mentionedParticipants = extractMentionedParticipantsFromMessage(messageText, conversationId);
+
     const payload = await fetchJson(`/api/collaboration/conversations/${conversationId}/messages`, {
         method: 'POST',
         headers: {
@@ -975,11 +983,12 @@ async function sendCollaborativeMessage(messageText, tempMessageId = null) {
         body: JSON.stringify({
             content: messageText,
             reply_to_message_id: activeReplyContext?.message_id || null,
+            mentioned_participants: mentionedParticipants,
         }),
     });
 
     if (payload.conversation) {
-        const normalizedConversation = normalizeCollaborationConversation(payload.conversation);
+        const normalizedConversation = cacheCollaborationConversation(payload.conversation);
         setConversationDataset(conversationId, normalizedConversation);
         applyConversationMetadataUpdate(conversationId, normalizedConversation);
     }
@@ -1061,9 +1070,11 @@ function buildSuggestionItemHtml(suggestion) {
     const subtitle = suggestion.email
         ? `<div class="small text-muted">${suggestion.email}</div>`
         : '<div class="small text-muted">No email recorded</div>';
-    const sourceLabel = suggestion.source === 'recent'
+    const sourceLabel = suggestion.action === 'tag'
+        ? '<span class="badge bg-success-subtle text-success-emphasis ms-2">Tag</span>'
+        : suggestion.source === 'recent'
         ? '<span class="badge bg-secondary-subtle text-secondary-emphasis ms-2">Recent</span>'
-        : '<span class="badge bg-light text-muted ms-2">Local</span>';
+        : '<span class="badge bg-light text-muted ms-2">Invite</span>';
 
     return `
         <div class="d-flex justify-content-between align-items-start gap-2">
@@ -1117,6 +1128,11 @@ function renderMentionMenu(results, mentionState) {
         button.setAttribute('data-index', String(index));
         button.addEventListener('mousedown', event => {
             event.preventDefault();
+            if (result.action === 'tag') {
+                insertParticipantMention(result, mentionState);
+                return;
+            }
+
             openParticipantConfirmation(result, {
                 conversationId: window.chatConversations?.getCurrentConversationId?.(),
                 source: 'mention',
@@ -1141,7 +1157,7 @@ function updateMentionMenuActiveItem() {
 
 async function refreshMentionSuggestions() {
     const conversationId = window.chatConversations?.getCurrentConversationId?.();
-    if (!conversationId || !canUseParticipantFlow(conversationId)) {
+    if (!conversationId) {
         hideMentionMenu();
         return;
     }
@@ -1154,7 +1170,7 @@ async function refreshMentionSuggestions() {
 
     const searchToken = ++mentionSearchToken;
     try {
-        const results = await searchLocalCollaborators(mentionState.query, { recentOnly: false, limit: DEFAULT_SUGGESTION_LIMIT });
+        const results = await loadMentionSuggestions(conversationId, mentionState.query);
         if (searchToken !== mentionSearchToken) {
             return;
         }
@@ -1457,11 +1473,15 @@ function handleComposerKeydown(event) {
         event.preventDefault();
         const collaborator = activeMentionState.results[activeMentionState.activeIndex];
         if (collaborator) {
-            openParticipantConfirmation(collaborator, {
-                conversationId: window.chatConversations?.getCurrentConversationId?.(),
-                source: 'mention',
-                mentionState: activeMentionState,
-            });
+            if (collaborator.action === 'tag') {
+                insertParticipantMention(collaborator, activeMentionState);
+            } else {
+                openParticipantConfirmation(collaborator, {
+                    conversationId: window.chatConversations?.getCurrentConversationId?.(),
+                    source: 'mention',
+                    mentionState: activeMentionState,
+                });
+            }
         }
         return true;
     }
