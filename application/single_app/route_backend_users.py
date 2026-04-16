@@ -1,6 +1,7 @@
 # route_backend_users.py
 
 from config import *
+from collaboration_models import normalize_collaboration_user
 from functions_authentication import *
 from functions_settings import *
 from swagger_wrapper import swagger_route, get_auth_security
@@ -97,6 +98,86 @@ def register_route_backend_users(app):
             return jsonify({
                 "error": f"User not found for oid {user_id}"
             }), 404
+
+    @app.route('/api/user/collaboration-suggestions', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def api_collaboration_suggestions():
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "Unable to identify user"}), 401
+
+        query = str(request.args.get('query') or '').strip().lower()
+        recent_only = str(request.args.get('recent_only', 'false')).strip().lower() == 'true'
+
+        try:
+            requested_limit = int(request.args.get('limit', 8))
+        except (TypeError, ValueError):
+            requested_limit = 8
+        limit = max(1, min(requested_limit, 20))
+
+        user_settings_doc = get_user_settings(user_id) or {}
+        recent_collaborators = ((user_settings_doc.get('settings') or {}).get('recentCollaborators') or [])
+
+        suggestions = []
+        seen_user_ids = set()
+
+        def add_suggestion(raw_value, source_label):
+            fallback_user_id = None
+            if isinstance(raw_value, dict):
+                fallback_user_id = raw_value.get('id')
+
+            normalized_user = normalize_collaboration_user(raw_value, fallback_user_id=fallback_user_id)
+            if not normalized_user:
+                return
+
+            normalized_user_id = normalized_user.get('user_id')
+            if not normalized_user_id or normalized_user_id == user_id or normalized_user_id in seen_user_ids:
+                return
+
+            haystack = f"{normalized_user.get('display_name', '')} {normalized_user.get('email', '')}".strip().lower()
+            if query and query not in haystack:
+                return
+
+            seen_user_ids.add(normalized_user_id)
+            suggestions.append({
+                'user_id': normalized_user_id,
+                'display_name': normalized_user.get('display_name'),
+                'email': normalized_user.get('email'),
+                'source': source_label,
+            })
+
+        for recent_collaborator in recent_collaborators:
+            add_suggestion(recent_collaborator, 'recent')
+            if len(suggestions) >= limit:
+                return jsonify({'results': suggestions[:limit]}), 200
+
+        if not recent_only and query:
+            user_query = (
+                f'SELECT TOP {max(limit * 3, 12)} c.id, c.display_name, c.email FROM c '
+                'WHERE c.id != @current_user_id AND '
+                '((IS_DEFINED(c.display_name) AND CONTAINS(LOWER(c.display_name), @query)) '
+                'OR (IS_DEFINED(c.email) AND CONTAINS(LOWER(c.email), @query)))'
+            )
+            local_results = list(cosmos_user_settings_container.query_items(
+                query=user_query,
+                parameters=[
+                    {'name': '@current_user_id', 'value': user_id},
+                    {'name': '@query', 'value': query},
+                ],
+                enable_cross_partition_query=True,
+            ))
+            for local_result in local_results:
+                add_suggestion({
+                    'id': local_result.get('id'),
+                    'display_name': local_result.get('display_name'),
+                    'email': local_result.get('email'),
+                }, 'local')
+                if len(suggestions) >= limit:
+                    break
+
+        return jsonify({'results': suggestions[:limit]}), 200
     
     @app.route('/api/user/settings', methods=['GET', 'POST'])
     @swagger_route(security=get_auth_security())
@@ -157,6 +238,7 @@ def register_route_backend_users(app):
                     'ttsEnabled', 'ttsVoice', 'ttsSpeed', 'ttsAutoplay',
                     # Tutorial visibility settings
                     'showTutorialButtons',
+                    'recentCollaborators',
                     # Metrics and other settings
                     'metrics', 'lastUpdated'
                 } # Add others as needed

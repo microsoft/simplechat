@@ -114,10 +114,25 @@ function prevStep() {
 
 async function _loadConversationTitles() {
     try {
-        const response = await fetch('/api/get_conversations');
-        if (!response.ok) throw new Error('Failed to fetch conversations');
-        const data = await response.json();
-        const conversations = data.conversations || [];
+        const legacyConversationsRequest = fetch('/api/get_conversations')
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Failed to fetch conversations');
+                }
+                return response.json();
+            });
+        const collaborationConversationsRequest = window.chatCollaboration?.fetchCollaborationConversationList
+            ? window.chatCollaboration.fetchCollaborationConversationList().catch(() => [])
+            : Promise.resolve([]);
+
+        const [legacyData, collaborationConversations] = await Promise.all([
+            legacyConversationsRequest,
+            collaborationConversationsRequest,
+        ]);
+        const conversations = [
+            ...(legacyData?.conversations || []),
+            ...(Array.isArray(collaborationConversations) ? collaborationConversations : []),
+        ];
         exportConversationTitles = {};
         conversations.forEach(c => {
             if (exportConversationIds.includes(c.id)) {

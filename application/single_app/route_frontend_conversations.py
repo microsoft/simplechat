@@ -1,9 +1,15 @@
 # route_frontend_conversations.py
 
 from config import *
+from functions_appinsights import log_event
 from functions_authentication import *
 from functions_debug import debug_print
 from functions_chat import sort_messages_by_thread
+from functions_collaboration import (
+    assert_user_can_view_collaboration_conversation,
+    get_collaboration_conversation,
+    get_collaboration_message,
+)
 from functions_message_artifacts import (
     build_message_artifact_payload_map,
     filter_assistant_artifact_items,
@@ -253,7 +259,16 @@ def register_route_frontend_conversations(app):
             ))
             
             if not messages:
-                return jsonify({'error': 'Message not found'}), 404
+                message = get_collaboration_message(message_id)
+                conversation = get_collaboration_conversation(message.get('conversation_id'))
+                assert_user_can_view_collaboration_conversation(
+                    user_id,
+                    conversation,
+                    allow_pending=True,
+                )
+                if message.get('role', '') == 'user':
+                    return jsonify(message.get('metadata', {}))
+                return jsonify(message)
                 
             message = messages[0]
             
@@ -282,7 +297,12 @@ def register_route_frontend_conversations(app):
             else:
                 # Assistant, image, file messages - return full document
                 return jsonify(message)
+
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Message not found'}), 404
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
             
         except Exception as e:
-            print(f"Error fetching message metadata: {str(e)}")
+            log_event(f"get_message_metadata failed: {e}", level="WARNING")
             return jsonify({'error': 'Failed to fetch message metadata'}), 500

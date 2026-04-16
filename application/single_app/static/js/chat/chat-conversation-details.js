@@ -5,19 +5,104 @@
 
 import { isColorLight } from "./chat-utils.js";
 
+function getConversationDetailsModalElements() {
+  return {
+    modal: document.getElementById('conversation-details-modal'),
+    modalTitle: document.getElementById('conversationDetailsModalLabel'),
+    content: document.getElementById('conversation-details-content'),
+    actionContainer: document.getElementById('conversation-details-actions'),
+  };
+}
+
+function cleanupConversationDetailsModalState() {
+  const anyVisibleModal = document.querySelector('.modal.show');
+  if (anyVisibleModal) {
+    return;
+  }
+
+  document.querySelectorAll('.modal-backdrop').forEach(backdrop => backdrop.remove());
+  document.body.classList.remove('modal-open');
+  document.body.style.removeProperty('padding-right');
+}
+
+function getConversationDetailsModalInstance() {
+  const { modal } = getConversationDetailsModalElements();
+  if (!modal || !window.bootstrap?.Modal) {
+    return null;
+  }
+  return bootstrap.Modal.getOrCreateInstance(modal);
+}
+
+export function hideConversationDetails() {
+  const { modal } = getConversationDetailsModalElements();
+  const modalInstance = getConversationDetailsModalInstance();
+  if (!modal || !modalInstance) {
+    cleanupConversationDetailsModalState();
+    return;
+  }
+
+  if (modal.classList.contains('show')) {
+    modalInstance.hide();
+    window.setTimeout(cleanupConversationDetailsModalState, 200);
+    return;
+  }
+
+  cleanupConversationDetailsModalState();
+}
+
+function renderConversationDetailsActions(metadata, conversationId) {
+  const { actionContainer } = getConversationDetailsModalElements();
+  if (!actionContainer) {
+    return;
+  }
+
+  if (!metadata || !conversationId) {
+    actionContainer.innerHTML = '';
+    return;
+  }
+
+  const actionButtons = [];
+
+  if (window.chatExport?.openExportWizard) {
+    actionButtons.push(`
+      <button type="button" class="btn btn-outline-primary btn-sm" data-conversation-action="export" data-conversation-id="${conversationId}">
+        <i class="bi bi-download me-1"></i>Export
+      </button>
+    `);
+  }
+
+  const isCollaborativeConversation = metadata.conversation_kind === 'collaborative';
+  const canShowDeleteAction = isCollaborativeConversation
+    ? Boolean(metadata.can_delete_conversation || metadata.can_leave_conversation)
+    : true;
+
+  if (canShowDeleteAction) {
+    const deleteLabel = isCollaborativeConversation
+      ? (metadata.can_delete_conversation ? 'Delete / Leave' : 'Leave')
+      : 'Delete';
+    actionButtons.push(`
+      <button type="button" class="btn btn-outline-danger btn-sm" data-conversation-action="delete" data-conversation-id="${conversationId}">
+        <i class="bi bi-trash me-1"></i>${deleteLabel}
+      </button>
+    `);
+  }
+
+  actionContainer.innerHTML = actionButtons.join('');
+}
+
 /**
  * Show conversation details in a modal
  * @param {string} conversationId - The conversation ID to show details for
  */
 export async function showConversationDetails(conversationId) {
-  const modal = document.getElementById('conversation-details-modal');
-  const modalTitle = document.getElementById('conversationDetailsModalLabel');
-  const content = document.getElementById('conversation-details-content');
+  const { modal, modalTitle, content } = getConversationDetailsModalElements();
   
   if (!modal || !content) {
     console.error('Conversation details modal not found');
     return;
   }
+
+  renderConversationDetailsActions(null, null);
 
   // Show loading state
   content.innerHTML = `
@@ -30,18 +115,28 @@ export async function showConversationDetails(conversationId) {
   `;
 
   // Show the modal
-  const bsModal = new bootstrap.Modal(modal);
-  bsModal.show();
+  const bsModal = getConversationDetailsModalInstance();
+  if (bsModal && !modal.classList.contains('show')) {
+    bsModal.show();
+  }
 
   try {
-    // Fetch conversation metadata
-    const response = await fetch(`/api/conversations/${conversationId}/metadata`);
-    
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    const conversationItem = document.querySelector(`.conversation-item[data-conversation-id="${conversationId}"]`)
+      || document.querySelector(`.sidebar-conversation-item[data-conversation-id="${conversationId}"]`);
+    const isCollaborativeConversation = conversationItem?.dataset?.conversationKind === 'collaborative';
+    let metadata = null;
+
+    if (isCollaborativeConversation && window.chatCollaboration?.fetchConversationMetadata) {
+      metadata = await window.chatCollaboration.fetchConversationMetadata(conversationId);
+    } else {
+      const response = await fetch(`/api/conversations/${conversationId}/metadata`);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      metadata = await response.json();
     }
-    
-    const metadata = await response.json();
     
     // Update modal title with conversation title, pin icon, and hidden icon
     const pinIcon = metadata.is_pinned ? '<i class="bi bi-pin-angle me-2" title="Pinned"></i>' : '';
@@ -53,9 +148,12 @@ export async function showConversationDetails(conversationId) {
     
     // Render the metadata
     content.innerHTML = renderConversationMetadata(metadata, conversationId);
+    renderConversationDetailsActions(metadata, conversationId);
+    attachConversationDetailActions(metadata, conversationId);
     
   } catch (error) {
     console.error('Error fetching conversation details:', error);
+    renderConversationDetailsActions(null, null);
     content.innerHTML = `
       <div class="text-center p-4">
         <div class="text-danger">
@@ -75,7 +173,32 @@ export async function showConversationDetails(conversationId) {
  * @returns {string} HTML string
  */
 function renderConversationMetadata(metadata, conversationId) {
-  const { context = [], tags = [], strict = false, classification = [], last_updated, chat_type = 'personal', is_pinned = false, is_hidden = false, scope_locked, locked_contexts = [], summary = null } = metadata;
+  const {
+    context = [],
+    tags = [],
+    strict = false,
+    classification = [],
+    last_updated,
+    updated_at,
+    chat_type = 'personal',
+    is_pinned = false,
+    is_hidden = false,
+    scope_locked,
+    locked_contexts = [],
+    summary = null,
+    conversation_kind = null,
+    participants = [],
+    membership_status = null,
+    can_manage_members = false,
+    can_manage_roles = false,
+    can_accept_invite = false,
+    can_post_messages = true,
+    can_delete_conversation = false,
+    can_leave_conversation = false,
+    current_user_role = '',
+    pending_invite_count = 0,
+  } = metadata;
+  const resolvedLastUpdated = last_updated || updated_at;
   
   // Organize tags by category
   const tagsByCategory = {
@@ -93,6 +216,13 @@ function renderConversationMetadata(metadata, conversationId) {
       tagsByCategory[category].push(tag);
     }
   });
+
+  const participantRecords = Array.isArray(participants) && participants.length > 0
+    ? participants
+    : tagsByCategory.participant;
+  const collaborationStatusHtml = conversation_kind === 'collaborative'
+    ? renderCollaborationMembershipStatus(membership_status, can_post_messages, pending_invite_count)
+    : `${is_pinned ? '<span class="badge bg-primary"><i class="bi bi-pin-angle me-1"></i>Pinned</span>' : ''} ${is_hidden ? '<span class="badge bg-secondary ms-1"><i class="bi bi-eye-slash me-1"></i>Hidden</span>' : ''}${!is_pinned && !is_hidden ? '<span class="text-muted">Normal</span>' : ''}`;
 
   // Build HTML sections
   let html = `
@@ -121,7 +251,7 @@ function renderConversationMetadata(metadata, conversationId) {
                 <strong>Conversation ID:</strong> <code class="text-muted">${conversationId}</code>
               </div>
               <div class="col-sm-6">
-                <strong>Last Updated:</strong> ${formatDate(last_updated)}
+                <strong>Last Updated:</strong> ${formatDate(resolvedLastUpdated)}
               </div>
               <div class="col-sm-6">
                 <strong>Strict Mode:</strong> ${strict ? '<span class="badge bg-warning">Enabled</span>' : '<span class="badge bg-success">Disabled</span>'}
@@ -133,11 +263,16 @@ function renderConversationMetadata(metadata, conversationId) {
                 <strong>Classifications:</strong> ${formatClassifications(classification)}
               </div>
               <div class="col-sm-6">
-                <strong>Status:</strong> ${is_pinned ? '<span class="badge bg-primary"><i class="bi bi-pin-angle me-1"></i>Pinned</span>' : ''} ${is_hidden ? '<span class="badge bg-secondary ms-1"><i class="bi bi-eye-slash me-1"></i>Hidden</span>' : ''}${!is_pinned && !is_hidden ? '<span class="text-muted">Normal</span>' : ''}
+                <strong>Status:</strong> ${collaborationStatusHtml}
               </div>
               <div class="col-sm-6">
                 <strong>Scope Lock:</strong> ${formatScopeLockStatus(scope_locked, locked_contexts)}
               </div>
+              ${conversation_kind === 'collaborative' ? `
+              <div class="col-sm-6">
+                <strong>Your Role:</strong> ${formatCollaborationRole(current_user_role, can_delete_conversation, can_leave_conversation)}
+              </div>
+              ` : ''}
             </div>
           </div>
         </div>
@@ -161,15 +296,20 @@ function renderConversationMetadata(metadata, conversationId) {
   }
 
   // Participants Section
-  if (tagsByCategory.participant.length > 0) {
+  if (participantRecords.length > 0 || can_manage_members || can_accept_invite) {
     html += `
       <div class="col-md-6">
         <div class="card h-100">
-          <div class="card-header bg-success text-white">
+          <div class="card-header bg-success text-white d-flex justify-content-between align-items-center gap-2 flex-wrap">
             <h6 class="mb-0"><i class="bi bi-people me-2"></i>Participants</h6>
+            ${renderCollaborationActionButtons(conversationId, metadata)}
           </div>
           <div class="card-body">
-            ${renderParticipantsSection(tagsByCategory.participant)}
+            ${renderParticipantsSection(participantRecords, {
+              canManageMembers: can_manage_members,
+              canManageRoles: can_manage_roles,
+              conversationKind: conversation_kind,
+            })}
           </div>
         </div>
       </div>
@@ -244,6 +384,70 @@ function renderConversationMetadata(metadata, conversationId) {
   return html;
 }
 
+function renderCollaborationMembershipStatus(membershipStatus, canPostMessages, pendingInviteCount) {
+  if (!membershipStatus) {
+    return '<span class="text-muted">Normal</span>';
+  }
+
+  const badges = [];
+  if (membershipStatus === 'accepted' || membershipStatus === 'group_member') {
+    badges.push('<span class="badge bg-success">Active member</span>');
+  }
+  if (membershipStatus === 'pending') {
+    badges.push('<span class="badge bg-warning text-dark">Invite pending</span>');
+  }
+  if (!canPostMessages) {
+    badges.push('<span class="badge bg-secondary">Read-only</span>');
+  }
+  if (pendingInviteCount > 0) {
+    badges.push(`<span class="badge bg-light text-dark">${pendingInviteCount} pending</span>`);
+  }
+
+  return badges.join(' ') || '<span class="text-muted">Normal</span>';
+}
+
+function formatCollaborationRole(currentUserRole, canDeleteConversation, canLeaveConversation) {
+  if (!currentUserRole) {
+    return '<span class="text-muted">Participant</span>';
+  }
+
+  if (currentUserRole === 'owner') {
+    return `<span class="badge bg-primary">Owner</span>${canDeleteConversation ? ' <small class="text-muted">Can delete for everyone</small>' : ''}`;
+  }
+  if (currentUserRole === 'admin') {
+    return '<span class="badge bg-info text-dark">Admin</span> <small class="text-muted">Can invite members</small>';
+  }
+  if (canLeaveConversation) {
+    return '<span class="badge bg-secondary">Member</span>';
+  }
+  return '<span class="text-muted">Participant</span>';
+}
+
+function renderCollaborationActionButtons(conversationId, metadata) {
+  if (metadata.can_accept_invite) {
+    return `
+      <div class="d-flex gap-2">
+        <button type="button" class="btn btn-light btn-sm" data-collaboration-action="accept-invite" data-conversation-id="${conversationId}">
+          <i class="bi bi-check-circle me-1"></i>Accept
+        </button>
+        <button type="button" class="btn btn-outline-light btn-sm" data-collaboration-action="decline-invite" data-conversation-id="${conversationId}">
+          <i class="bi bi-x-circle me-1"></i>Decline
+        </button>
+      </div>
+    `;
+  }
+
+  if (metadata.can_manage_members) {
+    return `
+      <button type="button" class="btn btn-light btn-sm" data-collaboration-action="add-participant" data-conversation-id="${conversationId}">
+        <i class="bi bi-person-plus me-1"></i>Add participant
+      </button>
+    `;
+  }
+
+  return '';
+}
+
 /**
  * Render context section
  */
@@ -255,7 +459,7 @@ function renderContextSection(context) {
   
   if (primary) {
     const displayName = primary.name || primary.id;
-    const isGroupChat = primary.scope === 'group';
+    const groupContextBadge = primary.scope === 'group' ? '<span class="badge bg-secondary me-2">group</span>' : '';
     
     html += `
       <div class="mb-3">
@@ -263,7 +467,7 @@ function renderContextSection(context) {
         <div class="ms-3 mt-1">
           <div class="d-flex align-items-center mb-2">
             <span class="badge bg-primary me-2">${primary.scope}</span>
-            ${isGroupChat ? '<span class="badge bg-secondary me-2">single-user</span>' : ''}
+            ${groupContextBadge}
             <span class="fw-bold">${displayName}</span>
           </div>
           ${primary.name ? `<div class="small text-muted">ID: ${primary.id}</div>` : ''}
@@ -299,22 +503,68 @@ function renderContextSection(context) {
 /**
  * Render participants section
  */
-function renderParticipantsSection(participants) {
+function renderParticipantsSection(participants, options = {}) {
   let html = '';
   
   participants.forEach(participant => {
-    const initials = (participant.name || 'U').slice(0, 2).toUpperCase();
+    const displayName = participant.display_name || participant.name || 'Unknown User';
+    const participantStatus = participant.status || null;
+    const participantRole = participant.role || null;
+    const initials = displayName.slice(0, 2).toUpperCase();
     const avatarId = `participant-avatar-${participant.user_id}`;
+    const canRemoveParticipant = Boolean(options.canManageMembers)
+      && options.conversationKind === 'collaborative'
+      && participantRole !== 'owner';
+    const canToggleAdmin = Boolean(options.canManageRoles)
+      && options.conversationKind === 'collaborative'
+      && participantRole !== 'owner'
+      && participantStatus === 'accepted';
+
+    let statusBadgesHtml = '';
+    if (participantRole === 'owner') {
+      statusBadgesHtml += '<span class="badge bg-primary-subtle text-primary-emphasis ms-2">Owner</span>';
+    }
+    if (participantRole === 'admin') {
+      statusBadgesHtml += '<span class="badge bg-info-subtle text-info-emphasis ms-2">Admin</span>';
+    }
+    if (participantStatus === 'pending') {
+      statusBadgesHtml += '<span class="badge bg-warning text-dark ms-2">Pending</span>';
+    }
+    if (participantStatus === 'removed') {
+      statusBadgesHtml += '<span class="badge bg-secondary ms-2">Removed</span>';
+    }
+    if (participantStatus === 'declined') {
+      statusBadgesHtml += '<span class="badge bg-light text-dark ms-2">Declined</span>';
+    }
+
+    const participantActions = [];
+    if (canToggleAdmin) {
+      const nextRole = participantRole === 'admin' ? 'member' : 'admin';
+      const roleActionLabel = participantRole === 'admin' ? 'Remove admin' : 'Make admin';
+      participantActions.push(`
+        <button type="button" class="btn btn-outline-primary btn-sm" data-collaboration-action="toggle-participant-role" data-member-user-id="${participant.user_id}" data-next-role="${nextRole}">
+          <i class="bi bi-shield-lock me-1"></i>${roleActionLabel}
+        </button>
+      `);
+    }
+    if (canRemoveParticipant) {
+      participantActions.push(`
+        <button type="button" class="btn btn-outline-danger btn-sm" data-collaboration-action="remove-participant" data-member-user-id="${participant.user_id}">
+          <i class="bi bi-person-dash"></i>
+        </button>
+      `);
+    }
     
     html += `
-      <div class="d-flex align-items-center mb-2">
+      <div class="d-flex align-items-center justify-content-between mb-2 gap-3">
         <div id="${avatarId}" class="rounded-circle bg-primary text-white d-flex align-items-center justify-content-center me-3" style="width: 32px; height: 32px; font-size: 0.9rem;">
           ${initials}
         </div>
-        <div>
-          <div class="fw-semibold">${participant.name || 'Unknown User'}</div>
+        <div class="flex-grow-1 overflow-hidden">
+          <div class="fw-semibold text-truncate">${displayName}${statusBadgesHtml}</div>
           <small class="text-muted">${participant.email || ''}</small>
         </div>
+        ${participantActions.length > 0 ? `<div class="d-flex flex-wrap justify-content-end gap-2">${participantActions.join('')}</div>` : ''}
       </div>
     `;
   });
@@ -327,6 +577,67 @@ function renderParticipantsSection(participants) {
   }, 100);
   
   return html;
+}
+
+function attachConversationDetailActions(metadata, conversationId) {
+  const addParticipantBtn = document.querySelector('[data-collaboration-action="add-participant"]');
+  const acceptInviteBtn = document.querySelector('[data-collaboration-action="accept-invite"]');
+  const declineInviteBtn = document.querySelector('[data-collaboration-action="decline-invite"]');
+  const removeParticipantButtons = document.querySelectorAll('[data-collaboration-action="remove-participant"]');
+  const roleButtons = document.querySelectorAll('[data-collaboration-action="toggle-participant-role"]');
+  const exportConversationBtn = document.querySelector('[data-conversation-action="export"]');
+  const deleteConversationBtn = document.querySelector('[data-conversation-action="delete"]');
+
+  if (addParticipantBtn) {
+    addParticipantBtn.addEventListener('click', () => {
+      window.chatCollaboration?.openParticipantPicker?.({ conversationId });
+    });
+  }
+
+  if (acceptInviteBtn) {
+    acceptInviteBtn.addEventListener('click', () => {
+      window.chatCollaboration?.respondToInvite?.(conversationId, 'accept');
+    });
+  }
+
+  if (declineInviteBtn) {
+    declineInviteBtn.addEventListener('click', () => {
+      window.chatCollaboration?.respondToInvite?.(conversationId, 'decline');
+    });
+  }
+
+  removeParticipantButtons.forEach(button => {
+    button.addEventListener('click', () => {
+      const memberUserId = button.getAttribute('data-member-user-id');
+      if (!memberUserId) {
+        return;
+      }
+      window.chatCollaboration?.removeParticipant?.(conversationId, memberUserId);
+    });
+  });
+
+  roleButtons.forEach(button => {
+    button.addEventListener('click', () => {
+      const memberUserId = button.getAttribute('data-member-user-id');
+      const nextRole = button.getAttribute('data-next-role');
+      if (!memberUserId || !nextRole) {
+        return;
+      }
+      window.chatCollaboration?.updateParticipantRole?.(conversationId, memberUserId, nextRole);
+    });
+  });
+
+  if (exportConversationBtn) {
+    exportConversationBtn.addEventListener('click', () => {
+      window.chatExport?.openExportWizard?.([conversationId], true);
+    });
+  }
+
+  if (deleteConversationBtn) {
+    deleteConversationBtn.addEventListener('click', () => {
+      window.chatConversations?.deleteConversation?.(conversationId);
+    });
+  }
 }
 
 /**
@@ -751,3 +1062,20 @@ document.addEventListener('click', function(e) {
 
 // Export functions for external use
 window.showConversationDetails = showConversationDetails;
+window.hideConversationDetails = hideConversationDetails;
+
+function initializeConversationDetailsModal() {
+  const { modal } = getConversationDetailsModalElements();
+  if (!modal || modal.dataset.initialized === 'true') {
+    return;
+  }
+
+  modal.dataset.initialized = 'true';
+  modal.addEventListener('hidden.bs.modal', cleanupConversationDetailsModalState);
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initializeConversationDetailsModal);
+} else {
+  initializeConversationDetailsModal();
+}

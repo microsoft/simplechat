@@ -94,7 +94,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.241.007"
+VERSION = "0.241.012"
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
@@ -318,6 +318,24 @@ cosmos_group_messages_container_name = "group_messages"
 cosmos_group_messages_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_group_messages_container_name,
     partition_key=PartitionKey(path="/conversation_id")
+)
+
+cosmos_collaboration_conversations_container_name = "collaboration_conversations"
+cosmos_collaboration_conversations_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_collaboration_conversations_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
+cosmos_collaboration_messages_container_name = "collaboration_messages"
+cosmos_collaboration_messages_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_collaboration_messages_container_name,
+    partition_key=PartitionKey(path="/conversation_id")
+)
+
+cosmos_collaboration_user_state_container_name = "collaboration_user_state"
+cosmos_collaboration_user_state_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_collaboration_user_state_container_name,
+    partition_key=PartitionKey(path="/user_id")
 )
 
 cosmos_settings_container_name = "settings"

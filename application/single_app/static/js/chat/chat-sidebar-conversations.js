@@ -205,11 +205,24 @@ export function loadSidebarConversations() {
   pendingSidebarReload = false; // Clear any pending reload flag
   sidebarConversationsList.innerHTML = '<div class="text-center p-2 text-muted small">Loading conversations...</div>';
 
-  fetch("/api/get_conversations")
-    .then(response => response.ok ? response.json() : response.json().then(err => Promise.reject(err)))
-    .then(data => {
+  const legacyConversationsRequest = fetch("/api/get_conversations")
+    .then(response => response.ok ? response.json() : response.json().then(err => Promise.reject(err)));
+  const collaborationConversationsRequest = window.chatCollaboration?.fetchCollaborationConversationList
+    ? window.chatCollaboration.fetchCollaborationConversationList().catch(error => {
+        console.warn('Failed to load collaborative sidebar conversations:', error);
+        return [];
+      })
+    : Promise.resolve([]);
+
+  Promise.all([legacyConversationsRequest, collaborationConversationsRequest])
+    .then(([data, collaborationConversations]) => {
       sidebarConversationsList.innerHTML = "";
-      if (!data.conversations || data.conversations.length === 0) {
+      const mergedConversations = [
+        ...(Array.isArray(data.conversations) ? data.conversations : []),
+        ...(Array.isArray(collaborationConversations) ? collaborationConversations : []),
+      ];
+
+      if (mergedConversations.length === 0) {
         sidebarConversationsList.innerHTML = '<div class="text-center p-2 text-muted small">No conversations yet.</div>';
         dispatchSidebarConversationsLoaded({ loaded: true, count: 0, hasVisibleConversations: false, isError: false });
         
@@ -225,7 +238,7 @@ export function loadSidebarConversations() {
       }
       
       // Sort conversations: pinned first (by last_updated), then unpinned (by last_updated)
-      const sortedConversations = [...data.conversations].sort((a, b) => {
+      const sortedConversations = [...mergedConversations].sort((a, b) => {
         const aPinned = a.is_pinned || false;
         const bPinned = b.is_pinned || false;
         
@@ -266,7 +279,7 @@ export function loadSidebarConversations() {
 
       dispatchSidebarConversationsLoaded({
         loaded: true,
-        count: data.conversations.length,
+        count: mergedConversations.length,
         hasVisibleConversations: visibleConversations.length > 0,
         isError: false
       });
@@ -313,28 +326,74 @@ function createSidebarConversationItem(convo) {
   convoItem.classList.add("sidebar-conversation-item");
   convoItem.setAttribute("data-conversation-id", convo.id);
   convoItem.dataset.hasUnreadAssistantResponse = convo.has_unread_assistant_response ? 'true' : 'false';
+  const isCollaborativeConversation = convo.conversation_kind === 'collaborative';
+  const normalizedChatType = normalizeSidebarChatType(convo.chat_type || '', convo.context || []);
+  const canManageMembers = isCollaborativeConversation
+    ? Boolean(convo.can_manage_members)
+    : normalizedChatType === 'personal_single_user';
+  const canManageRoles = isCollaborativeConversation ? Boolean(convo.can_manage_roles) : false;
+  const canEditCollaborativeTitle = !isCollaborativeConversation || canManageRoles;
+  const canShowAddParticipants = ['personal_single_user', 'personal_multi_user'].includes(normalizedChatType)
+    && canManageMembers;
+  const canDeleteCollaborativeConversation = Boolean(convo.can_delete_conversation);
+  const canLeaveCollaborativeConversation = Boolean(convo.can_leave_conversation);
+  const collaborativeDeleteLabel = canDeleteCollaborativeConversation ? 'Delete / Leave' : 'Leave';
+
+  if (isCollaborativeConversation) {
+    convoItem.dataset.conversationKind = 'collaborative';
+  }
+  if (convo.membership_status) {
+    convoItem.dataset.membershipStatus = convo.membership_status;
+  }
+  convoItem.dataset.canManageMembers = canManageMembers ? 'true' : 'false';
+  convoItem.dataset.canManageRoles = canManageRoles ? 'true' : 'false';
+  convoItem.dataset.canAcceptInvite = convo.can_accept_invite ? 'true' : 'false';
+  convoItem.dataset.canPostMessages = convo.can_post_messages === false ? 'false' : 'true';
+  convoItem.dataset.canDeleteConversation = canDeleteCollaborativeConversation ? 'true' : 'false';
+  convoItem.dataset.canLeaveConversation = canLeaveCollaborativeConversation ? 'true' : 'false';
+  convoItem.dataset.currentUserRole = convo.current_user_role || '';
   applySidebarConversationContextAttributes(convoItem, convo.chat_type || '', convo.context || []);
   
   const isPinned = convo.is_pinned || false;
   const isHidden = convo.is_hidden || false;
   const pinIcon = isPinned ? '<i class="bi bi-pin-angle me-1"></i>' : '';
   const hiddenIcon = isHidden ? '<i class="bi bi-eye-slash me-1 text-muted"></i>' : '';
-  
-  convoItem.innerHTML = `
-    <div class="d-flex justify-content-between align-items-center">
-      <div class="sidebar-conversation-title flex-grow-1" title="${convo.title} (Double-click to edit)">${pinIcon}${hiddenIcon}${convo.title}</div>
-      <div class="dropdown conversation-dropdown" style="opacity: 0; transition: opacity 0.2s;">
-        <button class="btn btn-light btn-sm" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Conversation options">
-          <i class="bi bi-three-dots-vertical"></i>
-        </button>
-        <ul class="dropdown-menu dropdown-menu-end">
-          <li><a class="dropdown-item details-btn" href="#"><i class="bi bi-info-circle me-2"></i>Details</a></li>
+  const collaborationIcon = isCollaborativeConversation ? '<i class="bi bi-people me-1"></i>' : '';
+  const titleTooltip = isCollaborativeConversation
+    ? convo.title
+    : `${convo.title} (Double-click to edit)`;
+  const addParticipantsItemHtml = canShowAddParticipants
+    ? '<li><a class="dropdown-item add-participants-btn" href="#"><i class="bi bi-person-plus me-2"></i>Add participants</a></li>'
+    : '';
+  const legacyActionsHtml = isCollaborativeConversation
+    ? `
+          <li><a class="dropdown-item pin-btn" href="#"><i class="bi bi-pin-angle me-2"></i>${isPinned ? 'Unpin' : 'Pin'}</a></li>
+          <li><a class="dropdown-item hide-btn" href="#"><i class="bi bi-${isHidden ? 'eye' : 'eye-slash'} me-2"></i>${isHidden ? 'Unhide' : 'Hide'}</a></li>
+          <li><a class="dropdown-item select-btn" href="#"><i class="bi bi-check-square me-2"></i>Select</a></li>
+          <li><a class="dropdown-item export-btn" href="#"><i class="bi bi-download me-2"></i>Export</a></li>
+            ${canEditCollaborativeTitle ? '<li><a class="dropdown-item edit-btn" href="#"><i class="bi bi-pencil-fill me-2"></i>Edit title</a></li>' : ''}
+          ${(canDeleteCollaborativeConversation || canLeaveCollaborativeConversation) ? `<li><a class="dropdown-item delete-btn text-danger" href="#"><i class="bi bi-trash-fill me-2"></i>${collaborativeDeleteLabel}</a></li>` : ''}
+      `
+    : `
           <li><a class="dropdown-item pin-btn" href="#"><i class="bi bi-pin-angle me-2"></i>${isPinned ? 'Unpin' : 'Pin'}</a></li>
           <li><a class="dropdown-item hide-btn" href="#"><i class="bi bi-${isHidden ? 'eye' : 'eye-slash'} me-2"></i>${isHidden ? 'Unhide' : 'Hide'}</a></li>
           <li><a class="dropdown-item select-btn" href="#"><i class="bi bi-check-square me-2"></i>Select</a></li>
           <li><a class="dropdown-item export-btn" href="#"><i class="bi bi-download me-2"></i>Export</a></li>
           <li><a class="dropdown-item edit-btn" href="#"><i class="bi bi-pencil-fill me-2"></i>Edit title</a></li>
           <li><a class="dropdown-item delete-btn text-danger" href="#"><i class="bi bi-trash-fill me-2"></i>Delete</a></li>
+      `;
+  
+  convoItem.innerHTML = `
+    <div class="d-flex justify-content-between align-items-center">
+      <div class="sidebar-conversation-title flex-grow-1" title="${titleTooltip}">${pinIcon}${hiddenIcon}${collaborationIcon}${convo.title}</div>
+      <div class="dropdown conversation-dropdown" style="opacity: 0; transition: opacity 0.2s;">
+        <button class="btn btn-light btn-sm" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Conversation options">
+          <i class="bi bi-three-dots-vertical"></i>
+        </button>
+        <ul class="dropdown-menu dropdown-menu-end">
+          <li><a class="dropdown-item details-btn" href="#"><i class="bi bi-info-circle me-2"></i>Details</a></li>
+          ${addParticipantsItemHtml}
+          ${legacyActionsHtml}
         </ul>
       </div>
     </div>
@@ -395,6 +454,9 @@ function createSidebarConversationItem(convo) {
   const titleElement = convoItem.querySelector('.sidebar-conversation-title');
   if (titleElement) {
     titleElement.addEventListener('dblclick', (e) => {
+      if (!canEditCollaborativeTitle) {
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
       enableSidebarTitleEdit(convo.id);
@@ -457,6 +519,7 @@ function createSidebarConversationItem(convo) {
   
   // Add dropdown menu event handlers
   const detailsBtn = convoItem.querySelector('.details-btn');
+  const addParticipantsBtn = convoItem.querySelector('.add-participants-btn');
   const pinBtn = convoItem.querySelector('.pin-btn');
   const hideBtn = convoItem.querySelector('.hide-btn');
   const selectBtn = convoItem.querySelector('.select-btn');
@@ -478,6 +541,15 @@ function createSidebarConversationItem(convo) {
       }
     });
   }
+
+  if (addParticipantsBtn) {
+    addParticipantsBtn.addEventListener('click', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      closeSidebarConversationDropdown(dropdownBtn, dropdownInstance);
+      window.chatCollaboration?.openParticipantPicker?.({ conversationId: convo.id });
+    });
+  }
   
   if (pinBtn) {
     pinBtn.addEventListener('click', async (e) => {
@@ -487,7 +559,7 @@ function createSidebarConversationItem(convo) {
       closeSidebarConversationDropdown(dropdownBtn, dropdownInstance);
       // Toggle pin status
       try {
-        const response = await fetch(`/api/conversations/${convo.id}/pin`, {
+        const response = await fetch(isCollaborativeConversation ? `/api/collaboration/conversations/${convo.id}/pin` : `/api/conversations/${convo.id}/pin`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' }
         });
@@ -518,7 +590,7 @@ function createSidebarConversationItem(convo) {
       closeSidebarConversationDropdown(dropdownBtn, dropdownInstance);
       // Toggle hide status
       try {
-        const response = await fetch(`/api/conversations/${convo.id}/hide`, {
+        const response = await fetch(isCollaborativeConversation ? `/api/collaboration/conversations/${convo.id}/hide` : `/api/conversations/${convo.id}/hide`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' }
         });
@@ -797,8 +869,12 @@ export function updateSidebarConversationTitle(conversationId, newTitle) {
   if (sidebarItem) {
     const titleElement = sidebarItem.querySelector('.sidebar-conversation-title');
     if (titleElement) {
-      titleElement.textContent = newTitle;
-      titleElement.title = `${newTitle} (Double-click to edit)`;
+      const existingIcons = Array.from(titleElement.querySelectorAll('i')).map(icon => icon.cloneNode(true));
+      titleElement.innerHTML = '';
+      existingIcons.forEach(icon => titleElement.appendChild(icon));
+      titleElement.appendChild(document.createTextNode(newTitle));
+      const isCollaborativeConversation = sidebarItem.dataset.conversationKind === 'collaborative';
+      titleElement.title = isCollaborativeConversation ? newTitle : `${newTitle} (Double-click to edit)`;
     }
   }
   
@@ -816,6 +892,34 @@ export function applySidebarConversationMetadataUpdate(conversationId, updates =
 
   if (updates.title) {
     updateSidebarConversationTitle(conversationId, updates.title);
+  }
+
+  if (updates.conversation_kind) {
+    sidebarItem.dataset.conversationKind = updates.conversation_kind;
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'membership_status') && updates.membership_status) {
+    sidebarItem.dataset.membershipStatus = updates.membership_status;
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'can_manage_members')) {
+    sidebarItem.dataset.canManageMembers = updates.can_manage_members ? 'true' : 'false';
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'can_manage_roles')) {
+    sidebarItem.dataset.canManageRoles = updates.can_manage_roles ? 'true' : 'false';
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'can_accept_invite')) {
+    sidebarItem.dataset.canAcceptInvite = updates.can_accept_invite ? 'true' : 'false';
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'can_post_messages')) {
+    sidebarItem.dataset.canPostMessages = updates.can_post_messages === false ? 'false' : 'true';
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'can_delete_conversation')) {
+    sidebarItem.dataset.canDeleteConversation = updates.can_delete_conversation ? 'true' : 'false';
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'can_leave_conversation')) {
+    sidebarItem.dataset.canLeaveConversation = updates.can_leave_conversation ? 'true' : 'false';
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'current_user_role')) {
+    sidebarItem.dataset.currentUserRole = updates.current_user_role || '';
   }
 
   if (Object.prototype.hasOwnProperty.call(updates, 'chat_type') || Array.isArray(updates.context)) {
@@ -871,7 +975,8 @@ export function enableSidebarTitleEdit(conversationId) {
     
     try {
       // Call the update function from main module
-      const response = await fetch(`/api/conversations/${conversationId}`, {
+      const isCollaborativeConversation = sidebarItem.dataset.conversationKind === 'collaborative';
+      const response = await fetch(isCollaborativeConversation ? `/api/collaboration/conversations/${conversationId}` : `/api/conversations/${conversationId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',

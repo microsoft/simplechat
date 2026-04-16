@@ -1040,6 +1040,17 @@ export function appendMessage(
         marked.parse(escapeHtml(messageContent))
       );
       messageContentHtml = addTargetBlankToExternalLinks(sanitizedUserHtml);
+    } else if (sender === "Collaborator") {
+      messageClass = "collaborator-message";
+      senderLabel = fullMessageObject?.sender?.display_name
+        || fullMessageObject?.metadata?.sender?.display_name
+        || "Participant";
+      avatarAltText = `${senderLabel} Avatar`;
+      avatarImg = "/static/images/user-avatar.png";
+      const sanitizedCollaboratorHtml = DOMPurify.sanitize(
+        marked.parse(escapeHtml(messageContent))
+      );
+      messageContentHtml = addTargetBlankToExternalLinks(sanitizedCollaboratorHtml);
     } else if (sender === "File") {
       messageClass = "file-message";
       senderLabel = "File Added";
@@ -1408,6 +1419,28 @@ export function sendMessage() {
 }
 
 export function actuallySendMessage(finalMessageToSend) {
+  const isCollaborativeConversation = Boolean(
+    currentConversationId
+    && window.chatCollaboration?.isCollaborationConversation?.(currentConversationId)
+  );
+
+  if (isCollaborativeConversation) {
+    const tempUserMessageId = `temp_user_${Date.now()}`;
+    appendMessage("You", finalMessageToSend, null, tempUserMessageId);
+    userInput.value = "";
+    userInput.style.height = "";
+    updateSendButtonVisibility();
+
+    window.chatCollaboration.sendCollaborativeMessage(finalMessageToSend, tempUserMessageId).catch(error => {
+      const tempMessage = document.querySelector(`[data-message-id="${tempUserMessageId}"]`);
+      if (tempMessage) {
+        tempMessage.remove();
+      }
+      showToast(error.message || 'Failed to send shared message.', 'danger');
+    });
+    return;
+  }
+
   // Generate a temporary message ID for the user message
   const tempUserMessageId = `temp_user_${Date.now()}`;
   
@@ -1636,6 +1669,10 @@ if (sendBtn) {
 
 if (userInput) {
   userInput.addEventListener("keydown", function (e) {
+    if (window.chatCollaboration?.handleComposerKeydown?.(e)) {
+      return;
+    }
+
     // Check if Enter key is pressed
     if (e.key === "Enter") {
       // Check if Shift key is NOT pressed
@@ -1650,9 +1687,18 @@ if (userInput) {
   });
   
   // Monitor input changes for send button visibility
-  userInput.addEventListener("input", updateSendButtonVisibility);
-  userInput.addEventListener("focus", updateSendButtonVisibility);
-  userInput.addEventListener("blur", updateSendButtonVisibility);
+  userInput.addEventListener("input", () => {
+    updateSendButtonVisibility();
+    window.chatCollaboration?.handleComposerInput?.();
+  });
+  userInput.addEventListener("focus", () => {
+    updateSendButtonVisibility();
+    window.chatCollaboration?.handleComposerInput?.();
+  });
+  userInput.addEventListener("blur", () => {
+    updateSendButtonVisibility();
+    window.chatCollaboration?.handleComposerBlur?.();
+  });
 }
 
 // Monitor prompt selection changes

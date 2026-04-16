@@ -264,6 +264,9 @@ def get_settings(use_cosmos=False, include_source=False):
         # Processing Thoughts
         'enable_thoughts': True,
 
+        # Collaborative Conversations
+        'enable_collaborative_conversations': True,
+
         # Search and Extract
         'azure_ai_search_endpoint': '',
         'azure_ai_search_key': '',

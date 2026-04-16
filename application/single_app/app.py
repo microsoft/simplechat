@@ -80,6 +80,7 @@ from route_backend_conversation_export import register_route_backend_conversatio
 from route_backend_thoughts import register_route_backend_thoughts
 from route_backend_speech import register_route_backend_speech
 from route_backend_tts import register_route_backend_tts
+from route_backend_collaboration import register_route_backend_collaboration
 from route_enhanced_citations import register_enhanced_citations_routes
 from plugin_validation_endpoint import plugin_validation_bp
 from route_openapi import register_openapi_routes
@@ -879,6 +880,9 @@ register_route_backend_search(app)
 
 # ------------------- API Conversation Routes ------------
 register_route_backend_conversations(app)
+
+# ------------------- API Collaboration Routes -----------
+register_route_backend_collaboration(app)
 
 # ------------------- API Documents Routes ---------------
 register_route_backend_documents(app)

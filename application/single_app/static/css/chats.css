@@ -1307,6 +1307,10 @@ a.citation-link:hover {
   justify-content: flex-start;
 }
 
+.collaborator-message {
+  justify-content: flex-start;
+}
+
 /* Message bubble */
 .message-bubble {
   max-width: 90%;
@@ -1335,6 +1339,13 @@ a.citation-link:hover {
   color: black;
   border-bottom-left-radius: 0;
   min-width: min(320px, 90%);
+}
+
+.collaborator-message .message-bubble {
+  background-color: #eef6ef;
+  color: black;
+  border-bottom-left-radius: 0;
+  min-width: min(280px, 90%);
 }
 
 /* File message bubble styling */
@@ -1368,6 +1379,11 @@ a.citation-link:hover {
 [data-bs-theme="dark"] .ai-message .message-bubble {
   background-color: #495057; /* Darker grey for AI in dark mode */
   color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .collaborator-message .message-bubble {
+  background-color: #35533f;
+  color: #f8f9fa;
 }
 
 [data-bs-theme="dark"] .file-message .message-bubble {
@@ -1477,8 +1493,41 @@ a.citation-link:hover {
   margin-right: 10px;
 }
 
+.collaborator-message .avatar {
+  margin-right: 10px;
+}
+
 .file-message {
   justify-content: flex-end;
+}
+
+.collaboration-typing-indicator {
+  min-height: 24px;
+  padding: 0 1rem 0.5rem 1rem;
+  font-size: 0.875rem;
+  color: #6c757d;
+}
+
+.collaboration-mention-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 0.5rem);
+  z-index: 1055;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.12);
+}
+
+.collaboration-mention-menu .list-group-item.active {
+  background-color: #0d6efd;
+  border-color: #0d6efd;
+}
+
+.collaboration-participant-results {
+  max-height: 320px;
+  overflow-y: auto;
 }
 
 /* Style code blocks */
