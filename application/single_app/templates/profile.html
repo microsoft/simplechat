@@ -179,6 +179,14 @@
     .fact-memory-pagination-summary {
         min-height: 1.5rem;
     }
+
+    .fact-memory-delete-modal-stacked {
+        --bs-modal-zindex: 1065;
+    }
+
+    .modal-backdrop.fact-memory-delete-backdrop-stacked {
+        --bs-backdrop-zindex: 1060;
+    }
     
     @keyframes spin {
         0% { transform: rotate(0deg); }
@@ -590,7 +598,7 @@
                 <button type="button" class="btn btn-sm btn-outline-primary" id="tts-preview-btn" onclick="playVoicePreview()">
                     <i class="bi bi-play-circle me-1"></i>Play Sample
                 </button>
-                <button type="button" class="btn btn-sm btn-outline-danger" id="tts-stop-btn" onclick="stopVoicePreview()" style="display: none;">
+                <button type="button" class="btn btn-sm btn-outline-danger d-none" id="tts-stop-btn" onclick="stopVoicePreview()">
                     <i class="bi bi-stop-circle me-1"></i>Stop
                 </button>
                 <span id="tts-preview-status" class="text-muted small"></span>
@@ -871,13 +879,16 @@ let loginChart, conversationChart, documentChart, tokenChart, storageChart;
 let factMemoryEntries = [];
 let filteredFactMemoryEntries = [];
 let factMemoryCurrentPage = 1;
+let pendingFactMemoryDeleteId = null;
+let factMemoryDeleteModalInstance = null;
+let factMemoryManagerModalInstance = null;
 const FACT_MEMORY_PAGE_SIZE = 5;
 const FACT_MEMORY_TYPE_INSTRUCTION = 'instruction';
 const FACT_MEMORY_TYPE_FACT = 'fact';
 const FACT_MEMORY_TYPE_LEGACY_DESCRIBER = 'describer';
-let pendingFactMemoryDeleteId = null;
-let factMemoryDeleteModalInstance = null;
-let factMemoryManagerModalInstance = null;
+let pendingFactMemoryDeleteTrigger = null;
+const FACT_MEMORY_DELETE_MODAL_STACKED_CLASS = 'fact-memory-delete-modal-stacked';
+const FACT_MEMORY_DELETE_BACKDROP_STACKED_CLASS = 'fact-memory-delete-backdrop-stacked';
 
 console.log('Profile page script loaded - preparing to initialize');
 
@@ -949,6 +960,7 @@ document.addEventListener('DOMContentLoaded', function() {
     loadRetentionSettings();
     handleProfileFeatureAction();
     loadTutorialPreferences();
+    initializeFactMemoryModalInstances();
     loadFactMemory();
     loadMicrophoneSettings();
     loadUserMetrics();
@@ -1132,6 +1144,100 @@ function buildFactMemoryMetaText(fact) {
     return `${getFactMemoryTypeLabel(fact.memory_type)} memory · Updated ${formatFactMemoryDate(fact.updated_at)}`;
 }
 
+function initializeFactMemoryModalInstances() {
+    if (typeof bootstrap === 'undefined') {
+        return;
+    }
+
+    const managerModalElement = document.getElementById('factMemoryManagerModal');
+    const deleteModalElement = document.getElementById('factMemoryDeleteModal');
+
+    if (managerModalElement) {
+        factMemoryManagerModalInstance = bootstrap.Modal.getOrCreateInstance(managerModalElement);
+    }
+
+    if (!deleteModalElement) {
+        return;
+    }
+
+    if (deleteModalElement.parentElement !== document.body) {
+        document.body.appendChild(deleteModalElement);
+    }
+
+    factMemoryDeleteModalInstance = bootstrap.Modal.getOrCreateInstance(deleteModalElement);
+
+    if (!deleteModalElement.dataset.bound) {
+        deleteModalElement.addEventListener('show.bs.modal', handleFactMemoryDeleteModalShow);
+        deleteModalElement.addEventListener('shown.bs.modal', handleFactMemoryDeleteModalShown);
+        deleteModalElement.addEventListener('hidden.bs.modal', handleFactMemoryDeleteModalHidden);
+        deleteModalElement.dataset.bound = 'true';
+    }
+}
+
+function isFactMemoryManagerModalOpen() {
+    const managerModalElement = document.getElementById('factMemoryManagerModal');
+    return Boolean(managerModalElement && managerModalElement.classList.contains('show'));
+}
+
+function getLatestModalBackdrop() {
+    const backdrops = document.querySelectorAll('.modal-backdrop');
+    return backdrops.length ? backdrops[backdrops.length - 1] : null;
+}
+
+function handleFactMemoryDeleteModalShow() {
+    const deleteModalElement = document.getElementById('factMemoryDeleteModal');
+    if (!deleteModalElement) {
+        return;
+    }
+
+    const shouldStackAboveManager = isFactMemoryManagerModalOpen();
+    deleteModalElement.classList.toggle(FACT_MEMORY_DELETE_MODAL_STACKED_CLASS, shouldStackAboveManager);
+    deleteModalElement.dataset.stackWithManager = shouldStackAboveManager ? 'true' : 'false';
+}
+
+function handleFactMemoryDeleteModalShown() {
+    const deleteModalElement = document.getElementById('factMemoryDeleteModal');
+    if (!deleteModalElement || deleteModalElement.dataset.stackWithManager !== 'true') {
+        return;
+    }
+
+    const latestBackdrop = getLatestModalBackdrop();
+    if (latestBackdrop) {
+        latestBackdrop.classList.add(FACT_MEMORY_DELETE_BACKDROP_STACKED_CLASS);
+    }
+}
+
+function handleFactMemoryDeleteModalHidden() {
+    const deleteModalElement = document.getElementById('factMemoryDeleteModal');
+    const searchInput = document.getElementById('fact-memory-search-input');
+    const focusTarget = pendingFactMemoryDeleteTrigger && document.contains(pendingFactMemoryDeleteTrigger)
+        ? pendingFactMemoryDeleteTrigger
+        : searchInput;
+
+    if (deleteModalElement) {
+        deleteModalElement.classList.remove(FACT_MEMORY_DELETE_MODAL_STACKED_CLASS);
+        deleteModalElement.dataset.stackWithManager = 'false';
+    }
+
+    document.querySelectorAll(`.modal-backdrop.${FACT_MEMORY_DELETE_BACKDROP_STACKED_CLASS}`).forEach((backdrop) => {
+        backdrop.classList.remove(FACT_MEMORY_DELETE_BACKDROP_STACKED_CLASS);
+    });
+
+    pendingFactMemoryDeleteId = null;
+    pendingFactMemoryDeleteTrigger = null;
+
+    if (!isFactMemoryManagerModalOpen()) {
+        return;
+    }
+
+    document.body.classList.add('modal-open');
+    if (focusTarget) {
+        window.setTimeout(() => {
+            focusTarget.focus({ preventScroll: true });
+        }, 0);
+    }
+}
+
 function updateFactMemorySummary() {
     const countElement = document.getElementById('fact-memory-count');
     const updatedElement = document.getElementById('fact-memory-last-updated');
@@ -1287,7 +1393,7 @@ function renderFactMemoryModalList() {
         deleteButton.className = 'btn btn-outline-danger btn-sm';
         deleteButton.setAttribute('aria-label', 'Delete memory');
         deleteButton.innerHTML = '<i class="bi bi-trash me-1"></i>Delete';
-        deleteButton.addEventListener('click', () => requestFactMemoryDelete(fact.id));
+        deleteButton.addEventListener('click', () => requestFactMemoryDelete(fact.id, deleteButton));
 
         actions.appendChild(saveButton);
         actions.appendChild(deleteButton);
@@ -1303,13 +1409,10 @@ function renderFactMemoryModalList() {
 }
 
 function openFactMemoryModal() {
+    initializeFactMemoryModalInstances();
     const modalElement = document.getElementById('factMemoryManagerModal');
-    if (!modalElement || typeof bootstrap === 'undefined') {
+    if (!modalElement || typeof bootstrap === 'undefined' || !factMemoryManagerModalInstance) {
         return;
-    }
-
-    if (!factMemoryManagerModalInstance) {
-        factMemoryManagerModalInstance = new bootstrap.Modal(modalElement);
     }
 
     factMemoryCurrentPage = 1;
@@ -1466,15 +1569,20 @@ async function saveFactMemory(factId) {
     }
 }
 
-function requestFactMemoryDelete(factId) {
+function requestFactMemoryDelete(factId, triggerElement = null) {
     pendingFactMemoryDeleteId = factId;
-    const modalElement = document.getElementById('factMemoryDeleteModal');
-    if (!modalElement || typeof bootstrap === 'undefined') {
-        return;
-    }
+    pendingFactMemoryDeleteTrigger = triggerElement && document.contains(triggerElement)
+        ? triggerElement
+        : null;
 
-    if (!factMemoryDeleteModalInstance) {
-        factMemoryDeleteModalInstance = new bootstrap.Modal(modalElement);
+    initializeFactMemoryModalInstances();
+
+    const modalElement = document.getElementById('factMemoryDeleteModal');
+    if (!modalElement || typeof bootstrap === 'undefined' || !factMemoryDeleteModalInstance) {
+        pendingFactMemoryDeleteId = null;
+        pendingFactMemoryDeleteTrigger = null;
+        updateFactMemoryStatus('Delete confirmation dialog is unavailable. Refresh the page and try again.', 'danger');
+        return;
     }
 
     factMemoryDeleteModalInstance.show();
@@ -1504,6 +1612,7 @@ async function confirmDeleteFactMemory() {
         }
 
         if (factMemoryDeleteModalInstance) {
+            pendingFactMemoryDeleteTrigger = null;
             factMemoryDeleteModalInstance.hide();
         }
         pendingFactMemoryDeleteId = null;
@@ -2382,8 +2491,21 @@ function exportActivityData() {
 let ttsVoices = [];
 let currentAudio = null;
 
+function setTtsPreviewButtonState(isPlaying) {
+    const previewButton = document.getElementById('tts-preview-btn');
+    const stopButton = document.getElementById('tts-stop-btn');
+    if (!previewButton || !stopButton) {
+        return;
+    }
+
+    previewButton.classList.toggle('d-none', isPlaying);
+    stopButton.classList.toggle('d-none', !isPlaying);
+}
+
 async function loadTTSSettings() {
     try {
+        setTtsPreviewButtonState(false);
+
         // Load available voices
         const voicesResponse = await fetch('/api/chat/tts/voices');
         const voicesData = await voicesResponse.json();
@@ -2459,9 +2581,9 @@ function updateVoicePreview() {
     if (currentAudio) {
         currentAudio.pause();
         currentAudio = null;
-        document.getElementById('tts-preview-btn').style.display = 'inline-block';
-        document.getElementById('tts-stop-btn').style.display = 'none';
     }
+
+    setTtsPreviewButtonState(false);
 }
 
 async function playVoicePreview() {
@@ -2475,7 +2597,6 @@ async function playVoicePreview() {
     
     const speed = parseFloat(document.getElementById('tts-speed-slider').value);
     const previewBtn = document.getElementById('tts-preview-btn');
-    const stopBtn = document.getElementById('tts-stop-btn');
     const statusSpan = document.getElementById('tts-preview-status');
     
     try {
@@ -2509,20 +2630,17 @@ async function playVoicePreview() {
         
         currentAudio = new Audio(audioUrl);
         currentAudio.onplay = () => {
-            previewBtn.style.display = 'none';
-            stopBtn.style.display = 'inline-block';
+            setTtsPreviewButtonState(true);
             statusSpan.textContent = 'Playing...';
         };
         currentAudio.onended = () => {
-            previewBtn.style.display = 'inline-block';
-            stopBtn.style.display = 'none';
+            setTtsPreviewButtonState(false);
             previewBtn.disabled = false;
             statusSpan.textContent = '';
             URL.revokeObjectURL(audioUrl);
         };
         currentAudio.onerror = () => {
-            previewBtn.style.display = 'inline-block';
-            stopBtn.style.display = 'none';
+            setTtsPreviewButtonState(false);
             previewBtn.disabled = false;
             statusSpan.textContent = '';
             showToastMessage('Error playing audio', 'danger');
@@ -2533,6 +2651,7 @@ async function playVoicePreview() {
     } catch (error) {
         console.error('Error playing voice preview:', error);
         showToastMessage('Failed to play voice preview', 'danger');
+        setTtsPreviewButtonState(false);
         previewBtn.disabled = false;
         statusSpan.textContent = '';
     }
@@ -2542,10 +2661,10 @@ function stopVoicePreview() {
     if (currentAudio) {
         currentAudio.pause();
         currentAudio = null;
-        document.getElementById('tts-preview-btn').style.display = 'inline-block';
-        document.getElementById('tts-stop-btn').style.display = 'none';
         document.getElementById('tts-preview-status').textContent = '';
     }
+
+    setTtsPreviewButtonState(false);
 }
 
 async function saveTTSSettings() {
