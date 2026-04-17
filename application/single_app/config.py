@@ -94,7 +94,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.241.008"
+VERSION = "0.241.010"
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
@@ -115,6 +115,7 @@ SECURITY_HEADERS = {
         #"font-src 'self' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com; "
         "connect-src 'self' https: wss: ws:; "
         "media-src 'self' blob:; "
+        "frame-src 'self' blob:; "
         "object-src 'none'; "
         "frame-ancestors 'self'; "
         "base-uri 'self';"

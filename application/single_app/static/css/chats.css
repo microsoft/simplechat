@@ -513,6 +513,11 @@
     --bs-tooltip-zindex: 1115;
   }
 
+  #chat-toast-container {
+    top: 16px;
+    z-index: 1100;
+  }
+
   .conversation-dropdown.tutorial-force-visible {
     opacity: 1 !important;
   }
