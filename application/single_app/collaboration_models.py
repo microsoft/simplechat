@@ -604,8 +604,7 @@ def build_collaboration_message_doc_from_legacy(
                 'display_name': _clean_string(legacy_message.get('agent_display_name')) or 'AI',
                 'email': '',
             }
-            image_url = _clean_string(legacy_message.get('content'))
-            content = f'[Generated image] {image_url}' if image_url else '[Generated image]'
+            content = '[Generated image]'
     elif legacy_role not in ('user', '') and not content.strip():
         return None
 
@@ -629,7 +628,9 @@ def build_collaboration_message_doc_from_legacy(
         'source_role': legacy_role or None,
     }
     if legacy_role == 'image':
-        collaboration_message['metadata']['legacy_image_url'] = _clean_string(legacy_message.get('content')) or None
+        legacy_image_url = _clean_string(legacy_message.get('content'))
+        if legacy_image_url and not legacy_image_url.startswith('data:image/'):
+            collaboration_message['metadata']['legacy_image_url'] = legacy_image_url
     if legacy_role == 'file':
         collaboration_message['metadata']['legacy_filename'] = _clean_string(legacy_message.get('filename')) or None
 

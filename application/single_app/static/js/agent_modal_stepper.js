@@ -4,6 +4,35 @@ import { showToast } from "./chat/chat-toast.js";
 import * as agentsCommon from "./agents_common.js";
 import { getModelSupportedLevels } from "./chat/chat-reasoning.js";
 
+const ACTION_CAPABILITIES_KEY = 'action_capabilities';
+const SIMPLECHAT_CAPABILITY_DEFINITIONS = [
+  {
+    key: 'create_group',
+    label: 'Create groups',
+    description: 'Allow the agent to create new group workspaces as the current user.'
+  },
+  {
+    key: 'add_group_member',
+    label: 'Add users to groups',
+    description: 'Allow the agent to add members directly to groups using the current user\'s permissions.'
+  },
+  {
+    key: 'create_group_conversation',
+    label: 'Create group conversations',
+    description: 'Allow the agent to create collaborative conversations in the active or specified group.'
+  },
+  {
+    key: 'create_personal_conversation',
+    label: 'Create personal conversations',
+    description: 'Allow the agent to create standard one-user personal conversations.'
+  },
+  {
+    key: 'create_personal_collaboration_conversation',
+    label: 'Create personal collaborative conversations',
+    description: 'Allow the agent to create personal collaborative conversations and invite participants.'
+  }
+];
+
 export class AgentModalStepper {
   constructor(isAdmin = false, options = {}) {
     this.currentStep = 1;
@@ -572,6 +601,7 @@ export class AgentModalStepper {
     const foundryActivityApiVersionInput = document.getElementById('agent-new-foundry-activity-api-version');
     const foundryNotesInput = document.getElementById('agent-foundry-notes');
     const foundryStatus = document.getElementById('agent-foundry-fetch-status');
+    const additionalSettings = document.getElementById('agent-additional-settings');
     
     if (displayName) displayName.value = '';
     if (generatedName) generatedName.value = '';
@@ -595,16 +625,22 @@ export class AgentModalStepper {
     if (foundryActivityApiVersionInput) foundryActivityApiVersionInput.value = '';
     if (foundryNotesInput) foundryNotesInput.value = '';
     if (foundryStatus) foundryStatus.textContent = '';
+    if (additionalSettings) additionalSettings.value = '{}';
     
     // Clear any selected actions
     this.clearSelectedActions();
   }
 
   clearSelectedActions() {
-    const actionCards = document.querySelectorAll('.action-card.border-primary');
+    const actionCards = document.querySelectorAll('.action-card');
     actionCards.forEach(card => {
-      card.classList.remove('border-primary', 'bg-primary-subtle');
+      card.classList.remove('border-primary', 'bg-light');
+      const checkIcon = card.querySelector('.action-check-icon');
+      if (checkIcon) {
+        checkIcon.classList.add('d-none');
+      }
     });
+    this.updateSelectedActionsDisplay();
   }
 
   async loadModelsForModal() {
@@ -1638,6 +1674,135 @@ export class AgentModalStepper {
     } else {
       if (summaryDiv) summaryDiv.classList.add('d-none');
     }
+
+    this.renderSimpleChatCapabilitySections();
+  }
+
+  getDefaultSimpleChatCapabilities() {
+    const defaults = {};
+    SIMPLECHAT_CAPABILITY_DEFINITIONS.forEach(definition => {
+      defaults[definition.key] = true;
+    });
+    return defaults;
+  }
+
+  getParsedAdditionalSettings() {
+    const settingsField = document.getElementById('agent-additional-settings');
+    const rawValue = settingsField?.value?.trim() || '{}';
+
+    try {
+      const parsed = JSON.parse(rawValue);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch (error) {
+      console.warn('Unable to parse agent additional settings while rendering capabilities:', error);
+      return {};
+    }
+  }
+
+  setParsedAdditionalSettings(settings) {
+    const settingsField = document.getElementById('agent-additional-settings');
+    if (!settingsField) {
+      return;
+    }
+    settingsField.value = JSON.stringify(settings || {}, null, 2);
+  }
+
+  getActionCapabilityMap() {
+    const otherSettings = this.getParsedAdditionalSettings();
+    const capabilityMap = otherSettings[ACTION_CAPABILITIES_KEY];
+    return capabilityMap && typeof capabilityMap === 'object' && !Array.isArray(capabilityMap)
+      ? capabilityMap
+      : {};
+  }
+
+  getSimpleChatCapabilitiesForAction(actionId, actionName) {
+    const defaults = this.getDefaultSimpleChatCapabilities();
+    const capabilityMap = this.getActionCapabilityMap();
+    const storedCapabilities = capabilityMap[actionId] || capabilityMap[actionName] || {};
+
+    SIMPLECHAT_CAPABILITY_DEFINITIONS.forEach(definition => {
+      if (Object.prototype.hasOwnProperty.call(storedCapabilities, definition.key)) {
+        defaults[definition.key] = Boolean(storedCapabilities[definition.key]);
+      }
+    });
+
+    return defaults;
+  }
+
+  updateSimpleChatCapabilities(actionId, actionName, nextCapabilities) {
+    const otherSettings = this.getParsedAdditionalSettings();
+    const capabilityMap = this.getActionCapabilityMap();
+    capabilityMap[actionId || actionName] = { ...nextCapabilities };
+    otherSettings[ACTION_CAPABILITIES_KEY] = capabilityMap;
+    this.setParsedAdditionalSettings(otherSettings);
+  }
+
+  renderSimpleChatCapabilitySections() {
+    const container = document.getElementById('agent-simplechat-capabilities');
+    const list = document.getElementById('agent-simplechat-capabilities-list');
+    if (!container || !list) {
+      return;
+    }
+
+    const selectedSimpleChatCards = Array.from(document.querySelectorAll('.action-card.border-primary')).filter(card => {
+      return (card.getAttribute('data-action-type') || '').toLowerCase() === 'simplechat';
+    });
+
+    if (!selectedSimpleChatCards.length || this.isAnyFoundryType()) {
+      container.classList.add('d-none');
+      list.innerHTML = '';
+      return;
+    }
+
+    container.classList.remove('d-none');
+    list.innerHTML = '';
+
+    selectedSimpleChatCards.forEach(card => {
+      const actionId = card.getAttribute('data-action-id') || card.getAttribute('data-action-name') || '';
+      const actionName = card.getAttribute('data-action-name') || actionId;
+      const capabilities = this.getSimpleChatCapabilitiesForAction(actionId, actionName);
+
+      const section = document.createElement('div');
+      section.className = 'border rounded p-3 bg-light';
+
+      const heading = document.createElement('div');
+      heading.className = 'fw-semibold mb-1';
+      heading.textContent = actionName;
+      section.appendChild(heading);
+
+      const helperText = document.createElement('div');
+      helperText.className = 'text-muted small mb-3';
+      helperText.textContent = 'These capability toggles apply only to this agent assignment.';
+      section.appendChild(helperText);
+
+      SIMPLECHAT_CAPABILITY_DEFINITIONS.forEach(definition => {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'form-check mb-2';
+
+        const checkbox = document.createElement('input');
+        checkbox.className = 'form-check-input';
+        checkbox.type = 'checkbox';
+        checkbox.id = `simplechat-capability-${actionId}-${definition.key}`;
+        checkbox.checked = Boolean(capabilities[definition.key]);
+
+        const label = document.createElement('label');
+        label.className = 'form-check-label';
+        label.setAttribute('for', checkbox.id);
+        label.innerHTML = `<span class="fw-medium">${this.escapeHtml(definition.label)}</span><br><span class="text-muted small">${this.escapeHtml(definition.description)}</span>`;
+
+        checkbox.addEventListener('change', () => {
+          const updatedCapabilities = this.getSimpleChatCapabilitiesForAction(actionId, actionName);
+          updatedCapabilities[definition.key] = checkbox.checked;
+          this.updateSimpleChatCapabilities(actionId, actionName, updatedCapabilities);
+        });
+
+        wrapper.appendChild(checkbox);
+        wrapper.appendChild(label);
+        section.appendChild(wrapper);
+      });
+
+      list.appendChild(section);
+    });
   }
 
   initializeActionSearch(actions) {

@@ -132,11 +132,17 @@ export class PluginModalStepper {
     });
     
     document.getElementById('sql-auth-type').addEventListener('change', () => this.handleSqlAuthTypeChange());
+    document.getElementById('cosmos-auth-type').addEventListener('change', () => this.handleCosmosAuthTypeChange());
     
     // Test SQL connection button
     const testConnBtn = document.getElementById('sql-test-connection-btn');
     if (testConnBtn) {
       testConnBtn.addEventListener('click', () => this.testSqlConnection());
+    }
+
+    const testCosmosBtn = document.getElementById('cosmos-test-connection-btn');
+    if (testCosmosBtn) {
+      testCosmosBtn.addEventListener('click', () => this.testCosmosConnection());
     }
     
     // Set up display name to generated name conversion
@@ -487,33 +493,60 @@ export class PluginModalStepper {
     }
   }
 
+  isOpenApiType(type = this.selectedType) {
+    return !!(type && type.toLowerCase().includes('openapi'));
+  }
+
+  isSqlType(type = this.selectedType) {
+    return !!(
+      type && (
+        type.toLowerCase().includes('sql') ||
+        type.toLowerCase() === 'sql_schema' ||
+        type.toLowerCase() === 'sql_query'
+      )
+    );
+  }
+
+  isCosmosType(type = this.selectedType) {
+    return !!(type && type.toLowerCase() === 'cosmos_query');
+  }
+
+  isStructuredConfigType(type = this.selectedType) {
+    return this.isSqlType(type) || this.isCosmosType(type);
+  }
+
   showConfigSectionForType() {
     const openApiSection = document.getElementById('openapi-config-section');
     const genericSection = document.getElementById('generic-config-section');
     const sqlSection = document.getElementById('sql-config-section');
-    
-    // Determine plugin type
-    const isOpenApiType = this.selectedType && this.selectedType.toLowerCase().includes('openapi');
-    const isSqlType = this.selectedType && (
-      this.selectedType.toLowerCase().includes('sql') || 
-      this.selectedType.toLowerCase() === 'sql_schema' ||
-      this.selectedType.toLowerCase() === 'sql_query'
-    );
+    const cosmosSection = document.getElementById('cosmos-config-section');
+    const isOpenApiType = this.isOpenApiType();
+    const isSqlType = this.isSqlType();
+    const isCosmosType = this.isCosmosType();
     
     if (isOpenApiType) {
       openApiSection.classList.remove('d-none');
       genericSection.classList.add('d-none');
       sqlSection.classList.add('d-none');
+      cosmosSection.classList.add('d-none');
     } else if (isSqlType) {
       openApiSection.classList.add('d-none');
       genericSection.classList.add('d-none');
       sqlSection.classList.remove('d-none');
+      cosmosSection.classList.add('d-none');
       // Initialize SQL plugin configuration
       this.initializeSqlConfiguration();
+    } else if (isCosmosType) {
+      openApiSection.classList.add('d-none');
+      genericSection.classList.add('d-none');
+      sqlSection.classList.add('d-none');
+      cosmosSection.classList.remove('d-none');
+      this.initializeCosmosConfiguration();
     } else {
       openApiSection.classList.add('d-none');
       genericSection.classList.remove('d-none');
       sqlSection.classList.add('d-none');
+      cosmosSection.classList.add('d-none');
     }
   }
 
@@ -537,17 +570,16 @@ export class PluginModalStepper {
     if (stepNumber === 3) {
       const titleEl = document.getElementById('step-3-title');
       if (titleEl) {
-        const isOpenApiType = this.selectedType && this.selectedType.toLowerCase().includes('openapi');
-        const isSqlType = this.selectedType && (
-          this.selectedType.toLowerCase().includes('sql') || 
-          this.selectedType.toLowerCase() === 'sql_schema' ||
-          this.selectedType.toLowerCase() === 'sql_query'
-        );
+        const isOpenApiType = this.isOpenApiType();
+        const isSqlType = this.isSqlType();
+        const isCosmosType = this.isCosmosType();
         
         if (isOpenApiType) {
           titleEl.textContent = 'API Configuration';
         } else if (isSqlType) {
           titleEl.textContent = 'Database Configuration';
+        } else if (isCosmosType) {
+          titleEl.textContent = 'Cosmos Configuration';
         } else {
           titleEl.textContent = 'Configuration';
         }
@@ -555,11 +587,11 @@ export class PluginModalStepper {
     }
 
     if (stepNumber === 4) {
-      const isSqlType = this.selectedType === 'sql_query' || this.selectedType === 'sql_schema';
+      const isStructuredConfigType = this.isStructuredConfigType();
       const additionalFieldsDiv = document.getElementById('plugin-additional-fields-div');
 
-      // For SQL types, hide additional fields entirely since Step 3 covers all SQL config
-      if (isSqlType && additionalFieldsDiv) {
+      // For SQL and Cosmos types, hide additional fields entirely since Step 3 covers config.
+      if (isStructuredConfigType && additionalFieldsDiv) {
         additionalFieldsDiv.innerHTML = '';
         additionalFieldsDiv.classList.add('d-none');
         this.lastAdditionalFieldsType = this.selectedType;
@@ -722,8 +754,10 @@ export class PluginModalStepper {
         // Validate based on which config section is visible
         const openApiSection = document.getElementById('openapi-config-section');
         const sqlSection = document.getElementById('sql-config-section');
+        const cosmosSection = document.getElementById('cosmos-config-section');
         const isOpenApiVisible = !openApiSection.classList.contains('d-none');
         const isSqlVisible = !sqlSection.classList.contains('d-none');
+        const isCosmosVisible = !cosmosSection.classList.contains('d-none');
         
         if (isOpenApiVisible) {
           // Validate OpenAPI fields
@@ -834,6 +868,44 @@ export class PluginModalStepper {
                 return false;
               }
             }
+          }
+        } else if (isCosmosVisible) {
+          const endpoint = document.getElementById('cosmos-endpoint').value.trim();
+          const databaseName = document.getElementById('cosmos-database-name').value.trim();
+          const containerName = document.getElementById('cosmos-container-name').value.trim();
+          const partitionKeyPath = document.getElementById('cosmos-partition-key-path').value.trim();
+          const authType = document.getElementById('cosmos-auth-type').value;
+          const authKey = document.getElementById('cosmos-auth-key').value.trim();
+          const maxItems = parseInt(document.getElementById('cosmos-max-items').value, 10);
+          const timeout = parseInt(document.getElementById('cosmos-timeout').value, 10);
+
+          if (!endpoint) {
+            this.showError('Cosmos DB account endpoint is required.');
+            return false;
+          }
+          if (!databaseName) {
+            this.showError('Cosmos DB database name is required.');
+            return false;
+          }
+          if (!containerName) {
+            this.showError('Cosmos DB container name is required.');
+            return false;
+          }
+          if (!partitionKeyPath || !partitionKeyPath.startsWith('/')) {
+            this.showError('Partition key path is required and must start with /.');
+            return false;
+          }
+          if (authType === 'key' && !authKey) {
+            this.showError('Cosmos DB account key is required when using account key authentication.');
+            return false;
+          }
+          if (Number.isNaN(maxItems) || maxItems < 1 || maxItems > 1000) {
+            this.showError('Max items must be between 1 and 1000.');
+            return false;
+          }
+          if (Number.isNaN(timeout) || timeout < 1 || timeout > 120) {
+            this.showError('Timeout must be between 1 and 120 seconds.');
+            return false;
           }
         } else {
           // Validate generic endpoint field
@@ -1098,6 +1170,143 @@ export class PluginModalStepper {
   }
 
   // SQL Plugin Configuration Methods
+  initializeCosmosConfiguration() {
+    const authTypeField = document.getElementById('cosmos-auth-type');
+    const maxItemsField = document.getElementById('cosmos-max-items');
+    const timeoutField = document.getElementById('cosmos-timeout');
+    if (authTypeField && !authTypeField.value) {
+      authTypeField.value = 'identity';
+    }
+    if (maxItemsField && !maxItemsField.value) {
+      maxItemsField.value = '100';
+    }
+    if (timeoutField && !timeoutField.value) {
+      timeoutField.value = '30';
+    }
+
+    const resultDiv = document.getElementById('cosmos-test-connection-result');
+    if (resultDiv) {
+      resultDiv.classList.add('d-none');
+    }
+
+    this.handleCosmosAuthTypeChange();
+  }
+
+  handleCosmosAuthTypeChange() {
+    const authType = document.getElementById('cosmos-auth-type')?.value || 'identity';
+    const keyGroup = document.getElementById('cosmos-auth-key-group');
+    const keyInput = document.getElementById('cosmos-auth-key');
+
+    if (keyGroup) {
+      keyGroup.classList.toggle('d-none', authType !== 'key');
+    }
+
+    if (keyInput) {
+      keyInput.required = authType === 'key';
+    }
+
+    this.updateCosmosAuthInfo(authType);
+  }
+
+  updateCosmosAuthInfo(authType = document.getElementById('cosmos-auth-type')?.value || 'identity') {
+    const infoDiv = document.getElementById('cosmos-auth-info');
+    const infoText = document.getElementById('cosmos-auth-info-text');
+
+    if (!infoDiv || !infoText) {
+      return;
+    }
+
+    let message = 'Managed Identity uses Azure AD authentication without storing credentials. Assign an Azure Cosmos DB built-in data reader role to the application identity for the target account.';
+    if (authType === 'key') {
+      message = 'Account Key uses a primary or secondary Azure Cosmos DB account key. When Key Vault secret storage is enabled, the key is stored in Key Vault and edit forms preserve the stored secret if you leave the masked value unchanged.';
+    }
+
+    infoText.textContent = message;
+    infoDiv.classList.remove('d-none');
+  }
+
+  getCosmosFieldHints() {
+    const rawValue = document.getElementById('cosmos-field-hints')?.value || '';
+    return rawValue
+      .split(/[,\n]/)
+      .map(value => value.trim())
+      .filter(Boolean);
+  }
+
+  async testCosmosConnection() {
+    const btn = document.getElementById('cosmos-test-connection-btn');
+    const resultDiv = document.getElementById('cosmos-test-connection-result');
+    const alertDiv = document.getElementById('cosmos-test-connection-alert');
+    if (!btn || !resultDiv || !alertDiv) return;
+
+    const endpoint = document.getElementById('cosmos-endpoint')?.value?.trim() || '';
+    const databaseName = document.getElementById('cosmos-database-name')?.value?.trim() || '';
+    const containerName = document.getElementById('cosmos-container-name')?.value?.trim() || '';
+    const authType = document.getElementById('cosmos-auth-type')?.value || 'identity';
+    const authKey = document.getElementById('cosmos-auth-key')?.value?.trim() || '';
+    const timeout = parseInt(document.getElementById('cosmos-timeout')?.value, 10) || 10;
+
+    if (!endpoint || !databaseName || !containerName) {
+      resultDiv.classList.remove('d-none');
+      alertDiv.className = 'alert alert-warning mb-0 py-2 px-3 small';
+      alertDiv.textContent = 'Endpoint, database name, and container name are required before testing the Cosmos connection.';
+      return;
+    }
+    if (authType === 'key' && !authKey) {
+      resultDiv.classList.remove('d-none');
+      alertDiv.className = 'alert alert-warning mb-0 py-2 px-3 small';
+      alertDiv.textContent = 'Account key is required before testing a key-based Cosmos connection.';
+      return;
+    }
+
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Testing...';
+    btn.disabled = true;
+    resultDiv.classList.add('d-none');
+
+    try {
+      const payload = {
+        endpoint,
+        database_name: databaseName,
+        container_name: containerName,
+        auth_type: authType,
+        timeout
+      };
+
+      if (authType === 'key') {
+        payload.auth_key = authKey;
+      }
+
+      const existingPluginContext = this.getTestPluginContext();
+      if (existingPluginContext) {
+        payload.existing_plugin = existingPluginContext;
+      }
+
+      const response = await fetch('/api/plugins/test-cosmos-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+
+      resultDiv.classList.remove('d-none');
+      if (data.success) {
+        alertDiv.className = 'alert alert-success mb-0 py-2 px-3 small';
+        alertDiv.innerHTML = '<i class="bi bi-check-circle me-2"></i>' + (data.message || 'Connection successful!');
+      } else {
+        alertDiv.className = 'alert alert-danger mb-0 py-2 px-3 small';
+        alertDiv.innerHTML = '<i class="bi bi-x-circle me-2"></i>' + (data.error || 'Connection failed.');
+      }
+    } catch (error) {
+      resultDiv.classList.remove('d-none');
+      alertDiv.className = 'alert alert-danger mb-0 py-2 px-3 small';
+      alertDiv.innerHTML = '<i class="bi bi-x-circle me-2"></i>Test failed: ' + (error.message || 'Network error');
+    } finally {
+      btn.innerHTML = originalText;
+      btn.disabled = false;
+    }
+  }
+
   initializeSqlConfiguration() {
     // Set default values
     document.getElementById('sql-read-only').value = 'true';
@@ -1256,7 +1465,7 @@ export class PluginModalStepper {
     this.updateSqlAuthInfo();
   }
 
-  getSqlTestPluginContext() {
+  getTestPluginContext() {
     if (!this.isEditMode || !this.originalPlugin) {
       return null;
     }
@@ -1323,7 +1532,7 @@ export class PluginModalStepper {
 
     payload.timeout = parseInt(document.getElementById('sql-timeout')?.value) || 10;
 
-    const existingPluginContext = this.getSqlTestPluginContext();
+    const existingPluginContext = this.getTestPluginContext();
     if (existingPluginContext) {
       payload.existing_plugin = existingPluginContext;
     }
@@ -1559,7 +1768,7 @@ export class PluginModalStepper {
       }
       
       document.getElementById('plugin-auth-type').value = authType;
-    } else if (plugin.type && (plugin.type.toLowerCase().includes('sql') || plugin.type.toLowerCase() === 'sql_schema' || plugin.type.toLowerCase() === 'sql_query')) {
+    } else if (this.isSqlType(plugin.type)) {
       // Populate SQL fields
       const additionalFields = plugin.additionalFields || {};
       const auth = plugin.auth || {};
@@ -1611,6 +1820,22 @@ export class PluginModalStepper {
       this.handleSqlDatabaseTypeChange();
       this.handleSqlConnectionMethodChange();
       this.handleSqlAuthTypeChange();
+    } else if (this.isCosmosType(plugin.type)) {
+      const additionalFields = plugin.additionalFields || {};
+      const auth = plugin.auth || {};
+
+      document.getElementById('cosmos-endpoint').value = plugin.endpoint || '';
+      document.getElementById('cosmos-database-name').value = additionalFields.database_name || '';
+      document.getElementById('cosmos-container-name').value = additionalFields.container_name || '';
+      document.getElementById('cosmos-partition-key-path').value = additionalFields.partition_key_path || '';
+      document.getElementById('cosmos-field-hints').value = Array.isArray(additionalFields.field_hints)
+        ? additionalFields.field_hints.join('\n')
+        : '';
+      document.getElementById('cosmos-max-items').value = additionalFields.max_items || 100;
+      document.getElementById('cosmos-timeout').value = additionalFields.timeout || 30;
+      document.getElementById('cosmos-auth-type').value = auth.type || 'identity';
+      document.getElementById('cosmos-auth-key').value = auth.key || '';
+      this.initializeCosmosConfiguration();
     } else {
       // Populate generic fields
       document.getElementById('plugin-endpoint-generic').value = plugin.endpoint || '';
@@ -1643,8 +1868,10 @@ export class PluginModalStepper {
     // Determine which configuration section is active
     const openApiSection = document.getElementById('openapi-config-section');
     const sqlSection = document.getElementById('sql-config-section');
+    const cosmosSection = document.getElementById('cosmos-config-section');
     const isOpenApiVisible = !openApiSection.classList.contains('d-none');
     const isSqlVisible = !sqlSection.classList.contains('d-none');
+    const isCosmosVisible = !cosmosSection.classList.contains('d-none');
     
     let auth = {};
     let endpoint = '';
@@ -1820,6 +2047,33 @@ export class PluginModalStepper {
       
       // For SQL plugins, endpoint is not applicable
       endpoint = '';
+    } else if (isCosmosVisible) {
+      endpoint = document.getElementById('cosmos-endpoint').value.trim();
+      const databaseName = document.getElementById('cosmos-database-name').value.trim();
+      const containerName = document.getElementById('cosmos-container-name').value.trim();
+      const partitionKeyPath = document.getElementById('cosmos-partition-key-path').value.trim();
+      const authType = document.getElementById('cosmos-auth-type').value;
+
+      if (!endpoint || !databaseName || !containerName || !partitionKeyPath) {
+        throw new Error('Please complete the Cosmos DB endpoint, database, container, and partition key path.');
+      }
+
+      auth.type = authType;
+      if (authType === 'key') {
+        const authKey = document.getElementById('cosmos-auth-key').value.trim();
+        if (!authKey) {
+          throw new Error('Please enter the Cosmos DB account key.');
+        }
+        auth.key = authKey;
+      } else {
+        auth.identity = 'managed_identity';
+      }
+      additionalFields.database_name = databaseName;
+      additionalFields.container_name = containerName;
+      additionalFields.partition_key_path = partitionKeyPath;
+      additionalFields.field_hints = this.getCosmosFieldHints();
+      additionalFields.max_items = parseInt(document.getElementById('cosmos-max-items').value, 10) || 100;
+      additionalFields.timeout = parseInt(document.getElementById('cosmos-timeout').value, 10) || 30;
     } else {
       // Collect generic plugin data
       console.log("Collecting generic plugin data");
@@ -1843,8 +2097,7 @@ export class PluginModalStepper {
     // This preserves OpenAPI spec content and other auto-populated fields
     // For SQL types, Step 3 already provides all necessary config — skip dynamic field merge
     // to prevent empty Step 4 fields from overwriting populated Step 3 values
-    const isSqlType = this.selectedType === 'sql_query' || this.selectedType === 'sql_schema';
-    if (!isSqlType) {
+    if (!this.isStructuredConfigType()) {
       try {
         const dynamicFields = this.collectAdditionalFields();
         // Merge dynamicFields into additionalFields (preserving existing values)
@@ -1897,23 +2150,30 @@ export class PluginModalStepper {
     document.getElementById('summary-plugin-type').textContent = type;
     document.getElementById('summary-plugin-description').textContent = description || '-';
     
-    // Configuration Section - Handle endpoint vs SQL configuration
-    const isSqlType = this.selectedType && (
-      this.selectedType.toLowerCase().includes('sql') || 
-      this.selectedType.toLowerCase() === 'sql_schema' ||
-      this.selectedType.toLowerCase() === 'sql_query'
-    );
+    // Configuration Section - Handle endpoint vs SQL/Cosmos configuration
+    const isSqlType = this.isSqlType();
+    const isCosmosType = this.isCosmosType();
     
     const endpointRow = document.getElementById('summary-plugin-endpoint-row');
+    const databaseTypeRow = document.getElementById('summary-plugin-database-type-row');
     
     if (isSqlType) {
       // Hide endpoint for SQL plugins since they don't use endpoints
       endpointRow.style.display = 'none';
+      document.getElementById('summary-plugin-database-type').textContent = this.getSqlDatabaseType() || '-';
+      databaseTypeRow.style.display = '';
+    } else if (isCosmosType) {
+      const endpoint = this.getEndpointValue();
+      document.getElementById('summary-plugin-endpoint').textContent = endpoint || '-';
+      endpointRow.style.display = '';
+      document.getElementById('summary-plugin-database-type').textContent = 'Cosmos DB for NoSQL';
+      databaseTypeRow.style.display = '';
     } else {
       // Show endpoint for non-SQL plugins (OpenAPI, generic, etc.)
       const endpoint = this.getEndpointValue();
       document.getElementById('summary-plugin-endpoint').textContent = endpoint || '-';
       endpointRow.style.display = '';
+      databaseTypeRow.style.display = 'none';
     }
     
     const authType = this.getAuthTypeValue();
@@ -1930,34 +2190,33 @@ export class PluginModalStepper {
     }
     
     const databaseType = this.getSqlDatabaseType();
-    const databaseTypeRow = document.getElementById('summary-plugin-database-type-row');
-    if (databaseType) {
+    if (!isSqlType && !isCosmosType && databaseType) {
       document.getElementById('summary-plugin-database-type').textContent = databaseType;
       databaseTypeRow.style.display = '';
-    } else {
+    } else if (!isSqlType && !isCosmosType) {
       databaseTypeRow.style.display = 'none';
     }
     
     // Show/hide type-specific sections
     this.populateOpenApiSummary();
     this.populateSqlSummary();
+    this.populateCosmosSummary();
     this.populateAdvancedSummary();
     this.populateChangesSummary();
   }
 
   getEndpointValue() {
     // Check different endpoint fields based on plugin type
-    const isOpenApiType = this.selectedType && this.selectedType.toLowerCase().includes('openapi');
-    const isSqlType = this.selectedType && (
-      this.selectedType.toLowerCase().includes('sql') || 
-      this.selectedType.toLowerCase() === 'sql_schema' ||
-      this.selectedType.toLowerCase() === 'sql_query'
-    );
+    const isOpenApiType = this.isOpenApiType();
+    const isSqlType = this.isSqlType();
+    const isCosmosType = this.isCosmosType();
     
     if (isOpenApiType) {
       return document.getElementById('plugin-endpoint').value.trim();
     } else if (isSqlType) {
       return document.getElementById('sql-connection-string').value.trim();
+    } else if (isCosmosType) {
+      return document.getElementById('cosmos-endpoint').value.trim();
     } else {
       return document.getElementById('plugin-endpoint-generic').value.trim();
     }
@@ -1965,12 +2224,9 @@ export class PluginModalStepper {
 
   getAuthTypeValue() {
     // Check different auth fields based on plugin type
-    const isOpenApiType = this.selectedType && this.selectedType.toLowerCase().includes('openapi');
-    const isSqlType = this.selectedType && (
-      this.selectedType.toLowerCase().includes('sql') || 
-      this.selectedType.toLowerCase() === 'sql_schema' ||
-      this.selectedType.toLowerCase() === 'sql_query'
-    );
+    const isOpenApiType = this.isOpenApiType();
+    const isSqlType = this.isSqlType();
+    const isCosmosType = this.isCosmosType();
     
     if (isOpenApiType) {
       const authType = document.getElementById('plugin-auth-type').value;
@@ -1978,6 +2234,9 @@ export class PluginModalStepper {
     } else if (isSqlType) {
       const authType = document.getElementById('sql-auth-type').value;
       return this.formatAuthType(authType);
+    } else if (isCosmosType) {
+      const authType = document.getElementById('cosmos-auth-type')?.value || 'identity';
+      return authType === 'key' ? 'Account Key' : 'Managed Identity';
     } else {
       const authType = document.getElementById('plugin-auth-type-generic').value;
       return this.formatAuthType(authType);
@@ -1998,6 +2257,9 @@ export class PluginModalStepper {
       'user': 'User',
       'servicePrincipal': 'Service Principal',
       'connection_string': 'Connection String',
+      'connection_string_only': 'Connection String Only',
+      'managed_identity': 'Managed Identity',
+      'integrated': 'Integrated Authentication',
       'basic': 'Basic',
       'NoAuth': 'No Authentication'
     };
@@ -2051,11 +2313,7 @@ export class PluginModalStepper {
   }
 
   populateSqlSummary() {
-    const isSqlType = this.selectedType && (
-      this.selectedType.toLowerCase().includes('sql') || 
-      this.selectedType.toLowerCase() === 'sql_schema' ||
-      this.selectedType.toLowerCase() === 'sql_query'
-    );
+    const isSqlType = this.isSqlType();
     const sqlSection = document.getElementById('summary-sql-section');
     
     if (isSqlType) {
@@ -2073,6 +2331,29 @@ export class PluginModalStepper {
       sqlSection.style.display = '';
     } else {
       sqlSection.style.display = 'none';
+    }
+  }
+
+  populateCosmosSummary() {
+    const cosmosSection = document.getElementById('summary-cosmos-section');
+    if (!cosmosSection) {
+      return;
+    }
+
+    if (this.isCosmosType()) {
+      const fieldHints = this.getCosmosFieldHints();
+      document.getElementById('summary-cosmos-auth-type').textContent = this.getAuthTypeValue() || '-';
+      document.getElementById('summary-cosmos-database-name').textContent = document.getElementById('cosmos-database-name').value.trim() || '-';
+      document.getElementById('summary-cosmos-container-name').textContent = document.getElementById('cosmos-container-name').value.trim() || '-';
+      document.getElementById('summary-cosmos-partition-key-path').textContent = document.getElementById('cosmos-partition-key-path').value.trim() || '-';
+      document.getElementById('summary-cosmos-max-items').textContent = document.getElementById('cosmos-max-items').value.trim() || '-';
+
+      const timeoutValue = document.getElementById('cosmos-timeout').value.trim();
+      document.getElementById('summary-cosmos-timeout').textContent = timeoutValue ? `${timeoutValue} seconds` : '-';
+      document.getElementById('summary-cosmos-field-hints').textContent = fieldHints.length ? fieldHints.join(', ') : 'None configured';
+      cosmosSection.style.display = '';
+    } else {
+      cosmosSection.style.display = 'none';
     }
   }
 
@@ -2119,25 +2400,26 @@ export class PluginModalStepper {
       
       // Get endpoint from the appropriate field based on plugin type
       let currentEndpoint = '';
-      const isOpenApiType = this.selectedType && this.selectedType.toLowerCase().includes('openapi');
-      const isSqlType = this.selectedType && (
-        this.selectedType.toLowerCase().includes('sql') || 
-        this.selectedType.toLowerCase() === 'sql_schema' ||
-        this.selectedType.toLowerCase() === 'sql_query'
-      );
+      const isOpenApiType = this.isOpenApiType();
+      const isSqlType = this.isSqlType();
+      const isCosmosType = this.isCosmosType();
       
       if (isOpenApiType) {
         currentEndpoint = document.getElementById('plugin-endpoint')?.value || '';
       } else if (isSqlType) {
         currentEndpoint = document.getElementById('sql-connection-string')?.value || '';
+      } else if (isCosmosType) {
+        currentEndpoint = document.getElementById('cosmos-endpoint')?.value || '';
       } else {
         currentEndpoint = document.getElementById('plugin-endpoint-generic')?.value || '';
       }
       
       // Get authentication information
       let currentAuthKey = '';
+      let currentAuthType = '';
       if (isOpenApiType) {
         const authType = document.getElementById('plugin-auth-type')?.value || 'none';
+        currentAuthType = authType;
         if (authType === 'api_key') {
           currentAuthKey = document.getElementById('plugin-auth-api-key-value')?.value || '';
         } else if (authType === 'bearer') {
@@ -2149,13 +2431,30 @@ export class PluginModalStepper {
         } else if (authType === 'oauth2') {
           currentAuthKey = document.getElementById('plugin-auth-oauth2-token')?.value || '';
         }
+      } else if (isCosmosType) {
+        currentAuthType = document.getElementById('cosmos-auth-type')?.value || 'identity';
+        if (currentAuthType === 'key') {
+          currentAuthKey = document.getElementById('cosmos-auth-key')?.value || '';
+        }
       } else {
+        currentAuthType = document.getElementById('plugin-auth-type-generic')?.value || '';
         currentAuthKey = document.getElementById('plugin-auth-key')?.value || '';
       }
       
       // Get metadata and additional fields
       const currentMetadata = document.getElementById('plugin-metadata')?.value || '{}';
-      const currentAdditionalFields = document.getElementById('plugin-additional-fields')?.value || '{}';
+      let currentAdditionalFields = document.getElementById('plugin-additional-fields')?.value || '{}';
+
+      if (isCosmosType) {
+        currentAdditionalFields = JSON.stringify({
+          database_name: document.getElementById('cosmos-database-name')?.value?.trim() || '',
+          container_name: document.getElementById('cosmos-container-name')?.value?.trim() || '',
+          partition_key_path: document.getElementById('cosmos-partition-key-path')?.value?.trim() || '',
+          field_hints: this.getCosmosFieldHints(),
+          max_items: parseInt(document.getElementById('cosmos-max-items')?.value, 10) || 100,
+          timeout: parseInt(document.getElementById('cosmos-timeout')?.value, 10) || 30
+        }, null, 2);
+      }
       
       // Compare basic fields
       if (currentDisplayName !== (this.originalPlugin.displayName || '')) {
@@ -2192,6 +2491,14 @@ export class PluginModalStepper {
         changes.authKey = {
           before: originalAuthKey ? '***' + originalAuthKey.slice(-4) : '(empty)',
           after: currentAuthKey ? '***' + currentAuthKey.slice(-4) : '(empty)'
+        };
+      }
+
+      const originalAuthType = (this.originalPlugin.auth && this.originalPlugin.auth.type) || '';
+      if (currentAuthType !== originalAuthType) {
+        changes.authType = {
+          before: originalAuthType || '(empty)',
+          after: currentAuthType || '(empty)'
         };
       }
       
@@ -2232,7 +2539,7 @@ export class PluginModalStepper {
 
   populateAdvancedSummary() {
     const advancedSection = document.getElementById('summary-advanced-section');
-    const isSqlType = this.selectedType === 'sql_query' || this.selectedType === 'sql_schema';
+    const isStructuredConfigType = this.isStructuredConfigType();
     
     // Check if there's any metadata or additional fields
     const metadata = document.getElementById('plugin-metadata').value.trim();
@@ -2250,9 +2557,9 @@ export class PluginModalStepper {
       hasMetadata = metadata.length > 0 && metadata !== '{}';
     }
     
-    // For SQL types, additional fields are already shown in the SQL Database Configuration
+    // For SQL and Cosmos types, additional fields are already shown in dedicated configuration
     // summary section, so skip showing them again in Advanced to avoid redundancy
-    if (!isSqlType) {
+    if (!isStructuredConfigType) {
       // DRY: Use private helper to collect additional fields
       let additionalFieldsObj = this.collectAdditionalFields();
       hasAdditionalFields = Object.keys(additionalFieldsObj).length > 0;
@@ -2272,7 +2579,7 @@ export class PluginModalStepper {
         additionalFieldsPreview.style.display = 'none';
       }
     } else {
-      // Hide additional fields for SQL types
+      // Hide additional fields for structured config types
       const additionalFieldsPreview = document.getElementById('summary-additional-fields-preview');
       if (additionalFieldsPreview) additionalFieldsPreview.style.display = 'none';
       hasAdditionalFields = false;
@@ -2431,6 +2738,17 @@ export class PluginModalStepper {
     safeSetValue('sql-password');
     safeSetValue('sql-auth-type', 'username_password');
     safeSetValue('sql-database-type', 'sql_server');
+
+    // Step 3 fields - Cosmos Plugin
+    safeSetValue('cosmos-endpoint');
+    safeSetValue('cosmos-database-name');
+    safeSetValue('cosmos-container-name');
+    safeSetValue('cosmos-partition-key-path');
+    safeSetValue('cosmos-field-hints');
+    safeSetValue('cosmos-max-items', '100');
+    safeSetValue('cosmos-timeout', '30');
+    safeSetValue('cosmos-auth-type', 'identity');
+    safeSetValue('cosmos-auth-key');
     
     // Clear any type selection
     this.selectedType = null;
@@ -2441,6 +2759,7 @@ export class PluginModalStepper {
       this.toggleOpenApiAuthFields();
       this.toggleGenericAuthFields();
       this.handleSqlAuthTypeChange();
+      this.handleCosmosAuthTypeChange();
     } catch (e) {
       console.log('Some auth field toggles not available:', e.message);
     }

@@ -1,6 +1,6 @@
 // chat-collaboration.js
 
-import { appendMessage, updateSendButtonVisibility, updateUserMessageId, userInput } from './chat-messages.js';
+import { appendMessage, getCollaborativeTagSuggestions, updateSendButtonVisibility, updateUserMessageId, userInput } from './chat-messages.js';
 import { applyConversationMetadataUpdate } from './chat-conversations.js';
 import { loadUserSettings, saveUserSetting } from './chat-layout.js';
 import { showToast } from './chat-toast.js';
@@ -261,10 +261,11 @@ function buildMentionSuggestionsFromParticipants(conversationId, query = '') {
 
 async function loadMentionSuggestions(conversationId, query = '') {
     const participantSuggestions = buildMentionSuggestionsFromParticipants(conversationId, query);
+    const targetSuggestions = getCollaborativeTagSuggestions(query);
     const seenUserIds = new Set(participantSuggestions.map(participant => participant.user_id));
 
     if (!canUseParticipantFlow(conversationId)) {
-        return participantSuggestions;
+        return [...participantSuggestions, ...targetSuggestions].slice(0, DEFAULT_SUGGESTION_LIMIT);
     }
 
     const collaboratorSuggestions = await searchLocalCollaborators(query, {
@@ -290,7 +291,7 @@ async function loadMentionSuggestions(conversationId, query = '') {
             action: 'invite',
         }));
 
-    return [...participantSuggestions, ...inviteSuggestions];
+    return [...participantSuggestions, ...targetSuggestions, ...inviteSuggestions].slice(0, DEFAULT_SUGGESTION_LIMIT);
 }
 
 function replaceComposerMention(mentionState, replacementText) {
@@ -318,6 +319,15 @@ function insertParticipantMention(collaborator, mentionState) {
     }
 
     replaceComposerMention(mentionState, `@${normalizedCollaborator.display_name}`);
+}
+
+function insertInvocationTargetMention(target, mentionState) {
+    const mentionText = String(target?.mention_text || `@${target?.display_name || ''}`).trim();
+    if (!mentionText) {
+        return;
+    }
+
+    replaceComposerMention(mentionState, mentionText);
 }
 
 function extractMentionedParticipantsFromMessage(messageText, conversationId) {
@@ -1221,10 +1231,16 @@ function getMentionMatch() {
 }
 
 function buildSuggestionItemHtml(suggestion) {
-    const subtitle = suggestion.email
-        ? `<div class="small text-muted">${suggestion.email}</div>`
+    const subtitle = suggestion.action === 'ai_tag'
+        ? `<div class="small text-muted">${escapeHtml(suggestion.subtitle || (suggestion.target_type === 'agent' ? 'AI agent' : 'Model deployment'))}</div>`
+        : suggestion.email
+        ? `<div class="small text-muted">${escapeHtml(suggestion.email)}</div>`
         : '<div class="small text-muted">No email recorded</div>';
-    const sourceLabel = suggestion.action === 'tag'
+    const sourceLabel = suggestion.action === 'ai_tag'
+        ? suggestion.target_type === 'agent'
+            ? '<span class="badge bg-warning-subtle text-warning-emphasis ms-2">Agent</span>'
+            : '<span class="badge bg-primary-subtle text-primary-emphasis ms-2">Model</span>'
+        : suggestion.action === 'tag'
         ? '<span class="badge bg-success-subtle text-success-emphasis ms-2">Tag</span>'
         : suggestion.source === 'recent'
         ? '<span class="badge bg-secondary-subtle text-secondary-emphasis ms-2">Recent</span>'
@@ -1233,7 +1249,7 @@ function buildSuggestionItemHtml(suggestion) {
     return `
         <div class="d-flex justify-content-between align-items-start gap-2">
             <div class="text-start overflow-hidden">
-                <div class="fw-semibold text-truncate">${suggestion.display_name}</div>
+                <div class="fw-semibold text-truncate">${escapeHtml(suggestion.display_name)}</div>
                 ${subtitle}
             </div>
             ${sourceLabel}
@@ -1257,7 +1273,7 @@ function renderMentionMenu(results, mentionState) {
     }
 
     if (!Array.isArray(results) || results.length === 0) {
-        mentionMenu.innerHTML = '<div class="list-group-item text-muted small">No participants or collaborators found.</div>';
+        mentionMenu.innerHTML = '<div class="list-group-item text-muted small">No matching participants, agents, models, or collaborators found.</div>';
         mentionMenu.classList.remove('d-none');
         activeMentionState = {
             ...mentionState,
@@ -1284,6 +1300,11 @@ function renderMentionMenu(results, mentionState) {
             event.preventDefault();
             if (result.action === 'tag') {
                 insertParticipantMention(result, mentionState);
+                return;
+            }
+
+            if (result.action === 'ai_tag') {
+                insertInvocationTargetMention(result, mentionState);
                 return;
             }
 
@@ -1629,6 +1650,8 @@ function handleComposerKeydown(event) {
         if (collaborator) {
             if (collaborator.action === 'tag') {
                 insertParticipantMention(collaborator, activeMentionState);
+            } else if (collaborator.action === 'ai_tag') {
+                insertInvocationTargetMention(collaborator, activeMentionState);
             } else {
                 openParticipantConfirmation(collaborator, {
                     conversationId: window.chatConversations?.getCurrentConversationId?.(),

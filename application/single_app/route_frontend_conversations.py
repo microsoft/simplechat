@@ -11,6 +11,7 @@ from functions_collaboration import (
     get_collaboration_conversation,
     get_collaboration_message,
 )
+from functions_image_messages import hydrate_image_messages
 from functions_message_artifacts import (
     build_message_artifact_payload_map,
     filter_assistant_artifact_items,
@@ -133,68 +134,10 @@ def register_route_frontend_conversations(app):
             attempt = thread_info.get('thread_attempt', 'N/A')
             debug_print(f"  {i+1}. {item.get('id')}: thread_id={thread_id}, prev={prev_thread_id}, attempt={attempt}, timestamp={timestamp}")
 
-        # Process messages and reassemble chunked images
-        messages = []
-        chunked_images = {}  # Store image chunks by parent_message_id
-        
-        for item in all_items:
-            if item.get('role') == 'image_chunk':
-                # This is a chunk, store it for reassembly
-                parent_id = item.get('parent_message_id')
-                if parent_id not in chunked_images:
-                    chunked_images[parent_id] = {}
-                chunk_index = item.get('metadata', {}).get('chunk_index', 0)
-                chunked_images[parent_id][chunk_index] = item.get('content', '')
-                debug_print(f"Frontend endpoint - Stored chunk {chunk_index} for parent {parent_id}")
-            else:
-                # Regular message or main image document
-                if item.get('role') == 'image' and item.get('metadata', {}).get('is_chunked'):
-                    # This is a chunked image main document
-                    messages.append(item)
-                else:
-                    # Regular message
-                    messages.append(item)
-
-        # Reassemble chunked images
-        for message in messages:
-            if (message.get('role') == 'image' and 
-                message.get('metadata', {}).get('is_chunked')):
-                
-                image_id = message.get('id')
-                total_chunks = message.get('metadata', {}).get('total_chunks', 1)
-                
-                debug_print(f"Frontend endpoint - Reassembling chunked image {image_id} with {total_chunks} chunks")
-                debug_print(f"Frontend endpoint - Available chunks: {list(chunked_images.get(image_id, {}).keys())}")
-                
-                # Start with the content from the main message (chunk 0)
-                complete_content = message.get('content', '')
-                debug_print(f"Frontend endpoint - Main message content length: {len(complete_content)} bytes")
-                
-                # Add remaining chunks in order (chunks 1, 2, 3, etc.)
-                if image_id in chunked_images:
-                    chunks = chunked_images[image_id]
-                    for chunk_index in range(1, total_chunks):
-                        if chunk_index in chunks:
-                            chunk_content = chunks[chunk_index]
-                            complete_content += chunk_content
-                            debug_print(f"Frontend endpoint - Added chunk {chunk_index}, length: {len(chunk_content)} bytes")
-                        else:
-                            print(f"WARNING: Frontend endpoint - Missing chunk {chunk_index} for image {image_id}")
-                else:
-                    print(f"WARNING: Frontend endpoint - No chunks found for image {image_id}")
-                
-                debug_print(f"Frontend endpoint - Final reassembled image total size: {len(complete_content)} bytes")
-                
-                # For large images (>1MB), use a URL reference instead of embedding in JSON
-                if len(complete_content) > 1024 * 1024:  # 1MB threshold
-                    debug_print(f"Frontend endpoint - Large image detected ({len(complete_content)} bytes), using URL reference")
-                    # Store the complete content temporarily and provide a URL reference
-                    message['content'] = f"/api/image/{image_id}"
-                    message['metadata']['is_large_image'] = True
-                    message['metadata']['image_size'] = len(complete_content)
-                else:
-                    # Small enough to embed directly
-                    message['content'] = complete_content
+        messages = hydrate_image_messages(
+            all_items,
+            image_url_builder=lambda image_id: f"/api/image/{image_id}",
+        )
 
         # Remove file content for security
         for m in messages:

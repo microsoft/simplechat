@@ -3,6 +3,9 @@
 import re
 import builtins
 import json
+from azure.cosmos import CosmosClient
+from azure.cosmos.exceptions import CosmosHttpResponseError
+from azure.identity import DefaultAzureCredential
 from flask import Blueprint, jsonify, request, current_app
 from semantic_kernel_plugins.plugin_loader import get_all_plugin_metadata
 from semantic_kernel_plugins.plugin_health_checker import PluginHealthChecker, PluginErrorRecovery
@@ -43,6 +46,25 @@ from functions_activity_logging import (
     log_action_update,
     log_action_deletion,
 )
+from functions_simplechat_operations import SIMPLECHAT_DEFAULT_ENDPOINT, SIMPLECHAT_PLUGIN_TYPE
+
+
+def _apply_plugin_runtime_defaults(plugin_payload):
+    if not isinstance(plugin_payload, dict):
+        return plugin_payload
+
+    plugin_type = plugin_payload.get('type', '')
+    if plugin_type in ['sql_schema', 'sql_query']:
+        plugin_payload.setdefault('endpoint', f'sql://{plugin_type}')
+    elif plugin_type == 'msgraph':
+        plugin_payload.setdefault('endpoint', 'https://graph.microsoft.com')
+    elif plugin_type == SIMPLECHAT_PLUGIN_TYPE:
+        plugin_payload.setdefault('endpoint', SIMPLECHAT_DEFAULT_ENDPOINT)
+        auth = plugin_payload.get('auth') if isinstance(plugin_payload.get('auth'), dict) else {}
+        auth['type'] = 'user'
+        plugin_payload['auth'] = auth
+
+    return plugin_payload
 
 def discover_plugin_types():
     # Dynamically discover allowed plugin types from available plugin classes.
@@ -145,6 +167,20 @@ def get_plugin_types():
                                 'connection_string': ':memory:',
                                 'metadata': {'description': 'Example SQL plugin'}
                             }
+                        elif 'cosmos' in module_name.lower():
+                            safe_manifest = {
+                                'endpoint': 'https://example.documents.azure.com:443/',
+                                'auth': {'type': 'identity', 'identity': 'managed_identity'},
+                                'additionalFields': {
+                                    'database_name': 'SimpleChat',
+                                    'container_name': 'documents',
+                                    'partition_key_path': '/id',
+                                    'field_hints': ['id', 'title', 'user_id'],
+                                    'max_items': 100,
+                                    'timeout': 30,
+                                },
+                                'metadata': {'description': 'Example Cosmos query plugin'}
+                            }
                         elif any(x in module_name.lower() for x in ['azure_function', 'blob_storage', 'queue_storage']):
                             safe_manifest = {
                                 'endpoint': 'https://example.azure.com',
@@ -230,8 +266,8 @@ def _redact_plugin_for_logging(plugin):
     return redact_plugin_secret_values(plugin)
 
 
-def _resolve_secret_value_for_sql_test(value, field_name):
-    """Resolve a Key Vault reference for SQL test-connection flows."""
+def _resolve_secret_value_for_plugin_test(value, field_name, plugin_label='plugin'):
+    """Resolve a Key Vault reference for plugin test-connection flows."""
     if not isinstance(value, str) or not value:
         return value
     if not validate_secret_name_dynamic(value):
@@ -239,12 +275,12 @@ def _resolve_secret_value_for_sql_test(value, field_name):
 
     resolved_value = retrieve_secret_from_key_vault_by_full_name(value)
     if validate_secret_name_dynamic(resolved_value):
-        raise ValueError(f"Unable to resolve stored Key Vault secret for SQL field '{field_name}'.")
+        raise ValueError(f"Unable to resolve stored Key Vault secret for {plugin_label} field '{field_name}'.")
     return resolved_value
 
 
-def _load_existing_plugin_for_sql_test(plugin_context, user_id):
-    """Load an existing plugin manifest with Key Vault reference names for edit-time SQL tests."""
+def _load_existing_plugin_for_test(plugin_context, user_id):
+    """Load an existing plugin manifest with Key Vault reference names for edit-time plugin tests."""
     if not isinstance(plugin_context, dict):
         return None
 
@@ -266,6 +302,16 @@ def _load_existing_plugin_for_sql_test(plugin_context, user_id):
         return get_global_action(plugin_identifier, return_type=SecretReturnType.NAME)
 
     return get_personal_action(user_id, plugin_identifier, return_type=SecretReturnType.NAME)
+
+
+def _resolve_secret_value_for_sql_test(value, field_name):
+    """Resolve a Key Vault reference for SQL test-connection flows."""
+    return _resolve_secret_value_for_plugin_test(value, field_name, plugin_label='SQL')
+
+
+def _load_existing_plugin_for_sql_test(plugin_context, user_id):
+    """Load an existing plugin manifest with Key Vault reference names for edit-time SQL tests."""
+    return _load_existing_plugin_for_test(plugin_context, user_id)
 
 # === USER PLUGINS ENDPOINTS ===
 @bpap.route('/api/user/plugins', methods=['GET'])
@@ -357,17 +403,8 @@ def set_user_plugins():
         
         # Handle endpoint based on plugin type
         plugin_type = plugin_to_save.get('type', '')
-        if plugin_type in ['sql_schema', 'sql_query']:
-            # SQL plugins don't use endpoints, but schema validation requires one
-            # Use a placeholder that indicates it's a SQL plugin
-            plugin_to_save.setdefault('endpoint', f'sql://{plugin_type}')
-        elif plugin_type == 'msgraph':
-            # MS Graph plugin does not require an endpoint, but schema validation requires one
-            #TODO: Update to support different clouds
-            plugin_to_save.setdefault('endpoint', 'https://graph.microsoft.com')
-        else:
-            # For other plugin types, require a real endpoint
-            plugin_to_save.setdefault('endpoint', '')
+        plugin_to_save.setdefault('endpoint', '')
+        _apply_plugin_runtime_defaults(plugin_to_save)
         
         # Ensure auth has default structure
         if 'auth' not in plugin_to_save:
@@ -547,12 +584,7 @@ def create_group_action_route():
     for key in ('group_id', 'last_updated', 'user_id', 'is_global', 'is_group', 'scope'):
         payload.pop(key, None)
 
-    # Handle endpoint based on plugin type (same logic as personal plugins)
-    plugin_type = payload.get('type', '')
-    if plugin_type in ['sql_schema', 'sql_query']:
-        payload.setdefault('endpoint', f'sql://{plugin_type}')
-    elif plugin_type == 'msgraph':
-        payload.setdefault('endpoint', 'https://graph.microsoft.com')
+    _apply_plugin_runtime_defaults(payload)
 
     # Merge with schema to ensure all required fields are present (same as global actions)
     schema_dir = os.path.join(current_app.root_path, 'static', 'json', 'schemas')
@@ -611,12 +643,7 @@ def update_group_action_route(action_id):
     merged['is_group'] = True
     merged['id'] = existing.get('id', action_id)
 
-    # Handle endpoint based on plugin type (same logic as personal plugins)
-    plugin_type = merged.get('type', '')
-    if plugin_type in ['sql_schema', 'sql_query']:
-        merged.setdefault('endpoint', f'sql://{plugin_type}')
-    elif plugin_type == 'msgraph':
-        merged.setdefault('endpoint', 'https://graph.microsoft.com')
+    _apply_plugin_runtime_defaults(merged)
 
     try:
         validate_group_action_payload(merged, partial=False)
@@ -767,6 +794,7 @@ def add_plugin():
     try:
         plugins = get_global_actions()
         new_plugin = request.json
+        _apply_plugin_runtime_defaults(new_plugin)
         
         # Strict validation with dynamic allowed types
         allowed_types = discover_plugin_types()
@@ -822,6 +850,7 @@ def edit_plugin(plugin_name):
     try:
         plugins = get_global_actions()
         updated_plugin = request.json
+        _apply_plugin_runtime_defaults(updated_plugin)
         
         # Strict validation with dynamic allowed types
         allowed_types = discover_plugin_types()
@@ -1193,3 +1222,148 @@ def test_sql_connection():
         if 'password' in error_msg.lower() or 'pwd' in error_msg.lower():
             error_msg = 'Authentication failed. Please check your credentials.'
         return jsonify({'success': False, 'error': f'Connection failed: {error_msg}'}), 400
+
+
+@bpap.route('/api/plugins/test-cosmos-connection', methods=['POST'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+def test_cosmos_connection():
+    """Test an Azure Cosmos DB for NoSQL connection using managed identity or an account key."""
+    data = request.get_json(silent=True) or {}
+    user_id = get_current_user_id()
+    endpoint = (data.get('endpoint') or '').strip()
+    database_name = (data.get('database_name') or '').strip()
+    container_name = (data.get('container_name') or '').strip()
+    auth_type = (data.get('auth_type') or 'identity').strip().lower()
+    auth_key = (data.get('auth_key') or '').strip()
+    timeout = min(max(int(data.get('timeout', 10)), 1), 30)
+
+    if auth_type == 'managed_identity':
+        auth_type = 'identity'
+
+    if not endpoint:
+        return jsonify({'success': False, 'error': 'Cosmos DB account endpoint is required.'}), 400
+    if not database_name:
+        return jsonify({'success': False, 'error': 'Database name is required.'}), 400
+    if not container_name:
+        return jsonify({'success': False, 'error': 'Container name is required.'}), 400
+
+    try:
+        existing_plugin = _load_existing_plugin_for_test(data.get('existing_plugin'), user_id)
+    except PermissionError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 403
+    except LookupError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
+    existing_auth = {}
+    if isinstance(existing_plugin, dict) and isinstance(existing_plugin.get('auth'), dict):
+        existing_auth = existing_plugin['auth']
+
+    if auth_type == 'key':
+        if auth_key == ui_trigger_word:
+            auth_key = existing_auth.get('key', '')
+
+        if auth_key == ui_trigger_word:
+            return jsonify({'success': False, 'error': 'Stored Cosmos DB account key could not be resolved for testing. Re-enter the account key.'}), 400
+
+        try:
+            auth_key = _resolve_secret_value_for_plugin_test(auth_key, 'auth.key', plugin_label='Cosmos DB')
+        except ValueError as exc:
+            return jsonify({'success': False, 'error': str(exc)}), 400
+
+        if not auth_key:
+            return jsonify({'success': False, 'error': 'Account key is required when using key authentication.'}), 400
+    elif auth_type != 'identity':
+        return jsonify({'success': False, 'error': "Cosmos DB auth_type must be either 'identity' or 'key'."}), 400
+
+    try:
+        headers = {}
+
+        def capture_response_headers(response_headers, _):
+            headers.clear()
+            headers.update(response_headers)
+
+        client = CosmosClient(
+            endpoint,
+            credential=DefaultAzureCredential() if auth_type == 'identity' else auth_key,
+            timeout=timeout,
+            connection_timeout=timeout,
+        )
+        database_client = client.get_database_client(database_name)
+        database_client.read()
+        container_client = database_client.get_container_client(container_name)
+        container_client.read()
+        list(
+            container_client.query_items(
+                query='SELECT TOP 1 VALUE c.id FROM c',
+                enable_cross_partition_query=True,
+                max_item_count=1,
+                response_hook=capture_response_headers,
+            )
+        )
+
+        log_event(
+            '[Plugins] Cosmos connection test succeeded',
+            extra={
+                'user_id': user_id,
+                'endpoint': endpoint,
+                'database_name': database_name,
+                'container_name': container_name,
+                'auth_type': auth_type,
+                'request_charge': headers.get('x-ms-request-charge'),
+            },
+            level=logging.INFO,
+        )
+        return jsonify({
+            'success': True,
+            'message': f'Successfully connected to Cosmos DB container {container_name} in database {database_name}.'
+        })
+    except CosmosHttpResponseError as exc:
+        status_code = getattr(exc, 'status_code', None)
+        if status_code in (401, 403):
+            if auth_type == 'key':
+                error_msg = 'Account key authentication failed. Verify the Cosmos DB account key and confirm key-based access is enabled for this account.'
+            else:
+                error_msg = 'Managed identity authentication or authorization failed. Ensure the application identity has Azure Cosmos DB built-in data reader access.'
+            status = 403
+        elif status_code == 404:
+            error_msg = 'The configured database or container was not found at the specified account endpoint.'
+            status = 404
+        else:
+            error_msg = f'Cosmos DB connection failed: {str(exc)}'
+            status = 400
+
+        log_event(
+            f'[Plugins] Cosmos connection test failed: {exc}',
+            extra={
+                'user_id': user_id,
+                'endpoint': endpoint,
+                'database_name': database_name,
+                'container_name': container_name,
+                'auth_type': auth_type,
+                'status_code': status_code,
+            },
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        return jsonify({'success': False, 'error': error_msg}), status
+    except Exception as exc:
+        log_event(
+            f'[Plugins] Cosmos connection test failed unexpectedly: {exc}',
+            extra={
+                'user_id': user_id,
+                'endpoint': endpoint,
+                'database_name': database_name,
+                'container_name': container_name,
+                'auth_type': auth_type,
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return jsonify({
+            'success': False,
+            'error': 'Cosmos DB authentication failed or the account could not be reached. Verify the endpoint and the selected authentication settings.'
+        }), 400

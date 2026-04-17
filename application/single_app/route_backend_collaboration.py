@@ -35,6 +35,7 @@ from functions_collaboration import (
     resolve_collaboration_mentions,
     serialize_collaboration_conversation,
     serialize_collaboration_message,
+    sync_collaboration_conversation_metadata_from_source,
     toggle_personal_collaboration_hide,
     toggle_personal_collaboration_pin,
     update_personal_collaboration_member_role,
@@ -1182,6 +1183,20 @@ def register_route_backend_collaboration(app):
                                     message_persisted=True,
                                     conversation_id=conversation_id,
                                 )
+
+                            try:
+                                source_conversation_doc = cosmos_conversations_container.read_item(
+                                    item=source_conversation_id,
+                                    partition_key=source_conversation_id,
+                                )
+                                updated_conversation_doc, _ = sync_collaboration_conversation_metadata_from_source(
+                                    updated_conversation_doc,
+                                    source_conversation_doc,
+                                )
+                            except CosmosResourceNotFoundError:
+                                source_conversation_doc = None
+                            except Exception:
+                                source_conversation_doc = None
 
                             mirrored_message_doc, final_conversation_doc, _ = mirror_source_message_to_collaboration(
                                 updated_conversation_doc,

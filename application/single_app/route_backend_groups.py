@@ -5,6 +5,10 @@ from functions_authentication import *
 from functions_group import *
 from functions_debug import debug_print
 from functions_notifications import create_notification
+from functions_simplechat_operations import (
+    add_group_member_for_current_user,
+    create_group_for_current_user,
+)
 from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_backend_groups(app):
@@ -148,8 +152,10 @@ def register_route_backend_groups(app):
         description = data.get("description", "")
 
         try:
-            group_doc = create_group(name, description)
+            group_doc = create_group_for_current_user(name, description)
             return jsonify({"id": group_doc["id"], "name": group_doc["name"]}), 201
+        except PermissionError as ex:
+            return jsonify({"error": str(ex)}), 403
         except Exception as ex:
             return jsonify({"error": str(ex)}), 400
 
@@ -385,101 +391,22 @@ def register_route_backend_groups(app):
         Body: { "userId": "<some_user_id>", "displayName": "...", etc. }
         Only Owner or Admin can add members directly (bypass request flow).
         """
-        user_info = get_current_user_info()
-        user_id = user_info["userId"]
-        user_email = user_info.get("email", "unknown")
-
-        group_doc = find_group_by_id(group_id)
-        
-        if not group_doc:
-            return jsonify({"error": "Group not found"}), 404
-
-        role = get_user_role_in_group(group_doc, user_id)
-        if role not in ["Owner", "Admin"]:
-            return jsonify({"error": "Only the owner or admin can add members"}), 403
-
         data = request.get_json()
-        new_user_id = data.get("userId")
-        if not new_user_id:
-            return jsonify({"error": "Missing userId"}), 400
-
-        if get_user_role_in_group(group_doc, new_user_id):
-            return jsonify({"error": "User is already a member"}), 400
-
-        # Get role from request, default to 'user'
-        member_role = data.get("role", "user").lower()
-        
-        # Validate role
-        valid_roles = ['admin', 'document_manager', 'user']
-        if member_role not in valid_roles:
-            return jsonify({"error": f"Invalid role. Must be: {', '.join(valid_roles)}"}), 400
-
-        new_member_doc = {
-            "userId": new_user_id,
-            "email": data.get("email", ""),
-            "displayName": data.get("displayName", "New User")
-        }
-        group_doc["users"].append(new_member_doc)
-        
-        # Add to appropriate role array
-        if member_role == 'admin':
-            if new_user_id not in group_doc.get('admins', []):
-                group_doc.setdefault('admins', []).append(new_user_id)
-        elif member_role == 'document_manager':
-            if new_user_id not in group_doc.get('documentManagers', []):
-                group_doc.setdefault('documentManagers', []).append(new_user_id)
-        
-        group_doc["modifiedDate"] = datetime.utcnow().isoformat()
-
-        cosmos_groups_container.upsert_item(group_doc)
-        
-        # Log activity for member addition
         try:
-            activity_record = {
-                'id': str(uuid.uuid4()),
-                'activity_type': 'add_member_directly',
-                'timestamp': datetime.utcnow().isoformat(),
-                'added_by_user_id': user_id,
-                'added_by_email': user_email,
-                'added_by_role': role,
-                'group_id': group_id,
-                'group_name': group_doc.get('name', 'Unknown'),
-                'member_user_id': new_user_id,
-                'member_email': new_member_doc.get('email', ''),
-                'member_name': new_member_doc.get('displayName', ''),
-                'member_role': member_role,
-                'description': f"{role} {user_email} added member {new_member_doc.get('displayName', '')} ({new_member_doc.get('email', '')}) to group {group_doc.get('name', group_id)} as {member_role}"
-            }
-            cosmos_activity_logs_container.create_item(body=activity_record)
-        except Exception as log_error:
-            debug_print(f"Failed to log member addition activity: {log_error}")
-        
-        # Create notification for the new member
-        try:
-            from functions_notifications import create_notification
-            role_display = {
-                'admin': 'Admin',
-                'document_manager': 'Document Manager',
-                'user': 'Member'
-            }.get(member_role, 'Member')
-            
-            create_notification(
-                user_id=new_user_id,
-                notification_type='system_announcement',
-                title='Added to Group',
-                message=f"You have been added to the group '{group_doc.get('name', 'Unknown')}' as {role_display} by {user_email}.",
-                link_url=f"/manage_group/{group_id}",
-                metadata={
-                    'group_id': group_id,
-                    'group_name': group_doc.get('name', 'Unknown'),
-                    'added_by': user_email,
-                    'role': member_role
-                }
+            result = add_group_member_for_current_user(
+                group_id=group_id,
+                user_id=data.get("userId", ""),
+                email=data.get("email", ""),
+                display_name=data.get("displayName", ""),
+                role=data.get("role", "user"),
             )
-        except Exception as notif_error:
-            debug_print(f"Failed to create member addition notification: {notif_error}")
-        
-        return jsonify({"message": "Member added", "success": True}), 200
+            return jsonify({"message": result.get("message", "Member added"), "success": True}), 200
+        except PermissionError as exc:
+            return jsonify({"error": str(exc)}), 403
+        except LookupError as exc:
+            return jsonify({"error": str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
 
     @app.route("/api/groups/<group_id>/members/<member_id>", methods=["DELETE"])
     @swagger_route(security=get_auth_security())

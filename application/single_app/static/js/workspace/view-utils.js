@@ -52,6 +52,8 @@ export function getTypeIcon(type) {
     if (!type) return "bi-lightning-charge";
     const t = type.toLowerCase();
     if (t.includes("sql")) return "bi-database";
+    if (t.includes("cosmos")) return "bi-database-fill-gear";
+    if (t.includes("simplechat")) return "bi-chat-square-dots";
     if (t.includes("openapi")) return "bi-globe";
     if (t.includes("log_analytics")) return "bi-graph-up";
     if (t.includes("msgraph")) return "bi-microsoft";

@@ -1637,6 +1637,18 @@ a.citation-link:hover {
   background-color: rgba(13, 110, 253, 0.15);
   color: #0a58ca;
 }
+.collaboration-mention-chip-target-model {
+  background-color: rgba(13, 110, 253, 0.15);
+  color: #0a58ca;
+}
+.collaboration-mention-chip-target-agent {
+  background-color: rgba(255, 193, 7, 0.22);
+  color: #7a5a00;
+}
+.collaboration-mention-chip-target-image {
+  background-color: rgba(108, 117, 125, 0.16);
+  color: #495057;
+}
 
 .collaboration-mention-menu {
   position: absolute;
@@ -1653,6 +1665,8 @@ a.citation-link:hover {
 .collaboration-mention-menu .list-group-item.active {
   background-color: #0d6efd;
   border-color: #0d6efd;
+}
+
 [data-bs-theme="dark"] .collaboration-mentions-label {
   color: #8dd7a3;
 }
@@ -1664,6 +1678,17 @@ a.citation-link:hover {
   background-color: rgba(84, 141, 255, 0.25);
   color: #d7e4ff;
 }
+[data-bs-theme="dark"] .collaboration-mention-chip-target-model {
+  background-color: rgba(84, 141, 255, 0.25);
+  color: #d7e4ff;
+}
+[data-bs-theme="dark"] .collaboration-mention-chip-target-agent {
+  background-color: rgba(255, 193, 7, 0.28);
+  color: #ffe8a3;
+}
+[data-bs-theme="dark"] .collaboration-mention-chip-target-image {
+  background-color: rgba(173, 181, 189, 0.2);
+  color: #f1f3f5;
 }
 
 .collaboration-participant-results {

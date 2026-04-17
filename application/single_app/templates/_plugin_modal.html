@@ -443,6 +443,103 @@
               </div>
             </div>
           </div>
+
+          <!-- Azure Cosmos DB Configuration -->
+          <div id="cosmos-config-section" class="d-none">
+            <div class="config-section-label">
+              <i class="bi bi-database me-2"></i>Azure Cosmos DB Configuration
+            </div>
+
+            <div class="cosmos-config-card">
+              <div class="config-section-label">
+                <i class="bi bi-plug me-2"></i>Account and Container
+              </div>
+
+              <div class="mb-3">
+                <label for="cosmos-endpoint" class="form-label">Account Endpoint <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" id="cosmos-endpoint" placeholder="https://your-account.documents.azure.com:443/" />
+                <div class="form-text">Use the Azure Cosmos DB account endpoint for the API for NoSQL account.</div>
+              </div>
+
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label for="cosmos-database-name" class="form-label">Database Name <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="cosmos-database-name" placeholder="SimpleChat" />
+                </div>
+                <div class="col-md-6">
+                  <label for="cosmos-container-name" class="form-label">Container Name <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="cosmos-container-name" placeholder="documents" />
+                </div>
+              </div>
+
+              <div class="mt-3">
+                <label for="cosmos-partition-key-path" class="form-label">Partition Key Path <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" id="cosmos-partition-key-path" placeholder="/id" />
+                <div class="form-text">Enter the container partition key path exactly as configured in Cosmos DB.</div>
+              </div>
+            </div>
+
+            <div class="cosmos-config-card">
+              <div class="config-section-label">
+                <i class="bi bi-shield-lock me-2"></i>Authentication
+              </div>
+
+              <div class="mb-3">
+                <label for="cosmos-auth-type" class="form-label">Authentication Method <span class="text-danger">*</span></label>
+                <select class="form-select" id="cosmos-auth-type">
+                  <option value="identity">Managed Identity</option>
+                  <option value="key">Account Key</option>
+                </select>
+                <div class="form-text">Managed identity avoids stored secrets. Account keys can be stored in Key Vault when app secret storage is enabled.</div>
+              </div>
+
+              <div class="mb-3 d-none" id="cosmos-auth-key-group">
+                <label for="cosmos-auth-key" class="form-label">Account Key <span class="text-danger">*</span></label>
+                <input type="password" class="form-control" id="cosmos-auth-key" placeholder="Primary or secondary account key" autocomplete="new-password" />
+                <div class="form-text">If this action already uses a Key Vault-backed key, leave the stored value unchanged to preserve the existing secret.</div>
+              </div>
+
+              <div class="alert alert-info mb-0" id="cosmos-auth-info">
+                <span id="cosmos-auth-info-text">Managed Identity uses Azure AD authentication without storing credentials. Assign an Azure Cosmos DB built-in data reader role to the application identity for the target account.</span>
+              </div>
+            </div>
+
+            <div class="cosmos-config-card">
+              <div class="config-section-label">
+                <i class="bi bi-gear me-2"></i>Query Guidance
+              </div>
+
+              <div class="mb-3">
+                <label for="cosmos-field-hints" class="form-label">Field Hints</label>
+                <textarea class="form-control" id="cosmos-field-hints" rows="4" placeholder="id&#10;title&#10;user_id"></textarea>
+                <div class="form-text">Optional. Add one field name per line so the model knows which document properties are relevant.</div>
+              </div>
+
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label for="cosmos-max-items" class="form-label">Max Items</label>
+                  <input type="number" class="form-control" id="cosmos-max-items" value="100" min="1" max="1000" />
+                  <div class="form-text">Hard cap for documents returned per query.</div>
+                </div>
+                <div class="col-md-6">
+                  <label for="cosmos-timeout" class="form-label">Timeout (seconds)</label>
+                  <input type="number" class="form-control" id="cosmos-timeout" value="30" min="1" max="120" />
+                  <div class="form-text">Absolute timeout for Cosmos client requests.</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-4 pt-3 border-top" id="cosmos-test-connection-section">
+              <div class="d-flex align-items-center gap-3">
+                <button type="button" class="btn btn-outline-primary" id="cosmos-test-connection-btn">
+                  <i class="bi bi-plug me-2"></i>Test Cosmos Connection
+                </button>
+              </div>
+              <div id="cosmos-test-connection-result" class="mt-2 d-none">
+                <div class="alert mb-0 py-2 px-3 small" id="cosmos-test-connection-alert" role="alert"></div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- Step 4: Advanced -->
@@ -609,6 +706,61 @@
                   <div class="d-flex flex-column">
                     <label class="text-muted small mb-1">Include System Tables</label>
                     <span class="fw-medium" id="summary-sql-include-system">-</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Cosmos DB Configuration Section -->
+          <div class="card mb-3 border-0 shadow-sm" id="summary-cosmos-section" style="display: none;">
+            <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #17a2b8 0%, #11707f 100%);">
+              <h6 class="mb-0 fw-bold">
+                <i class="fas fa-database me-2"></i>Cosmos DB Configuration
+              </h6>
+            </div>
+            <div class="card-body p-3">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Authentication</label>
+                    <span class="fw-medium" id="summary-cosmos-auth-type">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Database Name</label>
+                    <span class="fw-medium" id="summary-cosmos-database-name">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Container Name</label>
+                    <span class="fw-medium" id="summary-cosmos-container-name">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Partition Key Path</label>
+                    <span class="fw-medium font-monospace" id="summary-cosmos-partition-key-path">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Max Items</label>
+                    <span class="fw-medium" id="summary-cosmos-max-items">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Timeout</label>
+                    <span class="fw-medium" id="summary-cosmos-timeout">-</span>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Field Hints</label>
+                    <span class="fw-medium" id="summary-cosmos-field-hints">-</span>
                   </div>
                 </div>
               </div>
@@ -804,6 +956,13 @@
   background-color: #f8f9fa;
 }
 
+#cosmos-config-section {
+  border: 1px solid #d7eef5;
+  border-radius: 8px;
+  padding: 1rem;
+  background-color: #f8f9fa;
+}
+
 /* Advanced toggle chevron animation */
 #plugin-advanced-toggle-icon {
   transition: transform 0.3s ease;
@@ -815,6 +974,14 @@
 
 .sql-connection-config, 
 .sql-auth-config {
+  background-color: white;
+  border-radius: 6px;
+  padding: 1rem;
+  margin-top: 1rem;
+  border: 1px solid #e9ecef;
+}
+
+.cosmos-config-card {
   background-color: white;
   border-radius: 6px;
   padding: 1rem;
@@ -895,6 +1062,10 @@
   border-left: 4px solid #0dcaf0;
 }
 
+#cosmos-auth-info {
+  border-left: 4px solid #17a2b8;
+}
+
 /* Plugin type selection styling */
 .btn-outline-info small,
 .btn-outline-success small {
@@ -939,8 +1110,14 @@
   background-color: #343a40;
 }
 
+[data-bs-theme="dark"] #cosmos-config-section {
+  border-color: #495057;
+  background-color: #343a40;
+}
+
 [data-bs-theme="dark"] .sql-connection-config,
 [data-bs-theme="dark"] .sql-auth-config,
+[data-bs-theme="dark"] .cosmos-config-card,
 [data-bs-theme="dark"] .auth-section {
   background-color: #2d3237;
   border-color: #495057;
@@ -964,6 +1141,12 @@
 }
 
 [data-bs-theme="dark"] #sql-auth-info {
+  background-color: #1f3a4a;
+  border-color: #17a2b8;
+  color: #b3e5fc;
+}
+
+[data-bs-theme="dark"] #cosmos-auth-info {
   background-color: #1f3a4a;
   border-color: #17a2b8;
   color: #b3e5fc;

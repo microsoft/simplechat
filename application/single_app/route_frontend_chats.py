@@ -9,6 +9,7 @@ from functions_documents import *
 from functions_group import find_group_by_id, get_group_model_endpoints, get_user_groups
 from functions_group_agents import get_group_agents
 from functions_global_agents import get_global_agents
+from functions_image_messages import build_image_message_documents
 from functions_personal_agents import ensure_migration_complete, get_personal_agents
 from functions_prompts import list_all_prompts_for_scope
 from functions_public_workspaces import find_public_workspace_by_id, get_user_visible_public_workspace_ids_from_settings
@@ -595,134 +596,48 @@ def register_route_frontend_chats(app):
             
             # For images with base64 data, store as 'image' role (like system-generated images)
             if image_base64_url:
-                # Check if image data is too large for a single Cosmos document (2MB limit)
-                # Use 1.5MB as safe limit for base64 content
-                max_content_size = 1500000  # 1.5MB in bytes
-                
-                if len(image_base64_url) > max_content_size:
-                    print(f"Large image detected ({len(image_base64_url)} bytes), splitting across multiple documents")
-                    
-                    # Extract base64 part for splitting
-                    data_url_prefix = image_base64_url.split(',')[0] + ','
-                    base64_content = image_base64_url.split(',')[1]
-                    
-                    # Calculate chunks
-                    chunk_size = max_content_size - len(data_url_prefix) - 200  # Room for JSON overhead
-                    chunks = [base64_content[i:i+chunk_size] for i in range(0, len(base64_content), chunk_size)]
-                    total_chunks = len(chunks)
-                    
-                    print(f"Splitting into {total_chunks} chunks of max {chunk_size} bytes each")
-                    
-                    # Threading logic for file upload
-                    previous_thread_id = None
-                    try:
-                        last_msg_query = f"SELECT TOP 1 c.metadata.thread_info.thread_id as thread_id FROM c WHERE c.conversation_id = '{conversation_id}' ORDER BY c.timestamp DESC"
-                        last_msgs = list(cosmos_messages_container.query_items(query=last_msg_query, partition_key=conversation_id))
-                        if last_msgs:
-                            previous_thread_id = last_msgs[0].get('thread_id')
-                    except Exception as ex:
-                        pass
+                previous_thread_id = None
+                try:
+                    last_msg_query = f"SELECT TOP 1 c.metadata.thread_info.thread_id as thread_id FROM c WHERE c.conversation_id = '{conversation_id}' ORDER BY c.timestamp DESC"
+                    last_msgs = list(cosmos_messages_container.query_items(query=last_msg_query, partition_key=conversation_id))
+                    if last_msgs:
+                        previous_thread_id = last_msgs[0].get('thread_id')
+                except Exception:
+                    pass
 
-                    current_thread_id = str(uuid.uuid4())
-                    
-                    # Create main image document with first chunk
-                    main_image_doc = {
-                        'id': file_message_id,
-                        'conversation_id': conversation_id,
-                        'role': 'image',
-                        'content': f"{data_url_prefix}{chunks[0]}",
-                        'filename': filename,
-                        'prompt': f"User uploaded: {filename}",
-                        'created_at': datetime.utcnow().isoformat(),
-                        'timestamp': datetime.utcnow().isoformat(),
-                        'model_deployment_name': None,
-                        'metadata': {
-                            'is_chunked': True,
-                            'total_chunks': total_chunks,
-                            'chunk_index': 0,
-                            'original_size': len(image_base64_url),
-                            'is_user_upload': True,
-                            'thread_info': {
-                                'thread_id': current_thread_id,
-                                'previous_thread_id': previous_thread_id,
-                                'active_thread': True,
-                                'thread_attempt': 1
-                            }
+                current_thread_id = str(uuid.uuid4())
+                image_message = {
+                    'id': file_message_id,
+                    'conversation_id': conversation_id,
+                    'content': image_base64_url,
+                    'filename': filename,
+                    'prompt': f"User uploaded: {filename}",
+                    'created_at': datetime.utcnow().isoformat(),
+                    'timestamp': datetime.utcnow().isoformat(),
+                    'model_deployment_name': None,
+                    'metadata': {
+                        'is_user_upload': True,
+                        'thread_info': {
+                            'thread_id': current_thread_id,
+                            'previous_thread_id': previous_thread_id,
+                            'active_thread': True,
+                            'thread_attempt': 1
                         }
                     }
-                    
-                    # Add vision analysis and extracted text if available
-                    if vision_analysis:
-                        main_image_doc['vision_analysis'] = vision_analysis
-                    if extracted_content:
-                        main_image_doc['extracted_text'] = extracted_content
-                    
-                    cosmos_messages_container.upsert_item(main_image_doc)
-                    
-                    # Create chunk documents
-                    for i in range(1, total_chunks):
-                        chunk_doc = {
-                            'id': f"{file_message_id}_chunk_{i}",
-                            'conversation_id': conversation_id,
-                            'role': 'image_chunk',
-                            'content': chunks[i],
-                            'parent_message_id': file_message_id,
-                            'created_at': datetime.utcnow().isoformat(),
-                            'timestamp': datetime.utcnow().isoformat(),
-                            'metadata': {
-                                'is_chunk': True,
-                                'chunk_index': i,
-                                'total_chunks': total_chunks,
-                                'parent_message_id': file_message_id
-                            }
-                        }
-                        cosmos_messages_container.upsert_item(chunk_doc)
-                    
-                    print(f"Created {total_chunks} chunked image documents for {filename}")
+                }
+
+                if vision_analysis:
+                    image_message['vision_analysis'] = vision_analysis
+                if extracted_content:
+                    image_message['extracted_text'] = extracted_content
+
+                image_documents = build_image_message_documents(image_message)
+                for image_document in image_documents:
+                    cosmos_messages_container.upsert_item(image_document)
+
+                if image_documents[0].get('metadata', {}).get('is_chunked'):
+                    print(f"Created {len(image_documents)} chunked image documents for {filename}")
                 else:
-                    # Small enough to store in single document
-                    # Threading logic for file upload
-                    previous_thread_id = None
-                    try:
-                        last_msg_query = f"SELECT TOP 1 c.metadata.thread_info.thread_id as thread_id FROM c WHERE c.conversation_id = '{conversation_id}' ORDER BY c.timestamp DESC"
-                        last_msgs = list(cosmos_messages_container.query_items(query=last_msg_query, partition_key=conversation_id))
-                        if last_msgs:
-                            previous_thread_id = last_msgs[0].get('thread_id')
-                    except Exception as ex:
-                        pass
-
-                    current_thread_id = str(uuid.uuid4())
-                    
-                    image_message = {
-                        'id': file_message_id,
-                        'conversation_id': conversation_id,
-                        'role': 'image',
-                        'content': image_base64_url,
-                        'filename': filename,
-                        'prompt': f"User uploaded: {filename}",
-                        'created_at': datetime.utcnow().isoformat(),
-                        'timestamp': datetime.utcnow().isoformat(),
-                        'model_deployment_name': None,
-                        'metadata': {
-                            'is_chunked': False,
-                            'original_size': len(image_base64_url),
-                            'is_user_upload': True,
-                            'thread_info': {
-                                'thread_id': current_thread_id,
-                                'previous_thread_id': previous_thread_id,
-                                'active_thread': True,
-                                'thread_attempt': 1
-                            }
-                        }
-                    }
-                    
-                    # Add vision analysis and extracted text if available
-                    if vision_analysis:
-                        image_message['vision_analysis'] = vision_analysis
-                    if extracted_content:
-                        image_message['extracted_text'] = extracted_content
-                    
-                    cosmos_messages_container.upsert_item(image_message)
                     print(f"Created single image document for {filename}")
             else:
                 # Non-image file or failed to convert to base64, store as 'file' role

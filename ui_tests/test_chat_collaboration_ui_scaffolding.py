@@ -1,8 +1,8 @@
 # test_chat_collaboration_ui_scaffolding.py
 """
 UI test for chat collaboration scaffolding.
-Version: 0.241.019
-Implemented in: 0.241.019
+Version: 0.241.020
+Implemented in: 0.241.020
 
 This test ensures the authenticated chats page loads the collaboration UI
 containers needed for participant management and @-mention suggestions without
@@ -173,20 +173,96 @@ def test_chat_collaboration_ui_scaffolding(playwright):
                     <div class="collaboration-mentions-label">Tagged</div>
                     <div class="collaboration-mentions-list">
                         <span class="collaboration-mention-chip collaboration-mention-chip-current-user">@Owner User</span>
+                        <span class="collaboration-mention-chip collaboration-mention-chip-target-agent">@Default Agent</span>
+                        <span class="collaboration-mention-chip collaboration-mention-chip-target-model">@gpt-5.4</span>
                     </div>
                 `;
                 document.body.appendChild(mentionContainer);
 
-                const mentionChip = mentionContainer.querySelector('.collaboration-mention-chip');
-                const styles = window.getComputedStyle(mentionChip);
-                if (styles.borderRadius === '0px') {
+                const mentionChips = Array.from(mentionContainer.querySelectorAll('.collaboration-mention-chip'));
+                const baseStyles = window.getComputedStyle(mentionChips[0]);
+                if (baseStyles.borderRadius === '0px') {
                     throw new Error('Expected mention chips to be visibly pill-shaped.');
                 }
-                if (styles.display !== 'inline-flex') {
-                    throw new Error(`Expected mention chips to use inline-flex but received ${styles.display}.`);
+                if (baseStyles.display !== 'inline-flex') {
+                    throw new Error(`Expected mention chips to use inline-flex but received ${baseStyles.display}.`);
+                }
+
+                const currentUserStyles = window.getComputedStyle(mentionChips[0]);
+                const agentStyles = window.getComputedStyle(mentionChips[1]);
+                const modelStyles = window.getComputedStyle(mentionChips[2]);
+                if (agentStyles.backgroundColor === currentUserStyles.backgroundColor) {
+                    throw new Error('Expected agent mention chips to use a different background color than user mention chips.');
+                }
+                if (modelStyles.backgroundColor === agentStyles.backgroundColor) {
+                    throw new Error('Expected model mention chips to use a different background color than agent mention chips.');
                 }
 
                 mentionContainer.remove();
+            }
+        """)
+
+        page.evaluate("""
+            async () => {
+                window.chatModelOptions = [
+                    {
+                        display_name: 'gpt-5.4',
+                        deployment_name: 'gpt-5.4',
+                        model_id: 'gpt-5.4',
+                        provider: 'azure-openai'
+                    }
+                ];
+                window.chatAgentOptions = [
+                    {
+                        id: 'default-agent',
+                        name: 'default-agent',
+                        display_name: 'Default Agent',
+                        is_global: true,
+                        is_group: false
+                    }
+                ];
+
+                const mockConversationId = 'mock-mention-suggestions';
+                const originalConversationGetter = window.chatConversations.getCurrentConversationId;
+                const conversation = document.createElement('div');
+                conversation.className = 'conversation-item';
+                conversation.dataset.conversationId = mockConversationId;
+                conversation.dataset.conversationKind = 'collaborative';
+                conversation.dataset.chatType = 'personal_multi_user';
+                document.body.appendChild(conversation);
+
+                window.chatConversations.getCurrentConversationId = () => mockConversationId;
+                document.getElementById('user-input').value = '@gpt';
+                document.getElementById('user-input').setSelectionRange(4, 4);
+
+                try {
+                    window.chatCollaboration.handleComposerInput();
+                    await new Promise(resolve => window.setTimeout(resolve, 0));
+                    const mentionMenu = document.getElementById('collaboration-mention-menu');
+                    const mentionText = mentionMenu.textContent || '';
+                    if (!mentionText.includes('gpt-5.4')) {
+                        throw new Error('Expected @-mention suggestions to include model targets.');
+                    }
+                    if (!mentionText.includes('Model')) {
+                        throw new Error('Expected model suggestions to include a Model badge.');
+                    }
+
+                    document.getElementById('user-input').value = '@Default';
+                    document.getElementById('user-input').setSelectionRange(8, 8);
+                    window.chatCollaboration.handleComposerInput();
+                    await new Promise(resolve => window.setTimeout(resolve, 0));
+
+                    if (!(mentionMenu.textContent || '').includes('Default Agent')) {
+                        throw new Error('Expected @-mention suggestions to include agent targets.');
+                    }
+                } finally {
+                    window.chatConversations.getCurrentConversationId = originalConversationGetter;
+                    document.getElementById('user-input').value = '';
+                    document.getElementById('user-input').setSelectionRange(0, 0);
+                    document.getElementById('collaboration-mention-menu').classList.add('d-none');
+                    document.getElementById('collaboration-mention-menu').innerHTML = '';
+                    conversation.remove();
+                }
             }
         """)
 

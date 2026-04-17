@@ -1143,6 +1143,32 @@ def _save_collaboration_message_doc(conversation_doc, message_doc):
     return message_doc, conversation_doc
 
 
+def sync_collaboration_conversation_metadata_from_source(conversation_doc, source_conversation_doc):
+    if not isinstance(conversation_doc, dict) or not isinstance(source_conversation_doc, dict):
+        return conversation_doc, False
+
+    metadata_fields = {
+        'context': deepcopy(list(source_conversation_doc.get('context', []) or [])),
+        'tags': deepcopy(list(source_conversation_doc.get('tags', []) or [])),
+        'strict': bool(source_conversation_doc.get('strict', False)),
+        'scope_locked': bool(source_conversation_doc.get('scope_locked', conversation_doc.get('scope_locked', False))),
+        'locked_contexts': deepcopy(list(source_conversation_doc.get('locked_contexts', []) or [])),
+        'classification': deepcopy(list(source_conversation_doc.get('classification', []) or [])),
+        'summary': deepcopy(source_conversation_doc.get('summary')),
+    }
+
+    updated = False
+    for field_name, field_value in metadata_fields.items():
+        if conversation_doc.get(field_name) != field_value:
+            conversation_doc[field_name] = field_value
+            updated = True
+
+    if updated:
+        cosmos_collaboration_conversations_container.upsert_item(conversation_doc)
+
+    return conversation_doc, updated
+
+
 def ensure_collaboration_source_conversation(conversation_doc, current_user):
     normalized_current_user = normalize_collaboration_user(current_user)
     if not normalized_current_user:

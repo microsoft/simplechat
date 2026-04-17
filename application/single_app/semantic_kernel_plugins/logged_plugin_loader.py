@@ -321,6 +321,15 @@ class LoggedPluginLoader:
     def _register_plugin_with_kernel(self, plugin_instance, plugin_name: str):
         """Register the plugin with the Semantic Kernel."""
         try:
+            if hasattr(plugin_instance, 'get_kernel_plugin'):
+                kernel_plugin = plugin_instance.get_kernel_plugin(plugin_name)
+                if hasattr(self.kernel, 'add_plugin'):
+                    self.kernel.add_plugin(kernel_plugin)
+                else:
+                    self.kernel.plugins.add(kernel_plugin)
+                self.logger.info(f"Registered plugin {plugin_name} with kernel")
+                return
+
             # Try different registration methods based on SK version
             if hasattr(self.kernel, 'add_plugin'):
                 # Newer SK versions

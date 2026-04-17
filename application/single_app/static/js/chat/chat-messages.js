@@ -770,6 +770,22 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
+  function buildAtMentionPattern(displayName) {
+    return new RegExp(
+      `(^|\\s)@${escapeMentionPattern(displayName)}(?=$|\\s|[.,!?;:])`,
+      "gi"
+    );
+  }
+
+  function normalizeStructuredMessageContent(messageContent) {
+    return String(messageContent ?? "")
+      .replace(/[ \t]{2,}/g, " ")
+      .replace(/\s+\n/g, "\n")
+      .replace(/\n\s+/g, "\n")
+      .replace(/\s+([.,!?;:])/g, "$1")
+      .trim();
+  }
+
   function getMentionedParticipants(fullMessageObject = null) {
     const rawMentions = Array.isArray(fullMessageObject?.metadata?.mentioned_participants)
       ? fullMessageObject.metadata.mentioned_participants
@@ -803,22 +819,22 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
         return;
       }
 
-      const mentionPattern = new RegExp(
-        `(^|\\s)@${escapeMentionPattern(displayName)}(?=$|\\s|[.,!?;:])`,
-        "gi"
-      );
+      const mentionPattern = buildAtMentionPattern(displayName);
       normalizedMessageContent = normalizedMessageContent.replace(
         mentionPattern,
         (match, leadingWhitespace) => leadingWhitespace || ""
       );
     });
 
-    return normalizedMessageContent
-      .replace(/[ \t]{2,}/g, " ")
-      .replace(/\s+\n/g, "\n")
-      .replace(/\n\s+/g, "\n")
-      .replace(/\s+([.,!?;:])/g, "$1")
-      .trim();
+    const invocationTarget = getInvocationTarget(fullMessageObject);
+    if (invocationTarget?.display_name) {
+      normalizedMessageContent = normalizedMessageContent.replace(
+        buildAtMentionPattern(invocationTarget.display_name),
+        (match, leadingWhitespace) => leadingWhitespace || ""
+      );
+    }
+
+    return normalizeStructuredMessageContent(normalizedMessageContent);
   }
 
   function renderMentionTagsHtml(fullMessageObject = null) {
@@ -868,11 +884,15 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       return "";
     }
 
+    const targetTypeClass = ` collaboration-mention-chip-target-${String(invocationTarget.target_type || "model")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]/g, "") || "model"}`;
+
     return `
       <div class="collaboration-mentions-block" aria-label="AI invocation target">
-        <div class="collaboration-mentions-label">Invoking</div>
         <div class="collaboration-mentions-list">
-          <span class="collaboration-mention-chip collaboration-mention-chip-target" data-target-type="${escapeHtml(invocationTarget.target_type)}">${escapeHtml(invocationTarget.mention_text)}</span>
+          <span class="collaboration-mention-chip collaboration-mention-chip-target${targetTypeClass}" data-target-type="${escapeHtml(invocationTarget.target_type)}">${escapeHtml(invocationTarget.mention_text)}</span>
         </div>
       </div>`;
   }
@@ -1470,7 +1490,8 @@ export function appendMessage(
     const mentionTagsHtml = (sender === "You" || sender === "Collaborator")
       ? renderMentionTagsHtml(fullMessageObject)
       : "";
-    const hasVisibleMessageText = Boolean(stripHtmlTags(messageContentHtml || "").replace(/\s+/g, " ").trim());
+    const hasVisibleMessageText = sender === "image"
+      || Boolean(stripHtmlTags(messageContentHtml || "").replace(/\s+/g, " ").trim());
     if (sender === "You") {
       const metadataContainerId = `metadata-${messageId || Date.now()}`;
       const isMasked = fullMessageObject?.metadata?.masked || (fullMessageObject?.metadata?.masked_ranges && fullMessageObject.metadata.masked_ranges.length > 0);
@@ -1845,6 +1866,256 @@ function getCurrentAgentSelection() {
   };
 }
 
+function normalizeCollaborativeTargetLabel(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function getCollaborativeModelDisplayName(option = {}) {
+  const dataset = option?.dataset || {};
+  return String(
+    dataset.displayName
+    || option.display_name
+    || option.model_id
+    || dataset.modelId
+    || dataset.deploymentName
+    || option.deployment_name
+    || option.textContent
+    || option.label
+    || option.value
+    || ''
+  ).trim();
+}
+
+function getCollaborativeAgentDisplayName(option = {}) {
+  const dataset = option?.dataset || {};
+  return String(
+    dataset.displayName
+    || option.display_name
+    || option.displayName
+    || option.textContent
+    || option.label
+    || option.name
+    || option.value
+    || ''
+  ).trim();
+}
+
+function buildCollaborativeModelTarget(option = {}) {
+  const dataset = option?.dataset || {};
+  const displayName = getCollaborativeModelDisplayName(option);
+  const hasModelIdentity = Boolean(
+    dataset.modelId
+    || option.model_id
+    || dataset.deploymentName
+    || option.deployment_name
+    || dataset.endpointId
+    || option.endpoint_id
+    || option.display_name
+  );
+  if (!displayName) {
+    return null;
+  }
+
+  if (!hasModelIdentity && String(option.value || '').trim() === '') {
+    return null;
+  }
+
+  const modelDeployment = String(dataset.deploymentName || option.deployment_name || option.value || '').trim() || null;
+  const modelId = String(dataset.modelId || option.model_id || option.value || '').trim() || null;
+  const modelEndpointId = String(dataset.endpointId || option.endpoint_id || '').trim() || null;
+  const modelProvider = String(dataset.provider || option.provider || '').trim() || null;
+  const selectionKey = String(
+    dataset.selectionKey
+    || option.selection_key
+    || modelDeployment
+    || modelId
+    || displayName
+  ).trim();
+
+  return {
+    action: 'ai_tag',
+    target_type: 'model',
+    display_name: displayName,
+    mention_text: `@${displayName}`,
+    source_mode: 'explicit_tag',
+    selection_key: selectionKey,
+    model_deployment: modelDeployment,
+    model_id: modelId,
+    model_endpoint_id: modelEndpointId,
+    model_provider: modelProvider,
+    subtitle: modelDeployment && modelDeployment !== displayName
+      ? modelDeployment
+      : modelProvider
+      ? `${modelProvider} model`
+      : 'Model deployment',
+    search_text: [displayName, modelDeployment, modelId, modelProvider].filter(Boolean).join(' '),
+  };
+}
+
+function buildCollaborativeAgentTarget(option = {}) {
+  const dataset = option?.dataset || {};
+  const displayName = getCollaborativeAgentDisplayName(option);
+  const agentId = String(dataset.agentId || option.id || '').trim() || null;
+  const agentName = String(dataset.name || option.name || option.value || '').trim() || null;
+  if (!displayName || (!agentId && !agentName)) {
+    return null;
+  }
+
+  const isGlobal = String(dataset.isGlobal || option.is_global || '').trim() === 'true' || option.is_global === true;
+  const isGroup = String(dataset.isGroup || option.is_group || '').trim() === 'true' || option.is_group === true;
+  const groupName = String(dataset.groupName || option.group_name || '').trim() || null;
+
+  return {
+    action: 'ai_tag',
+    target_type: 'agent',
+    display_name: displayName,
+    mention_text: `@${displayName}`,
+    source_mode: 'explicit_tag',
+    agent_info: {
+      id: agentId,
+      name: agentName || displayName,
+      display_name: displayName,
+      is_global: isGlobal,
+      is_group: isGroup,
+      group_id: String(dataset.groupId || option.group_id || '').trim() || null,
+      group_name: groupName,
+    },
+    subtitle: isGroup && groupName
+      ? `Group agent · ${groupName}`
+      : isGlobal
+      ? 'Global agent'
+      : 'Personal agent',
+    search_text: [displayName, agentName, agentId, groupName].filter(Boolean).join(' '),
+  };
+}
+
+function getAvailableCollaborativeModelTargets() {
+  const modelOptions = modelSelect?.options ? Array.from(modelSelect.options) : [];
+  const mappedSelectTargets = modelOptions
+    .map(option => buildCollaborativeModelTarget(option))
+    .filter(Boolean);
+
+  if (mappedSelectTargets.length > 0) {
+    return mappedSelectTargets;
+  }
+
+  return (Array.isArray(window.chatModelOptions) ? window.chatModelOptions : [])
+    .map(option => buildCollaborativeModelTarget(option))
+    .filter(Boolean);
+}
+
+function getAvailableCollaborativeAgentTargets() {
+  const agentSelect = document.getElementById('agent-select');
+  const agentOptions = agentSelect?.options ? Array.from(agentSelect.options) : [];
+  const mappedSelectTargets = agentOptions
+    .map(option => buildCollaborativeAgentTarget(option))
+    .filter(Boolean);
+
+  if (mappedSelectTargets.length > 0) {
+    return mappedSelectTargets;
+  }
+
+  return (Array.isArray(window.chatAgentOptions) ? window.chatAgentOptions : [])
+    .map(option => buildCollaborativeAgentTarget(option))
+    .filter(Boolean);
+}
+
+export function getCollaborativeTagSuggestions(query = '') {
+  const normalizedQuery = normalizeCollaborativeTargetLabel(query);
+  const matchesQuery = target => {
+    if (!normalizedQuery) {
+      return true;
+    }
+
+    const haystack = normalizeCollaborativeTargetLabel([
+      target.display_name,
+      target.subtitle,
+      target.search_text,
+      target.mention_text,
+    ].filter(Boolean).join(' '));
+    return haystack.includes(normalizedQuery);
+  };
+
+  return [
+    ...getAvailableCollaborativeAgentTargets().filter(matchesQuery),
+    ...getAvailableCollaborativeModelTargets().filter(matchesQuery),
+  ];
+}
+
+function resolveCollaborativeExplicitInvocationTarget(messageText = '') {
+  const normalizedMessageText = String(messageText || '');
+  if (!normalizedMessageText.includes('@')) {
+    return null;
+  }
+
+  const targets = getCollaborativeTagSuggestions('')
+    .slice()
+    .sort((leftTarget, rightTarget) => String(rightTarget.display_name || '').length - String(leftTarget.display_name || '').length);
+
+  for (const target of targets) {
+    const displayName = String(target.display_name || '').trim();
+    if (!displayName) {
+      continue;
+    }
+
+    if (buildAtMentionPattern(displayName).test(normalizedMessageText)) {
+      return target;
+    }
+  }
+
+  return null;
+}
+
+function stripExplicitCollaborativeTargetText(messageText = '', invocationTarget = null) {
+  if (!invocationTarget?.display_name) {
+    return String(messageText || '');
+  }
+
+  return normalizeStructuredMessageContent(
+    String(messageText || '').replace(
+      buildAtMentionPattern(invocationTarget.display_name),
+      (match, leadingWhitespace) => leadingWhitespace || ''
+    )
+  );
+}
+
+function buildCollaborativeSendContext(finalMessageToSend, conversationId = currentConversationId) {
+  const messageText = String(finalMessageToSend ?? '');
+  const explicitInvocationTarget = resolveCollaborativeExplicitInvocationTarget(messageText);
+  const messageData = buildChatRequestPayload(messageText, conversationId);
+
+  if (explicitInvocationTarget?.target_type === 'agent' && explicitInvocationTarget.agent_info) {
+    messageData.image_generation = false;
+    messageData.agent_info = { ...explicitInvocationTarget.agent_info };
+  }
+
+  if (explicitInvocationTarget?.target_type === 'model') {
+    messageData.image_generation = false;
+    messageData.agent_info = null;
+    messageData.model_deployment = explicitInvocationTarget.model_deployment || messageData.model_deployment;
+    messageData.model_id = explicitInvocationTarget.model_id || messageData.model_id;
+    messageData.model_endpoint_id = explicitInvocationTarget.model_endpoint_id || messageData.model_endpoint_id;
+    messageData.model_provider = explicitInvocationTarget.model_provider || messageData.model_provider;
+  }
+
+  const invocationTarget = buildCollaborativeInvocationTarget(messageData, explicitInvocationTarget);
+  const displayMessageText = explicitInvocationTarget
+    ? stripExplicitCollaborativeTargetText(messageText, explicitInvocationTarget)
+    : messageText;
+
+  messageData.message = displayMessageText;
+
+  return {
+    messageData,
+    invocationTarget,
+    explicitInvocationTarget,
+    displayMessageText,
+  };
+}
+
 export function buildChatRequestPayload(finalMessageToSend, conversationId = currentConversationId) {
   const {
     modelDeployment,
@@ -1965,9 +2236,17 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
   };
 }
 
-export function buildCollaborativeInvocationTarget(messageData = {}) {
+export function buildCollaborativeInvocationTarget(messageData = {}, explicitInvocationTarget = null) {
   if (!messageData || typeof messageData !== 'object') {
     return null;
+  }
+
+  if (explicitInvocationTarget?.target_type === 'agent' || explicitInvocationTarget?.target_type === 'model') {
+    return {
+      ...explicitInvocationTarget,
+      source_mode: 'explicit_tag',
+      mention_text: explicitInvocationTarget.mention_text || `@${explicitInvocationTarget.display_name}`,
+    };
   }
 
   const hasAgentTarget = Boolean(
@@ -2023,8 +2302,8 @@ export function buildCollaborativeInvocationTarget(messageData = {}) {
   };
 }
 
-export function shouldUseCollaborativeAiWorkflow(messageData = {}) {
-  return Boolean(buildCollaborativeInvocationTarget(messageData));
+export function shouldUseCollaborativeAiWorkflow(messageData = {}, explicitInvocationTarget = null) {
+  return Boolean(buildCollaborativeInvocationTarget(messageData, explicitInvocationTarget));
 }
 
 export function actuallySendMessage(finalMessageToSend) {
@@ -2035,22 +2314,31 @@ export function actuallySendMessage(finalMessageToSend) {
 
   if (isCollaborativeConversation) {
     const tempUserMessageId = `temp_user_${Date.now()}`;
-    const collaborativeMessageData = buildChatRequestPayload(finalMessageToSend, currentConversationId);
-    const invocationTarget = buildCollaborativeInvocationTarget(collaborativeMessageData);
+    const {
+      messageData: collaborativeMessageData,
+      invocationTarget,
+      explicitInvocationTarget,
+      displayMessageText,
+    } = buildCollaborativeSendContext(finalMessageToSend, currentConversationId);
+    if (invocationTarget && !String(displayMessageText || '').trim()) {
+      showToast('Add a message after the selected @agent or @model tag.', 'warning');
+      return;
+    }
+
     const pendingCollaborativeContext = window.chatCollaboration?.getPendingMessageContext?.({ invocationTarget }) || null;
-    appendMessage("You", finalMessageToSend, null, tempUserMessageId, false, [], [], [], null, null, pendingCollaborativeContext);
+    appendMessage("You", displayMessageText, null, tempUserMessageId, false, [], [], [], null, null, pendingCollaborativeContext);
     userInput.value = "";
     userInput.style.height = "";
     updateSendButtonVisibility();
 
-    const collaborativeSendOperation = shouldUseCollaborativeAiWorkflow(collaborativeMessageData)
+    const collaborativeSendOperation = shouldUseCollaborativeAiWorkflow(collaborativeMessageData, explicitInvocationTarget)
       ? window.chatCollaboration.sendCollaborativeAiMessage?.(
-        finalMessageToSend,
+        displayMessageText,
         tempUserMessageId,
         collaborativeMessageData,
         pendingCollaborativeContext,
       )
-      : window.chatCollaboration.sendCollaborativeMessage(finalMessageToSend, tempUserMessageId);
+      : window.chatCollaboration.sendCollaborativeMessage(displayMessageText, tempUserMessageId);
 
     Promise.resolve(collaborativeSendOperation).catch(error => {
       const tempMessage = document.querySelector(`[data-message-id="${tempUserMessageId}"]`);

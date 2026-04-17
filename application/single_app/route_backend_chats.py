@@ -9457,6 +9457,17 @@ def register_route_backend_chats(app):
                     'reasoning_effort': reasoning_effort if reasoning_effort and reasoning_effort != 'none' else None,
                     'streaming': 'Enabled'
                 }
+
+                if request_agent_info and isinstance(request_agent_info, dict):
+                    user_metadata['agent_selection'] = {
+                        'selected_agent': request_agent_info.get('name'),
+                        'agent_display_name': request_agent_info.get('display_name'),
+                        'is_global': request_agent_info.get('is_global', False),
+                        'is_group': request_agent_info.get('is_group', False),
+                        'group_id': request_agent_info.get('group_id'),
+                        'group_name': request_agent_info.get('group_name'),
+                        'agent_id': request_agent_info.get('id')
+                    }
                 
                 user_metadata['chat_context'] = {
                     'conversation_id': conversation_id
@@ -10405,7 +10416,22 @@ def register_route_backend_chats(app):
                     
                     if all_agents:
                         agent_name_to_select = None
-                        if per_user_semantic_kernel:
+                        if request_agent_info:
+                            if isinstance(request_agent_info, dict):
+                                agent_name_to_select = request_agent_info.get('name')
+                                selected_agent_metadata = {
+                                    'selected_agent': request_agent_info.get('name'),
+                                    'agent_display_name': request_agent_info.get('display_name'),
+                                    'is_global': request_agent_info.get('is_global', False),
+                                    'is_group': request_agent_info.get('is_group', False),
+                                    'group_id': request_agent_info.get('group_id'),
+                                    'group_name': request_agent_info.get('group_name'),
+                                    'agent_id': request_agent_info.get('id')
+                                }
+                            else:
+                                agent_name_to_select = request_agent_info
+                            debug_print(f"[Streaming] Request agent name to select: {agent_name_to_select}")
+                        elif per_user_semantic_kernel:
                             # user_settings.get('selected_agent') returns a dict with agent info
                             selected_agent_info = user_settings.get('selected_agent')
                             if isinstance(selected_agent_info, dict):
@@ -10479,6 +10505,9 @@ def register_route_backend_chats(app):
                             debug_print(f"--- Streaming from Agent: {agent_name_used} (model: {actual_model_used}) ---")
                         else:
                             debug_print(f"[Streaming] ⚠️ No agent selected, falling back to GPT")
+
+                if selected_agent_metadata:
+                    user_metadata['agent_selection'] = selected_agent_metadata
 
                 # Stream the response
                 accumulated_content = ""
@@ -10890,6 +10919,19 @@ def register_route_backend_chats(app):
                     
                     # Update conversation
                     conversation_item['last_updated'] = datetime.utcnow().isoformat()
+
+                    try:
+                        user_message_doc = cosmos_messages_container.read_item(
+                            item=user_message_id,
+                            partition_key=conversation_id
+                        )
+                        if 'metadata' in user_message_doc and 'model_selection' in user_message_doc['metadata']:
+                            user_message_doc['metadata']['model_selection']['selected_model'] = final_model_used if use_agent_streaming else gpt_model
+                        if selected_agent_metadata:
+                            user_message_doc.setdefault('metadata', {})['agent_selection'] = selected_agent_metadata
+                        cosmos_messages_container.upsert_item(user_message_doc)
+                    except Exception as e:
+                        debug_print(f"Warning: Could not update streaming user message metadata: {e}")
                     
                     try:
                         conversation_item = collect_conversation_metadata(
@@ -10900,7 +10942,7 @@ def register_route_backend_chats(app):
                             active_group_ids=effective_active_group_ids,
                             document_scope=effective_document_scope,
                             selected_document_id=effective_selected_document_id,
-                            model_deployment=gpt_model,
+                            model_deployment=final_model_used if use_agent_streaming else gpt_model,
                             hybrid_search_enabled=hybrid_search_enabled or history_grounded_search_used,
                             image_gen_enabled=False,
                             selected_documents=combined_documents if combined_documents else None,

@@ -46,6 +46,11 @@ from functions_group import assert_group_role, get_group_model_endpoints, requir
 from functions_personal_actions import get_personal_actions, ensure_migration_complete as ensure_actions_migration_complete
 from functions_personal_agents import get_personal_agents, ensure_migration_complete as ensure_agents_migration_complete
 from functions_agent_payload import can_agent_use_default_multi_endpoint_model
+from functions_simplechat_operations import (
+    SIMPLECHAT_PLUGIN_TYPE,
+    get_simplechat_enabled_function_names,
+    resolve_simplechat_action_capabilities,
+)
 from semantic_kernel_plugins.plugin_loader import discover_plugins
 from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
 from functions_agent_scope import find_agent_by_scope
@@ -916,7 +921,7 @@ def initialize_semantic_kernel(user_id: str=None, redis_client=None):
     )
     debug_print(f"[SK Loader] Semantic Kernel Agent and Plugins loading completed.")
 
-def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="global", user_id=None, group_id=None):
+def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="global", user_id=None, group_id=None, agent_other_settings=None):
     """
     Load specific plugins by name for an agent with enhanced logging.
     
@@ -971,6 +976,12 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
             p for p in all_plugin_manifests 
             if p.get('name') in plugin_names or p.get('id') in plugin_names
         ]
+
+        plugin_manifests = _apply_agent_plugin_runtime_overlays(
+            plugin_manifests,
+            agent_other_settings=agent_other_settings,
+            group_id=group_id,
+        )
 
         debug_print(f"[SK Loader] Filtered to {len(plugin_manifests)} plugin manifests after matching names/IDs")
         debug_print(f"[SK Loader] Plugin manifests to load: {plugin_manifests}")
@@ -1057,7 +1068,12 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
             else:
                 all_plugin_manifests = get_global_actions(return_type=SecretReturnType.NAME)
 
-            plugin_manifests = [p for p in all_plugin_manifests if p.get('name') in plugin_names]
+            plugin_manifests = [p for p in all_plugin_manifests if p.get('name') in plugin_names or p.get('id') in plugin_names]
+            plugin_manifests = _apply_agent_plugin_runtime_overlays(
+                plugin_manifests,
+                agent_other_settings=agent_other_settings,
+                group_id=group_id,
+            )
             _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label)
         except Exception as fallback_error:
             log_event(
@@ -1067,6 +1083,33 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
                 exceptionTraceback=True
             )
             print(f"[SK Loader][Error] Fallback plugin loading also failed: {fallback_error}")
+
+
+def _apply_agent_plugin_runtime_overlays(plugin_manifests, agent_other_settings=None, group_id=None):
+    action_capabilities = {}
+    if isinstance(agent_other_settings, dict):
+        raw_action_capabilities = agent_other_settings.get('action_capabilities')
+        if isinstance(raw_action_capabilities, dict):
+            action_capabilities = raw_action_capabilities
+
+    overlaid_manifests = []
+    for manifest in plugin_manifests or []:
+        manifest_copy = dict(manifest)
+        if group_id and not manifest_copy.get('group_id'):
+            manifest_copy['default_group_id'] = group_id
+
+        if manifest_copy.get('type') == SIMPLECHAT_PLUGIN_TYPE:
+            capabilities = resolve_simplechat_action_capabilities(
+                action_capabilities,
+                action_id=manifest_copy.get('id'),
+                action_name=manifest_copy.get('name'),
+            )
+            manifest_copy['simplechat_capabilities'] = capabilities
+            manifest_copy['enabled_functions'] = get_simplechat_enabled_function_names(capabilities)
+
+        overlaid_manifests.append(manifest_copy)
+
+    return overlaid_manifests
 
 
 def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="global"):
@@ -1331,6 +1374,52 @@ def _extract_sql_schema_for_instructions(kernel) -> str:
     return "\n".join(schema_parts)
 
 
+def _extract_cosmos_context_for_instructions(kernel) -> str:
+    """
+    Check if any Cosmos Query plugins are loaded in the kernel and extract
+    their configured container context for agent instructions.
+    """
+    from semantic_kernel_plugins.cosmos_query_plugin import CosmosQueryPlugin
+
+    cosmos_parts = []
+
+    try:
+        for plugin_name, plugin in kernel.plugins.items():
+            plugin_obj = None
+
+            if isinstance(plugin, CosmosQueryPlugin):
+                plugin_obj = plugin
+            elif hasattr(plugin, '_plugin_instance') and isinstance(plugin._plugin_instance, CosmosQueryPlugin):
+                plugin_obj = plugin._plugin_instance
+            else:
+                for _, func in plugin.functions.items():
+                    if hasattr(func, 'method') and hasattr(func.method, '__self__'):
+                        if isinstance(func.method.__self__, CosmosQueryPlugin):
+                            plugin_obj = func.method.__self__
+                            break
+
+            if plugin_obj is not None:
+                try:
+                    cosmos_parts.append(plugin_obj.build_instruction_context())
+                    print(f"[SK Loader] Extracted Cosmos context for plugin: {plugin_name}")
+                except Exception as e:
+                    print(f"[SK Loader] Warning: Failed to build Cosmos context from {plugin_name}: {e}")
+                    log_event(
+                        f"[SK Loader] Failed to build Cosmos context for injection: {e}",
+                        extra={"plugin_name": plugin_name, "error": str(e)},
+                        level=logging.WARNING,
+                    )
+    except Exception as e:
+        print(f"[SK Loader] Warning: Error iterating kernel plugins for Cosmos context: {e}")
+        log_event(
+            f"[SK Loader] Error iterating kernel plugins for Cosmos context: {e}",
+            extra={"error": str(e)},
+            level=logging.WARNING,
+        )
+
+    return "\n\n".join(cosmos_parts)
+
+
 def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis_client=None, mode_label="global", group_scope_id=None):
     """
     DRY helper to load a single agent (default agent) for the kernel.
@@ -1529,6 +1618,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 plugin_mode,
                 user_id=resolved_user_id,
                 group_id=group_id,
+                agent_other_settings=agent_config.get("other_settings"),
             )
 
             # Auto-inject SQL database schema into agent instructions if SQL plugins are loaded
@@ -1551,6 +1641,26 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 log_event(f"[SK Loader] Failed to inject SQL schema into agent instructions: {e}",
                          extra={"agent_name": agent_config["name"], "error": str(e)},
                          level=logging.WARNING)
+
+            try:
+                cosmos_context_summary = _extract_cosmos_context_for_instructions(kernel)
+                if cosmos_context_summary:
+                    agent_config["instructions"] = (
+                        agent_config.get("instructions", "") +
+                        "\n\n## Available Cosmos DB Containers\n"
+                        "The following Azure Cosmos DB for NoSQL containers are available through the Cosmos Query plugin. "
+                        "Use the configured container hints below when writing read-only SELECT queries, and pass the partition_key argument when the partition value is known.\n\n" +
+                        cosmos_context_summary +
+                        "\n\nWhen a user asks about data in one of these containers, construct a parameterized read-only Cosmos DB SQL query that matches the configured fields and partition key guidance."
+                    )
+                    print(f"[SK Loader] Injected Cosmos context into agent instructions for {agent_config['name']}")
+            except Exception as e:
+                print(f"[SK Loader] Warning: Failed to inject Cosmos context into instructions: {e}")
+                log_event(
+                    f"[SK Loader] Failed to inject Cosmos context into agent instructions: {e}",
+                    extra={"agent_name": agent_config["name"], "error": str(e)},
+                    level=logging.WARNING,
+                )
 
         try:
             kwargs = {

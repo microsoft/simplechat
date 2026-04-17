@@ -9,6 +9,7 @@ import traceback
 from typing import Dict, Any, List, Optional, Tuple
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from functions_appinsights import log_event
+from functions_simplechat_operations import SIMPLECHAT_DEFAULT_ENDPOINT
 
 
 class PluginHealthChecker:
@@ -60,11 +61,44 @@ class PluginHealthChecker:
                 errors.append(f"SQL plugin requires 'database_type' field")
             if not connection_string and not (server and database):
                 errors.append("SQL plugin requires either 'connection_string' or 'server' and 'database' fields")
+
+        elif plugin_type == 'cosmos_query':
+            additional_fields = manifest.get('additionalFields', {})
+            if not isinstance(additional_fields, dict):
+                additional_fields = {}
+
+            endpoint = manifest.get('endpoint')
+            database_name = manifest.get('database_name') or additional_fields.get('database_name')
+            container_name = manifest.get('container_name') or additional_fields.get('container_name')
+            partition_key_path = manifest.get('partition_key_path') or additional_fields.get('partition_key_path')
+            auth = manifest.get('auth', {}) if isinstance(manifest.get('auth'), dict) else {}
+            auth_type = (auth.get('type') or 'identity').strip()
+
+            if not endpoint:
+                errors.append("Cosmos plugin requires an 'endpoint' field")
+            if not database_name:
+                errors.append("Cosmos plugin requires 'database_name' in additionalFields")
+            if not container_name:
+                errors.append("Cosmos plugin requires 'container_name' in additionalFields")
+            if not partition_key_path:
+                errors.append("Cosmos plugin requires 'partition_key_path' in additionalFields")
+            if auth_type not in {'identity', 'key'}:
+                errors.append("Cosmos plugin only supports auth.type values 'identity' and 'key'")
+            if auth_type == 'key' and not auth.get('key'):
+                errors.append("Cosmos plugin requires auth.key when auth.type='key'")
         
         elif plugin_type == 'log_analytics':
             additional_fields = manifest.get('additionalFields', {})
             if 'workspaceId' not in additional_fields:
                 errors.append("Log Analytics plugin requires 'workspaceId' in additionalFields")
+
+        elif plugin_type == 'simplechat':
+            endpoint = manifest.get('endpoint')
+            auth = manifest.get('auth', {}) if isinstance(manifest.get('auth'), dict) else {}
+            if not endpoint:
+                errors.append(f"SimpleChat plugin requires an 'endpoint' field (use {SIMPLECHAT_DEFAULT_ENDPOINT})")
+            if auth.get('type') != 'user':
+                errors.append("SimpleChat plugin requires auth.type='user'")
         
         return len(errors) == 0, errors
     
