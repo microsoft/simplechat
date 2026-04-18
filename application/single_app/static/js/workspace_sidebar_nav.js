@@ -51,6 +51,12 @@ document.addEventListener('DOMContentLoaded', function() {
     };
 });
 
+function syncWorkspaceSidebarActiveTab(tabId) {
+    document.querySelectorAll('.workspace-nav-tab').forEach((link) => {
+        link.classList.toggle('active', link.getAttribute('data-tab') === tabId);
+    });
+}
+
 function initWorkspaceSidebarNav() {
     console.log('Initializing workspace sidebar navigation');
     
@@ -65,6 +71,11 @@ function initWorkspaceSidebarNav() {
     console.log('Group submenu found:', !!groupSubmenu);
     
     toggles.forEach(toggle => {
+        if (toggle.dataset.workspaceToggleBound === 'true') {
+            return;
+        }
+
+        toggle.dataset.workspaceToggleBound = 'true';
         console.log('Setting up toggle for:', toggle.getAttribute('data-target'));
         toggle.addEventListener('click', function(e) {
             e.preventDefault();
@@ -120,6 +131,11 @@ function initWorkspaceSidebarNav() {
     console.log('Found workspace tabs:', workspaceTabs.length);
     
     workspaceTabs.forEach(tabLink => {
+        if (tabLink.dataset.workspaceTabBound === 'true') {
+            return;
+        }
+
+        tabLink.dataset.workspaceTabBound = 'true';
         tabLink.addEventListener('click', function(e) {
             e.preventDefault();
             const tabId = this.getAttribute('data-tab');
@@ -134,6 +150,21 @@ function initWorkspaceSidebarNav() {
                 });
             }
             this.classList.add('active');
+        });
+    });
+
+    document.querySelectorAll('#workspaceTab button[data-bs-toggle="tab"], #groupWorkspaceTab button[data-bs-toggle="tab"]').forEach(tabButton => {
+        if (tabButton.dataset.workspaceSidebarBound === 'true') {
+            return;
+        }
+
+        tabButton.dataset.workspaceSidebarBound = 'true';
+        tabButton.addEventListener('shown.bs.tab', function(event) {
+            const targetSelector = event.target.getAttribute('data-bs-target') || '';
+            const targetId = targetSelector.startsWith('#') ? targetSelector.slice(1) : targetSelector;
+            if (targetId) {
+                syncWorkspaceSidebarActiveTab(targetId);
+            }
         });
     });
     
@@ -195,6 +226,15 @@ function initWorkspaceSidebarNav() {
             }
         } else {
             console.log('Group submenu or toggle not found!');
+        }
+    }
+
+    const activeButton = document.querySelector('#workspaceTab .nav-link.active, #groupWorkspaceTab .nav-link.active');
+    if (activeButton) {
+        const activeTarget = activeButton.getAttribute('data-bs-target') || '';
+        const activeTabId = activeTarget.startsWith('#') ? activeTarget.slice(1) : activeTarget;
+        if (activeTabId) {
+            syncWorkspaceSidebarActiveTab(activeTabId);
         }
     }
 }

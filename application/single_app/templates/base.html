@@ -48,15 +48,15 @@
   <style>
     /* Add this: if banner is present, increase padding-top */
     #classification-banner + nav.navbar.fixed-top {
-      top: 40px; /* Height of the banner */
+      top: var(--classification-banner-height, 40px);
     }
     #classification-banner {
-      height: 40px;
-      line-height: 40px;
+      height: var(--classification-banner-height, 40px);
+      line-height: var(--classification-banner-height, 40px);
     }
     /* Adjust body padding if banner is present */
     body.has-classification-banner {
-      padding-top: 96px; /* 56px navbar + 40px banner */
+      padding-top: calc(var(--top-nav-height, 56px) + var(--classification-banner-height, 40px));
     }
 
     .main-content {

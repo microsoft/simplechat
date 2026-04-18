@@ -1,7 +1,7 @@
 // static/js/workspace/workspace-documents.js
 
 import { escapeHtml } from "./workspace-utils.js";
-import { initializeTags, renderTagBadges, loadWorkspaceTags } from "./workspace-tags.js";
+import { initializeTags, renderTagBadges, loadWorkspaceTags, currentView } from "./workspace-tags.js";
 import { getSelectedTagsArray, setSelectedTags, clearSelectedTags, updateDocumentTagsDisplay, loadWorkspaceTags as loadTagManagementTags } from './workspace-tag-management.js';
 
 // ------------- State Variables -------------
@@ -19,6 +19,7 @@ const activePolls = new Set();
 
 // ------------- DOM Elements (Documents Tab) -------------
 const documentsTableBody = document.querySelector("#documents-table tbody");
+const documentsCardView = document.getElementById("documents-card-view");
 const docsPaginationContainer = document.getElementById("docs-pagination-container");
 const docsPageSizeSelect = document.getElementById("docs-page-size-select");
 const fileInput = document.getElementById("workspace-file-input");
@@ -59,6 +60,9 @@ window.docsCurrentPage = docsCurrentPage;
 window.docsTagsFilter = docsTagsFilter;
 window.selectedDocuments = selectedDocuments;
 window.fetchUserDocuments = fetchUserDocuments;
+window.lastFetchedDocs = window.lastFetchedDocs || [];
+window.lastFetchedDocsError = null;
+window.hasFetchedUserDocuments = window.hasFetchedUserDocuments || false;
 
 // ------------- Helper Functions -------------
 function isColorLight(hexColor) {
@@ -89,6 +93,353 @@ function isColorLight(hexColor) {
     const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
     return luminance > 0.5;
 }
+
+function truncateDocumentText(text, maxLength = 150) {
+    if (!text) {
+        return "";
+    }
+
+    return text.length > maxLength ? `${text.slice(0, maxLength).trimEnd()}…` : text;
+}
+
+function getDocumentProcessingState(doc) {
+    const pctString = String(doc?.percentage_complete ?? "");
+    const pct = /^\d+(\.\d+)?$/.test(pctString) ? parseFloat(pctString) : 0;
+    const docStatus = doc?.status || "";
+    const normalizedStatus = docStatus.toLowerCase();
+    const hasError = normalizedStatus.includes("error");
+    const isComplete = pct >= 100 || normalizedStatus.includes("complete") || hasError;
+
+    return { pct, docStatus, hasError, isComplete };
+}
+
+function getPersonalDocumentAccess(doc) {
+    const currentUserId = window.current_user_id;
+    const isOwner = doc.user_id === currentUserId;
+    let sharedUserEntry = null;
+
+    if (!isOwner) {
+        sharedUserEntry = (doc.shared_user_ids || []).find(
+            entry => entry.startsWith(`${currentUserId},`)
+        ) || null;
+    }
+
+    return {
+        isOwner,
+        sharedUserEntry,
+        requiresApproval: Boolean(!isOwner && sharedUserEntry && sharedUserEntry.endsWith(",not_approved")),
+        hasApprovedAccess: isOwner || (!sharedUserEntry || sharedUserEntry.endsWith(",approved"))
+    };
+}
+
+function getDocumentCardIcon(fileName = "") {
+    const extension = (fileName.split('.').pop() || '').toLowerCase();
+    const iconMap = {
+        pdf: 'bi-filetype-pdf',
+        doc: 'bi-file-earmark-word',
+        docx: 'bi-file-earmark-word',
+        ppt: 'bi-file-earmark-slides',
+        pptx: 'bi-file-earmark-slides',
+        xls: 'bi-file-earmark-spreadsheet',
+        xlsx: 'bi-file-earmark-spreadsheet',
+        xlsm: 'bi-file-earmark-spreadsheet',
+        csv: 'bi-filetype-csv',
+        png: 'bi-file-earmark-image',
+        jpg: 'bi-file-earmark-image',
+        jpeg: 'bi-file-earmark-image',
+        gif: 'bi-file-earmark-image',
+        txt: 'bi-file-earmark-text',
+        md: 'bi-file-earmark-richtext',
+        html: 'bi-filetype-html',
+        json: 'bi-filetype-json',
+        xml: 'bi-filetype-xml'
+    };
+
+    return iconMap[extension] || 'bi-file-earmark-text';
+}
+
+function getDocumentClassificationBadge(doc) {
+    if (!(window.enable_document_classification === true || window.enable_document_classification === "true")) {
+        return '';
+    }
+
+    const currentLabel = doc.document_classification || null;
+    const categories = window.classification_categories || [];
+    const category = categories.find(cat => cat.label === currentLabel);
+
+    if (category) {
+        const bgColor = category.color || '#6c757d';
+        const textColorClass = isColorLight(bgColor) ? 'text-dark' : '';
+        return `<span class="classification-badge ${textColorClass}" style="background-color: ${escapeHtml(bgColor)};">${escapeHtml(category.label)}</span>`;
+    }
+
+    if (currentLabel) {
+        return `<span class="badge bg-warning text-dark">${escapeHtml(currentLabel)}</span>`;
+    }
+
+    return '<span class="badge bg-secondary">None</span>';
+}
+
+function getDocumentMetaPills(doc) {
+    const pills = [];
+    const authors = Array.isArray(doc.authors)
+        ? doc.authors.filter(Boolean)
+        : (doc.authors ? [doc.authors] : []);
+
+    if (doc.version) {
+        pills.push(`<span class="document-meta-pill"><i class="bi bi-layers"></i>v${escapeHtml(String(doc.version))}</span>`);
+    }
+    if (doc.number_of_pages) {
+        pills.push(`<span class="document-meta-pill"><i class="bi bi-file-earmark-text"></i>${escapeHtml(String(doc.number_of_pages))} pages</span>`);
+    }
+    if (authors.length) {
+        const authorLabel = authors.length > 2
+            ? `${authors.slice(0, 2).join(', ')} +${authors.length - 2}`
+            : authors.join(', ');
+        pills.push(`<span class="document-meta-pill"><i class="bi bi-people"></i>${escapeHtml(authorLabel)}</span>`);
+    }
+    if (doc.publication_date) {
+        pills.push(`<span class="document-meta-pill"><i class="bi bi-calendar-event"></i>${escapeHtml(String(doc.publication_date))}</span>`);
+    }
+
+    return pills.join('');
+}
+
+function getDocumentSummaryText(doc) {
+    const abstractText = truncateDocumentText((doc.abstract || '').trim(), 165);
+    if (abstractText) {
+        return abstractText;
+    }
+
+    const keywords = Array.isArray(doc.keywords)
+        ? doc.keywords.filter(Boolean).join(', ')
+        : (doc.keywords || '');
+
+    if (keywords) {
+        return `Keywords: ${truncateDocumentText(keywords, 165)}`;
+    }
+
+    return 'Use chat, metadata tools, and sharing actions directly from this document card.';
+}
+
+function renderDocumentsEmptyState(filtersActive) {
+    const message = filtersActive
+        ? 'No documents found matching the current filters.'
+        : 'No documents found. Upload a document to get started.';
+    const resetHtml = filtersActive
+        ? '<br /><button class="btn btn-link btn-sm p-0 docs-reset-filter-msg-btn" type="button">Clear filters</button> to see all documents.'
+        : '';
+
+    documentsTableBody.innerHTML = `
+        <tr>
+            <td colspan="4" class="text-center p-4 text-muted">${message}${resetHtml}</td>
+        </tr>`;
+
+    if (documentsCardView) {
+        documentsCardView.innerHTML = `
+            <div class="col-12 text-center text-muted py-5">
+                <i class="bi bi-folder2-open display-6 mb-2 d-block"></i>
+                <p class="mb-2">${message}</p>
+                ${filtersActive ? '<button class="btn btn-link btn-sm p-0 docs-reset-filter-msg-btn" type="button">Clear filters</button>' : ''}
+            </div>`;
+    }
+
+    document.querySelectorAll('.docs-reset-filter-msg-btn').forEach(button => {
+        if (button.dataset.bound === 'true') {
+            return;
+        }
+
+        button.dataset.bound = 'true';
+        button.addEventListener('click', () => {
+            docsClearFiltersBtn?.click();
+        });
+    });
+}
+
+function renderDocumentsErrorState(message) {
+    documentsTableBody.innerHTML = `<tr><td colspan="4" class="text-center text-danger p-4">${message}</td></tr>`;
+
+    if (documentsCardView) {
+        documentsCardView.innerHTML = `
+            <div class="col-12 text-center text-danger py-5">
+                <i class="bi bi-exclamation-triangle display-6 mb-2 d-block"></i>
+                <p class="mb-0">${message}</p>
+            </div>`;
+    }
+}
+
+function createDocumentCard(doc) {
+    const docId = doc.id;
+    const { pct, docStatus, hasError, isComplete } = getDocumentProcessingState(doc);
+    const access = getPersonalDocumentAccess(doc);
+    const displayTitle = doc.title && doc.title !== doc.file_name ? doc.title : (doc.file_name || 'Untitled');
+    const subtitle = doc.title && doc.title !== doc.file_name ? (doc.file_name || '') : '';
+    const selected = selectedDocuments.has(docId);
+    const checkboxClass = selectionModeActive ? '' : ' d-none';
+
+    let statusBadge = '<span class="badge bg-success">Ready</span>';
+    if (access.requiresApproval) {
+        statusBadge = '<span class="badge bg-warning text-dark">Pending Approval</span>';
+    } else if (hasError) {
+        statusBadge = '<span class="badge bg-danger">Error</span>';
+    } else if (!isComplete) {
+        statusBadge = `<span class="badge bg-info text-dark">Processing ${pct.toFixed(0)}%</span>`;
+    }
+
+    let primaryButtonsHtml = '';
+    if (access.requiresApproval) {
+        primaryButtonsHtml += `
+            <button class="btn btn-sm btn-success me-1" onclick="window.approveSharedDocument('${docId}', this, '${escapeHtml(doc.owner_id || doc.user_id)}')">
+                <i class="bi bi-check-circle me-1"></i>Approve
+            </button>`;
+    } else if (isComplete && !hasError && access.hasApprovedAccess) {
+        primaryButtonsHtml += `
+            <button class="btn btn-sm btn-primary me-1" onclick="window.redirectToChat('${docId}')">
+                <i class="bi bi-chat-dots me-1"></i>Chat
+            </button>
+            <button class="btn btn-sm btn-outline-secondary me-1" onclick="window.onEditDocument('${docId}')">
+                <i class="bi bi-pencil me-1"></i>Edit
+            </button>`;
+    }
+
+    let dropdownItems = '';
+    if (isComplete && !hasError) {
+        dropdownItems += `
+            <li><a class="dropdown-item select-btn" href="#" onclick="window.toggleSelectionMode(); return false;">
+                <i class="bi bi-check-square me-2"></i>Select
+            </a></li>`;
+
+        if (window.enable_extract_meta_data === true || window.enable_extract_meta_data === "true") {
+            dropdownItems += `
+                <li><a class="dropdown-item" href="#" onclick="window.onExtractMetadata('${docId}', event); return false;">
+                    <i class="bi bi-magic me-2"></i>Extract Metadata
+                </a></li>`;
+        }
+
+        if (access.isOwner && (window.enable_file_sharing === true || window.enable_file_sharing === "true")) {
+            const shareCount = Array.isArray(doc.shared_user_ids) ? doc.shared_user_ids.length : 0;
+            dropdownItems += `
+                <li><a class="dropdown-item" href="#" onclick="window.shareDocument('${docId}', '${escapeHtml(doc.file_name || '')}'); return false;">
+                    <i class="bi bi-share-fill me-2"></i>Share
+                    <span class="badge bg-secondary ms-1">${shareCount}</span>
+                </a></li>`;
+        }
+
+        if (access.isOwner) {
+            dropdownItems += `
+                <li><hr class="dropdown-divider"></li>
+                <li><a class="dropdown-item text-danger" href="#" onclick="window.deleteDocument('${docId}', event); return false;">
+                    <i class="bi bi-trash-fill me-2"></i>Delete
+                </a></li>`;
+        } else if (access.sharedUserEntry && !access.requiresApproval) {
+            dropdownItems += `
+                <li><hr class="dropdown-divider"></li>
+                <li><a class="dropdown-item text-danger" href="#" onclick="window.removeSelfFromDocument('${docId}', event); return false;">
+                    <i class="bi bi-x-circle-fill me-2"></i>Remove
+                </a></li>`;
+        }
+    } else if (access.isOwner) {
+        dropdownItems += `
+            <li><a class="dropdown-item text-danger" href="#" onclick="window.deleteDocument('${docId}', event); return false;">
+                <i class="bi bi-trash-fill me-2"></i>Delete
+            </a></li>`;
+    }
+
+    const dropdownHtml = dropdownItems
+        ? `
+            <div class="dropdown action-dropdown d-inline-block ms-auto">
+                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                    <i class="bi bi-three-dots-vertical"></i>
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end">${dropdownItems}</ul>
+            </div>`
+        : '';
+
+    const progressHtml = hasError
+        ? `<div class="alert alert-danger py-2 px-3 small mb-0"><i class="bi bi-exclamation-triangle-fill me-1"></i>${escapeHtml(docStatus || 'Processing error')}</div>`
+        : (!isComplete
+            ? `<div class="document-item-card__progress"><div class="progress" style="height: 10px;"><div class="progress-bar progress-bar-striped progress-bar-animated bg-info" role="progressbar" style="width: ${pct}%" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"></div></div><span class="document-item-card__progress-label">${escapeHtml(docStatus)} (${pct.toFixed(0)}%)</span></div>`
+            : '');
+
+    const cardColumn = document.createElement('div');
+    cardColumn.className = 'col-12 col-md-6 col-xl-4';
+    cardColumn.innerHTML = `
+        <div class="card item-card document-item-card h-100${selected ? ' is-selected' : ''}" data-document-id="${docId}">
+            <div class="card-body d-flex flex-column">
+                <div class="document-item-card__header">
+                    <div class="document-item-card__check">
+                        <input type="checkbox" class="form-check-input document-checkbox${checkboxClass}" data-document-id="${docId}" ${selected ? 'checked' : ''} />
+                    </div>
+                    <div class="item-card-icon"><i class="bi ${getDocumentCardIcon(doc.file_name || '')}" style="font-size: 1.75rem;"></i></div>
+                    <div class="document-item-card__title-wrap">
+                        <div class="document-item-card__eyebrow">Personal document</div>
+                        <h6 class="card-title mb-1" title="${escapeHtml(displayTitle)}">${escapeHtml(truncateDocumentText(displayTitle, 60))}</h6>
+                        ${subtitle ? `<div class="document-item-card__subtitle" title="${escapeHtml(subtitle)}">${escapeHtml(subtitle)}</div>` : ''}
+                    </div>
+                    <div class="document-item-card__status">${statusBadge}</div>
+                </div>
+                <div class="document-item-card__summary">${escapeHtml(getDocumentSummaryText(doc))}</div>
+                <div class="document-item-card__meta">${getDocumentMetaPills(doc)}</div>
+                <div class="document-item-card__badges">
+                    ${getDocumentClassificationBadge(doc)}
+                    <span class="badge ${doc.enhanced_citations ? 'bg-success' : 'bg-secondary'}">${doc.enhanced_citations ? 'Enhanced citations' : 'Standard citations'}</span>
+                </div>
+                <div class="document-item-card__tags">${renderTagBadges(doc.tags || [], 4)}</div>
+                ${progressHtml}
+                <div class="item-card-buttons mt-auto d-flex flex-wrap gap-1">
+                    ${primaryButtonsHtml}
+                    ${dropdownHtml}
+                </div>
+            </div>
+        </div>`;
+
+    return cardColumn;
+}
+
+function renderDocumentCards(docs) {
+    if (!documentsCardView) {
+        return;
+    }
+
+    documentsCardView.innerHTML = '';
+    docs.forEach(doc => {
+        documentsCardView.appendChild(createDocumentCard(doc));
+    });
+}
+
+function renderWorkspaceDocumentView() {
+    const docs = Array.isArray(window.lastFetchedDocs) ? window.lastFetchedDocs : [];
+    const filtersActive = docsSearchTerm || docsClassificationFilter || docsAuthorFilter || docsKeywordsFilter || docsAbstractFilter || docsTagsFilter;
+
+    if (!window.hasFetchedUserDocuments && !window.lastFetchedDocsError) {
+        return;
+    }
+
+    if (window.lastFetchedDocsError) {
+        renderDocumentsErrorState(window.lastFetchedDocsError);
+        return;
+    }
+
+    documentsTableBody.innerHTML = '';
+    if (documentsCardView) {
+        documentsCardView.innerHTML = '';
+    }
+
+    if (!docs.length) {
+        renderDocumentsEmptyState(filtersActive);
+        return;
+    }
+
+    if (currentView === 'cards') {
+        renderDocumentCards(docs);
+    } else {
+        docs.forEach(doc => renderDocumentRow(doc));
+    }
+
+    syncDocumentSelectionModeUI();
+}
+
+window.renderWorkspaceDocumentView = renderWorkspaceDocumentView;
 
 function getDocumentDeleteModalContent(documentCount) {
     if (documentCount === 1) {
@@ -661,6 +1012,13 @@ function fetchUserDocuments() {
                 Loading documents...
             </td>
         </tr>`;
+    if (documentsCardView) {
+        documentsCardView.innerHTML = `
+            <div class="col-12 text-center text-muted py-5">
+                <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
+                Loading documents...
+            </div>`;
+    }
     if (docsPaginationContainer) docsPaginationContainer.innerHTML = ''; // Clear pagination
 
     // Build query parameters - Include all active filters
@@ -709,50 +1067,25 @@ function fetchUserDocuments() {
                 showLegacyUpdatePrompt();
               }
 
-            documentsTableBody.innerHTML = ""; // Clear loading/existing rows
-            if (!data.documents || data.documents.length === 0) {
-                // Check if any filters are active
-                const filtersActive = docsSearchTerm || docsClassificationFilter || docsAuthorFilter || docsKeywordsFilter || docsAbstractFilter || docsTagsFilter;
-                documentsTableBody.innerHTML = `
-                    <tr>
-                        <td colspan="4" class="text-center p-4 text-muted">
-                            ${ filtersActive
-                                ? 'No documents found matching the current filters.'
-                                : 'No documents found. Upload a document to get started.'
-                            }
-                            ${ filtersActive
-                                ? '<br><button class="btn btn-link btn-sm p-0" id="docs-reset-filter-msg-btn">Clear filters</button> to see all documents.'
-                                : ''
-                            }
-                        </td>
-                    </tr>`;
-                 // Add event listener for the reset button within the message
-                 const resetButton = document.getElementById('docs-reset-filter-msg-btn');
-                 if (resetButton && docsClearFiltersBtn) { // Ensure clear button exists
-                     resetButton.addEventListener('click', () => {
-                         docsClearFiltersBtn.click(); // Simulate clicking the main clear button
-                     });
-                 }
-            } else {
-                // If backend does not support shared_only, filter client-side as fallback
-                let docs = data.documents;
-                if (docsSharedOnlyFilter && docsSharedOnlyFilter.checked) {
-                    docs = docs.filter(doc =>
-                        Array.isArray(doc.shared_user_ids) && doc.shared_user_ids.length > 0
-                    );
-                }
-                // Client-side sort to ensure correct order
-                if (docsSortBy !== '_ts') {
-                    docs.sort((a, b) => {
-                        const valA = (a[docsSortBy] || '').toLowerCase();
-                        const valB = (b[docsSortBy] || '').toLowerCase();
-                        const cmp = valA.localeCompare(valB);
-                        return docsSortOrder === 'asc' ? cmp : -cmp;
-                    });
-                }
-                window.lastFetchedDocs = docs;
-                docs.forEach(doc => renderDocumentRow(doc));
+            let docs = data.documents || [];
+            if (docsSharedOnlyFilter && docsSharedOnlyFilter.checked) {
+                docs = docs.filter(doc =>
+                    Array.isArray(doc.shared_user_ids) && doc.shared_user_ids.length > 0
+                );
             }
+            if (docsSortBy !== '_ts') {
+                docs.sort((a, b) => {
+                    const valA = String(a[docsSortBy] || '').toLowerCase();
+                    const valB = String(b[docsSortBy] || '').toLowerCase();
+                    const cmp = valA.localeCompare(valB);
+                    return docsSortOrder === 'asc' ? cmp : -cmp;
+                });
+            }
+
+            window.lastFetchedDocs = docs;
+            window.lastFetchedDocsError = null;
+            window.hasFetchedUserDocuments = true;
+            renderWorkspaceDocumentView();
             renderDocsPaginationControls(data.page, data.page_size, data.total_count);
         })
         .catch(error => {
@@ -765,7 +1098,10 @@ function fetchUserDocuments() {
             } else {
                 displayMsg = `Error loading documents: ${escapeHtml(error.error || error.message || 'Unknown error')}`;
             }
-            documentsTableBody.innerHTML = `<tr><td colspan="4" class="text-center text-danger p-4">${displayMsg}</td></tr>`;
+            window.lastFetchedDocs = [];
+            window.lastFetchedDocsError = displayMsg;
+            window.hasFetchedUserDocuments = true;
+            renderDocumentsErrorState(displayMsg);
             renderDocsPaginationControls(1, docsPageSize, 0); // Show empty pagination on error
         });
 }
@@ -800,7 +1136,7 @@ function renderDocumentRow(doc) {
     // First column with checkbox and expand/collapse
     let firstColumnHtml = `
         <td class="align-middle">
-            <input type="checkbox" class="document-checkbox" data-document-id="${docId}" style="display: none;">
+            <input type="checkbox" class="form-check-input document-checkbox${selectionModeActive ? '' : ' d-none'}" data-document-id="${docId}" ${selectedDocuments.has(docId) ? 'checked' : ''}>
             <span class="expand-collapse-container">
             ${isComplete && !hasError ?
                 `<button class="btn btn-link p-0" onclick="window.toggleDetails('${docId}')" title="Show/Hide Details">
@@ -930,9 +1266,9 @@ function renderDocumentRow(doc) {
     // Complete row HTML
     docRow.innerHTML = `
         ${firstColumnHtml}
-        <td class="align-middle" title="${escapeHtml(doc.file_name || "")}">${escapeHtml(doc.file_name || "")}</td>
-        <td class="align-middle" title="${escapeHtml(doc.title || "")}">${escapeHtml(doc.title || "N/A")}</td>
-        <td class="align-middle">
+        <td class="align-middle document-file-cell" title="${escapeHtml(doc.file_name || "")}">${escapeHtml(doc.file_name || "")}</td>
+        <td class="align-middle document-title-cell" title="${escapeHtml(doc.title || "")}">${escapeHtml(doc.title || "N/A")}</td>
+        <td class="align-middle document-actions-cell">
             ${approvalButton}
             ${chatButton}
             ${actionsDropdown}
@@ -945,6 +1281,7 @@ function renderDocumentRow(doc) {
     if (isComplete && !hasError) {
         const detailsRow = document.createElement("tr");
         detailsRow.id = `details-row-${docId}`;
+        detailsRow.classList.add("document-details-row");
         detailsRow.style.display = "none"; // Initially hidden
 
         let classificationDisplayHTML = '';
@@ -1005,6 +1342,7 @@ function renderDocumentRow(doc) {
     if (!isComplete || hasError) {
         const statusRow = document.createElement("tr");
         statusRow.id = `status-row-${docId}`;
+        statusRow.classList.add("document-status-row");
         if (hasError) {
              statusRow.innerHTML = `
                 <td colspan="4">
@@ -1525,51 +1863,12 @@ window.fetchUserDocuments = fetchUserDocuments;
 // Toggle selection mode
 window.toggleSelectionMode = function() {
     selectionModeActive = !selectionModeActive;
-    
-    const documentsTable = document.getElementById("documents-table");
-    const checkboxes = document.querySelectorAll('.document-checkbox');
-    const expandContainers = document.querySelectorAll('.expand-collapse-container');
-    const bulkActionsBar = document.getElementById('bulkActionsBar');
-    
-    if (selectionModeActive) {
-        // Enter selection mode
-        documentsTable.classList.add('selection-mode');
-        
-        // Show checkboxes and hide expand buttons
-        checkboxes.forEach(checkbox => {
-            checkbox.classList.remove('d-none');
-            checkbox.classList.add('d-inline-block');
-        });
-        
-        expandContainers.forEach(container => {
-            container.classList.remove('d-inline-block');
-            container.classList.add('d-none');
-        });
-    } else {
-        // Exit selection mode
-        documentsTable.classList.remove('selection-mode');
-        
-        // Hide checkboxes and show expand buttons
-        checkboxes.forEach(checkbox => {
-            checkbox.classList.remove('d-inline-block');
-            checkbox.classList.add('d-none');
-            checkbox.checked = false;
-        });
-        
-        expandContainers.forEach(container => {
-            container.classList.remove('d-none');
-            container.classList.add('d-inline-block');
-        });
-        
-        // Hide bulk actions bar
-        if (bulkActionsBar) {
-            bulkActionsBar.classList.remove('d-block');
-            bulkActionsBar.classList.add('d-none');
-        }
-        
-        // Clear selected documents
+
+    if (!selectionModeActive) {
         selectedDocuments.clear();
     }
+
+    syncDocumentSelectionModeUI();
 };
 
 // Update selected documents
@@ -1579,8 +1878,14 @@ window.updateSelectedDocuments = function(documentId, isSelected) {
     } else {
         selectedDocuments.delete(documentId);
     }
-    
-    // Show/hide appropriate action buttons based on selection
+
+    document.querySelectorAll(`.document-checkbox[data-document-id="${documentId}"]`).forEach(checkbox => {
+        checkbox.checked = isSelected;
+    });
+    document.querySelectorAll(`.document-item-card[data-document-id="${documentId}"]`).forEach(card => {
+        card.classList.toggle('is-selected', isSelected);
+    });
+
     updateBulkActionButtons();
 };
 
@@ -1599,15 +1904,6 @@ function updateBulkActionButtons() {
             selectedCountSpan.textContent = selectedDocuments.size;
         }
         
-        // Check if any selected documents are shared (for remove button logic if needed in future)
-        const hasSharedDocuments = Array.from(selectedDocuments).some(docId => {
-            const docRow = document.getElementById(`doc-row-${docId}`);
-            if (docRow && docRow.__docData) {
-                const doc = docRow.__docData;
-                return doc.user_id !== window.current_user_id;
-            }
-            return false;
-        });
     } else {
         // Hide bulk actions bar
         if (bulkActionsBar) {
@@ -1615,6 +1911,36 @@ function updateBulkActionButtons() {
             bulkActionsBar.classList.add('d-none');
         }
     }
+}
+
+function syncDocumentSelectionModeUI() {
+    const documentsTable = document.getElementById('documents-table');
+    const bulkActionsBar = document.getElementById('bulkActionsBar');
+
+    documentsTable?.classList.toggle('selection-mode', selectionModeActive);
+    documentsCardView?.classList.toggle('selection-mode', selectionModeActive);
+
+    document.querySelectorAll('.document-checkbox').forEach(checkbox => {
+        checkbox.classList.toggle('d-none', !selectionModeActive);
+        checkbox.checked = selectionModeActive && selectedDocuments.has(checkbox.getAttribute('data-document-id'));
+    });
+
+    document.querySelectorAll('.expand-collapse-container').forEach(container => {
+        container.classList.toggle('d-none', selectionModeActive);
+        container.classList.toggle('d-inline-block', !selectionModeActive);
+    });
+
+    document.querySelectorAll('.document-item-card').forEach(card => {
+        const documentId = card.getAttribute('data-document-id');
+        card.classList.toggle('is-selected', selectedDocuments.has(documentId));
+    });
+
+    if (!selectionModeActive && bulkActionsBar) {
+        bulkActionsBar.classList.remove('d-block');
+        bulkActionsBar.classList.add('d-none');
+    }
+
+    updateBulkActionButtons();
 }
 
 // Delete selected documents
@@ -1726,7 +2052,7 @@ window.clearDocumentSelection = function() {
         checkbox.checked = false;
     });
     selectedDocuments.clear();
-    updateBulkActionButtons();
+    syncDocumentSelectionModeUI();
 };
 
 // Add event listeners for selection functionality
@@ -1741,15 +2067,12 @@ document.addEventListener('DOMContentLoaded', function() {
         clearSelectionBtn.addEventListener('click', window.clearDocumentSelection);
     }
     
-    // Delegate event listener for checkboxes (they're dynamically created)
-    if (documentsTableBody) {
-        documentsTableBody.addEventListener('change', function(event) {
-            if (event.target.classList.contains('document-checkbox')) {
-                const documentId = event.target.getAttribute('data-document-id');
-                window.updateSelectedDocuments(documentId, event.target.checked);
-            }
-        });
-    }
+    document.addEventListener('change', function(event) {
+        if (event.target.classList.contains('document-checkbox')) {
+            const documentId = event.target.getAttribute('data-document-id');
+            window.updateSelectedDocuments(documentId, event.target.checked);
+        }
+    });
 });
 
 // Approve shared document handler

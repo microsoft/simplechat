@@ -31,7 +31,8 @@ def get_settings(use_cosmos=False, include_source=False):
     import secrets
     default_settings = {
         # External health check
-        'enable_external_healthcheck': True,
+        'enable_external_healthcheck': False,
+        'enable_no_auth_external_healthcheck': False,
         # Security settings
         'enable_appinsights_global_logging': False,
         'enable_debug_logging': False,
@@ -351,8 +352,6 @@ def get_settings(use_cosmos=False, include_source=False):
         'file_timer_value': 1,
         'file_timer_unit': 'hours',
         'file_processing_logs_turnoff_time': None,
-        'enable_external_healthcheck': False,
-        
         # Streaming settings
         'streamingEnabled': True,
         

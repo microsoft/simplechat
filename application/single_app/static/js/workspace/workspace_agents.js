@@ -347,7 +347,7 @@ function initializeWorkspaceAgentUI() {
     if (mode === 'grid' && filteredAgents.length) {
       renderAgentsGrid(filteredAgents);
     }
-  });
+  }, { mobileDefault: 'grid' });
 
   fetchAgents();
 }

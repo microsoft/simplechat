@@ -1579,19 +1579,58 @@
                     </div>
                     <p class="text-muted mb-3">Configure health check endpoint for external monitoring systems.</p>
 
-                    <div class="form-check form-switch mb-2">
-                        <input
-                            type="checkbox"
-                            class="form-check-input"
-                            id="enable_external_healthcheck"
-                            name="enable_external_healthcheck"
-                            {% if settings.enable_external_healthcheck %}checked{% endif %}>
-                        <label class="form-check-label ms-2" for="enable_external_healthcheck">
-                            Enable External Health Check Endpoint (/external/healthcheck)
-                        </label>
-                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable the /external/healthcheck endpoint for external monitoring systems."></i>
+                    <div class="row g-3">
+                        <div class="col-lg-6">
+                            <div class="border rounded p-3 h-100 bg-body-tertiary-subtle">
+                                <div class="d-flex align-items-start justify-content-between gap-2">
+                                    <div>
+                                        <h6 class="mb-1">Authenticated Endpoint</h6>
+                                        <p class="text-muted small mb-0">Use when your monitoring system can reach a protected route and you want the endpoint governed by the normal app access boundary.</p>
+                                    </div>
+                                    <span class="badge text-bg-primary">Protected</span>
+                                </div>
+                                <div class="form-check form-switch mt-3 mb-2">
+                                    <input
+                                        type="checkbox"
+                                        class="form-check-input"
+                                        id="enable_external_healthcheck"
+                                        name="enable_external_healthcheck"
+                                        {% if settings.enable_external_healthcheck %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="enable_external_healthcheck">
+                                        Enable /external/healthcheck
+                                    </label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable the authenticated /external/healthcheck endpoint for external monitoring systems."></i>
+                                </div>
+                                <p class="text-muted small mb-0">Best for internal monitors or diagnostics tooling that already authenticates to the application.</p>
+                            </div>
+                        </div>
+                        <div class="col-lg-6">
+                            <div class="border rounded p-3 h-100 border-warning-subtle bg-warning-subtle">
+                                <div class="d-flex align-items-start justify-content-between gap-2">
+                                    <div>
+                                        <h6 class="mb-1">Unauthenticated Endpoint</h6>
+                                        <p class="text-muted small mb-0">Use when a platform health probe cannot sign in and only needs a lightweight availability response.</p>
+                                    </div>
+                                    <span class="badge text-bg-warning">No Auth</span>
+                                </div>
+                                <div class="form-check form-switch mt-3 mb-2">
+                                    <input
+                                        type="checkbox"
+                                        class="form-check-input"
+                                        id="enable_no_auth_external_healthcheck"
+                                        name="enable_no_auth_external_healthcheck"
+                                        {% if settings.enable_no_auth_external_healthcheck %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="enable_no_auth_external_healthcheck">
+                                        Enable /external/healthcheckz
+                                    </label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable the unauthenticated /external/healthcheckz endpoint for probes that cannot authenticate."></i>
+                                </div>
+                                <div class="alert alert-warning small mb-0" role="alert">
+                                    <strong>Security note:</strong> This route is intentionally unauthenticated. Only enable it for trusted health probes or controlled network paths.
+                                </div>
+                            </div>
+                        </div>
                     </div>
-                    <p class="text-muted small mb-0">Health check endpoint for external monitoring systems that require endpoint verification.</p>
                 </div>
 
                 <div class="card p-3 mb-3" id="swagger-section">
