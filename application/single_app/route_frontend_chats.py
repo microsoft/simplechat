@@ -402,6 +402,24 @@ def register_route_frontend_chats(app):
             chat_model_options=chat_model_options,
             initial_chat_model_selection=initial_chat_model_selection,
         )
+
+    @app.route('/workflow-activity', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    def workflow_activity():
+        user_id = get_current_user_id()
+        if not user_id:
+            return redirect(url_for('login'))
+
+        settings = get_settings()
+        public_settings = sanitize_settings_for_user(settings)
+
+        return render_template(
+            'workflow_activity.html',
+            settings=public_settings,
+        )
     
     @app.route('/upload', methods=['POST'])
     @swagger_route(security=get_auth_security())

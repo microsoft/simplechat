@@ -61,6 +61,7 @@ from route_backend_groups import *
 from route_backend_users import *
 from route_backend_group_documents import *
 from route_backend_models import *
+from route_backend_workflows import *
 from route_backend_safety import *
 from route_backend_feedback import *
 from route_backend_settings import *
@@ -898,6 +899,9 @@ register_route_backend_group_documents(app)
 
 # ------------------- API Model Routes -------------------
 register_route_backend_models(app)
+
+# ------------------- API Workflow Routes ----------------
+register_route_backend_workflows(app)
 
 # ------------------- API Safety Logs Routes -------------
 register_route_backend_safety(app)

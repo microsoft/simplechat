@@ -9,7 +9,11 @@ import {
   setActiveConversation as setSidebarActiveConversation,
   setConversationUnreadState as setSidebarConversationUnreadState,
 } from "./chat-sidebar-conversations.js";
-import { toggleConversationInfoButton } from "./chat-conversation-info-button.js";
+import {
+  hideWorkflowActivityButton,
+  toggleConversationInfoButton,
+  updateWorkflowActivityButton,
+} from "./chat-conversation-info-button.js";
 import { restoreScopeLockState, resetScopeLock } from "./chat-documents.js";
 import { loadUserSettings } from "./chat-layout.js";
 import { setUserSetting } from "../agents_common.js";
@@ -271,6 +275,13 @@ export function applyConversationMetadataUpdate(conversationId, updates = {}) {
   if (Object.prototype.hasOwnProperty.call(updates, 'current_user_role')) {
     convoItem.dataset.currentUserRole = updates.current_user_role || '';
   }
+  if (Object.prototype.hasOwnProperty.call(updates, 'workflow_id')) {
+    if (updates.workflow_id) {
+      convoItem.dataset.workflowId = updates.workflow_id;
+    } else {
+      delete convoItem.dataset.workflowId;
+    }
+  }
 
   if (Array.isArray(updates.classification)) {
     convoItem.dataset.classifications = JSON.stringify(updates.classification);
@@ -297,6 +308,7 @@ export function applyConversationMetadataUpdate(conversationId, updates = {}) {
     can_delete_conversation: updates.can_delete_conversation,
     can_leave_conversation: updates.can_leave_conversation,
     current_user_role: updates.current_user_role,
+    workflow_id: updates.workflow_id,
   });
 
   applySidebarConversationMetadataUpdate(conversationId, updates);
@@ -314,6 +326,10 @@ export function applyConversationMetadataUpdate(conversationId, updates = {}) {
     }
 
     renderConversationHeaderBadges(convoItem);
+    updateWorkflowActivityButton(conversationId, {
+      chat_type: updates.chat_type || convoItem.getAttribute('data-chat-type') || '',
+      workflow_id: updates.workflow_id || convoItem.dataset.workflowId || '',
+    });
 
     if (hasContextUpdate) {
       void refreshAgentsAndModelsForActiveConversation();
@@ -803,15 +819,18 @@ export function createConversationItem(convo) {
   convoItem.classList.add("list-group-item", "list-group-item-action", "conversation-item", "d-flex", "align-items-center"); // Use action class
   convoItem.setAttribute("data-conversation-id", convo.id);
   convoItem.setAttribute("data-conversation-title", convo.title); // Store title too
+  if (convo.workflow_id) {
+    convoItem.dataset.workflowId = convo.workflow_id;
+  }
   convoItem.dataset.hasUnreadAssistantResponse = convo.has_unread_assistant_response ? "true" : "false";
   const isCollaborativeConversation = convo.conversation_kind === 'collaborative';
   const conversationChatType = convo.chat_type === 'personal' ? 'personal_single_user' : convo.chat_type;
   const canManageMembers = isCollaborativeConversation
     ? Boolean(convo.can_manage_members)
-    : conversationChatType === 'personal_single_user';
+    : ['personal_single_user', 'group-single-user'].includes(conversationChatType || '');
   const canManageRoles = isCollaborativeConversation ? Boolean(convo.can_manage_roles) : false;
   const canEditCollaborativeTitle = !isCollaborativeConversation || canManageRoles;
-  const canShowAddParticipants = ['personal_single_user', 'personal_multi_user'].includes(conversationChatType || '')
+  const canShowAddParticipants = ['personal_single_user', 'personal_multi_user', 'group-single-user', 'group_multi_user'].includes(conversationChatType || '')
     && canManageMembers;
   const canDeleteCollaborativeConversation = Boolean(convo.can_delete_conversation);
   const canLeaveCollaborativeConversation = Boolean(convo.can_leave_conversation);
@@ -1372,6 +1391,7 @@ export async function selectConversation(conversationId) {
       if (chatbox) chatbox.innerHTML = '<div class="text-center p-5 text-muted">Conversation not found.</div>';
       highlightSelectedConversation(null); // Deselect all visually
       toggleConversationInfoButton(false); // Hide the info button
+        hideWorkflowActivityButton();
       return;
   }
 
@@ -1511,6 +1531,11 @@ export async function selectConversation(conversationId) {
       if (metadata.conversation_kind) {
         convoItem.dataset.conversationKind = metadata.conversation_kind;
       }
+      if (metadata.workflow_id) {
+        convoItem.dataset.workflowId = metadata.workflow_id;
+      } else {
+        delete convoItem.dataset.workflowId;
+      }
     }
   } catch (error) {
     console.warn('Failed to fetch conversation metadata:', error);
@@ -1541,6 +1566,10 @@ export async function selectConversation(conversationId) {
   
   // Show the conversation info button since we have an active conversation
   toggleConversationInfoButton(true);
+  updateWorkflowActivityButton(conversationId, {
+    chat_type: metadata?.chat_type || convoItem.getAttribute('data-chat-type') || '',
+    workflow_id: metadata?.workflow_id || convoItem.dataset.workflowId || '',
+  });
   
   // Update sidebar active conversation if sidebar exists
   if (setSidebarActiveConversation) {
@@ -1746,6 +1775,7 @@ export function removeConversationFromUi(conversationId, options = {}) {
     }
     highlightSelectedConversation(null);
     toggleConversationInfoButton(false);
+    hideWorkflowActivityButton();
     window.chatCollaboration?.deactivateConversation?.();
     setSidebarActiveConversation(null);
   }
@@ -2093,6 +2123,7 @@ async function deleteSelectedConversations() {
         if (chatbox) chatbox.innerHTML = '<div class="text-center p-5 text-muted">Select a conversation to view messages.</div>';
         highlightSelectedConversation(null);
         toggleConversationInfoButton(false); // Hide the info button
+        hideWorkflowActivityButton();
       }
     });
     

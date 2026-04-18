@@ -114,6 +114,46 @@
       white-space: nowrap;
     }
 
+    /* --- Workflows Table Styles --- */
+    #workflows-table th:nth-child(1),
+    #workflows-table td:nth-child(1) {
+      width: 24%;
+      min-width: 180px;
+    }
+    #workflows-table th:nth-child(2),
+    #workflows-table td:nth-child(2) {
+      width: 24%;
+      min-width: 180px;
+    }
+    #workflows-table th:nth-child(3),
+    #workflows-table td:nth-child(3) {
+      width: 15%;
+      min-width: 130px;
+    }
+    #workflows-table th:nth-child(4),
+    #workflows-table td:nth-child(4) {
+      width: 19%;
+      min-width: 180px;
+    }
+    #workflows-table th:nth-child(5),
+    #workflows-table td:nth-child(5) {
+      width: 18%;
+      min-width: 220px;
+      white-space: nowrap;
+    }
+
+    .workflow-meta {
+      color: #6c757d;
+      font-size: 0.85rem;
+    }
+
+    .workflow-response-preview {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
     /* Style for the classification badge */
     .classification-badge {
         display: inline-block;
@@ -527,6 +567,22 @@
             </li>
           {% endif %}
         {% endif %}
+      {% endif %}
+      {% if settings.allow_user_workflows %}
+        <li class="nav-item" role="presentation">
+          <button
+            class="nav-link"
+            id="workflows-tab-btn"
+            data-bs-toggle="tab"
+            data-bs-target="#workflows-tab"
+            type="button"
+            role="tab"
+            aria-controls="workflows-tab"
+            aria-selected="false"
+          >
+            Your Workflows
+          </button>
+        </li>
       {% endif %}
       {% if settings.allow_user_custom_endpoints and settings.enable_multi_model_endpoints %}
         <li class="nav-item" role="presentation">
@@ -953,6 +1009,63 @@
       </div>
       <!-- End ACTIONS TAB -->
 
+      {% endif %}
+
+      {% if settings.allow_user_workflows %}
+      <!-- ============= WORKFLOWS TAB ============= -->
+      <div
+        class="tab-pane fade"
+        id="workflows-tab"
+        role="tabpanel"
+        aria-labelledby="workflows-tab-btn"
+      >
+        <div class="tab-pane-inner">
+          <div class="card p-3 my-3">
+            <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-3">
+              <div>
+                <h5 class="mb-1"><i class="bi bi-diagram-3 me-2"></i>Your Workflows</h5>
+                <p class="text-muted small mb-0">Create personal workflows that run a selected agent or model manually or on an interval schedule.</p>
+              </div>
+              <button class="btn btn-success btn-sm align-self-start align-self-lg-center" id="create-workflow-btn" type="button">
+                <i class="bi bi-plus-circle me-1"></i>New Workflow
+              </button>
+            </div>
+            <div class="row g-2 mb-3 align-items-center">
+              <div class="col-lg-7">
+                <input type="search" class="form-control" id="workflows-search" placeholder="Search workflows by name, runner, or task prompt..." />
+              </div>
+              <div class="col-lg-5 text-lg-end">
+                <div class="text-muted small" id="workflows-summary"></div>
+              </div>
+            </div>
+            <div class="table-responsive">
+              <table class="table table-striped item-list-table" id="workflows-table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Runner</th>
+                    <th>Trigger</th>
+                    <th>Last Run</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="workflows-table-body">
+                  <tr class="table-loading-row">
+                    <td colspan="5">
+                      <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
+                      Loading workflows...
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div id="workspace-workflows-error"></div>
+        </div>
+      </div>
+      <!-- End WORKFLOWS TAB -->
+      {% endif %}
+
       {% if settings.allow_user_custom_endpoints and settings.enable_multi_model_endpoints %}
       <!-- ============= ENDPOINTS TAB ============= -->
       <div
@@ -1000,7 +1113,6 @@
       </div>
       <!-- End ENDPOINTS TAB -->
       {% endif %}
-      {% endif %}
     </div>
     <!-- End Tab Content -->
   </div>
@@ -1024,6 +1136,183 @@
       </div>
     </div>
   </div>
+
+  {% if settings.allow_user_workflows %}
+  <div class="modal fade" id="workflowModal" tabindex="-1" aria-labelledby="workflowModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <form class="modal-content" id="workflow-form" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
+        <div class="modal-header">
+          <h5 class="modal-title" id="workflowModalLabel">Create Workflow</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="workflow-id" />
+          <div class="row g-3 mb-3">
+            <div class="col-md-7">
+              <label for="workflow-name" class="form-label">Workflow Name</label>
+              <input type="text" class="form-control" id="workflow-name" maxlength="120" required />
+            </div>
+            <div class="col-md-5">
+              <label for="workflow-runner-type" class="form-label">Runner</label>
+              <select class="form-select" id="workflow-runner-type">
+                <option value="model">Direct Model</option>
+                <option value="agent">Agent</option>
+              </select>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label for="workflow-description" class="form-label">Description</label>
+            <input type="text" class="form-control" id="workflow-description" maxlength="240" placeholder="Optional summary for the workflow list." />
+          </div>
+          <div class="mb-3">
+            <label for="workflow-task-prompt" class="form-label">Task Prompt</label>
+            <textarea class="form-control" id="workflow-task-prompt" rows="7" placeholder="Describe exactly what this workflow should do each time it runs." required></textarea>
+            <div class="form-text">Each run appends this prompt to the workflow conversation as a new user message.</div>
+          </div>
+
+          <div id="workflow-agent-fields" class="card p-3 mb-3 d-none">
+            <div class="mb-0">
+              <label for="workflow-agent-select" class="form-label">Selected Agent</label>
+              <select class="form-select" id="workflow-agent-select"></select>
+              <div class="form-text" id="workflow-agent-help">Choose a personal agent or a merged global agent.</div>
+            </div>
+          </div>
+
+          <div id="workflow-model-fields" class="card p-3 mb-3">
+            <div class="row g-3">
+              <div class="col-md-4">
+                <label for="workflow-model-source" class="form-label">Model Source</label>
+                <select class="form-select" id="workflow-model-source">
+                  <option value="default">Default App Model</option>
+                  <option value="custom">Specific Endpoint + Model</option>
+                </select>
+              </div>
+              <div class="col-md-4 d-none" id="workflow-model-endpoint-group">
+                <label for="workflow-model-endpoint-select" class="form-label">Endpoint</label>
+                <select class="form-select" id="workflow-model-endpoint-select"></select>
+              </div>
+              <div class="col-md-4 d-none" id="workflow-model-group">
+                <label for="workflow-model-select" class="form-label">Model</label>
+                <select class="form-select" id="workflow-model-select"></select>
+              </div>
+            </div>
+            <div class="form-text mt-2" id="workflow-model-help">The default app model follows your admin-configured default selection or legacy GPT settings.</div>
+          </div>
+
+          <div class="card p-3 mb-3">
+            <div class="row g-3 align-items-end">
+              <div class="col-md-5">
+                <label for="workflow-alert-priority" class="form-label">Pop-up Alert Priority</label>
+                <select class="form-select" id="workflow-alert-priority">
+                  <option value="none">No notification</option>
+                  <option value="low">Low priority</option>
+                  <option value="medium">Medium priority</option>
+                  <option value="high">High priority</option>
+                </select>
+              </div>
+              <div class="col-md-7">
+                <div class="form-text mt-0">When enabled, workflow runs create a pop-up alert modal with direct links to the workflow conversation and any conversation the agent created during the run.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card p-3">
+            <div class="row g-3 align-items-end">
+              <div class="col-md-4">
+                <label for="workflow-trigger-type" class="form-label">Trigger</label>
+                <select class="form-select" id="workflow-trigger-type">
+                  <option value="manual">Manual</option>
+                  <option value="interval">Interval Schedule</option>
+                </select>
+              </div>
+              <div class="col-md-4 d-none" id="workflow-schedule-value-group">
+                <label for="workflow-schedule-value" class="form-label">Every</label>
+                <input type="number" class="form-control" id="workflow-schedule-value" min="1" max="59" value="10" />
+              </div>
+              <div class="col-md-4 d-none" id="workflow-schedule-unit-group">
+                <label for="workflow-schedule-unit" class="form-label">Unit</label>
+                <select class="form-select" id="workflow-schedule-unit">
+                  <option value="seconds">Seconds</option>
+                  <option value="minutes">Minutes</option>
+                  <option value="hours">Hours</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-check form-switch mt-3 d-none" id="workflow-enabled-group">
+              <input class="form-check-input" type="checkbox" id="workflow-enabled" checked />
+              <label class="form-check-label ms-2" for="workflow-enabled">Enable scheduled runs</label>
+            </div>
+            <div class="form-text mt-2" id="workflow-trigger-help">Manual workflows run only when you trigger them from the workspace.</div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="workflow-save-btn">Save Workflow</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal fade" id="workflowHistoryModal" tabindex="-1" aria-labelledby="workflowHistoryModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="workflowHistoryModalLabel">Workflow Run History</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div class="alert alert-light border mb-3" id="workflow-history-conversation-card">
+            <div class="fw-semibold">Dedicated Conversation</div>
+            <div class="small text-muted" id="workflow-history-conversation-id">Not created yet.</div>
+            <a href="#" class="btn btn-sm btn-outline-primary mt-2 d-none" id="workflow-history-open-conversation-link">Open workflow conversation</a>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm table-striped" id="workflow-history-table">
+              <thead>
+                <tr>
+                  <th>Status</th>
+                  <th>Started</th>
+                  <th>Trigger</th>
+                  <th>Details</th>
+                  <th>Conversation</th>
+                </tr>
+              </thead>
+              <tbody id="workflow-history-body">
+                <tr class="table-loading-row">
+                  <td colspan="5">
+                    <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
+                    Loading run history...
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal fade" id="workflowDeleteModal" tabindex="-1" aria-labelledby="workflowDeleteModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="workflowDeleteModalLabel">Delete Workflow</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <p class="mb-0">Delete <strong id="workflow-delete-name">this workflow</strong>? Its dedicated conversation remains in your conversations list, but this workflow definition and its run history will be removed.</p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-danger" id="workflow-delete-confirm-btn">Delete Workflow</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
 
   <!-- Modal for Creating/Editing Prompts (Keep As Is) -->
   <div
@@ -1572,6 +1861,9 @@
     <script type="module" src="/static/js/workspace/workspace_agents.js"></script>
     <script type="module" src="/static/js/workspace/workspace_plugins.js"></script>
   {% endif %}
+  {% if settings.allow_user_workflows %}
+    <script type="module" src="{{ url_for('static', filename='js/workspace/workspace_workflows.js') }}"></script>
+  {% endif %}
   <script>
     window.enableMultiModelEndpoints = {{ 'true' if settings.enable_multi_model_endpoints else 'false' }};
     window.modelEndpointScope = 'user';
@@ -1655,7 +1947,8 @@
         document.getElementById("shareDocumentModal"),
         document.getElementById("modelEndpointModal"),
         document.getElementById("agentModal"),
-        document.getElementById("plugin-modal")
+        document.getElementById("plugin-modal"),
+        document.getElementById("workflowModal")
       ].forEach(applyWorkspaceAutofillMetadata);
     }
 

@@ -5,7 +5,7 @@ import threading
 import time
 
 import app_settings_cache
-from flask import Response, current_app, jsonify, request, session, stream_with_context
+from flask import Response, current_app, jsonify, redirect, request, session, stream_with_context
 
 from config import *
 from collaboration_models import MEMBERSHIP_STATUS_PENDING, MESSAGE_KIND_AI_REQUEST, add_seconds_to_iso, normalize_collaboration_user, utc_now_iso
@@ -20,8 +20,10 @@ from functions_collaboration import (
     delete_collaboration_message,
     delete_personal_collaboration_conversation,
     ensure_collaboration_source_conversation,
+    ensure_group_collaboration_for_legacy_conversation,
     ensure_personal_collaboration_for_legacy_conversation,
     get_collaboration_conversation,
+    get_collaboration_message,
     get_collaboration_user_state,
     invite_personal_collaboration_participants,
     leave_personal_collaboration_conversation,
@@ -42,6 +44,7 @@ from functions_collaboration import (
     update_personal_collaboration_title,
 )
 from functions_group import assert_group_role, check_group_status_allows_operation, find_group_by_id
+from functions_image_messages import decode_image_content, get_complete_image_content, is_external_image_url
 from functions_notifications import mark_collaboration_message_notifications_read_for_conversation
 from functions_settings import get_settings, get_user_settings
 from swagger_wrapper import swagger_route, get_auth_security
@@ -295,11 +298,14 @@ def register_route_backend_collaboration(app):
                         conversations.append(serialized)
 
             if scope_filter in ('all', 'group'):
-                for conversation_doc in list_group_collaboration_conversations_for_user(current_user['user_id']):
-                    conversations.append(serialize_collaboration_conversation(
+                for conversation_doc, user_state in list_group_collaboration_conversations_for_user(current_user['user_id']):
+                    serialized = serialize_collaboration_conversation(
                         conversation_doc,
                         current_user_id=current_user['user_id'],
-                    ))
+                        user_state=user_state,
+                    )
+                    if include_pending or serialized.get('membership_status') != MEMBERSHIP_STATUS_PENDING:
+                        conversations.append(serialized)
 
             conversations.sort(
                 key=lambda item: item.get('updated_at') or item.get('created_at') or '',
@@ -359,6 +365,7 @@ def register_route_backend_collaboration(app):
 
             if conversation_type == 'group':
                 group_id = str(data.get('group_id') or '').strip()
+                participants_to_invite = _normalize_participant_payload(data.get('participants', []))
                 if not group_id:
                     user_settings = get_user_settings(current_user['user_id'])
                     group_id = str(
@@ -380,14 +387,20 @@ def register_route_backend_collaboration(app):
                 if not allowed:
                     return jsonify({'error': reason}), 403
 
-                conversation_doc = create_group_collaboration_conversation_record(
+                conversation_doc, user_states = create_group_collaboration_conversation_record(
                     title=title,
                     creator_user=current_user,
                     group_doc=group_doc,
+                    invited_participants=participants_to_invite,
+                )
+                creator_state = next(
+                    (state for state in user_states if state.get('user_id') == current_user['user_id']),
+                    None,
                 )
                 serialized = serialize_collaboration_conversation(
                     conversation_doc,
                     current_user_id=current_user['user_id'],
+                    user_state=creator_state,
                 )
                 COLLABORATION_EVENT_REGISTRY.publish(
                     conversation_doc.get('id'),
@@ -402,6 +415,8 @@ def register_route_backend_collaboration(app):
             return jsonify({'error': 'conversation_type must be personal or group'}), 400
         except PermissionError as exc:
             return jsonify({'error': str(exc)}), 403
+        except (LookupError, ValueError) as exc:
+            return jsonify({'error': str(exc)}), 400
         except Exception as exc:
             log_event(
                 f'[Collaboration] Failed to create conversation: {exc}',
@@ -548,6 +563,8 @@ def register_route_backend_collaboration(app):
             return jsonify({'error': 'Collaborative conversation not found'}), 404
         except PermissionError as exc:
             return jsonify({'error': str(exc)}), 403
+        except (LookupError, ValueError) as exc:
+            return jsonify({'error': str(exc)}), 400
         except Exception as exc:
             log_event(
                 f'[Collaboration] Failed to invite members for {conversation_id}: {exc}',
@@ -634,6 +651,88 @@ def register_route_backend_collaboration(app):
                 exceptionTraceback=True,
             )
             return jsonify({'error': 'Failed to convert conversation to collaborative conversation'}), 500
+
+    @app.route('/api/collaboration/conversations/from-group/<conversation_id>/members', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def convert_group_conversation_to_collaboration_api(conversation_id):
+        try:
+            _require_collaboration_feature_enabled()
+            current_user = _get_current_collaboration_user()
+            if not current_user:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            data = request.get_json(silent=True) or {}
+            participants_to_add = _normalize_participant_payload(
+                data.get('participants', data.get('participant'))
+            )
+            if not participants_to_add:
+                return jsonify({'error': 'participants are required'}), 400
+
+            conversation_doc, invited_state_docs, created_new, _ = ensure_group_collaboration_for_legacy_conversation(
+                conversation_id,
+                current_user,
+                invited_participants=participants_to_add,
+            )
+            serialized = serialize_collaboration_conversation(
+                conversation_doc,
+                current_user_id=current_user['user_id'],
+                user_state=get_user_state_or_none(current_user['user_id'], conversation_doc.get('id')),
+            )
+            invited_participants = [
+                {
+                    'user_id': state_doc.get('user_id'),
+                    'display_name': state_doc.get('user_display_name'),
+                    'email': state_doc.get('user_email'),
+                    'membership_status': state_doc.get('membership_status'),
+                }
+                for state_doc in invited_state_docs
+            ]
+
+            if created_new:
+                COLLABORATION_EVENT_REGISTRY.publish(
+                    conversation_doc.get('id'),
+                    _build_collaboration_event(
+                        conversation_doc.get('id'),
+                        'collaboration.created',
+                        {'conversation': serialized, 'source_conversation_id': conversation_id},
+                    ),
+                )
+
+            if invited_participants:
+                COLLABORATION_EVENT_REGISTRY.publish(
+                    conversation_doc.get('id'),
+                    _build_collaboration_event(
+                        conversation_doc.get('id'),
+                        'collaboration.member.invited',
+                        {
+                            'conversation': serialized,
+                            'participants': invited_participants,
+                            'source_conversation_id': conversation_id,
+                        },
+                    ),
+                )
+
+            return jsonify({
+                'conversation': serialized,
+                'invited_participants': invited_participants,
+                'created': created_new,
+                'source_conversation_id': conversation_id,
+            }), 201 if created_new else 200
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Conversation not found'}), 404
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+        except (LookupError, ValueError) as exc:
+            return jsonify({'error': str(exc)}), 400
+        except Exception as exc:
+            log_event(
+                f'[Collaboration] Failed to convert group conversation {conversation_id}: {exc}',
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to convert group conversation to collaborative conversation'}), 500
 
     @app.route('/api/collaboration/conversations/<conversation_id>/members/<member_user_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
@@ -946,6 +1045,66 @@ def register_route_backend_collaboration(app):
             )
             return jsonify({'error': 'Failed to load collaborative conversation messages'}), 500
 
+    @app.route('/api/collaboration/conversations/<conversation_id>/images/<message_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def get_collaboration_image_api(conversation_id, message_id):
+        try:
+            _require_collaboration_feature_enabled()
+            current_user = _get_current_collaboration_user()
+            if not current_user:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            conversation_doc = get_collaboration_conversation(conversation_id)
+            assert_user_can_view_collaboration_conversation(
+                current_user['user_id'],
+                conversation_doc,
+                allow_pending=True,
+            )
+
+            message_doc = get_collaboration_message(message_id)
+            if str(message_doc.get('conversation_id') or '').strip() != str(conversation_id or '').strip():
+                return jsonify({'error': 'Collaborative image not found'}), 404
+
+            message_metadata = message_doc.get('metadata', {}) if isinstance(message_doc.get('metadata'), dict) else {}
+            source_conversation_id = str(message_metadata.get('source_conversation_id') or '').strip()
+            source_message_id = str(message_metadata.get('source_message_id') or '').strip()
+            if not source_conversation_id or not source_message_id:
+                return jsonify({'error': 'Source image not found'}), 404
+
+            _, complete_content = get_complete_image_content(
+                cosmos_messages_container,
+                source_conversation_id,
+                source_message_id,
+            )
+
+            if is_external_image_url(complete_content):
+                return redirect(complete_content)
+
+            mime_type, image_data = decode_image_content(complete_content)
+            return Response(
+                image_data,
+                mimetype=mime_type,
+                headers={
+                    'Content-Length': len(image_data),
+                    'Cache-Control': 'public, max-age=3600',
+                },
+            )
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Collaborative image not found'}), 404
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
+        except Exception as exc:
+            log_event(
+                f'[Collaboration] Failed to load image {message_id} for {conversation_id}: {exc}',
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to load collaborative image'}), 500
+
     @app.route('/api/collaboration/conversations/<conversation_id>/messages', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -1253,8 +1412,8 @@ def register_route_backend_collaboration(app):
                                 'agent_citations': serialized_assistant_message.get('agent_citations', []),
                                 'agent_display_name': serialized_assistant_message.get('agent_display_name'),
                                 'agent_name': serialized_assistant_message.get('agent_name'),
-                                'full_content': mirrored_message_doc.get('content') if serialized_assistant_message.get('role') != 'image' else stream_payload.get('full_content', ''),
-                                'image_url': mirrored_message_doc.get('content') if serialized_assistant_message.get('role') == 'image' else stream_payload.get('image_url'),
+                                'full_content': serialized_assistant_message.get('content') if serialized_assistant_message.get('role') != 'image' else stream_payload.get('full_content', ''),
+                                'image_url': serialized_assistant_message.get('content') if serialized_assistant_message.get('role') == 'image' else stream_payload.get('image_url'),
                                 'reload_messages': False,
                             }
                             return f'data: {json.dumps(transformed_payload)}\n\n'

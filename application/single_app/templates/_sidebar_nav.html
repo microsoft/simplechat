@@ -95,6 +95,13 @@
                   <i class="bi bi-lightbulb me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Prompts</span>
                 </a>
               </li>
+              {% if settings.allow_user_workflows %}
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="workflows-tab">
+                  <i class="bi bi-diagram-3 me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Workflows</span>
+                </a>
+              </li>
+              {% endif %}
               {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="agents-tab">
@@ -719,7 +726,7 @@
     <!-- Conversations Section - Only show on chats page -->
     {% if request.endpoint == 'chats' %}
     <div id="conversations-section" class="flex-grow-1 overflow-auto">
-      <div id="conversations-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center justify-content-between" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;">
+      <div id="conversations-toggle" class="sidebar-section-toggle mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center justify-content-between">
         <div class="d-flex align-items-center">
           <span class="nav-text">Conversations</span>
           <i id="conversations-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;"></i>
@@ -762,6 +769,18 @@
       <div id="conversations-list-container" class="px-2">
         <div id="sidebar-conversations-list" class="list-group list-group-flush">
           <div class="text-center p-2 text-muted small">Loading conversations...</div>
+        </div>
+        <div id="sidebar-workflow-section" class="sidebar-conversation-subsection d-none">
+          <div id="sidebar-workflows-toggle" class="sidebar-section-toggle mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center" role="button" tabindex="0" aria-controls="sidebar-workflow-list-container" aria-expanded="true">
+            <span class="nav-text">Workflows</span>
+            <i id="sidebar-workflows-caret" class="bi bi-caret-down-fill ms-2" style="font-size: 0.9em; transition: transform 0.2s;"></i>
+          </div>
+          <div id="sidebar-workflow-list-container" class="sidebar-workflow-list-container">
+            <div id="sidebar-workflow-conversations-list" class="list-group list-group-flush"></div>
+            <button id="sidebar-workflow-show-more-btn" class="btn btn-link btn-sm sidebar-workflow-show-more-btn d-none" type="button" aria-controls="sidebar-workflow-conversations-list" aria-expanded="false">
+              Show more
+            </button>
+          </div>
         </div>
       </div>
     </div>

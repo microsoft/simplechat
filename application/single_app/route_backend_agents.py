@@ -1510,6 +1510,7 @@ def get_global_agent_settings(include_admin_extras=False, user_id=None, group_id
         "gpt_model": settings.get("gpt_model", {}),
         "allow_user_agents": settings.get("allow_user_agents", False),
         "allow_user_custom_endpoints": settings.get("allow_user_custom_endpoints", False),
+        "allow_user_workflows": settings.get("allow_user_workflows", True),
         "allow_group_agents": settings.get("allow_group_agents", False),
         "allow_group_custom_endpoints": settings.get("allow_group_custom_endpoints", False),
         "allow_ai_foundry_agents": settings.get("allow_ai_foundry_agents", False),

@@ -1,8 +1,8 @@
 # test_agent_modal_simplechat_capabilities.py
 """
 UI test for SimpleChat capability controls in the agent modal.
-Version: 0.241.023
-Implemented in: 0.241.023
+Version: 0.241.038
+Implemented in: 0.241.038
 
 This test ensures the agent modal renders per-agent capability toggles for the
 SimpleChat action and persists those toggles into additional settings JSON.
@@ -82,7 +82,13 @@ def test_agent_modal_simplechat_capabilities(playwright):
         capability_panel = page.locator("#agent-simplechat-capabilities")
         expect(capability_panel).to_be_visible()
         expect(capability_panel).to_contain_text("Create groups")
+        expect(capability_panel).to_contain_text("Make groups inactive")
+        expect(capability_panel).to_contain_text("Create group multi-user conversations")
+        expect(capability_panel).to_contain_text("Invite group conversation members")
+        expect(capability_panel).to_contain_text("Add conversation messages")
+        expect(capability_panel).to_contain_text("Upload markdown documents")
         expect(capability_panel).to_contain_text("Create personal conversations")
+        expect(capability_panel).to_contain_text("Create personal workflows")
 
         first_checkbox = page.locator("#agent-simplechat-capabilities input[type='checkbox']").first
         first_checkbox.uncheck()

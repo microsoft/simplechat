@@ -229,6 +229,8 @@ def register_route_frontend_admin_settings(app):
             settings['allow_user_custom_endpoints'] = settings.get('allow_user_custom_agent_endpoints', False)
         if 'allow_user_plugins' not in settings:
             settings['allow_user_plugins'] = False
+        if 'allow_user_workflows' not in settings:
+            settings['allow_user_workflows'] = True
         if 'allow_group_agents' not in settings:
             settings['allow_group_agents'] = False
         if 'allow_group_custom_endpoints' not in settings:

@@ -337,6 +337,15 @@ export async function getErrorMessageFromResponse(response, fallbackMessage = 'R
     return fallbackMessage;
   }
 
+  const trimmedResponseText = responseText.trim();
+  const normalizedResponseText = trimmedResponseText.toLowerCase();
+  if (normalizedResponseText.startsWith('<!doctype') || normalizedResponseText.startsWith('<html')) {
+    if (response.status === 404) {
+      return 'Requested API endpoint was not found.';
+    }
+    return fallbackMessage;
+  }
+
   try {
     const errorData = JSON.parse(responseText);
     return errorData.error || responseText;
@@ -348,18 +357,36 @@ export async function getErrorMessageFromResponse(response, fallbackMessage = 'R
 // Server-side validation fallback
 async function validatePluginManifestServerSide(pluginManifest) {
   try {
-    const response = await fetch('/api/admin/plugins/validate', {
+    const response = await fetch('/api/plugins/validate', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(pluginManifest)
     });
-    
+
+    if (response.status === 404) {
+      console.warn('Plugin validation endpoint is unavailable. Falling back to save-time validation.');
+      return {
+        valid: true,
+        errors: [],
+        warnings: ['Validation endpoint unavailable; using save-time validation only.']
+      };
+    }
+
+    if (!response.ok) {
+      const errorMessage = await getErrorMessageFromResponse(response, 'Validation request failed');
+      return {
+        valid: false,
+        errors: [errorMessage],
+        warnings: []
+      };
+    }
+
     const result = await response.json();
     return {
-      valid: result.valid,
-      errors: result.errors || [],
+      valid: Boolean(result.valid),
+      errors: result.errors || (result.error ? [result.error] : []),
       warnings: result.warnings || []
     };
   } catch (error) {

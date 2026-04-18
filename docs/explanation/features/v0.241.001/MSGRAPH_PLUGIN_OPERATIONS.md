@@ -1,10 +1,13 @@
 # Microsoft Graph Plugin Operations
 
-Implemented in version: **0.239.171**
+Implemented in version: **0.241.027**
+
+Related config update:
+- `application/single_app/config.py` now reports version `0.241.027`.
 
 ## Overview and Purpose
 
-The Microsoft Graph plugin now provides a stronger foundation for Graph-backed agent operations and adds practical read-focused capabilities for profile, calendar, mail, directory, and OneDrive access. The goal is to make the plugin more useful for day-to-day assistant workflows while handling consent and Graph list responses more safely.
+The Microsoft Graph plugin now provides a stronger foundation for Graph-backed agent operations and adds practical read-heavy capabilities for profile, calendar, mail, directory, and OneDrive access, plus a focused mail-triage update for marking messages as read or unread. The goal is to make the plugin more useful for day-to-day assistant workflows while handling consent and Graph list responses more safely.
 
 ## Dependencies
 
@@ -29,8 +32,10 @@ The plugin now routes Graph calls through a shared request helper that:
 ### Operations Added or Enhanced
 
 - `get_my_profile`
+- `get_my_timezone`
 - `get_my_events`
 - `get_my_messages`
+- `mark_message_as_read`
 - `search_users`
 - `get_user_by_email`
 - `list_drive_items`
@@ -46,7 +51,8 @@ The plugin now routes Graph calls through a shared request helper that:
 1. Register the plugin with a Graph endpoint manifest.
 2. Ensure delegated Microsoft Graph permissions are granted for the desired operations.
 3. Use read operations first to confirm token scope coverage.
-4. If consent is required, surface the returned consent URL to the user and retry after consent is granted.
+4. Use `mark_message_as_read` only after `Mail.ReadWrite` has been granted for the signed-in user.
+5. If consent is required, surface the returned consent URL to the user and retry after consent is granted.
 
 ## Testing and Validation
 
@@ -60,5 +66,5 @@ The plugin now routes Graph calls through a shared request helper that:
 
 ## Known Limitations
 
-- The plugin currently focuses on read-heavy operations and does not yet add write operations such as sending mail or creating events.
+- The plugin now supports a narrow mail write operation for updating `isRead`, but it does not yet add broader write operations such as sending mail or creating events.
 - Security alert access still requires elevated delegated permissions and may not be appropriate for all tenants.

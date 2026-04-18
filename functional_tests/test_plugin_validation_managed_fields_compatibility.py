@@ -2,11 +2,13 @@
 # test_plugin_validation_managed_fields_compatibility.py
 """
 Functional test for persisted plugin validation managed-field compatibility.
-Version: 0.240.011
-Implemented in: 0.240.011
+Version: 0.241.023
+Implemented in: 0.241.023
 
 This test ensures storage-managed audit fields on persisted plugin documents do not
-block validation during workspace action saves, while endpoint rules remain enforced.
+block validation during workspace action saves, while built-in internal action
+types still validate without user-entered endpoints and generic endpoint rules
+remain enforced.
 """
 
 import os
@@ -130,12 +132,56 @@ def test_non_sql_endpoint_requirement_still_applies():
         return False
 
 
+def test_simplechat_internal_action_validation_defaults():
+    """SimpleChat should validate without a user-entered endpoint."""
+    print('🔍 Testing SimpleChat internal action validation defaults...')
+
+    try:
+        from json_schema_validation import validate_plugin
+
+        plugin = {
+            'name': 'simple_chat',
+            'displayName': 'Simple Chat',
+            'type': 'simplechat',
+            'description': 'SimpleChat workspace actions using the current user context.',
+            'endpoint': '',
+            'auth': {'type': 'user'},
+            'metadata': {},
+            'additionalFields': {
+                'simplechat_capabilities': {
+                    'create_group': False,
+                    'add_group_member': False,
+                    'create_group_conversation': True,
+                    'create_personal_conversation': True,
+                    'create_personal_collaboration_conversation': False,
+                }
+            },
+            'created_by': 'user-123',
+            'modified_by': 'user-123',
+            'modified_at': '2026-04-16T12:00:00Z',
+        }
+
+        validation_error = validate_plugin(plugin)
+        if validation_error:
+            print(f'❌ SimpleChat validation failed: {validation_error}')
+            return False
+
+        print('✅ SimpleChat internal action validation passed!')
+        return True
+    except Exception as exc:
+        print(f'❌ SimpleChat internal action validation test failed: {exc}')
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 if __name__ == '__main__':
     print('🧪 Running persisted plugin validation managed-field compatibility tests...\n')
 
     tests = [
         test_persisted_msgraph_plugin_validation,
         test_persisted_sql_plugin_validation,
+        test_simplechat_internal_action_validation_defaults,
         test_non_sql_endpoint_requirement_still_applies,
     ]
     results = []

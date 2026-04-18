@@ -1,8 +1,8 @@
 # test_chat_generated_image_rendering.py
 """
 UI test for chat generated image rendering.
-Version: 0.241.021
-Implemented in: 0.241.021
+Version: 0.241.022
+Implemented in: 0.241.022
 
 This test ensures that image messages appended through the shared chat renderer
 keep their visible image bubble markup for both the single-user image endpoint

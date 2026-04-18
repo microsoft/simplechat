@@ -88,6 +88,7 @@ body.sidebar-nav-enabled.has-classification-banner .container-fluid {
   flex: 1;
   display: flex;
   flex-direction: column;
+  gap: 0.75rem;
   min-height: 0; /* Allow shrinking */
   overflow: hidden; /* Prevent container from expanding */
 }
@@ -99,8 +100,53 @@ body.sidebar-nav-enabled.has-classification-banner .container-fluid {
   max-height: none; /* Remove any max-height constraints */
 }
 
+#sidebar-workflow-section {
+  flex: 0 0 auto;
+  min-height: 0;
+}
+
+.sidebar-section-toggle {
+  color: #6c757d;
+  font-size: 0.875rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  cursor: pointer;
+  user-select: none;
+}
+
+.sidebar-workflow-list-container {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+#sidebar-workflow-conversations-list {
+  max-height: 18rem;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.sidebar-workflow-show-more-btn {
+  align-self: flex-start;
+  padding: 0.35rem 0.5rem;
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  text-decoration: none;
+}
+
+.sidebar-workflow-show-more-btn:hover,
+.sidebar-workflow-show-more-btn:focus {
+  text-decoration: none;
+}
+
 /* Custom scrollbar styling for sidebar conversations */
 #sidebar-conversations-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+#sidebar-workflow-conversations-list::-webkit-scrollbar {
   width: 8px;
 }
 
@@ -109,7 +155,17 @@ body.sidebar-nav-enabled.has-classification-banner .container-fluid {
   border-radius: 4px;
 }
 
+#sidebar-workflow-conversations-list::-webkit-scrollbar-track {
+  background: #f8f9fa;
+  border-radius: 4px;
+}
+
 #sidebar-conversations-list::-webkit-scrollbar-thumb {
+  background: #dee2e6;
+  border-radius: 4px;
+}
+
+#sidebar-workflow-conversations-list::-webkit-scrollbar-thumb {
   background: #dee2e6;
   border-radius: 4px;
 }
@@ -118,17 +174,37 @@ body.sidebar-nav-enabled.has-classification-banner .container-fluid {
   background: #adb5bd;
 }
 
+#sidebar-workflow-conversations-list::-webkit-scrollbar-thumb:hover {
+  background: #adb5bd;
+}
+
 /* Dark mode scrollbar styles */
 [data-bs-theme="dark"] #sidebar-conversations-list::-webkit-scrollbar-track {
   background: #343a40; /* Match sidebar background in dark mode */
+}
+
+[data-bs-theme="dark"] #sidebar-workflow-conversations-list::-webkit-scrollbar-track {
+  background: #343a40;
 }
 
 [data-bs-theme="dark"] #sidebar-conversations-list::-webkit-scrollbar-thumb {
   background: #495057;
 }
 
+[data-bs-theme="dark"] #sidebar-workflow-conversations-list::-webkit-scrollbar-thumb {
+  background: #495057;
+}
+
 [data-bs-theme="dark"] #sidebar-conversations-list::-webkit-scrollbar-thumb:hover {
   background: #6c757d;
+}
+
+[data-bs-theme="dark"] #sidebar-workflow-conversations-list::-webkit-scrollbar-thumb:hover {
+  background: #6c757d;
+}
+
+[data-bs-theme="dark"] .sidebar-section-toggle {
+  color: rgba(233, 236, 239, 0.65);
 }
 
 /* Workspaces Section Styles */

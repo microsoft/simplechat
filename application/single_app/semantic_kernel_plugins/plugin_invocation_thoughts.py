@@ -134,6 +134,23 @@ def _format_plugin_detail(invocation, parameters):
     return '; '.join(detail_parts)
 
 
+def _build_plugin_activity_payload(invocation_or_start, state):
+    plugin_name = getattr(invocation_or_start, 'plugin_name', '')
+    function_name = getattr(invocation_or_start, 'function_name', '')
+    invocation_id = getattr(invocation_or_start, 'invocation_id', None)
+    return {
+        'activity_key': invocation_id or f'{plugin_name}.{function_name}',
+        'kind': 'tool_invocation',
+        'title': f'{plugin_name}.{function_name}',
+        'status': state,
+        'state': state,
+        'lane_key': plugin_name or 'tool',
+        'lane_label': plugin_name or 'Tool',
+        'plugin_name': plugin_name,
+        'function_name': function_name,
+    }
+
+
 def format_plugin_invocation_start_thought(invocation_start):
     """Build a concise thought payload for an in-flight plugin invocation."""
     plugin_name = getattr(invocation_start, 'plugin_name', 'Plugin')
@@ -148,6 +165,7 @@ def format_plugin_invocation_start_thought(invocation_start):
         'step_type': 'agent_tool_call',
         'content': f"Invoking {plugin_name}.{function_name}",
         'detail': detail or None,
+        'activity': _build_plugin_activity_payload(invocation_start, 'running'),
     }
 
 
@@ -158,6 +176,10 @@ def format_plugin_invocation_thought(invocation, actor_label='Agent'):
         'step_type': 'agent_tool_call',
         'content': _format_plugin_content(invocation, actor_label, parameters),
         'detail': _format_plugin_detail(invocation, parameters),
+        'activity': _build_plugin_activity_payload(
+            invocation,
+            'failed' if not getattr(invocation, 'success', True) else 'completed',
+        ),
     }
 
 
@@ -176,7 +198,8 @@ def register_plugin_invocation_thought_callback(
         thought_tracker.add_thought(
             thought_payload['step_type'],
             thought_payload['content'],
-            detail=thought_payload['detail']
+            detail=thought_payload['detail'],
+            activity=thought_payload.get('activity'),
         )
 
         if callable(live_thought_callback):

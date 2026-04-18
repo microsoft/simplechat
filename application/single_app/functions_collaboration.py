@@ -63,6 +63,30 @@ def is_group_collaboration_conversation(conversation_doc):
     return bool((conversation_doc or {}).get('chat_type') == GROUP_MULTI_USER_CHAT_TYPE)
 
 
+def get_collaboration_visibility_mode(conversation_doc):
+    scope = (conversation_doc or {}).get('scope', {}) if isinstance((conversation_doc or {}).get('scope'), dict) else {}
+    visibility_mode = str(scope.get('visibility_mode') or '').strip().lower()
+    if visibility_mode:
+        return visibility_mode
+    if is_group_collaboration_conversation(conversation_doc):
+        return 'group_membership'
+    return 'invited_members'
+
+
+def is_invited_group_collaboration_conversation(conversation_doc):
+    return bool(
+        is_group_collaboration_conversation(conversation_doc)
+        and get_collaboration_visibility_mode(conversation_doc) == 'invited_members'
+    )
+
+
+def is_explicit_membership_collaboration(conversation_doc):
+    return bool(
+        is_personal_collaboration_conversation(conversation_doc)
+        or is_invited_group_collaboration_conversation(conversation_doc)
+    )
+
+
 def get_collaboration_conversation(conversation_id):
     return cosmos_collaboration_conversations_container.read_item(
         item=conversation_id,
@@ -75,6 +99,13 @@ def get_collaboration_user_state(user_id, conversation_id):
         item=get_collaboration_user_state_doc_id(user_id, conversation_id),
         partition_key=user_id,
     )
+
+
+def get_collaboration_user_state_or_none(user_id, conversation_id):
+    try:
+        return get_collaboration_user_state(user_id, conversation_id)
+    except CosmosResourceNotFoundError:
+        return None
 
 
 def get_collaboration_message(message_id):
@@ -128,14 +159,176 @@ def get_personal_collaboration_role(conversation_doc, participant_user_id, user_
     return str(participant.get('role') or '').strip()
 
 
+def _build_group_member_lookup(group_doc):
+    member_lookup = {}
+    if not isinstance(group_doc, dict):
+        return member_lookup
+
+    owner = group_doc.get('owner', {}) if isinstance(group_doc.get('owner'), dict) else {}
+    owner_summary = normalize_collaboration_user({
+        'userId': owner.get('id'),
+        'displayName': owner.get('displayName'),
+        'email': owner.get('email'),
+    })
+    if owner_summary:
+        member_lookup[owner_summary['user_id']] = owner_summary
+
+    for raw_member in list(group_doc.get('users', []) or []):
+        member_summary = normalize_collaboration_user(raw_member)
+        if not member_summary:
+            continue
+        member_lookup[member_summary['user_id']] = member_summary
+
+    return member_lookup
+
+
+def _resolve_group_member_summary(group_doc, user_id):
+    normalized_user_id = str(user_id or '').strip()
+    if not normalized_user_id:
+        return None
+    return _build_group_member_lookup(group_doc).get(normalized_user_id)
+
+
+def _normalize_group_conversation_participants(group_doc, participants_to_add):
+    member_lookup = _build_group_member_lookup(group_doc)
+    normalized_participants = []
+    missing_participant_labels = []
+
+    for raw_participant in participants_to_add or []:
+        participant_summary = normalize_collaboration_user(raw_participant)
+        if not participant_summary:
+            continue
+
+        group_member_summary = member_lookup.get(participant_summary['user_id'])
+        if not group_member_summary:
+            missing_participant_labels.append(
+                participant_summary.get('display_name')
+                or participant_summary.get('email')
+                or participant_summary['user_id']
+            )
+            continue
+
+        normalized_participants.append(group_member_summary)
+
+    if missing_participant_labels:
+        missing_labels = ', '.join(sorted(set(missing_participant_labels)))
+        raise ValueError(
+            f'Only current group members can be added to this shared conversation: {missing_labels}'
+        )
+
+    return normalized_participants
+
+
+def ensure_collaboration_user_state_for_participant(
+    conversation_doc,
+    participant_summary,
+    role,
+    membership_status,
+    invited_by_user_id=None,
+    created_at=None,
+):
+    normalized_participant = normalize_collaboration_user(participant_summary)
+    if not normalized_participant:
+        raise ValueError('participant_summary is required')
+
+    normalized_conversation_id = str((conversation_doc or {}).get('id') or '').strip()
+    if not normalized_conversation_id:
+        raise ValueError('conversation_id is required')
+
+    timestamp = str(created_at or '').strip() or utc_now_iso()
+    state_doc = get_collaboration_user_state_or_none(
+        normalized_participant['user_id'],
+        normalized_conversation_id,
+    )
+    if state_doc is None:
+        state_doc = build_collaboration_user_state(
+            conversation_doc=conversation_doc,
+            user_summary=normalized_participant,
+            role=role,
+            membership_status=membership_status,
+            invited_by_user_id=invited_by_user_id,
+            created_at=timestamp,
+        )
+    else:
+        state_doc['user_display_name'] = normalized_participant['display_name']
+        state_doc['user_email'] = normalized_participant['email']
+        state_doc['title_snapshot'] = conversation_doc.get('title')
+        state_doc['role'] = str(role or state_doc.get('role') or MEMBERSHIP_ROLE_MEMBER).strip() or MEMBERSHIP_ROLE_MEMBER
+        state_doc['membership_status'] = str(
+            membership_status or state_doc.get('membership_status') or MEMBERSHIP_STATUS_PENDING
+        ).strip() or MEMBERSHIP_STATUS_PENDING
+        state_doc['updated_at'] = timestamp
+        state_doc['scope_type'] = ((conversation_doc or {}).get('scope') or {}).get('type')
+        state_doc['group_id'] = ((conversation_doc or {}).get('scope') or {}).get('group_id')
+        state_doc['group_name'] = ((conversation_doc or {}).get('scope') or {}).get('group_name')
+        state_doc['chat_type'] = conversation_doc.get('chat_type')
+        if invited_by_user_id is not None:
+            state_doc['invited_by_user_id'] = str(invited_by_user_id or '').strip()
+
+    if state_doc.get('membership_status') == MEMBERSHIP_STATUS_ACCEPTED and not state_doc.get('joined_at'):
+        state_doc['joined_at'] = timestamp
+
+    cosmos_collaboration_user_state_container.upsert_item(state_doc)
+    return state_doc
+
+
+def _bootstrap_collaboration_user_state_from_participant(conversation_doc, participant_record, invited_by_user_id=None):
+    if not isinstance(participant_record, dict):
+        return None
+
+    membership_status = str(participant_record.get('status') or '').strip() or MEMBERSHIP_STATUS_PENDING
+    if membership_status not in (MEMBERSHIP_STATUS_ACCEPTED, MEMBERSHIP_STATUS_PENDING):
+        return None
+
+    created_at = (
+        participant_record.get('joined_at')
+        or participant_record.get('invited_at')
+        or (conversation_doc or {}).get('created_at')
+        or utc_now_iso()
+    )
+    state_doc = ensure_collaboration_user_state_for_participant(
+        conversation_doc,
+        participant_record,
+        role=participant_record.get('role') or MEMBERSHIP_ROLE_MEMBER,
+        membership_status=membership_status,
+        invited_by_user_id=invited_by_user_id,
+        created_at=created_at,
+    )
+
+    if participant_record.get('responded_at'):
+        state_doc['responded_at'] = participant_record.get('responded_at')
+    if participant_record.get('removed_at'):
+        state_doc['removed_at'] = participant_record.get('removed_at')
+    cosmos_collaboration_user_state_container.upsert_item(state_doc)
+    return state_doc
+
+
+def build_collaboration_image_url(conversation_id, message_id):
+    normalized_conversation_id = str(conversation_id or '').strip()
+    normalized_message_id = str(message_id or '').strip()
+    if not normalized_conversation_id or not normalized_message_id:
+        return ''
+
+    return f'/api/collaboration/conversations/{normalized_conversation_id}/images/{normalized_message_id}'
+
+
 def serialize_collaboration_message(message_doc):
     metadata = message_doc.get('metadata', {}) if isinstance(message_doc, dict) else {}
+    display_role = _get_collaboration_display_role(message_doc)
+    serialized_role = 'image' if display_role == 'image' else message_doc.get('role')
+    serialized_content = message_doc.get('content', '')
+    if display_role == 'image':
+        serialized_content = build_collaboration_image_url(
+            message_doc.get('conversation_id'),
+            message_doc.get('id'),
+        ) or serialized_content
+
     return {
         'id': message_doc.get('id'),
         'conversation_id': message_doc.get('conversation_id'),
-        'role': message_doc.get('role'),
+        'role': serialized_role,
         'message_kind': message_doc.get('message_kind', MESSAGE_KIND_HUMAN),
-        'content': message_doc.get('content', ''),
+        'content': serialized_content,
         'reply_to_message_id': message_doc.get('reply_to_message_id'),
         'timestamp': message_doc.get('timestamp'),
         'sender': metadata.get('sender', {}),
@@ -148,6 +341,10 @@ def serialize_collaboration_message(message_doc):
         'agent_citations': list(message_doc.get('agent_citations', []) or []),
         'agent_display_name': message_doc.get('agent_display_name'),
         'agent_name': message_doc.get('agent_name'),
+        'filename': message_doc.get('filename'),
+        'prompt': message_doc.get('prompt'),
+        'extracted_text': message_doc.get('extracted_text'),
+        'vision_analysis': message_doc.get('vision_analysis'),
     }
 
 
@@ -329,7 +526,10 @@ def _get_group_collaboration_notification_recipient_ids(conversation_doc, sender
 
 
 def list_collaboration_notification_recipient_ids(conversation_doc, sender_user_id):
-    if is_group_collaboration_conversation(conversation_doc):
+    if (
+        is_group_collaboration_conversation(conversation_doc)
+        and get_collaboration_visibility_mode(conversation_doc) == 'group_membership'
+    ):
         return _get_group_collaboration_notification_recipient_ids(conversation_doc, sender_user_id)
 
     accepted_participant_ids = set(conversation_doc.get('accepted_participant_ids', []) or [])
@@ -455,9 +655,13 @@ def build_collaboration_message_metadata_payload(message_doc, conversation_doc):
             'is_table': (source_message_doc or {}).get('is_table'),
         }
     if display_role == 'image':
+        collaboration_image_url = build_collaboration_image_url(
+            message_doc.get('conversation_id'),
+            message_doc.get('id'),
+        )
         merged_metadata['image_details'] = {
             'filename': message_doc.get('filename') or (source_message_doc or {}).get('filename') or merged_metadata.get('legacy_filename'),
-            'image_url': merged_metadata.get('legacy_image_url') or (source_message_doc or {}).get('content'),
+            'image_url': collaboration_image_url or merged_metadata.get('legacy_image_url') or (source_message_doc or {}).get('content'),
             'is_user_upload': bool(merged_metadata.get('is_user_upload', False)),
             'extracted_text': message_doc.get('extracted_text') or (source_message_doc or {}).get('extracted_text'),
             'vision_analysis': message_doc.get('vision_analysis') or (source_message_doc or {}).get('vision_analysis'),
@@ -472,7 +676,7 @@ def build_collaboration_message_metadata_payload(message_doc, conversation_doc):
         'conversation_id': message_doc.get('conversation_id'),
         'role': display_role,
         'message_kind': message_doc.get('message_kind'),
-        'content': message_doc.get('content'),
+        'content': build_collaboration_image_url(message_doc.get('conversation_id'), message_doc.get('id')) if display_role == 'image' else message_doc.get('content'),
         'timestamp': message_doc.get('timestamp'),
         'model_deployment_name': message_doc.get('model_deployment_name') or payload.get('model_deployment_name'),
         'augmented': message_doc.get('augmented') if 'augmented' in message_doc else payload.get('augmented'),
@@ -494,12 +698,13 @@ def build_collaboration_message_metadata_payload(message_doc, conversation_doc):
 def serialize_collaboration_conversation(conversation_doc, current_user_id, user_state=None):
     conversation_doc = conversation_doc or {}
     participants = list(conversation_doc.get('participants', []) or [])
+    visibility_mode = get_collaboration_visibility_mode(conversation_doc)
     membership_status = None
     if user_state:
         membership_status = user_state.get('membership_status')
     elif current_user_id in set(conversation_doc.get('accepted_participant_ids', []) or []):
         membership_status = MEMBERSHIP_STATUS_ACCEPTED
-    elif is_group_collaboration_conversation(conversation_doc):
+    elif is_group_collaboration_conversation(conversation_doc) and visibility_mode == 'group_membership':
         membership_status = 'group_member'
 
     owner_user_ids = list(conversation_doc.get('owner_user_ids', []) or [])
@@ -511,27 +716,30 @@ def serialize_collaboration_conversation(conversation_doc, current_user_id, user
         user_state=user_state,
     )
     can_manage_members = bool(
-        is_personal_collaboration_conversation(conversation_doc)
+        is_explicit_membership_collaboration(conversation_doc)
         and membership_status == MEMBERSHIP_STATUS_ACCEPTED
         and current_user_role in PERSONAL_COLLABORATION_MANAGER_ROLES
     )
     can_manage_roles = bool(
-        is_personal_collaboration_conversation(conversation_doc)
+        is_explicit_membership_collaboration(conversation_doc)
         and membership_status == MEMBERSHIP_STATUS_ACCEPTED
         and current_user_role == MEMBERSHIP_ROLE_OWNER
     )
     can_accept_invite = membership_status == MEMBERSHIP_STATUS_PENDING
     can_post_messages = bool(
-        is_group_collaboration_conversation(conversation_doc)
+        (
+            is_group_collaboration_conversation(conversation_doc)
+            and visibility_mode == 'group_membership'
+        )
         or membership_status == MEMBERSHIP_STATUS_ACCEPTED
     )
     can_delete_conversation = bool(
-        is_personal_collaboration_conversation(conversation_doc)
+        is_explicit_membership_collaboration(conversation_doc)
         and membership_status == MEMBERSHIP_STATUS_ACCEPTED
         and current_user_role == MEMBERSHIP_ROLE_OWNER
     )
     can_leave_conversation = bool(
-        is_personal_collaboration_conversation(conversation_doc)
+        is_explicit_membership_collaboration(conversation_doc)
         and membership_status == MEMBERSHIP_STATUS_ACCEPTED
     )
 
@@ -562,6 +770,7 @@ def serialize_collaboration_conversation(conversation_doc, current_user_id, user
         'can_delete_conversation': can_delete_conversation,
         'can_leave_conversation': can_leave_conversation,
         'scope': scope,
+        'visibility_mode': visibility_mode,
         'context': list(conversation_doc.get('context', []) or []),
         'scope_locked': conversation_doc.get('scope_locked', True),
         'locked_contexts': list(conversation_doc.get('locked_contexts', []) or []),
@@ -751,6 +960,185 @@ def ensure_personal_collaboration_for_legacy_conversation(source_conversation_id
     return collaboration_conversation_doc, invited_state_docs, True, source_conversation_doc
 
 
+def _is_eligible_legacy_group_conversation(source_conversation_doc):
+    if str((source_conversation_doc or {}).get('conversation_kind') or '').strip().lower() == COLLABORATION_KIND:
+        return False
+
+    chat_type = str((source_conversation_doc or {}).get('chat_type') or '').strip().lower()
+    if chat_type in ('group-single-user', 'group_single_user', 'group'):
+        return True
+
+    primary_context = next(
+        (
+            context_item
+            for context_item in list((source_conversation_doc or {}).get('context', []) or [])
+            if context_item.get('type') == 'primary'
+        ),
+        None,
+    )
+    return bool(primary_context and str(primary_context.get('scope') or '').strip().lower() == 'group')
+
+
+def _copy_legacy_group_messages_to_collaboration(source_conversation_id, collaboration_conversation_id, owner_user):
+    query = 'SELECT * FROM c WHERE c.conversation_id = @conversation_id ORDER BY c.timestamp ASC'
+    raw_messages = list(cosmos_group_messages_container.query_items(
+        query=query,
+        parameters=[{'name': '@conversation_id', 'value': source_conversation_id}],
+        partition_key=source_conversation_id,
+    ))
+    raw_messages = filter_assistant_artifact_items(raw_messages)
+
+    copied_messages = []
+    for raw_message in raw_messages:
+        collaboration_message = build_collaboration_message_doc_from_legacy(
+            collaboration_conversation_id,
+            raw_message,
+            owner_user,
+        )
+        if not collaboration_message:
+            continue
+
+        metadata = collaboration_message.setdefault('metadata', {})
+        metadata.setdefault('source_message_id', raw_message.get('id'))
+        metadata.setdefault('source_conversation_id', source_conversation_id)
+        metadata.setdefault('source_conversation_scope', 'group')
+        metadata.setdefault('source_thought_user_id', str((owner_user or {}).get('user_id') or '').strip())
+
+        cosmos_collaboration_messages_container.upsert_item(collaboration_message)
+        copied_messages.append(collaboration_message)
+
+    return copied_messages
+
+
+def ensure_group_collaboration_for_legacy_conversation(source_conversation_id, owner_user, invited_participants=None):
+    source_conversation_doc = cosmos_group_conversations_container.read_item(
+        item=source_conversation_id,
+        partition_key=source_conversation_id,
+    )
+    owner_summary = owner_user or {}
+    owner_user_id = str(owner_summary.get('user_id') or '').strip()
+    if not owner_user_id:
+        raise PermissionError('User not authenticated')
+
+    if str(source_conversation_doc.get('user_id') or '').strip() != owner_user_id:
+        raise PermissionError('Only the conversation owner can convert this group conversation')
+
+    if not _is_eligible_legacy_group_conversation(source_conversation_doc):
+        raise PermissionError('Only group single-user conversations can be converted into group multi-user conversations')
+
+    primary_group_context = next(
+        (
+            context_item
+            for context_item in list(source_conversation_doc.get('context', []) or [])
+            if context_item.get('type') == 'primary' and str(context_item.get('scope') or '').strip().lower() == 'group'
+        ),
+        None,
+    )
+    group_id = str(
+        source_conversation_doc.get('group_id')
+        or (primary_group_context or {}).get('id')
+        or ''
+    ).strip()
+    if not group_id:
+        raise LookupError('Group conversation is missing group context')
+
+    group_doc = find_group_by_id(group_id)
+    if not group_doc:
+        raise LookupError('Group not found')
+
+    assert_group_role(
+        owner_user_id,
+        group_id,
+        allowed_roles=('Owner', 'Admin', 'DocumentManager', 'User'),
+    )
+    allowed, reason = check_group_status_allows_operation(group_doc, 'chat')
+    if not allowed:
+        raise PermissionError(reason)
+
+    collaboration_conversation_doc = None
+    linked_collaboration_id = str(source_conversation_doc.get('collaboration_conversation_id') or '').strip()
+    if linked_collaboration_id:
+        try:
+            collaboration_conversation_doc = get_collaboration_conversation(linked_collaboration_id)
+        except CosmosResourceNotFoundError:
+            collaboration_conversation_doc = None
+
+    if collaboration_conversation_doc is not None:
+        invited_state_docs = []
+        if invited_participants:
+            collaboration_conversation_doc, invited_state_docs = invite_personal_collaboration_participants(
+                collaboration_conversation_doc.get('id'),
+                owner_user_id,
+                invited_participants,
+            )
+        return collaboration_conversation_doc, invited_state_docs, False, source_conversation_doc
+
+    collaboration_conversation_doc, user_states = create_group_collaboration_conversation_record(
+        title=source_conversation_doc.get('title') or '',
+        creator_user=owner_summary,
+        group_doc=group_doc,
+        invited_participants=invited_participants,
+    )
+    invited_state_docs = [
+        state_doc
+        for state_doc in user_states
+        if state_doc.get('user_id') != owner_user_id
+    ]
+
+    collaboration_conversation_doc['classification'] = list(source_conversation_doc.get('classification', []) or [])
+    collaboration_conversation_doc['tags'] = list(source_conversation_doc.get('tags', []) or [])
+    collaboration_conversation_doc['strict'] = bool(source_conversation_doc.get('strict', False))
+    collaboration_conversation_doc['summary'] = source_conversation_doc.get('summary')
+    collaboration_conversation_doc['legacy_source_conversation_id'] = source_conversation_id
+    collaboration_conversation_doc['legacy_source_scope'] = 'group'
+
+    source_context = list(source_conversation_doc.get('context', []) or [])
+    if source_context:
+        collaboration_conversation_doc['context'] = source_context
+    source_scope_locked = source_conversation_doc.get('scope_locked')
+    if source_scope_locked is not None:
+        collaboration_conversation_doc['scope_locked'] = bool(source_scope_locked)
+    source_locked_contexts = list(source_conversation_doc.get('locked_contexts', []) or [])
+    if source_locked_contexts:
+        collaboration_conversation_doc['locked_contexts'] = source_locked_contexts
+
+    copied_messages = _copy_legacy_group_messages_to_collaboration(
+        source_conversation_id,
+        collaboration_conversation_doc.get('id'),
+        owner_summary,
+    )
+    if copied_messages:
+        last_copied_message = copied_messages[-1]
+        collaboration_conversation_doc['last_message_at'] = last_copied_message.get('timestamp')
+        collaboration_conversation_doc['last_message_preview'] = (
+            (last_copied_message.get('metadata') or {}).get('last_message_preview') or ''
+        )
+        collaboration_conversation_doc['updated_at'] = last_copied_message.get('timestamp')
+        collaboration_conversation_doc['message_count'] = len(copied_messages)
+
+    cosmos_collaboration_conversations_container.upsert_item(collaboration_conversation_doc)
+
+    conversion_timestamp = utc_now_iso()
+    source_conversation_doc['collaboration_conversation_id'] = collaboration_conversation_doc.get('id')
+    source_conversation_doc['converted_to_collaboration_at'] = conversion_timestamp
+    source_conversation_doc['is_hidden'] = True
+    source_conversation_doc['last_updated'] = conversion_timestamp
+    cosmos_group_conversations_container.upsert_item(source_conversation_doc)
+
+    log_event(
+        '[Collaboration] Converted group conversation into collaborative conversation',
+        extra={
+            'source_conversation_id': source_conversation_id,
+            'conversation_id': collaboration_conversation_doc.get('id'),
+            'group_id': group_id,
+            'created_by_user_id': owner_user_id,
+            'copied_message_count': len(copied_messages),
+        },
+        level=logging.INFO,
+    )
+    return collaboration_conversation_doc, invited_state_docs, True, source_conversation_doc
+
+
 def create_personal_collaboration_conversation_record(title, creator_user, invited_participants=None):
     conversation_doc = build_personal_collaboration_conversation(
         title=title,
@@ -790,24 +1178,46 @@ def create_personal_collaboration_conversation_record(title, creator_user, invit
     return conversation_doc, user_states
 
 
-def create_group_collaboration_conversation_record(title, creator_user, group_doc):
+def create_group_collaboration_conversation_record(title, creator_user, group_doc, invited_participants=None):
     conversation_doc = build_group_collaboration_conversation(
         title=title,
         creator_user=creator_user,
         group_id=group_doc.get('id'),
         group_name=group_doc.get('name', 'Group Workspace'),
+        invited_participants=_normalize_group_conversation_participants(
+            group_doc,
+            invited_participants,
+        ) if invited_participants else None,
     )
     cosmos_collaboration_conversations_container.upsert_item(conversation_doc)
+
+    user_states = []
+    for participant in conversation_doc.get('participants', []):
+        invited_by_user_id = ''
+        if participant.get('user_id') != conversation_doc.get('created_by_user_id'):
+            invited_by_user_id = conversation_doc.get('created_by_user_id')
+        state_doc = ensure_collaboration_user_state_for_participant(
+            conversation_doc,
+            participant,
+            role=participant.get('role') or MEMBERSHIP_ROLE_MEMBER,
+            membership_status=participant.get('status') or MEMBERSHIP_STATUS_PENDING,
+            invited_by_user_id=invited_by_user_id,
+            created_at=participant.get('joined_at') or participant.get('invited_at') or conversation_doc.get('created_at'),
+        )
+        user_states.append(state_doc)
+
     log_event(
         '[Collaboration] Created group collaborative conversation',
         extra={
             'conversation_id': conversation_doc.get('id'),
             'group_id': group_doc.get('id'),
             'created_by_user_id': conversation_doc.get('created_by_user_id'),
+            'participant_count': conversation_doc.get('participant_count', 0),
+            'pending_invite_count': conversation_doc.get('pending_invite_count', 0),
         },
         level=logging.INFO,
     )
-    return conversation_doc
+    return conversation_doc, user_states
 
 
 def list_personal_collaboration_conversations_for_user(user_id):
@@ -861,6 +1271,52 @@ def list_group_collaboration_conversations_for_user(user_id):
     if not group_map:
         return []
 
+    state_query = (
+        'SELECT * FROM c WHERE c.user_id = @user_id '
+        'AND c.conversation_kind = @conversation_kind'
+    )
+    state_docs = list(cosmos_collaboration_user_state_container.query_items(
+        query=state_query,
+        parameters=[
+            {'name': '@user_id', 'value': user_id},
+            {'name': '@conversation_kind', 'value': COLLABORATION_KIND},
+        ],
+        partition_key=user_id,
+    ))
+
+    conversations = []
+    seen_conversation_ids = set()
+    for state_doc in state_docs:
+        membership_status = state_doc.get('membership_status')
+        if membership_status not in (MEMBERSHIP_STATUS_ACCEPTED, MEMBERSHIP_STATUS_PENDING):
+            continue
+        if state_doc.get('chat_type') != GROUP_MULTI_USER_CHAT_TYPE:
+            continue
+
+        conversation_id = str(state_doc.get('conversation_id') or '').strip()
+        if not conversation_id or conversation_id in seen_conversation_ids:
+            continue
+
+        try:
+            conversation_doc = get_collaboration_conversation(conversation_id)
+        except CosmosResourceNotFoundError:
+            continue
+
+        if not is_group_collaboration_conversation(conversation_doc):
+            continue
+
+        group_id = str((conversation_doc.get('scope') or {}).get('group_id') or '')
+        group_doc = group_map.get(group_id)
+        if not group_doc:
+            continue
+
+        allowed, _ = check_group_status_allows_operation(group_doc, 'view')
+        if not allowed:
+            continue
+
+        seen_conversation_ids.add(conversation_id)
+        conversations.append((conversation_doc, state_doc))
+
     query = (
         'SELECT * FROM c WHERE c.conversation_kind = @conversation_kind '
         'AND c.chat_type = @chat_type AND c.status = @status'
@@ -875,21 +1331,30 @@ def list_group_collaboration_conversations_for_user(user_id):
         enable_cross_partition_query=True,
     ))
 
-    filtered_items = []
     for conversation_doc in items:
-        group_id = str((conversation_doc.get('scope') or {}).get('group_id') or '')
-        if group_id not in group_map:
+        if get_collaboration_visibility_mode(conversation_doc) != 'group_membership':
             continue
 
-        allowed, _ = check_group_status_allows_operation(group_map[group_id], 'view')
-        if allowed:
-            filtered_items.append(conversation_doc)
+        conversation_id = str(conversation_doc.get('id') or '').strip()
+        if not conversation_id or conversation_id in seen_conversation_ids:
+            continue
 
-    filtered_items.sort(
-        key=lambda item: item.get('updated_at') or item.get('created_at') or '',
+        group_id = str((conversation_doc.get('scope') or {}).get('group_id') or '')
+        group_doc = group_map.get(group_id)
+        if not group_doc:
+            continue
+
+        allowed, _ = check_group_status_allows_operation(group_doc, 'view')
+        if allowed:
+            user_state = get_collaboration_user_state_or_none(user_id, conversation_id)
+            conversations.append((conversation_doc, user_state))
+            seen_conversation_ids.add(conversation_id)
+
+    conversations.sort(
+        key=lambda item: item[0].get('updated_at') or item[0].get('created_at') or '',
         reverse=True,
     )
-    return filtered_items
+    return conversations
 
 
 def assert_user_can_view_collaboration_conversation(user_id, conversation_doc, allow_pending=False):
@@ -932,6 +1397,44 @@ def assert_user_can_view_collaboration_conversation(user_id, conversation_doc, a
         allowed, reason = check_group_status_allows_operation(group_doc, 'view')
         if not allowed:
             raise PermissionError(reason)
+
+        if get_collaboration_visibility_mode(conversation_doc) == 'group_membership':
+            return {
+                'group_doc': group_doc,
+                'group_role': group_role,
+                'membership_status': 'group_member',
+                'user_state': get_collaboration_user_state_or_none(user_id, conversation_doc.get('id')),
+            }
+
+        user_state = get_collaboration_user_state_or_none(user_id, conversation_doc.get('id'))
+        if user_state is None:
+            participant = get_personal_collaboration_participant(conversation_doc, user_id)
+            user_state = _bootstrap_collaboration_user_state_from_participant(
+                conversation_doc,
+                participant,
+                invited_by_user_id=conversation_doc.get('created_by_user_id'),
+            )
+
+        if user_state is None:
+            raise PermissionError('You are not a participant in this shared group conversation')
+
+        membership_status = user_state.get('membership_status')
+        if membership_status == MEMBERSHIP_STATUS_ACCEPTED:
+            return {
+                'group_doc': group_doc,
+                'group_role': group_role,
+                'user_state': user_state,
+                'membership_status': membership_status,
+            }
+        if allow_pending and membership_status == MEMBERSHIP_STATUS_PENDING:
+            return {
+                'group_doc': group_doc,
+                'group_role': group_role,
+                'user_state': user_state,
+                'membership_status': membership_status,
+            }
+        raise PermissionError('You do not have access to this shared group conversation')
+
         return {
             'group_doc': group_doc,
             'group_role': group_role,
@@ -959,8 +1462,16 @@ def assert_user_can_participate_in_collaboration_conversation(user_id, conversat
 
 def record_personal_invite_response(conversation_id, user_id, action):
     conversation_doc = get_collaboration_conversation(conversation_id)
-    if not is_personal_collaboration_conversation(conversation_doc):
-        raise PermissionError('Invite responses are only supported for personal collaborative conversations')
+    if not is_explicit_membership_collaboration(conversation_doc):
+        raise PermissionError('Invite responses are only supported for invite-managed collaborative conversations')
+
+    if is_group_collaboration_conversation(conversation_doc):
+        group_id = str(((conversation_doc.get('scope') or {}).get('group_id')) or '').strip()
+        assert_group_role(
+            user_id,
+            group_id,
+            allowed_roles=('Owner', 'Admin', 'DocumentManager', 'User'),
+        )
 
     user_state = get_collaboration_user_state(user_id, conversation_id)
     participant_record = apply_personal_invite_response(
@@ -984,14 +1495,25 @@ def record_personal_invite_response(conversation_id, user_id, action):
 
 def invite_personal_collaboration_participants(conversation_id, owner_user_id, participants_to_add):
     conversation_doc = get_collaboration_conversation(conversation_id)
-    if not is_personal_collaboration_conversation(conversation_doc):
-        raise PermissionError('Member invites are only supported for personal collaborative conversations')
+    if not is_explicit_membership_collaboration(conversation_doc):
+        raise PermissionError('Member invites are only supported for invite-managed collaborative conversations')
 
-    actor_user_state = None
-    try:
-        actor_user_state = get_collaboration_user_state(owner_user_id, conversation_id)
-    except CosmosResourceNotFoundError:
-        actor_user_state = None
+    actor_user_state = get_collaboration_user_state_or_none(owner_user_id, conversation_id)
+
+    if is_group_collaboration_conversation(conversation_doc):
+        group_id = str(((conversation_doc.get('scope') or {}).get('group_id')) or '').strip()
+        group_role = assert_group_role(
+            owner_user_id,
+            group_id,
+            allowed_roles=('Owner', 'Admin', 'DocumentManager', 'User'),
+        )
+        group_doc = find_group_by_id(group_id)
+        if not group_doc:
+            raise LookupError('Group not found')
+        allowed, reason = check_group_status_allows_operation(group_doc, 'chat')
+        if not allowed:
+            raise PermissionError(reason)
+        participants_to_add = _normalize_group_conversation_participants(group_doc, participants_to_add)
 
     actor_role = get_personal_collaboration_role(
         conversation_doc,
@@ -1030,14 +1552,24 @@ def invite_personal_collaboration_participants(conversation_id, owner_user_id, p
 
 def remove_personal_collaboration_member(conversation_id, owner_user_id, member_user_id):
     conversation_doc = get_collaboration_conversation(conversation_id)
-    if not is_personal_collaboration_conversation(conversation_doc):
-        raise PermissionError('Member removal is only supported for personal collaborative conversations')
+    if not is_explicit_membership_collaboration(conversation_doc):
+        raise PermissionError('Member removal is only supported for invite-managed collaborative conversations')
 
-    actor_user_state = None
-    try:
-        actor_user_state = get_collaboration_user_state(owner_user_id, conversation_id)
-    except CosmosResourceNotFoundError:
-        actor_user_state = None
+    actor_user_state = get_collaboration_user_state_or_none(owner_user_id, conversation_id)
+
+    if is_group_collaboration_conversation(conversation_doc):
+        group_id = str(((conversation_doc.get('scope') or {}).get('group_id')) or '').strip()
+        group_role = assert_group_role(
+            owner_user_id,
+            group_id,
+            allowed_roles=('Owner', 'Admin', 'DocumentManager', 'User'),
+        )
+        group_doc = find_group_by_id(group_id)
+        if not group_doc:
+            raise LookupError('Group not found')
+        allowed, reason = check_group_status_allows_operation(group_doc, 'chat')
+        if not allowed:
+            raise PermissionError(reason)
 
     actor_role = get_personal_collaboration_role(
         conversation_doc,
@@ -1121,11 +1653,20 @@ def _save_collaboration_message_doc(conversation_doc, message_doc):
     if is_group_collaboration_conversation(conversation_doc):
         sender_user_id = str((sender_summary or {}).get('user_id') or '').strip()
         if sender_user_id and sender_user_id != 'assistant' and str(message_doc.get('role') or '').strip().lower() == 'user':
-            ensure_group_participant_record(
-                conversation_doc,
-                sender_summary,
-                joined_at=message_doc.get('timestamp'),
-            )
+            if get_collaboration_visibility_mode(conversation_doc) == 'group_membership':
+                ensure_group_participant_record(
+                    conversation_doc,
+                    sender_summary,
+                    joined_at=message_doc.get('timestamp'),
+                )
+            else:
+                participant_record = get_personal_collaboration_participant(
+                    conversation_doc,
+                    sender_user_id,
+                )
+                if participant_record is not None:
+                    participant_record['display_name'] = sender_summary.get('display_name') or participant_record.get('display_name')
+                    participant_record['email'] = sender_summary.get('email') or participant_record.get('email')
 
     cosmos_collaboration_messages_container.upsert_item(message_doc)
 
@@ -1278,10 +1819,8 @@ def mirror_source_message_to_collaboration(
     if reply_to_message_id:
         collaboration_message['reply_to_message_id'] = str(reply_to_message_id or '').strip() or None
 
-    if source_role == 'image' and not bool(source_metadata.get('is_user_upload')):
-        collaboration_message['role'] = 'image'
-        collaboration_message['content'] = str((source_message_doc or {}).get('content') or '')
-        message_metadata['last_message_preview'] = '[Generated image]'
+    if source_role == 'image':
+        message_metadata['last_message_preview'] = '[Uploaded image]' if bool(source_metadata.get('is_user_upload')) else '[Generated image]'
 
     return (*_save_collaboration_message_doc(conversation_doc, collaboration_message), True)
 
@@ -1354,8 +1893,15 @@ def delete_collaboration_message(conversation_id, message_id, current_user_id):
 
 def update_personal_collaboration_title(conversation_id, current_user_id, new_title):
     conversation_doc = get_collaboration_conversation(conversation_id)
-    if not is_personal_collaboration_conversation(conversation_doc):
-        raise PermissionError('Title updates are only supported for personal collaborative conversations')
+    if not is_collaboration_conversation(conversation_doc):
+        raise PermissionError('Title updates are only supported for collaborative conversations')
+    if is_group_collaboration_conversation(conversation_doc):
+        group_id = str(((conversation_doc.get('scope') or {}).get('group_id')) or '').strip()
+        assert_group_role(
+            current_user_id,
+            group_id,
+            allowed_roles=('Owner', 'Admin', 'DocumentManager', 'User'),
+        )
     if current_user_id not in set(conversation_doc.get('owner_user_ids', []) or []):
         raise PermissionError('Only conversation owners can rename collaborative conversations')
 
@@ -1371,10 +1917,33 @@ def update_personal_collaboration_title(conversation_id, current_user_id, new_ti
 
 def toggle_personal_collaboration_pin(conversation_id, current_user_id):
     conversation_doc = get_collaboration_conversation(conversation_id)
-    if not is_personal_collaboration_conversation(conversation_doc):
-        raise PermissionError('Pin is only supported for personal collaborative conversations')
+    if not is_collaboration_conversation(conversation_doc):
+        raise PermissionError('Pin is only supported for collaborative conversations')
 
-    user_state = get_collaboration_user_state(current_user_id, conversation_id)
+    access_context = assert_user_can_view_collaboration_conversation(
+        current_user_id,
+        conversation_doc,
+        allow_pending=True,
+    )
+    user_state = access_context.get('user_state')
+    if user_state is None:
+        if is_group_collaboration_conversation(conversation_doc):
+            participant_summary = _resolve_group_member_summary(access_context.get('group_doc'), current_user_id) or {
+                'user_id': current_user_id,
+                'display_name': 'Group Member',
+                'email': '',
+            }
+            user_state = ensure_collaboration_user_state_for_participant(
+                conversation_doc,
+                participant_summary,
+                role=get_personal_collaboration_role(conversation_doc, current_user_id) or MEMBERSHIP_ROLE_MEMBER,
+                membership_status=MEMBERSHIP_STATUS_ACCEPTED,
+                invited_by_user_id='',
+                created_at=conversation_doc.get('created_at'),
+            )
+        else:
+            user_state = get_collaboration_user_state(current_user_id, conversation_id)
+
     user_state['is_pinned'] = not bool(user_state.get('is_pinned', False))
     user_state['updated_at'] = utc_now_iso()
     cosmos_collaboration_user_state_container.upsert_item(user_state)
@@ -1383,10 +1952,33 @@ def toggle_personal_collaboration_pin(conversation_id, current_user_id):
 
 def toggle_personal_collaboration_hide(conversation_id, current_user_id):
     conversation_doc = get_collaboration_conversation(conversation_id)
-    if not is_personal_collaboration_conversation(conversation_doc):
-        raise PermissionError('Hide is only supported for personal collaborative conversations')
+    if not is_collaboration_conversation(conversation_doc):
+        raise PermissionError('Hide is only supported for collaborative conversations')
 
-    user_state = get_collaboration_user_state(current_user_id, conversation_id)
+    access_context = assert_user_can_view_collaboration_conversation(
+        current_user_id,
+        conversation_doc,
+        allow_pending=True,
+    )
+    user_state = access_context.get('user_state')
+    if user_state is None:
+        if is_group_collaboration_conversation(conversation_doc):
+            participant_summary = _resolve_group_member_summary(access_context.get('group_doc'), current_user_id) or {
+                'user_id': current_user_id,
+                'display_name': 'Group Member',
+                'email': '',
+            }
+            user_state = ensure_collaboration_user_state_for_participant(
+                conversation_doc,
+                participant_summary,
+                role=get_personal_collaboration_role(conversation_doc, current_user_id) or MEMBERSHIP_ROLE_MEMBER,
+                membership_status=MEMBERSHIP_STATUS_ACCEPTED,
+                invited_by_user_id='',
+                created_at=conversation_doc.get('created_at'),
+            )
+        else:
+            user_state = get_collaboration_user_state(current_user_id, conversation_id)
+
     user_state['is_hidden'] = not bool(user_state.get('is_hidden', False))
     user_state['updated_at'] = utc_now_iso()
     cosmos_collaboration_user_state_container.upsert_item(user_state)
@@ -1395,8 +1987,18 @@ def toggle_personal_collaboration_hide(conversation_id, current_user_id):
 
 def update_personal_collaboration_member_role(conversation_id, current_user_id, member_user_id, new_role):
     conversation_doc = get_collaboration_conversation(conversation_id)
-    if not is_personal_collaboration_conversation(conversation_doc):
-        raise PermissionError('Role updates are only supported for personal collaborative conversations')
+    if not is_explicit_membership_collaboration(conversation_doc):
+        raise PermissionError('Role updates are only supported for invite-managed collaborative conversations')
+    if is_group_collaboration_conversation(conversation_doc):
+        group_id = str(((conversation_doc.get('scope') or {}).get('group_id')) or '').strip()
+        group_doc = find_group_by_id(group_id)
+        if not group_doc:
+            raise LookupError('Group not found')
+        assert_group_role(
+            current_user_id,
+            group_id,
+            allowed_roles=('Owner', 'Admin', 'DocumentManager', 'User'),
+        )
     if current_user_id not in set(conversation_doc.get('owner_user_ids', []) or []):
         raise PermissionError('Only conversation owners can change participant roles')
 
@@ -1421,10 +2023,7 @@ def update_personal_collaboration_member_role(conversation_id, current_user_id, 
     refresh_personal_participant_indexes(conversation_doc)
     cosmos_collaboration_conversations_container.upsert_item(conversation_doc)
 
-    try:
-        user_state = get_collaboration_user_state(member_user_id, conversation_id)
-    except CosmosResourceNotFoundError:
-        user_state = None
+    user_state = get_collaboration_user_state_or_none(member_user_id, conversation_id)
 
     if user_state:
         user_state['role'] = normalized_role
@@ -1436,8 +2035,21 @@ def update_personal_collaboration_member_role(conversation_id, current_user_id, 
 
 def leave_personal_collaboration_conversation(conversation_id, current_user_id, new_owner_user_id=None):
     conversation_doc = get_collaboration_conversation(conversation_id)
-    if not is_personal_collaboration_conversation(conversation_doc):
-        raise PermissionError('Leave is only supported for personal collaborative conversations')
+    if not is_explicit_membership_collaboration(conversation_doc):
+        raise PermissionError('Leave is only supported for invite-managed collaborative conversations')
+    if is_group_collaboration_conversation(conversation_doc):
+        group_id = str(((conversation_doc.get('scope') or {}).get('group_id')) or '').strip()
+        group_doc = find_group_by_id(group_id)
+        if not group_doc:
+            raise LookupError('Group not found')
+        assert_group_role(
+            current_user_id,
+            group_id,
+            allowed_roles=('Owner', 'Admin', 'DocumentManager', 'User'),
+        )
+        allowed, reason = check_group_status_allows_operation(group_doc, 'chat')
+        if not allowed:
+            raise PermissionError(reason)
 
     participant = get_personal_collaboration_participant(conversation_doc, current_user_id)
     if participant is None:
@@ -1539,10 +2151,58 @@ def _delete_source_personal_conversation(conversation_doc, current_user_id):
     )
 
 
+def _delete_source_group_conversation(conversation_doc, current_user_id):
+    source_conversation_id = str((conversation_doc or {}).get('legacy_source_conversation_id') or '').strip()
+    if not source_conversation_id:
+        return
+
+    try:
+        source_conversation = cosmos_group_conversations_container.read_item(
+            item=source_conversation_id,
+            partition_key=source_conversation_id,
+        )
+    except CosmosResourceNotFoundError:
+        return
+
+    if str(source_conversation.get('user_id') or '').strip() != str(current_user_id or '').strip():
+        return
+    if str(source_conversation.get('collaboration_conversation_id') or '').strip() != str(conversation_doc.get('id') or '').strip():
+        return
+
+    message_query = 'SELECT * FROM c WHERE c.conversation_id = @conversation_id'
+    source_messages = list(cosmos_group_messages_container.query_items(
+        query=message_query,
+        parameters=[{'name': '@conversation_id', 'value': source_conversation_id}],
+        partition_key=source_conversation_id,
+    ))
+
+    for message_doc in source_messages:
+        cosmos_group_messages_container.delete_item(
+            item=message_doc.get('id'),
+            partition_key=source_conversation_id,
+        )
+
+    delete_thoughts_for_conversation(source_conversation_id, current_user_id)
+    cosmos_group_conversations_container.delete_item(
+        item=source_conversation_id,
+        partition_key=source_conversation_id,
+    )
+
+
 def delete_personal_collaboration_conversation(conversation_id, current_user_id):
     conversation_doc = get_collaboration_conversation(conversation_id)
-    if not is_personal_collaboration_conversation(conversation_doc):
-        raise PermissionError('Delete is only supported for personal collaborative conversations')
+    if not is_explicit_membership_collaboration(conversation_doc):
+        raise PermissionError('Delete is only supported for invite-managed collaborative conversations')
+    if is_group_collaboration_conversation(conversation_doc):
+        group_id = str(((conversation_doc.get('scope') or {}).get('group_id')) or '').strip()
+        group_doc = find_group_by_id(group_id)
+        if not group_doc:
+            raise LookupError('Group not found')
+        assert_group_role(
+            current_user_id,
+            group_id,
+            allowed_roles=('Owner', 'Admin', 'DocumentManager', 'User'),
+        )
     if current_user_id not in set(conversation_doc.get('owner_user_ids', []) or []):
         raise PermissionError('Only conversation owners can delete this shared conversation')
 
@@ -1571,6 +2231,8 @@ def delete_personal_collaboration_conversation(conversation_id, current_user_id)
         )
 
     _delete_source_personal_conversation(conversation_doc, current_user_id)
+    if is_group_collaboration_conversation(conversation_doc):
+        _delete_source_group_conversation(conversation_doc, current_user_id)
     cosmos_collaboration_conversations_container.delete_item(
         item=conversation_id,
         partition_key=conversation_id,

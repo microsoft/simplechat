@@ -2,8 +2,8 @@
 # test_large_image_api.py
 """
 Functional test for large image retrieval helpers.
-Version: 0.241.021
-Implemented in: 0.241.021
+Version: 0.241.022
+Implemented in: 0.241.022
 
 This test ensures that reassembled image content can be retrieved from a main
 image record plus chunk records and decoded into binary image bytes suitable for

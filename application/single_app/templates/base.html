@@ -283,6 +283,333 @@
 
   <!-- Toast container for error/info messages -->
   <div id="toast-container" class="position-fixed bottom-0 end-0 p-3" style="z-index: 1100;"></div>
+  {% if session.get('user') %}
+  <style>
+    .workflow-alert-modal-dialog {
+      max-width: 860px;
+    }
+
+    .workflow-alert-modal-content {
+      position: relative;
+      border: 0;
+      border-radius: 1.35rem;
+      overflow: hidden;
+      box-shadow: 0 1.5rem 3rem rgba(15, 23, 42, 0.18);
+      background: var(--bs-body-bg);
+    }
+
+    .workflow-alert-modal-content::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: 6px;
+      background: var(--workflow-alert-accent, var(--bs-primary));
+    }
+
+    .workflow-alert-modal-content[data-priority="high"] {
+      --workflow-alert-accent: var(--bs-danger);
+      --workflow-alert-accent-rgb: var(--bs-danger-rgb);
+    }
+
+    .workflow-alert-modal-content[data-priority="medium"] {
+      --workflow-alert-accent: var(--bs-warning);
+      --workflow-alert-accent-rgb: var(--bs-warning-rgb);
+    }
+
+    .workflow-alert-modal-content[data-priority="low"] {
+      --workflow-alert-accent: var(--bs-info);
+      --workflow-alert-accent-rgb: var(--bs-info-rgb);
+    }
+
+    .workflow-alert-modal-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 1.5rem;
+      align-items: flex-start;
+      padding: 2rem 2rem 1rem 2.3rem;
+      border-bottom: 0;
+    }
+
+    .workflow-alert-header-main {
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+
+    .workflow-alert-badge-row {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.85rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .workflow-alert-section-label {
+      font-size: 0.86rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      font-weight: 700;
+      color: var(--bs-secondary-color);
+    }
+
+    .workflow-alert-title {
+      margin: 0;
+      font-size: clamp(2rem, 3vw, 2.7rem);
+      line-height: 1.04;
+      font-weight: 700;
+      color: var(--bs-emphasis-color);
+    }
+
+    .workflow-alert-header-side {
+      display: flex;
+      align-items: flex-start;
+      gap: 1rem;
+      flex: 0 0 auto;
+    }
+
+    .workflow-alert-triggered {
+      text-align: right;
+      color: var(--bs-secondary-color);
+      font-size: 0.95rem;
+      font-weight: 700;
+      white-space: nowrap;
+      padding-top: 0.35rem;
+    }
+
+    .workflow-alert-triggered strong {
+      color: var(--bs-emphasis-color);
+      font-weight: 700;
+    }
+
+    .workflow-alert-close {
+      margin-top: 0.15rem;
+    }
+
+    .workflow-alert-modal-body {
+      padding: 0 2rem 2rem 2.3rem;
+    }
+
+    .workflow-alert-type-card {
+      display: inline-flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      padding: 1rem 1.15rem;
+      border-radius: 1rem;
+      background: var(--bs-tertiary-bg);
+      margin-bottom: 1.5rem;
+      min-width: 150px;
+    }
+
+    .workflow-alert-type-card.d-none {
+      display: none !important;
+    }
+
+    .workflow-alert-type-label {
+      font-size: 0.72rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      font-weight: 700;
+      color: var(--bs-secondary-color);
+    }
+
+    .workflow-alert-type-value {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: var(--bs-primary);
+      line-height: 1.2;
+    }
+
+    .workflow-alert-summary-panel {
+      display: flex;
+      gap: 1rem;
+      align-items: flex-start;
+      padding: 1.4rem;
+      border-radius: 1.1rem;
+      background: var(--bs-tertiary-bg);
+      margin-bottom: 1rem;
+    }
+
+    .workflow-alert-summary-icon {
+      width: 3rem;
+      height: 3rem;
+      border-radius: 0.9rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(var(--workflow-alert-accent-rgb, var(--bs-primary-rgb)), 0.12);
+      color: var(--workflow-alert-accent, var(--bs-primary));
+      flex: 0 0 auto;
+      font-size: 1.2rem;
+    }
+
+    .workflow-alert-summary-copy {
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+
+    .workflow-alert-message {
+      margin: 0;
+      font-size: 1.35rem;
+      line-height: 1.5;
+      color: var(--bs-emphasis-color);
+      font-weight: 500;
+    }
+
+    .workflow-alert-detail-card {
+      margin-top: 1rem;
+      padding: 1rem 1.1rem;
+      border-radius: 0.95rem;
+      background: rgba(var(--bs-primary-rgb), 0.06);
+      border-left: 4px solid var(--workflow-alert-accent, var(--bs-primary));
+    }
+
+    .workflow-alert-detail-label {
+      font-size: 0.78rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 700;
+      color: var(--bs-secondary-color);
+      margin-bottom: 0.35rem;
+    }
+
+    .workflow-alert-detail-text {
+      margin: 0;
+      font-size: 0.98rem;
+      line-height: 1.55;
+      color: var(--bs-secondary-color);
+    }
+
+    .workflow-alert-footer-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      align-items: center;
+      color: var(--bs-secondary-color);
+      font-size: 0.94rem;
+      font-weight: 600;
+      margin-bottom: 1.4rem;
+    }
+
+    .workflow-alert-footer-meta span {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+    }
+
+    .workflow-alert-actions {
+      display: flex;
+      gap: 1rem;
+      align-items: stretch;
+      flex-wrap: wrap;
+    }
+
+    .workflow-alert-links {
+      flex: 1 1 360px;
+      min-width: 0;
+    }
+
+    .workflow-alert-links .btn {
+      width: 100%;
+      min-height: 3.35rem;
+      font-weight: 700;
+      border-radius: 0.85rem;
+      justify-content: flex-start;
+      padding-inline: 1.1rem;
+    }
+
+    .workflow-alert-secondary-actions {
+      flex: 0 0 auto;
+      display: flex;
+      gap: 0.75rem;
+      align-items: stretch;
+      margin-left: auto;
+    }
+
+    .workflow-alert-secondary-actions .btn {
+      min-width: 132px;
+      border-radius: 0.85rem;
+      font-weight: 700;
+    }
+
+    @media (max-width: 767.98px) {
+      .workflow-alert-modal-header,
+      .workflow-alert-modal-body {
+        padding-left: 1.5rem;
+        padding-right: 1.5rem;
+      }
+
+      .workflow-alert-header-side {
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 0.4rem;
+      }
+
+      .workflow-alert-summary-panel {
+        flex-direction: column;
+      }
+
+      .workflow-alert-actions,
+      .workflow-alert-secondary-actions {
+        flex-direction: column;
+      }
+
+      .workflow-alert-secondary-actions {
+        margin-left: 0;
+        width: 100%;
+      }
+
+      .workflow-alert-secondary-actions .btn {
+        width: 100%;
+      }
+    }
+  </style>
+  <div class="modal fade" id="workflowAlertModal" tabindex="-1" aria-labelledby="workflowAlertModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered workflow-alert-modal-dialog">
+      <div class="modal-content workflow-alert-modal-content" data-priority="medium">
+        <div class="modal-header workflow-alert-modal-header">
+          <div class="workflow-alert-header-main">
+            <div class="workflow-alert-badge-row">
+              <span class="badge text-bg-secondary text-uppercase" id="workflow-alert-priority-badge">Alert</span>
+              <span class="workflow-alert-section-label">Workflow Alert</span>
+            </div>
+            <h5 class="modal-title workflow-alert-title" id="workflowAlertModalLabel">Workflow alert</h5>
+          </div>
+          <div class="workflow-alert-header-side">
+            <div class="workflow-alert-triggered" id="workflow-alert-triggered-at">Triggered: --:--:--</div>
+            <button type="button" class="btn-close workflow-alert-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+        </div>
+        <div class="modal-body workflow-alert-modal-body">
+          <div class="workflow-alert-type-card d-none" id="workflow-alert-type-card">
+            <div class="workflow-alert-type-label">Type</div>
+            <div class="workflow-alert-type-value" id="workflow-alert-type-value"></div>
+          </div>
+          <div class="workflow-alert-summary-panel">
+            <div class="workflow-alert-summary-icon">
+              <i class="bi bi-bell-fill" id="workflow-alert-summary-icon"></i>
+            </div>
+            <div class="workflow-alert-summary-copy">
+              <p class="workflow-alert-message" id="workflow-alert-message"></p>
+              <div class="workflow-alert-detail-card d-none" id="workflow-alert-response-preview-card">
+                <div class="workflow-alert-detail-label">Detail</div>
+                <p class="workflow-alert-detail-text" id="workflow-alert-response-preview"></p>
+              </div>
+            </div>
+          </div>
+          <div class="workflow-alert-footer-meta" id="workflow-alert-meta"></div>
+          <div class="workflow-alert-actions">
+            <div class="workflow-alert-links d-grid gap-2" id="workflow-alert-links"></div>
+            <div class="workflow-alert-secondary-actions">
+              <button type="button" class="btn btn-light border" id="workflow-alert-dismiss-btn">Dismiss</button>
+              <button type="button" class="btn btn-light border" id="workflow-alert-mark-read-btn">Mark as read</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
   <!-- <script src="https://unpkg.com/split.js/dist/split.min.js"></script>
   LOCAL VERSION BELOW
   -->

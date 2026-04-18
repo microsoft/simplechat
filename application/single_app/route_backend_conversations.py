@@ -719,6 +719,7 @@ def register_route_backend_conversations(app):
                 "scope_locked": conversation_item.get('scope_locked'),
                 "locked_contexts": conversation_item.get('locked_contexts', []),
                 "chat_type": conversation_item.get('chat_type'),
+                "workflow_id": conversation_item.get('workflow_id'),
                 "summary": conversation_item.get('summary')
             }), 200
             

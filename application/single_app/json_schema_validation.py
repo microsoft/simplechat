@@ -6,6 +6,14 @@ from functools import lru_cache
 from jsonschema import validate, ValidationError, Draft7Validator, Draft6Validator, RefResolver
 
 SCHEMA_DIR = os.path.join(os.path.dirname(__file__), 'static', 'json', 'schemas')
+PLUGIN_ENDPOINT_DEFAULTS = {
+    'sql_schema': 'sql://sql_schema',
+    'sql_query': 'sql://sql_query',
+    'msgraph': 'https://graph.microsoft.com',
+    'simplechat': 'simplechat://internal',
+    'search': 'internal://document-search',
+    'document_search': 'internal://document-search',
+}
 
 PLUGIN_STORAGE_MANAGED_FIELDS = {
     '_attachments',
@@ -45,20 +53,25 @@ def validate_agent(agent):
         return '; '.join([e.message for e in errors])
     return None
 
-def validate_plugin(plugin):
-    schema = load_schema('plugin.schema.json')
-    
-    # For SQL plugins, temporarily provide a dummy endpoint if none exists
-    # since SQL plugins don't use endpoints but the schema requires them
-    plugin_copy = plugin.copy()
-    plugin_type = plugin_copy.get('type', '')
-    
+
+def apply_plugin_validation_defaults(plugin):
+    plugin_copy = plugin.copy() if isinstance(plugin, dict) else {}
+    plugin_type = str(plugin_copy.get('type', '') or '').strip().lower()
+
     # Remove storage-managed fields that appear on persisted plugin documents but are not part of the schema.
     for field in PLUGIN_STORAGE_MANAGED_FIELDS:
         plugin_copy.pop(field, None)
-    
-    if plugin_type in ['sql_schema', 'sql_query'] and not plugin_copy.get('endpoint'):
-        plugin_copy['endpoint'] = f'sql://{plugin_type}'
+
+    default_endpoint = PLUGIN_ENDPOINT_DEFAULTS.get(plugin_type)
+    if default_endpoint and not str(plugin_copy.get('endpoint', '') or '').strip():
+        plugin_copy['endpoint'] = default_endpoint
+
+    return plugin_copy
+
+def validate_plugin(plugin):
+    schema = load_schema('plugin.schema.json')
+    plugin_copy = apply_plugin_validation_defaults(plugin)
+    plugin_type = str(plugin_copy.get('type', '') or '').strip().lower()
     
     # First run schema validation
     if schema.get("$ref") and schema.get("definitions"):
@@ -72,7 +85,7 @@ def validate_plugin(plugin):
     # Additional business logic validation
     # For non-SQL plugins, endpoint must not be empty
     if plugin_type not in ['sql_schema', 'sql_query']:
-        endpoint = plugin.get('endpoint', '')
+        endpoint = plugin_copy.get('endpoint', '')
         if not endpoint or endpoint.strip() == '':
             return 'Non-SQL plugins must have a valid endpoint'
     

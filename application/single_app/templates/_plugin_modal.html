@@ -189,6 +189,119 @@
               </div>
             </div>
           </div>
+
+          <div id="simplechat-config-section" class="d-none">
+            <div class="alert alert-primary mb-0">
+              <strong>Built-in action:</strong> SimpleChat does not require a URL or external credentials.
+              The capabilities below become the default operations exposed by this action. Agents can narrow them further per assignment.
+            </div>
+
+            <div class="simplechat-config-card">
+              <div class="config-section-label">
+                <i class="bi bi-chat-square-dots me-2"></i>Default SimpleChat Capabilities
+              </div>
+              <div id="simplechat-capabilities-list" class="d-grid gap-2"></div>
+            </div>
+          </div>
+
+          <div id="msgraph-config-section" class="d-none">
+            <div class="alert alert-info mb-0">
+              <strong>Built-in action:</strong> Microsoft Graph uses the signed-in user's delegated permissions and the standard Graph endpoint.
+              The capabilities below become the default operations exposed by this action. Agents can narrow them further per assignment.
+            </div>
+
+            <div class="simplechat-config-card">
+              <div class="config-section-label">
+                <i class="bi bi-calendar3 me-2"></i>Default Microsoft Graph Capabilities
+              </div>
+              <div id="msgraph-capabilities-list" class="d-grid gap-2"></div>
+            </div>
+          </div>
+
+          <div id="document-search-config-section" class="d-none">
+            <div class="alert alert-info mb-3">
+              <i class="bi bi-search me-2"></i>
+              This action uses SimpleChat's internal document search and the current user's access. No external URL or stored credentials are required.
+            </div>
+
+            <div class="card border-0 shadow-sm mb-3">
+              <div class="card-body p-3">
+                <div class="config-section-label">
+                  <i class="bi bi-sliders me-2"></i>Search Defaults
+                </div>
+                <div class="row g-3">
+                  <div class="col-md-6">
+                    <label for="document-search-scope" class="form-label">Default Scope</label>
+                    <select class="form-select" id="document-search-scope">
+                      <option value="all">All Accessible Content</option>
+                      <option value="personal">Personal Workspace</option>
+                      <option value="group">Group Workspaces</option>
+                      <option value="public">Public Workspaces</option>
+                    </select>
+                    <div class="form-text">Used when the action is called without an explicit scope filter.</div>
+                  </div>
+                  <div class="col-md-6">
+                    <label for="document-search-top-n" class="form-label">Default Search Result Limit</label>
+                    <input type="number" class="form-control" id="document-search-top-n" value="12" min="1" max="500" />
+                    <div class="form-text">Maximum number of ranked results returned when a caller does not set <code>top_n</code>.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card border-0 shadow-sm mb-3">
+              <div class="card-body p-3">
+                <div class="config-section-label">
+                  <i class="bi bi-layout-split me-2"></i>Windowing Defaults
+                </div>
+                <p class="text-muted small mb-3">Chunk retrieval returns all chunks by default. Configure preferred windowing so downstream tools can plan comparisons and summaries consistently.</p>
+                <div class="row g-3">
+                  <div class="col-md-4">
+                    <label for="document-search-window-unit" class="form-label">Preferred Window Unit</label>
+                    <select class="form-select" id="document-search-window-unit">
+                      <option value="pages">Pages</option>
+                      <option value="chunks">Chunks</option>
+                    </select>
+                  </div>
+                  <div class="col-md-4">
+                    <label for="document-search-window-size" class="form-label">Preferred Window Size</label>
+                    <input type="number" class="form-control" id="document-search-window-size" min="1" max="100" placeholder="Optional" />
+                    <div class="form-text">Optional fixed number of pages or chunks per window. Takes precedence over percent.</div>
+                  </div>
+                  <div class="col-md-4">
+                    <label for="document-search-window-percent" class="form-label">Preferred Window Percent</label>
+                    <input type="number" class="form-control" id="document-search-window-percent" min="1" max="100" placeholder="Optional" />
+                    <div class="form-text">Optional percent of the document per window when size is not set.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card border-0 shadow-sm mb-0">
+              <div class="card-body p-3">
+                <div class="config-section-label">
+                  <i class="bi bi-card-text me-2"></i>Summary Defaults
+                </div>
+                <div class="mb-3">
+                  <label for="document-search-focus-instructions" class="form-label">Default Focus Instructions</label>
+                  <textarea class="form-control" id="document-search-focus-instructions" rows="3" placeholder="Optional guidance such as compare versions, highlight risks, or focus on assigned knowledge."></textarea>
+                  <div class="form-text">Applied when a summarization call does not include its own focus instructions.</div>
+                </div>
+                <div class="row g-3">
+                  <div class="col-md-6">
+                    <label for="document-search-window-target-length" class="form-label">Window Summary Target Length</label>
+                    <input type="text" class="form-control" id="document-search-window-target-length" value="2 pages" placeholder="2 pages" />
+                    <div class="form-text">Target length for first-pass summaries over each chunk window.</div>
+                  </div>
+                  <div class="col-md-6">
+                    <label for="document-search-final-target-length" class="form-label">Final Summary Target Length</label>
+                    <input type="text" class="form-control" id="document-search-final-target-length" value="2 pages" placeholder="2 pages" />
+                    <div class="form-text">Target length for the final summary output.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
           
           <!-- SQL Database Configuration -->
           <div id="sql-config-section" class="d-none">
@@ -767,6 +880,108 @@
             </div>
           </div>
 
+          <div class="card mb-3 border-0 shadow-sm" id="summary-simplechat-section" style="display: none;">
+            <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #0d6efd 0%, #084298 100%);">
+              <h6 class="mb-0 fw-bold">
+                <i class="fas fa-comments me-2"></i>SimpleChat Capabilities
+              </h6>
+            </div>
+            <div class="card-body p-3">
+              <div class="row g-3">
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Enabled By Default</label>
+                    <span class="fw-medium" id="summary-simplechat-enabled-list">-</span>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Disabled By Default</label>
+                    <span class="fw-medium" id="summary-simplechat-disabled-list">-</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card mb-3 border-0 shadow-sm" id="summary-msgraph-section" style="display: none;">
+            <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #198754 0%, #146c43 100%);">
+              <h6 class="mb-0 fw-bold">
+                <i class="bi bi-calendar3 me-2"></i>Microsoft Graph Capabilities
+              </h6>
+            </div>
+            <div class="card-body p-3">
+              <div class="row g-3">
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Enabled By Default</label>
+                    <span class="fw-medium" id="summary-msgraph-enabled-list">-</span>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Disabled By Default</label>
+                    <span class="fw-medium" id="summary-msgraph-disabled-list">-</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card mb-3 border-0 shadow-sm" id="summary-document-search-section" style="display: none;">
+            <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #198754 0%, #146c43 100%);">
+              <h6 class="mb-0 fw-bold">
+                <i class="fas fa-search me-2"></i>Document Search Defaults
+              </h6>
+            </div>
+            <div class="card-body p-3">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Default Scope</label>
+                    <span class="fw-medium" id="summary-search-scope">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Search Result Limit</label>
+                    <span class="fw-medium" id="summary-search-top-n">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Chunk Retrieval</label>
+                    <span class="fw-medium" id="summary-search-chunk-behavior">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Preferred Windowing</label>
+                    <span class="fw-medium" id="summary-search-windowing">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Window Summary Target</label>
+                    <span class="fw-medium" id="summary-search-window-target-length">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Final Summary Target</label>
+                    <span class="fw-medium" id="summary-search-final-target-length">-</span>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Default Focus Instructions</label>
+                    <span class="fw-medium" id="summary-search-focus-instructions">-</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- Advanced Settings Section -->
           <div class="card mb-3 border-0 shadow-sm" id="summary-advanced-section" style="display: none;">
             <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #fd7e14 0%, #e55a00 100%);">
@@ -989,6 +1204,14 @@
   border: 1px solid #e9ecef;
 }
 
+.simplechat-config-card {
+  background-color: white;
+  border-radius: 6px;
+  padding: 1rem;
+  margin-top: 1rem;
+  border: 1px solid #e9ecef;
+}
+
 .btn-check:checked + .btn-outline-primary {
   background-color: #0d6efd;
   border-color: #0d6efd;
@@ -1117,6 +1340,7 @@
 
 [data-bs-theme="dark"] .sql-connection-config,
 [data-bs-theme="dark"] .sql-auth-config,
+[data-bs-theme="dark"] .simplechat-config-card,
 [data-bs-theme="dark"] .cosmos-config-card,
 [data-bs-theme="dark"] .auth-section {
   background-color: #2d3237;

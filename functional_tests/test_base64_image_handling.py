@@ -2,8 +2,8 @@
 # test_base64_image_handling.py
 """
 Functional test for base64 image data handling.
-Version: 0.241.021
-Implemented in: 0.241.021
+Version: 0.241.022
+Implemented in: 0.241.022
 
 This test ensures that base64 image payloads can be decoded into binary image
 bytes and that external image URLs are still recognized separately from data

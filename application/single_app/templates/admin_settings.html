@@ -3914,6 +3914,17 @@
                         </label>
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage their own private workspaces for document storage, knowledge bases, and personal AI interactions."></i>
                     </div>
+                    <div class="form-group form-check form-switch mb-0">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="allow_user_workflows"
+                            name="allow_user_workflows"
+                            {% if settings.allow_user_workflows %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="allow_user_workflows">
+                            Allow User Workflows
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create personal workflows that run a selected agent or model manually or on an interval schedule."></i>
+                    </div>
                 </div>
 
                

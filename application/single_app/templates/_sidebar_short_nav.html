@@ -105,6 +105,18 @@
         <div id="sidebar-conversations-list" class="list-group list-group-flush">
           <div class="text-center p-2 text-muted small">Loading conversations...</div>
         </div>
+        <div id="sidebar-workflow-section" class="sidebar-conversation-subsection d-none">
+          <div id="sidebar-workflows-toggle" class="sidebar-section-toggle mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center" role="button" tabindex="0" aria-controls="sidebar-workflow-list-container" aria-expanded="true">
+            <span class="nav-text">Workflows</span>
+            <i id="sidebar-workflows-caret" class="bi bi-caret-down-fill ms-2" style="font-size: 0.9em; transition: transform 0.2s;"></i>
+          </div>
+          <div id="sidebar-workflow-list-container" class="sidebar-workflow-list-container">
+            <div id="sidebar-workflow-conversations-list" class="list-group list-group-flush"></div>
+            <button id="sidebar-workflow-show-more-btn" class="btn btn-link btn-sm sidebar-workflow-show-more-btn d-none" type="button" aria-controls="sidebar-workflow-conversations-list" aria-expanded="false">
+              Show more
+            </button>
+          </div>
+        </div>
       </div>
     </div>
     {% endif %}

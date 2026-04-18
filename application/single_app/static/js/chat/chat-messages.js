@@ -2517,7 +2517,12 @@ export function updateUserMessageId(tempId, realId) {
       console.error(`❌ ID update verification failed: ${realId} not found in DOM`);
     }
   } else {
-    console.error(`❌ Message div with temp ID ${tempId} not found for update`);
+    const existingRealMessageDiv = document.querySelector(`[data-message-id="${realId}"]`);
+    if (existingRealMessageDiv) {
+      console.info(`ℹ️ Message div for temp ID ${tempId} was already reconciled to ${realId}`);
+    } else {
+      console.warn(`⚠️ Message div with temp ID ${tempId} not found for update`);
+    }
   }
 }
 

@@ -2,7 +2,7 @@
 
 """Pure collaboration data-model helpers for multi-user conversations."""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 import uuid
 
 
@@ -29,7 +29,7 @@ DEFAULT_GROUP_COLLABORATION_TITLE = 'New Group Collaborative Conversation'
 
 
 def utc_now_iso():
-    return datetime.utcnow().isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def add_seconds_to_iso(timestamp, seconds):
@@ -217,6 +217,7 @@ def build_group_collaboration_conversation(
     creator_user,
     group_id,
     group_name,
+    invited_participants=None,
     conversation_id=None,
     created_at=None,
 ):
@@ -236,7 +237,37 @@ def build_group_collaboration_conversation(
         normalized_group_name,
     )
 
-    return {
+    participants = [
+        {
+            'user_id': creator_summary['user_id'],
+            'display_name': creator_summary['display_name'],
+            'email': creator_summary['email'],
+            'role': MEMBERSHIP_ROLE_OWNER,
+            'status': MEMBERSHIP_STATUS_ACCEPTED,
+            'invited_at': created_at,
+            'joined_at': created_at,
+        }
+    ]
+    existing_user_ids = {creator_summary['user_id']}
+
+    for raw_participant in invited_participants or []:
+        participant_summary = normalize_collaboration_user(raw_participant)
+        if not participant_summary:
+            continue
+        if participant_summary['user_id'] in existing_user_ids:
+            continue
+
+        existing_user_ids.add(participant_summary['user_id'])
+        participants.append({
+            'user_id': participant_summary['user_id'],
+            'display_name': participant_summary['display_name'],
+            'email': participant_summary['email'],
+            'role': MEMBERSHIP_ROLE_MEMBER,
+            'status': MEMBERSHIP_STATUS_PENDING,
+            'invited_at': created_at,
+        })
+
+    conversation_doc = {
         'id': conversation_id,
         'conversation_kind': COLLABORATION_KIND,
         'chat_type': GROUP_MULTI_USER_CHAT_TYPE,
@@ -248,32 +279,17 @@ def build_group_collaboration_conversation(
         'status': 'active',
         'created_by_user_id': creator_summary['user_id'],
         'created_by_display_name': creator_summary['display_name'],
-        'owner_user_ids': [creator_summary['user_id']],
-        'accepted_participant_ids': [creator_summary['user_id']],
-        'pending_participant_ids': [],
-        'participant_count': 1,
-        'pending_invite_count': 0,
         'scope': {
             'type': 'group',
             'group_id': normalized_group_id,
             'group_name': normalized_group_name,
-            'visibility_mode': 'group_membership',
+            'visibility_mode': 'invited_members',
             'allowed_scope_types': ['group', 'public'],
         },
         'context': build_collaboration_context('group', normalized_group_id, normalized_group_name),
         'scope_locked': True,
         'locked_contexts': [{'scope': 'group', 'id': normalized_group_id}],
-        'participants': [
-            {
-                'user_id': creator_summary['user_id'],
-                'display_name': creator_summary['display_name'],
-                'email': creator_summary['email'],
-                'role': MEMBERSHIP_ROLE_OWNER,
-                'status': MEMBERSHIP_STATUS_ACCEPTED,
-                'invited_at': created_at,
-                'joined_at': created_at,
-            }
-        ],
+        'participants': participants,
         'conversation_settings': {
             'ai_invocation_mode': 'explicit_only',
             'reply_mode_enabled': True,
@@ -281,6 +297,7 @@ def build_group_collaboration_conversation(
         'message_count': 0,
         'tags': [],
     }
+    return refresh_personal_participant_indexes(conversation_doc)
 
 
 def get_collaboration_user_state_doc_id(user_id, conversation_id):

@@ -15,7 +15,14 @@ from azure.core import MatchConditions
 from config import cosmos_settings_container, exceptions
 from functions_appinsights import log_event
 from functions_debug import debug_print
+from functions_personal_workflows import (
+    compute_next_run_at,
+    get_due_personal_workflows,
+    get_personal_workflow,
+    update_personal_workflow_runtime_fields,
+)
 from functions_settings import get_settings, update_settings
+from functions_workflow_runner import run_personal_workflow
 
 
 def _get_lock_holder_id():
@@ -303,12 +310,109 @@ def run_retention_policy_loop():
         time.sleep(300)
 
 
+def check_due_workflows_once():
+    """Execute interval-based personal workflows that are due."""
+    settings = get_settings()
+    if not settings.get('allow_user_workflows', True):
+        return []
+
+    due_workflows = get_due_personal_workflows(limit=20)
+    if not due_workflows:
+        return []
+
+    results = []
+    for workflow in due_workflows:
+        workflow_id = str(workflow.get('id') or '').strip()
+        user_id = str(workflow.get('user_id') or '').strip()
+        if not workflow_id or not user_id:
+            continue
+
+        lock_document = acquire_distributed_task_lock(f'workflow_run_{workflow_id}', lease_seconds=900)
+        if not lock_document:
+            continue
+
+        refreshed_workflow = None
+        try:
+            refreshed_workflow = get_personal_workflow(user_id, workflow_id)
+            if not refreshed_workflow:
+                continue
+            if refreshed_workflow.get('trigger_type') != 'interval' or not refreshed_workflow.get('is_enabled', False):
+                continue
+
+            next_run_at = refreshed_workflow.get('next_run_at')
+            if next_run_at:
+                try:
+                    if datetime.fromisoformat(next_run_at) > datetime.now(timezone.utc):
+                        continue
+                except Exception:
+                    pass
+
+            started_at = datetime.now(timezone.utc).isoformat()
+            update_personal_workflow_runtime_fields(
+                user_id,
+                workflow_id,
+                {
+                    'status': 'running',
+                    'last_run_started_at': started_at,
+                    'last_run_trigger_source': 'scheduled',
+                    'last_run_error': '',
+                },
+            )
+
+            result = run_personal_workflow(refreshed_workflow, trigger_source='scheduled')
+            update_fields = dict(result.get('workflow_updates') or {})
+            update_fields['status'] = 'idle'
+            update_fields['next_run_at'] = compute_next_run_at(refreshed_workflow, from_time=datetime.now(timezone.utc))
+            update_personal_workflow_runtime_fields(user_id, workflow_id, update_fields)
+            results.append({'workflow_id': workflow_id, 'success': bool(result.get('success'))})
+        except Exception as exc:
+            log_event(
+                f"[WorkflowScheduler] Error executing workflow {workflow_id}: {exc}",
+                extra={
+                    'workflow_id': workflow_id,
+                    'user_id': user_id,
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            if refreshed_workflow:
+                update_personal_workflow_runtime_fields(
+                    user_id,
+                    workflow_id,
+                    {
+                        'status': 'idle',
+                        'last_run_status': 'failed',
+                        'last_run_error': str(exc),
+                        'last_run_at': datetime.now(timezone.utc).isoformat(),
+                        'last_run_trigger_source': 'scheduled',
+                        'next_run_at': compute_next_run_at(refreshed_workflow, from_time=datetime.now(timezone.utc)),
+                    },
+                )
+        finally:
+            release_distributed_task_lock(lock_document)
+
+    return results
+
+
+def run_workflow_scheduler_loop():
+    """Run personal workflow scheduling checks forever."""
+    while True:
+        try:
+            check_due_workflows_once()
+        except Exception as exc:
+            print(f"Error in workflow scheduler check: {exc}")
+            log_event(f"[WorkflowScheduler] Error in workflow scheduler check: {exc}", level=logging.ERROR)
+
+        time.sleep(5)
+
+
 def start_background_task_threads():
     """Start all background task loops for the current process."""
     task_specs = [
         ('Logging timer background task started.', run_logging_timer_loop),
         ('Approval expiration background task started.', run_approval_expiration_loop),
         ('Retention policy background task started.', run_retention_policy_loop),
+        ('Workflow scheduler background task started.', run_workflow_scheduler_loop),
     ]
 
     started_threads = []

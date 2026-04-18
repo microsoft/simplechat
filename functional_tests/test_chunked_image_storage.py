@@ -2,8 +2,8 @@
 # test_chunked_image_storage.py
 """
 Functional test for chunked image storage helpers.
-Version: 0.241.021
-Implemented in: 0.241.021
+Version: 0.241.022
+Implemented in: 0.241.022
 
 This test ensures that large image payloads are split across safe document
 sizes, preserve chunk metadata, and rehydrate back into either inline data URLs

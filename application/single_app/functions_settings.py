@@ -62,6 +62,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'allow_user_custom_endpoints': False,
         'allow_user_custom_agent_endpoints': False,
         'allow_user_plugins': False,
+        'allow_user_workflows': True,
         'allow_group_agents': False,
         'allow_group_custom_endpoints': False,
         'allow_group_custom_agent_endpoints': False,

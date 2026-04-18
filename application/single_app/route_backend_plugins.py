@@ -46,7 +46,11 @@ from functions_activity_logging import (
     log_action_update,
     log_action_deletion,
 )
+from functions_msgraph_operations import MSGRAPH_DEFAULT_ENDPOINT, MSGRAPH_PLUGIN_TYPE
 from functions_simplechat_operations import SIMPLECHAT_DEFAULT_ENDPOINT, SIMPLECHAT_PLUGIN_TYPE
+
+
+DOCUMENT_SEARCH_INTERNAL_ENDPOINT = 'internal://document-search'
 
 
 def _apply_plugin_runtime_defaults(plugin_payload):
@@ -56,8 +60,16 @@ def _apply_plugin_runtime_defaults(plugin_payload):
     plugin_type = plugin_payload.get('type', '')
     if plugin_type in ['sql_schema', 'sql_query']:
         plugin_payload.setdefault('endpoint', f'sql://{plugin_type}')
-    elif plugin_type == 'msgraph':
-        plugin_payload.setdefault('endpoint', 'https://graph.microsoft.com')
+    elif plugin_type == MSGRAPH_PLUGIN_TYPE:
+        plugin_payload.setdefault('endpoint', MSGRAPH_DEFAULT_ENDPOINT)
+        auth = plugin_payload.get('auth') if isinstance(plugin_payload.get('auth'), dict) else {}
+        auth['type'] = 'user'
+        plugin_payload['auth'] = auth
+    elif plugin_type in ['search', 'document_search']:
+        plugin_payload.setdefault('endpoint', DOCUMENT_SEARCH_INTERNAL_ENDPOINT)
+        auth = plugin_payload.get('auth') if isinstance(plugin_payload.get('auth'), dict) else {}
+        auth['type'] = 'NoAuth'
+        plugin_payload['auth'] = auth
     elif plugin_type == SIMPLECHAT_PLUGIN_TYPE:
         plugin_payload.setdefault('endpoint', SIMPLECHAT_DEFAULT_ENDPOINT)
         auth = plugin_payload.get('auth') if isinstance(plugin_payload.get('auth'), dict) else {}

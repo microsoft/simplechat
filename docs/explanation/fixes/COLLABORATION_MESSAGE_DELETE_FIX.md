@@ -1,6 +1,6 @@
-# Collaboration Message Delete Fix (v0.241.018)
+# Collaboration Message Delete Fix (v0.241.024)
 
-Fixed/Implemented in version: **0.241.018**
+Fixed/Implemented in version: **0.241.024**
 
 ## Issue Summary
 
@@ -28,6 +28,7 @@ Deleting a message inside a collaborative conversation failed with a 404 because
 3. Published a `collaboration.message.deleted` live event so other participants' open chat views remove the deleted message without a manual refresh.
 4. Updated the chat UI to route shared-message deletes to the collaboration API instead of the personal message delete endpoint.
 5. Switched shared user-message deletes to the single-message confirmation flow instead of the personal thread-delete modal.
+6. Updated the collaboration event replay guard so cached delete events use UTC-aware timestamp parsing and no longer re-show stale "A shared message was deleted." toasts on conversation reload.
 
 ## Validation
 
@@ -39,3 +40,4 @@ Deleting a message inside a collaborative conversation failed with a 404 because
 - Deleting your own message in a collaborative conversation now succeeds instead of returning `Message not found`.
 - Shared conversation previews stay in sync after deletion.
 - Other participants with the shared conversation open see the deleted message disappear via the collaboration event stream.
+- Reloading or reopening a collaborative conversation no longer replays old shared-delete toast notifications from cached event history.

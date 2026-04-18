@@ -5,6 +5,13 @@ import { showToast } from "./chat-toast.js";
 
 const sidebarConversationsList = document.getElementById("sidebar-conversations-list");
 const sidebarNewChatBtn = document.getElementById("sidebar-new-chat-btn");
+const sidebarWorkflowSection = document.getElementById("sidebar-workflow-section");
+const sidebarWorkflowsToggle = document.getElementById("sidebar-workflows-toggle");
+const sidebarWorkflowsCaret = document.getElementById("sidebar-workflows-caret");
+const sidebarWorkflowListContainer = document.getElementById("sidebar-workflow-list-container");
+const sidebarWorkflowConversationsList = document.getElementById("sidebar-workflow-conversations-list");
+const sidebarWorkflowShowMoreBtn = document.getElementById("sidebar-workflow-show-more-btn");
+const DEFAULT_WORKFLOW_SECTION_LIMIT = 5;
 
 function dispatchSidebarConversationsLoaded(details = {}) {
   document.dispatchEvent(new CustomEvent('chat:sidebar-conversations-loaded', {
@@ -16,6 +23,9 @@ let currentActiveConversationId = null;
 let sidebarShowHiddenConversations = false; // Track if hidden conversations should be shown in sidebar
 let isLoadingSidebarConversations = false; // Prevent concurrent sidebar loads
 let pendingSidebarReload = false; // Track if a reload is pending
+let sidebarWorkflowSectionExpanded = false;
+let sidebarWorkflowSectionCollapsed = false;
+let sidebarVisibleConversations = [];
 
 function getShortGroupLabel(name) {
   const normalizedName = (name || '').trim();
@@ -166,6 +176,107 @@ function closeSidebarConversationDropdown(dropdownBtn, dropdownInstance) {
   }
 }
 
+function isWorkflowConversation(conversation = {}) {
+  return String(conversation?.chat_type || '').trim().toLowerCase() === 'workflow';
+}
+
+function isSidebarQuickSearchActive() {
+  const searchTerm = window.chatConversations?.getQuickSearchTerm?.();
+  return Boolean(searchTerm && searchTerm.trim() !== '');
+}
+
+function appendSidebarConversationItems(container, conversations = []) {
+  if (!container) {
+    return;
+  }
+
+  conversations.forEach(conversation => {
+    container.appendChild(createSidebarConversationItem(conversation));
+  });
+}
+
+function setSidebarListMessage(container, message) {
+  if (!container) {
+    return;
+  }
+
+  container.innerHTML = `<div class="text-center p-2 text-muted small">${message}</div>`;
+}
+
+function applyWorkflowSectionCollapsedState(isCollapsed = false) {
+  if (!sidebarWorkflowListContainer || !sidebarWorkflowsCaret || !sidebarWorkflowsToggle) {
+    return;
+  }
+
+  sidebarWorkflowListContainer.classList.toggle('d-none', isCollapsed);
+  sidebarWorkflowsCaret.style.transform = isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
+  sidebarWorkflowsToggle.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+}
+
+function renderWorkflowConversations(workflowConversations = [], isSearchActive = false) {
+  if (!sidebarWorkflowSection || !sidebarWorkflowConversationsList) {
+    return;
+  }
+
+  sidebarWorkflowConversationsList.innerHTML = '';
+
+  if (workflowConversations.length === 0) {
+    sidebarWorkflowSection.classList.add('d-none');
+    if (sidebarWorkflowShowMoreBtn) {
+      sidebarWorkflowShowMoreBtn.classList.add('d-none');
+      sidebarWorkflowShowMoreBtn.setAttribute('aria-expanded', 'false');
+    }
+    return;
+  }
+
+  sidebarWorkflowSection.classList.remove('d-none');
+  applyWorkflowSectionCollapsedState(isSearchActive ? false : sidebarWorkflowSectionCollapsed);
+
+  const showAllWorkflowConversations = isSearchActive
+    || sidebarWorkflowSectionExpanded
+    || workflowConversations.length <= DEFAULT_WORKFLOW_SECTION_LIMIT;
+  const visibleWorkflowConversations = showAllWorkflowConversations
+    ? workflowConversations
+    : workflowConversations.slice(0, DEFAULT_WORKFLOW_SECTION_LIMIT);
+
+  appendSidebarConversationItems(sidebarWorkflowConversationsList, visibleWorkflowConversations);
+
+  if (!sidebarWorkflowShowMoreBtn) {
+    return;
+  }
+
+  const showExpandButton = !isSearchActive && workflowConversations.length > DEFAULT_WORKFLOW_SECTION_LIMIT;
+  sidebarWorkflowShowMoreBtn.classList.toggle('d-none', !showExpandButton);
+  sidebarWorkflowShowMoreBtn.textContent = sidebarWorkflowSectionExpanded ? 'Show less' : 'Show more';
+  sidebarWorkflowShowMoreBtn.setAttribute('aria-expanded', sidebarWorkflowSectionExpanded ? 'true' : 'false');
+}
+
+function renderSidebarConversationSections(visibleConversations = [], totalConversationCount = 0) {
+  if (!sidebarConversationsList) {
+    return;
+  }
+
+  const regularConversations = visibleConversations.filter(conversation => !isWorkflowConversation(conversation));
+  const workflowConversations = visibleConversations.filter(conversation => isWorkflowConversation(conversation));
+  const isSearchActive = isSidebarQuickSearchActive();
+
+  sidebarConversationsList.innerHTML = '';
+
+  if (regularConversations.length > 0) {
+    appendSidebarConversationItems(sidebarConversationsList, regularConversations);
+  } else if (visibleConversations.length === 0 && totalConversationCount > 0) {
+    setSidebarListMessage(sidebarConversationsList, 'No matching conversations.');
+  } else if (workflowConversations.length > 0 && isSearchActive) {
+    setSidebarListMessage(sidebarConversationsList, 'No matching standard conversations.');
+  } else if (workflowConversations.length > 0) {
+    setSidebarListMessage(sidebarConversationsList, 'No standard conversations yet.');
+  } else {
+    setSidebarListMessage(sidebarConversationsList, 'No conversations yet.');
+  }
+
+  renderWorkflowConversations(workflowConversations, isSearchActive);
+}
+
 export function setConversationUnreadState(conversationId, hasUnread) {
   const sidebarItem = document.querySelector(`.sidebar-conversation-item[data-conversation-id="${conversationId}"]`);
   if (!sidebarItem) {
@@ -203,7 +314,18 @@ export function loadSidebarConversations() {
   
   isLoadingSidebarConversations = true;
   pendingSidebarReload = false; // Clear any pending reload flag
+  sidebarVisibleConversations = [];
   sidebarConversationsList.innerHTML = '<div class="text-center p-2 text-muted small">Loading conversations...</div>';
+  if (sidebarWorkflowConversationsList) {
+    sidebarWorkflowConversationsList.innerHTML = '';
+  }
+  if (sidebarWorkflowSection) {
+    sidebarWorkflowSection.classList.add('d-none');
+  }
+  if (sidebarWorkflowShowMoreBtn) {
+    sidebarWorkflowShowMoreBtn.classList.add('d-none');
+    sidebarWorkflowShowMoreBtn.setAttribute('aria-expanded', 'false');
+  }
 
   const legacyConversationsRequest = fetch("/api/get_conversations")
     .then(response => response.ok ? response.json() : response.json().then(err => Promise.reject(err)));
@@ -216,14 +338,13 @@ export function loadSidebarConversations() {
 
   Promise.all([legacyConversationsRequest, collaborationConversationsRequest])
     .then(([data, collaborationConversations]) => {
-      sidebarConversationsList.innerHTML = "";
       const mergedConversations = [
         ...(Array.isArray(data.conversations) ? data.conversations : []),
         ...(Array.isArray(collaborationConversations) ? collaborationConversations : []),
       ];
 
       if (mergedConversations.length === 0) {
-        sidebarConversationsList.innerHTML = '<div class="text-center p-2 text-muted small">No conversations yet.</div>';
+        renderSidebarConversationSections([], 0);
         dispatchSidebarConversationsLoaded({ loaded: true, count: 0, hasVisibleConversations: false, isError: false });
         
         // Reset loading flag even when no conversations
@@ -272,10 +393,9 @@ export function loadSidebarConversations() {
           });
         }
       }
-      
-      visibleConversations.forEach(convo => {
-        sidebarConversationsList.appendChild(createSidebarConversationItem(convo));
-      });
+
+      sidebarVisibleConversations = visibleConversations;
+      renderSidebarConversationSections(visibleConversations, mergedConversations.length);
 
       dispatchSidebarConversationsLoaded({
         loaded: true,
@@ -330,10 +450,10 @@ function createSidebarConversationItem(convo) {
   const normalizedChatType = normalizeSidebarChatType(convo.chat_type || '', convo.context || []);
   const canManageMembers = isCollaborativeConversation
     ? Boolean(convo.can_manage_members)
-    : normalizedChatType === 'personal_single_user';
+    : ['personal_single_user', 'group-single-user'].includes(normalizedChatType);
   const canManageRoles = isCollaborativeConversation ? Boolean(convo.can_manage_roles) : false;
   const canEditCollaborativeTitle = !isCollaborativeConversation || canManageRoles;
-  const canShowAddParticipants = ['personal_single_user', 'personal_multi_user'].includes(normalizedChatType)
+  const canShowAddParticipants = ['personal_single_user', 'personal_multi_user', 'group-single-user', 'group_multi_user'].includes(normalizedChatType)
     && canManageMembers;
   const canDeleteCollaborativeConversation = Boolean(convo.can_delete_conversation);
   const canLeaveCollaborativeConversation = Boolean(convo.can_leave_conversation);
@@ -1067,6 +1187,39 @@ document.addEventListener('DOMContentLoaded', () => {
         const mainNewConversationBtn = document.getElementById('new-conversation-btn');
         if (mainNewConversationBtn) {
           mainNewConversationBtn.click();
+        }
+      });
+    }
+
+    if (sidebarWorkflowShowMoreBtn) {
+      sidebarWorkflowShowMoreBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        sidebarWorkflowSectionExpanded = !sidebarWorkflowSectionExpanded;
+        renderWorkflowConversations(
+          sidebarVisibleConversations.filter(conversation => isWorkflowConversation(conversation)),
+          isSidebarQuickSearchActive()
+        );
+      });
+    }
+
+    if (sidebarWorkflowsToggle) {
+      const toggleWorkflowSection = () => {
+        sidebarWorkflowSectionCollapsed = !sidebarWorkflowSectionCollapsed;
+        renderWorkflowConversations(
+          sidebarVisibleConversations.filter(conversation => isWorkflowConversation(conversation)),
+          isSidebarQuickSearchActive()
+        );
+      };
+
+      sidebarWorkflowsToggle.addEventListener('click', (e) => {
+        e.preventDefault();
+        toggleWorkflowSection();
+      });
+
+      sidebarWorkflowsToggle.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggleWorkflowSection();
         }
       });
     }

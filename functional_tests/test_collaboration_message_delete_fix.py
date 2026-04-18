@@ -2,12 +2,13 @@
 # test_collaboration_message_delete_fix.py
 """
 Functional test for collaborative message delete fix.
-Version: 0.241.018
-Implemented in: 0.241.018
+Version: 0.241.024
+Implemented in: 0.241.024
 
 This test ensures shared message deletion uses the collaboration delete API,
 removes the message from the collaboration store, and publishes a live delete
-event instead of falling back to the personal message delete route.
+event instead of falling back to the personal message delete route, without
+replaying stale shared-delete toasts every time a collaborative conversation is reloaded.
 """
 
 import copy
@@ -173,6 +174,9 @@ def test_collaboration_message_delete_source_contracts():
     assert '/api/collaboration/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}' in messages_source
     assert "messageType === 'user' && !isCollaborativeConversation" in messages_source
     assert 'function removeCollaborationMessage(messageId)' in collaboration_source
+    assert 'function parseCollaborationEventTimestamp(timestamp)' in collaboration_source
+    assert "const occurredAt = parseCollaborationEventTimestamp(eventEnvelope.occurred_at || '');" in collaboration_source
+    assert "const utcTimestamp = Date.parse(`${normalizedTimestamp}Z`);" in collaboration_source
     assert "eventEnvelope.event_type === 'collaboration.message.deleted'" in collaboration_source
 
     print('✅ Collaboration delete source contracts are present')

@@ -69,6 +69,17 @@ function getConversationChatType(conversationId) {
     return item?.getAttribute('data-chat-type') || null;
 }
 
+function getConversationGroupId(conversationId) {
+    const item = getConversationDomItem(conversationId);
+    const groupId = String(item?.getAttribute('data-group-id') || item?.dataset?.groupId || '').trim();
+    if (groupId) {
+        return groupId;
+    }
+
+    const cachedConversation = getCachedCollaborationConversation(conversationId);
+    return String(cachedConversation?.group_id || cachedConversation?.scope?.group_id || '').trim() || null;
+}
+
 function markCollaborationConversationRead(conversationId, options = {}) {
     const { suppressErrorToast = false } = options;
     if (!conversationId) {
@@ -268,10 +279,14 @@ async function loadMentionSuggestions(conversationId, query = '') {
         return [...participantSuggestions, ...targetSuggestions].slice(0, DEFAULT_SUGGESTION_LIMIT);
     }
 
-    const collaboratorSuggestions = await searchLocalCollaborators(query, {
-        recentOnly: false,
-        limit: DEFAULT_SUGGESTION_LIMIT,
-    });
+    const collaboratorSuggestions = await searchConversationParticipantCandidates(
+        conversationId,
+        query,
+        {
+            recentOnly: false,
+            limit: DEFAULT_SUGGESTION_LIMIT,
+        }
+    );
     const inviteSuggestions = collaboratorSuggestions
         .map(collaborator => {
             const normalizedCollaborator = normalizeCollaborator(collaborator);
@@ -539,12 +554,30 @@ function buildEventKey(eventEnvelope = {}) {
     ].join('|');
 }
 
+function parseCollaborationEventTimestamp(timestamp) {
+    const normalizedTimestamp = String(timestamp || '').trim();
+    if (!normalizedTimestamp) {
+        return Number.NaN;
+    }
+
+    if (/(?:Z|[+-]\d{2}:\d{2})$/i.test(normalizedTimestamp)) {
+        return Date.parse(normalizedTimestamp);
+    }
+
+    const utcTimestamp = Date.parse(`${normalizedTimestamp}Z`);
+    if (!Number.isNaN(utcTimestamp)) {
+        return utcTimestamp;
+    }
+
+    return Date.parse(normalizedTimestamp);
+}
+
 function isReplayEvent(eventEnvelope = {}) {
     if (!activeSubscriptionStartedAt) {
         return false;
     }
 
-    const occurredAt = Date.parse(eventEnvelope.occurred_at || '');
+    const occurredAt = parseCollaborationEventTimestamp(eventEnvelope.occurred_at || '');
     if (Number.isNaN(occurredAt)) {
         return false;
     }
@@ -612,6 +645,65 @@ async function searchLocalCollaborators(query = '', options = {}) {
 
     const payload = await fetchJson(`/api/user/collaboration-suggestions?${search.toString()}`);
     return Array.isArray(payload.results) ? payload.results : [];
+}
+
+function filterParticipantCandidates(candidates, conversationId, limit = DEFAULT_SUGGESTION_LIMIT) {
+    const normalizedConversationId = String(conversationId || '').trim();
+    const currentUserId = getCurrentUserId();
+    const conversation = normalizedConversationId
+        ? getCachedCollaborationConversation(normalizedConversationId)
+        : null;
+    const existingParticipantIds = new Set(
+        Array.isArray(conversation?.participants)
+            ? conversation.participants
+                .map(participant => String(participant?.user_id || '').trim())
+                .filter(Boolean)
+            : []
+    );
+
+    return (Array.isArray(candidates) ? candidates : [])
+        .map(candidate => {
+            const normalizedCandidate = normalizeCollaborator(candidate);
+            return normalizedCandidate ? { ...candidate, ...normalizedCandidate } : candidate;
+        })
+        .filter(candidate => {
+            const candidateUserId = String(candidate?.user_id || candidate?.userId || candidate?.id || '').trim();
+            if (!candidateUserId || candidateUserId === currentUserId) {
+                return false;
+            }
+            return !existingParticipantIds.has(candidateUserId);
+        })
+        .slice(0, limit);
+}
+
+async function searchConversationParticipantCandidates(conversationId, query = '', options = {}) {
+    const limit = Number(options.limit || DEFAULT_SUGGESTION_LIMIT) || DEFAULT_SUGGESTION_LIMIT;
+    const chatType = getConversationChatType(conversationId);
+
+    if (['group-single-user', 'group_multi_user'].includes(chatType || '')) {
+        const groupId = getConversationGroupId(conversationId);
+        if (!groupId) {
+            return [];
+        }
+
+        const search = new URLSearchParams();
+        if (query) {
+            search.set('search', query);
+        }
+        const payload = await fetchJson(`/api/groups/${groupId}/members?${search.toString()}`);
+        const groupMembers = Array.isArray(payload) ? payload : [];
+        const normalizedMembers = groupMembers.map(member => ({
+            user_id: member.userId || member.user_id || member.id || '',
+            display_name: member.displayName || member.display_name || member.name || member.email || '',
+            email: member.email || '',
+            source: 'group',
+            group_role: member.role || '',
+        }));
+        return filterParticipantCandidates(normalizedMembers, conversationId, limit);
+    }
+
+    const collaborators = await searchLocalCollaborators(query, options);
+    return filterParticipantCandidates(collaborators, conversationId, limit);
 }
 
 function ensureTypingIndicator() {
@@ -1400,7 +1492,8 @@ function renderParticipantResults(results, emptyMessage = 'No collaborators foun
 
 async function refreshParticipantPickerResults(query = '') {
     try {
-        const results = await searchLocalCollaborators(query, { recentOnly: false, limit: 12 });
+        const conversationId = participantConversationIdInput?.value || window.chatConversations?.getCurrentConversationId?.();
+        const results = await searchConversationParticipantCandidates(conversationId, query, { recentOnly: false, limit: 12 });
         renderParticipantResults(results);
     } catch (error) {
         renderParticipantResults([], 'Failed to load collaborators.');
@@ -1416,7 +1509,7 @@ function openParticipantPicker(options = {}) {
     }
 
     if (!canUseParticipantFlow(conversationId)) {
-        showToast('Participants can only be added to eligible personal conversations you manage.', 'warning');
+        showToast('Participants can only be added to eligible conversations you manage.', 'warning');
         return;
     }
 
@@ -1447,7 +1540,7 @@ function openParticipantConfirmation(userSummary, context = {}) {
 
 function canUseParticipantFlow(conversationId) {
     const chatType = getConversationChatType(conversationId);
-    if (!chatType || !['personal_single_user', 'personal_multi_user'].includes(chatType)) {
+    if (!chatType || !['personal_single_user', 'personal_multi_user', 'group-single-user', 'group_multi_user'].includes(chatType)) {
         return false;
     }
 
@@ -1470,9 +1563,13 @@ function canPostMessages(conversationId) {
 
 async function addParticipantToConversation(conversationId, collaborator) {
     const isCollaborative = isCollaborationConversation(conversationId);
-    const endpoint = isCollaborative
-        ? `/api/collaboration/conversations/${conversationId}/members`
-        : `/api/collaboration/conversations/from-personal/${conversationId}/members`;
+    const chatType = getConversationChatType(conversationId);
+    let endpoint = `/api/collaboration/conversations/from-personal/${conversationId}/members`;
+    if (isCollaborative) {
+        endpoint = `/api/collaboration/conversations/${conversationId}/members`;
+    } else if (chatType === 'group-single-user') {
+        endpoint = `/api/collaboration/conversations/from-group/${conversationId}/members`;
+    }
 
     const payload = await fetchJson(endpoint, {
         method: 'POST',
@@ -1526,7 +1623,7 @@ async function confirmPendingParticipant() {
 
         showToast(
             payload.created
-                ? 'Conversation converted to a collaborative chat and participant invited.'
+                ? 'Conversation converted to a multi-user chat and participant invited.'
                 : 'Participant invited to the conversation.',
             'success'
         );
