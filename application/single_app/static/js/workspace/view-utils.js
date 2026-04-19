@@ -145,23 +145,33 @@ export function switchViewContainers(mode, listContainer, gridContainer) {
 // ============================================================================
 
 /**
- * Open a read-only view modal for an agent or action.
+ * Open a read-only view modal for an agent, action, or prompt.
  * @param {object} item - The agent or action data object
- * @param {'agent'|'action'} type - What kind of item this is
+ * @param {'agent'|'action'|'prompt'} type - What kind of item this is
  * @param {object} [callbacks] - Optional action callbacks { onChat, onEdit, onDelete }
  */
 export function openViewModal(item, type, callbacks = {}) {
     const modalEl = document.getElementById("item-view-modal");
     if (!modalEl) return;
 
+    const dialogEl = modalEl.querySelector(".modal-dialog");
     const titleEl = modalEl.querySelector(".modal-title");
     const bodyEl = modalEl.querySelector(".modal-body");
     const footerEl = modalEl.querySelector(".modal-footer");
     if (!titleEl || !bodyEl || !footerEl) return;
 
+    if (dialogEl) {
+        dialogEl.className = type === "prompt"
+            ? "modal-dialog modal-dialog-scrollable"
+            : "modal-dialog modal-lg modal-dialog-scrollable";
+    }
+
     if (type === "agent") {
         titleEl.textContent = "Agent Details";
         bodyEl.innerHTML = buildAgentViewHtml(item);
+    } else if (type === "prompt") {
+        titleEl.textContent = "Prompt Details";
+        bodyEl.innerHTML = buildPromptViewHtml(item);
     } else {
         titleEl.textContent = "Action Details";
         bodyEl.innerHTML = buildActionViewHtml(item);
@@ -175,7 +185,7 @@ export function openViewModal(item, type, callbacks = {}) {
         const chatBtn = document.createElement('button');
         chatBtn.type = 'button';
         chatBtn.className = 'btn btn-primary';
-        chatBtn.innerHTML = '<i class="bi bi-chat-dots me-1"></i>Chat';
+        chatBtn.innerHTML = '<i class="bi bi-chat-dots-fill me-1"></i>Chat';
         chatBtn.addEventListener('click', () => {
             bootstrap.Modal.getInstance(modalEl)?.hide();
             onChat(item);
@@ -361,6 +371,30 @@ function buildActionViewHtml(action) {
         ${configHtml}`;
 }
 
+function buildPromptViewHtml(prompt) {
+    const promptName = escapeHtml(prompt.name || "Untitled Prompt");
+    const promptContent = escapeHtml(prompt.content || "No prompt content available.");
+
+    return `
+        <div class="card mb-3 border-0 shadow-sm">
+            <div class="card-header text-white py-2" style="background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);">
+                <i class="bi bi-file-earmark-text me-2"></i><strong>Prompt</strong>
+            </div>
+            <div class="card-body">
+                <label class="text-muted small mb-1 d-block">Prompt Name</label>
+                <span class="fw-medium">${promptName}</span>
+            </div>
+        </div>
+        <div class="card border-0 shadow-sm">
+            <div class="card-header text-white py-2" style="background: linear-gradient(135deg, #28a745 0%, #1e7e34 100%);">
+                <i class="bi bi-card-text me-2"></i><strong>Prompt Content</strong>
+            </div>
+            <div class="card-body">
+                <pre class="mb-0 p-3 bg-body-tertiary border rounded" style="white-space: pre-wrap; word-break: break-word; max-height: 360px; overflow-y: auto; font-size: 0.9rem;">${promptContent}</pre>
+            </div>
+        </div>`;
+}
+
 function formatAuthType(type) {
     if (!type) return "";
     const map = {
@@ -402,7 +436,7 @@ export function createAgentCard(agent, options = {}) {
 
     let buttonsHtml = `
         <button class="btn btn-sm btn-primary item-card-chat-btn me-1" title="Chat with this agent">
-            <i class="bi bi-chat-dots me-1"></i>Chat
+            <i class="bi bi-chat-dots-fill me-1"></i>Chat
         </button>
         <button class="btn btn-sm btn-outline-info item-card-view-btn me-1" title="View details">
             <i class="bi bi-eye"></i>

@@ -11,6 +11,7 @@ const pageState = {
 
 const BOTTOM_SCROLL_THRESHOLD = 24;
 
+const mainContentEl = document.getElementById("main-content");
 const pageEl = document.querySelector(".workflow-activity-page");
 const titleEl = document.getElementById("workflow-activity-title");
 const statusEl = document.getElementById("workflow-activity-status");
@@ -113,6 +114,18 @@ function buildConversationUrl(conversationId) {
     }
 
     return `/chats?conversationId=${encodeURIComponent(normalizedConversationId)}`;
+}
+
+function enableWorkflowActivityLayoutMode() {
+    if (mainContentEl) {
+        mainContentEl.classList.add("workflow-activity-main-content");
+    }
+}
+
+function disableWorkflowActivityLayoutMode() {
+    if (mainContentEl) {
+        mainContentEl.classList.remove("workflow-activity-main-content");
+    }
 }
 
 function buildResponseToggleLabel(heading) {
@@ -632,6 +645,7 @@ if (timelineViewportEl) {
 
 window.addEventListener("beforeunload", () => {
     stopEventStream();
+    disableWorkflowActivityLayoutMode();
 });
 
 window.addEventListener("resize", () => {
@@ -639,6 +653,7 @@ window.addEventListener("resize", () => {
 });
 
 window.addEventListener("DOMContentLoaded", () => {
+    enableWorkflowActivityLayoutMode();
     initializePage().catch(error => {
         console.warn("Workflow activity initialization failed", error);
     });

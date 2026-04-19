@@ -1,16 +1,66 @@
 .workflow-activity-page {
     --workflow-activity-accent: #1f6feb;
     --workflow-activity-accent-soft: rgba(31, 111, 235, 0.12);
-    --workflow-activity-surface: rgba(255, 255, 255, 0.94);
     --workflow-activity-border: rgba(15, 23, 42, 0.08);
     --workflow-activity-shadow: 0 22px 50px rgba(15, 23, 42, 0.08);
     --workflow-activity-viewport-height: auto;
+    --workflow-activity-surface-start: rgba(255, 255, 255, 0.98);
+    --workflow-activity-surface-end: rgba(247, 249, 252, 0.98);
+    --workflow-activity-stat-bg: rgba(255, 255, 255, 0.82);
+    --workflow-activity-card-bg: rgba(255, 255, 255, 0.92);
+    --workflow-activity-muted-bg: rgba(248, 250, 252, 0.88);
+    --workflow-activity-empty-bg: rgba(248, 250, 252, 0.8);
+    --workflow-activity-outline-border: rgba(31, 41, 55, 0.08);
+    --workflow-activity-card-border: rgba(15, 23, 42, 0.08);
+    --workflow-activity-track-start: rgba(31, 111, 235, 0.28);
+    --workflow-activity-track-end: rgba(15, 23, 42, 0.12);
+    --workflow-activity-connector: rgba(31, 111, 235, 0.18);
+    --workflow-activity-node-border: rgba(255, 255, 255, 0.95);
+    --workflow-activity-scroll-track: rgba(15, 23, 42, 0.05);
+    --workflow-activity-scroll-thumb: rgba(31, 111, 235, 0.32);
+    --workflow-activity-scroll-thumb-hover: rgba(31, 111, 235, 0.5);
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
     gap: 1.5rem;
     min-height: var(--workflow-activity-viewport-height);
     height: var(--workflow-activity-viewport-height);
     overflow: hidden;
+}
+
+[data-bs-theme="dark"] .workflow-activity-page {
+    --workflow-activity-accent: #6ea8fe;
+    --workflow-activity-accent-soft: rgba(110, 168, 254, 0.18);
+    --workflow-activity-border: rgba(255, 255, 255, 0.12);
+    --workflow-activity-shadow: 0 22px 50px rgba(0, 0, 0, 0.34);
+    --workflow-activity-surface-start: rgba(43, 48, 53, 0.96);
+    --workflow-activity-surface-end: rgba(33, 37, 41, 0.96);
+    --workflow-activity-stat-bg: rgba(43, 48, 53, 0.84);
+    --workflow-activity-card-bg: rgba(43, 48, 53, 0.92);
+    --workflow-activity-muted-bg: rgba(52, 58, 64, 0.88);
+    --workflow-activity-empty-bg: rgba(52, 58, 64, 0.76);
+    --workflow-activity-outline-border: rgba(255, 255, 255, 0.12);
+    --workflow-activity-card-border: rgba(255, 255, 255, 0.12);
+    --workflow-activity-track-start: rgba(110, 168, 254, 0.4);
+    --workflow-activity-track-end: rgba(255, 255, 255, 0.08);
+    --workflow-activity-connector: rgba(110, 168, 254, 0.24);
+    --workflow-activity-node-border: rgba(33, 37, 41, 0.95);
+    --workflow-activity-scroll-track: rgba(255, 255, 255, 0.06);
+    --workflow-activity-scroll-thumb: rgba(110, 168, 254, 0.38);
+    --workflow-activity-scroll-thumb-hover: rgba(110, 168, 254, 0.56);
+}
+
+#main-content.workflow-activity-main-content {
+    width: 100%;
+    max-width: none;
+    padding-right: clamp(0.75rem, 1.6vw, 1.5rem);
+}
+
+#main-content.workflow-activity-main-content:not(.sidebar-padding) {
+    padding-left: clamp(0.75rem, 1.6vw, 1.5rem);
+}
+
+#main-content.workflow-activity-main-content.sidebar-padding {
+    padding-left: calc(var(--sidebar-width, 260px) + clamp(0.75rem, 1.6vw, 1.5rem));
 }
 
 .workflow-activity-hero-wrap {
@@ -21,8 +71,8 @@
 .workflow-activity-timeline-panel,
 .workflow-activity-detail-panel {
     background:
-        radial-gradient(circle at top right, rgba(31, 111, 235, 0.12), transparent 32%),
-        linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 249, 252, 0.98));
+        radial-gradient(circle at top right, var(--workflow-activity-accent-soft), transparent 32%),
+        linear-gradient(180deg, var(--workflow-activity-surface-start), var(--workflow-activity-surface-end));
     border: 1px solid var(--workflow-activity-border);
     box-shadow: var(--workflow-activity-shadow);
 }
@@ -53,8 +103,8 @@
     height: 100%;
     padding: 1rem 1.1rem;
     border-radius: 1rem;
-    background: rgba(255, 255, 255, 0.82);
-    border: 1px solid rgba(31, 41, 55, 0.08);
+    background: var(--workflow-activity-stat-bg);
+    border: 1px solid var(--workflow-activity-outline-border);
 }
 
 .workflow-activity-stat-label {
@@ -75,8 +125,8 @@
 .workflow-activity-response {
     border-radius: 1rem;
     padding: 1rem 1.1rem;
-    background: rgba(255, 255, 255, 0.8);
-    border: 1px solid rgba(31, 41, 55, 0.08);
+    background: var(--workflow-activity-stat-bg);
+    border: 1px solid var(--workflow-activity-outline-border);
 }
 
 .workflow-activity-response-toggle-icon {
@@ -136,7 +186,7 @@
     scroll-behavior: smooth;
     scrollbar-gutter: stable;
     scrollbar-width: thin;
-    scrollbar-color: rgba(31, 111, 235, 0.35) rgba(15, 23, 42, 0.06);
+    scrollbar-color: var(--workflow-activity-scroll-thumb) var(--workflow-activity-scroll-track);
 }
 
 .workflow-activity-timeline-viewport::-webkit-scrollbar,
@@ -146,20 +196,20 @@
 
 .workflow-activity-timeline-viewport::-webkit-scrollbar-track,
 .workflow-activity-event-history::-webkit-scrollbar-track {
-    background: rgba(15, 23, 42, 0.05);
+    background: var(--workflow-activity-scroll-track);
     border-radius: 999px;
 }
 
 .workflow-activity-timeline-viewport::-webkit-scrollbar-thumb,
 .workflow-activity-event-history::-webkit-scrollbar-thumb {
-    background: rgba(31, 111, 235, 0.32);
+    background: var(--workflow-activity-scroll-thumb);
     border-radius: 999px;
-    border: 2px solid rgba(255, 255, 255, 0.75);
+    border: 2px solid var(--workflow-activity-surface-start);
 }
 
 .workflow-activity-timeline-viewport::-webkit-scrollbar-thumb:hover,
 .workflow-activity-event-history::-webkit-scrollbar-thumb:hover {
-    background: rgba(31, 111, 235, 0.5);
+    background: var(--workflow-activity-scroll-thumb-hover);
 }
 
 .workflow-activity-timeline {
@@ -176,7 +226,7 @@
     bottom: 0.75rem;
     left: 1.25rem;
     width: 2px;
-    background: linear-gradient(180deg, rgba(31, 111, 235, 0.28), rgba(15, 23, 42, 0.12));
+    background: linear-gradient(180deg, var(--workflow-activity-track-start), var(--workflow-activity-track-end));
 }
 
 .workflow-activity-row {
@@ -192,7 +242,7 @@
     bottom: -1rem;
     left: calc(1.25rem + (var(--lane-index, 0) * 2.5rem));
     width: 2px;
-    background: rgba(31, 111, 235, 0.18);
+    background: var(--workflow-activity-connector);
 }
 
 .workflow-activity-row:last-child::before {
@@ -206,7 +256,7 @@
     left: 1.25rem;
     width: calc(var(--lane-index, 0) * 2.5rem);
     height: 2px;
-    background: rgba(31, 111, 235, 0.18);
+    background: var(--workflow-activity-connector);
 }
 
 .workflow-activity-node {
@@ -216,7 +266,7 @@
     width: 0.75rem;
     height: 0.75rem;
     border-radius: 999px;
-    border: 2px solid rgba(255, 255, 255, 0.95);
+    border: 2px solid var(--workflow-activity-node-border);
     box-shadow: 0 0 0 4px rgba(31, 111, 235, 0.16);
 }
 
@@ -234,9 +284,9 @@
 
 .workflow-activity-card {
     width: 100%;
-    border: 1px solid rgba(15, 23, 42, 0.08);
+    border: 1px solid var(--workflow-activity-card-border);
     border-radius: 1.15rem;
-    background: rgba(255, 255, 255, 0.92);
+    background: var(--workflow-activity-card-bg);
     padding: 1rem 1rem 1rem 1.05rem;
     text-align: left;
     box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
@@ -323,11 +373,11 @@
 }
 
 .workflow-activity-empty {
-    border: 1px dashed rgba(15, 23, 42, 0.12);
+    border: 1px dashed var(--workflow-activity-card-border);
     border-radius: 1.25rem;
     padding: 2.25rem 1.5rem;
     text-align: center;
-    background: rgba(248, 250, 252, 0.8);
+    background: var(--workflow-activity-empty-bg);
 }
 
 .workflow-activity-empty-icon {
@@ -358,8 +408,8 @@
 .workflow-activity-detail-block {
     border-radius: 1rem;
     padding: 1rem 1rem 1.1rem;
-    background: rgba(248, 250, 252, 0.88);
-    border: 1px solid rgba(15, 23, 42, 0.07);
+    background: var(--workflow-activity-muted-bg);
+    border: 1px solid var(--workflow-activity-card-border);
 }
 
 .workflow-activity-event-history-block {
@@ -394,14 +444,14 @@
     overflow-y: auto;
     padding-right: 0.2rem;
     scrollbar-width: thin;
-    scrollbar-color: rgba(31, 111, 235, 0.3) rgba(15, 23, 42, 0.05);
+    scrollbar-color: var(--workflow-activity-scroll-thumb) var(--workflow-activity-scroll-track);
 }
 
 .workflow-activity-event-item {
     border-radius: 0.85rem;
     padding: 0.75rem 0.85rem;
-    background: rgba(255, 255, 255, 0.9);
-    border: 1px solid rgba(15, 23, 42, 0.06);
+    background: var(--workflow-activity-card-bg);
+    border: 1px solid var(--workflow-activity-card-border);
 }
 
 .workflow-activity-event-item-header {
@@ -430,6 +480,13 @@
 }
 
 @media (max-width: 991.98px) {
+    #main-content.workflow-activity-main-content,
+    #main-content.workflow-activity-main-content.sidebar-padding,
+    #main-content.workflow-activity-main-content:not(.sidebar-padding) {
+        padding-left: 0.75rem;
+        padding-right: 0.75rem;
+    }
+
     .workflow-activity-page {
         min-height: auto;
         height: auto;

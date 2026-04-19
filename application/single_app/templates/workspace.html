@@ -87,7 +87,8 @@
     }
     #prompts-table th:nth-child(2), /* Actions */
     #prompts-table td:nth-child(2) {
-        width: 150px; /* Adjust as needed for buttons */
+      width: 170px;
+      white-space: nowrap;
     }
 
     /* --- Agents Table Styles --- */
@@ -115,36 +116,90 @@
     }
 
     /* --- Workflows Table Styles --- */
+    #workflows-table {
+      table-layout: fixed;
+      width: 100%;
+    }
+
+    #workflows-table th,
+    #workflows-table td {
+      vertical-align: top;
+    }
+
     #workflows-table th:nth-child(1),
     #workflows-table td:nth-child(1) {
-      width: 24%;
-      min-width: 180px;
+      width: 22%;
     }
     #workflows-table th:nth-child(2),
     #workflows-table td:nth-child(2) {
-      width: 24%;
-      min-width: 180px;
+      width: 21%;
     }
     #workflows-table th:nth-child(3),
     #workflows-table td:nth-child(3) {
-      width: 15%;
-      min-width: 130px;
+      width: 13%;
     }
     #workflows-table th:nth-child(4),
     #workflows-table td:nth-child(4) {
-      width: 19%;
-      min-width: 180px;
+      width: 20%;
     }
     #workflows-table th:nth-child(5),
     #workflows-table td:nth-child(5) {
-      width: 18%;
-      min-width: 220px;
-      white-space: nowrap;
+      width: 24%;
+      white-space: normal;
+    }
+
+    #workflows-table td:nth-child(1),
+    #workflows-table td:nth-child(2),
+    #workflows-table td:nth-child(3),
+    #workflows-table td:nth-child(4) {
+      overflow-wrap: anywhere;
+    }
+
+    .workflow-action-buttons {
+      row-gap: 0.35rem;
     }
 
     .workflow-meta {
       color: #6c757d;
       font-size: 0.85rem;
+    }
+
+    .workflow-item-card .card-title {
+      word-break: break-word;
+    }
+
+    .workflow-grid-meta {
+      display: grid;
+      gap: 0.45rem;
+      font-size: 0.82rem;
+      color: var(--bs-secondary-color);
+    }
+
+    .workflow-grid-meta-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.75rem;
+    }
+
+    .workflow-grid-meta-row span:last-child {
+      text-align: right;
+      color: var(--bs-body-color);
+      font-weight: 500;
+    }
+
+    .workflow-grid-preview {
+      min-height: 2.75rem;
+    }
+
+    .workflow-grid-actions {
+      border-top: 1px solid var(--bs-border-color-translucent);
+      padding-top: 0.85rem;
+    }
+
+    @media (max-width: 991.98px) {
+      #workflows-table {
+        table-layout: auto;
+      }
     }
 
     .workflow-response-preview {
@@ -1021,15 +1076,16 @@
       >
         <div class="tab-pane-inner">
           <div class="card p-3 my-3">
-            <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-3">
-              <div>
-                <h5 class="mb-1"><i class="bi bi-diagram-3 me-2"></i>Your Workflows</h5>
-                <p class="text-muted small mb-0">Create personal workflows that run a selected agent or model manually or on an interval schedule.</p>
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <button class="btn btn-success btn-sm" id="create-workflow-btn" type="button">New Workflow</button>
+              <div class="btn-group btn-group-sm" role="group" aria-label="Workflows view mode">
+                <input type="radio" class="btn-check" name="workflows-view-mode" id="workflows-view-list" autocomplete="off" checked>
+                <label class="btn btn-outline-secondary" for="workflows-view-list"><i class="bi bi-list-ul"></i></label>
+                <input type="radio" class="btn-check" name="workflows-view-mode" id="workflows-view-grid" autocomplete="off">
+                <label class="btn btn-outline-secondary" for="workflows-view-grid"><i class="bi bi-grid-3x3-gap"></i></label>
               </div>
-              <button class="btn btn-success btn-sm align-self-start align-self-lg-center" id="create-workflow-btn" type="button">
-                <i class="bi bi-plus-circle me-1"></i>New Workflow
-              </button>
             </div>
+            <p class="text-muted small mb-3">Create personal workflows that run a selected agent or model manually or on an interval schedule.</p>
             <div class="row g-2 mb-3 align-items-center">
               <div class="col-lg-7">
                 <input type="search" class="form-control" id="workflows-search" placeholder="Search workflows by name, runner, or task prompt..." />
@@ -1038,27 +1094,30 @@
                 <div class="text-muted small" id="workflows-summary"></div>
               </div>
             </div>
-            <div class="table-responsive">
-              <table class="table table-striped item-list-table" id="workflows-table">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Runner</th>
-                    <th>Trigger</th>
-                    <th>Last Run</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody id="workflows-table-body">
-                  <tr class="table-loading-row">
-                    <td colspan="5">
-                      <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
-                      Loading workflows...
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+            <div id="workflows-list-view">
+              <div class="table-responsive">
+                <table class="table table-striped item-list-table" id="workflows-table">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Runner</th>
+                      <th>Trigger</th>
+                      <th>Last Run</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="workflows-table-body">
+                    <tr class="table-loading-row">
+                      <td colspan="5">
+                        <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
+                        Loading workflows...
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
             </div>
+            <div id="workflows-grid-view" class="row g-3 d-none"></div>
           </div>
           <div id="workspace-workflows-error"></div>
         </div>
@@ -1261,11 +1320,6 @@
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
         </div>
         <div class="modal-body">
-          <div class="alert alert-light border mb-3" id="workflow-history-conversation-card">
-            <div class="fw-semibold">Dedicated Conversation</div>
-            <div class="small text-muted" id="workflow-history-conversation-id">Not created yet.</div>
-            <a href="#" class="btn btn-sm btn-outline-primary mt-2 d-none" id="workflow-history-open-conversation-link">Open workflow conversation</a>
-          </div>
           <div class="table-responsive">
             <table class="table table-sm table-striped" id="workflow-history-table">
               <thead>
@@ -1274,7 +1328,7 @@
                   <th>Started</th>
                   <th>Trigger</th>
                   <th>Details</th>
-                  <th>Conversation</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody id="workflow-history-body">

@@ -1,9 +1,11 @@
 // workspace_workflows.js
 
 import { showToast } from "../chat/chat-toast.js";
-import { escapeHtml, truncateDescription } from "./view-utils.js";
+import { escapeHtml, truncateDescription, setupViewToggle, switchViewContainers } from "./view-utils.js";
 
 const workflowsTableBody = document.getElementById("workflows-table-body");
+const workflowsListView = document.getElementById("workflows-list-view");
+const workflowsGridView = document.getElementById("workflows-grid-view");
 const workflowsSearchInput = document.getElementById("workflows-search");
 const workflowsSummary = document.getElementById("workflows-summary");
 const createWorkflowBtn = document.getElementById("create-workflow-btn");
@@ -52,6 +54,7 @@ const workflowDeleteName = document.getElementById("workflow-delete-name");
 const workflowDeleteConfirmBtn = document.getElementById("workflow-delete-confirm-btn");
 
 let workflows = [];
+let filteredWorkflows = [];
 let agentOptions = [];
 let agentsLoaded = false;
 let workflowPendingDelete = null;
@@ -193,6 +196,50 @@ function buildWorkflowSearchText(workflow) {
     ].map((value) => normalizeText(value).toLowerCase()).join(" ");
 }
 
+function getWorkflowDisplayStatus(workflow) {
+    const runtimeStatus = normalizeText(workflow?.status).toLowerCase();
+    if (runtimeStatus === "running") {
+        return "running";
+    }
+
+    return normalizeText(workflow?.last_run_status).toLowerCase();
+}
+
+function getWorkflowActivityState(workflow) {
+    const conversationId = normalizeText(workflow?.conversation_id);
+    const displayStatus = getWorkflowDisplayStatus(workflow);
+    const hasRecordedRun = Boolean(normalizeText(workflow?.last_run_status) || normalizeText(workflow?.last_run_at));
+    return {
+        isAvailable: Boolean(conversationId && (displayStatus === "running" || hasRecordedRun)),
+        url: buildWorkflowActivityUrl(conversationId, "", normalizeText(workflow?.id)),
+    };
+}
+
+function getWorkflowRunTimestamp(workflow) {
+    return getWorkflowDisplayStatus(workflow) === "running"
+        ? normalizeText(workflow?.last_run_started_at || workflow?.last_run_at)
+        : normalizeText(workflow?.last_run_at);
+}
+
+function buildWorkflowActionButtons(workflow) {
+    const workflowId = escapeHtml(normalizeText(workflow.id));
+    const isRunning = getWorkflowDisplayStatus(workflow) === "running";
+    const activityState = getWorkflowActivityState(workflow);
+    const buttons = [
+        `<button type="button" class="btn btn-sm btn-primary" data-action="run" data-workflow-id="${workflowId}" ${isRunning ? "disabled" : ""} title="Run workflow">${isRunning ? '<i class="bi bi-hourglass-split me-1"></i>Running' : '<i class="bi bi-play-fill me-1"></i>Run'}</button>`,
+    ];
+
+    if (activityState.isAvailable) {
+        buttons.push(`<button type="button" class="btn btn-sm btn-outline-info" data-action="activity" data-workflow-id="${workflowId}" title="Open activity view"><i class="bi bi-activity me-1"></i>Activity</button>`);
+    }
+
+    buttons.push(`<button type="button" class="btn btn-sm btn-outline-secondary" data-action="history" data-workflow-id="${workflowId}" title="View run history"><i class="bi bi-clock-history me-1"></i>History</button>`);
+    buttons.push(`<button type="button" class="btn btn-sm btn-outline-secondary" data-action="edit" data-workflow-id="${workflowId}" title="Edit workflow"><i class="bi bi-pencil"></i></button>`);
+    buttons.push(`<button type="button" class="btn btn-sm btn-outline-danger" data-action="delete" data-workflow-id="${workflowId}" title="Delete workflow"><i class="bi bi-trash"></i></button>`);
+
+    return `<div class="workflow-action-buttons d-flex flex-wrap gap-1 justify-content-start justify-content-xl-end">${buttons.join("")}</div>`;
+}
+
 function getCustomEndpointOptions() {
     const endpointGroups = [
         {
@@ -274,15 +321,17 @@ function refreshWorkflowSummary(items) {
 }
 
 function renderWorkflowEmptyState(message) {
-    if (!workflowsTableBody) {
-        return;
+    if (workflowsTableBody) {
+        workflowsTableBody.innerHTML = `
+            <tr>
+                <td colspan="5" class="text-center text-muted py-4">${escapeHtml(message)}</td>
+            </tr>
+        `;
     }
 
-    workflowsTableBody.innerHTML = `
-        <tr>
-            <td colspan="5" class="text-center text-muted py-4">${escapeHtml(message)}</td>
-        </tr>
-    `;
+    if (workflowsGridView) {
+        workflowsGridView.innerHTML = `<div class="col-12 text-center text-muted py-4">${escapeHtml(message)}</div>`;
+    }
 }
 
 function renderWorkflowTable(items) {
@@ -291,8 +340,11 @@ function renderWorkflowTable(items) {
     }
 
     if (!items.length) {
-        renderWorkflowEmptyState(workflows.length ? "No workflows match the current search." : "No workflows created yet.");
-        refreshWorkflowSummary(items);
+        workflowsTableBody.innerHTML = `
+            <tr>
+                <td colspan="5" class="text-center text-muted py-4">${escapeHtml(workflows.length ? "No workflows match the current search." : "No workflows created yet.")}</td>
+            </tr>
+        `;
         return;
     }
 
@@ -301,11 +353,15 @@ function renderWorkflowTable(items) {
         const description = escapeHtml(truncateDescription(normalizeText(workflow.description), 120));
         const runnerLabel = escapeHtml(getWorkflowRunnerLabel(workflow));
         const triggerLabel = escapeHtml(getWorkflowTriggerLabel(workflow));
-        const lastRunStatus = workflow.last_run_status ? buildStatusBadge(workflow.last_run_status) : '<span class="text-muted small">Never run</span>';
-        const lastRunAt = workflow.last_run_at
-            ? `<div class="small text-muted mt-1">${escapeHtml(formatDateTime(workflow.last_run_at))}</div>`
+        const displayStatus = getWorkflowDisplayStatus(workflow);
+        const lastRunStatus = displayStatus ? buildStatusBadge(displayStatus) : '<span class="text-muted small">Never run</span>';
+        const runTimestamp = getWorkflowRunTimestamp(workflow);
+        const lastRunAt = runTimestamp
+            ? `<div class="small text-muted mt-1">${escapeHtml(formatDateTime(runTimestamp))}</div>`
             : "";
-        const lastRunPreview = normalizeText(workflow.last_run_response_preview)
+        const lastRunPreview = displayStatus === "running"
+            ? '<div class="workflow-meta text-primary mt-1">Run in progress. Open Activity to follow the live timeline.</div>'
+            : normalizeText(workflow.last_run_response_preview)
             ? `<div class="workflow-meta workflow-response-preview mt-1">${escapeHtml(truncateDescription(workflow.last_run_response_preview, 160))}</div>`
             : normalizeText(workflow.last_run_error)
                 ? `<div class="workflow-meta text-danger mt-1">${escapeHtml(truncateDescription(workflow.last_run_error, 120))}</div>`
@@ -323,8 +379,6 @@ function renderWorkflowTable(items) {
         const runnerMeta = workflow.runner_type === "agent"
             ? '<div class="workflow-meta mt-1">Uses your selected agent configuration.</div>'
             : '<div class="workflow-meta mt-1">Uses direct model execution.</div>';
-        const runDisabled = normalizeText(workflow.status).toLowerCase() === "running";
-
         return `
             <tr>
                 <td>
@@ -348,16 +402,70 @@ function renderWorkflowTable(items) {
                     ${lastRunPreview}
                 </td>
                 <td>
-                    <div class="d-flex flex-wrap gap-1 justify-content-start justify-content-xl-end">
-                        <button type="button" class="btn btn-sm btn-outline-primary" data-action="run" data-workflow-id="${escapeHtml(workflow.id)}" ${runDisabled ? "disabled" : ""}>${runDisabled ? "Running..." : "Run"}</button>
-                        <button type="button" class="btn btn-sm btn-outline-secondary" data-action="history" data-workflow-id="${escapeHtml(workflow.id)}">History</button>
-                        <button type="button" class="btn btn-sm btn-outline-dark" data-action="edit" data-workflow-id="${escapeHtml(workflow.id)}">Edit</button>
-                        <button type="button" class="btn btn-sm btn-outline-danger" data-action="delete" data-workflow-id="${escapeHtml(workflow.id)}">Delete</button>
-                    </div>
+                    ${buildWorkflowActionButtons(workflow)}
                 </td>
             </tr>
         `;
     }).join("");
+}
+
+function renderWorkflowGrid(items) {
+    if (!workflowsGridView) {
+        return;
+    }
+
+    if (!items.length) {
+        workflowsGridView.innerHTML = `<div class="col-12 text-center text-muted py-4">${escapeHtml(workflows.length ? "No workflows match the current search." : "No workflows created yet.")}</div>`;
+        return;
+    }
+
+    workflowsGridView.innerHTML = items.map((workflow) => {
+        const workflowName = escapeHtml(normalizeText(workflow.name) || "Untitled Workflow");
+        const description = escapeHtml(truncateDescription(normalizeText(workflow.description) || "No description available.", 180));
+        const displayStatus = getWorkflowDisplayStatus(workflow);
+        const statusBadge = displayStatus ? buildStatusBadge(displayStatus) : '<span class="text-muted small">Never run</span>';
+        const runTimestamp = getWorkflowRunTimestamp(workflow);
+        const previewText = displayStatus === "running"
+            ? "Run in progress. Open Activity to follow the live timeline."
+            : normalizeText(workflow.last_run_response_preview) || normalizeText(workflow.last_run_error) || "No recent response preview available.";
+        const runnerLabel = escapeHtml(getWorkflowRunnerLabel(workflow));
+        const triggerLabel = escapeHtml(getWorkflowTriggerLabel(workflow));
+        const alertLabel = escapeHtml(getWorkflowAlertLabel(workflow));
+
+        return `
+            <div class="col-12 col-md-6 col-xl-4">
+                <div class="card item-card workflow-item-card h-100">
+                    <div class="card-body d-flex flex-column">
+                        <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+                            <div class="item-card-icon mb-0"><i class="bi bi-diagram-3"></i></div>
+                            ${statusBadge}
+                        </div>
+                        <h6 class="card-title mb-2">${workflowName}</h6>
+                        <p class="card-text small text-muted mb-3">${description}</p>
+                        <div class="workflow-grid-meta mb-3">
+                            <div class="workflow-grid-meta-row"><span>Runner</span><span>${runnerLabel}</span></div>
+                            <div class="workflow-grid-meta-row"><span>Trigger</span><span>${triggerLabel}</span></div>
+                            <div class="workflow-grid-meta-row"><span>Alert</span><span>${alertLabel}</span></div>
+                            <div class="workflow-grid-meta-row"><span>Last Run</span><span>${runTimestamp ? escapeHtml(formatDateTime(runTimestamp)) : "Never run"}</span></div>
+                        </div>
+                        <div class="workflow-grid-preview small text-muted mb-3">${escapeHtml(truncateDescription(previewText, 170))}</div>
+                        <div class="workflow-grid-actions mt-auto">
+                            ${buildWorkflowActionButtons(workflow)}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join("");
+}
+
+function renderWorkflowViews(items) {
+    if (!items.length) {
+        renderWorkflowEmptyState(workflows.length ? "No workflows match the current search." : "No workflows created yet.");
+    } else {
+        renderWorkflowTable(items);
+        renderWorkflowGrid(items);
+    }
 
     refreshWorkflowSummary(items);
 }
@@ -365,12 +473,13 @@ function renderWorkflowTable(items) {
 function filterWorkflows() {
     const searchTerm = normalizeText(workflowsSearchInput?.value).toLowerCase();
     if (!searchTerm) {
-        renderWorkflowTable(workflows);
+        filteredWorkflows = [...workflows];
+        renderWorkflowViews(filteredWorkflows);
         return;
     }
 
-    const filteredWorkflows = workflows.filter((workflow) => buildWorkflowSearchText(workflow).includes(searchTerm));
-    renderWorkflowTable(filteredWorkflows);
+    filteredWorkflows = workflows.filter((workflow) => buildWorkflowSearchText(workflow).includes(searchTerm));
+    renderWorkflowViews(filteredWorkflows);
 }
 
 async function loadAgentOptions(forceRefresh = false) {
@@ -865,8 +974,8 @@ function renderRunHistory(runs) {
         const conversationLink = conversationUrl
             ? `
                 <div class="d-flex flex-wrap gap-2">
-                    <a class="btn btn-sm btn-outline-primary" href="${escapeHtml(conversationUrl)}">Open workflow conversation</a>
-                    <a class="btn btn-sm btn-outline-secondary" href="${escapeHtml(activityUrl)}" target="_blank" rel="noopener">Open activity view</a>
+                    <a class="btn btn-sm btn-outline-primary" href="${escapeHtml(conversationUrl)}"><i class="bi bi-chat-dots-fill me-1"></i>Open workflow conversation</a>
+                    <a class="btn btn-sm btn-outline-info" href="${escapeHtml(activityUrl)}" target="_blank" rel="noopener"><i class="bi bi-activity me-1"></i>Open activity view</a>
                 </div>
                 <div class="small text-muted mt-1">${escapeHtml(conversationId)}</div>
             `
@@ -921,16 +1030,33 @@ async function openHistoryModalForWorkflow(workflow) {
     }
 }
 
-async function runWorkflow(workflow, button) {
+function openWorkflowActivity(workflow) {
+    const activityState = getWorkflowActivityState(workflow);
+    if (!activityState.isAvailable || !activityState.url) {
+        return;
+    }
+
+    const activityWindow = window.open(activityState.url, "_blank", "noopener");
+    if (!activityWindow) {
+        window.location.href = activityState.url;
+    }
+}
+
+async function runWorkflow(workflow) {
     if (!workflow) {
         return;
     }
 
-    const originalText = button?.textContent || "Run";
-    if (button) {
-        button.disabled = true;
-        button.textContent = "Running...";
-    }
+    const previousRuntimeFields = {
+        status: workflow.status,
+        last_run_status: workflow.last_run_status,
+        last_run_started_at: workflow.last_run_started_at,
+    };
+
+    workflow.status = "running";
+    workflow.last_run_status = "running";
+    workflow.last_run_started_at = new Date().toISOString();
+    filterWorkflows();
 
     try {
         const response = await fetch(`/api/user/workflows/${encodeURIComponent(workflow.id)}/run`, {
@@ -955,13 +1081,12 @@ async function runWorkflow(workflow, button) {
             await openHistoryModalForWorkflow(refreshedWorkflow);
         }
     } catch (error) {
+        workflow.status = previousRuntimeFields.status;
+        workflow.last_run_status = previousRuntimeFields.last_run_status;
+        workflow.last_run_started_at = previousRuntimeFields.last_run_started_at;
+        filterWorkflows();
         showToast(escapeHtml(error.message || "Workflow run failed."), "danger");
         await fetchUserWorkflows();
-    } finally {
-        if (button) {
-            button.disabled = false;
-            button.textContent = originalText;
-        }
     }
 }
 
@@ -1011,7 +1136,7 @@ function findWorkflowById(workflowId) {
     return workflows.find((workflow) => normalizeText(workflow.id) === normalizeText(workflowId)) || null;
 }
 
-function handleWorkflowTableClick(event) {
+function handleWorkflowActionClick(event) {
     const button = event.target.closest("button[data-action]");
     if (!button) {
         return;
@@ -1024,7 +1149,9 @@ function handleWorkflowTableClick(event) {
 
     const action = button.getAttribute("data-action");
     if (action === "run") {
-        runWorkflow(workflow, button);
+        runWorkflow(workflow);
+    } else if (action === "activity") {
+        openWorkflowActivity(workflow);
     } else if (action === "history") {
         openHistoryModalForWorkflow(workflow);
     } else if (action === "edit") {
@@ -1039,14 +1166,7 @@ async function fetchUserWorkflows() {
         return [];
     }
 
-    workflowsTableBody.innerHTML = `
-        <tr class="table-loading-row">
-            <td colspan="5">
-                <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
-                Loading workflows...
-            </td>
-        </tr>
-    `;
+    renderWorkflowEmptyState("Loading workflows...");
 
     try {
         const response = await fetch("/api/user/workflows", {
@@ -1078,7 +1198,8 @@ function initializeWorkflowEvents() {
         openWorkflowModal();
     });
     workflowsSearchInput?.addEventListener("input", filterWorkflows);
-    workflowsTableBody.addEventListener("click", handleWorkflowTableClick);
+    workflowsTableBody.addEventListener("click", handleWorkflowActionClick);
+    workflowsGridView?.addEventListener("click", handleWorkflowActionClick);
     workflowForm?.addEventListener("submit", saveWorkflow);
     workflowDeleteConfirmBtn?.addEventListener("click", deleteWorkflow);
     workflowRunnerTypeSelect?.addEventListener("change", updateRunnerFields);
@@ -1097,6 +1218,10 @@ function initializeWorkflowEvents() {
             workflowDeleteConfirmBtn.disabled = false;
             workflowDeleteConfirmBtn.textContent = "Delete Workflow";
         }
+    });
+
+    setupViewToggle("workflows", "workflowsViewPreference", (mode) => {
+        switchViewContainers(mode, workflowsListView, workflowsGridView);
     });
 }
 
