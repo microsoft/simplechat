@@ -4,6 +4,17 @@
     --workflow-activity-surface: rgba(255, 255, 255, 0.94);
     --workflow-activity-border: rgba(15, 23, 42, 0.08);
     --workflow-activity-shadow: 0 22px 50px rgba(15, 23, 42, 0.08);
+    --workflow-activity-viewport-height: auto;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 1.5rem;
+    min-height: var(--workflow-activity-viewport-height);
+    height: var(--workflow-activity-viewport-height);
+    overflow: hidden;
+}
+
+.workflow-activity-hero-wrap {
+    min-height: 0;
 }
 
 .workflow-activity-hero,
@@ -68,6 +79,14 @@
     border: 1px solid rgba(31, 41, 55, 0.08);
 }
 
+.workflow-activity-response-toggle-icon {
+    transition: transform 0.18s ease;
+}
+
+.workflow-activity-response-toggle[aria-expanded="true"] .workflow-activity-response-toggle-icon {
+    transform: rotate(180deg);
+}
+
 .workflow-activity-response-title {
     font-size: 0.82rem;
     text-transform: uppercase;
@@ -87,7 +106,60 @@
     display: grid;
     grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.85fr);
     gap: 1.5rem;
-    align-items: start;
+    align-items: stretch;
+    min-height: 0;
+}
+
+.workflow-activity-timeline-panel,
+.workflow-activity-detail-panel {
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
+}
+
+.workflow-activity-panel-body,
+.workflow-activity-detail-body {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    min-height: 0;
+    height: 100%;
+}
+
+.workflow-activity-timeline-viewport {
+    min-height: 0;
+    height: 100%;
+    max-height: 100%;
+    overflow-y: scroll;
+    overflow-x: hidden;
+    padding-right: 0.3rem;
+    padding-bottom: 0.5rem;
+    scroll-behavior: smooth;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(31, 111, 235, 0.35) rgba(15, 23, 42, 0.06);
+}
+
+.workflow-activity-timeline-viewport::-webkit-scrollbar,
+.workflow-activity-event-history::-webkit-scrollbar {
+    width: 0.75rem;
+}
+
+.workflow-activity-timeline-viewport::-webkit-scrollbar-track,
+.workflow-activity-event-history::-webkit-scrollbar-track {
+    background: rgba(15, 23, 42, 0.05);
+    border-radius: 999px;
+}
+
+.workflow-activity-timeline-viewport::-webkit-scrollbar-thumb,
+.workflow-activity-event-history::-webkit-scrollbar-thumb {
+    background: rgba(31, 111, 235, 0.32);
+    border-radius: 999px;
+    border: 2px solid rgba(255, 255, 255, 0.75);
+}
+
+.workflow-activity-timeline-viewport::-webkit-scrollbar-thumb:hover,
+.workflow-activity-event-history::-webkit-scrollbar-thumb:hover {
+    background: rgba(31, 111, 235, 0.5);
 }
 
 .workflow-activity-timeline {
@@ -265,8 +337,10 @@
 }
 
 .workflow-activity-detail-sticky {
-    position: sticky;
-    top: 1rem;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    height: 100%;
 }
 
 .workflow-activity-detail-meta {
@@ -286,6 +360,13 @@
     padding: 1rem 1rem 1.1rem;
     background: rgba(248, 250, 252, 0.88);
     border: 1px solid rgba(15, 23, 42, 0.07);
+}
+
+.workflow-activity-event-history-block {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    flex: 1 1 auto;
 }
 
 .workflow-activity-detail-label {
@@ -309,6 +390,11 @@
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 0.2rem;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(31, 111, 235, 0.3) rgba(15, 23, 42, 0.05);
 }
 
 .workflow-activity-event-item {
@@ -344,12 +430,18 @@
 }
 
 @media (max-width: 991.98px) {
+    .workflow-activity-page {
+        min-height: auto;
+        height: auto;
+        overflow: visible;
+    }
+
     .workflow-activity-layout {
         grid-template-columns: 1fr;
     }
 
-    .workflow-activity-detail-sticky {
-        position: static;
+    .workflow-activity-timeline-viewport {
+        max-height: 50vh;
     }
 }
 

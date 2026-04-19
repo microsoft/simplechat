@@ -4,15 +4,24 @@ const pageState = {
     snapshot: null,
     selectedActivityId: "",
     eventSource: null,
+    followLatest: true,
+    timelinePinnedToLatest: true,
+    responseExpanded: false,
 };
 
+const BOTTOM_SCROLL_THRESHOLD = 24;
+
+const pageEl = document.querySelector(".workflow-activity-page");
 const titleEl = document.getElementById("workflow-activity-title");
 const statusEl = document.getElementById("workflow-activity-status");
 const captionEl = document.getElementById("workflow-activity-caption");
 const conversationLinkEl = document.getElementById("workflow-activity-conversation-link");
+const responseToggleBtn = document.getElementById("workflow-activity-response-toggle");
+const responseToggleLabelEl = document.getElementById("workflow-activity-response-toggle-label");
 const refreshBtn = document.getElementById("workflow-activity-refresh-btn");
 const responseEl = document.getElementById("workflow-activity-response");
 const emptyEl = document.getElementById("workflow-activity-empty");
+const timelineViewportEl = document.getElementById("workflow-activity-timeline-viewport");
 const timelineEl = document.getElementById("workflow-activity-timeline");
 const detailTitleEl = document.getElementById("workflow-activity-detail-title");
 const detailMetaEl = document.getElementById("workflow-activity-detail-meta");
@@ -106,6 +115,50 @@ function buildConversationUrl(conversationId) {
     return `/chats?conversationId=${encodeURIComponent(normalizedConversationId)}`;
 }
 
+function buildResponseToggleLabel(heading) {
+    const normalizedHeading = normalizeText(heading).toLowerCase() || "response preview";
+    return `${pageState.responseExpanded ? "Hide" : "Show"} ${normalizedHeading}`;
+}
+
+function syncResponseBlockVisibility() {
+    if (!responseEl) {
+        return;
+    }
+
+    const hasContent = responseEl.dataset.hasContent === "true";
+    const responseHeading = responseEl.dataset.heading || "Response Preview";
+
+    responseEl.classList.toggle("d-none", !hasContent || !pageState.responseExpanded);
+
+    if (responseToggleBtn) {
+        responseToggleBtn.classList.toggle("d-none", !hasContent);
+        responseToggleBtn.setAttribute("aria-expanded", hasContent && pageState.responseExpanded ? "true" : "false");
+    }
+
+    if (responseToggleLabelEl) {
+        responseToggleLabelEl.textContent = buildResponseToggleLabel(responseHeading);
+    }
+
+    syncViewportHeight();
+}
+
+function syncViewportHeight() {
+    if (!pageEl || window.innerWidth <= 991) {
+        if (pageEl) {
+            pageEl.style.removeProperty("--workflow-activity-viewport-height");
+        }
+        return;
+    }
+
+    const topOffset = Math.max(pageEl.getBoundingClientRect().top, 0);
+    const viewportHeight = Math.max(560, Math.floor(window.innerHeight - topOffset - 16));
+    pageEl.style.setProperty("--workflow-activity-viewport-height", `${viewportHeight}px`);
+
+    if (pageState.timelinePinnedToLatest) {
+        scrollTimelineToNewest();
+    }
+}
+
 function buildStatusBadge(status) {
     const normalizedStatus = normalizeText(status).toLowerCase() || "idle";
     const label = normalizedStatus === "running"
@@ -158,17 +211,22 @@ function updateResponseBlock(run) {
     }
 
     if (!errorText && !previewText) {
-        responseEl.classList.add("d-none");
+        pageState.responseExpanded = false;
+        responseEl.dataset.hasContent = "false";
+        responseEl.dataset.heading = "Response Preview";
         responseEl.innerHTML = "";
+        syncResponseBlockVisibility();
         return;
     }
 
     const heading = errorText ? "Run Error" : "Response Preview";
+    responseEl.dataset.hasContent = "true";
+    responseEl.dataset.heading = heading;
     responseEl.innerHTML = `
         <div class="workflow-activity-response-title">${escapeHtml(heading)}</div>
         <p class="workflow-activity-response-text mb-0">${escapeHtml(errorText || previewText)}</p>
     `;
-    responseEl.classList.remove("d-none");
+    syncResponseBlockVisibility();
 }
 
 function renderHeader(snapshot) {
@@ -282,6 +340,34 @@ function renderTimeline(snapshot) {
     });
 }
 
+function scrollTimelineToNewest() {
+    if (!timelineViewportEl) {
+        return;
+    }
+
+    window.requestAnimationFrame(() => {
+        const lastTimelineRow = timelineEl?.lastElementChild || null;
+        if (lastTimelineRow) {
+            lastTimelineRow.scrollIntoView({
+                behavior: "smooth",
+                block: "end",
+            });
+            return;
+        }
+
+        timelineViewportEl.scrollTop = timelineViewportEl.scrollHeight;
+    });
+}
+
+function isTimelineNearBottom() {
+    if (!timelineViewportEl) {
+        return true;
+    }
+
+    const remainingDistance = timelineViewportEl.scrollHeight - timelineViewportEl.scrollTop - timelineViewportEl.clientHeight;
+    return remainingDistance <= BOTTOM_SCROLL_THRESHOLD;
+}
+
 function renderDetailMeta(activity) {
     if (!detailMetaEl) {
         return;
@@ -363,6 +449,12 @@ function getSelectedActivity(snapshot) {
         return null;
     }
 
+    if (pageState.followLatest) {
+        const latestActivity = activities[activities.length - 1];
+        pageState.selectedActivityId = normalizeText(latestActivity.id);
+        return latestActivity;
+    }
+
     const selectedActivity = activities.find(activity => normalizeText(activity.id) === pageState.selectedActivityId);
     if (selectedActivity) {
         return selectedActivity;
@@ -384,6 +476,9 @@ function applySnapshot(snapshot) {
     renderHeader(pageState.snapshot);
     renderTimeline(pageState.snapshot);
     renderSelectedActivity(getSelectedActivity(pageState.snapshot));
+    if (pageState.timelinePinnedToLatest && pageState.snapshot?.live !== false) {
+        scrollTimelineToNewest();
+    }
     toggleEventStream();
 }
 
@@ -392,6 +487,10 @@ function selectActivity(activityId) {
     if (!pageState.snapshot) {
         return;
     }
+
+    const activities = Array.isArray(pageState.snapshot.activities) ? pageState.snapshot.activities : [];
+    const latestActivityId = activities.length ? normalizeText(activities[activities.length - 1].id) : "";
+    pageState.followLatest = pageState.selectedActivityId === latestActivityId;
 
     renderTimeline(pageState.snapshot);
     renderSelectedActivity(getSelectedActivity(pageState.snapshot));
@@ -410,14 +509,17 @@ async function loadSnapshot() {
 }
 
 function shouldListenForUpdates(snapshot) {
-    const hasConversationId = Boolean(getQueryParam("conversationId"));
-    const hasExplicitRunId = Boolean(getQueryParam("runId"));
-    if (!hasConversationId || hasExplicitRunId || typeof EventSource === "undefined") {
+    const hasAnyIdentifier = Boolean(getQueryParam("conversationId") || getQueryParam("workflowId") || getQueryParam("runId"));
+    if (!hasAnyIdentifier || typeof EventSource === "undefined") {
         return false;
     }
 
     const run = snapshot?.run || null;
-    return !run || normalizeText(run.status).toLowerCase() === "running";
+    if (!run) {
+        return true;
+    }
+
+    return Boolean(snapshot?.live) || normalizeText(run.status).toLowerCase() === "running";
 }
 
 function stopEventStream() {
@@ -464,6 +566,7 @@ function toggleEventStream() {
 }
 
 async function initializePage() {
+    syncViewportHeight();
     const hasAnyIdentifier = Boolean(getQueryParam("conversationId") || getQueryParam("workflowId") || getQueryParam("runId"));
     if (!hasAnyIdentifier) {
         applySnapshot({
@@ -506,14 +609,33 @@ async function initializePage() {
 
 if (refreshBtn) {
     refreshBtn.addEventListener("click", () => {
+        pageState.followLatest = true;
+        pageState.timelinePinnedToLatest = true;
         initializePage().catch(error => {
             console.warn("Workflow activity refresh failed", error);
         });
     });
 }
 
+if (responseToggleBtn) {
+    responseToggleBtn.addEventListener("click", () => {
+        pageState.responseExpanded = !pageState.responseExpanded;
+        syncResponseBlockVisibility();
+    });
+}
+
+if (timelineViewportEl) {
+    timelineViewportEl.addEventListener("scroll", () => {
+        pageState.timelinePinnedToLatest = isTimelineNearBottom();
+    }, { passive: true });
+}
+
 window.addEventListener("beforeunload", () => {
     stopEventStream();
+});
+
+window.addEventListener("resize", () => {
+    syncViewportHeight();
 });
 
 window.addEventListener("DOMContentLoaded", () => {

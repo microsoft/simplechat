@@ -122,7 +122,7 @@ def _stream_workflow_activity(user_id, conversation_id='', workflow_id='', run_i
     last_payload = None
     terminal_snapshots_seen = 0
 
-    yield 'retry: 1500\n\n'
+    yield 'retry: 750\n\n'
 
     for _ in range(300):
         snapshot = _resolve_workflow_activity_context(
@@ -147,7 +147,7 @@ def _stream_workflow_activity(user_id, conversation_id='', workflow_id='', run_i
         else:
             terminal_snapshots_seen = 0
 
-        time.sleep(1)
+        time.sleep(0.5)
 
 
 def register_route_backend_workflows(app):

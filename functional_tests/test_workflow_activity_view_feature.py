@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for workflow activity view snapshot aggregation.
-Version: 0.241.039
-Implemented in: 0.241.039
+Version: 0.241.042
+Implemented in: 0.241.040
 
 This test ensures that workflow activity snapshots merge lifecycle events,
 preserve branch lanes for tool calls, and fall back to a summary card for
@@ -195,8 +195,82 @@ def test_legacy_run_fallback():
     return True
 
 
+def test_running_snapshot_live_flag():
+    print("Testing workflow activity live snapshot behavior...")
+
+    snapshot = build_workflow_activity_snapshot(
+        run_record={
+            "id": "running-run-1",
+            "workflow_id": WORKFLOW_ID,
+            "workflow_name": "Security Events",
+            "status": "running",
+            "success": False,
+            "started_at": "2025-01-03T00:00:00+00:00",
+            "completed_at": None,
+            "conversation_id": CONVERSATION_ID,
+            "assistant_message_id": "assistant-message-2",
+        },
+        workflow={
+            "id": WORKFLOW_ID,
+            "name": "Security Events",
+        },
+        conversation={
+            "id": CONVERSATION_ID,
+            "title": "Workflow: Security Events",
+            "chat_type": "workflow",
+        },
+        thoughts=[
+            {
+                "id": "thought-running-1",
+                "step_index": 0,
+                "step_type": "workflow",
+                "content": "Workflow run started",
+                "detail": "trigger_source=manual",
+                "timestamp": "2025-01-03T00:00:00+00:00",
+                "duration_ms": None,
+                "activity": {
+                    "activity_key": "run:running-run-1",
+                    "workflow_id": WORKFLOW_ID,
+                    "run_id": "running-run-1",
+                    "kind": "workflow_run",
+                    "title": "Workflow run",
+                    "status": "running",
+                    "lane_key": "main",
+                    "lane_label": "Main",
+                },
+            },
+            {
+                "id": "thought-running-2",
+                "step_index": 1,
+                "step_type": "agent_tool_call",
+                "content": "Invoking SecurityPlugin.fetch_events",
+                "detail": "severity=high",
+                "timestamp": "2025-01-03T00:00:01+00:00",
+                "duration_ms": None,
+                "activity": {
+                    "activity_key": "plugin-running-1",
+                    "workflow_id": WORKFLOW_ID,
+                    "run_id": "running-run-1",
+                    "kind": "tool_invocation",
+                    "title": "SecurityPlugin.fetch_events",
+                    "status": "running",
+                    "lane_key": "SecurityPlugin",
+                    "lane_label": "SecurityPlugin",
+                },
+            },
+        ],
+    )
+
+    assert_equal(snapshot["live"], True, "live snapshot state")
+    assert_equal(snapshot["activities"][-1]["status"], "running", "latest activity status")
+    assert_equal(snapshot["activities"][-1]["lane_index"], 1, "running tool lane index")
+
+    print("Workflow activity live snapshot behavior passed.")
+    return True
+
+
 if __name__ == "__main__":
-    tests = [test_activity_merging, test_legacy_run_fallback]
+    tests = [test_activity_merging, test_legacy_run_fallback, test_running_snapshot_live_flag]
     results = []
 
     for test in tests:

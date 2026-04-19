@@ -8,8 +8,9 @@
 
 {% block content %}
 <div class="workflow-activity-page py-4">
-    <div class="workflow-activity-hero card border-0 mb-4">
-        <div class="card-body p-4 p-lg-5">
+    <div class="workflow-activity-hero-wrap">
+        <div class="workflow-activity-hero card border-0">
+            <div class="card-body p-4 p-lg-5">
             <div class="d-flex flex-column flex-lg-row align-items-start justify-content-between gap-3">
                 <div class="flex-grow-1 min-w-0">
                     <div class="workflow-activity-kicker">Workflow Activity</div>
@@ -22,6 +23,10 @@
                     </p>
                 </div>
                 <div class="workflow-activity-actions d-flex flex-wrap gap-2">
+                    <button id="workflow-activity-response-toggle" type="button" class="btn btn-outline-secondary d-none" aria-expanded="false" aria-controls="workflow-activity-response">
+                        <i class="bi bi-chevron-down workflow-activity-response-toggle-icon" aria-hidden="true"></i>
+                        <span id="workflow-activity-response-toggle-label">Show response preview</span>
+                    </button>
                     <a id="workflow-activity-conversation-link" class="btn btn-outline-primary d-none" href="#">Open workflow conversation</a>
                     <button id="workflow-activity-refresh-btn" type="button" class="btn btn-outline-secondary">Refresh</button>
                 </div>
@@ -53,29 +58,32 @@
                 </div>
             </div>
             <div id="workflow-activity-response" class="workflow-activity-response d-none mt-4"></div>
+            </div>
         </div>
     </div>
 
     <div class="workflow-activity-layout">
         <section class="workflow-activity-timeline-panel card border-0">
-            <div class="card-body p-4">
+            <div class="card-body p-4 workflow-activity-panel-body">
                 <div class="d-flex align-items-center justify-content-between gap-2 mb-3">
                     <div>
                         <h2 class="h5 mb-1">Timeline</h2>
                         <p class="text-muted small mb-0">Live events roll in here while a workflow run is active.</p>
                     </div>
                 </div>
-                <div id="workflow-activity-empty" class="workflow-activity-empty d-none">
-                    <div class="workflow-activity-empty-icon"><i class="bi bi-clock-history"></i></div>
-                    <h3 class="h5 mb-2">No activity yet</h3>
-                    <p class="text-muted mb-0">This conversation does not have a captured workflow run yet, or the run completed before activity tracking was available.</p>
+                <div id="workflow-activity-timeline-viewport" class="workflow-activity-timeline-viewport">
+                    <div id="workflow-activity-empty" class="workflow-activity-empty d-none">
+                        <div class="workflow-activity-empty-icon"><i class="bi bi-clock-history"></i></div>
+                        <h3 class="h5 mb-2">No activity yet</h3>
+                        <p class="text-muted mb-0">This conversation does not have a captured workflow run yet, or the run completed before activity tracking was available.</p>
+                    </div>
+                    <div id="workflow-activity-timeline" class="workflow-activity-timeline" aria-live="polite"></div>
                 </div>
-                <div id="workflow-activity-timeline" class="workflow-activity-timeline" aria-live="polite"></div>
             </div>
         </section>
 
         <aside class="workflow-activity-detail-panel card border-0">
-            <div class="card-body p-4">
+            <div class="card-body p-4 workflow-activity-detail-body">
                 <div class="workflow-activity-detail-sticky">
                     <div class="workflow-activity-detail-kicker">Details</div>
                     <h2 id="workflow-activity-detail-title" class="h4 mb-2">Select an activity</h2>
@@ -87,7 +95,7 @@
                         <div class="workflow-activity-detail-label">Technical Detail</div>
                         <pre id="workflow-activity-detail-text" class="workflow-activity-detail-text mb-0">No activity selected.</pre>
                     </div>
-                    <div class="workflow-activity-detail-block">
+                    <div class="workflow-activity-detail-block workflow-activity-event-history-block">
                         <div class="workflow-activity-detail-label">Event History</div>
                         <div id="workflow-activity-event-history" class="workflow-activity-event-history text-muted">
                             Select an activity to inspect its event history.
