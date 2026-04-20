@@ -8,6 +8,10 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### Bug Fixes
 
+*   **Requests Runtime Dependency Upgrade**
+    *   Updated the runtime HTTP client dependency from `requests==2.33.0` to `requests==2.33.1` in the main application requirements to keep deployment environments aligned with the latest pinned patch release.
+    *   (Ref: `application/single_app/requirements.txt`)
+
 *   **Speech and Video Indexer Setup Guidance Alignment**
     *   Fixed stale admin guidance around Azure AI Video Indexer and shared Azure Speech configuration so managed-identity setup no longer points admins toward legacy Video Indexer API keys or incomplete Speech instructions.
     *   The admin experience now reflects the shared Speech resource model, adds Speech Resource ID helper fields, and keeps managed-identity voice-response requirements aligned with runtime behavior.
