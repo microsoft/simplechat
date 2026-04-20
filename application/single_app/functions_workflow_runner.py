@@ -1,5 +1,4 @@
 # functions_workflow_runner.py
-
 """
 Workflow execution helpers for personal workflows.
 """
@@ -43,6 +42,7 @@ from functions_collaboration import (
 )
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
 from functions_message_artifacts import (
+    build_agent_citation_tool_label,
     build_agent_citation_artifact_documents,
     make_json_serializable,
 )
@@ -135,8 +135,14 @@ def _build_agent_citations_from_invocations(user_id, conversation_id):
     detailed_citations = []
 
     for invocation in plugin_invocations:
+        tool_name = build_agent_citation_tool_label(
+            invocation.plugin_name,
+            invocation.function_name,
+            invocation.parameters,
+            invocation.result,
+        )
         detailed_citations.append({
-            'tool_name': f'{invocation.plugin_name}.{invocation.function_name}',
+            'tool_name': tool_name,
             'function_name': invocation.function_name,
             'plugin_name': invocation.plugin_name,
             'function_arguments': make_json_serializable(invocation.parameters),
@@ -518,6 +524,374 @@ def _select_preferred_workflow_alert_targets(targets):
     return selected_targets
 
 
+def _strip_workflow_alert_markdown(text):
+    normalized_text = str(text or '').strip()
+    if not normalized_text:
+        return ''
+
+    normalized_text = re.sub(r'\[([^\]]+)\]\([^\)]*\)', r'\1', normalized_text)
+    normalized_text = re.sub(r'[*_`#>~]+', '', normalized_text)
+    normalized_text = re.sub(r'\s+', ' ', normalized_text)
+    return normalized_text.strip(' \t-:;,')
+
+
+def _normalize_workflow_alert_title_text(text, max_length=110):
+    normalized_text = _strip_workflow_alert_markdown(text)
+    if not normalized_text:
+        return ''
+
+    normalized_text = re.sub(
+        r'^\s*eguardian\s*alert\s*[:,-]?\s*',
+        'eGuardian Alert, ',
+        normalized_text,
+        flags=re.IGNORECASE,
+    )
+    normalized_text = re.sub(
+        r'^\s*eguardian\s*[:,-]\s*',
+        'eGuardian Alert, ',
+        normalized_text,
+        flags=re.IGNORECASE,
+    )
+    normalized_text = re.sub(r'\s+', ' ', normalized_text).strip(' ,;:-')
+    if len(normalized_text) > max_length:
+        normalized_text = f"{normalized_text[:max_length - 3].rstrip(' ,;:-')}..."
+    return normalized_text
+
+
+def _extract_workflow_alert_event_title(text, max_length=90):
+    normalized_text = _strip_workflow_alert_markdown(text)
+    if not normalized_text:
+        return ''
+
+    numbered_match = re.search(r'(?:^|\s)\d+\.\s*([^\-:.]{3,90}?)(?=\s+-|\.|:|$)', normalized_text)
+    if numbered_match:
+        return _normalize_workflow_alert_title_text(numbered_match.group(1), max_length=max_length)
+
+    heading_match = re.search(r"^([A-Z][A-Za-z0-9/&()'\s]{5,90}?)(?=\s+-|:|\.)", normalized_text)
+    if heading_match:
+        return _normalize_workflow_alert_title_text(heading_match.group(1), max_length=max_length)
+
+    return ''
+
+
+def _build_workflow_alert_citation_label(citation):
+    if not isinstance(citation, dict):
+        return ''
+
+    explicit_label = str(citation.get('tool_name') or '').strip()
+    if explicit_label:
+        return explicit_label
+
+    return build_agent_citation_tool_label(
+        citation.get('plugin_name'),
+        citation.get('function_name'),
+        citation.get('function_arguments'),
+        citation.get('function_result'),
+    )
+
+
+def _get_workflow_alert_enrichment_priority(citation):
+    function_name = str((citation or {}).get('function_name') or '').strip()
+    priority_map = {
+        'create_group_conversation': 100,
+        'create_personal_collaboration_conversation': 100,
+        'create_personal_conversation': 100,
+        'create_calendar_invite': 95,
+        'create_map_visualization': 90,
+        'upload_markdown_document': 85,
+        'create_group': 80,
+        'invite_group_conversation_members': 75,
+        'mark_message_as_read': 70,
+        'get_my_messages': 40,
+        'search_users': 30,
+        'get_user_by_email': 30,
+    }
+    return priority_map.get(function_name, 10)
+
+
+def _build_workflow_alert_enrichment_labels(agent_citations):
+    ranked_labels = []
+    seen_labels = set()
+
+    for index, citation in enumerate(agent_citations or []):
+        if not isinstance(citation, dict):
+            continue
+        if citation.get('success') is False:
+            continue
+
+        function_name = str(citation.get('function_name') or '').strip()
+        if function_name == 'add_conversation_message':
+            continue
+
+        label = _normalize_workflow_alert_text(_build_workflow_alert_citation_label(citation))
+        if not label:
+            continue
+
+        dedupe_key = label.lower()
+        if dedupe_key in seen_labels:
+            continue
+
+        seen_labels.add(dedupe_key)
+        ranked_labels.append((
+            _get_workflow_alert_enrichment_priority(citation),
+            index,
+            label,
+        ))
+
+    ranked_labels.sort(key=lambda item: (-item[0], item[1]))
+    return [item[2] for item in ranked_labels]
+
+
+def _extract_workflow_alert_subject(alert_title):
+    normalized_title = _normalize_workflow_alert_title_text(alert_title)
+    if not normalized_title:
+        return ''
+
+    normalized_title = re.sub(
+        r'^\s*eguardian\s*alert,\s*',
+        '',
+        normalized_title,
+        flags=re.IGNORECASE,
+    )
+    return normalized_title.strip(' ,;:-')
+
+
+def _build_workflow_alert_action_plan(agent_citations):
+    action_plan = {
+        'summary_labels': [],
+        'ready_lines': [],
+        'support_lines': [],
+    }
+    seen_values = {
+        'summary_labels': set(),
+        'ready_lines': set(),
+        'support_lines': set(),
+    }
+
+    for citation in agent_citations or []:
+        if not isinstance(citation, dict) or citation.get('success') is False:
+            continue
+
+        function_name = str(citation.get('function_name') or '').strip()
+        function_result = citation.get('function_result') if isinstance(citation.get('function_result'), dict) else {}
+        citation_label = _normalize_workflow_alert_text(_build_workflow_alert_citation_label(citation))
+        summary_label = ''
+        ready_line = ''
+        support_line = ''
+
+        if function_name in {
+            'create_group_conversation',
+            'create_personal_collaboration_conversation',
+            'create_personal_conversation',
+        }:
+            summary_label = 'coordination conversation'
+            ready_line = 'Coordination conversation created'
+        elif function_name == 'create_calendar_invite':
+            is_teams_briefing = (
+                str(function_result.get('meeting_type') or '').strip().lower() == 'teams'
+                or 'teams' in citation_label.lower()
+            )
+            summary_label = 'Teams briefing' if is_teams_briefing else 'briefing invite'
+            ready_line = 'Teams briefing prepared' if is_teams_briefing else 'Briefing invite prepared'
+        elif function_name == 'create_map_visualization':
+            summary_label = 'travel map'
+            ready_line = 'Travel map generated'
+        elif function_name == 'upload_markdown_document':
+            support_line = 'Briefing document saved'
+        elif function_name == 'invite_group_conversation_members':
+            support_line = 'Participants invited'
+        else:
+            continue
+
+        if summary_label:
+            summary_key = summary_label.lower()
+            if summary_key not in seen_values['summary_labels']:
+                seen_values['summary_labels'].add(summary_key)
+                action_plan['summary_labels'].append(summary_label)
+        if ready_line:
+            ready_key = ready_line.lower()
+            if ready_key not in seen_values['ready_lines']:
+                seen_values['ready_lines'].add(ready_key)
+                action_plan['ready_lines'].append(ready_line)
+        if support_line:
+            support_key = support_line.lower()
+            if support_key not in seen_values['support_lines']:
+                seen_values['support_lines'].add(support_key)
+                action_plan['support_lines'].append(support_line)
+
+    return action_plan
+
+
+def _join_workflow_alert_labels(labels):
+    normalized_labels = [str(label or '').strip() for label in labels or [] if str(label or '').strip()]
+    if not normalized_labels:
+        return ''
+    if len(normalized_labels) == 1:
+        return normalized_labels[0]
+    if len(normalized_labels) == 2:
+        return f'{normalized_labels[0]} and {normalized_labels[1]}'
+    return f"{', '.join(normalized_labels[:-1])}, and {normalized_labels[-1]}"
+
+
+def _looks_like_workflow_alert_failure_text(text):
+    normalized_text = _normalize_workflow_alert_text(text).lower()
+    if not normalized_text:
+        return False
+
+    failure_markers = [
+        "i can't",
+        'i cannot',
+        "couldn't",
+        'could not',
+        'failed to',
+        'unable to',
+        'not able to',
+        'do not have access',
+        'permission',
+        'not supported',
+        'not reliably',
+    ]
+    return any(marker in normalized_text for marker in failure_markers)
+
+
+def _extract_workflow_alert_title_from_citations(agent_citations):
+    for conversation_doc in _extract_created_conversation_docs_from_citations(agent_citations):
+        conversation_title = str(conversation_doc.get('title') or '').strip()
+        if conversation_title:
+            return _normalize_workflow_alert_title_text(conversation_title)
+
+    for enrichment_label in _build_workflow_alert_enrichment_labels(agent_citations):
+        if ': ' not in enrichment_label:
+            continue
+        label_detail = enrichment_label.split(': ', 1)[1].strip()
+        if label_detail:
+            return _normalize_workflow_alert_title_text(label_detail)
+
+    return ''
+
+
+def _build_workflow_alert_action_summary(summary_labels):
+    normalized_labels = [str(label or '').strip() for label in summary_labels or [] if str(label or '').strip()]
+    if not normalized_labels:
+        return ''
+
+    summary_subset = normalized_labels[:3]
+    joined_labels = _join_workflow_alert_labels(summary_subset)
+    verb = 'is' if len(summary_subset) == 1 else 'are'
+    return f'{joined_labels[:1].upper()}{joined_labels[1:]} {verb} ready.'
+
+
+def _trim_workflow_alert_summary_text(text, max_length=180):
+    normalized_text = _normalize_workflow_alert_text(text)
+    if not normalized_text:
+        return ''
+    if len(normalized_text) <= max_length:
+        return normalized_text
+    return f'{normalized_text[:max_length - 3].rstrip()}...'
+
+
+def _build_workflow_alert_success_summary(alert_title, action_plan, response_preview, workflow_name, trigger_source):
+    alert_subject = _extract_workflow_alert_subject(alert_title)
+    action_summary = _build_workflow_alert_action_summary(action_plan.get('summary_labels') or [])
+
+    if alert_subject and action_summary:
+        return _trim_workflow_alert_summary_text(f'{alert_subject}. {action_summary}', max_length=180)
+    if alert_subject:
+        return _trim_workflow_alert_summary_text(alert_subject, max_length=180)
+    if action_summary:
+        return _trim_workflow_alert_summary_text(action_summary, max_length=180)
+
+    normalized_preview = _strip_workflow_alert_markdown(response_preview)
+    if normalized_preview and not _looks_like_workflow_alert_failure_text(normalized_preview):
+        return _summarize_workflow_alert_text(normalized_preview)
+
+    return _summarize_workflow_alert_text(
+        f'{workflow_name} completed from the {trigger_source} trigger.'
+    )
+
+
+def _build_workflow_alert_success_detail(alert_title, action_plan, response_preview, workflow_name, trigger_source):
+    alert_subject = _extract_workflow_alert_subject(alert_title)
+    ready_lines = list(action_plan.get('ready_lines') or [])
+    support_lines = list(action_plan.get('support_lines') or [])
+    detail_sections = []
+
+    if alert_subject:
+        detail_sections.append(f'Focus\n{alert_subject}')
+
+    if ready_lines:
+        ready_text = '\n- '.join(ready_lines[:4])
+        detail_sections.append(f'Ready now\n- {ready_text}')
+
+    if support_lines:
+        support_text = '\n- '.join(support_lines[:2])
+        detail_sections.append(f'Supporting items\n- {support_text}')
+
+    if detail_sections:
+        return '\n\n'.join(detail_sections)
+
+    normalized_preview = _strip_workflow_alert_markdown(response_preview)
+    if normalized_preview and not _looks_like_workflow_alert_failure_text(normalized_preview):
+        return normalized_preview
+
+    return _normalize_workflow_alert_text(
+        f'{workflow_name} completed from the {trigger_source} trigger.'
+    )
+
+
+def _build_workflow_alert_content(workflow, run_record, execution_result, priority):
+    execution_result = execution_result if isinstance(execution_result, dict) else {}
+    workflow_name = _normalize_workflow_alert_title_text(workflow.get('name') or 'Workflow') or 'Workflow'
+    trigger_source = str(run_record.get('trigger_source') or 'manual').strip() or 'manual'
+    success = bool(run_record.get('success'))
+    response_preview = _strip_workflow_alert_markdown(run_record.get('response_preview') or '')
+    reply_text = _strip_workflow_alert_markdown(execution_result.get('reply') or '')
+    error_text = _strip_workflow_alert_markdown(run_record.get('error') or '')
+    agent_citations = list(execution_result.get('agent_citations') or [])
+    enrichment_labels = _build_workflow_alert_enrichment_labels(agent_citations)
+    action_plan = _build_workflow_alert_action_plan(agent_citations)
+
+    alert_title = _extract_workflow_alert_title_from_citations(agent_citations)
+    if not alert_title:
+        alert_title = _extract_workflow_alert_event_title(reply_text or response_preview)
+    if not alert_title:
+        alert_title = workflow_name
+
+    if success:
+        alert_summary = _build_workflow_alert_success_summary(
+            alert_title,
+            action_plan,
+            response_preview or reply_text,
+            workflow_name,
+            trigger_source,
+        )
+        alert_detail = _build_workflow_alert_success_detail(
+            alert_title,
+            action_plan,
+            response_preview or reply_text,
+            workflow_name,
+            trigger_source,
+        )
+        notification_title = f'{priority.capitalize()} priority workflow alert: {alert_title}'
+    else:
+        failure_text = error_text or response_preview or reply_text or (
+            f'{workflow_name} failed from the {trigger_source} trigger.'
+        )
+        alert_summary = _summarize_workflow_alert_text(failure_text)
+        alert_detail = _normalize_workflow_alert_text(failure_text)
+        notification_title = f'{priority.capitalize()} priority workflow alert: {workflow_name} failed'
+
+    return {
+        'notification_title': notification_title,
+        'notification_message': alert_summary,
+        'alert_title': alert_title,
+        'alert_summary': alert_summary,
+        'alert_detail': alert_detail,
+        'event_title': alert_title,
+        'enrichment_labels': enrichment_labels,
+    }
+
+
 def _build_workflow_alert_target_from_conversation(conversation_doc, default_label='Open conversation'):
     conversation_doc = conversation_doc if isinstance(conversation_doc, dict) else {}
     conversation_id = str(conversation_doc.get('id') or '').strip()
@@ -595,7 +969,7 @@ def _create_workflow_priority_alert(workflow, run_record, conversation, executio
     try:
         user_id = str(workflow.get('user_id') or '').strip()
         workflow_id = str(workflow.get('id') or '').strip()
-        workflow_name = str(workflow.get('name') or 'Workflow').strip() or 'Workflow'
+        workflow_name = _normalize_workflow_alert_title_text(workflow.get('name') or 'Workflow') or 'Workflow'
         trigger_source = str(run_record.get('trigger_source') or 'manual').strip() or 'manual'
         workflow_targets = list(execution_result.get('alert_targets') or [])
         workflow_conversation_target = _build_workflow_alert_target_from_conversation(
@@ -607,21 +981,14 @@ def _create_workflow_priority_alert(workflow, run_record, conversation, executio
 
         workflow_targets = _select_preferred_workflow_alert_targets(workflow_targets)
         primary_target = workflow_targets[0] if workflow_targets else None
-        success = bool(run_record.get('success'))
-        title_prefix = f'{priority.capitalize()} priority workflow alert'
         response_preview = str(run_record.get('response_preview') or '').strip()
         error_text = str(run_record.get('error') or '').strip()
-
-        if success:
-            title = f'{title_prefix}: {workflow_name}'
-            message = _summarize_workflow_alert_text(
-                response_preview or f'{workflow_name} completed from the {trigger_source} trigger.'
-            )
-        else:
-            title = f'{title_prefix}: {workflow_name} failed'
-            message = _summarize_workflow_alert_text(
-                error_text or f'{workflow_name} failed from the {trigger_source} trigger.'
-            )
+        alert_content = _build_workflow_alert_content(
+            workflow,
+            run_record,
+            execution_result,
+            priority,
+        )
 
         metadata = {
             'workflow_id': workflow_id,
@@ -635,6 +1002,11 @@ def _create_workflow_priority_alert(workflow, run_record, conversation, executio
             'assistant_message_id': str(run_record.get('assistant_message_id') or '').strip(),
             'response_preview': response_preview,
             'error': error_text,
+            'event_title': alert_content.get('event_title'),
+            'alert_title': alert_content.get('alert_title'),
+            'alert_summary': alert_content.get('alert_summary'),
+            'alert_detail': alert_content.get('alert_detail'),
+            'alert_enrichments': alert_content.get('enrichment_labels') or [],
             'link_targets': workflow_targets,
         }
         if execution_result.get('agent_name'):
@@ -647,8 +1019,8 @@ def _create_workflow_priority_alert(workflow, run_record, conversation, executio
             workflow_id=workflow_id,
             workflow_name=workflow_name,
             priority=priority,
-            title=title,
-            message=message,
+            title=alert_content.get('notification_title') or f'{priority.capitalize()} priority workflow alert: {workflow_name}',
+            message=alert_content.get('notification_message') or _summarize_workflow_alert_text(response_preview or error_text),
             link_url=primary_target.get('link_url') if primary_target else '',
             link_context=primary_target.get('link_context') if primary_target else {},
             metadata=metadata,

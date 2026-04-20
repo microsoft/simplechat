@@ -338,9 +338,9 @@
         const priority = String(metadata.priority || notification?.priority || 'medium').trim().toLowerCase();
         const workflowName = metadata.workflow_name || notification?.title || 'Workflow';
         const triggerSource = metadata.trigger_source || '';
-        const detailText = normalizeWorkflowAlertText(metadata.response_preview || metadata.error || '');
+        const detailText = normalizeWorkflowAlertText(metadata.alert_detail || metadata.response_preview || metadata.error || '');
         const summaryText = buildWorkflowAlertSummary(
-            normalizeWorkflowAlertText(notification?.message || '') || detailText || 'Workflow update available.',
+            normalizeWorkflowAlertText(metadata.alert_summary || notification?.message || '') || detailText || 'Workflow update available.',
         );
         const alertTitle = buildWorkflowAlertTitle(notification, summaryText, detailText);
         const alertType = buildWorkflowAlertType(notification, alertTitle);

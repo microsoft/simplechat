@@ -47,6 +47,7 @@ from swagger_wrapper import swagger_route, get_auth_security
 from azure.identity import ClientSecretCredential, DefaultAzureCredential, get_bearer_token_provider
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
 from functions_message_artifacts import (
+    build_agent_citation_tool_label,
     build_agent_citation_artifact_documents,
     build_message_artifact_payload_map,
     filter_assistant_artifact_items,
@@ -5024,7 +5025,12 @@ def collect_tabular_sk_citations(user_id, conversation_id):
         parameters = getattr(inv, 'parameters', {}) or {}
         sheet_name = parameters.get('sheet_name')
         sheet_index = parameters.get('sheet_index')
-        tool_name = f"{inv.plugin_name}.{inv.function_name}"
+        tool_name = build_agent_citation_tool_label(
+            inv.plugin_name,
+            inv.function_name,
+            parameters,
+            inv.result,
+        )
         if sheet_name:
             tool_name = f"{tool_name} [{sheet_name}]"
         elif sheet_index not in (None, ''):
@@ -8321,9 +8327,15 @@ def register_route_backend_chats(app):
                                     timestamp_str = inv.timestamp.isoformat()
                                 else:
                                     timestamp_str = str(inv.timestamp)
+                            tool_name = build_agent_citation_tool_label(
+                                inv.plugin_name,
+                                inv.function_name,
+                                inv.parameters,
+                                inv.result,
+                            )
                             
                             citation = {
-                                'tool_name': f"{inv.plugin_name}.{inv.function_name}",
+                                'tool_name': tool_name,
                                 'function_name': inv.function_name,
                                 'plugin_name': inv.plugin_name,
                                 'function_arguments': make_json_serializable(inv.parameters),
@@ -10813,9 +10825,15 @@ def register_route_backend_chats(app):
                                     timestamp_str = inv.timestamp.isoformat()
                                 else:
                                     timestamp_str = str(inv.timestamp)
+                            tool_name = build_agent_citation_tool_label(
+                                inv.plugin_name,
+                                inv.function_name,
+                                inv.parameters,
+                                inv.result,
+                            )
                             
                             citation = {
-                                'tool_name': f"{inv.plugin_name}.{inv.function_name}",
+                                'tool_name': tool_name,
                                 'function_name': inv.function_name,
                                 'plugin_name': inv.plugin_name,
                                 'function_arguments': make_json_serializable(inv.parameters),

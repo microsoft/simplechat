@@ -1,12 +1,13 @@
 # test_workflow_priority_alert_modal.py
 """
 UI test for the workflow priority alert modal.
-Version: 0.241.036
-Implemented in: 0.241.029
+Version: 0.241.055
+Implemented in: 0.241.055
 
 This test ensures unread workflow alerts open in the global modal, show the
-configured priority and linked conversations, and can be marked as read from
-the browser workflow.
+configured priority, prefer alert-focused enrichment copy over legacy preview
+text, render linked conversations, and can be marked as read from the browser
+workflow.
 """
 
 import json
@@ -49,7 +50,7 @@ def test_workflow_priority_alert_modal(playwright):
             {
                 "id": "workflow-alert-001",
                 "title": "High priority workflow alert: Critical Security Event",
-                "message": "Processed 2 relevant unread emails. 1. Security Incident - Sender: Microsoft Defender for Cloud <DefenderCloudnoreply@microsoft.com> - Subject: Microsoft Defender for Cloud has detected suspicious activity in your environment.",
+                "message": "I can't reliably create a Teams meeting for this alert from the current workflow permissions.",
                 "created_at": "2025-01-01T10:00:00+00:00",
                 "priority": "high",
                 "link_url": "/chats?conversationId=group-conversation-001",
@@ -63,7 +64,10 @@ def test_workflow_priority_alert_modal(playwright):
                     "workflow_name": "Security Events",
                     "priority": "high",
                     "trigger_source": "scheduled",
-                    "response_preview": "Processed 2 relevant unread emails. 1. Security Incident - Sender: Microsoft Defender for Cloud <DefenderCloudnoreply@microsoft.com> - Subject: Microsoft Defender for Cloud has detected suspicious activity in your environment.",
+                    "alert_title": "eGuardian Alert, Potential Suspect Travel from Atlanta to Pittsburgh",
+                    "alert_summary": "Potential Suspect Travel from Atlanta to Pittsburgh. Coordination conversation and Teams briefing are ready.",
+                    "alert_detail": "Focus\nPotential Suspect Travel from Atlanta to Pittsburgh\n\nReady now\n- Coordination conversation created\n- Teams briefing prepared\n\nSupporting items\n- Briefing document saved",
+                    "response_preview": "I can't reliably create a Teams meeting for this alert from the current workflow permissions.",
                     "link_targets": [
                         {
                             "label": "Open created conversation",
@@ -154,14 +158,21 @@ def test_workflow_priority_alert_modal(playwright):
         modal = page.locator("#workflowAlertModal")
         expect(modal).to_be_visible()
         expect(page.locator("#workflow-alert-priority-badge")).to_have_text("HIGH PRIORITY")
-        expect(page.locator("#workflowAlertModalLabel")).to_have_text("Critical Security Event")
+        expect(page.locator("#workflowAlertModalLabel")).to_have_text("eGuardian Alert, Potential Suspect Travel from Atlanta to Pittsburgh")
         expect(page.locator("#workflow-alert-type-card")).to_be_visible()
         expect(page.locator("#workflow-alert-type-value")).to_have_text("Security Events")
         expect(page.locator("#workflow-alert-triggered-at")).to_contain_text("Triggered:")
         expect(page.locator("#workflow-alert-meta")).to_contain_text("Trigger: scheduled")
-        expect(page.locator("#workflow-alert-message")).to_have_text("Processed 2 relevant unread emails.")
+        expect(page.locator("#workflow-alert-message")).to_have_text("Potential Suspect Travel from Atlanta to Pittsburgh. Coordination conversation and Teams briefing are ready.")
         expect(page.locator("#workflow-alert-response-preview-card")).to_be_visible()
-        expect(page.locator("#workflow-alert-response-preview")).to_contain_text("Security Incident")
+        expect(page.locator("#workflow-alert-response-preview")).to_contain_text("Focus")
+        expect(page.locator("#workflow-alert-response-preview")).to_contain_text("Potential Suspect Travel from Atlanta to Pittsburgh")
+        expect(page.locator("#workflow-alert-response-preview")).to_contain_text("Ready now")
+        expect(page.locator("#workflow-alert-response-preview")).to_contain_text("Coordination conversation created")
+        expect(page.locator("#workflow-alert-response-preview")).to_contain_text("Teams briefing prepared")
+        expect(page.locator("#workflow-alert-response-preview")).to_contain_text("Supporting items")
+        expect(page.locator("#workflow-alert-response-preview")).to_contain_text("Briefing document saved")
+        expect(page.locator("#workflow-alert-response-preview")).not_to_contain_text("can't reliably create a Teams meeting")
         expect(page.locator("#workflow-alert-links")).to_contain_text("Open created conversation")
         expect(page.locator("#workflow-alert-links")).to_contain_text("Open workflow")
         expect(page.locator("#workflow-alert-links button")).to_have_count(2)

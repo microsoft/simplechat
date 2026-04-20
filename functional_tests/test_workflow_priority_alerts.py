@@ -2,12 +2,13 @@
 # test_workflow_priority_alerts.py
 """
 Functional test for workflow priority alerts.
-Version: 0.241.036
-Implemented in: 0.241.029
+Version: 0.241.055
+Implemented in: 0.241.055
 
 This test ensures workflows store an alert priority, workflow runs create
-priority-aware notifications, and the global modal plumbing exists for
-personal, group, and collaborative deep-link targets.
+priority-aware notifications, surface alert-focused enrichment summaries,
+and keep the global modal plumbing intact for personal, group, and
+collaborative deep-link targets.
 """
 
 from pathlib import Path
@@ -36,7 +37,7 @@ def test_workflow_priority_alert_contracts():
     notifications_js_content = read_text("application/single_app/static/js/notifications.js")
     feature_doc_content = read_text("docs/explanation/features/WORKFLOW_PRIORITY_ALERTS.md")
 
-    assert 'VERSION = "0.241.036"' in config_content
+    assert 'VERSION = "0.241.055"' in config_content
     assert "WORKFLOW_ALERT_PRIORITIES = {'none', 'low', 'medium', 'high'}" in workflow_store_content
     assert "'alert_priority': alert_priority," in workflow_store_content
     assert 'id="workflow-alert-priority"' in workspace_template_content
@@ -50,6 +51,9 @@ def test_workflow_priority_alert_contracts():
     assert "default_label='Open workflow'" in workflow_runner_content
     assert 'def _summarize_workflow_alert_text(text, max_length=140):' in workflow_runner_content
     assert 'def _select_preferred_workflow_alert_targets(targets):' in workflow_runner_content
+    assert 'def _build_workflow_alert_content(workflow, run_record, execution_result, priority):' in workflow_runner_content
+    assert "'alert_summary': alert_content.get('alert_summary')," in workflow_runner_content
+    assert "'alert_detail': alert_content.get('alert_detail')," in workflow_runner_content
     assert 'plugin_logger.clear_invocations_for_conversation(user_id, conversation_id)' in workflow_runner_content
     assert 'g.conversation_id = conversation_id' in workflow_runner_content
     assert "'link_targets': workflow_targets," in workflow_runner_content
@@ -61,8 +65,67 @@ def test_workflow_priority_alert_contracts():
     assert "const workflowAlertModalEl = document.getElementById('workflowAlertModal');" in notifications_js_content
     assert 'function buildWorkflowAlertSummary(text, maxLength = 140)' in notifications_js_content
     assert 'function selectPreferredWorkflowAlertTargets(targets)' in notifications_js_content
+    assert 'metadata.alert_detail || metadata.response_preview || metadata.error' in notifications_js_content
+    assert 'metadata.alert_summary || notification?.message' in notifications_js_content
     assert "return 'Open workflow';" in notifications_js_content
     assert 'Workflow Priority Alerts' in feature_doc_content
+
+
+def test_workflow_alert_content_prefers_successful_enrichments_over_failure_preview():
+    workflow_runner = importlib.import_module('functions_workflow_runner')
+
+    alert_content = workflow_runner._build_workflow_alert_content(
+        {
+            'name': 'Security Events',
+        },
+        {
+            'success': True,
+            'trigger_source': 'scheduled',
+            'response_preview': "**Movement/destination search** I can't reliably create a Teams meeting for this alert from the current workflow permissions.",
+        },
+        {
+            'reply': "**Movement/destination search** I can't reliably create a Teams meeting for this alert from the current workflow permissions.",
+            'agent_citations': [
+                {
+                    'plugin_name': 'SimpleChatPlugin',
+                    'function_name': 'create_group_conversation',
+                    'tool_name': 'Group conversation: eGuardian: Potential Suspect Travel from Atlanta to Pittsburgh',
+                    'success': True,
+                    'function_result': {
+                        'conversation': {
+                            'id': 'group-conversation-001',
+                            'title': 'eGuardian: Potential Suspect Travel from Atlanta to Pittsburgh',
+                            'chat_type': 'group_multi_user',
+                        }
+                    },
+                },
+                {
+                    'plugin_name': 'MSGraphPlugin',
+                    'function_name': 'create_calendar_invite',
+                    'tool_name': 'Teams meeting: eGuardian Alert Bridge',
+                    'success': True,
+                },
+            ],
+        },
+        'high',
+    )
+
+    assert alert_content['alert_title'] == 'eGuardian Alert, Potential Suspect Travel from Atlanta to Pittsburgh'
+    assert alert_content['notification_title'] == 'High priority workflow alert: eGuardian Alert, Potential Suspect Travel from Atlanta to Pittsburgh'
+    assert alert_content['alert_summary'] == (
+        'Potential Suspect Travel from Atlanta to Pittsburgh. '
+        'Coordination conversation and Teams briefing are ready.'
+    )
+    assert alert_content['alert_detail'] == (
+        'Focus\n'
+        'Potential Suspect Travel from Atlanta to Pittsburgh\n\n'
+        'Ready now\n'
+        '- Coordination conversation created\n'
+        '- Teams briefing prepared'
+    )
+    assert "can't reliably create a Teams meeting" not in alert_content['alert_summary']
+    assert "can't reliably create a Teams meeting" not in alert_content['alert_detail']
+    assert '**' not in alert_content['alert_title']
 
 
 def test_workflow_alert_target_priority_prefers_group_created_conversation():
@@ -110,4 +173,5 @@ def test_workflow_alert_target_priority_prefers_group_created_conversation():
 if __name__ == '__main__':
     test_workflow_priority_alert_contracts()
     test_workflow_alert_target_priority_prefers_group_created_conversation()
+    test_workflow_alert_content_prefers_successful_enrichments_over_failure_preview()
     print('Workflow priority alert checks passed.')

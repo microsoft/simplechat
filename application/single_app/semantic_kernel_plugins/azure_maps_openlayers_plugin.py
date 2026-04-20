@@ -45,7 +45,7 @@ class AzureMapsOpenLayersPlugin(BasePlugin):
             "methods": [
                 {
                     "name": "create_map_visualization",
-                    "description": "Create an interactive Azure Maps visualization for chat. Supply location markers and optional polygon areas as JSON using longitude/latitude coordinates.",
+                    "description": "Create an interactive Azure Maps visualization for chat. Supply location markers plus optional path and polygon overlays as JSON using longitude/latitude coordinates.",
                     "parameters": [
                         {
                             "name": "title",
@@ -69,6 +69,12 @@ class AzureMapsOpenLayersPlugin(BasePlugin):
                             "name": "areas_json",
                             "type": "str",
                             "description": "JSON array of polygon area objects. Each item should include coordinates as longitude/latitude pairs, plus optional label, description, stroke_color, and fill_color.",
+                            "required": False,
+                        },
+                        {
+                            "name": "paths_json",
+                            "type": "str",
+                            "description": "JSON array of path objects. Each item should include ordered coordinates as longitude/latitude pairs, plus optional label, description, stroke_color, and line_width.",
                             "required": False,
                         },
                         {
@@ -182,10 +188,51 @@ class AzureMapsOpenLayersPlugin(BasePlugin):
             "fill_color": str(area.get("fill_color") or area.get("fillColor") or "rgba(176, 42, 55, 0.20)").strip() or "rgba(176, 42, 55, 0.20)",
         }
 
+    def _normalize_path_coordinates(self, coordinates: Any, index: int) -> List[List[float]]:
+        if not isinstance(coordinates, list) or not coordinates:
+            raise ValueError(f"paths_json[{index}].coordinates must be a JSON array of longitude/latitude pairs.")
+
+        if isinstance(coordinates[0], list) and coordinates[0] and isinstance(coordinates[0][0], list):
+            coordinates = coordinates[0]
+
+        normalized_path: List[List[float]] = []
+        for point_index, point in enumerate(coordinates):
+            if not isinstance(point, Sequence) or len(point) < 2:
+                raise ValueError(
+                    f"paths_json[{index}].coordinates[{point_index}] must contain longitude and latitude."
+                )
+            normalized_path.append([
+                self._coerce_float(point[0], f"paths_json[{index}].coordinates[{point_index}].longitude"),
+                self._coerce_float(point[1], f"paths_json[{index}].coordinates[{point_index}].latitude"),
+            ])
+
+        if len(normalized_path) < 2:
+            raise ValueError(f"paths_json[{index}] must contain at least two coordinate pairs.")
+
+        return normalized_path
+
+    def _normalize_path(self, path: Dict[str, Any], index: int) -> Dict[str, Any]:
+        raw_line_width = path.get("line_width", path.get("lineWidth", path.get("width", 4)))
+        line_width = int(self._coerce_float(raw_line_width, f"paths_json[{index}].line_width"))
+        return {
+            "id": str(path.get("id") or f"path-{index + 1}"),
+            "label": self._normalize_label(
+                path.get("label") or path.get("title") or path.get("name"),
+                f"Path {index + 1}",
+            ),
+            "description": str(
+                path.get("description") or path.get("popup") or path.get("details") or ""
+            ).strip(),
+            "coordinates": self._normalize_path_coordinates(path.get("coordinates"), index),
+            "stroke_color": str(path.get("stroke_color") or path.get("strokeColor") or "#0b5ed7").strip() or "#0b5ed7",
+            "line_width": max(1, min(12, line_width)),
+        }
+
     def _collect_reference_points(
         self,
         markers: List[Dict[str, Any]],
         areas: List[Dict[str, Any]],
+        paths: List[Dict[str, Any]],
     ) -> List[Tuple[float, float]]:
         points = [
             (marker["longitude"], marker["latitude"])
@@ -196,6 +243,10 @@ class AzureMapsOpenLayersPlugin(BasePlugin):
             for longitude, latitude in area.get("coordinates", []):
                 points.append((float(longitude), float(latitude)))
 
+        for path in paths:
+            for longitude, latitude in path.get("coordinates", []):
+                points.append((float(longitude), float(latitude)))
+
         return points
 
     def _normalize_view(
@@ -203,8 +254,9 @@ class AzureMapsOpenLayersPlugin(BasePlugin):
         raw_view: Dict[str, Any],
         markers: List[Dict[str, Any]],
         areas: List[Dict[str, Any]],
+        paths: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        reference_points = self._collect_reference_points(markers, areas)
+        reference_points = self._collect_reference_points(markers, areas, paths)
         provided_center = raw_view.get("center")
 
         if isinstance(provided_center, Sequence) and len(provided_center) >= 2:
@@ -221,7 +273,7 @@ class AzureMapsOpenLayersPlugin(BasePlugin):
 
         raw_zoom = raw_view.get("zoom")
         if raw_zoom in (None, ""):
-            zoom = 14 if len(markers) == 1 and not areas else 10
+            zoom = 14 if len(markers) == 1 and not areas and not paths else 10
         else:
             zoom = int(self._coerce_float(raw_zoom, "view_json.zoom"))
 
@@ -253,7 +305,7 @@ class AzureMapsOpenLayersPlugin(BasePlugin):
         description=(
             "Create an inline Azure Maps visualization for chat using OpenLayers. "
             "Provide locations_json as a JSON array with longitude and latitude for each point, "
-            "and optionally provide polygon areas_json using longitude/latitude coordinate pairs."
+            "and optionally provide polygon areas_json or ordered paths_json using longitude/latitude coordinate pairs."
         )
     )
     def create_map_visualization(
@@ -262,6 +314,7 @@ class AzureMapsOpenLayersPlugin(BasePlugin):
         summary: str = "",
         locations_json: str = "[]",
         areas_json: str = "[]",
+        paths_json: str = "[]",
         view_json: str = "{}",
         tileset_id: str = AZURE_MAPS_DEFAULT_TILESET_ID,
     ) -> dict:
@@ -272,17 +325,19 @@ class AzureMapsOpenLayersPlugin(BasePlugin):
 
             raw_locations = self._parse_json(locations_json, "locations_json", list, [])
             raw_areas = self._parse_json(areas_json, "areas_json", list, [])
+            raw_paths = self._parse_json(paths_json, "paths_json", list, [])
             raw_view = self._parse_json(view_json, "view_json", dict, {})
 
             markers = [self._normalize_marker(marker, index) for index, marker in enumerate(raw_locations)]
             areas = [self._normalize_area(area, index) for index, area in enumerate(raw_areas)]
-            if not markers and not areas:
-                raise ValueError("Provide at least one marker in locations_json or one polygon in areas_json.")
+            paths = [self._normalize_path(path, index) for index, path in enumerate(raw_paths)]
+            if not markers and not areas and not paths:
+                raise ValueError("Provide at least one marker in locations_json, one path in paths_json, or one polygon in areas_json.")
 
             normalized_title = str(title or "").strip() or "Interactive Map"
             normalized_summary = str(summary or "").strip()
             normalized_tileset_id = self._normalize_tileset_id(tileset_id)
-            view = self._normalize_view(raw_view, markers, areas)
+            view = self._normalize_view(raw_view, markers, areas, paths)
             tile_proxy_token = create_tile_proxy_token(azure_maps_key)
 
             map_payload = {
@@ -301,20 +356,26 @@ class AzureMapsOpenLayersPlugin(BasePlugin):
                 "tile_attribution": AZURE_MAPS_TILE_ATTRIBUTION,
                 "view": view,
                 "markers": markers,
+                "paths": paths,
                 "areas": areas,
                 "source_action_name": str(self.manifest.get("name") or AZURE_MAPS_PLUGIN_TYPE),
             }
 
             marker_count = len(markers)
+            path_count = len(paths)
             area_count = len(areas)
+            feature_counts = []
+            if marker_count:
+                feature_counts.append(f"{marker_count} marker{'s' if marker_count != 1 else ''}")
+            if path_count:
+                feature_counts.append(f"{path_count} path{'s' if path_count != 1 else ''}")
+            if area_count:
+                feature_counts.append(f"{area_count} area{'s' if area_count != 1 else ''}")
+            feature_summary = ', '.join(feature_counts) if feature_counts else '0 features'
             return {
                 "success": True,
                 "render_type": AZURE_MAPS_RENDER_TYPE,
-                "summary": (
-                    f"Prepared an interactive Azure Maps view with {marker_count} marker"
-                    f"{'s' if marker_count != 1 else ''} and {area_count} area"
-                    f"{'s' if area_count != 1 else ''}."
-                ),
+                "summary": f"Prepared an interactive Azure Maps view with {feature_summary}.",
                 "map_payload": map_payload,
             }
         except ValueError as exc:

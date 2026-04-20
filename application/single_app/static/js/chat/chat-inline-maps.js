@@ -139,7 +139,47 @@ function normalizeAreas(rawAreas = []) {
         .filter(Boolean);
 }
 
-function buildFallbackCenter(markers, areas) {
+function normalizePaths(rawPaths = []) {
+    if (!Array.isArray(rawPaths)) {
+        return [];
+    }
+
+    return rawPaths
+        .map((path) => {
+            if (!path || typeof path !== "object" || Array.isArray(path)) {
+                return null;
+            }
+
+            let rawCoordinates = path.coordinates;
+            if (
+                Array.isArray(rawCoordinates)
+                && Array.isArray(rawCoordinates[0])
+                && Array.isArray(rawCoordinates[0][0])
+            ) {
+                rawCoordinates = rawCoordinates[0];
+            }
+
+            const coordinates = Array.isArray(rawCoordinates)
+                ? rawCoordinates.map((coordinate) => normalizeCoordinatePair(coordinate)).filter(Boolean)
+                : [];
+
+            if (coordinates.length < 2) {
+                return null;
+            }
+
+            const lineWidth = toFiniteNumber(path.line_width ?? path.lineWidth ?? path.width);
+            return {
+                ...path,
+                coordinates,
+                label: typeof path.label === "string" && path.label.trim() ? path.label.trim() : "Path",
+                description: typeof path.description === "string" ? path.description : "",
+                line_width: lineWidth === null ? 4 : lineWidth,
+            };
+        })
+        .filter(Boolean);
+}
+
+function buildFallbackCenter(markers, areas, paths) {
     if (markers.length > 0) {
         return [markers[0].longitude, markers[0].latitude];
     }
@@ -148,18 +188,22 @@ function buildFallbackCenter(markers, areas) {
         return [...areas[0].coordinates[0]];
     }
 
+    if (paths.length > 0 && Array.isArray(paths[0].coordinates) && paths[0].coordinates.length > 0) {
+        return [...paths[0].coordinates[0]];
+    }
+
     return [0, 20];
 }
 
-function normalizeView(rawView = {}, markers = [], areas = []) {
-    const fallbackCenter = buildFallbackCenter(markers, areas);
+function normalizeView(rawView = {}, markers = [], areas = [], paths = []) {
+    const fallbackCenter = buildFallbackCenter(markers, areas, paths);
     const parsedCenter = normalizeCoordinatePair(rawView?.center);
     const zoom = toFiniteNumber(rawView?.zoom);
     const maxZoom = toFiniteNumber(rawView?.max_zoom);
 
     return {
         center: parsedCenter || fallbackCenter,
-        zoom: zoom === null ? (markers.length === 1 && areas.length === 0 ? 14 : 10) : zoom,
+        zoom: zoom === null ? (markers.length === 1 && areas.length === 0 && paths.length === 0 ? 14 : 10) : zoom,
         max_zoom: maxZoom === null ? 15 : maxZoom,
         fit_to_features: rawView?.fit_to_features !== false,
     };
@@ -173,7 +217,8 @@ function normalizeAzureMapsResult(result) {
     const payload = result.map_payload || {};
     const markers = normalizeMarkers(payload.markers);
     const areas = normalizeAreas(payload.areas);
-    if (markers.length === 0 && areas.length === 0) {
+    const paths = normalizePaths(payload.paths);
+    if (markers.length === 0 && areas.length === 0 && paths.length === 0) {
         return null;
     }
 
@@ -182,8 +227,9 @@ function normalizeAzureMapsResult(result) {
         map_payload: {
             ...payload,
             markers,
+            paths,
             areas,
-            view: normalizeView(payload.view || {}, markers, areas),
+            view: normalizeView(payload.view || {}, markers, areas, paths),
         },
     };
 }
@@ -296,6 +342,49 @@ function createAreaFeature(olRef, area) {
     return feature;
 }
 
+function createPathFeature(olRef, path) {
+    const line = (path.coordinates || []).map((coordinate) => olRef.proj.fromLonLat([
+        Number(coordinate[0]),
+        Number(coordinate[1]),
+    ]));
+
+    const feature = new olRef.Feature({
+        geometry: new olRef.geom.LineString(line),
+        featureType: "path",
+        label: path.label || "Path",
+        description: path.description || "",
+    });
+
+    feature.setStyle(new olRef.style.Style({
+        stroke: new olRef.style.Stroke({
+            color: path.stroke_color || "#0b5ed7",
+            width: Number(path.line_width || 4),
+        }),
+    }));
+
+    return feature;
+}
+
+function fitViewToFeatures(olRef, vectorSource, view, payload, featureCount) {
+    if (!payload.view?.fit_to_features || featureCount === 0) {
+        return;
+    }
+
+    const extent = vectorSource.getExtent();
+    const extentIsEmpty = typeof olRef.extent?.isEmpty === "function"
+        ? olRef.extent.isEmpty(extent)
+        : false;
+    if (extentIsEmpty) {
+        return;
+    }
+
+    view.fit(extent, {
+        padding: [48, 48, 48, 48],
+        maxZoom: payload.view?.max_zoom || 15,
+        duration: 0,
+    });
+}
+
 function initializeOpenLayersMap(mapElement, popupElement, payload) {
     const olRef = window.ol;
     if (!olRef?.Map || !olRef?.layer?.Tile || !olRef?.source?.XYZ) {
@@ -316,6 +405,10 @@ function initializeOpenLayersMap(mapElement, popupElement, payload) {
 
     (payload.markers || []).forEach((marker) => {
         features.push(createMarkerFeature(olRef, marker));
+    });
+
+    (payload.paths || []).forEach((path) => {
+        features.push(createPathFeature(olRef, path));
     });
 
     (payload.areas || []).forEach((area) => {
@@ -351,17 +444,6 @@ function initializeOpenLayersMap(mapElement, popupElement, payload) {
             : undefined,
     });
 
-    if (payload.view?.fit_to_features && features.length > 0) {
-        const extent = vectorSource.getExtent();
-        if (!olRef.extent?.isEmpty || !olRef.extent.isEmpty(extent)) {
-            view.fit(extent, {
-                padding: [32, 32, 32, 32],
-                maxZoom: payload.view?.max_zoom || 15,
-                duration: 0,
-            });
-        }
-    }
-
     map.on("click", (event) => {
         const feature = map.forEachFeatureAtPixel(event.pixel, (selectedFeature) => selectedFeature);
         if (!feature) {
@@ -381,6 +463,11 @@ function initializeOpenLayersMap(mapElement, popupElement, payload) {
 
     requestAnimationFrame(() => {
         map.updateSize();
+        fitViewToFeatures(olRef, vectorSource, view, payload, features.length);
+        requestAnimationFrame(() => {
+            map.updateSize();
+            fitViewToFeatures(olRef, vectorSource, view, payload, features.length);
+        });
     });
 }
 
@@ -399,6 +486,7 @@ function createMapCard(result, messageId, index) {
     const safeMessageId = String(messageId || "map").replace(/[^a-zA-Z0-9_-]/g, "-");
     const mapId = `inline-map-${safeMessageId}-${index}`;
     const markerCount = Array.isArray(payload.markers) ? payload.markers.length : 0;
+    const pathCount = Array.isArray(payload.paths) ? payload.paths.length : 0;
     const areaCount = Array.isArray(payload.areas) ? payload.areas.length : 0;
     const summaryText = payload.summary || result.summary || "Interactive Azure Maps visualization.";
 
@@ -427,6 +515,9 @@ function createMapCard(result, messageId, index) {
     const badgesContainer = card.querySelector(".inline-map-badges");
     if (badgesContainer) {
         badgesContainer.appendChild(createBadge("Markers", markerCount));
+        if (pathCount > 0) {
+            badgesContainer.appendChild(createBadge("Paths", pathCount));
+        }
         badgesContainer.appendChild(createBadge("Areas", areaCount));
         if (payload.tileset_id) {
             badgesContainer.appendChild(createBadge("Tiles", payload.tileset_id));
@@ -451,13 +542,14 @@ export async function renderInlineAzureMaps(messageElement, agentCitations = [],
         return;
     }
 
-    container.innerHTML = "";
-    container.classList.add("d-none");
+    container.querySelectorAll(".inline-map-card").forEach((card) => card.remove());
 
     if (!Array.isArray(agentCitations) || agentCitations.length === 0) {
+        container.classList.toggle("d-none", container.children.length === 0);
         return;
     }
 
+    const pendingMaps = [];
     let renderedCount = 0;
     for (let index = 0; index < agentCitations.length; index += 1) {
         const citation = agentCitations[index];
@@ -468,7 +560,14 @@ export async function renderInlineAzureMaps(messageElement, agentCitations = [],
 
         const { card, mapElement, popupElement, payload } = createMapCard(result, messageId, index);
         container.appendChild(card);
+        pendingMaps.push({ card, mapElement, popupElement, payload });
 
+        renderedCount += 1;
+    }
+
+    container.classList.toggle("d-none", container.children.length === 0);
+
+    pendingMaps.forEach(({ card, mapElement, popupElement, payload }) => {
         try {
             initializeOpenLayersMap(mapElement, popupElement, payload);
         } catch (error) {
@@ -479,11 +578,5 @@ export async function renderInlineAzureMaps(messageElement, agentCitations = [],
                 mapShell.appendChild(createFallbackNotice("The map data is available, but OpenLayers could not be initialized in this browser session."));
             }
         }
-
-        renderedCount += 1;
-    }
-
-    if (renderedCount > 0) {
-        container.classList.remove("d-none");
-    }
+    });
 }

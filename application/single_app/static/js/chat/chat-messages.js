@@ -22,6 +22,7 @@ import { getCurrentReasoningEffort, isReasoningEffortEnabled } from './chat-reas
 import { areAgentsEnabled } from './chat-agents.js';
 import { createThoughtsToggleHtml, attachThoughtsToggleListener } from './chat-thoughts.js';
 import { extractInlineChartBlocks, hydrateInlineCharts, injectInlineChartHtml, restoreInlineChartTokens } from './chat-inline-charts.js';
+import { renderInlineImageGalleries } from './chat-inline-images.js';
 import { renderInlineAzureMaps } from './chat-inline-maps.js';
 
 // Conditionally import TTS if enabled
@@ -1174,12 +1175,20 @@ export function appendMessage(
     }
 
     hydrateInlineCharts(messageDiv);
-    void renderInlineAzureMaps(
-      messageDiv,
-      agentCitations || [],
-      messageId,
-      messageConversationId
-    );
+    void (async () => {
+      await renderInlineImageGalleries(
+        messageDiv,
+        agentCitations || [],
+        messageId,
+        messageConversationId
+      );
+      await renderInlineAzureMaps(
+        messageDiv,
+        agentCitations || [],
+        messageId,
+        messageConversationId
+      );
+    })();
     
     // Highlight code blocks in the messages
     messageDiv.querySelectorAll('pre code[class^="language-"]').forEach((block) => {

@@ -1,12 +1,13 @@
 # test_chat_inline_azure_maps_rendering.py
 """
 UI test for inline Azure Maps rendering in chat.
-Version: 0.241.050
-Implemented in: 0.241.050
+Version: 0.241.053
+Implemented in: 0.241.053
 
 This test ensures that assistant messages can hydrate an Azure Maps agent
 citation artifact, render the inline map card inside the chat bubble, and keep
-the standard citation button available for the same tool invocation.
+the standard citation button available for the same tool invocation while
+fitting the full visible feature set after the visualization container is shown.
 """
 
 import json
@@ -22,6 +23,13 @@ STORAGE_STATE = os.getenv("SIMPLECHAT_UI_STORAGE_STATE", "")
 SKIP_RESPONSE_CODES = {401, 403, 404}
 
 OPENLAYERS_STUB = """
+window.__openlayersDiagnostics = {
+  mapCreations: [],
+  fitCalls: 0,
+  updateSizeCalls: 0,
+  lastFitExtent: null,
+};
+
 window.ol = {
   proj: {
     fromLonLat(coords) {
@@ -43,6 +51,9 @@ window.ol = {
   },
   geom: {
     Point: function Point(coords) {
+      this.coords = coords;
+    },
+    LineString: function LineString(coords) {
       this.coords = coords;
     },
     Polygon: function Polygon(coords) {
@@ -92,7 +103,10 @@ window.ol = {
   },
   View: function View(config) {
     this.config = config;
-    this.fit = () => {};
+    this.fit = (extent) => {
+      window.__openlayersDiagnostics.fitCalls += 1;
+      window.__openlayersDiagnostics.lastFitExtent = extent;
+    };
   },
   control: {
     defaults() {
@@ -100,6 +114,10 @@ window.ol = {
     }
   },
   Map: function Map(config) {
+    const container = config.target.closest('.inline-visualizations-container');
+    window.__openlayersDiagnostics.mapCreations.push({
+      hidden: container ? container.classList.contains('d-none') : null,
+    });
     this.config = config;
     this.handlers = {};
     this.on = (eventName, handler) => {
@@ -109,7 +127,9 @@ window.ol = {
     this.hasFeatureAtPixel = () => false;
     this.getTargetElement = () => config.target;
     this.getView = () => config.view;
-    this.updateSize = () => {};
+    this.updateSize = () => {
+      window.__openlayersDiagnostics.updateSizeCalls += 1;
+    };
   }
 };
 """
@@ -124,7 +144,7 @@ def _require_ui_env():
 
 def _build_full_map_citation():
     return {
-        "tool_name": "AzureMapsOpenLayersPlugin.create_map_visualization",
+    "tool_name": "Map: Court Coverage Map",
         "function_name": "create_map_visualization",
         "plugin_name": "AzureMapsOpenLayersPlugin",
         "function_arguments": json.dumps(
@@ -137,7 +157,7 @@ def _build_full_map_citation():
             {
                 "success": True,
                 "render_type": "azure_maps_openlayers",
-                "summary": "Prepared an interactive Azure Maps view with 2 markers and 1 area.",
+            "summary": "Prepared an interactive Azure Maps view with 2 markers, 1 path, 1 area.",
                 "map_payload": {
                     "title": "Court Coverage Map",
                     "summary": "Explore district courts and the service polygon.",
@@ -168,6 +188,19 @@ def _build_full_map_citation():
                             "color": "#0ea5e9",
                         },
                     ],
+                        "paths": [
+                          {
+                            "label": "Service Corridor",
+                            "description": "Ordered progression across the district service corridor",
+                            "coordinates": [
+                              [-97.7431, 30.2672],
+                              [-97.7331, 30.3072],
+                              [-97.71, 30.33],
+                            ],
+                            "stroke_color": "#2563eb",
+                            "line_width": 5,
+                          }
+                        ],
                     "areas": [
                         {
                             "label": "Service Area",
@@ -204,7 +237,7 @@ def test_chat_inline_azure_maps_rendering(playwright):
     page = context.new_page()
 
     compact_citation = {
-        "tool_name": "AzureMapsOpenLayersPlugin.create_map_visualization",
+        "tool_name": "Map: Court Coverage Map",
         "function_arguments": {"title": "Court Coverage Map"},
       "function_result": {
         "success": True,
@@ -224,6 +257,7 @@ def test_chat_inline_azure_maps_rendering(playwright):
             "fit_to_features": True,
           },
           "markers": ["<dict with 6 keys>", "<dict with 6 keys>"],
+          "paths": ["<dict with 5 keys>"],
           "areas": [],
           "source_action_name": "court_mapper",
         },
@@ -309,11 +343,21 @@ def test_chat_inline_azure_maps_rendering(playwright):
         expect(message_scope.locator('.inline-map-card-title')).to_have_text('Court Coverage Map')
         expect(message_scope.locator('.inline-map-card-summary')).to_contain_text('Explore district courts and the service polygon.')
         expect(message_scope.locator('.inline-map-badges')).to_contain_text('Markers: 2')
+        expect(message_scope.locator('.inline-map-badges')).to_contain_text('Paths: 1')
         expect(message_scope.locator('.inline-map-badges')).to_contain_text('Areas: 1')
         expect(message_scope.locator('.inline-map-footer')).to_contain_text('court_mapper')
         expect(message_scope.locator('.inline-map-canvas')).to_be_visible()
         expect(message_scope.locator('.inline-map-fallback')).to_have_count(0)
         expect(message_scope.locator('a.agent-citation-link')).to_have_count(1)
+
+        page.wait_for_function(
+          "window.__openlayersDiagnostics && window.__openlayersDiagnostics.fitCalls > 0"
+        )
+        diagnostics = page.evaluate("window.__openlayersDiagnostics")
+        assert diagnostics["mapCreations"], "Expected the OpenLayers stub to record map creation."
+        assert diagnostics["mapCreations"][0]["hidden"] is False, "Map initialized while the visualization container was hidden."
+        assert diagnostics["updateSizeCalls"] >= 1, "Expected map.updateSize() to run before fitting features."
+        assert diagnostics["fitCalls"] >= 1, "Expected fit-to-features to run for the rendered map."
     finally:
         context.close()
         browser.close()

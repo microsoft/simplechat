@@ -1,12 +1,13 @@
 # test_azure_maps_openlayers_plugin.py
 """
 Functional test for the Azure Maps OpenLayers Semantic Kernel action.
-Version: 0.241.046
-Implemented in: 0.241.046
+Version: 0.241.053
+Implemented in: 0.241.053
 
 This test ensures that the Azure Maps action creates a secure inline map payload,
 keeps the raw subscription key out of the browser-facing tile URL template, and
-normalizes markers, polygon areas, and default view settings for chat rendering.
+normalizes markers, path overlays, polygon areas, and default view settings for
+chat rendering.
 """
 
 import importlib.util
@@ -149,6 +150,20 @@ def test_create_map_visualization_builds_secure_inline_payload():
                 }
             ]
         ),
+        paths_json=json.dumps(
+            [
+                {
+                    "label": "Service Corridor",
+                    "coordinates": [
+                        [-97.7431, 30.2672],
+                        [-97.7331, 30.3072],
+                        [-97.71, 30.33],
+                    ],
+                    "stroke_color": "#2563eb",
+                    "line_width": 5,
+                }
+            ]
+        ),
         view_json=json.dumps({"fit_to_features": True}),
         tileset_id="microsoft.base.road",
     )
@@ -171,6 +186,12 @@ def test_create_map_visualization_builds_secure_inline_payload():
 
     if len(map_payload.get("areas") or []) != 1:
         raise AssertionError(f"Expected 1 area, got: {len(map_payload.get('areas') or [])}")
+
+    if len(map_payload.get("paths") or []) != 1:
+        raise AssertionError(f"Expected 1 path, got: {len(map_payload.get('paths') or [])}")
+
+    if map_payload["paths"][0]["coordinates"][0] != [-97.7431, 30.2672]:
+        raise AssertionError(f"Unexpected first path coordinate: {map_payload['paths'][0]['coordinates'][0]}")
 
     area_ring = map_payload["areas"][0]["coordinates"]
     if area_ring[0] != area_ring[-1]:
@@ -199,8 +220,10 @@ def test_create_map_visualization_builds_secure_inline_payload():
     if view.get("zoom") != 10:
         raise AssertionError(f"Expected default multi-feature zoom of 10, got: {view.get('zoom')}")
 
+    if "1 path" not in (result.get("summary") or ""):
+        raise AssertionError(f"Expected summary to mention path overlays, got: {result.get('summary')}")
+
     print("  Azure Maps inline payload generation passed.")
-    return True
 
 
 def test_create_map_visualization_requires_locations_or_areas():
@@ -232,7 +255,6 @@ def test_create_map_visualization_requires_locations_or_areas():
         raise AssertionError(f"Unexpected validation message: {result.get('error')}")
 
     print("  Missing-feature validation passed.")
-    return True
 
 
 if __name__ == "__main__":
@@ -247,7 +269,8 @@ if __name__ == "__main__":
         print(f"Running {test.__name__}...")
         print("=" * 60)
         try:
-            results.append(bool(test()))
+            test()
+            results.append(True)
         except Exception as exc:
             print(f"ERROR: {exc}")
             traceback.print_exc()
