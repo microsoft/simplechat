@@ -250,7 +250,35 @@ def _is_visualization_citation(citation):
         function_result.get('render_type')
         or function_result.get('chart_markdown')
         or function_result.get('chart_payload')
+        or _contains_inline_image_gallery_result(function_result)
     )
+
+
+def _contains_inline_image_gallery_result(function_result):
+    if not isinstance(function_result, dict):
+        return False
+
+    image_gallery = function_result.get('image_gallery')
+    if isinstance(image_gallery, dict) and list(image_gallery.get('items') or []):
+        return True
+
+    for field_name in ('items', 'images', 'image_urls'):
+        field_value = function_result.get(field_name)
+        if isinstance(field_value, list) and field_value:
+            return True
+
+    image_url = function_result.get('image_url')
+    if isinstance(image_url, str) and image_url.strip():
+        return True
+    if isinstance(image_url, dict) and str(image_url.get('url') or '').strip():
+        return True
+
+    mime_type = str(function_result.get('mime') or '').strip().lower()
+    if mime_type.startswith('image/'):
+        return True
+
+    result_type = str(function_result.get('type') or '').strip().lower()
+    return result_type == 'image_url'
 
 
 def _filter_visualization_agent_citations(agent_citations):

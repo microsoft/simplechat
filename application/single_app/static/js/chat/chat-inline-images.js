@@ -1,12 +1,14 @@
 // chat-inline-images.js
 import {
     fetchAgentCitationArtifact,
+    parseDocIdAndPage,
     showImagePopup,
 } from "./chat-citations.js";
 import { escapeHtml } from "./chat-utils.js";
 
 const INLINE_IMAGE_GALLERY_RENDER_TYPE = "inline_image_gallery";
 const MAX_INLINE_IMAGE_ITEMS = 5;
+const IMAGE_FILE_NAME_PATTERN = /\.(?:avif|bmp|gif|heic|heif|ico|jpe?g|png|svg|tiff?|webp)(?:$|[?#])/i;
 
 function toNonEmptyString(value) {
     return typeof value === "string" ? value.trim() : "";
@@ -101,6 +103,51 @@ function deriveSourceLabel(docId, imageUrl, explicitLabel = "") {
     return "Image";
 }
 
+function isLikelyImageFileName(fileName) {
+    return IMAGE_FILE_NAME_PATTERN.test(toNonEmptyString(fileName));
+}
+
+function isLikelyImageUrl(urlValue) {
+    const normalizedUrl = toNonEmptyString(urlValue);
+    if (!normalizedUrl) {
+        return false;
+    }
+
+    if (normalizedUrl.startsWith("data:image/")) {
+        return true;
+    }
+
+    return IMAGE_FILE_NAME_PATTERN.test(normalizedUrl);
+}
+
+function getItemIdentityKey(item) {
+    if (!item || typeof item !== "object") {
+        return "";
+    }
+
+    return toNonEmptyString(
+        item.doc_id
+        || item.source_url
+        || item.full_image_url
+        || item.preview_image_url
+        || item.title
+    );
+}
+
+function pushUniqueImageItem(targetItems, seenKeys, item) {
+    if (!item) {
+        return;
+    }
+
+    const identityKey = getItemIdentityKey(item);
+    if (!identityKey || seenKeys.has(identityKey)) {
+        return;
+    }
+
+    seenKeys.add(identityKey);
+    targetItems.push(item);
+}
+
 function normalizeImageItem(rawItem, index) {
     const item = typeof rawItem === "string"
         ? { image_url: rawItem }
@@ -144,6 +191,117 @@ function normalizeImageItem(rawItem, index) {
     };
 }
 
+function normalizeWorkspaceCitationImageItem(rawCitation, index) {
+    if (!rawCitation || typeof rawCitation !== "object" || rawCitation.metadata_type) {
+        return null;
+    }
+
+    const fileName = toNonEmptyString(rawCitation.file_name || rawCitation.fileName || rawCitation.title);
+    if (!isLikelyImageFileName(fileName)) {
+        return null;
+    }
+
+    const citationId = toNonEmptyString(rawCitation.citation_id || rawCitation.chunk_id);
+    const { docId } = citationId ? parseDocIdAndPage(citationId) : { docId: "" };
+    const normalizedDocId = toNonEmptyString(docId || rawCitation.doc_id || rawCitation.docId);
+    if (!normalizedDocId) {
+        return null;
+    }
+
+    const locationLabel = toNonEmptyString(rawCitation.location_label || (rawCitation.sheet_name ? "Sheet" : "Page"));
+    const locationValue = toNonEmptyString(rawCitation.location_value || rawCitation.sheet_name || rawCitation.page_number);
+    const description = locationValue && locationValue !== "N/A"
+        ? `${locationLabel || "Location"}: ${locationValue}`
+        : "Workspace image cited in this response.";
+
+    return {
+        id: `workspace-image-${normalizedDocId}-${index + 1}`,
+        title: fileName || `Workspace image ${index + 1}`,
+        description,
+        file_name: fileName,
+        doc_id: normalizedDocId,
+        preview_image_url: buildWorkspaceImageUrl(normalizedDocId),
+        full_image_url: buildWorkspaceImageUrl(normalizedDocId),
+        source_label: "Workspace image",
+        source_url: "",
+        alt_text: fileName || `Workspace image ${index + 1}`,
+    };
+}
+
+function extractWorkspaceCitationImageItems(hybridCitations = [], seenKeys = new Set()) {
+    const items = [];
+    if (!Array.isArray(hybridCitations) || hybridCitations.length === 0) {
+        return items;
+    }
+
+    hybridCitations.forEach((citation, index) => {
+        pushUniqueImageItem(items, seenKeys, normalizeWorkspaceCitationImageItem(citation, index));
+    });
+
+    return items;
+}
+
+function normalizeWebCitationImageItem(rawCitation, index) {
+    if (!rawCitation || typeof rawCitation !== "object") {
+        return null;
+    }
+
+    const imageUrl = resolveImageUrlValue(rawCitation.image_url || rawCitation.url || rawCitation.src);
+    if (!isLikelyImageUrl(imageUrl)) {
+        return null;
+    }
+
+    const title = toNonEmptyString(rawCitation.title || rawCitation.label || rawCitation.name)
+        || `Linked image ${index + 1}`;
+    const description = toNonEmptyString(rawCitation.description || rawCitation.summary);
+
+    return {
+        id: `linked-image-${index + 1}`,
+        title,
+        description,
+        file_name: toNonEmptyString(rawCitation.file_name || rawCitation.fileName),
+        doc_id: "",
+        preview_image_url: imageUrl,
+        full_image_url: imageUrl,
+        source_label: deriveSourceLabel("", imageUrl, rawCitation.source_label || rawCitation.sourceLabel),
+        source_url: toNonEmptyString(rawCitation.source_url || rawCitation.sourceUrl || rawCitation.url),
+        alt_text: toNonEmptyString(rawCitation.alt_text || rawCitation.altText) || title,
+    };
+}
+
+function extractLinkedImageItems(webCitations = [], seenKeys = new Set()) {
+    const items = [];
+    if (!Array.isArray(webCitations) || webCitations.length === 0) {
+        return items;
+    }
+
+    webCitations.forEach((citation, index) => {
+        pushUniqueImageItem(items, seenKeys, normalizeWebCitationImageItem(citation, index));
+    });
+
+    return items;
+}
+
+function buildImageGalleryResult(title, summary, items, sourceActionName, totalCount = items.length) {
+    const renderedItems = Array.isArray(items) ? items.slice(0, MAX_INLINE_IMAGE_ITEMS) : [];
+    if (renderedItems.length === 0) {
+        return null;
+    }
+
+    return {
+        success: true,
+        render_type: INLINE_IMAGE_GALLERY_RENDER_TYPE,
+        image_gallery: {
+            title,
+            summary,
+            items: renderedItems,
+            total_count: Number(totalCount) || renderedItems.length,
+            rendered_count: renderedItems.length,
+            source_action_name: sourceActionName,
+        },
+    };
+}
+
 function extractRawImageItems(candidate) {
     if (!candidate || typeof candidate !== "object") {
         return [];
@@ -183,8 +341,8 @@ function extractRawImageItems(candidate) {
     return [];
 }
 
-function normalizeImageGalleryResult(result) {
-    if (!result || typeof result !== "object" || result.success === false) {
+function normalizeImageGalleryResult(result, maxItems = MAX_INLINE_IMAGE_ITEMS) {
+    if (!result || typeof result !== "object" || result.success === false || maxItems <= 0) {
         return null;
     }
 
@@ -203,7 +361,10 @@ function normalizeImageGalleryResult(result) {
         return null;
     }
 
-    const renderedItems = normalizedItems.slice(0, MAX_INLINE_IMAGE_ITEMS);
+    const renderedItems = normalizedItems.slice(0, Math.max(0, maxItems));
+    if (renderedItems.length === 0) {
+        return null;
+    }
     const totalCount = Number.isFinite(Number(galleryCandidate.total_count || galleryCandidate.totalCount))
         ? Number(galleryCandidate.total_count || galleryCandidate.totalCount)
         : normalizedItems.length;
@@ -238,7 +399,7 @@ async function hydrateInlineImageGalleryCitation(conversationId, artifactId) {
     }
 }
 
-async function resolveInlineImageGallery(citation, conversationId) {
+async function resolveInlineImageGallery(citation, conversationId, maxItems = MAX_INLINE_IMAGE_ITEMS) {
     const shouldPreferArtifact = Boolean(
         citation?.raw_payload_externalized
         && citation?.artifact_id
@@ -247,12 +408,17 @@ async function resolveInlineImageGallery(citation, conversationId) {
 
     if (shouldPreferArtifact) {
         const hydratedResult = await hydrateInlineImageGalleryCitation(conversationId, citation.artifact_id);
+        const normalizedHydratedResult = normalizeImageGalleryResult(hydratedResult, maxItems);
+        if (normalizedHydratedResult) {
+            return normalizedHydratedResult;
+        }
+
         if (hydratedResult) {
             return hydratedResult;
         }
     }
 
-    const localResult = normalizeImageGalleryResult(getCitationResult(citation));
+    const localResult = normalizeImageGalleryResult(getCitationResult(citation), maxItems);
     if (localResult) {
         return localResult;
     }
@@ -261,7 +427,8 @@ async function resolveInlineImageGallery(citation, conversationId) {
         return null;
     }
 
-    return hydrateInlineImageGalleryCitation(conversationId, citation.artifact_id);
+    const fallbackHydratedResult = await hydrateInlineImageGalleryCitation(conversationId, citation.artifact_id);
+    return normalizeImageGalleryResult(fallbackHydratedResult, maxItems);
 }
 
 function buildImageDetailsRows(item) {
@@ -463,7 +630,14 @@ function createImageGalleryCard(result, messageId, index) {
     return { card };
 }
 
-export async function renderInlineImageGalleries(messageElement, agentCitations = [], messageId = "", conversationId = "") {
+export async function renderInlineImageGalleries(
+    messageElement,
+    hybridCitations = [],
+    webCitations = [],
+    agentCitations = [],
+    messageId = "",
+    conversationId = ""
+) {
     if (!messageElement) {
         return;
     }
@@ -475,20 +649,81 @@ export async function renderInlineImageGalleries(messageElement, agentCitations 
 
     container.querySelectorAll(".inline-image-gallery-card").forEach((card) => card.remove());
 
-    if (!Array.isArray(agentCitations) || agentCitations.length === 0) {
+    const hasHybridCitations = Array.isArray(hybridCitations) && hybridCitations.length > 0;
+    const hasWebCitations = Array.isArray(webCitations) && webCitations.length > 0;
+    const hasAgentCitations = Array.isArray(agentCitations) && agentCitations.length > 0;
+    if (!hasHybridCitations && !hasWebCitations && !hasAgentCitations) {
         container.classList.toggle("d-none", container.children.length === 0);
         return;
     }
 
-    for (let index = 0; index < agentCitations.length; index += 1) {
+    let remainingSlots = MAX_INLINE_IMAGE_ITEMS;
+    let galleryIndex = 0;
+    const seenImageKeys = new Set();
+
+    const workspaceItems = extractWorkspaceCitationImageItems(hybridCitations, seenImageKeys);
+    if (workspaceItems.length > 0 && remainingSlots > 0) {
+        const workspaceGallery = buildImageGalleryResult(
+            "Workspace images",
+            "Image sources cited from workspace content.",
+            workspaceItems.slice(0, remainingSlots),
+            "Workspace citations",
+            workspaceItems.length
+        );
+        if (workspaceGallery) {
+            const { card } = createImageGalleryCard(workspaceGallery, messageId, galleryIndex);
+            container.appendChild(card);
+            remainingSlots -= workspaceGallery.image_gallery.rendered_count || 0;
+            galleryIndex += 1;
+        }
+    }
+
+    const linkedItems = extractLinkedImageItems(webCitations, seenImageKeys);
+    if (linkedItems.length > 0 && remainingSlots > 0) {
+        const linkedGallery = buildImageGalleryResult(
+            "Linked images",
+            "Direct image links returned with this response.",
+            linkedItems.slice(0, remainingSlots),
+            "Linked sources",
+            linkedItems.length
+        );
+        if (linkedGallery) {
+            const { card } = createImageGalleryCard(linkedGallery, messageId, galleryIndex);
+            container.appendChild(card);
+            remainingSlots -= linkedGallery.image_gallery.rendered_count || 0;
+            galleryIndex += 1;
+        }
+    }
+
+    for (let index = 0; index < agentCitations.length && remainingSlots > 0; index += 1) {
         const citation = agentCitations[index];
-        const result = await resolveInlineImageGallery(citation, conversationId);
+        const result = await resolveInlineImageGallery(citation, conversationId, remainingSlots);
         if (!result) {
             continue;
         }
 
-        const { card } = createImageGalleryCard(result, messageId, index);
+        const normalizedItems = Array.isArray(result?.image_gallery?.items)
+            ? result.image_gallery.items.filter((item) => {
+                const identityKey = getItemIdentityKey(item);
+                if (!identityKey || seenImageKeys.has(identityKey)) {
+                    return false;
+                }
+
+                seenImageKeys.add(identityKey);
+                return true;
+            })
+            : [];
+        if (normalizedItems.length === 0) {
+            continue;
+        }
+
+        result.image_gallery.items = normalizedItems;
+        result.image_gallery.rendered_count = normalizedItems.length;
+
+        const { card } = createImageGalleryCard(result, messageId, galleryIndex);
         container.appendChild(card);
+        remainingSlots -= normalizedItems.length;
+        galleryIndex += 1;
     }
 
     container.classList.toggle("d-none", container.children.length === 0);

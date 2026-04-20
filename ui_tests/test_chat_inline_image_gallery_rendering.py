@@ -1,8 +1,8 @@
 # test_chat_inline_image_gallery_rendering.py
 """
 UI test for inline image gallery rendering in chat.
-Version: 0.241.055
-Implemented in: 0.241.055
+Version: 0.241.056
+Implemented in: 0.241.056
 
 This test ensures assistant messages can hydrate inline image gallery agent
 citations, render up to five framed images inside the chat bubble, and expose
@@ -143,7 +143,7 @@ def test_chat_inline_image_gallery_rendering(playwright):
         with page.expect_response("**/api/conversation/test-convo/agent-citation/assistant-msg-images-1_artifact_1"):
             page.evaluate(
                 """
-                async (payload) => {
+                async ({ agentCitation, hybridCitation }) => {
                     currentConversationId = 'test-convo';
                     window.currentConversationId = 'test-convo';
                     const messagesModule = await import('/static/js/chat/chat-messages.js');
@@ -152,43 +152,57 @@ def test_chat_inline_image_gallery_rendering(playwright):
                         'Incident image results',
                         null,
                         'assistant-msg-images-1',
-                        false,
+                        true,
+                        [hybridCitation],
                         [],
-                        [],
-                        [payload],
+                        [agentCitation],
                         null,
                         null,
                         {
                             id: 'assistant-msg-images-1',
                             role: 'assistant',
                             content: 'Incident image results',
-                            agent_citations: [payload],
+                            conversation_id: 'test-convo',
+                            hybrid_citations: [hybridCitation],
+                            agent_citations: [agentCitation],
                         },
                         true
                     );
                 }
                 """,
-                compact_citation,
+                {
+                    "agentCitation": compact_citation,
+                    "hybridCitation": {
+                        "file_name": "workspace-photo.png",
+                        "citation_id": "workspace-image-001_1",
+                        "page_number": 1,
+                    },
+                },
             )
 
         message_scope = page.locator('[data-message-id="assistant-msg-images-1"]')
-        expect(message_scope.locator('.inline-image-gallery-card')).to_be_visible()
-        expect(message_scope.locator('.inline-image-gallery-title')).to_have_text('Incident Photos')
-        expect(message_scope.locator('.inline-image-gallery-summary')).to_contain_text('Key visuals gathered from the workspace and an external feed.')
-        expect(message_scope.locator('.inline-image-gallery-badges')).to_contain_text('Images: 2')
-        expect(message_scope.locator('.inline-image-gallery-footer')).to_contain_text('media_collector')
+        gallery_cards = message_scope.locator('.inline-image-gallery-card')
+        expect(gallery_cards).to_have_count(2)
+        expect(gallery_cards.first).to_be_visible()
+        expect(gallery_cards.nth(0).locator('.inline-image-gallery-title')).to_have_text('Workspace images')
+        expect(gallery_cards.nth(0).locator('.inline-image-gallery-item-title')).to_have_text('workspace-photo.png')
+        expect(gallery_cards.nth(0).locator('.inline-image-gallery-badges')).to_contain_text('Images: 1')
+        expect(gallery_cards.nth(1).locator('.inline-image-gallery-title')).to_have_text('Incident Photos')
+        expect(gallery_cards.nth(1).locator('.inline-image-gallery-summary')).to_contain_text('Key visuals gathered from the workspace and an external feed.')
+        expect(gallery_cards.nth(1).locator('.inline-image-gallery-badges')).to_contain_text('Images: 1')
+        expect(gallery_cards.nth(1).locator('.inline-image-gallery-footer')).to_contain_text('media_collector')
         expect(message_scope.locator('.inline-image-gallery-item')).to_have_count(2)
         expect(message_scope.locator('.inline-image-gallery-info-btn')).to_have_count(2)
         expect(message_scope.locator('a.agent-citation-link')).to_have_count(1)
 
-        message_scope.locator('.inline-image-gallery-info-btn').first.click()
+        message_scope.locator('.inline-image-gallery-info-btn').nth(1).click()
         details_modal = page.locator('#inline-image-details-modal')
         expect(details_modal).to_be_visible()
         expect(details_modal.locator('#inline-image-details-title')).to_have_text('Loading Dock Camera')
         expect(details_modal.locator('#inline-image-details-description')).to_contain_text('facility entrance camera')
         expect(details_modal.locator('#inline-image-details-meta')).to_contain_text('External image (api.example.com)')
 
-        page.locator('[data-message-id="assistant-msg-images-1"] .inline-image-gallery-item-image').first.click()
+        page.locator('[data-message-id="assistant-msg-images-1"] .inline-image-gallery-item-image').nth(1).click()
         expect(page.locator('#image-modal')).to_be_visible()
         expect(page.locator('#image-modal img')).to_be_visible()
     finally:

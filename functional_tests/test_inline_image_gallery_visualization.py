@@ -2,8 +2,8 @@
 # test_inline_image_gallery_visualization.py
 """
 Functional test for inline image gallery visualization support.
-Version: 0.241.055
-Implemented in: 0.241.055
+Version: 0.241.056
+Implemented in: 0.241.056
 
 This test ensures assistant agent citations can expose inline image galleries,
 workflow mirroring treats them as visualizations, and user-facing citation
@@ -89,16 +89,21 @@ def test_chat_renderer_wires_inline_image_galleries():
     chats_css = read_text("application/single_app/static/css/chats.css")
     config_py = read_text("application/single_app/config.py")
 
-    assert 'VERSION = "0.241.055"' in config_py
+    assert 'VERSION = "0.241.056"' in config_py
     assert "import { renderInlineImageGalleries } from './chat-inline-images.js';" in messages_js
     assert "await renderInlineImageGalleries(" in messages_js
     assert "const MAX_INLINE_IMAGE_ITEMS = 5;" in images_js
+    assert "parseDocIdAndPage" in images_js
+    assert '"Workspace images"' in images_js
+    assert '"Linked images"' in images_js
     assert 'return "Workspace image";' in images_js
     assert 'class="inline-image-gallery-info-btn"' in images_js
     assert 'function showInlineImageDetailsModal(item)' in images_js
     assert ".inline-image-gallery-card" in chats_css
     assert ".inline-image-gallery-info-btn" in chats_css
     assert ".inline-image-modal-meta-row" in chats_css
+    assert "hybridCitations || []" in messages_js
+    assert "webCitations || []" in messages_js
 
 
 if __name__ == "__main__":

@@ -1178,6 +1178,8 @@ export function appendMessage(
     void (async () => {
       await renderInlineImageGalleries(
         messageDiv,
+        hybridCitations || [],
+        webCitations || [],
         agentCitations || [],
         messageId,
         messageConversationId
