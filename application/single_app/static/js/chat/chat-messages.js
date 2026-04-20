@@ -21,6 +21,8 @@ import { sendMessageWithStreaming } from "./chat-streaming.js";
 import { getCurrentReasoningEffort, isReasoningEffortEnabled } from './chat-reasoning.js';
 import { areAgentsEnabled } from './chat-agents.js';
 import { createThoughtsToggleHtml, attachThoughtsToggleListener } from './chat-thoughts.js';
+import { extractInlineChartBlocks, hydrateInlineCharts, injectInlineChartHtml, restoreInlineChartTokens } from './chat-inline-charts.js';
+import { renderInlineAzureMaps } from './chat-inline-maps.js';
 
 // Conditionally import TTS if enabled
 let ttsModule = null;
@@ -359,11 +361,31 @@ export function updateSendButtonVisibility() {
 // Make function available globally for inline oninput handler
 window.handleInputChange = updateSendButtonVisibility;
 
+function resolveMessageConversationId(fullMessageObject = null) {
+  const conversationCandidates = [
+    fullMessageObject?.conversation_id,
+    fullMessageObject?.metadata?.source_conversation_id,
+    fullMessageObject?.source_conversation_id,
+    window.chatConversations?.getCurrentConversationId?.(),
+    window.currentConversationId,
+  ];
+
+  for (const candidate of conversationCandidates) {
+    const normalizedConversationId = String(candidate || '').trim();
+    if (normalizedConversationId) {
+      return normalizedConversationId;
+    }
+  }
+
+  return '';
+}
+
 function createCitationsHtml(
   hybridCitations = [],
   webCitations = [],
   agentCitations = [],
-  messageId
+  messageId,
+  messageConversationId = ""
 ) {
   let citationsHtml = "";
   let hasCitations = false;
@@ -449,7 +471,7 @@ function createCitationsHtml(
                  data-tool-args="${escapeHtml(toolArgs)}"
                  data-tool-result="${escapeHtml(toolResult)}"
                  data-artifact-id="${escapeHtml(cite.artifact_id || '')}"
-                 data-conversation-id="${escapeHtml(window.currentConversationId || '')}"
+                 data-conversation-id="${escapeHtml(messageConversationId)}"
                  title="Agent tool: ${escapeHtml(displayText)} - Click to view details">
                   <i class="bi bi-cpu me-1"></i>${escapeHtml(displayText)}
               </a>`;
@@ -897,6 +919,26 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       </div>`;
   }
 
+  export function renderAiMessageContent(messageContent) {
+    let cleaned = String(messageContent ?? '').trim().replace(/\n{3,}/g, "\n\n");
+    cleaned = cleaned.replace(/(\bhttps?:\/\/\S+)(%5D|\])+/gi, (_, url) => url);
+
+    const chartExtraction = extractInlineChartBlocks(cleaned);
+    const withInlineCitations = parseCitations(chartExtraction.markdown);
+    const withUnwrappedTables = unwrapTablesFromCodeBlocks(withInlineCitations);
+    const withMarkdownTables = convertUnicodeTableToMarkdown(withUnwrappedTables);
+    const withPSVTables = convertPSVCodeBlockToMarkdown(withMarkdownTables);
+    const withASCIITables = convertASCIIDashTableToMarkdown(withPSVTables);
+    const sanitizedHtml = DOMPurify.sanitize(marked.parse(withASCIITables));
+    const htmlWithCharts = injectInlineChartHtml(sanitizedHtml, chartExtraction.blocks);
+
+    return {
+      htmlContent: addTargetBlankToExternalLinks(htmlWithCharts),
+      copyMarkdown: restoreInlineChartTokens(withInlineCitations, chartExtraction.blocks),
+      previewMarkdown: chartExtraction.markdown,
+    };
+  }
+
 export function appendMessage(
   sender,
   messageContent,
@@ -959,16 +1001,10 @@ export function appendMessage(
       senderLabel = "AI";
     }
 
-    // Parse content with comprehensive table processing
-    let cleaned = messageContent.trim().replace(/\n{3,}/g, "\n\n");
-    cleaned = cleaned.replace(/(\bhttps?:\/\/\S+)(%5D|\])+/gi, (_, url) => url);
-    const withInlineCitations = parseCitations(cleaned);
-    const withUnwrappedTables = unwrapTablesFromCodeBlocks(withInlineCitations);
-    const withMarkdownTables = convertUnicodeTableToMarkdown(withUnwrappedTables);
-    const withPSVTables = convertPSVCodeBlockToMarkdown(withMarkdownTables);
-    const withASCIITables = convertASCIIDashTableToMarkdown(withPSVTables);
-    const sanitizedHtml = DOMPurify.sanitize(marked.parse(withASCIITables));
-    const htmlContent = addTargetBlankToExternalLinks(sanitizedHtml);
+    const messageConversationId = resolveMessageConversationId(fullMessageObject);
+
+    const renderedAiContent = renderAiMessageContent(messageContent);
+    const htmlContent = renderedAiContent.htmlContent;
 
     const mainMessageHtml = `<div class="message-text">${htmlContent}</div>`; // Renamed for clarity
 
@@ -996,7 +1032,7 @@ export function appendMessage(
                 <i class="bi bi-copy"></i>
             </button>
             <textarea id="${hiddenTextId}" style="display:none;">${escapeHtml(
-      withInlineCitations
+          renderedAiContent.copyMarkdown
     )}</textarea>
         `;
     
@@ -1036,7 +1072,8 @@ export function appendMessage(
       hybridCitations,
       webCitations,
       agentCitations,
-      messageId
+      messageId,
+      messageConversationId
     );
     console.log(
       `Generated citationsButtonsHtml (length ${
@@ -1117,6 +1154,7 @@ export function appendMessage(
                 <div class="message-bubble">
                     <div class="message-sender">${senderLabel}</div>
                     ${mainMessageHtml}
+            <div class="inline-visualizations-container d-none"></div>
                     ${citationContentContainerHtml}
                     ${thoughtsHtml.containerHtml}
                     ${metadataContainerHtml}
@@ -1125,15 +1163,23 @@ export function appendMessage(
             </div>`;
 
               messageDiv.dataset.replySenderName = stripHtmlTags(senderLabel).replace(/\s+/g, " ").trim() || "AI";
-              messageDiv.dataset.replyPreviewText = buildPlainTextPreview(messageContent);
+              messageDiv.dataset.replyPreviewText = buildPlainTextPreview(renderedAiContent.previewMarkdown);
 
     messageDiv.classList.add(messageClass); // Add AI message class
     chatbox.appendChild(messageDiv); // Append AI message
     
     // Auto-play TTS if enabled (only for new messages, not when loading history)
     if (isNewMessage && typeof autoplayTTSIfEnabled === 'function') {
-        autoplayTTSIfEnabled(messageId, messageContent);
+      autoplayTTSIfEnabled(messageId, renderedAiContent.previewMarkdown || messageContent);
     }
+
+    hydrateInlineCharts(messageDiv);
+    void renderInlineAzureMaps(
+      messageDiv,
+      agentCitations || [],
+      messageId,
+      messageConversationId
+    );
     
     // Highlight code blocks in the messages
     messageDiv.querySelectorAll('pre code[class^="language-"]').forEach((block) => {
@@ -1146,10 +1192,7 @@ export function appendMessage(
 
     // Apply masked state if message has masking
     if (fullMessageObject?.metadata) {
-      console.log('Applying masked state for AI message:', messageId, fullMessageObject.metadata);
       applyMaskedState(messageDiv, fullMessageObject.metadata);
-    } else {
-      console.log('No metadata found for AI message:', messageId, 'fullMessageObject:', fullMessageObject);
     }
 
     // --- Attach Event Listeners specifically for AI message ---

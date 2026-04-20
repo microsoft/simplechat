@@ -2,6 +2,11 @@
 
 from config import *
 from functions_authentication import *
+from functions_collaboration import (
+    assert_user_can_participate_in_collaboration_conversation,
+    ensure_collaboration_source_conversation,
+    get_collaboration_conversation,
+)
 from functions_settings import *
 from functions_conversation_metadata import get_conversation_metadata, update_conversation_with_metadata
 from functions_conversation_unread import clear_conversation_unread, normalize_conversation_unread_state
@@ -73,6 +78,43 @@ def _collect_child_message_documents(conversation_id, root_message_ids):
             pending_ids.append(child_id)
 
     return child_docs
+
+
+def _load_scope_lock_conversation(conversation_id, user_id):
+    try:
+        conversation_item = cosmos_conversations_container.read_item(
+            item=conversation_id,
+            partition_key=conversation_id,
+        )
+        if conversation_item.get('user_id') != user_id:
+            raise PermissionError('Forbidden')
+        return conversation_item, 'personal'
+    except CosmosResourceNotFoundError:
+        pass
+
+    try:
+        conversation_item = get_collaboration_conversation(conversation_id)
+    except CosmosResourceNotFoundError as exc:
+        raise LookupError('Conversation not found') from exc
+
+    assert_user_can_participate_in_collaboration_conversation(user_id, conversation_item)
+    return conversation_item, 'collaboration'
+
+
+def _persist_scope_lock_update(conversation_item, conversation_kind, user_id, new_value):
+    timestamp = datetime.utcnow().isoformat()
+    conversation_item['scope_locked'] = new_value
+
+    if conversation_kind == 'collaboration':
+        conversation_item['updated_at'] = timestamp
+        cosmos_collaboration_conversations_container.upsert_item(conversation_item)
+        current_user = get_current_user_info() or {'userId': user_id}
+        _, conversation_item = ensure_collaboration_source_conversation(conversation_item, current_user)
+        return conversation_item
+
+    conversation_item['last_updated'] = timestamp
+    cosmos_conversations_container.upsert_item(conversation_item)
+    return conversation_item
 
 def register_route_backend_conversations(app):
 
@@ -887,28 +929,25 @@ def register_route_backend_conversations(app):
                 return jsonify({'error': 'Scope unlock is disabled by administrator'}), 403
 
         try:
-            conversation_item = cosmos_conversations_container.read_item(
-                item=conversation_id, partition_key=conversation_id
+            conversation_item, conversation_kind = _load_scope_lock_conversation(conversation_id, user_id)
+            conversation_item = _persist_scope_lock_update(
+                conversation_item,
+                conversation_kind,
+                user_id,
+                new_value,
             )
-            if conversation_item.get('user_id') != user_id:
-                return jsonify({'error': 'Forbidden'}), 403
-
-            conversation_item['scope_locked'] = new_value
-            # locked_contexts are PRESERVED regardless — needed for re-locking
-
-            from datetime import datetime
-            conversation_item['last_updated'] = datetime.utcnow().isoformat()
-            cosmos_conversations_container.upsert_item(conversation_item)
 
             return jsonify({
                 "success": True,
                 "scope_locked": new_value,
                 "locked_contexts": conversation_item.get('locked_contexts', [])
             }), 200
-        except CosmosResourceNotFoundError:
+        except PermissionError as exc:
+            return jsonify({'error': str(exc) or 'Forbidden'}), 403
+        except (CosmosResourceNotFoundError, LookupError):
             return jsonify({'error': 'Conversation not found'}), 404
         except Exception as e:
-            print(f"Error updating scope lock: {e}")
+            debug_print(f"Error updating scope lock: {e}")
             return jsonify({'error': 'Failed to update scope lock'}), 500
 
     @app.route('/api/conversations/classifications', methods=['GET'])

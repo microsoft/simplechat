@@ -53,10 +53,12 @@ export function getTypeIcon(type) {
     const t = type.toLowerCase();
     if (t.includes("sql")) return "bi-database";
     if (t.includes("cosmos")) return "bi-database-fill-gear";
+    if (t.includes("chart")) return "bi-bar-chart-line";
     if (t.includes("simplechat")) return "bi-chat-square-dots";
     if (t.includes("openapi")) return "bi-globe";
     if (t.includes("log_analytics")) return "bi-graph-up";
     if (t.includes("msgraph")) return "bi-microsoft";
+    if (t.includes("azure_maps") || t.includes("openlayers")) return "bi-geo-alt";
     if (t.includes("databricks")) return "bi-bricks";
     if (t.includes("http") || t.includes("smart_http")) return "bi-cloud-arrow-up";
     if (t.includes("azure_function")) return "bi-lightning";

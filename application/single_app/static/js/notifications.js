@@ -163,7 +163,7 @@
     function normalizeWorkflowAlertTargetLabel(label) {
         const normalizedLabel = String(label || '').trim();
         const lowerLabel = normalizedLabel.toLowerCase();
-        if (lowerLabel === 'open workflow conversation' || lowerLabel === 'open workflow') {
+        if (lowerLabel === 'open workflow' || lowerLabel === 'open workflow') {
             return 'Open workflow';
         }
         if (lowerLabel.startsWith('open created')) {

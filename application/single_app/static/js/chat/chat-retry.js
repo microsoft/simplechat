@@ -3,7 +3,12 @@
 
 import { showToast } from './chat-toast.js';
 import { showLoadingIndicatorInChatbox, hideLoadingIndicatorInChatbox } from './chat-loading-indicator.js';
+import { getEffectiveScopes, isScopeLocked } from './chat-documents.js';
 import { sendMessageWithStreaming } from './chat-streaming.js';
+
+function getKnownGroupName(groupId) {
+    return (window.userGroups || []).find(group => String(group?.id || '') === String(groupId || ''))?.name || null;
+}
 
 /**
  * Populate retry agent dropdown with available agents
@@ -36,13 +41,32 @@ async function populateRetryAgentDropdown() {
             fetchUserAgents(),
             fetchSelectedAgent()
         ]);
-        const groupAgents = activeGroupId ? await fetchGroupAgentsForActiveGroup(activeGroupId) : [];
+        const scopes = getEffectiveScopes();
+        const isExplicitlyUnlocked = isScopeLocked() === false;
+        let groupAgents = [];
+
+        if (isExplicitlyUnlocked) {
+            const unlockedGroupIds = Array.from(new Set((scopes.groupIds || []).filter(Boolean)));
+            const groupAgentResults = await Promise.all(
+                unlockedGroupIds.map(groupId => fetchGroupAgentsForActiveGroup(groupId, getKnownGroupName(groupId)))
+            );
+            groupAgents = groupAgentResults.flat();
+        } else if (activeGroupId) {
+            groupAgents = await fetchGroupAgentsForActiveGroup(activeGroupId);
+        }
         
         // Combine and order agents
         const personalAgents = userAgents.filter(agent => !agent.is_global && !agent.is_group);
         const globalAgents = userAgents.filter(agent => agent.is_global);
         let orderedAgents = [];
-        if (!conversationScope) {
+
+        if (isExplicitlyUnlocked) {
+            orderedAgents = [
+                ...(scopes.personal ? personalAgents : []),
+                ...groupAgents,
+                ...globalAgents,
+            ];
+        } else if (!conversationScope) {
             orderedAgents = [...personalAgents, ...groupAgents, ...globalAgents];
         } else if (conversationScope === 'group') {
             orderedAgents = [...groupAgents, ...globalAgents];

@@ -1,7 +1,21 @@
 # route_frontend_conversations.py
 
+import logging
+import re
+
+import requests
+from flask import Response, jsonify, redirect, render_template, request
+
 from config import *
 from functions_appinsights import log_event
+from functions_azure_maps import (
+    AZURE_MAPS_DEFAULT_ENDPOINT,
+    AZURE_MAPS_DEFAULT_LANGUAGE,
+    AZURE_MAPS_DEFAULT_TILESET_ID,
+    AZURE_MAPS_DEFAULT_VIEW,
+    AZURE_MAPS_TILE_API_VERSION,
+    decode_tile_proxy_token,
+)
 from functions_authentication import *
 from functions_debug import debug_print
 from functions_chat import sort_messages_by_thread
@@ -10,6 +24,7 @@ from functions_collaboration import (
     build_collaboration_message_metadata_payload,
     get_collaboration_conversation,
     get_collaboration_message,
+    list_collaboration_messages,
 )
 from functions_image_messages import hydrate_image_messages
 from functions_message_artifacts import (
@@ -155,24 +170,49 @@ def register_route_frontend_conversations(app):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
+        artifact_lookup_conversation_id = conversation_id
+
         try:
             conversation = cosmos_conversations_container.read_item(
                 item=conversation_id,
                 partition_key=conversation_id,
             )
         except CosmosResourceNotFoundError:
-            return jsonify({'error': 'Conversation not found'}), 404
+            try:
+                conversation = get_collaboration_conversation(conversation_id)
+            except CosmosResourceNotFoundError:
+                return jsonify({'error': 'Conversation not found'}), 404
 
-        if conversation.get('user_id') != user_id:
-            return jsonify({'error': 'Unauthorized access to conversation'}), 403
+            try:
+                assert_user_can_view_collaboration_conversation(user_id, conversation)
+            except PermissionError:
+                return jsonify({'error': 'Unauthorized access to conversation'}), 403
 
-        conversation_messages = list(cosmos_messages_container.query_items(
-            query="SELECT * FROM c WHERE c.conversation_id = @conversation_id",
-            parameters=[{'name': '@conversation_id', 'value': conversation_id}],
-            partition_key=conversation_id,
-        ))
+            artifact_lookup_conversation_id = str(conversation.get('source_conversation_id') or '').strip()
+            if artifact_lookup_conversation_id:
+                conversation_messages = list(cosmos_messages_container.query_items(
+                    query="SELECT * FROM c WHERE c.conversation_id = @conversation_id",
+                    parameters=[{'name': '@conversation_id', 'value': artifact_lookup_conversation_id}],
+                    partition_key=artifact_lookup_conversation_id,
+                ))
+            else:
+                conversation_messages = list_collaboration_messages(conversation_id)
+        else:
+            if conversation.get('user_id') != user_id:
+                return jsonify({'error': 'Unauthorized access to conversation'}), 403
+
+            conversation_messages = list(cosmos_messages_container.query_items(
+                query="SELECT * FROM c WHERE c.conversation_id = @conversation_id",
+                parameters=[{'name': '@conversation_id', 'value': conversation_id}],
+                partition_key=conversation_id,
+            ))
+
         artifact_payload_map = build_message_artifact_payload_map(conversation_messages)
         artifact_payload = artifact_payload_map.get(str(artifact_id or ''))
+        if artifact_payload is None and artifact_lookup_conversation_id != conversation_id:
+            collaboration_messages = list_collaboration_messages(conversation_id)
+            artifact_payload_map = build_message_artifact_payload_map(collaboration_messages)
+            artifact_payload = artifact_payload_map.get(str(artifact_id or ''))
         if not isinstance(artifact_payload, dict):
             return jsonify({'error': 'Agent citation artifact not found'}), 404
 
@@ -181,6 +221,79 @@ def register_route_frontend_conversations(app):
             return jsonify({'error': 'Agent citation payload not found'}), 404
 
         return jsonify({'citation': citation})
+
+    @app.route('/api/azure-maps/tile', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def get_azure_maps_tile():
+        tile_proxy_token = str(request.args.get('token') or '').strip()
+        token_payload = decode_tile_proxy_token(tile_proxy_token)
+        if not token_payload:
+            return jsonify({'error': 'Invalid or expired Azure Maps tile token.'}), 400
+
+        subscription_key = str(token_payload.get('subscription_key') or '').strip()
+        if not subscription_key:
+            return jsonify({'error': 'Azure Maps tile token is missing a subscription key.'}), 400
+
+        try:
+            zoom = int(str(request.args.get('zoom') or '').strip())
+            tile_x = int(str(request.args.get('x') or '').strip())
+            tile_y = int(str(request.args.get('y') or '').strip())
+        except ValueError:
+            return jsonify({'error': 'Tile requests must include numeric zoom, x, and y values.'}), 400
+
+        raw_tileset_id = str(request.args.get('tilesetId') or AZURE_MAPS_DEFAULT_TILESET_ID).strip()
+        raw_language = str(request.args.get('language') or AZURE_MAPS_DEFAULT_LANGUAGE).strip()
+        raw_view = str(request.args.get('view') or AZURE_MAPS_DEFAULT_VIEW).strip()
+        raw_tile_size = str(request.args.get('tileSize') or '256').strip()
+
+        if not re.fullmatch(r'[A-Za-z0-9._-]+', raw_tileset_id):
+            return jsonify({'error': 'tilesetId contains unsupported characters.'}), 400
+        if raw_language and not re.fullmatch(r'[A-Za-z0-9-]{2,16}', raw_language):
+            return jsonify({'error': 'language contains unsupported characters.'}), 400
+        if raw_view and not re.fullmatch(r'[A-Za-z]+', raw_view):
+            return jsonify({'error': 'view contains unsupported characters.'}), 400
+        if raw_tile_size not in {'256', '512'}:
+            return jsonify({'error': 'tileSize must be 256 or 512.'}), 400
+
+        upstream_params = {
+            'api-version': AZURE_MAPS_TILE_API_VERSION,
+            'tilesetId': raw_tileset_id,
+            'zoom': zoom,
+            'x': tile_x,
+            'y': tile_y,
+            'tileSize': raw_tile_size,
+            'language': raw_language or AZURE_MAPS_DEFAULT_LANGUAGE,
+            'view': raw_view or AZURE_MAPS_DEFAULT_VIEW,
+            'subscription-key': subscription_key,
+        }
+
+        try:
+            upstream_response = requests.get(
+                f'{AZURE_MAPS_DEFAULT_ENDPOINT}/map/tile',
+                params=upstream_params,
+                timeout=20,
+            )
+        except requests.RequestException as exc:
+            log_event(
+                f"[AzureMaps] Tile proxy request failed: {exc}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Azure Maps tile request failed.'}), 502
+
+        proxy_response = Response(
+            upstream_response.content,
+            status=upstream_response.status_code,
+            content_type=upstream_response.headers.get('Content-Type', 'image/png'),
+        )
+
+        cache_control = upstream_response.headers.get('Cache-Control')
+        if cache_control:
+            proxy_response.headers['Cache-Control'] = cache_control
+        proxy_response.headers['X-Content-Type-Options'] = 'nosniff'
+        return proxy_response
 
     @app.route('/api/message/<message_id>/metadata', methods=['GET'])
     @swagger_route(security=get_auth_security())

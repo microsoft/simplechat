@@ -218,6 +218,40 @@
             </div>
           </div>
 
+          <div id="azure-maps-config-section" class="d-none">
+            <div class="alert alert-info mb-3">
+              <strong>Built-in action:</strong> This action prepares inline OpenLayers maps in chat and proxies Azure Maps raster tiles through SimpleChat.
+              Only the Azure Maps subscription key is required here.
+            </div>
+
+            <div class="card border-0 shadow-sm mb-0">
+              <div class="card-body p-3">
+                <div class="config-section-label">
+                  <i class="bi bi-geo-alt me-2"></i>Azure Maps Credentials
+                </div>
+                <div class="mb-0">
+                  <label for="azure-maps-key" class="form-label">Subscription Key <span class="text-danger">*</span></label>
+                  <input type="password" class="form-control" id="azure-maps-key" placeholder="Azure Maps subscription key" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
+                  <div class="form-text">The browser receives only a short-lived proxy token. The raw subscription key stays in the stored action configuration.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="chart-config-section" class="d-none">
+            <div class="alert alert-warning mb-0">
+              <strong>Built-in action:</strong> Charts are rendered with SimpleChat's internal Chart.js bundle and the current user's chat session.
+              The chart types below become the default visualization options exposed by this action. Agents can narrow them further per assignment.
+            </div>
+
+            <div class="simplechat-config-card">
+              <div class="config-section-label">
+                <i class="bi bi-bar-chart-line me-2"></i>Default Chart Types
+              </div>
+              <div id="chart-capabilities-list" class="d-grid gap-2"></div>
+            </div>
+          </div>
+
           <div id="document-search-config-section" class="d-none">
             <div class="alert alert-info mb-3">
               <i class="bi bi-search me-2"></i>
@@ -922,6 +956,30 @@
                   <div class="d-flex flex-column">
                     <label class="text-muted small mb-1">Disabled By Default</label>
                     <span class="fw-medium" id="summary-msgraph-disabled-list">-</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card mb-3 border-0 shadow-sm" id="summary-chart-section" style="display: none;">
+            <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #fd7e14 0%, #b45309 100%);">
+              <h6 class="mb-0 fw-bold">
+                <i class="bi bi-bar-chart-line me-2"></i>Chart Types
+              </h6>
+            </div>
+            <div class="card-body p-3">
+              <div class="row g-3">
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Enabled By Default</label>
+                    <span class="fw-medium" id="summary-chart-enabled-list">-</span>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Disabled By Default</label>
+                    <span class="fw-medium" id="summary-chart-disabled-list">-</span>
                   </div>
                 </div>
               </div>

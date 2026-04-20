@@ -46,6 +46,8 @@ from functions_activity_logging import (
     log_action_update,
     log_action_deletion,
 )
+from functions_azure_maps import AZURE_MAPS_DEFAULT_ENDPOINT, AZURE_MAPS_PLUGIN_TYPE
+from functions_chart_operations import CHART_DEFAULT_ENDPOINT, CHART_PLUGIN_TYPE
 from functions_msgraph_operations import MSGRAPH_DEFAULT_ENDPOINT, MSGRAPH_PLUGIN_TYPE
 from functions_simplechat_operations import SIMPLECHAT_DEFAULT_ENDPOINT, SIMPLECHAT_PLUGIN_TYPE
 
@@ -60,6 +62,11 @@ def _apply_plugin_runtime_defaults(plugin_payload):
     plugin_type = plugin_payload.get('type', '')
     if plugin_type in ['sql_schema', 'sql_query']:
         plugin_payload.setdefault('endpoint', f'sql://{plugin_type}')
+    elif plugin_type == CHART_PLUGIN_TYPE:
+        plugin_payload.setdefault('endpoint', CHART_DEFAULT_ENDPOINT)
+        auth = plugin_payload.get('auth') if isinstance(plugin_payload.get('auth'), dict) else {}
+        auth['type'] = 'user'
+        plugin_payload['auth'] = auth
     elif plugin_type == MSGRAPH_PLUGIN_TYPE:
         plugin_payload.setdefault('endpoint', MSGRAPH_DEFAULT_ENDPOINT)
         auth = plugin_payload.get('auth') if isinstance(plugin_payload.get('auth'), dict) else {}
@@ -69,6 +76,11 @@ def _apply_plugin_runtime_defaults(plugin_payload):
         plugin_payload.setdefault('endpoint', DOCUMENT_SEARCH_INTERNAL_ENDPOINT)
         auth = plugin_payload.get('auth') if isinstance(plugin_payload.get('auth'), dict) else {}
         auth['type'] = 'NoAuth'
+        plugin_payload['auth'] = auth
+    elif plugin_type == AZURE_MAPS_PLUGIN_TYPE:
+        plugin_payload.setdefault('endpoint', AZURE_MAPS_DEFAULT_ENDPOINT)
+        auth = plugin_payload.get('auth') if isinstance(plugin_payload.get('auth'), dict) else {}
+        auth['type'] = 'key'
         plugin_payload['auth'] = auth
     elif plugin_type == SIMPLECHAT_PLUGIN_TYPE:
         plugin_payload.setdefault('endpoint', SIMPLECHAT_DEFAULT_ENDPOINT)
@@ -203,6 +215,12 @@ def get_plugin_types():
                             safe_manifest = {
                                 'auth': {'type': 'user'},
                                 'metadata': {'description': 'Microsoft Graph plugin'}
+                            }
+                        elif 'azure_maps' in module_name.lower():
+                            safe_manifest = {
+                                'endpoint': AZURE_MAPS_DEFAULT_ENDPOINT,
+                                'auth': {'type': 'key', 'key': 'dummy'},
+                                'metadata': {'description': 'Azure Maps visualization plugin'}
                             }
                         elif 'log_analytics' in module_name.lower():
                             safe_manifest = {

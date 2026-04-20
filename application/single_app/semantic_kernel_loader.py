@@ -46,6 +46,11 @@ from functions_group import assert_group_role, get_group_model_endpoints, requir
 from functions_personal_actions import get_personal_actions, ensure_migration_complete as ensure_actions_migration_complete
 from functions_personal_agents import get_personal_agents, ensure_migration_complete as ensure_agents_migration_complete
 from functions_agent_payload import can_agent_use_default_multi_endpoint_model
+from functions_chart_operations import (
+    CHART_PLUGIN_TYPE,
+    get_enabled_chart_type_keys,
+    resolve_chart_action_capabilities,
+)
 from functions_msgraph_operations import (
     MSGRAPH_PLUGIN_TYPE,
     get_msgraph_enabled_function_names,
@@ -1118,6 +1123,22 @@ def _apply_agent_plugin_runtime_overlays(plugin_manifests, agent_other_settings=
             )
             manifest_copy['simplechat_capabilities'] = capabilities
             manifest_copy['enabled_functions'] = get_simplechat_enabled_function_names(capabilities)
+
+        if manifest_copy.get('type') == CHART_PLUGIN_TYPE:
+            action_defaults = manifest_copy.get('chart_capabilities')
+            if action_defaults is None:
+                additional_fields = manifest_copy.get('additionalFields')
+                if isinstance(additional_fields, dict):
+                    action_defaults = additional_fields.get('chart_capabilities')
+
+            capabilities = resolve_chart_action_capabilities(
+                action_capability_map=action_capabilities,
+                default_capabilities=action_defaults,
+                action_id=manifest_copy.get('id'),
+                action_name=manifest_copy.get('name'),
+            )
+            manifest_copy['chart_capabilities'] = capabilities
+            manifest_copy['enabled_chart_types'] = get_enabled_chart_type_keys(capabilities)
 
         if manifest_copy.get('type') == MSGRAPH_PLUGIN_TYPE:
             action_defaults = manifest_copy.get('msgraph_capabilities')

@@ -9,6 +9,7 @@ import traceback
 from typing import Dict, Any, List, Optional, Tuple
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from functions_appinsights import log_event
+from functions_azure_maps import AZURE_MAPS_DEFAULT_ENDPOINT, AZURE_MAPS_PLUGIN_TYPE
 from functions_simplechat_operations import SIMPLECHAT_DEFAULT_ENDPOINT
 
 
@@ -99,6 +100,16 @@ class PluginHealthChecker:
                 errors.append(f"SimpleChat plugin requires an 'endpoint' field (use {SIMPLECHAT_DEFAULT_ENDPOINT})")
             if auth.get('type') != 'user':
                 errors.append("SimpleChat plugin requires auth.type='user'")
+
+        elif plugin_type == AZURE_MAPS_PLUGIN_TYPE:
+            endpoint = manifest.get('endpoint')
+            auth = manifest.get('auth', {}) if isinstance(manifest.get('auth'), dict) else {}
+            if not endpoint:
+                errors.append(f"Azure Maps plugin requires an 'endpoint' field (use {AZURE_MAPS_DEFAULT_ENDPOINT})")
+            if auth.get('type') != 'key':
+                errors.append("Azure Maps plugin requires auth.type='key'")
+            if not auth.get('key'):
+                errors.append("Azure Maps plugin requires auth.key with an Azure Maps subscription key")
         
         return len(errors) == 0, errors
     

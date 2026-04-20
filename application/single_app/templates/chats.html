@@ -5,6 +5,7 @@
 
 {% block head %}
     <link rel="stylesheet" href="/static/css/chats.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@10.6.1/ol.css" crossorigin="anonymous">
     {% if app_settings.enable_speech_to_text_input %}
     <link rel="stylesheet" href="/static/css/chat-speech-input.css">
     {% endif %}
@@ -1290,6 +1291,8 @@
     const USER_SETTINGS_KEY_SPLIT = 'splitSizesPreference';
 </script>
 <script src="{{ url_for('static', filename='js/chat/chat-global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/chart.min.js') }}"></script>
+<script src="https://cdn.jsdelivr.net/npm/ol@10.6.1/dist/ol.js" crossorigin="anonymous"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-layout.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-utils.js') }}"></script>
 {% if app_settings.enable_speech_to_text_input %}

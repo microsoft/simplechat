@@ -5,10 +5,13 @@ import json
 from functools import lru_cache
 from jsonschema import validate, ValidationError, Draft7Validator, Draft6Validator, RefResolver
 
+from functions_chart_operations import CHART_DEFAULT_ENDPOINT
+
 SCHEMA_DIR = os.path.join(os.path.dirname(__file__), 'static', 'json', 'schemas')
 PLUGIN_ENDPOINT_DEFAULTS = {
     'sql_schema': 'sql://sql_schema',
     'sql_query': 'sql://sql_query',
+    'chart': CHART_DEFAULT_ENDPOINT,
     'msgraph': 'https://graph.microsoft.com',
     'simplechat': 'simplechat://internal',
     'search': 'internal://document-search',

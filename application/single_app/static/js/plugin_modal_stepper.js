@@ -5,6 +5,9 @@ import { getTypeIcon } from "./workspace/view-utils.js";
 
 // Action types hidden from the creation UI (backend plugins remain intact)
 const HIDDEN_ACTION_TYPES = ['sql_schema', 'ui_test', 'queue_storage', 'blob_storage', 'embedding_model'];
+const AZURE_MAPS_PLUGIN_TYPE = 'azure_maps_openlayers';
+const AZURE_MAPS_DEFAULT_ENDPOINT = 'https://atlas.microsoft.com';
+const CHART_DEFAULT_ENDPOINT = 'chart://internal';
 const INTERNAL_DOCUMENT_SEARCH_ENDPOINT = 'internal://document-search';
 const MSGRAPH_DEFAULT_ENDPOINT = 'https://graph.microsoft.com';
 const SIMPLECHAT_CAPABILITY_DEFINITIONS = [
@@ -111,6 +114,58 @@ const MSGRAPH_CAPABILITY_DEFINITIONS = [
     description: 'Allow this action to read recent security alerts available to the signed-in user.'
   }
 ];
+const CHART_CAPABILITY_DEFINITIONS = [
+  {
+    key: 'line',
+    label: 'Line charts',
+    description: 'Render single-series and multi-series line charts.'
+  },
+  {
+    key: 'bar',
+    label: 'Bar charts',
+    description: 'Render categorical bar charts, including grouped multi-series bars.'
+  },
+  {
+    key: 'pie',
+    label: 'Pie charts',
+    description: 'Render proportional pie charts for part-to-whole comparisons.'
+  },
+  {
+    key: 'doughnut',
+    label: 'Doughnut charts',
+    description: 'Render doughnut charts for part-to-whole comparisons with a center cutout.'
+  },
+  {
+    key: 'scatter',
+    label: 'Scatter plots',
+    description: 'Render XY scatter plots with optional grouped series.'
+  },
+  {
+    key: 'area',
+    label: 'Area charts',
+    description: 'Render filled line charts for trend visualization.'
+  },
+  {
+    key: 'bubble',
+    label: 'Bubble charts',
+    description: 'Render bubble charts with x, y, and size dimensions.'
+  },
+  {
+    key: 'radar',
+    label: 'Radar charts',
+    description: 'Render radar charts for multi-axis comparisons.'
+  },
+  {
+    key: 'stacked_bar',
+    label: 'Stacked bar charts',
+    description: 'Render stacked bar charts for cumulative category comparisons.'
+  },
+  {
+    key: 'stacked_line',
+    label: 'Stacked line charts',
+    description: 'Render stacked line charts for cumulative multi-series trends.'
+  }
+];
 
 export class PluginModalStepper {
   
@@ -133,6 +188,7 @@ export class PluginModalStepper {
     this.currentAllowedAuthTypes = null; // Active allowed auth types derived from definition
     this.simpleChatCapabilityState = this.getDefaultSimpleChatCapabilities();
     this.msGraphCapabilityState = this.getDefaultMsGraphCapabilities();
+    this.chartCapabilityState = this.getDefaultChartCapabilities();
 
     this._loadPluginSchema().then(() => { // Load schema on initialization
       this._populateGenericAuthTypeDropdown(); // Dynamically populate generic auth type dropdown after schema loads (will be called again after schema loads)
@@ -631,6 +687,14 @@ export class PluginModalStepper {
     return !!(type && type.toLowerCase() === 'msgraph');
   }
 
+  isAzureMapsType(type = this.selectedType) {
+    return !!(type && type.toLowerCase() === AZURE_MAPS_PLUGIN_TYPE);
+  }
+
+  isChartType(type = this.selectedType) {
+    return !!(type && type.toLowerCase() === 'chart');
+  }
+
   getDefaultSimpleChatCapabilities() {
     const defaults = {};
     SIMPLECHAT_CAPABILITY_DEFINITIONS.forEach(definition => {
@@ -765,6 +829,73 @@ export class PluginModalStepper {
     return this.normalizeMsGraphCapabilities(this.msGraphCapabilityState);
   }
 
+  getDefaultChartCapabilities() {
+    const defaults = {};
+    CHART_CAPABILITY_DEFINITIONS.forEach(definition => {
+      defaults[definition.key] = true;
+    });
+    return defaults;
+  }
+
+  normalizeChartCapabilities(rawCapabilities = null) {
+    const defaults = this.getDefaultChartCapabilities();
+    if (!rawCapabilities || typeof rawCapabilities !== 'object' || Array.isArray(rawCapabilities)) {
+      return defaults;
+    }
+
+    CHART_CAPABILITY_DEFINITIONS.forEach(definition => {
+      if (Object.prototype.hasOwnProperty.call(rawCapabilities, definition.key)) {
+        defaults[definition.key] = Boolean(rawCapabilities[definition.key]);
+      }
+    });
+
+    return defaults;
+  }
+
+  renderChartConfiguration() {
+    const list = document.getElementById('chart-capabilities-list');
+    if (!list) {
+      return;
+    }
+
+    list.innerHTML = '';
+    CHART_CAPABILITY_DEFINITIONS.forEach(definition => {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'form-check mb-3';
+
+      const checkbox = document.createElement('input');
+      checkbox.className = 'form-check-input';
+      checkbox.type = 'checkbox';
+      checkbox.id = `chart-capability-${definition.key}`;
+      checkbox.checked = Boolean(this.chartCapabilityState?.[definition.key]);
+
+      const label = document.createElement('label');
+      label.className = 'form-check-label';
+      label.setAttribute('for', checkbox.id);
+      label.innerHTML = `<span class="fw-medium">${this.escapeHtml(definition.label)}</span><br><span class="text-muted small">${this.escapeHtml(definition.description)}</span>`;
+
+      checkbox.addEventListener('change', () => {
+        this.chartCapabilityState = {
+          ...this.chartCapabilityState,
+          [definition.key]: checkbox.checked
+        };
+      });
+
+      wrapper.appendChild(checkbox);
+      wrapper.appendChild(label);
+      list.appendChild(wrapper);
+    });
+  }
+
+  setChartCapabilities(rawCapabilities = null) {
+    this.chartCapabilityState = this.normalizeChartCapabilities(rawCapabilities);
+    this.renderChartConfiguration();
+  }
+
+  getSelectedChartCapabilities() {
+    return this.normalizeChartCapabilities(this.chartCapabilityState);
+  }
+
   initializeDocumentSearchConfiguration() {
     const defaults = {
       'document-search-scope': 'all',
@@ -845,7 +976,7 @@ export class PluginModalStepper {
   }
 
   isStructuredConfigType(type = this.selectedType) {
-    return this.isSqlType(type) || this.isCosmosType(type) || this.isDocumentSearchType(type) || this.isSimpleChatType(type) || this.isMsGraphType(type);
+    return this.isSqlType(type) || this.isCosmosType(type) || this.isDocumentSearchType(type) || this.isSimpleChatType(type) || this.isMsGraphType(type) || this.isAzureMapsType(type) || this.isChartType(type);
   }
 
   showConfigSectionForType() {
@@ -856,12 +987,16 @@ export class PluginModalStepper {
     const documentSearchSection = document.getElementById('document-search-config-section');
     const simpleChatSection = document.getElementById('simplechat-config-section');
     const msGraphSection = document.getElementById('msgraph-config-section');
+    const azureMapsSection = document.getElementById('azure-maps-config-section');
+    const chartSection = document.getElementById('chart-config-section');
     const isOpenApiType = this.isOpenApiType();
     const isSqlType = this.isSqlType();
     const isCosmosType = this.isCosmosType();
     const isDocumentSearchType = this.isDocumentSearchType();
     const isSimpleChatType = this.isSimpleChatType();
     const isMsGraphType = this.isMsGraphType();
+    const isAzureMapsType = this.isAzureMapsType();
+    const isChartType = this.isChartType();
     
     if (isOpenApiType) {
       openApiSection.classList.remove('d-none');
@@ -871,6 +1006,8 @@ export class PluginModalStepper {
       documentSearchSection.classList.add('d-none');
       simpleChatSection.classList.add('d-none');
       msGraphSection.classList.add('d-none');
+      azureMapsSection.classList.add('d-none');
+      chartSection.classList.add('d-none');
     } else if (isSqlType) {
       openApiSection.classList.add('d-none');
       genericSection.classList.add('d-none');
@@ -879,6 +1016,8 @@ export class PluginModalStepper {
       documentSearchSection.classList.add('d-none');
       simpleChatSection.classList.add('d-none');
       msGraphSection.classList.add('d-none');
+      azureMapsSection.classList.add('d-none');
+      chartSection.classList.add('d-none');
       // Initialize SQL plugin configuration
       this.initializeSqlConfiguration();
     } else if (isCosmosType) {
@@ -889,6 +1028,8 @@ export class PluginModalStepper {
       documentSearchSection.classList.add('d-none');
       simpleChatSection.classList.add('d-none');
       msGraphSection.classList.add('d-none');
+      azureMapsSection.classList.add('d-none');
+      chartSection.classList.add('d-none');
       this.initializeCosmosConfiguration();
     } else if (isDocumentSearchType) {
       openApiSection.classList.add('d-none');
@@ -898,6 +1039,8 @@ export class PluginModalStepper {
       documentSearchSection.classList.remove('d-none');
       simpleChatSection.classList.add('d-none');
       msGraphSection.classList.add('d-none');
+      azureMapsSection.classList.add('d-none');
+      chartSection.classList.add('d-none');
       this.initializeDocumentSearchConfiguration();
     } else if (isSimpleChatType) {
       openApiSection.classList.add('d-none');
@@ -907,6 +1050,8 @@ export class PluginModalStepper {
       documentSearchSection.classList.add('d-none');
       simpleChatSection.classList.remove('d-none');
       msGraphSection.classList.add('d-none');
+      azureMapsSection.classList.add('d-none');
+      chartSection.classList.add('d-none');
       this.renderSimpleChatConfiguration();
     } else if (isMsGraphType) {
       openApiSection.classList.add('d-none');
@@ -916,7 +1061,30 @@ export class PluginModalStepper {
       documentSearchSection.classList.add('d-none');
       simpleChatSection.classList.add('d-none');
       msGraphSection.classList.remove('d-none');
+      azureMapsSection.classList.add('d-none');
+      chartSection.classList.add('d-none');
       this.renderMsGraphConfiguration();
+    } else if (isAzureMapsType) {
+      openApiSection.classList.add('d-none');
+      genericSection.classList.add('d-none');
+      sqlSection.classList.add('d-none');
+      cosmosSection.classList.add('d-none');
+      documentSearchSection.classList.add('d-none');
+      simpleChatSection.classList.add('d-none');
+      msGraphSection.classList.add('d-none');
+      azureMapsSection.classList.remove('d-none');
+      chartSection.classList.add('d-none');
+    } else if (isChartType) {
+      openApiSection.classList.add('d-none');
+      genericSection.classList.add('d-none');
+      sqlSection.classList.add('d-none');
+      cosmosSection.classList.add('d-none');
+      documentSearchSection.classList.add('d-none');
+      simpleChatSection.classList.add('d-none');
+      msGraphSection.classList.add('d-none');
+      azureMapsSection.classList.add('d-none');
+      chartSection.classList.remove('d-none');
+      this.renderChartConfiguration();
     } else {
       openApiSection.classList.add('d-none');
       genericSection.classList.remove('d-none');
@@ -925,6 +1093,8 @@ export class PluginModalStepper {
       documentSearchSection.classList.add('d-none');
       simpleChatSection.classList.add('d-none');
       msGraphSection.classList.add('d-none');
+      azureMapsSection.classList.add('d-none');
+      chartSection.classList.add('d-none');
     }
   }
 
@@ -952,6 +1122,8 @@ export class PluginModalStepper {
         const isSqlType = this.isSqlType();
         const isCosmosType = this.isCosmosType();
         const isDocumentSearchType = this.isDocumentSearchType();
+        const isAzureMapsType = this.isAzureMapsType();
+        const isChartType = this.isChartType();
         
         if (isOpenApiType) {
           titleEl.textContent = 'API Configuration';
@@ -965,6 +1137,10 @@ export class PluginModalStepper {
           titleEl.textContent = 'SimpleChat Configuration';
         } else if (this.isMsGraphType()) {
           titleEl.textContent = 'Microsoft Graph Configuration';
+        } else if (isAzureMapsType) {
+          titleEl.textContent = 'Azure Maps Configuration';
+        } else if (isChartType) {
+          titleEl.textContent = 'Chart Configuration';
         } else {
           titleEl.textContent = 'Configuration';
         }
@@ -1143,12 +1319,16 @@ export class PluginModalStepper {
         const documentSearchSection = document.getElementById('document-search-config-section');
         const simpleChatSection = document.getElementById('simplechat-config-section');
         const msGraphSection = document.getElementById('msgraph-config-section');
+        const azureMapsSection = document.getElementById('azure-maps-config-section');
+        const chartSection = document.getElementById('chart-config-section');
         const isOpenApiVisible = !openApiSection.classList.contains('d-none');
         const isSqlVisible = !sqlSection.classList.contains('d-none');
         const isCosmosVisible = !cosmosSection.classList.contains('d-none');
         const isDocumentSearchVisible = !documentSearchSection.classList.contains('d-none');
         const isSimpleChatVisible = !simpleChatSection.classList.contains('d-none');
         const isMsGraphVisible = !msGraphSection.classList.contains('d-none');
+        const isAzureMapsVisible = !azureMapsSection.classList.contains('d-none');
+        const isChartVisible = !chartSection.classList.contains('d-none');
         
         if (isOpenApiVisible) {
           // Validate OpenAPI fields
@@ -1308,6 +1488,18 @@ export class PluginModalStepper {
           const capabilityValues = Object.values(this.getSelectedMsGraphCapabilities());
           if (!capabilityValues.some(Boolean)) {
             this.showError('Enable at least one Microsoft Graph capability before continuing.');
+            return false;
+          }
+        } else if (isAzureMapsVisible) {
+          const azureMapsKey = document.getElementById('azure-maps-key').value.trim();
+          if (!azureMapsKey) {
+            this.showError('Azure Maps subscription key is required.');
+            return false;
+          }
+        } else if (isChartVisible) {
+          const capabilityValues = Object.values(this.getSelectedChartCapabilities());
+          if (!capabilityValues.some(Boolean)) {
+            this.showError('Enable at least one chart type before continuing.');
             return false;
           }
         } else if (isDocumentSearchVisible) {
@@ -2271,6 +2463,12 @@ export class PluginModalStepper {
     } else if (this.isMsGraphType(plugin.type)) {
       const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
       this.setMsGraphCapabilities(additionalFields.msgraph_capabilities || plugin.msgraph_capabilities || null);
+    } else if (this.isAzureMapsType(plugin.type)) {
+      const auth = plugin.auth || {};
+      document.getElementById('azure-maps-key').value = auth.key || '';
+    } else if (this.isChartType(plugin.type)) {
+      const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
+      this.setChartCapabilities(additionalFields.chart_capabilities || plugin.chart_capabilities || null);
     } else {
       // Populate generic fields
       document.getElementById('plugin-endpoint-generic').value = plugin.endpoint || '';
@@ -2305,10 +2503,12 @@ export class PluginModalStepper {
     const sqlSection = document.getElementById('sql-config-section');
     const cosmosSection = document.getElementById('cosmos-config-section');
     const documentSearchSection = document.getElementById('document-search-config-section');
+    const azureMapsSection = document.getElementById('azure-maps-config-section');
     const isOpenApiVisible = !openApiSection.classList.contains('d-none');
     const isSqlVisible = !sqlSection.classList.contains('d-none');
     const isCosmosVisible = !cosmosSection.classList.contains('d-none');
     const isDocumentSearchVisible = !documentSearchSection.classList.contains('d-none');
+    const isAzureMapsVisible = !azureMapsSection.classList.contains('d-none');
     
     let auth = {};
     let endpoint = '';
@@ -2523,6 +2723,14 @@ export class PluginModalStepper {
       endpoint = MSGRAPH_DEFAULT_ENDPOINT;
       auth.type = 'user';
       additionalFields.msgraph_capabilities = this.getSelectedMsGraphCapabilities();
+    } else if (isAzureMapsVisible) {
+      endpoint = AZURE_MAPS_DEFAULT_ENDPOINT;
+      auth.type = 'key';
+      auth.key = document.getElementById('azure-maps-key').value.trim();
+    } else if (this.isChartType()) {
+      endpoint = CHART_DEFAULT_ENDPOINT;
+      auth.type = 'user';
+      additionalFields.chart_capabilities = this.getSelectedChartCapabilities();
     } else {
       // Collect generic plugin data
       console.log("Collecting generic plugin data");
@@ -2604,6 +2812,9 @@ export class PluginModalStepper {
     const isCosmosType = this.isCosmosType();
     const isDocumentSearchType = this.isDocumentSearchType();
     const isSimpleChatType = this.isSimpleChatType();
+    const isMsGraphType = this.isMsGraphType();
+    const isAzureMapsType = this.isAzureMapsType();
+    const isChartType = this.isChartType();
     
     const endpointRow = document.getElementById('summary-plugin-endpoint-row');
     const databaseTypeRow = document.getElementById('summary-plugin-database-type-row');
@@ -2631,6 +2842,14 @@ export class PluginModalStepper {
       endpointRow.style.display = 'none';
       document.getElementById('summary-plugin-database-type').textContent = 'Built-in Microsoft Graph action';
       databaseTypeRow.style.display = '';
+    } else if (isAzureMapsType) {
+      endpointRow.style.display = 'none';
+      document.getElementById('summary-plugin-database-type').textContent = 'Azure Maps tile proxy';
+      databaseTypeRow.style.display = '';
+    } else if (isChartType) {
+      endpointRow.style.display = 'none';
+      document.getElementById('summary-plugin-database-type').textContent = 'Built-in chart action';
+      databaseTypeRow.style.display = '';
     } else {
       // Show endpoint for non-SQL plugins (OpenAPI, generic, etc.)
       const endpoint = this.getEndpointValue();
@@ -2653,10 +2872,10 @@ export class PluginModalStepper {
     }
     
     const databaseType = this.getSqlDatabaseType();
-    if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isSimpleChatType && !isMsGraphType && databaseType) {
+    if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && databaseType) {
       document.getElementById('summary-plugin-database-type').textContent = databaseType;
       databaseTypeRow.style.display = '';
-    } else if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isSimpleChatType && !isMsGraphType) {
+    } else if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType) {
       databaseTypeRow.style.display = 'none';
     }
     
@@ -2667,6 +2886,7 @@ export class PluginModalStepper {
     this.populateDocumentSearchSummary();
     this.populateSimpleChatSummary();
     this.populateMsGraphSummary();
+    this.populateChartSummary();
     this.populateAdvancedSummary();
     this.populateChangesSummary();
   }
@@ -2677,7 +2897,10 @@ export class PluginModalStepper {
     const isSqlType = this.isSqlType();
     const isCosmosType = this.isCosmosType();
     const isDocumentSearchType = this.isDocumentSearchType();
+    const isSimpleChatType = this.isSimpleChatType();
     const isMsGraphType = this.isMsGraphType();
+    const isAzureMapsType = this.isAzureMapsType();
+    const isChartType = this.isChartType();
     
     if (isOpenApiType) {
       return document.getElementById('plugin-endpoint').value.trim();
@@ -2687,8 +2910,12 @@ export class PluginModalStepper {
       return document.getElementById('cosmos-endpoint').value.trim();
     } else if (isDocumentSearchType) {
       return INTERNAL_DOCUMENT_SEARCH_ENDPOINT;
+    } else if (isAzureMapsType) {
+      return AZURE_MAPS_DEFAULT_ENDPOINT;
     } else if (isMsGraphType) {
       return MSGRAPH_DEFAULT_ENDPOINT;
+    } else if (isChartType) {
+      return CHART_DEFAULT_ENDPOINT;
     } else {
       return document.getElementById('plugin-endpoint-generic').value.trim();
     }
@@ -2701,6 +2928,8 @@ export class PluginModalStepper {
     const isCosmosType = this.isCosmosType();
     const isDocumentSearchType = this.isDocumentSearchType();
     const isMsGraphType = this.isMsGraphType();
+    const isAzureMapsType = this.isAzureMapsType();
+    const isChartType = this.isChartType();
     
     if (isOpenApiType) {
       const authType = document.getElementById('plugin-auth-type').value;
@@ -2713,7 +2942,13 @@ export class PluginModalStepper {
       return authType === 'key' ? 'Account Key' : 'Managed Identity';
     } else if (isDocumentSearchType) {
       return 'Internal user context';
+    } else if (isSimpleChatType) {
+      return 'User';
     } else if (isMsGraphType) {
+      return 'User';
+    } else if (isAzureMapsType) {
+      return 'Subscription Key';
+    } else if (isChartType) {
       return 'User';
     } else {
       const authType = document.getElementById('plugin-auth-type-generic').value;
@@ -2917,6 +3152,36 @@ export class PluginModalStepper {
     msGraphSection.style.display = '';
   }
 
+  populateChartSummary() {
+    const chartSection = document.getElementById('summary-chart-section');
+    const enabledList = document.getElementById('summary-chart-enabled-list');
+    const disabledList = document.getElementById('summary-chart-disabled-list');
+    if (!chartSection || !enabledList || !disabledList) {
+      return;
+    }
+
+    if (!this.isChartType()) {
+      chartSection.style.display = 'none';
+      return;
+    }
+
+    const capabilities = this.getSelectedChartCapabilities();
+    const enabledLabels = [];
+    const disabledLabels = [];
+
+    CHART_CAPABILITY_DEFINITIONS.forEach(definition => {
+      if (capabilities[definition.key]) {
+        enabledLabels.push(definition.label);
+      } else {
+        disabledLabels.push(definition.label);
+      }
+    });
+
+    enabledList.textContent = enabledLabels.length ? enabledLabels.join(', ') : 'None';
+    disabledList.textContent = disabledLabels.length ? disabledLabels.join(', ') : 'None';
+    chartSection.style.display = '';
+  }
+
   populateSqlOptionalSetting(inputId, summaryId, rowId) {
     const input = document.getElementById(inputId);
     const summaryElement = document.getElementById(summaryId);
@@ -2966,6 +3231,8 @@ export class PluginModalStepper {
       const isDocumentSearchType = this.isDocumentSearchType();
       const isSimpleChatType = this.isSimpleChatType();
       const isMsGraphType = this.isMsGraphType();
+      const isAzureMapsType = this.isAzureMapsType();
+      const isChartType = this.isChartType();
       
       if (isOpenApiType) {
         currentEndpoint = document.getElementById('plugin-endpoint')?.value || '';
@@ -2979,6 +3246,10 @@ export class PluginModalStepper {
         currentEndpoint = '';
       } else if (isMsGraphType) {
         currentEndpoint = MSGRAPH_DEFAULT_ENDPOINT;
+      } else if (isAzureMapsType) {
+        currentEndpoint = AZURE_MAPS_DEFAULT_ENDPOINT;
+      } else if (isChartType) {
+        currentEndpoint = CHART_DEFAULT_ENDPOINT;
       } else {
         currentEndpoint = document.getElementById('plugin-endpoint-generic')?.value || '';
       }
@@ -3011,6 +3282,11 @@ export class PluginModalStepper {
         currentAuthType = 'user';
       } else if (isMsGraphType) {
         currentAuthType = 'user';
+      } else if (isAzureMapsType) {
+        currentAuthType = 'key';
+        currentAuthKey = document.getElementById('azure-maps-key')?.value || '';
+      } else if (isChartType) {
+        currentAuthType = 'user';
       } else {
         currentAuthType = document.getElementById('plugin-auth-type-generic')?.value || '';
         currentAuthKey = document.getElementById('plugin-auth-key')?.value || '';
@@ -3038,6 +3314,12 @@ export class PluginModalStepper {
       } else if (isMsGraphType) {
         currentAdditionalFields = JSON.stringify({
           msgraph_capabilities: this.getSelectedMsGraphCapabilities()
+        }, null, 2);
+      } else if (isAzureMapsType) {
+        currentAdditionalFields = '{}';
+      } else if (isChartType) {
+        currentAdditionalFields = JSON.stringify({
+          chart_capabilities: this.getSelectedChartCapabilities()
         }, null, 2);
       }
       
@@ -3313,6 +3595,7 @@ export class PluginModalStepper {
     safeSetValue('plugin-auth-basic-username-generic');
     safeSetValue('plugin-auth-basic-password-generic');
     safeSetValue('plugin-auth-oauth2-token-generic');
+    safeSetValue('azure-maps-key');
     
     // Step 3 fields - SQL Plugin
     safeSetValue('sql-connection-method', 'connection_string');
@@ -3347,8 +3630,10 @@ export class PluginModalStepper {
 
     this.simpleChatCapabilityState = this.getDefaultSimpleChatCapabilities();
     this.renderSimpleChatConfiguration();
-  this.msGraphCapabilityState = this.getDefaultMsGraphCapabilities();
-  this.renderMsGraphConfiguration();
+    this.msGraphCapabilityState = this.getDefaultMsGraphCapabilities();
+    this.renderMsGraphConfiguration();
+    this.chartCapabilityState = this.getDefaultChartCapabilities();
+    this.renderChartConfiguration();
     
     // Clear any type selection
     this.selectedType = null;

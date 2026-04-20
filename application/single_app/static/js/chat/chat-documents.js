@@ -160,8 +160,10 @@ export async function toggleScopeLock(conversationId, newState) {
 
   updateHeaderLockIcon();
 
-  // Reload docs for the new scope
-  loadAllDocs().then(() => { loadTagsForScope(); });
+  // Reload scope-dependent UI and notify listeners like the agent picker.
+  runScopeRefreshPipeline('scope-lock').catch(error => {
+    console.error('Failed to refresh scope-dependent UI after toggling scope lock:', error);
+  });
 }
 
 /**

@@ -22,6 +22,12 @@ from openai import AzureOpenAI
 from semantic_kernel import Kernel
 from semantic_kernel.contents.chat_message_content import ChatMessageContent
 
+from collaboration_models import (
+    COLLABORATION_KIND,
+    GROUP_MULTI_USER_CHAT_TYPE,
+    PERSONAL_MULTI_USER_CHAT_TYPE,
+    normalize_collaboration_user,
+)
 from config import (
     SECRET_KEY,
     cognitive_services_scope,
@@ -30,7 +36,16 @@ from config import (
 )
 from functions_activity_logging import log_conversation_creation, log_workflow_run
 from functions_appinsights import log_event
+from functions_collaboration import (
+    create_collaboration_message_notifications,
+    get_collaboration_conversation,
+    mirror_source_message_to_collaboration,
+)
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
+from functions_message_artifacts import (
+    build_agent_citation_artifact_documents,
+    make_json_serializable,
+)
 from functions_notifications import create_workflow_priority_notification
 from functions_personal_workflows import save_personal_workflow_run
 from functions_settings import get_settings, get_user_settings, normalize_model_endpoints
@@ -49,6 +64,91 @@ def _utc_now():
 
 def _utc_now_iso():
     return _utc_now().isoformat()
+
+
+def _strip_agent_citation_artifact_refs(agent_citations):
+    compact_citations = []
+    for citation in agent_citations or []:
+        if not isinstance(citation, dict):
+            compact_citations.append(citation)
+            continue
+
+        compact_citation = dict(citation)
+        compact_citation.pop('artifact_id', None)
+        compact_citation.pop('raw_payload_externalized', None)
+        compact_citations.append(compact_citation)
+
+    return compact_citations
+
+
+def _persist_agent_citation_artifacts(
+    conversation_id,
+    assistant_message_id,
+    agent_citations,
+    created_timestamp,
+    user_info=None,
+):
+    if not agent_citations:
+        return []
+
+    compact_citations, artifact_docs = build_agent_citation_artifact_documents(
+        conversation_id=conversation_id,
+        assistant_message_id=assistant_message_id,
+        agent_citations=agent_citations,
+        created_timestamp=created_timestamp,
+        user_info=user_info,
+    )
+
+    try:
+        for artifact_doc in artifact_docs:
+            cosmos_messages_container.upsert_item(artifact_doc)
+        return compact_citations
+    except Exception as exc:
+        log_event(
+            f'[WorkflowRunner] Failed to persist workflow assistant artifacts: {exc}',
+            extra={
+                'conversation_id': conversation_id,
+                'assistant_message_id': assistant_message_id,
+                'artifact_count': len(artifact_docs),
+                'citation_count': len(agent_citations),
+            },
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        return _strip_agent_citation_artifact_refs(compact_citations)
+
+
+def _normalize_invocation_timestamp(raw_timestamp):
+    if not raw_timestamp:
+        return None
+    if hasattr(raw_timestamp, 'isoformat'):
+        return raw_timestamp.isoformat()
+    return str(raw_timestamp)
+
+
+def _build_agent_citations_from_invocations(user_id, conversation_id):
+    if not user_id or not conversation_id:
+        return []
+
+    plugin_logger = get_plugin_logger()
+    plugin_invocations = plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
+    detailed_citations = []
+
+    for invocation in plugin_invocations:
+        detailed_citations.append({
+            'tool_name': f'{invocation.plugin_name}.{invocation.function_name}',
+            'function_name': invocation.function_name,
+            'plugin_name': invocation.plugin_name,
+            'function_arguments': make_json_serializable(invocation.parameters),
+            'function_result': make_json_serializable(invocation.result),
+            'duration_ms': invocation.duration_ms,
+            'timestamp': _normalize_invocation_timestamp(invocation.timestamp),
+            'success': invocation.success,
+            'error_message': make_json_serializable(invocation.error_message),
+            'user_id': invocation.user_id,
+        })
+
+    return detailed_citations
 
 
 def _build_response_preview(text, max_length=220):
@@ -101,6 +201,218 @@ def _extract_message_text(message_content):
                 parts.append(str(item))
         return ''.join(parts)
     return str(message_content or '')
+
+
+def _extract_created_conversation_docs_from_citations(agent_citations):
+    created_function_names = {
+        'create_group_conversation',
+        'create_personal_collaboration_conversation',
+        'create_personal_conversation',
+    }
+    created_conversations = []
+    seen_conversation_ids = set()
+
+    for citation in agent_citations or []:
+        if not isinstance(citation, dict):
+            continue
+        if citation.get('plugin_name') != 'SimpleChatPlugin':
+            continue
+        if citation.get('function_name') not in created_function_names:
+            continue
+
+        invocation_result = citation.get('function_result') if isinstance(citation.get('function_result'), dict) else {}
+        conversation_doc = invocation_result.get('conversation') if isinstance(invocation_result.get('conversation'), dict) else {}
+        conversation_id = str(conversation_doc.get('id') or '').strip()
+        if not conversation_id or conversation_id in seen_conversation_ids:
+            continue
+
+        seen_conversation_ids.add(conversation_id)
+        created_conversations.append(dict(conversation_doc))
+
+    return created_conversations
+
+
+def _is_visualization_citation(citation):
+    if not isinstance(citation, dict):
+        return False
+
+    function_result = citation.get('function_result') if isinstance(citation.get('function_result'), dict) else {}
+    if function_result.get('success') is False:
+        return False
+
+    return bool(
+        function_result.get('render_type')
+        or function_result.get('chart_markdown')
+        or function_result.get('chart_payload')
+    )
+
+
+def _filter_visualization_agent_citations(agent_citations):
+    return [citation for citation in agent_citations or [] if _is_visualization_citation(citation)]
+
+
+def _is_collaboration_target_conversation(conversation_doc):
+    chat_type = str((conversation_doc or {}).get('chat_type') or '').strip()
+    conversation_kind = str((conversation_doc or {}).get('conversation_kind') or '').strip()
+    return conversation_kind == COLLABORATION_KIND or chat_type in {
+        GROUP_MULTI_USER_CHAT_TYPE,
+        PERSONAL_MULTI_USER_CHAT_TYPE,
+    }
+
+
+def _build_workflow_mirror_metadata(workflow, source_assistant_doc, previous_thread_id):
+    source_metadata = source_assistant_doc.get('metadata') if isinstance(source_assistant_doc.get('metadata'), dict) else {}
+    workflow_metadata = source_metadata.get('workflow') if isinstance(source_metadata.get('workflow'), dict) else {}
+    return {
+        'source': 'workflow_mirror',
+        'workflow': {
+            'workflow_id': workflow.get('id'),
+            'workflow_name': workflow.get('name'),
+            'runner_type': workflow.get('runner_type'),
+            'trigger_source': workflow_metadata.get('trigger_source'),
+            'run_id': workflow_metadata.get('run_id'),
+        },
+        'mirrored_from': {
+            'conversation_id': source_assistant_doc.get('conversation_id'),
+            'message_id': source_assistant_doc.get('id'),
+        },
+        'thread_info': {
+            'thread_id': str(uuid.uuid4()),
+            'previous_thread_id': previous_thread_id,
+            'active_thread': True,
+            'thread_attempt': 1,
+        },
+    }
+
+
+def _mirror_assistant_message_to_personal_conversation(
+    workflow,
+    source_assistant_doc,
+    target_conversation_doc,
+    visualization_citations,
+):
+    conversation_id = str((target_conversation_doc or {}).get('id') or '').strip()
+    if not conversation_id:
+        return None
+
+    try:
+        conversation_doc = cosmos_conversations_container.read_item(
+            item=conversation_id,
+            partition_key=conversation_id,
+        )
+    except Exception:
+        conversation_doc = dict(target_conversation_doc or {})
+
+    mirrored_message_id = str(uuid.uuid4())
+    timestamp = _utc_now_iso()
+    previous_thread_id = _get_latest_thread_id(conversation_id)
+    prepared_agent_citations = _persist_agent_citation_artifacts(
+        conversation_id=conversation_id,
+        assistant_message_id=mirrored_message_id,
+        agent_citations=visualization_citations,
+        created_timestamp=timestamp,
+        user_info={
+            'user_id': str(workflow.get('user_id') or '').strip(),
+        },
+    )
+
+    mirrored_assistant_doc = {
+        'id': mirrored_message_id,
+        'conversation_id': conversation_id,
+        'role': 'assistant',
+        'content': source_assistant_doc.get('content', ''),
+        'timestamp': timestamp,
+        'model_deployment_name': source_assistant_doc.get('model_deployment_name'),
+        'agent_citations': prepared_agent_citations,
+        'agent_display_name': source_assistant_doc.get('agent_display_name'),
+        'agent_name': source_assistant_doc.get('agent_name'),
+        'metadata': _build_workflow_mirror_metadata(
+            workflow,
+            source_assistant_doc,
+            previous_thread_id,
+        ),
+    }
+    cosmos_messages_container.upsert_item(mirrored_assistant_doc)
+
+    conversation_doc['last_updated'] = timestamp
+    conversation_doc['has_unread_assistant_response'] = True
+    conversation_doc['last_unread_assistant_message_id'] = mirrored_message_id
+    conversation_doc['last_unread_assistant_at'] = timestamp
+    cosmos_conversations_container.upsert_item(conversation_doc)
+
+    return mirrored_assistant_doc
+
+
+def _mirror_workflow_visualizations_to_created_conversations(workflow, source_assistant_doc, execution_result):
+    source_assistant_doc = source_assistant_doc if isinstance(source_assistant_doc, dict) else {}
+    execution_result = execution_result if isinstance(execution_result, dict) else {}
+    raw_agent_citations = list(execution_result.get('agent_citations') or [])
+    visualization_citations = _filter_visualization_agent_citations(raw_agent_citations)
+    if not source_assistant_doc or not visualization_citations:
+        return []
+
+    created_conversations = _extract_created_conversation_docs_from_citations(raw_agent_citations)
+    if not created_conversations:
+        return []
+
+    source_conversation_id = str(source_assistant_doc.get('conversation_id') or '').strip()
+    default_sender_user = normalize_collaboration_user({
+        'user_id': str(workflow.get('user_id') or '').strip(),
+        'display_name': str(workflow.get('user_id') or '').strip(),
+    }) or {
+        'user_id': str(workflow.get('user_id') or '').strip(),
+        'display_name': str(workflow.get('user_id') or '').strip() or 'Workflow user',
+        'email': '',
+    }
+    collaboration_source_doc = {
+        **source_assistant_doc,
+        'agent_citations': visualization_citations,
+    }
+    mirrored_message_ids = []
+
+    for created_conversation in created_conversations:
+        conversation_id = str(created_conversation.get('id') or '').strip()
+        if not conversation_id or conversation_id == source_conversation_id:
+            continue
+
+        try:
+            if _is_collaboration_target_conversation(created_conversation):
+                collaboration_conversation = get_collaboration_conversation(conversation_id)
+                mirrored_message_doc, updated_conversation, created = mirror_source_message_to_collaboration(
+                    collaboration_conversation,
+                    collaboration_source_doc,
+                    default_sender_user,
+                    extra_metadata={
+                        'source_conversation_id': source_conversation_id,
+                        'source_thought_user_id': str(workflow.get('user_id') or '').strip(),
+                        'workflow_mirror': True,
+                    },
+                )
+                if created and mirrored_message_doc:
+                    create_collaboration_message_notifications(updated_conversation, mirrored_message_doc)
+                    mirrored_message_ids.append(mirrored_message_doc.get('id'))
+            else:
+                mirrored_message_doc = _mirror_assistant_message_to_personal_conversation(
+                    workflow,
+                    source_assistant_doc,
+                    created_conversation,
+                    visualization_citations,
+                )
+                if mirrored_message_doc:
+                    mirrored_message_ids.append(mirrored_message_doc.get('id'))
+        except Exception as exc:
+            log_event(
+                f'[WorkflowRunner] Failed to mirror workflow visualizations into conversation {conversation_id}: {exc}',
+                extra={
+                    'workflow_id': str(workflow.get('id') or '').strip(),
+                    'source_message_id': str(source_assistant_doc.get('id') or '').strip(),
+                    'target_conversation_id': conversation_id,
+                },
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+
+    return mirrored_message_ids
 
 
 WORKFLOW_ALERT_PRIORITIES = {'low', 'medium', 'high'}
@@ -608,6 +920,16 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
     assistant_message_id = assistant_message_id or str(uuid.uuid4())
     timestamp = _utc_now_iso()
     user_thread_info = (user_message_doc.get('metadata') or {}).get('thread_info') or {}
+    raw_agent_citations = list(result.get('agent_citations') or [])
+    prepared_agent_citations = _persist_agent_citation_artifacts(
+        conversation_id=conversation.get('id'),
+        assistant_message_id=assistant_message_id,
+        agent_citations=raw_agent_citations,
+        created_timestamp=timestamp,
+        user_info={
+            'user_id': str(workflow.get('user_id') or '').strip(),
+        },
+    )
     assistant_doc = {
         'id': assistant_message_id,
         'conversation_id': conversation.get('id'),
@@ -615,6 +937,9 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
         'content': result.get('reply', ''),
         'timestamp': timestamp,
         'model_deployment_name': result.get('model_deployment_name'),
+        'agent_citations': prepared_agent_citations,
+        'agent_display_name': result.get('agent_display_name'),
+        'agent_name': result.get('agent_name'),
         'metadata': {
             'source': 'workflow',
             'workflow': {
@@ -889,6 +1214,7 @@ def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None,
                 ChatMessageContent(role='user', content=workflow.get('task_prompt', '')),
             ]))
             reply = str(result)
+            agent_citations = _build_agent_citations_from_invocations(user_id, conversation_id)
             alert_targets = _collect_agent_alert_targets(user_id, conversation_id)
 
             if thought_tracker and run_id:
@@ -911,6 +1237,7 @@ def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None,
                 'provider': 'agent',
                 'agent_name': getattr(loaded_agent, 'name', None) or requested_name,
                 'agent_display_name': getattr(loaded_agent, 'display_name', None) or selected_agent.get('display_name') or requested_name,
+                'agent_citations': agent_citations,
                 'alert_targets': alert_targets,
             }
         finally:
@@ -1015,6 +1342,11 @@ def run_personal_workflow(workflow, trigger_source='manual'):
             run_id,
             user_message_doc,
             assistant_message_id=assistant_message_id,
+        )
+        _mirror_workflow_visualizations_to_created_conversations(
+            workflow,
+            assistant_doc,
+            execution_result,
         )
 
         _add_workflow_activity_thought(

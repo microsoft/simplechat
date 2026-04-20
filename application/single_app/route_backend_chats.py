@@ -36,6 +36,7 @@ from functions_agents import get_agent_id_by_name
 from functions_group import find_group_by_id, get_group_model_endpoints, get_user_role_in_group
 from functions_chat import *
 from functions_content import generate_embedding, generate_embeddings_batch
+from functions_chart_operations import INLINE_CHART_BLOCK_LANGUAGE
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_conversation_unread import mark_conversation_unread
 from functions_debug import debug_print
@@ -74,6 +75,69 @@ def _strip_agent_citation_artifact_refs(agent_citations):
 FACT_MEMORY_TYPE_FACT = 'fact'
 FACT_MEMORY_TYPE_INSTRUCTION = 'instruction'
 FACT_MEMORY_TYPE_LEGACY_DESCRIBER = 'describer'
+INLINE_CHART_ID_PATTERN_TEMPLATE = '"chartId":"{}"'
+
+
+def _normalize_inline_chart_markdown(chart_markdown):
+    block = str(chart_markdown or '').strip()
+    if not block.startswith(f'```{INLINE_CHART_BLOCK_LANGUAGE}'):
+        return None
+    return block
+
+
+def _collect_inline_chart_blocks(candidate, chart_blocks):
+    if isinstance(candidate, dict):
+        normalized_chart_markdown = _normalize_inline_chart_markdown(candidate.get('chart_markdown'))
+        if normalized_chart_markdown:
+            chart_blocks.append({
+                'chart_id': candidate.get('chart_payload', {}).get('chartId') if isinstance(candidate.get('chart_payload'), dict) else None,
+                'chart_markdown': normalized_chart_markdown,
+            })
+
+        for value in candidate.values():
+            _collect_inline_chart_blocks(value, chart_blocks)
+        return
+
+    if isinstance(candidate, list):
+        for item in candidate:
+            _collect_inline_chart_blocks(item, chart_blocks)
+
+
+def _append_inline_chart_blocks_to_message(message_content, agent_citations):
+    chart_blocks = []
+    _collect_inline_chart_blocks(agent_citations, chart_blocks)
+
+    if not chart_blocks:
+        return message_content
+
+    existing_content = str(message_content or '').strip()
+    appended_blocks = []
+    seen_chart_ids = set()
+
+    for chart_block in chart_blocks:
+        chart_id = str(chart_block.get('chart_id') or '').strip()
+        chart_markdown = chart_block.get('chart_markdown')
+        if not chart_markdown:
+            continue
+
+        if chart_id:
+            if chart_id in seen_chart_ids:
+                continue
+            if INLINE_CHART_ID_PATTERN_TEMPLATE.format(chart_id) in existing_content:
+                seen_chart_ids.add(chart_id)
+                continue
+            seen_chart_ids.add(chart_id)
+
+        if chart_markdown in existing_content:
+            continue
+
+        appended_blocks.append(chart_markdown)
+
+    if not appended_blocks:
+        return message_content
+
+    separator = '\n\n' if existing_content else ''
+    return f"{existing_content}{separator}{'\n\n'.join(appended_blocks)}"
 
 
 def normalize_fact_memory_type(memory_type):
@@ -8607,6 +8671,8 @@ def register_route_backend_chats(app):
                 ai_message, final_model_used, chat_mode, kernel_fallback_notice = fallback_result
                 token_usage_data = None
 
+            ai_message = _append_inline_chart_blocks_to_message(ai_message, agent_citations_list)
+
             # Emit responded thought for non-agent paths (agent paths emit their own inside callbacks)
             if not selected_agent:
                 gpt_total_duration_s = round(time.time() - request_start_time, 1)
@@ -9682,6 +9748,7 @@ def register_route_backend_chats(app):
                                 'web_search_citations': [],
                                 'agent_citations': [],
                                 'model_deployment_name': None,
+                                'metadata': safety_doc.get('metadata', {}),
                                 'thoughts_enabled': thought_tracker.enabled,
                             })
                             yield f"data: {json.dumps(final_data)}\n\n"
@@ -10613,7 +10680,7 @@ def register_route_backend_chats(app):
 
                                         if chunk_content:
                                             accumulated_content += chunk_content
-                                            yield f"data: {json.dumps({'content': chunk_content})}\\n\\n"
+                                            yield f"data: {json.dumps({'content': chunk_content})}\n\n"
 
                                     if agent_retry_plan:
                                         debug_print(
@@ -10842,6 +10909,7 @@ def register_route_backend_chats(app):
                         yield emit_thought('generation', f"'{gpt_model}' responded ({gpt_stream_total_duration_s}s from initial message)")
                     
                     # Stream complete - save message and send final metadata
+                    accumulated_content = _append_inline_chart_blocks_to_message(accumulated_content, agent_citations_list)
                     user_info_for_assistant = response_message_context.get('user_info')
                     user_thread_id = response_message_context.get('thread_id')
                     user_previous_thread_id = response_message_context.get('previous_thread_id')
@@ -11000,6 +11068,7 @@ def register_route_backend_chats(app):
                         'agent_citations': prepared_agent_citations,
                         'agent_display_name': agent_display_name_used if use_agent_streaming else None,
                         'agent_name': agent_name_used if use_agent_streaming else None,
+                        'metadata': assistant_doc.get('metadata', {}),
                         'full_content': accumulated_content,
                         'thoughts_enabled': thought_tracker.enabled
                     })

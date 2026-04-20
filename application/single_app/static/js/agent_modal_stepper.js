@@ -109,6 +109,58 @@ const MSGRAPH_CAPABILITY_DEFINITIONS = [
     description: 'Allow the agent to read recent security alerts available to the signed-in user.'
   }
 ];
+const CHART_CAPABILITY_DEFINITIONS = [
+  {
+    key: 'line',
+    label: 'Line charts',
+    description: 'Allow the agent to generate line charts.'
+  },
+  {
+    key: 'bar',
+    label: 'Bar charts',
+    description: 'Allow the agent to generate bar charts.'
+  },
+  {
+    key: 'pie',
+    label: 'Pie charts',
+    description: 'Allow the agent to generate pie charts.'
+  },
+  {
+    key: 'doughnut',
+    label: 'Doughnut charts',
+    description: 'Allow the agent to generate doughnut charts.'
+  },
+  {
+    key: 'scatter',
+    label: 'Scatter plots',
+    description: 'Allow the agent to generate scatter plots.'
+  },
+  {
+    key: 'area',
+    label: 'Area charts',
+    description: 'Allow the agent to generate area charts.'
+  },
+  {
+    key: 'bubble',
+    label: 'Bubble charts',
+    description: 'Allow the agent to generate bubble charts.'
+  },
+  {
+    key: 'radar',
+    label: 'Radar charts',
+    description: 'Allow the agent to generate radar charts.'
+  },
+  {
+    key: 'stacked_bar',
+    label: 'Stacked bar charts',
+    description: 'Allow the agent to generate stacked bar charts.'
+  },
+  {
+    key: 'stacked_line',
+    label: 'Stacked line charts',
+    description: 'Allow the agent to generate stacked line charts.'
+  }
+];
 
 export class AgentModalStepper {
   constructor(isAdmin = false, options = {}) {
@@ -1756,6 +1808,7 @@ export class AgentModalStepper {
 
     this.renderSimpleChatCapabilitySections();
     this.renderMsGraphCapabilitySections();
+    this.renderChartCapabilitySections();
   }
 
   getDefaultSimpleChatCapabilities(actionId = '', actionName = '') {
@@ -2010,6 +2063,123 @@ export class AgentModalStepper {
           const updatedCapabilities = this.getMsGraphCapabilitiesForAction(actionId, actionName);
           updatedCapabilities[definition.key] = checkbox.checked;
           this.updateMsGraphCapabilities(actionId, actionName, updatedCapabilities);
+        });
+
+        wrapper.appendChild(checkbox);
+        wrapper.appendChild(label);
+        section.appendChild(wrapper);
+      });
+
+      list.appendChild(section);
+    });
+  }
+
+  getDefaultChartCapabilities(actionId = '', actionName = '') {
+    const defaults = {};
+    CHART_CAPABILITY_DEFINITIONS.forEach(definition => {
+      defaults[definition.key] = true;
+    });
+
+    const action = (this.availableActions || []).find(candidate => {
+      const candidateId = String(candidate?.id || candidate?.name || '').trim();
+      const candidateName = String(candidate?.name || candidate?.display_name || '').trim();
+      return (actionId && candidateId === actionId) || (actionName && candidateName === actionName);
+    });
+
+    const rawCapabilities = action?.additionalFields?.chart_capabilities
+      || action?.additional_fields?.chart_capabilities
+      || action?.chart_capabilities;
+
+    if (rawCapabilities && typeof rawCapabilities === 'object' && !Array.isArray(rawCapabilities)) {
+      CHART_CAPABILITY_DEFINITIONS.forEach(definition => {
+        if (Object.prototype.hasOwnProperty.call(rawCapabilities, definition.key)) {
+          defaults[definition.key] = Boolean(rawCapabilities[definition.key]);
+        }
+      });
+    }
+
+    return defaults;
+  }
+
+  getChartCapabilitiesForAction(actionId, actionName) {
+    const defaults = this.getDefaultChartCapabilities(actionId, actionName);
+    const capabilityMap = this.getActionCapabilityMap();
+    const storedCapabilities = capabilityMap[actionId] || capabilityMap[actionName] || {};
+
+    CHART_CAPABILITY_DEFINITIONS.forEach(definition => {
+      if (Object.prototype.hasOwnProperty.call(storedCapabilities, definition.key)) {
+        defaults[definition.key] = Boolean(storedCapabilities[definition.key]);
+      }
+    });
+
+    return defaults;
+  }
+
+  updateChartCapabilities(actionId, actionName, nextCapabilities) {
+    const otherSettings = this.getParsedAdditionalSettings();
+    const capabilityMap = this.getActionCapabilityMap();
+    capabilityMap[actionId || actionName] = { ...nextCapabilities };
+    otherSettings[ACTION_CAPABILITIES_KEY] = capabilityMap;
+    this.setParsedAdditionalSettings(otherSettings);
+  }
+
+  renderChartCapabilitySections() {
+    const container = document.getElementById('agent-chart-capabilities');
+    const list = document.getElementById('agent-chart-capabilities-list');
+    if (!container || !list) {
+      return;
+    }
+
+    const selectedChartCards = Array.from(document.querySelectorAll('.action-card.border-primary')).filter(card => {
+      return (card.getAttribute('data-action-type') || '').toLowerCase() === 'chart';
+    });
+
+    if (!selectedChartCards.length || this.isAnyFoundryType()) {
+      container.classList.add('d-none');
+      list.innerHTML = '';
+      return;
+    }
+
+    container.classList.remove('d-none');
+    list.innerHTML = '';
+
+    selectedChartCards.forEach(card => {
+      const actionId = card.getAttribute('data-action-id') || card.getAttribute('data-action-name') || '';
+      const actionName = card.getAttribute('data-action-name') || actionId;
+      const capabilities = this.getChartCapabilitiesForAction(actionId, actionName);
+
+      const section = document.createElement('div');
+      section.className = 'border rounded p-3 bg-light';
+
+      const heading = document.createElement('div');
+      heading.className = 'fw-semibold mb-1';
+      heading.textContent = actionName;
+      section.appendChild(heading);
+
+      const helperText = document.createElement('div');
+      helperText.className = 'text-muted small mb-3';
+      helperText.textContent = 'These chart type toggles apply only to this agent assignment.';
+      section.appendChild(helperText);
+
+      CHART_CAPABILITY_DEFINITIONS.forEach(definition => {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'form-check mb-2';
+
+        const checkbox = document.createElement('input');
+        checkbox.className = 'form-check-input';
+        checkbox.type = 'checkbox';
+        checkbox.id = `chart-capability-${actionId}-${definition.key}`;
+        checkbox.checked = Boolean(capabilities[definition.key]);
+
+        const label = document.createElement('label');
+        label.className = 'form-check-label';
+        label.setAttribute('for', checkbox.id);
+        label.innerHTML = `<span class="fw-medium">${this.escapeHtml(definition.label)}</span><br><span class="text-muted small">${this.escapeHtml(definition.description)}</span>`;
+
+        checkbox.addEventListener('change', () => {
+          const updatedCapabilities = this.getChartCapabilitiesForAction(actionId, actionName);
+          updatedCapabilities[definition.key] = checkbox.checked;
+          this.updateChartCapabilities(actionId, actionName, updatedCapabilities);
         });
 
         wrapper.appendChild(checkbox);

@@ -473,7 +473,7 @@ function renderAgentCitationResult(toolResultEl, toolResultSummaryEl, toolResult
   });
 }
 
-async function fetchAgentCitationArtifact(conversationId, artifactId) {
+export async function fetchAgentCitationArtifact(conversationId, artifactId) {
   if (!conversationId || !artifactId) {
     return null;
   }
