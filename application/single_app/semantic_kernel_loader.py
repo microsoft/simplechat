@@ -51,6 +51,11 @@ from functions_chart_operations import (
     get_enabled_chart_type_keys,
     resolve_chart_action_capabilities,
 )
+from functions_blob_storage_operations import (
+    BLOB_STORAGE_PLUGIN_TYPE,
+    get_blob_storage_enabled_function_names,
+    resolve_blob_storage_action_capabilities,
+)
 from functions_msgraph_operations import (
     MSGRAPH_PLUGIN_TYPE,
     get_msgraph_enabled_function_names,
@@ -1155,6 +1160,22 @@ def _apply_agent_plugin_runtime_overlays(plugin_manifests, agent_other_settings=
             )
             manifest_copy['msgraph_capabilities'] = capabilities
             manifest_copy['enabled_functions'] = get_msgraph_enabled_function_names(capabilities)
+
+        if manifest_copy.get('type') == BLOB_STORAGE_PLUGIN_TYPE:
+            action_defaults = manifest_copy.get('blob_storage_capabilities')
+            if action_defaults is None:
+                additional_fields = manifest_copy.get('additionalFields')
+                if isinstance(additional_fields, dict):
+                    action_defaults = additional_fields.get('blob_storage_capabilities')
+
+            capabilities = resolve_blob_storage_action_capabilities(
+                action_capabilities,
+                action_defaults=action_defaults,
+                action_id=manifest_copy.get('id'),
+                action_name=manifest_copy.get('name'),
+            )
+            manifest_copy['blob_storage_capabilities'] = capabilities
+            manifest_copy['enabled_functions'] = get_blob_storage_enabled_function_names(capabilities)
 
         overlaid_manifests.append(manifest_copy)
 

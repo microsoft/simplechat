@@ -5,6 +5,7 @@ import json
 from functools import lru_cache
 from jsonschema import validate, ValidationError, Draft7Validator, Draft6Validator, RefResolver
 
+from functions_blob_storage_operations import BLOB_STORAGE_PLUGIN_TYPE, derive_blob_endpoint_from_connection_string
 from functions_chart_operations import CHART_DEFAULT_ENDPOINT
 
 SCHEMA_DIR = os.path.join(os.path.dirname(__file__), 'static', 'json', 'schemas')
@@ -68,6 +69,13 @@ def apply_plugin_validation_defaults(plugin):
     default_endpoint = PLUGIN_ENDPOINT_DEFAULTS.get(plugin_type)
     if default_endpoint and not str(plugin_copy.get('endpoint', '') or '').strip():
         plugin_copy['endpoint'] = default_endpoint
+
+    if plugin_type == BLOB_STORAGE_PLUGIN_TYPE and not str(plugin_copy.get('endpoint', '') or '').strip():
+        auth = plugin_copy.get('auth', {}) if isinstance(plugin_copy.get('auth'), dict) else {}
+        if str(auth.get('type') or '').strip().lower() == 'connection_string':
+            derived_endpoint = derive_blob_endpoint_from_connection_string(auth.get('key') or '')
+            if derived_endpoint:
+                plugin_copy['endpoint'] = derived_endpoint
 
     return plugin_copy
 

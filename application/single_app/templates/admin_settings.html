@@ -1463,14 +1463,38 @@
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Hide the application title from the header and navigation, showing only the logo if enabled."></i>
                     </div>
                     <div class="form-group mb-3">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <label for="landing_page_logo_scale_percent" class="form-label mb-0">Main Page Logo Size</label>
+                            <span id="landing-page-logo-scale-value" class="small text-muted fw-semibold">{{ settings.landing_page_logo_scale_percent | default(100) }}%</span>
+                        </div>
+                        <input
+                            type="range"
+                            class="form-range"
+                            id="landing_page_logo_scale_percent"
+                            name="landing_page_logo_scale_percent"
+                            min="50"
+                            max="500"
+                            step="10"
+                            value="{{ settings.landing_page_logo_scale_percent | default(100) }}"
+                            aria-describedby="landing-page-logo-scale-help"
+                        />
+                        <div class="d-flex justify-content-between small text-muted">
+                            <span>50%</span>
+                            <span>500%</span>
+                        </div>
+                        <small id="landing-page-logo-scale-help" class="form-text text-muted">
+                            Adjust the logo size on the home page only. This does not change the logo size in the top or sidebar navigation.
+                        </small>
+                    </div>
+                    <div class="form-group mb-3">
                         <label for="logo_file">Upload Custom Logo (Light Mode)</label>
                         <input type="file" class="form-control" name="logo_file" id="logo_file" accept=".png,.jpg,.jpeg">
-                        <small class="form-text text-muted">This logo will be displayed in light mode.</small>
+                        <small class="form-text text-muted">This logo will be displayed in light mode and stored at up to 500px tall so the main page can render it sharply without keeping oversized assets in settings.</small>
                     </div>
                     <div class="form-group mb-3">
                         <label for="logo_dark_file">Upload Custom Logo (Dark Mode)</label>
                         <input type="file" class="form-control" name="logo_dark_file" id="logo_dark_file" accept=".png,.jpg,.jpeg">
-                        <small class="form-text text-muted">This logo will be displayed in dark mode. If not provided, the light mode logo will be used in both themes.</small>
+                        <small class="form-text text-muted">This logo will be displayed in dark mode. If not provided, the light mode logo will be used in both themes. Dark logos are also stored at up to 500px tall.</small>
                     </div>
                     <div class="form-group mb-3">
                         <label for="favicon_file">Upload Custom Favicon</label>

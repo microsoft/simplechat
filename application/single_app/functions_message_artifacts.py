@@ -7,6 +7,8 @@ import numbers
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
 
+from functions_azure_maps import refresh_azure_maps_citation_payload
+
 
 ASSISTANT_ARTIFACT_ROLE = 'assistant_artifact'
 ASSISTANT_ARTIFACT_CHUNK_ROLE = 'assistant_artifact_chunk'
@@ -418,7 +420,7 @@ def hydrate_agent_citations_from_artifacts(
             artifact_payload = artifact_payload_map.get(str(artifact_id or ''))
             raw_citation = artifact_payload.get('citation') if isinstance(artifact_payload, dict) else None
             if isinstance(raw_citation, dict):
-                merged_citation = deepcopy(raw_citation)
+                merged_citation = refresh_azure_maps_citation_payload(deepcopy(raw_citation))
                 merged_citation.setdefault('artifact_id', artifact_id)
                 merged_citation.setdefault('raw_payload_externalized', True)
                 hydrated_citations.append(merged_citation)

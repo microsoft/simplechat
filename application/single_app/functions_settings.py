@@ -84,6 +84,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'landing_page_text': 'You can add text here and it supports Markdown. '
                              'You agree to our [acceptable user policy](acceptable_use_policy.html) by using this service.',
         'landing_page_alignment': 'left',
+        'landing_page_logo_scale_percent': 100,
         'show_logo': False,
         'hide_app_title': False,
         'custom_logo_base64': '',

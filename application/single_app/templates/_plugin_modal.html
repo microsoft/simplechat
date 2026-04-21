@@ -336,6 +336,57 @@
               </div>
             </div>
           </div>
+
+          <div id="blob-storage-config-section" class="d-none">
+            <div class="alert alert-info mb-3">
+              <strong>Container-scoped action:</strong> Configure one Azure Blob container and optionally narrow the action to a blob prefix.
+              The connection string can be stored in Key Vault through the normal action secret flow, while the capability toggles below define the default operations exposed by this action.
+            </div>
+
+            <div class="simplechat-config-card mb-3">
+              <div class="config-section-label">
+                <i class="bi bi-cloud-arrow-down me-2"></i>Blob Storage Connection
+              </div>
+              <div class="mb-3">
+                <label for="blob-storage-connection-string" class="form-label">Connection String <span class="text-danger">*</span></label>
+                <textarea class="form-control" id="blob-storage-connection-string" rows="3" placeholder="DefaultEndpointsProtocol=https;AccountName=...;AccountKey=...;EndpointSuffix=core.windows.net"></textarea>
+                <div class="form-text">Use an Azure Storage account connection string with access to the target container.</div>
+              </div>
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label for="blob-storage-container-name" class="form-label">Container Name <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="blob-storage-container-name" placeholder="knowledge-base" />
+                  <div class="form-text">The action is scoped to this single container.</div>
+                </div>
+                <div class="col-md-6">
+                  <label for="blob-storage-blob-prefix" class="form-label">Blob Prefix</label>
+                  <input type="text" class="form-control" id="blob-storage-blob-prefix" placeholder="docs/markdown" />
+                  <div class="form-text">Optional. Restrict list, read, and upload operations to blobs under this prefix.</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="simplechat-config-card mb-3">
+              <div class="config-section-label">
+                <i class="bi bi-sliders me-2"></i>Default Blob Storage Capabilities
+              </div>
+              <div id="blob-storage-capabilities-list" class="d-grid gap-2"></div>
+            </div>
+
+            <div class="simplechat-config-card mb-0">
+              <div class="config-section-label">
+                <i class="bi bi-file-earmark-text me-2"></i>Supported File Types
+              </div>
+              <div id="blob-storage-read-file-types-section" class="mb-3">
+                <label class="form-label">Read File Types</label>
+                <div id="blob-storage-read-file-types-list" class="d-grid gap-2"></div>
+              </div>
+              <div id="blob-storage-upload-file-types-section">
+                <label class="form-label">Upload File Types</label>
+                <div id="blob-storage-upload-file-types-list" class="d-grid gap-2"></div>
+              </div>
+            </div>
+          </div>
           
           <!-- SQL Database Configuration -->
           <div id="sql-config-section" class="d-none">
@@ -908,6 +959,54 @@
                   <div class="d-flex flex-column">
                     <label class="text-muted small mb-1">Field Hints</label>
                     <span class="fw-medium" id="summary-cosmos-field-hints">-</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card mb-3 border-0 shadow-sm" id="summary-blob-storage-section" style="display: none;">
+            <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #0dcaf0 0%, #087990 100%);">
+              <h6 class="mb-0 fw-bold">
+                <i class="bi bi-cloud me-2"></i>Blob Storage Configuration
+              </h6>
+            </div>
+            <div class="card-body p-3">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Container Name</label>
+                    <span class="fw-medium" id="summary-blob-storage-container-name">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Blob Prefix</label>
+                    <span class="fw-medium font-monospace" id="summary-blob-storage-blob-prefix">-</span>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Enabled By Default</label>
+                    <span class="fw-medium" id="summary-blob-storage-enabled-list">-</span>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Disabled By Default</label>
+                    <span class="fw-medium" id="summary-blob-storage-disabled-list">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Readable File Types</label>
+                    <span class="fw-medium" id="summary-blob-storage-read-file-types">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Uploadable File Types</label>
+                    <span class="fw-medium" id="summary-blob-storage-upload-file-types">-</span>
                   </div>
                 </div>
               </div>

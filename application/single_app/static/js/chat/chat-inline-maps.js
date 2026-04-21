@@ -245,11 +245,7 @@ async function hydrateAzureMapsCitation(conversationId, artifactId) {
 }
 
 async function resolveAzureMapsVisualization(citation, conversationId) {
-    const shouldPreferArtifact = Boolean(
-        citation?.raw_payload_externalized
-        && citation?.artifact_id
-        && conversationId
-    );
+    const shouldPreferArtifact = Boolean(citation?.artifact_id && conversationId);
 
     if (shouldPreferArtifact) {
         const hydratedResult = await hydrateAzureMapsCitation(conversationId, citation.artifact_id);

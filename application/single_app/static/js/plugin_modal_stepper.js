@@ -4,12 +4,37 @@ import { showToast } from "./chat/chat-toast.js";
 import { getTypeIcon } from "./workspace/view-utils.js";
 
 // Action types hidden from the creation UI (backend plugins remain intact)
-const HIDDEN_ACTION_TYPES = ['sql_schema', 'ui_test', 'queue_storage', 'blob_storage', 'embedding_model'];
+const HIDDEN_ACTION_TYPES = ['sql_schema', 'ui_test', 'queue_storage', 'embedding_model'];
+const BLOB_STORAGE_PLUGIN_TYPE = 'blob_storage';
 const AZURE_MAPS_PLUGIN_TYPE = 'azure_maps_openlayers';
 const AZURE_MAPS_DEFAULT_ENDPOINT = 'https://atlas.microsoft.com';
 const CHART_DEFAULT_ENDPOINT = 'chart://internal';
 const INTERNAL_DOCUMENT_SEARCH_ENDPOINT = 'internal://document-search';
 const MSGRAPH_DEFAULT_ENDPOINT = 'https://graph.microsoft.com';
+const BLOB_STORAGE_CAPABILITY_DEFINITIONS = [
+  {
+    key: 'list_container_contents',
+    label: 'List container contents',
+    description: 'List blobs in the configured container and optional prefix.'
+  },
+  {
+    key: 'read_file_content',
+    label: 'Read file content',
+    description: 'Read supported files from the configured container.'
+  },
+  {
+    key: 'upload_file_to_container',
+    label: 'Upload file to container',
+    description: 'Upload supported files into the configured container.'
+  }
+];
+const BLOB_STORAGE_FILE_TYPE_DEFINITIONS = [
+  {
+    key: 'markdown',
+    label: 'Markdown',
+    description: 'Supports .md and .markdown files stored as UTF-8 text.'
+  }
+];
 const SIMPLECHAT_CAPABILITY_DEFINITIONS = [
   {
     key: 'create_group',
@@ -189,6 +214,9 @@ export class PluginModalStepper {
     this.simpleChatCapabilityState = this.getDefaultSimpleChatCapabilities();
     this.msGraphCapabilityState = this.getDefaultMsGraphCapabilities();
     this.chartCapabilityState = this.getDefaultChartCapabilities();
+    this.blobStorageCapabilityState = this.getDefaultBlobStorageCapabilities();
+    this.blobStorageReadFileTypeState = this.getDefaultBlobStorageReadFileTypes();
+    this.blobStorageUploadFileTypeState = this.getDefaultBlobStorageUploadFileTypes();
 
     this._loadPluginSchema().then(() => { // Load schema on initialization
       this._populateGenericAuthTypeDropdown(); // Dynamically populate generic auth type dropdown after schema loads (will be called again after schema loads)
@@ -679,6 +707,10 @@ export class PluginModalStepper {
     return !!(type && ['search', 'document_search'].includes(type.toLowerCase()));
   }
 
+  isBlobStorageType(type = this.selectedType) {
+    return !!(type && type.toLowerCase() === BLOB_STORAGE_PLUGIN_TYPE);
+  }
+
   isSimpleChatType(type = this.selectedType) {
     return !!(type && type.toLowerCase() === 'simplechat');
   }
@@ -896,6 +928,253 @@ export class PluginModalStepper {
     return this.normalizeChartCapabilities(this.chartCapabilityState);
   }
 
+  getDefaultBlobStorageCapabilities() {
+    return {
+      list_container_contents: true,
+      read_file_content: true,
+      upload_file_to_container: false
+    };
+  }
+
+  normalizeBlobStorageCapabilities(rawCapabilities = null) {
+    const defaults = this.getDefaultBlobStorageCapabilities();
+    if (!rawCapabilities || typeof rawCapabilities !== 'object' || Array.isArray(rawCapabilities)) {
+      return defaults;
+    }
+
+    BLOB_STORAGE_CAPABILITY_DEFINITIONS.forEach(definition => {
+      if (Object.prototype.hasOwnProperty.call(rawCapabilities, definition.key)) {
+        defaults[definition.key] = Boolean(rawCapabilities[definition.key]);
+      }
+    });
+
+    return defaults;
+  }
+
+  getDefaultBlobStorageReadFileTypes() {
+    const defaults = {};
+    BLOB_STORAGE_FILE_TYPE_DEFINITIONS.forEach(definition => {
+      defaults[definition.key] = true;
+    });
+    return defaults;
+  }
+
+  getDefaultBlobStorageUploadFileTypes() {
+    const defaults = {};
+    BLOB_STORAGE_FILE_TYPE_DEFINITIONS.forEach(definition => {
+      defaults[definition.key] = true;
+    });
+    return defaults;
+  }
+
+  normalizeBlobStorageReadFileTypes(rawFileTypes = null) {
+    const defaults = this.getDefaultBlobStorageReadFileTypes();
+    if (!rawFileTypes || typeof rawFileTypes !== 'object' || Array.isArray(rawFileTypes)) {
+      return defaults;
+    }
+
+    BLOB_STORAGE_FILE_TYPE_DEFINITIONS.forEach(definition => {
+      if (Object.prototype.hasOwnProperty.call(rawFileTypes, definition.key)) {
+        defaults[definition.key] = Boolean(rawFileTypes[definition.key]);
+      }
+    });
+
+    return defaults;
+  }
+
+  normalizeBlobStorageUploadFileTypes(rawFileTypes = null) {
+    const defaults = this.getDefaultBlobStorageUploadFileTypes();
+    if (!rawFileTypes || typeof rawFileTypes !== 'object' || Array.isArray(rawFileTypes)) {
+      return defaults;
+    }
+
+    BLOB_STORAGE_FILE_TYPE_DEFINITIONS.forEach(definition => {
+      if (Object.prototype.hasOwnProperty.call(rawFileTypes, definition.key)) {
+        defaults[definition.key] = Boolean(rawFileTypes[definition.key]);
+      }
+    });
+
+    return defaults;
+  }
+
+  renderBlobStorageFileTypes(listId, state, stateKey) {
+    const list = document.getElementById(listId);
+    if (!list) {
+      return;
+    }
+
+    list.innerHTML = '';
+    BLOB_STORAGE_FILE_TYPE_DEFINITIONS.forEach(definition => {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'form-check mb-2';
+
+      const checkbox = document.createElement('input');
+      checkbox.className = 'form-check-input';
+      checkbox.type = 'checkbox';
+      checkbox.id = `${stateKey}-${definition.key}`;
+      checkbox.checked = Boolean(state?.[definition.key]);
+
+      const label = document.createElement('label');
+      label.className = 'form-check-label';
+      label.setAttribute('for', checkbox.id);
+      label.innerHTML = `<span class="fw-medium">${this.escapeHtml(definition.label)}</span><br><span class="text-muted small">${this.escapeHtml(definition.description)}</span>`;
+
+      checkbox.addEventListener('change', () => {
+        if (stateKey === 'blob-storage-read-file-type') {
+          this.blobStorageReadFileTypeState = {
+            ...this.blobStorageReadFileTypeState,
+            [definition.key]: checkbox.checked
+          };
+          return;
+        }
+
+        this.blobStorageUploadFileTypeState = {
+          ...this.blobStorageUploadFileTypeState,
+          [definition.key]: checkbox.checked
+        };
+      });
+
+      wrapper.appendChild(checkbox);
+      wrapper.appendChild(label);
+      list.appendChild(wrapper);
+    });
+  }
+
+  updateBlobStorageFileTypeVisibility() {
+    const readSection = document.getElementById('blob-storage-read-file-types-section');
+    const uploadSection = document.getElementById('blob-storage-upload-file-types-section');
+    if (readSection) {
+      if (this.blobStorageCapabilityState?.read_file_content) {
+        readSection.classList.remove('d-none');
+      } else {
+        readSection.classList.add('d-none');
+      }
+    }
+
+    if (uploadSection) {
+      if (this.blobStorageCapabilityState?.upload_file_to_container) {
+        uploadSection.classList.remove('d-none');
+      } else {
+        uploadSection.classList.add('d-none');
+      }
+    }
+  }
+
+  renderBlobStorageConfiguration() {
+    const capabilityList = document.getElementById('blob-storage-capabilities-list');
+    if (!capabilityList) {
+      return;
+    }
+
+    capabilityList.innerHTML = '';
+    BLOB_STORAGE_CAPABILITY_DEFINITIONS.forEach(definition => {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'form-check mb-3';
+
+      const checkbox = document.createElement('input');
+      checkbox.className = 'form-check-input';
+      checkbox.type = 'checkbox';
+      checkbox.id = `blob-storage-capability-${definition.key}`;
+      checkbox.checked = Boolean(this.blobStorageCapabilityState?.[definition.key]);
+
+      const label = document.createElement('label');
+      label.className = 'form-check-label';
+      label.setAttribute('for', checkbox.id);
+      label.innerHTML = `<span class="fw-medium">${this.escapeHtml(definition.label)}</span><br><span class="text-muted small">${this.escapeHtml(definition.description)}</span>`;
+
+      checkbox.addEventListener('change', () => {
+        this.blobStorageCapabilityState = {
+          ...this.blobStorageCapabilityState,
+          [definition.key]: checkbox.checked
+        };
+        this.updateBlobStorageFileTypeVisibility();
+      });
+
+      wrapper.appendChild(checkbox);
+      wrapper.appendChild(label);
+      capabilityList.appendChild(wrapper);
+    });
+
+    this.renderBlobStorageFileTypes(
+      'blob-storage-read-file-types-list',
+      this.blobStorageReadFileTypeState,
+      'blob-storage-read-file-type'
+    );
+    this.renderBlobStorageFileTypes(
+      'blob-storage-upload-file-types-list',
+      this.blobStorageUploadFileTypeState,
+      'blob-storage-upload-file-type'
+    );
+    this.updateBlobStorageFileTypeVisibility();
+  }
+
+  setBlobStorageConfiguration(additionalFields = {}) {
+    const normalizedAdditionalFields = additionalFields || {};
+    this.blobStorageCapabilityState = this.normalizeBlobStorageCapabilities(
+      normalizedAdditionalFields.blob_storage_capabilities || null
+    );
+    this.blobStorageReadFileTypeState = this.normalizeBlobStorageReadFileTypes(
+      normalizedAdditionalFields.blob_storage_read_file_types || null
+    );
+    this.blobStorageUploadFileTypeState = this.normalizeBlobStorageUploadFileTypes(
+      normalizedAdditionalFields.blob_storage_upload_file_types || null
+    );
+    this.renderBlobStorageConfiguration();
+  }
+
+  getSelectedBlobStorageCapabilities() {
+    return this.normalizeBlobStorageCapabilities(this.blobStorageCapabilityState);
+  }
+
+  getSelectedBlobStorageReadFileTypes() {
+    return this.normalizeBlobStorageReadFileTypes(this.blobStorageReadFileTypeState);
+  }
+
+  getSelectedBlobStorageUploadFileTypes() {
+    return this.normalizeBlobStorageUploadFileTypes(this.blobStorageUploadFileTypeState);
+  }
+
+  normalizeBlobStoragePrefix(prefix = '') {
+    return String(prefix || '').trim().replace(/^\/+|\/+$/g, '');
+  }
+
+  deriveBlobStorageEndpointFromConnectionString(connectionString = '') {
+    const normalizedConnectionString = String(connectionString || '').trim();
+    if (!normalizedConnectionString || normalizedConnectionString === 'Stored_In_KeyVault') {
+      return '';
+    }
+
+    const parsed = {};
+    normalizedConnectionString.split(';').forEach(segment => {
+      const normalizedSegment = segment.trim();
+      if (!normalizedSegment || !normalizedSegment.includes('=')) {
+        return;
+      }
+      const separatorIndex = normalizedSegment.indexOf('=');
+      const key = normalizedSegment.slice(0, separatorIndex).trim();
+      const value = normalizedSegment.slice(separatorIndex + 1).trim();
+      if (key) {
+        parsed[key] = value;
+      }
+    });
+
+    if ((parsed.UseDevelopmentStorage || '').toLowerCase() === 'true') {
+      return 'http://127.0.0.1:10000/devstoreaccount1';
+    }
+
+    if (parsed.BlobEndpoint) {
+      return String(parsed.BlobEndpoint).replace(/\/+$/, '');
+    }
+
+    if (!parsed.AccountName) {
+      return '';
+    }
+
+    const protocol = parsed.DefaultEndpointsProtocol || 'https';
+    const suffix = parsed.EndpointSuffix || 'core.windows.net';
+    return `${protocol}://${parsed.AccountName}.blob.${suffix}`.replace(/\/+$/, '');
+  }
+
   initializeDocumentSearchConfiguration() {
     const defaults = {
       'document-search-scope': 'all',
@@ -976,7 +1255,7 @@ export class PluginModalStepper {
   }
 
   isStructuredConfigType(type = this.selectedType) {
-    return this.isSqlType(type) || this.isCosmosType(type) || this.isDocumentSearchType(type) || this.isSimpleChatType(type) || this.isMsGraphType(type) || this.isAzureMapsType(type) || this.isChartType(type);
+    return this.isSqlType(type) || this.isCosmosType(type) || this.isDocumentSearchType(type) || this.isBlobStorageType(type) || this.isSimpleChatType(type) || this.isMsGraphType(type) || this.isAzureMapsType(type) || this.isChartType(type);
   }
 
   showConfigSectionForType() {
@@ -985,6 +1264,7 @@ export class PluginModalStepper {
     const sqlSection = document.getElementById('sql-config-section');
     const cosmosSection = document.getElementById('cosmos-config-section');
     const documentSearchSection = document.getElementById('document-search-config-section');
+    const blobStorageSection = document.getElementById('blob-storage-config-section');
     const simpleChatSection = document.getElementById('simplechat-config-section');
     const msGraphSection = document.getElementById('msgraph-config-section');
     const azureMapsSection = document.getElementById('azure-maps-config-section');
@@ -993,6 +1273,7 @@ export class PluginModalStepper {
     const isSqlType = this.isSqlType();
     const isCosmosType = this.isCosmosType();
     const isDocumentSearchType = this.isDocumentSearchType();
+    const isBlobStorageType = this.isBlobStorageType();
     const isSimpleChatType = this.isSimpleChatType();
     const isMsGraphType = this.isMsGraphType();
     const isAzureMapsType = this.isAzureMapsType();
@@ -1004,6 +1285,7 @@ export class PluginModalStepper {
       sqlSection.classList.add('d-none');
       cosmosSection.classList.add('d-none');
       documentSearchSection.classList.add('d-none');
+      blobStorageSection.classList.add('d-none');
       simpleChatSection.classList.add('d-none');
       msGraphSection.classList.add('d-none');
       azureMapsSection.classList.add('d-none');
@@ -1014,6 +1296,7 @@ export class PluginModalStepper {
       sqlSection.classList.remove('d-none');
       cosmosSection.classList.add('d-none');
       documentSearchSection.classList.add('d-none');
+      blobStorageSection.classList.add('d-none');
       simpleChatSection.classList.add('d-none');
       msGraphSection.classList.add('d-none');
       azureMapsSection.classList.add('d-none');
@@ -1026,6 +1309,7 @@ export class PluginModalStepper {
       sqlSection.classList.add('d-none');
       cosmosSection.classList.remove('d-none');
       documentSearchSection.classList.add('d-none');
+      blobStorageSection.classList.add('d-none');
       simpleChatSection.classList.add('d-none');
       msGraphSection.classList.add('d-none');
       azureMapsSection.classList.add('d-none');
@@ -1037,17 +1321,31 @@ export class PluginModalStepper {
       sqlSection.classList.add('d-none');
       cosmosSection.classList.add('d-none');
       documentSearchSection.classList.remove('d-none');
+      blobStorageSection.classList.add('d-none');
       simpleChatSection.classList.add('d-none');
       msGraphSection.classList.add('d-none');
       azureMapsSection.classList.add('d-none');
       chartSection.classList.add('d-none');
       this.initializeDocumentSearchConfiguration();
+    } else if (isBlobStorageType) {
+      openApiSection.classList.add('d-none');
+      genericSection.classList.add('d-none');
+      sqlSection.classList.add('d-none');
+      cosmosSection.classList.add('d-none');
+      documentSearchSection.classList.add('d-none');
+      blobStorageSection.classList.remove('d-none');
+      simpleChatSection.classList.add('d-none');
+      msGraphSection.classList.add('d-none');
+      azureMapsSection.classList.add('d-none');
+      chartSection.classList.add('d-none');
+      this.renderBlobStorageConfiguration();
     } else if (isSimpleChatType) {
       openApiSection.classList.add('d-none');
       genericSection.classList.add('d-none');
       sqlSection.classList.add('d-none');
       cosmosSection.classList.add('d-none');
       documentSearchSection.classList.add('d-none');
+      blobStorageSection.classList.add('d-none');
       simpleChatSection.classList.remove('d-none');
       msGraphSection.classList.add('d-none');
       azureMapsSection.classList.add('d-none');
@@ -1059,6 +1357,7 @@ export class PluginModalStepper {
       sqlSection.classList.add('d-none');
       cosmosSection.classList.add('d-none');
       documentSearchSection.classList.add('d-none');
+      blobStorageSection.classList.add('d-none');
       simpleChatSection.classList.add('d-none');
       msGraphSection.classList.remove('d-none');
       azureMapsSection.classList.add('d-none');
@@ -1070,6 +1369,7 @@ export class PluginModalStepper {
       sqlSection.classList.add('d-none');
       cosmosSection.classList.add('d-none');
       documentSearchSection.classList.add('d-none');
+      blobStorageSection.classList.add('d-none');
       simpleChatSection.classList.add('d-none');
       msGraphSection.classList.add('d-none');
       azureMapsSection.classList.remove('d-none');
@@ -1080,6 +1380,7 @@ export class PluginModalStepper {
       sqlSection.classList.add('d-none');
       cosmosSection.classList.add('d-none');
       documentSearchSection.classList.add('d-none');
+      blobStorageSection.classList.add('d-none');
       simpleChatSection.classList.add('d-none');
       msGraphSection.classList.add('d-none');
       azureMapsSection.classList.add('d-none');
@@ -1091,6 +1392,7 @@ export class PluginModalStepper {
       sqlSection.classList.add('d-none');
       cosmosSection.classList.add('d-none');
       documentSearchSection.classList.add('d-none');
+      blobStorageSection.classList.add('d-none');
       simpleChatSection.classList.add('d-none');
       msGraphSection.classList.add('d-none');
       azureMapsSection.classList.add('d-none');
@@ -1122,6 +1424,7 @@ export class PluginModalStepper {
         const isSqlType = this.isSqlType();
         const isCosmosType = this.isCosmosType();
         const isDocumentSearchType = this.isDocumentSearchType();
+        const isBlobStorageType = this.isBlobStorageType();
         const isAzureMapsType = this.isAzureMapsType();
         const isChartType = this.isChartType();
         
@@ -1133,6 +1436,8 @@ export class PluginModalStepper {
           titleEl.textContent = 'Cosmos Configuration';
         } else if (isDocumentSearchType) {
           titleEl.textContent = 'Document Search Configuration';
+        } else if (isBlobStorageType) {
+          titleEl.textContent = 'Blob Storage Configuration';
         } else if (this.isSimpleChatType()) {
           titleEl.textContent = 'SimpleChat Configuration';
         } else if (this.isMsGraphType()) {
@@ -1317,6 +1622,7 @@ export class PluginModalStepper {
         const sqlSection = document.getElementById('sql-config-section');
         const cosmosSection = document.getElementById('cosmos-config-section');
         const documentSearchSection = document.getElementById('document-search-config-section');
+        const blobStorageSection = document.getElementById('blob-storage-config-section');
         const simpleChatSection = document.getElementById('simplechat-config-section');
         const msGraphSection = document.getElementById('msgraph-config-section');
         const azureMapsSection = document.getElementById('azure-maps-config-section');
@@ -1325,6 +1631,7 @@ export class PluginModalStepper {
         const isSqlVisible = !sqlSection.classList.contains('d-none');
         const isCosmosVisible = !cosmosSection.classList.contains('d-none');
         const isDocumentSearchVisible = !documentSearchSection.classList.contains('d-none');
+        const isBlobStorageVisible = !blobStorageSection.classList.contains('d-none');
         const isSimpleChatVisible = !simpleChatSection.classList.contains('d-none');
         const isMsGraphVisible = !msGraphSection.classList.contains('d-none');
         const isAzureMapsVisible = !azureMapsSection.classList.contains('d-none');
@@ -1476,6 +1783,33 @@ export class PluginModalStepper {
           }
           if (Number.isNaN(timeout) || timeout < 1 || timeout > 120) {
             this.showError('Timeout must be between 1 and 120 seconds.');
+            return false;
+          }
+        } else if (isBlobStorageVisible) {
+          const connectionString = document.getElementById('blob-storage-connection-string').value.trim();
+          const containerName = document.getElementById('blob-storage-container-name').value.trim();
+          const capabilityValues = Object.values(this.getSelectedBlobStorageCapabilities());
+          const readTypeValues = Object.values(this.getSelectedBlobStorageReadFileTypes());
+          const uploadTypeValues = Object.values(this.getSelectedBlobStorageUploadFileTypes());
+
+          if (!connectionString) {
+            this.showError('Blob storage connection string is required.');
+            return false;
+          }
+          if (!containerName) {
+            this.showError('Blob storage container name is required.');
+            return false;
+          }
+          if (!capabilityValues.some(Boolean)) {
+            this.showError('Enable at least one blob storage capability before continuing.');
+            return false;
+          }
+          if (this.getSelectedBlobStorageCapabilities().read_file_content && !readTypeValues.some(Boolean)) {
+            this.showError('Enable at least one supported file type for blob reads before continuing.');
+            return false;
+          }
+          if (this.getSelectedBlobStorageCapabilities().upload_file_to_container && !uploadTypeValues.some(Boolean)) {
+            this.showError('Enable at least one supported file type for blob uploads before continuing.');
             return false;
           }
         } else if (isSimpleChatVisible) {
@@ -2457,6 +2791,18 @@ export class PluginModalStepper {
     } else if (this.isDocumentSearchType(plugin.type)) {
       this.populateDocumentSearchForm(plugin.additionalFields || {});
       this.initializeDocumentSearchConfiguration();
+    } else if (this.isBlobStorageType(plugin.type)) {
+      const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
+      const auth = plugin.auth || {};
+
+      document.getElementById('blob-storage-connection-string').value = auth.key || '';
+      document.getElementById('blob-storage-container-name').value = additionalFields.container_name || '';
+      document.getElementById('blob-storage-blob-prefix').value = additionalFields.blob_prefix || '';
+      this.setBlobStorageConfiguration({
+        blob_storage_capabilities: additionalFields.blob_storage_capabilities || plugin.blob_storage_capabilities || null,
+        blob_storage_read_file_types: additionalFields.blob_storage_read_file_types || plugin.blob_storage_read_file_types || null,
+        blob_storage_upload_file_types: additionalFields.blob_storage_upload_file_types || plugin.blob_storage_upload_file_types || null
+      });
     } else if (this.isSimpleChatType(plugin.type)) {
       const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
       this.setSimpleChatCapabilities(additionalFields.simplechat_capabilities || plugin.simplechat_capabilities || null);
@@ -2503,11 +2849,13 @@ export class PluginModalStepper {
     const sqlSection = document.getElementById('sql-config-section');
     const cosmosSection = document.getElementById('cosmos-config-section');
     const documentSearchSection = document.getElementById('document-search-config-section');
+    const blobStorageSection = document.getElementById('blob-storage-config-section');
     const azureMapsSection = document.getElementById('azure-maps-config-section');
     const isOpenApiVisible = !openApiSection.classList.contains('d-none');
     const isSqlVisible = !sqlSection.classList.contains('d-none');
     const isCosmosVisible = !cosmosSection.classList.contains('d-none');
     const isDocumentSearchVisible = !documentSearchSection.classList.contains('d-none');
+    const isBlobStorageVisible = !blobStorageSection.classList.contains('d-none');
     const isAzureMapsVisible = !azureMapsSection.classList.contains('d-none');
     
     let auth = {};
@@ -2715,6 +3063,21 @@ export class PluginModalStepper {
       endpoint = INTERNAL_DOCUMENT_SEARCH_ENDPOINT;
       auth.type = 'NoAuth';
       additionalFields = this.getDocumentSearchAdditionalFields();
+    } else if (isBlobStorageVisible) {
+      const connectionString = document.getElementById('blob-storage-connection-string').value.trim();
+      const containerName = document.getElementById('blob-storage-container-name').value.trim();
+      const blobPrefix = this.normalizeBlobStoragePrefix(document.getElementById('blob-storage-blob-prefix').value);
+
+      auth.type = 'connection_string';
+      auth.key = connectionString;
+      endpoint = this.deriveBlobStorageEndpointFromConnectionString(connectionString) || this.originalPlugin?.endpoint || '';
+      additionalFields.container_name = containerName;
+      if (blobPrefix) {
+        additionalFields.blob_prefix = blobPrefix;
+      }
+      additionalFields.blob_storage_capabilities = this.getSelectedBlobStorageCapabilities();
+      additionalFields.blob_storage_read_file_types = this.getSelectedBlobStorageReadFileTypes();
+      additionalFields.blob_storage_upload_file_types = this.getSelectedBlobStorageUploadFileTypes();
     } else if (this.isSimpleChatType()) {
       endpoint = '';
       auth.type = 'user';
@@ -2811,6 +3174,7 @@ export class PluginModalStepper {
     const isSqlType = this.isSqlType();
     const isCosmosType = this.isCosmosType();
     const isDocumentSearchType = this.isDocumentSearchType();
+    const isBlobStorageType = this.isBlobStorageType();
     const isSimpleChatType = this.isSimpleChatType();
     const isMsGraphType = this.isMsGraphType();
     const isAzureMapsType = this.isAzureMapsType();
@@ -2833,6 +3197,12 @@ export class PluginModalStepper {
     } else if (isDocumentSearchType) {
       endpointRow.style.display = 'none';
       document.getElementById('summary-plugin-database-type').textContent = 'Internal document search';
+      databaseTypeRow.style.display = '';
+    } else if (isBlobStorageType) {
+      const endpoint = this.getEndpointValue();
+      document.getElementById('summary-plugin-endpoint').textContent = endpoint || '-';
+      endpointRow.style.display = '';
+      document.getElementById('summary-plugin-database-type').textContent = 'Azure Blob Storage container';
       databaseTypeRow.style.display = '';
     } else if (isSimpleChatType) {
       endpointRow.style.display = 'none';
@@ -2872,10 +3242,10 @@ export class PluginModalStepper {
     }
     
     const databaseType = this.getSqlDatabaseType();
-    if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && databaseType) {
+    if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isBlobStorageType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && databaseType) {
       document.getElementById('summary-plugin-database-type').textContent = databaseType;
       databaseTypeRow.style.display = '';
-    } else if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType) {
+    } else if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isBlobStorageType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType) {
       databaseTypeRow.style.display = 'none';
     }
     
@@ -2884,6 +3254,7 @@ export class PluginModalStepper {
     this.populateSqlSummary();
     this.populateCosmosSummary();
     this.populateDocumentSearchSummary();
+    this.populateBlobStorageSummary();
     this.populateSimpleChatSummary();
     this.populateMsGraphSummary();
     this.populateChartSummary();
@@ -2897,6 +3268,7 @@ export class PluginModalStepper {
     const isSqlType = this.isSqlType();
     const isCosmosType = this.isCosmosType();
     const isDocumentSearchType = this.isDocumentSearchType();
+    const isBlobStorageType = this.isBlobStorageType();
     const isSimpleChatType = this.isSimpleChatType();
     const isMsGraphType = this.isMsGraphType();
     const isAzureMapsType = this.isAzureMapsType();
@@ -2910,6 +3282,9 @@ export class PluginModalStepper {
       return document.getElementById('cosmos-endpoint').value.trim();
     } else if (isDocumentSearchType) {
       return INTERNAL_DOCUMENT_SEARCH_ENDPOINT;
+    } else if (isBlobStorageType) {
+      const connectionString = document.getElementById('blob-storage-connection-string').value.trim();
+      return this.deriveBlobStorageEndpointFromConnectionString(connectionString) || this.originalPlugin?.endpoint || '';
     } else if (isAzureMapsType) {
       return AZURE_MAPS_DEFAULT_ENDPOINT;
     } else if (isMsGraphType) {
@@ -2927,6 +3302,7 @@ export class PluginModalStepper {
     const isSqlType = this.isSqlType();
     const isCosmosType = this.isCosmosType();
     const isDocumentSearchType = this.isDocumentSearchType();
+    const isBlobStorageType = this.isBlobStorageType();
     const isMsGraphType = this.isMsGraphType();
     const isAzureMapsType = this.isAzureMapsType();
     const isChartType = this.isChartType();
@@ -2942,6 +3318,8 @@ export class PluginModalStepper {
       return authType === 'key' ? 'Account Key' : 'Managed Identity';
     } else if (isDocumentSearchType) {
       return 'Internal user context';
+    } else if (isBlobStorageType) {
+      return 'Connection String';
     } else if (isSimpleChatType) {
       return 'User';
     } else if (isMsGraphType) {
@@ -3090,6 +3468,55 @@ export class PluginModalStepper {
     document.getElementById('summary-search-final-target-length').textContent = config.default_final_target_length || '2 pages';
     document.getElementById('summary-search-focus-instructions').textContent = config.default_focus_instructions || 'Uses caller-provided focus instructions';
     searchSection.style.display = '';
+  }
+
+  populateBlobStorageSummary() {
+    const blobSection = document.getElementById('summary-blob-storage-section');
+    if (!blobSection) {
+      return;
+    }
+
+    if (!this.isBlobStorageType()) {
+      blobSection.style.display = 'none';
+      return;
+    }
+
+    const capabilities = this.getSelectedBlobStorageCapabilities();
+    const readFileTypes = this.getSelectedBlobStorageReadFileTypes();
+    const uploadFileTypes = this.getSelectedBlobStorageUploadFileTypes();
+    const enabledLabels = [];
+    const disabledLabels = [];
+    const enabledReadTypes = [];
+    const enabledUploadTypes = [];
+
+    BLOB_STORAGE_CAPABILITY_DEFINITIONS.forEach(definition => {
+      if (capabilities[definition.key]) {
+        enabledLabels.push(definition.label);
+      } else {
+        disabledLabels.push(definition.label);
+      }
+    });
+
+    BLOB_STORAGE_FILE_TYPE_DEFINITIONS.forEach(definition => {
+      if (readFileTypes[definition.key]) {
+        enabledReadTypes.push(definition.label);
+      }
+      if (uploadFileTypes[definition.key]) {
+        enabledUploadTypes.push(definition.label);
+      }
+    });
+
+    document.getElementById('summary-blob-storage-container-name').textContent = document.getElementById('blob-storage-container-name').value.trim() || '-';
+    document.getElementById('summary-blob-storage-blob-prefix').textContent = this.normalizeBlobStoragePrefix(document.getElementById('blob-storage-blob-prefix').value) || 'None';
+    document.getElementById('summary-blob-storage-enabled-list').textContent = enabledLabels.length ? enabledLabels.join(', ') : 'None';
+    document.getElementById('summary-blob-storage-disabled-list').textContent = disabledLabels.length ? disabledLabels.join(', ') : 'None';
+    document.getElementById('summary-blob-storage-read-file-types').textContent = capabilities.read_file_content
+      ? (enabledReadTypes.length ? enabledReadTypes.join(', ') : 'None')
+      : 'Read capability disabled';
+    document.getElementById('summary-blob-storage-upload-file-types').textContent = capabilities.upload_file_to_container
+      ? (enabledUploadTypes.length ? enabledUploadTypes.join(', ') : 'None')
+      : 'Upload capability disabled';
+    blobSection.style.display = '';
   }
 
   populateSimpleChatSummary() {
@@ -3628,12 +4055,21 @@ export class PluginModalStepper {
     safeSetValue('document-search-window-target-length', '2 pages');
     safeSetValue('document-search-final-target-length', '2 pages');
 
+    // Step 3 fields - Blob Storage Plugin
+    safeSetValue('blob-storage-connection-string');
+    safeSetValue('blob-storage-container-name');
+    safeSetValue('blob-storage-blob-prefix');
+
     this.simpleChatCapabilityState = this.getDefaultSimpleChatCapabilities();
     this.renderSimpleChatConfiguration();
     this.msGraphCapabilityState = this.getDefaultMsGraphCapabilities();
     this.renderMsGraphConfiguration();
     this.chartCapabilityState = this.getDefaultChartCapabilities();
     this.renderChartConfiguration();
+    this.blobStorageCapabilityState = this.getDefaultBlobStorageCapabilities();
+    this.blobStorageReadFileTypeState = this.getDefaultBlobStorageReadFileTypes();
+    this.blobStorageUploadFileTypeState = this.getDefaultBlobStorageUploadFileTypes();
+    this.renderBlobStorageConfiguration();
     
     // Clear any type selection
     this.selectedType = null;

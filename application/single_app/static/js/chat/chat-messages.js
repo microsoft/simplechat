@@ -493,7 +493,12 @@ export function loadMessages(conversationId) {
   // Clear search highlights when loading a different conversation
   clearSearchHighlight();
   
-  return fetch(`/conversation/${conversationId}/messages`)
+  return fetch(`/conversation/${conversationId}/messages?ts=${Date.now()}`, {
+    cache: "no-store",
+    headers: {
+      "Cache-Control": "no-cache",
+    },
+  })
     .then((response) => response.json())
     .then((data) => {
       const chatbox = document.getElementById("chatbox");
@@ -809,6 +814,19 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       .trim();
   }
 
+  function stripInlineAzureMapsBlocks(messageContent) {
+    const normalizedContent = String(messageContent ?? "");
+    if (!normalizedContent.includes("{{map:")) {
+      return normalizedContent;
+    }
+
+    return normalizeStructuredMessageContent(
+      normalizedContent
+        .replace(/\n?\{\{map:[\s\S]*?\}\}\n?/g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+    );
+  }
+
   function getMentionedParticipants(fullMessageObject = null) {
     const rawMentions = Array.isArray(fullMessageObject?.metadata?.mentioned_participants)
       ? fullMessageObject.metadata.mentioned_participants
@@ -921,7 +939,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
   }
 
   export function renderAiMessageContent(messageContent) {
-    let cleaned = String(messageContent ?? '').trim().replace(/\n{3,}/g, "\n\n");
+    let cleaned = stripInlineAzureMapsBlocks(messageContent).trim().replace(/\n{3,}/g, "\n\n");
     cleaned = cleaned.replace(/(\bhttps?:\/\/\S+)(%5D|\])+/gi, (_, url) => url);
 
     const chartExtraction = extractInlineChartBlocks(cleaned);

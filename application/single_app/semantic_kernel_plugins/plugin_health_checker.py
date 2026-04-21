@@ -10,6 +10,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from functions_appinsights import log_event
 from functions_azure_maps import AZURE_MAPS_DEFAULT_ENDPOINT, AZURE_MAPS_PLUGIN_TYPE
+from functions_blob_storage_operations import BLOB_STORAGE_PLUGIN_TYPE
 from functions_simplechat_operations import SIMPLECHAT_DEFAULT_ENDPOINT
 
 
@@ -42,11 +43,39 @@ class PluginHealthChecker:
                 errors.append(f"Missing required field: {field}")
         
         # Validate specific plugin types
-        if plugin_type in ['azure_function', 'blob_storage', 'queue_storage']:
+        if plugin_type in ['azure_function', 'queue_storage']:
             if 'endpoint' not in manifest:
                 errors.append(f"Plugin type '{plugin_type}' requires 'endpoint' field")
             if 'auth' not in manifest:
                 errors.append(f"Plugin type '{plugin_type}' requires 'auth' field")
+
+        elif plugin_type == BLOB_STORAGE_PLUGIN_TYPE:
+            additional_fields = manifest.get('additionalFields', {})
+            if not isinstance(additional_fields, dict):
+                additional_fields = {}
+
+            auth = manifest.get('auth', {}) if isinstance(manifest.get('auth'), dict) else {}
+            auth_type = (auth.get('type') or '').strip().lower()
+            endpoint = (manifest.get('endpoint') or '').strip()
+            container_name = str(
+                manifest.get('container_name') or additional_fields.get('container_name') or ''
+            ).strip()
+
+            if not auth:
+                errors.append("Blob storage plugin requires 'auth' field")
+            if not container_name:
+                errors.append("Blob storage plugin requires 'container_name' in additionalFields")
+            if auth_type not in {'connection_string', 'identity', 'key'}:
+                errors.append("Blob storage plugin requires auth.type values 'connection_string', 'identity', or 'key'")
+            if auth_type == 'connection_string' and not auth.get('key'):
+                errors.append("Blob storage plugin requires auth.key when auth.type='connection_string'")
+            if auth_type == 'key':
+                if not endpoint:
+                    errors.append("Blob storage plugin requires an 'endpoint' field when auth.type='key'")
+                if not auth.get('key'):
+                    errors.append("Blob storage plugin requires auth.key when auth.type='key'")
+            if auth_type == 'identity' and not endpoint:
+                errors.append("Blob storage plugin requires an 'endpoint' field when auth.type='identity'")
         
         elif plugin_type in ['sql_query', 'sql_schema']:
             additional_fields = manifest.get('additionalFields', {})

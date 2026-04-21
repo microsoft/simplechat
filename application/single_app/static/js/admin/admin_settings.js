@@ -96,6 +96,7 @@ document.addEventListener('DOMContentLoaded', () => {
     updateImageHiddenInput();
 
     setupToggles(); // This function will be extended below
+    setupLandingPageLogoScaleControl();
     
     // Initialize tooltips
     initializeTooltips();
@@ -4919,6 +4920,23 @@ function initializeTooltips() {
     if (tooltipTriggerList.length > 0) {
         const tooltipList = [...tooltipTriggerList].map(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl));
     }
+}
+
+function setupLandingPageLogoScaleControl() {
+    const slider = document.getElementById('landing_page_logo_scale_percent');
+    const valueDisplay = document.getElementById('landing-page-logo-scale-value');
+
+    if (!slider || !valueDisplay) {
+        return;
+    }
+
+    const updateValue = () => {
+        valueDisplay.textContent = `${slider.value}%`;
+    };
+
+    slider.addEventListener('input', updateValue);
+    slider.addEventListener('change', updateValue);
+    updateValue();
 }
 
 /**

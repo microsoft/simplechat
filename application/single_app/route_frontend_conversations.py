@@ -15,6 +15,9 @@ from functions_azure_maps import (
     AZURE_MAPS_DEFAULT_VIEW,
     AZURE_MAPS_TILE_API_VERSION,
     decode_tile_proxy_token,
+    refresh_azure_maps_citation_payload,
+    refresh_azure_maps_citation_payloads,
+    refresh_azure_maps_message_content,
 )
 from functions_authentication import *
 from functions_debug import debug_print
@@ -30,10 +33,36 @@ from functions_image_messages import hydrate_image_messages
 from functions_message_artifacts import (
     build_message_artifact_payload_map,
     filter_assistant_artifact_items,
+    hydrate_agent_citations_from_artifacts,
 )
 from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_frontend_conversations(app):
+    def _disable_response_caching(response):
+        response.headers['Cache-Control'] = 'no-store, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+        return response
+
+    def _refresh_azure_maps_message_payloads(messages):
+        refreshed_messages = []
+        for message in messages or []:
+            if not isinstance(message, dict):
+                refreshed_messages.append(message)
+                continue
+
+            refreshed_message = dict(message)
+            refreshed_message['agent_citations'] = refresh_azure_maps_citation_payloads(
+                refreshed_message.get('agent_citations')
+            )
+            if refreshed_message.get('role') == 'assistant':
+                refreshed_message['content'] = refresh_azure_maps_message_content(
+                    refreshed_message.get('content')
+                )
+            refreshed_messages.append(refreshed_message)
+
+        return refreshed_messages
+
     @app.route('/conversations')
     @swagger_route(security=get_auth_security())
     @login_required
@@ -80,7 +109,10 @@ def register_route_frontend_conversations(app):
             query=message_query,
             partition_key=conversation_id
         ))
+        artifact_payload_map = build_message_artifact_payload_map(messages)
         messages = filter_assistant_artifact_items(messages)
+        messages = hydrate_agent_citations_from_artifacts(messages, artifact_payload_map)
+        messages = _refresh_azure_maps_message_payloads(messages)
         return render_template('chat.html', conversation_id=conversation_id, messages=messages)
     
     @app.route('/conversation/<conversation_id>/messages', methods=['GET'])
@@ -106,7 +138,10 @@ def register_route_frontend_conversations(app):
             query=msg_query,
             partition_key=conversation_id
         ))
+        artifact_payload_map = build_message_artifact_payload_map(all_items)
         all_items = filter_assistant_artifact_items(all_items)
+        all_items = hydrate_agent_citations_from_artifacts(all_items, artifact_payload_map)
+        all_items = _refresh_azure_maps_message_payloads(all_items)
 
         debug_print(f"Frontend endpoint - Query returned {len(all_items)} total items (before filtering)")
         
@@ -159,7 +194,8 @@ def register_route_frontend_conversations(app):
             if m.get('role') == 'file' and 'file_content' in m:
                 del m['file_content']
 
-        return jsonify({'messages': messages})
+        response = jsonify({'messages': messages})
+        return _disable_response_caching(response)
 
     @app.route('/api/conversation/<conversation_id>/agent-citation/<artifact_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -220,7 +256,8 @@ def register_route_frontend_conversations(app):
         if citation is None:
             return jsonify({'error': 'Agent citation payload not found'}), 404
 
-        return jsonify({'citation': citation})
+        response = jsonify({'citation': refresh_azure_maps_citation_payload(citation)})
+        return _disable_response_caching(response)
 
     @app.route('/api/azure-maps/tile', methods=['GET'])
     @swagger_route(security=get_auth_security())

@@ -47,6 +47,13 @@ from functions_activity_logging import (
     log_action_deletion,
 )
 from functions_azure_maps import AZURE_MAPS_DEFAULT_ENDPOINT, AZURE_MAPS_PLUGIN_TYPE
+from functions_blob_storage_operations import (
+    BLOB_STORAGE_PLUGIN_TYPE,
+    derive_blob_endpoint_from_connection_string,
+    get_default_blob_storage_capabilities,
+    get_default_blob_storage_read_file_types,
+    get_default_blob_storage_upload_file_types,
+)
 from functions_chart_operations import CHART_DEFAULT_ENDPOINT, CHART_PLUGIN_TYPE
 from functions_msgraph_operations import MSGRAPH_DEFAULT_ENDPOINT, MSGRAPH_PLUGIN_TYPE
 from functions_simplechat_operations import SIMPLECHAT_DEFAULT_ENDPOINT, SIMPLECHAT_PLUGIN_TYPE
@@ -82,6 +89,17 @@ def _apply_plugin_runtime_defaults(plugin_payload):
         auth = plugin_payload.get('auth') if isinstance(plugin_payload.get('auth'), dict) else {}
         auth['type'] = 'key'
         plugin_payload['auth'] = auth
+    elif plugin_type == BLOB_STORAGE_PLUGIN_TYPE:
+        auth = plugin_payload.get('auth') if isinstance(plugin_payload.get('auth'), dict) else {}
+        additional_fields = plugin_payload.get('additionalFields') if isinstance(plugin_payload.get('additionalFields'), dict) else {}
+        if not plugin_payload.get('endpoint') and auth.get('type') == 'connection_string':
+            derived_endpoint = derive_blob_endpoint_from_connection_string(auth.get('key') or '')
+            if derived_endpoint:
+                plugin_payload['endpoint'] = derived_endpoint
+        additional_fields.setdefault('blob_storage_capabilities', get_default_blob_storage_capabilities())
+        additional_fields.setdefault('blob_storage_read_file_types', get_default_blob_storage_read_file_types())
+        additional_fields.setdefault('blob_storage_upload_file_types', get_default_blob_storage_upload_file_types())
+        plugin_payload['additionalFields'] = additional_fields
     elif plugin_type == SIMPLECHAT_PLUGIN_TYPE:
         plugin_payload.setdefault('endpoint', SIMPLECHAT_DEFAULT_ENDPOINT)
         auth = plugin_payload.get('auth') if isinstance(plugin_payload.get('auth'), dict) else {}
@@ -205,7 +223,23 @@ def get_plugin_types():
                                 },
                                 'metadata': {'description': 'Example Cosmos query plugin'}
                             }
-                        elif any(x in module_name.lower() for x in ['azure_function', 'blob_storage', 'queue_storage']):
+                        elif 'blob_storage' in module_name.lower():
+                            safe_manifest = {
+                                'endpoint': 'https://example.blob.core.windows.net',
+                                'auth': {
+                                    'type': 'connection_string',
+                                    'key': 'DefaultEndpointsProtocol=https;AccountName=example;AccountKey=ZmFrZQ==;EndpointSuffix=core.windows.net'
+                                },
+                                'additionalFields': {
+                                    'container_name': 'content',
+                                    'blob_prefix': 'docs',
+                                    'blob_storage_capabilities': get_default_blob_storage_capabilities(),
+                                    'blob_storage_read_file_types': get_default_blob_storage_read_file_types(),
+                                    'blob_storage_upload_file_types': get_default_blob_storage_upload_file_types(),
+                                },
+                                'metadata': {'description': 'Example Blob Storage plugin'}
+                            }
+                        elif any(x in module_name.lower() for x in ['azure_function', 'queue_storage']):
                             safe_manifest = {
                                 'endpoint': 'https://example.azure.com',
                                 'auth': {'type': 'key', 'key': 'dummy'},
