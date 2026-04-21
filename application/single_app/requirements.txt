@@ -21,7 +21,7 @@ SciPy==1.15.1
 joblib==1.4.2
 threadpoolctl==3.5.0
 azure-search-documents==11.5.3
-python-dotenv==0.21.0
+python-dotenv==1.2.2
 azure-ai-formrecognizer==3.3.3
 azure-ai-projects==1.0.0
 azure-ai-agents==1.2.0b6
