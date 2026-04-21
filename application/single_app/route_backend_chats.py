@@ -4657,12 +4657,12 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 service_id="tabular-analysis",
                 function_choice_behavior=(
                     FunctionChoiceBehavior.Required(
-                        maximum_auto_invoke_attempts=8,
+                        maximum_auto_invoke_attempts=20,
                         filters=allowed_function_filters,
                     )
                     if force_tool_use else
                     FunctionChoiceBehavior.Auto(
-                        maximum_auto_invoke_attempts=7,
+                        maximum_auto_invoke_attempts=20,
                         filters=allowed_function_filters,
                     )
                 ),
