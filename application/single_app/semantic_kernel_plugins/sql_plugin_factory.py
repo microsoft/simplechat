@@ -40,7 +40,7 @@ class SQLPluginFactory:
             base_config.update({
                 "username": username,
                 "password": password,
-                "driver": "ODBC Driver 17 for SQL Server"
+                "driver": "ODBC Driver 18 for SQL Server"
             })
         
         # Schema plugin config
@@ -227,9 +227,9 @@ class SQLPluginFactory:
             tuple: (schema_plugin, query_plugin)
         """
         if use_managed_identity:
-            connection_string = f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={server};DATABASE={database};Authentication=ActiveDirectoryMsi"
+            connection_string = f"DRIVER={{ODBC Driver 18 for SQL Server}};SERVER={server};DATABASE={database};Authentication=ActiveDirectoryMsi"
         else:
-            connection_string = f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={server};DATABASE={database};UID={username};PWD={password}"
+            connection_string = f"DRIVER={{ODBC Driver 18 for SQL Server}};SERVER={server};DATABASE={database};UID={username};PWD={password}"
         
         base_config = {
             "database_type": "sqlserver",

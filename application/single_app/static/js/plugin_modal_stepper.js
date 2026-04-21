@@ -2534,12 +2534,12 @@ export class PluginModalStepper {
   getSqlConnectionExamples(dbType) {
     const examples = {
       sqlserver: `
-        <div class="example"><strong>SQL Server:</strong> DRIVER={ODBC Driver 17 for SQL Server};SERVER=server.com;DATABASE=mydb;UID=user;PWD=pass</div>
-        <div class="example"><strong>Integrated Auth:</strong> DRIVER={ODBC Driver 17 for SQL Server};SERVER=server.com;DATABASE=mydb;Trusted_Connection=yes</div>
+        <div class="example"><strong>SQL Server:</strong> DRIVER={ODBC Driver 18 for SQL Server};SERVER=server.com;DATABASE=mydb;UID=user;PWD=pass</div>
+        <div class="example"><strong>Integrated Auth:</strong> DRIVER={ODBC Driver 18 for SQL Server};SERVER=server.com;DATABASE=mydb;Trusted_Connection=yes</div>
       `,
       azure_sql: `
-        <div class="example"><strong>Managed Identity:</strong> DRIVER={ODBC Driver 17 for SQL Server};SERVER=server.database.windows.net;DATABASE=mydb;Authentication=ActiveDirectoryMsi</div>
-        <div class="example"><strong>Username/Password:</strong> DRIVER={ODBC Driver 17 for SQL Server};SERVER=server.database.windows.net;DATABASE=mydb;UID=user;PWD=pass</div>
+        <div class="example"><strong>Managed Identity:</strong> DRIVER={ODBC Driver 18 for SQL Server};SERVER=server.database.windows.net;DATABASE=mydb;Authentication=ActiveDirectoryMsi</div>
+        <div class="example"><strong>Username/Password:</strong> DRIVER={ODBC Driver 18 for SQL Server};SERVER=server.database.windows.net;DATABASE=mydb;UID=user;PWD=pass</div>
       `,
       postgresql: `
         <div class="example"><strong>PostgreSQL:</strong> host=localhost dbname=mydb user=username password=password port=5432</div>
@@ -2749,7 +2749,7 @@ export class PluginModalStepper {
       document.getElementById('sql-server').value = additionalFields.server || '';
       document.getElementById('sql-database').value = additionalFields.database || '';
       document.getElementById('sql-port').value = additionalFields.port || '';
-      document.getElementById('sql-driver').value = additionalFields.driver || 'ODBC Driver 17 for SQL Server';
+      document.getElementById('sql-driver').value = additionalFields.driver || 'ODBC Driver 18 for SQL Server';
 
       let sqlAuthType = hasConnectionString ? 'connection_string_only' : 'username_password';
 

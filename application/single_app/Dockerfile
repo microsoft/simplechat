@@ -19,6 +19,22 @@ RUN update-ca-trust enable \
 ENV PYTHONUNBUFFERED=1
 
 RUN set -eux; \
+    tdnf install -y curl ca-certificates; \
+    printf '%s\n' \
+        '[microsoft-azurelinux-3-ms-non-oss]' \
+        'name=Microsoft Azure Linux 3 Non-OSS' \
+        'baseurl=https://packages.microsoft.com/azurelinux/3.0/prod/ms-non-oss/$basearch' \
+        'enabled=1' \
+        'gpgcheck=1' \
+        'gpgkey=https://packages.microsoft.com/keys/microsoft.asc' \
+        > /etc/yum.repos.d/microsoft-ms-non-oss.repo; \
+    mkdir -p /opt/microsoft/msodbcsql18; \
+    touch /opt/microsoft/msodbcsql18/ACCEPT_EULA; \
+    tdnf install -y unixODBC unixODBC-devel msodbcsql18; \
+    tdnf clean all; \
+    rm -rf /var/cache/tdnf
+
+RUN set -eux; \
     echo "nonroot:x:${GID}:" >> /etc/group; \
     echo "nonroot:x:${UID}:${GID}:nonroot:/home/nonroot:/bin/bash" >> /etc/passwd; \
     mkdir -p /home/nonroot; \
@@ -29,6 +45,14 @@ RUN set -eux; \
 
 RUN mkdir -p /app/flask_session && chown -R ${UID}:${GID} /app/flask_session
 RUN mkdir /sc-temp-files && chown -R ${UID}:${GID} /sc-temp-files
+RUN set -eux; \
+    mkdir -p /odbc-runtime/usr/lib64 /odbc-runtime/etc /odbc-runtime/opt; \
+    cp -a /etc/odbcinst.ini /odbc-runtime/etc/; \
+    cp -a /opt/microsoft /odbc-runtime/opt/; \
+    cp -a /usr/lib64/libodbc.so* /odbc-runtime/usr/lib64/; \
+    cp -a /usr/lib64/libodbcinst.so* /odbc-runtime/usr/lib64/; \
+    cp -a /usr/lib64/libodbccr.so* /odbc-runtime/usr/lib64/; \
+    cp -a /usr/lib64/libltdl.so* /odbc-runtime/usr/lib64/
 
 WORKDIR /app
 
@@ -47,6 +71,7 @@ COPY --from=builder /home/nonroot /home/nonroot
 COPY --from=builder /etc/passwd /etc/passwd
 COPY --from=builder /etc/group /etc/group
 COPY --from=builder /usr/lib/python3.12 /usr/lib/python3.12
+COPY --from=builder /odbc-runtime/ /
 
 USER ${UID}:${GID}
 
@@ -54,6 +79,7 @@ COPY --from=builder --chown=${UID}:${GID} /app /app
 COPY --from=builder --chown=${UID}:${GID} /sc-temp-files /sc-temp-files
 
 ENV HOME=/home/nonroot \
+    LD_LIBRARY_PATH="/usr/lib64:/opt/microsoft/msodbcsql18/lib64" \
     PATH="/home/nonroot/.local/bin:$PATH" \
     PYTHONIOENCODING=utf-8 \
     LANG=C.UTF-8 \

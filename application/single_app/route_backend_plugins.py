@@ -1,4 +1,4 @@
-#route_backlend_plugins.py
+# route_backend_plugins.py
 
 import re
 import builtins
@@ -1204,7 +1204,7 @@ def test_sql_connection():
             else:
                 if not server or not database:
                     return jsonify({'success': False, 'error': 'Server and database are required for individual parameters connection.'}), 400
-                drv = driver or 'ODBC Driver 17 for SQL Server'
+                drv = driver or 'ODBC Driver 18 for SQL Server'
                 conn_str = f"DRIVER={{{drv}}};SERVER={server};DATABASE={database}"
                 if port:
                     conn_str += f",{port}"
@@ -1279,9 +1279,16 @@ def test_sql_connection():
             return jsonify({'success': False, 'error': f'Unsupported database type: {database_type}'}), 400
 
     except ImportError as e:
+        if database_type == 'sqlserver' and 'libodbc' in str(e):
+            return jsonify({
+                'success': False,
+                'error': 'Database driver not installed: the container image is missing the unixODBC runtime required for SQL Server connections.'
+            }), 400
         return jsonify({'success': False, 'error': f'Database driver not installed: {str(e)}'}), 400
     except Exception as e:
         error_msg = str(e)
+        if database_type == 'sqlserver' and "Can't open lib 'ODBC Driver 17 for SQL Server'" in error_msg:
+            error_msg = 'The selected ODBC Driver 17 is not installed in this container image. Select ODBC Driver 18 for SQL Server or rebuild the image with Driver 17.'
         # Sanitize error message to avoid leaking sensitive details
         if 'password' in error_msg.lower() or 'pwd' in error_msg.lower():
             error_msg = 'Authentication failed. Please check your credentials.'
