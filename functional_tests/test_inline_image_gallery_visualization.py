@@ -2,8 +2,8 @@
 # test_inline_image_gallery_visualization.py
 """
 Functional test for inline image gallery visualization support.
-Version: 0.241.056
-Implemented in: 0.241.056
+Version: 0.241.057
+Implemented in: 0.241.057
 
 This test ensures assistant agent citations can expose inline image galleries,
 workflow mirroring treats them as visualizations, and user-facing citation
@@ -89,7 +89,7 @@ def test_chat_renderer_wires_inline_image_galleries():
     chats_css = read_text("application/single_app/static/css/chats.css")
     config_py = read_text("application/single_app/config.py")
 
-    assert 'VERSION = "0.241.056"' in config_py
+    assert 'VERSION = "0.241.057"' in config_py
     assert "import { renderInlineImageGalleries } from './chat-inline-images.js';" in messages_js
     assert "await renderInlineImageGalleries(" in messages_js
     assert "const MAX_INLINE_IMAGE_ITEMS = 5;" in images_js
@@ -102,12 +102,27 @@ def test_chat_renderer_wires_inline_image_galleries():
     assert ".inline-image-gallery-card" in chats_css
     assert ".inline-image-gallery-info-btn" in chats_css
     assert ".inline-image-modal-meta-row" in chats_css
+    assert "max-height: 400px;" in chats_css
+    assert "object-fit: contain;" in chats_css
     assert "hybridCitations || []" in messages_js
     assert "webCitations || []" in messages_js
+
+
+def test_workflow_created_conversations_keep_summary_citations():
+    workflow_runner_source = read_text("application/single_app/functions_workflow_runner.py")
+
+    assert "mirrored_agent_citations = raw_agent_citations or list(source_assistant_doc.get('agent_citations') or [])" in workflow_runner_source
+    assert "'hybrid_citations': list(source_assistant_doc.get('hybrid_citations') or [])," in workflow_runner_source
+    assert "'web_search_citations': list(source_assistant_doc.get('web_search_citations') or [])," in workflow_runner_source
+    assert "'agent_citations': mirrored_agent_citations," in workflow_runner_source
+    assert "'hybrid_citations': hybrid_citations," in workflow_runner_source
+    assert "'web_search_citations': web_search_citations," in workflow_runner_source
+    assert "_mirror_assistant_message_to_personal_conversation(" in workflow_runner_source
 
 
 if __name__ == "__main__":
     test_image_gallery_citation_tool_labels_are_human_readable()
     test_workflow_runner_treats_image_results_as_visualizations()
     test_chat_renderer_wires_inline_image_galleries()
+    test_workflow_created_conversations_keep_summary_citations()
     print("Inline image gallery visualization checks passed.")

@@ -323,7 +323,7 @@ def _mirror_assistant_message_to_personal_conversation(
     workflow,
     source_assistant_doc,
     target_conversation_doc,
-    visualization_citations,
+    mirrored_agent_citations,
 ):
     conversation_id = str((target_conversation_doc or {}).get('id') or '').strip()
     if not conversation_id:
@@ -343,7 +343,7 @@ def _mirror_assistant_message_to_personal_conversation(
     prepared_agent_citations = _persist_agent_citation_artifacts(
         conversation_id=conversation_id,
         assistant_message_id=mirrored_message_id,
-        agent_citations=visualization_citations,
+        agent_citations=mirrored_agent_citations,
         created_timestamp=timestamp,
         user_info={
             'user_id': str(workflow.get('user_id') or '').strip(),
@@ -357,6 +357,9 @@ def _mirror_assistant_message_to_personal_conversation(
         'content': source_assistant_doc.get('content', ''),
         'timestamp': timestamp,
         'model_deployment_name': source_assistant_doc.get('model_deployment_name'),
+        'augmented': bool(source_assistant_doc.get('augmented', False)),
+        'hybrid_citations': list(source_assistant_doc.get('hybrid_citations') or []),
+        'web_search_citations': list(source_assistant_doc.get('web_search_citations') or []),
         'agent_citations': prepared_agent_citations,
         'agent_display_name': source_assistant_doc.get('agent_display_name'),
         'agent_name': source_assistant_doc.get('agent_name'),
@@ -381,8 +384,10 @@ def _mirror_workflow_visualizations_to_created_conversations(workflow, source_as
     source_assistant_doc = source_assistant_doc if isinstance(source_assistant_doc, dict) else {}
     execution_result = execution_result if isinstance(execution_result, dict) else {}
     raw_agent_citations = list(execution_result.get('agent_citations') or [])
-    visualization_citations = _filter_visualization_agent_citations(raw_agent_citations)
-    if not source_assistant_doc or not visualization_citations:
+    mirrored_agent_citations = raw_agent_citations or list(source_assistant_doc.get('agent_citations') or [])
+    hybrid_citations = list(source_assistant_doc.get('hybrid_citations') or [])
+    web_search_citations = list(source_assistant_doc.get('web_search_citations') or [])
+    if not source_assistant_doc or not (mirrored_agent_citations or hybrid_citations or web_search_citations):
         return []
 
     created_conversations = _extract_created_conversation_docs_from_citations(raw_agent_citations)
@@ -400,7 +405,9 @@ def _mirror_workflow_visualizations_to_created_conversations(workflow, source_as
     }
     collaboration_source_doc = {
         **source_assistant_doc,
-        'agent_citations': visualization_citations,
+        'agent_citations': mirrored_agent_citations,
+        'hybrid_citations': hybrid_citations,
+        'web_search_citations': web_search_citations,
     }
     mirrored_message_ids = []
 
@@ -430,7 +437,7 @@ def _mirror_workflow_visualizations_to_created_conversations(workflow, source_as
                     workflow,
                     source_assistant_doc,
                     created_conversation,
-                    visualization_citations,
+                    mirrored_agent_citations,
                 )
                 if mirrored_message_doc:
                     mirrored_message_ids.append(mirrored_message_doc.get('id'))
