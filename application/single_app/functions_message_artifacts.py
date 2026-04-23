@@ -117,6 +117,15 @@ def build_agent_citation_tool_label(
         )
         return _format_tool_label('Image gallery', title, fallback_label=fallback_label)
 
+    video_gallery_payload = _get_video_gallery_payload(parsed_result)
+    if video_gallery_payload:
+        title = _first_non_empty(
+            _get_mapping_value(video_gallery_payload, 'title'),
+            _get_mapping_value(parsed_arguments, 'title'),
+            _get_mapping_value(parsed_result, 'title'),
+        )
+        return _format_tool_label('Video gallery', title, fallback_label=fallback_label)
+
     if _has_image_result(parsed_result):
         title = _first_non_empty(
             _get_mapping_value(parsed_result, 'title'),
@@ -124,6 +133,14 @@ def build_agent_citation_tool_label(
             _get_mapping_value(parsed_result, 'summary'),
         )
         return _format_tool_label('Image', title, fallback_label=fallback_label)
+
+    if _has_video_result(parsed_result):
+        title = _first_non_empty(
+            _get_mapping_value(parsed_result, 'title'),
+            _get_mapping_value(parsed_arguments, 'title'),
+            _get_mapping_value(parsed_result, 'summary'),
+        )
+        return _format_tool_label('Video', title, fallback_label=fallback_label)
 
     if normalized_plugin_name == 'SimpleChatPlugin':
         simplechat_label = _build_simplechat_tool_label(
@@ -297,6 +314,31 @@ def _get_image_gallery_payload(candidate: Any) -> Any:
     return None
 
 
+def _get_video_gallery_payload(candidate: Any) -> Any:
+    if not isinstance(candidate, dict):
+        return None
+
+    video_gallery_payload = _get_mapping_value(candidate, 'video_gallery')
+    if isinstance(video_gallery_payload, dict):
+        items = _get_mapping_value(video_gallery_payload, 'items')
+        if isinstance(items, list) and items:
+            return video_gallery_payload
+
+    candidate_items = _get_mapping_value(candidate, 'items')
+    if isinstance(candidate_items, list) and candidate_items:
+        return candidate
+
+    candidate_videos = _get_mapping_value(candidate, 'videos')
+    if isinstance(candidate_videos, list) and candidate_videos:
+        return candidate
+
+    candidate_video_urls = _get_mapping_value(candidate, 'video_urls')
+    if isinstance(candidate_video_urls, list) and candidate_video_urls:
+        return candidate
+
+    return None
+
+
 def _has_image_result(candidate: Any) -> bool:
     if not isinstance(candidate, dict):
         return False
@@ -314,6 +356,25 @@ def _has_image_result(candidate: Any) -> bool:
 
     result_type = str(_get_mapping_value(candidate, 'type') or '').strip().lower()
     return result_type == 'image_url'
+
+
+def _has_video_result(candidate: Any) -> bool:
+    if not isinstance(candidate, dict):
+        return False
+
+    video_url = _get_mapping_value(candidate, 'video_url')
+    if isinstance(video_url, str) and video_url.strip():
+        return True
+
+    if isinstance(video_url, dict) and str(video_url.get('url') or '').strip():
+        return True
+
+    mime_type = str(_get_mapping_value(candidate, 'mime') or '').strip().lower()
+    if mime_type.startswith('video/'):
+        return True
+
+    result_type = str(_get_mapping_value(candidate, 'type') or '').strip().lower()
+    return result_type == 'video_url'
 
 
 def build_agent_citation_artifact_documents(

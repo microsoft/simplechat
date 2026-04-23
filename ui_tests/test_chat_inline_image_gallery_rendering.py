@@ -1,7 +1,7 @@
 # test_chat_inline_image_gallery_rendering.py
 """
 UI test for inline image gallery rendering in chat.
-Version: 0.241.056
+Version: 0.241.066
 Implemented in: 0.241.056
 
 This test ensures assistant messages can hydrate inline image gallery agent

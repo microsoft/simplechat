@@ -2,7 +2,7 @@
 # test_inline_image_gallery_visualization.py
 """
 Functional test for inline image gallery visualization support.
-Version: 0.241.057
+Version: 0.241.066
 Implemented in: 0.241.057
 
 This test ensures assistant agent citations can expose inline image galleries,
@@ -89,7 +89,7 @@ def test_chat_renderer_wires_inline_image_galleries():
     chats_css = read_text("application/single_app/static/css/chats.css")
     config_py = read_text("application/single_app/config.py")
 
-    assert 'VERSION = "0.241.057"' in config_py
+    assert 'VERSION = "0.241.066"' in config_py
     assert "import { renderInlineImageGalleries } from './chat-inline-images.js';" in messages_js
     assert "await renderInlineImageGalleries(" in messages_js
     assert "const MAX_INLINE_IMAGE_ITEMS = 5;" in images_js

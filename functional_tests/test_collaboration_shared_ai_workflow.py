@@ -2,8 +2,8 @@
 # test_collaboration_shared_ai_workflow.py
 """
 Functional test for collaboration shared AI workflow parity.
-Version: 0.241.024
-Implemented in: 0.241.024
+Version: 0.241.068
+Implemented in: 0.241.068
 
 This test ensures collaborative conversations route shared AI requests through
 the collaboration stream bridge, persist explicit AI-request metadata, and
@@ -75,12 +75,17 @@ def test_streaming_metadata_alignment_for_explicit_agent_targets():
     collaboration_route_source = read_repo_file('application', 'single_app', 'route_backend_collaboration.py')
     chat_route_source = read_repo_file('application', 'single_app', 'route_backend_chats.py')
     collaboration_functions_source = read_repo_file('application', 'single_app', 'functions_collaboration.py')
+    metadata_functions_source = read_repo_file('application', 'single_app', 'functions_conversation_metadata.py')
 
     assert 'sync_collaboration_conversation_metadata_from_source(' in collaboration_functions_source
     assert 'source_conversation_doc = cosmos_conversations_container.read_item(' in collaboration_route_source
-    assert 'source_conversation_doc, collaboration_conversation_doc = sync_collaboration_conversation_metadata_from_source(' in collaboration_route_source
+    assert 'collaboration_conversation_doc, _ = sync_collaboration_conversation_metadata_from_source(' in collaboration_route_source
     assert 'updated_conversation_doc, _ = sync_collaboration_conversation_metadata_from_source(' not in collaboration_route_source
     assert 'collaboration_conversation_doc = updated_conversation_doc' in collaboration_route_source
+    assert 'json.dumps(make_json_serializable(transformed_payload))' in collaboration_route_source
+    assert "source_chat_type = 'group' if is_group_collaboration_conversation(conversation_doc) else 'personal_single_user'" in collaboration_functions_source
+    assert "'chat_type': source_chat_type" in collaboration_functions_source
+    assert "conversation_item.get('conversation_kind') == 'collaboration_source'" in metadata_functions_source
 
     assert 'if request_agent_info and isinstance(request_agent_info, dict):' in chat_route_source
     assert "user_metadata['agent_selection'] = {" in chat_route_source

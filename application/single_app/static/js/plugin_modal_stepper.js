@@ -3303,6 +3303,7 @@ export class PluginModalStepper {
     const isCosmosType = this.isCosmosType();
     const isDocumentSearchType = this.isDocumentSearchType();
     const isBlobStorageType = this.isBlobStorageType();
+    const isSimpleChatType = this.isSimpleChatType();
     const isMsGraphType = this.isMsGraphType();
     const isAzureMapsType = this.isAzureMapsType();
     const isChartType = this.isChartType();

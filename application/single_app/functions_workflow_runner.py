@@ -251,6 +251,7 @@ def _is_visualization_citation(citation):
         or function_result.get('chart_markdown')
         or function_result.get('chart_payload')
         or _contains_inline_image_gallery_result(function_result)
+        or _contains_inline_video_result(function_result)
     )
 
 
@@ -279,6 +280,33 @@ def _contains_inline_image_gallery_result(function_result):
 
     result_type = str(function_result.get('type') or '').strip().lower()
     return result_type == 'image_url'
+
+
+def _contains_inline_video_result(function_result):
+    if not isinstance(function_result, dict):
+        return False
+
+    video_gallery = function_result.get('video_gallery')
+    if isinstance(video_gallery, dict) and list(video_gallery.get('items') or []):
+        return True
+
+    for field_name in ('items', 'videos', 'video_urls'):
+        field_value = function_result.get(field_name)
+        if isinstance(field_value, list) and field_value:
+            return True
+
+    video_url = function_result.get('video_url')
+    if isinstance(video_url, str) and video_url.strip():
+        return True
+    if isinstance(video_url, dict) and str(video_url.get('url') or '').strip():
+        return True
+
+    mime_type = str(function_result.get('mime') or '').strip().lower()
+    if mime_type.startswith('video/'):
+        return True
+
+    result_type = str(function_result.get('type') or '').strip().lower()
+    return result_type == 'video_url'
 
 
 def _filter_visualization_agent_citations(agent_citations):

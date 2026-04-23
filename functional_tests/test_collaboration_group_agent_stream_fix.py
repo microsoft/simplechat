@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-# test_collaboration_stream_image_completion_fix.py
+# test_collaboration_group_agent_stream_fix.py
 """
-Functional test for collaboration image stream completion.
+Functional test for group collaboration agent stream completion.
 Version: 0.241.068
 Implemented in: 0.241.068
 
-This test ensures collaborative image streaming completes through the shared
-stream bridge without tripping the nested `updated_conversation_doc` scoping
-bug, and that the final SSE payload emits a collaboration image URL instead of
-an error event.
+This test ensures group collaborative agent responses complete through the
+shared stream bridge even when mirrored agent citation payloads contain nested
+values that need JSON-safe normalization before the final SSE payload is sent.
 """
 
 import copy
@@ -69,13 +68,13 @@ class FakeEventRegistry:
         self.events.append((conversation_id, copy.deepcopy(payload)))
 
 
-def build_stream_fix_test_app():
+def build_group_agent_stream_test_app():
     """Register the collaboration stream route with isolated fake dependencies."""
     import route_backend_collaboration
     from collaboration_models import MESSAGE_KIND_AI_REQUEST, MESSAGE_KIND_ASSISTANT
 
-    conversation_id = 'shared-image-conversation-001'
-    source_conversation_id = 'source-conversation-001'
+    conversation_id = 'shared-agent-conversation-001'
+    source_conversation_id = 'source-group-agent-conversation-001'
     current_user = {
         'user_id': 'owner-user-001',
         'display_name': 'Owner User',
@@ -83,80 +82,113 @@ def build_stream_fix_test_app():
     }
     collaboration_conversation_doc = {
         'id': conversation_id,
-        'title': 'Shared Image Conversation',
-        'chat_type': 'personal_multi_user',
+        'title': 'Shared Agent Conversation',
+        'chat_type': 'group_multi_user',
         'conversation_kind': 'collaborative',
         'created_by_user_id': current_user['user_id'],
         'created_by_display_name': current_user['display_name'],
         'participants': [
-            {'user_id': current_user['user_id'], 'display_name': current_user['display_name'], 'status': 'accepted', 'role': 'owner'},
+            {
+                'user_id': current_user['user_id'],
+                'display_name': current_user['display_name'],
+                'status': 'accepted',
+                'role': 'owner',
+            },
         ],
         'message_count': 1,
-        'context': [],
+        'context': [{'type': 'primary', 'scope': 'group', 'id': 'group-001', 'name': 'Incident Response'}],
         'tags': [],
         'classification': [],
         'locked_contexts': [],
         'scope_locked': False,
+        'scope': {
+            'type': 'group',
+            'group_id': 'group-001',
+            'group_name': 'Incident Response',
+        },
     }
     source_conversation_doc = {
         'id': source_conversation_id,
-        'title': 'Hidden Source Conversation',
-        'context': ['Aviation'],
-        'tags': ['image'],
+        'title': 'Hidden Shared Agent Conversation',
+        'context': [{'type': 'primary', 'scope': 'group', 'id': 'group-001', 'name': 'Incident Response'}],
+        'tags': ['agent'],
         'classification': [],
         'locked_contexts': [],
         'scope_locked': False,
         'strict': False,
         'summary': 'Source summary',
+        'chat_type': 'group',
+        'conversation_kind': 'collaboration_source',
     }
     user_message_doc = {
         'id': 'shared-user-message-001',
         'conversation_id': conversation_id,
         'role': 'user',
         'message_kind': MESSAGE_KIND_AI_REQUEST,
-        'content': 'plane landing',
-        'timestamp': '2026-04-16T12:00:00Z',
+        'content': 'check plate GGG-1133',
+        'timestamp': '2026-04-22T13:46:17Z',
         'metadata': {
             'sender': current_user,
-            'last_message_preview': 'plane landing',
+            'last_message_preview': 'check plate GGG-1133',
         },
     }
     source_message_doc = {
-        'id': 'source-image-message-001',
+        'id': 'source-agent-message-001',
         'conversation_id': source_conversation_id,
-        'role': 'image',
-        'content': 'data:image/png;base64,AAAA',
-        'timestamp': '2026-04-16T12:00:01Z',
-        'model_deployment_name': 'gpt-image-1.5',
+        'role': 'assistant',
+        'content': 'I checked the NYC Police API for related records and found none for GGG-1133.',
+        'timestamp': '2026-04-22T13:46:47Z',
+        'model_deployment_name': 'gpt-5.4',
+        'agent_display_name': 'NYC Police',
+        'agent_name': 'nyc_police',
+        'agent_citations': [
+            {
+                'tool_name': 'nyc_police.listPoliceCases',
+                'plugin_name': 'nyc_police',
+                'function_name': 'listPoliceCases',
+                'function_arguments': {
+                    'columns': {'case_id', 'opened_at'},
+                },
+                'function_result': {
+                    'count': 0,
+                },
+            },
+        ],
         'metadata': {
-            'is_user_upload': False,
+            'history_context': {
+                'final_api_message_roles': {'assistant', 'user'},
+            },
         },
-        'agent_display_name': 'AI',
     }
     mirrored_message_doc = {
-        'id': 'shared-image-message-001',
+        'id': 'shared-agent-message-001',
         'conversation_id': conversation_id,
         'role': 'assistant',
         'message_kind': MESSAGE_KIND_ASSISTANT,
-        'content': '[Generated image]',
-        'timestamp': '2026-04-16T12:00:02Z',
-        'model_deployment_name': 'gpt-image-1.5',
+        'content': source_message_doc['content'],
+        'timestamp': '2026-04-22T13:46:48Z',
+        'model_deployment_name': 'gpt-5.4',
+        'agent_display_name': 'NYC Police',
+        'agent_name': 'nyc_police',
+        'agent_citations': copy.deepcopy(source_message_doc['agent_citations']),
         'metadata': {
             'sender': {
                 'user_id': 'assistant',
-                'display_name': 'AI',
+                'display_name': 'NYC Police',
                 'email': '',
             },
-            'source_role': 'image',
+            'source_role': 'assistant',
             'source_message_id': source_message_doc['id'],
             'source_conversation_id': source_conversation_id,
-            'last_message_preview': '[Generated image]',
+            'history_context': {
+                'final_api_message_roles': {'assistant', 'user'},
+            },
+            'last_message_preview': source_message_doc['content'],
         },
-        'agent_display_name': 'AI',
     }
     final_conversation_doc = copy.deepcopy(collaboration_conversation_doc)
     final_conversation_doc['message_count'] = 2
-    final_conversation_doc['last_message_preview'] = '[Generated image]'
+    final_conversation_doc['last_message_preview'] = source_message_doc['content']
 
     fake_message_container = FakeItemContainer([user_message_doc])
     fake_conversation_container = FakeConversationContainer([source_conversation_doc])
@@ -222,12 +254,8 @@ def build_stream_fix_test_app():
     route_backend_collaboration._read_source_message_doc = lambda requested_source_conversation_id, requested_message_id: copy.deepcopy(source_message_doc)
     route_backend_collaboration.sync_collaboration_conversation_metadata_from_source = (
         lambda collaboration_doc, source_doc: (
-            {
-                **copy.deepcopy(collaboration_doc),
-                'context': list(source_doc.get('context', []) or []),
-                'tags': list(source_doc.get('tags', []) or []),
-            },
-            True,
+            copy.deepcopy(collaboration_doc),
+            False,
         )
     )
     route_backend_collaboration.mirror_source_message_to_collaboration = (
@@ -251,8 +279,9 @@ def build_stream_fix_test_app():
             'done': True,
             'message_id': source_message_doc['id'],
             'user_message_id': 'source-user-message-001',
-            'image_url': '/api/image/source-image-message-001',
-            'full_content': '',
+            'full_content': source_message_doc['content'],
+            'agent_display_name': 'NYC Police',
+            'agent_name': 'nyc_police',
         }
         return Response([f'data: {json.dumps(payload)}\n\n'], mimetype='text/event-stream')
 
@@ -262,18 +291,18 @@ def build_stream_fix_test_app():
         for attribute_name, original_value in original_values.items():
             setattr(route_backend_collaboration, attribute_name, original_value)
 
-    return app, fake_message_container, fake_event_registry, restore
+    return app, fake_event_registry, restore
 
 
-def test_collaboration_stream_image_completion_uses_reference_payload():
-    """Verify the shared image stream completes with a collaboration image URL."""
-    app, fake_message_container, fake_event_registry, restore = build_stream_fix_test_app()
+def test_group_collaboration_agent_stream_sanitizes_final_payload():
+    """Verify final collaborative SSE payloads are sanitized for agent citations."""
+    app, fake_event_registry, restore = build_group_agent_stream_test_app()
 
     try:
         with app.test_client() as client:
             response = client.post(
-                '/api/collaboration/conversations/shared-image-conversation-001/stream',
-                json={'content': 'plane landing'},
+                '/api/collaboration/conversations/shared-agent-conversation-001/stream',
+                json={'content': 'check plate GGG-1133'},
                 buffered=True,
             )
 
@@ -281,17 +310,25 @@ def test_collaboration_stream_image_completion_uses_reference_payload():
 
         response_body = response.get_data(as_text=True)
         assert 'Failed to stream collaborative AI response' not in response_body
-        assert '/api/collaboration/conversations/shared-image-conversation-001/images/shared-image-message-001' in response_body
-        assert 'cannot access local variable' not in response_body
-        assert '"error":' not in response_body
+        assert '"agent_display_name": "NYC Police"' in response_body
 
-        saved_user_message = fake_message_container.read_item('shared-user-message-001')
-        assert saved_user_message['metadata']['source_message_id'] == 'source-user-message-001'
+        payloads = [
+            json.loads(line[6:])
+            for line in response_body.splitlines()
+            if line.startswith('data: ')
+        ]
+        final_payload = payloads[-1]
+
+        assert final_payload['done'] is True
+        assert final_payload['message_id'] == 'shared-agent-message-001'
+        assert final_payload['agent_display_name'] == 'NYC Police'
+        assert isinstance(final_payload['agent_citations'][0]['function_arguments']['columns'], list)
+        assert sorted(final_payload['agent_citations'][0]['function_arguments']['columns']) == ['case_id', 'opened_at']
         assert fake_event_registry.events, 'Expected collaboration events to be published during streaming.'
     finally:
         restore()
 
 
 if __name__ == '__main__':
-    test_collaboration_stream_image_completion_uses_reference_payload()
-    print('Collaboration stream image completion checks passed.')
+    test_group_collaboration_agent_stream_sanitizes_final_payload()
+    print('Group collaboration agent stream checks passed.')

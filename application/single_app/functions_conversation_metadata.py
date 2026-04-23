@@ -390,7 +390,11 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
     if existing_primary:
         # Documents were used - set chat_type based on primary context scope
         if existing_primary.get('scope') == 'group':
-            conversation_item['chat_type'] = 'group-single-user'  # Default to single-user for now
+            conversation_item['chat_type'] = (
+                'group'
+                if conversation_item.get('conversation_kind') == 'collaboration_source'
+                else 'group-single-user'
+            )
         elif existing_primary.get('scope') == 'public':
             conversation_item['chat_type'] = 'public'
         elif existing_primary.get('scope') == 'personal':

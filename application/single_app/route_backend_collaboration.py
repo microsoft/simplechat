@@ -46,6 +46,7 @@ from functions_collaboration import (
 from functions_group import assert_group_role, check_group_status_allows_operation, find_group_by_id
 from functions_image_messages import decode_image_content, get_complete_image_content, is_external_image_url
 from functions_notifications import mark_collaboration_message_notifications_read_for_conversation
+from functions_message_artifacts import make_json_serializable
 from functions_settings import get_settings, get_user_settings
 from swagger_wrapper import swagger_route, get_auth_security
 
@@ -1343,13 +1344,15 @@ def register_route_backend_collaboration(app):
                                     conversation_id=conversation_id,
                                 )
 
+                            collaboration_conversation_doc = updated_conversation_doc
+
                             try:
                                 source_conversation_doc = cosmos_conversations_container.read_item(
                                     item=source_conversation_id,
                                     partition_key=source_conversation_id,
                                 )
-                                updated_conversation_doc, _ = sync_collaboration_conversation_metadata_from_source(
-                                    updated_conversation_doc,
+                                collaboration_conversation_doc, _ = sync_collaboration_conversation_metadata_from_source(
+                                    collaboration_conversation_doc,
                                     source_conversation_doc,
                                 )
                             except CosmosResourceNotFoundError:
@@ -1358,7 +1361,7 @@ def register_route_backend_collaboration(app):
                                 source_conversation_doc = None
 
                             mirrored_message_doc, final_conversation_doc, _ = mirror_source_message_to_collaboration(
-                                updated_conversation_doc,
+                                collaboration_conversation_doc,
                                 source_message_doc,
                                 source_owner_user,
                                 reply_to_message_id=serialized_user_message.get('id'),
@@ -1416,7 +1419,7 @@ def register_route_backend_collaboration(app):
                                 'image_url': serialized_assistant_message.get('content') if serialized_assistant_message.get('role') == 'image' else stream_payload.get('image_url'),
                                 'reload_messages': False,
                             }
-                            return f'data: {json.dumps(transformed_payload)}\n\n'
+                            return f'data: {json.dumps(make_json_serializable(transformed_payload))}\n\n'
 
                         for chunk in internal_response.response:
                             if chunk is None:

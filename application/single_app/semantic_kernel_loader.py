@@ -1745,7 +1745,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 "deployment_name": agent_config["deployment"],
                 "azure_endpoint": agent_config["endpoint"],
                 "api_version": agent_config["api_version"],
-                "function_choice_behavior": FunctionChoiceBehavior.Auto(maximum_auto_invoke_attempts=30)
+                "function_choice_behavior": FunctionChoiceBehavior.Auto(maximum_auto_invoke_attempts=60)
             }
             # Don't pass plugins to agent since they're already loaded in kernel
             agent_obj = LoggingChatCompletionAgent(**kwargs)
@@ -2553,7 +2553,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
                         "deployment_name": agent_config["deployment"],
                         "azure_endpoint": agent_config["endpoint"],
                         "api_version": agent_config["api_version"],
-                        "function_choice_behavior": FunctionChoiceBehavior.Auto(maximum_auto_invoke_attempts=30)
+                        "function_choice_behavior": FunctionChoiceBehavior.Auto(maximum_auto_invoke_attempts=60)
                     }
                     if agent_config.get("actions_to_load"):
                         kwargs["plugins"] = agent_config["actions_to_load"]
@@ -2892,7 +2892,7 @@ def set_prompt_settings_for_agent(chat_service, agent_config: dict):
     if hasattr(prompt_exec_settings, 'function_choice_behavior'):
         if getattr(prompt_exec_settings, 'function_choice_behavior', None) is None:
             try:
-                prompt_exec_settings.function_choice_behavior = FunctionChoiceBehavior.Auto(maximum_auto_invoke_attempts=30)
+                prompt_exec_settings.function_choice_behavior = FunctionChoiceBehavior.Auto(maximum_auto_invoke_attempts=60)
             except Exception:
                 # pass this to prevent additional future agent types from potentially failing
                 pass

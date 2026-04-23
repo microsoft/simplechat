@@ -2296,6 +2296,224 @@ ol {
   line-height: 1.5;
 }
 
+.inline-video-gallery-card {
+  margin-top: 1rem;
+  border: 1px solid rgba(14, 116, 144, 0.16);
+  border-radius: 1.15rem;
+  background: linear-gradient(180deg, rgba(240, 249, 255, 0.98) 0%, rgba(236, 253, 245, 0.94) 100%);
+  box-shadow: 0 10px 24px rgba(14, 116, 144, 0.08);
+  overflow: hidden;
+}
+
+.inline-video-gallery-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1rem 0.75rem;
+}
+
+.inline-video-gallery-copy {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.inline-video-gallery-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.inline-video-gallery-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  background: rgba(14, 116, 144, 0.12);
+  color: #0f766e;
+  font-size: 1rem;
+}
+
+.inline-video-gallery-title {
+  color: #0f172a;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.inline-video-gallery-summary {
+  color: #475569;
+  font-size: 0.92rem;
+}
+
+.inline-video-gallery-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.inline-video-gallery-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.06);
+  color: #334155;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.inline-video-gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 320px));
+  justify-content: start;
+  gap: 0.85rem;
+  padding: 0 1rem 1rem;
+}
+
+.inline-video-gallery-item {
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 0.9rem;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
+}
+
+.inline-video-gallery-stage {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 220px;
+  max-height: 400px;
+  padding: 0.75rem;
+  background: linear-gradient(180deg, rgba(224, 242, 254, 0.84) 0%, rgba(209, 250, 229, 0.78) 100%);
+}
+
+.inline-video-gallery-item-video {
+  width: 100%;
+  max-height: 400px;
+  display: block;
+  border-radius: 0.75rem;
+  background: #020617;
+}
+
+.inline-video-gallery-info-btn {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.6rem;
+  width: 2rem;
+  height: 2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #f8fafc;
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.18);
+}
+
+.inline-video-gallery-info-btn:hover,
+.inline-video-gallery-info-btn:focus-visible {
+  background: rgba(15, 23, 42, 0.92);
+  color: #ffffff;
+}
+
+.inline-video-gallery-item-copy {
+  padding: 0.8rem 0.85rem 0.9rem;
+}
+
+.inline-video-gallery-item-meta {
+  color: #0f766e;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.inline-video-gallery-item-title {
+  margin-top: 0.35rem;
+  color: #0f172a;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.inline-video-gallery-item-description {
+  margin-top: 0.35rem;
+  color: #475569;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.inline-video-gallery-footer {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.75rem 1rem 0.9rem;
+  font-size: 0.78rem;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-top: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.inline-video-gallery-footer-separator {
+  color: #94a3b8;
+}
+
+.inline-video-modal-stage {
+  display: flex;
+  justify-content: center;
+  padding: 0.5rem;
+  border-radius: 1rem;
+  background: linear-gradient(180deg, rgba(241, 245, 249, 0.9) 0%, rgba(226, 232, 240, 0.9) 100%);
+}
+
+.inline-video-modal-stage video {
+  width: 100%;
+  max-height: min(70vh, 560px);
+  border-radius: 0.85rem;
+  background: #020617;
+}
+
+.inline-video-modal-description {
+  color: #475569;
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+.inline-video-modal-meta {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.inline-video-modal-meta-row {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.inline-video-modal-meta-label {
+  color: #0f766e;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.inline-video-modal-meta-value {
+  color: #0f172a;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
 [data-bs-theme="dark"] .inline-map-card {
   border-color: rgba(96, 165, 250, 0.18);
   background: linear-gradient(180deg, rgba(15, 23, 42, 0.96) 0%, rgba(30, 41, 59, 0.96) 100%);
@@ -2350,6 +2568,44 @@ ol {
 }
 
 [data-bs-theme="dark"] .inline-image-gallery-footer {
+  color: #94a3b8;
+  border-top-color: rgba(148, 163, 184, 0.14);
+}
+
+[data-bs-theme="dark"] .inline-video-gallery-card {
+  border-color: rgba(45, 212, 191, 0.18);
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.96) 0%, rgba(15, 118, 110, 0.2) 100%);
+  box-shadow: 0 10px 26px rgba(2, 6, 23, 0.38);
+}
+
+[data-bs-theme="dark"] .inline-video-gallery-title,
+[data-bs-theme="dark"] .inline-video-gallery-item-title,
+[data-bs-theme="dark"] .inline-video-modal-meta-value {
+  color: #e2e8f0;
+}
+
+[data-bs-theme="dark"] .inline-video-gallery-summary,
+[data-bs-theme="dark"] .inline-video-gallery-item-description,
+[data-bs-theme="dark"] .inline-video-modal-description {
+  color: #cbd5e1;
+}
+
+[data-bs-theme="dark"] .inline-video-gallery-badge {
+  background: rgba(148, 163, 184, 0.12);
+  color: #e2e8f0;
+}
+
+[data-bs-theme="dark"] .inline-video-gallery-item {
+  border-color: rgba(148, 163, 184, 0.16);
+  background: rgba(15, 23, 42, 0.74);
+}
+
+[data-bs-theme="dark"] .inline-video-gallery-stage,
+[data-bs-theme="dark"] .inline-video-modal-stage {
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.82) 0%, rgba(30, 41, 59, 0.82) 100%);
+}
+
+[data-bs-theme="dark"] .inline-video-gallery-footer {
   color: #94a3b8;
   border-top-color: rgba(148, 163, 184, 0.14);
 }

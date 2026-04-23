@@ -1716,6 +1716,7 @@ def ensure_collaboration_source_conversation(conversation_doc, current_user):
         raise PermissionError('User not authenticated')
 
     source_conversation_id = str((conversation_doc or {}).get('source_conversation_id') or '').strip()
+    source_chat_type = 'group' if is_group_collaboration_conversation(conversation_doc) else 'personal_single_user'
     source_conversation_doc = None
     source_updated = False
 
@@ -1740,7 +1741,7 @@ def ensure_collaboration_source_conversation(conversation_doc, current_user):
             'context': list((conversation_doc or {}).get('context', []) or []),
             'tags': list((conversation_doc or {}).get('tags', []) or []),
             'strict': bool((conversation_doc or {}).get('strict', False)),
-            'chat_type': 'group' if is_group_collaboration_conversation(conversation_doc) else 'personal_single_user',
+            'chat_type': source_chat_type,
             'scope_locked': bool((conversation_doc or {}).get('scope_locked', False)),
             'locked_contexts': list((conversation_doc or {}).get('locked_contexts', []) or []),
             'classification': list((conversation_doc or {}).get('classification', []) or []),
@@ -1756,6 +1757,7 @@ def ensure_collaboration_source_conversation(conversation_doc, current_user):
             'context': list((conversation_doc or {}).get('context', []) or source_conversation_doc.get('context', []) or []),
             'tags': list((conversation_doc or {}).get('tags', []) or source_conversation_doc.get('tags', []) or []),
             'strict': bool((conversation_doc or {}).get('strict', source_conversation_doc.get('strict', False))),
+            'chat_type': source_chat_type,
             'scope_locked': bool((conversation_doc or {}).get('scope_locked', source_conversation_doc.get('scope_locked', False))),
             'locked_contexts': list((conversation_doc or {}).get('locked_contexts', []) or source_conversation_doc.get('locked_contexts', []) or []),
             'classification': list((conversation_doc or {}).get('classification', []) or source_conversation_doc.get('classification', []) or []),

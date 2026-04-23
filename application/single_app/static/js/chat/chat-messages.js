@@ -22,6 +22,7 @@ import { getCurrentReasoningEffort, isReasoningEffortEnabled } from './chat-reas
 import { areAgentsEnabled } from './chat-agents.js';
 import { createThoughtsToggleHtml, attachThoughtsToggleListener } from './chat-thoughts.js';
 import { extractInlineChartBlocks, hydrateInlineCharts, injectInlineChartHtml, restoreInlineChartTokens } from './chat-inline-charts.js';
+import { renderInlineVideoGalleries } from './chat-inline-videos.js';
 import { renderInlineImageGalleries } from './chat-inline-images.js';
 import { renderInlineAzureMaps } from './chat-inline-maps.js';
 
@@ -1194,6 +1195,13 @@ export function appendMessage(
 
     hydrateInlineCharts(messageDiv);
     void (async () => {
+      await renderInlineVideoGalleries(
+        messageDiv,
+        hybridCitations || [],
+        webCitations || [],
+        agentCitations || [],
+        messageConversationId
+      );
       await renderInlineImageGalleries(
         messageDiv,
         hybridCitations || [],

@@ -40,7 +40,7 @@ from functions_keyvault import (
 #from functions_personal_actions import delete_personal_action
 
 from functions_debug import debug_print
-from json_schema_validation import PLUGIN_STORAGE_MANAGED_FIELDS, validate_plugin
+from json_schema_validation import PLUGIN_STORAGE_MANAGED_FIELDS, apply_plugin_validation_defaults, validate_plugin
 from functions_activity_logging import (
     log_action_creation,
     log_action_update,
@@ -68,24 +68,29 @@ def _apply_plugin_runtime_defaults(plugin_payload):
 
     plugin_type = plugin_payload.get('type', '')
     if plugin_type in ['sql_schema', 'sql_query']:
-        plugin_payload.setdefault('endpoint', f'sql://{plugin_type}')
+        if not str(plugin_payload.get('endpoint') or '').strip():
+            plugin_payload['endpoint'] = f'sql://{plugin_type}'
     elif plugin_type == CHART_PLUGIN_TYPE:
-        plugin_payload.setdefault('endpoint', CHART_DEFAULT_ENDPOINT)
+        if not str(plugin_payload.get('endpoint') or '').strip():
+            plugin_payload['endpoint'] = CHART_DEFAULT_ENDPOINT
         auth = plugin_payload.get('auth') if isinstance(plugin_payload.get('auth'), dict) else {}
         auth['type'] = 'user'
         plugin_payload['auth'] = auth
     elif plugin_type == MSGRAPH_PLUGIN_TYPE:
-        plugin_payload.setdefault('endpoint', MSGRAPH_DEFAULT_ENDPOINT)
+        if not str(plugin_payload.get('endpoint') or '').strip():
+            plugin_payload['endpoint'] = MSGRAPH_DEFAULT_ENDPOINT
         auth = plugin_payload.get('auth') if isinstance(plugin_payload.get('auth'), dict) else {}
         auth['type'] = 'user'
         plugin_payload['auth'] = auth
     elif plugin_type in ['search', 'document_search']:
-        plugin_payload.setdefault('endpoint', DOCUMENT_SEARCH_INTERNAL_ENDPOINT)
+        if not str(plugin_payload.get('endpoint') or '').strip():
+            plugin_payload['endpoint'] = DOCUMENT_SEARCH_INTERNAL_ENDPOINT
         auth = plugin_payload.get('auth') if isinstance(plugin_payload.get('auth'), dict) else {}
         auth['type'] = 'NoAuth'
         plugin_payload['auth'] = auth
     elif plugin_type == AZURE_MAPS_PLUGIN_TYPE:
-        plugin_payload.setdefault('endpoint', AZURE_MAPS_DEFAULT_ENDPOINT)
+        if not str(plugin_payload.get('endpoint') or '').strip():
+            plugin_payload['endpoint'] = AZURE_MAPS_DEFAULT_ENDPOINT
         auth = plugin_payload.get('auth') if isinstance(plugin_payload.get('auth'), dict) else {}
         auth['type'] = 'key'
         plugin_payload['auth'] = auth
@@ -101,7 +106,8 @@ def _apply_plugin_runtime_defaults(plugin_payload):
         additional_fields.setdefault('blob_storage_upload_file_types', get_default_blob_storage_upload_file_types())
         plugin_payload['additionalFields'] = additional_fields
     elif plugin_type == SIMPLECHAT_PLUGIN_TYPE:
-        plugin_payload.setdefault('endpoint', SIMPLECHAT_DEFAULT_ENDPOINT)
+        if not str(plugin_payload.get('endpoint') or '').strip():
+            plugin_payload['endpoint'] = SIMPLECHAT_DEFAULT_ENDPOINT
         auth = plugin_payload.get('auth') if isinstance(plugin_payload.get('auth'), dict) else {}
         auth['type'] = 'user'
         plugin_payload['auth'] = auth
@@ -857,8 +863,9 @@ def list_plugins():
 def add_plugin():
     try:
         plugins = get_global_actions()
-        new_plugin = request.json
+        new_plugin = request.get_json(silent=True) or {}
         _apply_plugin_runtime_defaults(new_plugin)
+        new_plugin = apply_plugin_validation_defaults(new_plugin)
         
         # Strict validation with dynamic allowed types
         allowed_types = discover_plugin_types()
@@ -913,8 +920,9 @@ def add_plugin():
 def edit_plugin(plugin_name):
     try:
         plugins = get_global_actions()
-        updated_plugin = request.json
+        updated_plugin = request.get_json(silent=True) or {}
         _apply_plugin_runtime_defaults(updated_plugin)
+        updated_plugin = apply_plugin_validation_defaults(updated_plugin)
         
         # Strict validation with dynamic allowed types
         allowed_types = discover_plugin_types()
