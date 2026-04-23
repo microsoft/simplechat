@@ -40,6 +40,10 @@ from functions_collaboration import (
     get_collaboration_conversation,
     mirror_source_message_to_collaboration,
 )
+from functions_exhaustive_document_review import (
+    WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS,
+    run_exhaustive_document_review,
+)
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
 from functions_message_artifacts import (
     build_agent_citation_tool_label,
@@ -1268,6 +1272,7 @@ def _create_user_message(conversation_id, workflow, trigger_source, run_id):
             'runner_type': workflow.get('runner_type'),
             'trigger_source': trigger_source,
             'run_id': run_id,
+            'exhaustive_review': workflow.get('exhaustive_review') or {},
         },
         'thread_info': {
             'thread_id': current_thread_id,
@@ -1385,6 +1390,8 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
                 'run_id': run_id,
                 'selected_agent': workflow.get('selected_agent') or {},
                 'model_binding_summary': workflow.get('model_binding_summary') or {},
+                'exhaustive_review': workflow.get('exhaustive_review') or {},
+                'review_coverage': result.get('review_coverage') or {},
             },
             'thread_info': {
                 'thread_id': str(uuid.uuid4()),
@@ -1527,12 +1534,106 @@ def _build_legacy_default_client(settings):
     return client, deployment_name, 'aoai'
 
 
-def _execute_model_workflow(workflow, settings, run_id=None, thought_tracker=None):
+def _resolve_model_workflow_client(workflow, settings):
     user_id = str(workflow.get('user_id') or '').strip()
     binding_summary = workflow.get('model_binding_summary') if isinstance(workflow.get('model_binding_summary'), dict) else {}
     endpoint_id = str(workflow.get('model_endpoint_id') or binding_summary.get('endpoint_id') or '').strip()
     model_id = str(workflow.get('model_id') or binding_summary.get('model_id') or '').strip()
+    legacy_model_deployment = str(workflow.get('legacy_model_deployment') or '').strip()
 
+    if endpoint_id and model_id:
+        return _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings)
+
+    if legacy_model_deployment:
+        client, _, provider = _build_legacy_default_client(settings)
+        return client, legacy_model_deployment, provider
+
+    default_selection = settings.get('default_model_selection', {}) if isinstance(settings, dict) else {}
+    default_endpoint_id = str(default_selection.get('endpoint_id') or '').strip()
+    default_model_id = str(default_selection.get('model_id') or '').strip()
+    if default_endpoint_id and default_model_id:
+        return _build_multi_endpoint_client(user_id, default_endpoint_id, default_model_id, settings)
+
+    return _build_legacy_default_client(settings)
+
+
+def _chain_activity_callbacks(*callbacks):
+    active_callbacks = [callback for callback in callbacks if callable(callback)]
+    if not active_callbacks:
+        return None
+
+    def callback(event):
+        for activity_callback in active_callbacks:
+            try:
+                activity_callback(event)
+            except Exception as exc:
+                log_event(
+                    f'[WorkflowRunner] Exhaustive review activity callback failed: {exc}',
+                    level=logging.WARNING,
+                    exceptionTraceback=True,
+                )
+
+    return callback
+
+
+def _build_exhaustive_review_activity_callback(workflow, run_id, thought_tracker=None):
+    if not thought_tracker or not run_id:
+        return None
+
+    def callback(event):
+        event_type = str((event or {}).get('type') or '').strip().lower()
+        document_id = str((event or {}).get('document_id') or '').strip()
+        document_name = str((event or {}).get('document_name') or 'Document').strip() or 'Document'
+        window_range = (event or {}).get('window_range') if isinstance((event or {}).get('window_range'), dict) else {}
+        window_number = window_range.get('window_number')
+
+        if event_type == 'document_started':
+            _add_workflow_activity_thought(
+                thought_tracker,
+                workflow,
+                run_id,
+                step_type='document',
+                content=f'Started exhaustive review for {document_name}',
+                detail=f"windows={event.get('window_count', 0)}",
+                activity_key=f'review:{run_id}:{document_id}:start',
+                kind='document_review',
+                title='Document review',
+                status='running',
+            )
+        elif event_type == 'document_completed':
+            _add_workflow_activity_thought(
+                thought_tracker,
+                workflow,
+                run_id,
+                step_type='document',
+                content=f'Completed exhaustive review for {document_name}',
+                detail=(
+                    f"processed={event.get('processed_windows', 0)} | "
+                    f"failed={event.get('failed_windows', 0)}"
+                ),
+                activity_key=f'review:{run_id}:{document_id}:complete',
+                kind='document_review',
+                title='Document review',
+                status='completed',
+            )
+        elif event_type == 'window_failed':
+            _add_workflow_activity_thought(
+                thought_tracker,
+                workflow,
+                run_id,
+                step_type='document',
+                content=f'Failed review window {window_number} for {document_name}',
+                detail=str(event.get('error') or 'Unknown exhaustive review failure'),
+                activity_key=f'review:{run_id}:{document_id}:window:{window_number}:failed',
+                kind='document_review',
+                title='Document review',
+                status='failed',
+            )
+
+    return callback
+
+
+def _execute_model_workflow(workflow, settings, run_id=None, thought_tracker=None):
     if thought_tracker and run_id:
         _add_workflow_activity_thought(
             thought_tracker,
@@ -1547,16 +1648,7 @@ def _execute_model_workflow(workflow, settings, run_id=None, thought_tracker=Non
             status='running',
         )
 
-    if endpoint_id and model_id:
-        client, deployment_name, provider = _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings)
-    else:
-        default_selection = settings.get('default_model_selection', {}) if isinstance(settings, dict) else {}
-        default_endpoint_id = str(default_selection.get('endpoint_id') or '').strip()
-        default_model_id = str(default_selection.get('model_id') or '').strip()
-        if default_endpoint_id and default_model_id:
-            client, deployment_name, provider = _build_multi_endpoint_client(user_id, default_endpoint_id, default_model_id, settings)
-        else:
-            client, deployment_name, provider = _build_legacy_default_client(settings)
+    client, deployment_name, provider = _resolve_model_workflow_client(workflow, settings)
 
     completion = client.chat.completions.create(
         model=deployment_name,
@@ -1582,6 +1674,156 @@ def _execute_model_workflow(workflow, settings, run_id=None, thought_tracker=Non
 
     return {
         'reply': reply,
+        'model_deployment_name': deployment_name,
+        'provider': provider,
+    }
+
+
+def _execute_exhaustive_review_workflow(
+    workflow,
+    settings,
+    conversation_id='',
+    run_id=None,
+    thought_tracker=None,
+    external_activity_callback=None,
+):
+    review_config = workflow.get('exhaustive_review') if isinstance(workflow.get('exhaustive_review'), dict) else {}
+    if not review_config.get('enabled'):
+        raise ValueError('Exhaustive review is not enabled for this workflow.')
+
+    activity_callback = _chain_activity_callbacks(
+        _build_exhaustive_review_activity_callback(workflow, run_id, thought_tracker=thought_tracker),
+        external_activity_callback,
+    )
+    user_id = str(workflow.get('user_id') or '').strip()
+    selected_agent = workflow.get('selected_agent') if isinstance(workflow.get('selected_agent'), dict) else {}
+
+    if workflow.get('runner_type') == 'agent':
+        with _ensure_execution_context(user_id):
+            plugin_logger = get_plugin_logger()
+            previous_force_enable_agents = getattr(g, 'force_enable_agents', None) if hasattr(g, 'force_enable_agents') else None
+            previous_request_agent_info = getattr(g, 'request_agent_info', None) if hasattr(g, 'request_agent_info') else None
+            previous_request_agent_name = getattr(g, 'request_agent_name', None) if hasattr(g, 'request_agent_name') else None
+            previous_conversation_id = getattr(g, 'conversation_id', None) if hasattr(g, 'conversation_id') else None
+
+            g.force_enable_agents = True
+            g.request_agent_info = dict(selected_agent)
+            g.request_agent_name = selected_agent.get('name')
+            callback_key = None
+            if conversation_id:
+                plugin_logger.clear_invocations_for_conversation(user_id, conversation_id)
+                g.conversation_id = conversation_id
+
+            try:
+                kernel = Kernel()
+                kernel, agent_objs = load_user_semantic_kernel(kernel, settings, user_id, None)
+                if not agent_objs:
+                    raise ValueError('The selected agent could not be loaded for exhaustive review.')
+
+                loaded_agent = None
+                requested_name = str(selected_agent.get('name') or '').strip()
+                if requested_name:
+                    loaded_agent = agent_objs.get(requested_name)
+                if loaded_agent is None:
+                    loaded_agent = next(iter(agent_objs.values()))
+
+                if thought_tracker and run_id and conversation_id:
+                    callback_key = register_plugin_invocation_thought_callback(
+                        plugin_logger,
+                        thought_tracker,
+                        user_id,
+                        conversation_id,
+                        actor_label='Workflow agent',
+                    )
+
+                def invoke_prompt(prompt_text, stage='window_review', metadata=None):
+                    result = asyncio.run(loaded_agent.invoke([
+                        ChatMessageContent(role='user', content=prompt_text),
+                    ]))
+                    return str(result)
+
+                review_result = run_exhaustive_document_review(
+                    user_id=user_id,
+                    review_prompt=workflow.get('task_prompt', ''),
+                    document_ids=review_config.get('document_ids'),
+                    invoke_prompt=invoke_prompt,
+                    doc_scope=review_config.get('doc_scope'),
+                    active_group_ids=review_config.get('active_group_ids'),
+                    active_public_workspace_id=review_config.get('active_public_workspace_id'),
+                    window_unit=review_config.get('window_unit'),
+                    window_size=review_config.get('window_size'),
+                    window_percent=review_config.get('window_percent'),
+                    max_retries_per_window=review_config.get('max_retries_per_window'),
+                    activity_callback=activity_callback,
+                    max_documents=WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS,
+                )
+                agent_citations = _build_agent_citations_from_invocations(user_id, conversation_id)
+                alert_targets = _collect_agent_alert_targets(user_id, conversation_id)
+
+                return {
+                    'reply': review_result.get('reply', ''),
+                    'review_result': review_result,
+                    'review_coverage': review_result.get('coverage') or {},
+                    'model_deployment_name': getattr(loaded_agent, 'deployment_name', None) or requested_name,
+                    'provider': 'agent',
+                    'agent_name': getattr(loaded_agent, 'name', None) or requested_name,
+                    'agent_display_name': getattr(loaded_agent, 'display_name', None) or selected_agent.get('display_name') or requested_name,
+                    'agent_citations': agent_citations,
+                    'alert_targets': alert_targets,
+                }
+            finally:
+                if callback_key:
+                    plugin_logger.deregister_callbacks(callback_key)
+                if previous_force_enable_agents is None and hasattr(g, 'force_enable_agents'):
+                    delattr(g, 'force_enable_agents')
+                else:
+                    g.force_enable_agents = previous_force_enable_agents
+
+                if previous_request_agent_info is None and hasattr(g, 'request_agent_info'):
+                    delattr(g, 'request_agent_info')
+                else:
+                    g.request_agent_info = previous_request_agent_info
+
+                if previous_request_agent_name is None and hasattr(g, 'request_agent_name'):
+                    delattr(g, 'request_agent_name')
+                else:
+                    g.request_agent_name = previous_request_agent_name
+
+                if previous_conversation_id is None and hasattr(g, 'conversation_id'):
+                    delattr(g, 'conversation_id')
+                else:
+                    g.conversation_id = previous_conversation_id
+
+    client, deployment_name, provider = _resolve_model_workflow_client(workflow, settings)
+
+    def invoke_model_prompt(prompt_text, stage='window_review', metadata=None):
+        completion = client.chat.completions.create(
+            model=deployment_name,
+            messages=[{'role': 'user', 'content': prompt_text}],
+        )
+        if not getattr(completion, 'choices', None):
+            return ''
+        return _extract_message_text(completion.choices[0].message.content)
+
+    review_result = run_exhaustive_document_review(
+        user_id=user_id,
+        review_prompt=workflow.get('task_prompt', ''),
+        document_ids=review_config.get('document_ids'),
+        invoke_prompt=invoke_model_prompt,
+        doc_scope=review_config.get('doc_scope'),
+        active_group_ids=review_config.get('active_group_ids'),
+        active_public_workspace_id=review_config.get('active_public_workspace_id'),
+        window_unit=review_config.get('window_unit'),
+        window_size=review_config.get('window_size'),
+        window_percent=review_config.get('window_percent'),
+        max_retries_per_window=review_config.get('max_retries_per_window'),
+        activity_callback=activity_callback,
+        max_documents=WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS,
+    )
+    return {
+        'reply': review_result.get('reply', ''),
+        'review_result': review_result,
+        'review_coverage': review_result.get('coverage') or {},
         'model_deployment_name': deployment_name,
         'provider': provider,
     }
@@ -1753,7 +1995,15 @@ def run_personal_workflow(workflow, trigger_source='manual'):
             status='running',
         )
 
-        if workflow.get('runner_type') == 'agent':
+        if (workflow.get('exhaustive_review') or {}).get('enabled'):
+            execution_result = _execute_exhaustive_review_workflow(
+                workflow,
+                settings,
+                conversation_id=conversation.get('id'),
+                run_id=run_id,
+                thought_tracker=thought_tracker,
+            )
+        elif workflow.get('runner_type') == 'agent':
             execution_result = _execute_agent_workflow(
                 workflow,
                 settings,
@@ -1808,6 +2058,7 @@ def run_personal_workflow(workflow, trigger_source='manual'):
             'model_deployment_name': execution_result.get('model_deployment_name'),
             'agent_name': execution_result.get('agent_name'),
             'agent_display_name': execution_result.get('agent_display_name'),
+            'review_coverage': execution_result.get('review_coverage') or {},
             'response_preview': _build_response_preview(execution_result.get('reply')),
             'error': '',
         })

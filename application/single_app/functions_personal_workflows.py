@@ -16,6 +16,10 @@ from config import (
 )
 from functions_appinsights import log_event
 from functions_debug import debug_print
+from functions_exhaustive_document_review import (
+    WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS,
+    normalize_exhaustive_review_targets,
+)
 from functions_global_agents import get_global_agents
 from functions_personal_agents import get_personal_agents
 from functions_settings import get_settings, get_user_settings, normalize_model_endpoints
@@ -74,6 +78,44 @@ def _normalize_alert_priority(value):
     if normalized not in WORKFLOW_ALERT_PRIORITIES:
         raise ValueError('Alert priority must be none, low, medium, or high.')
     return normalized
+
+
+def _normalize_exhaustive_review_config(workflow_data, existing_workflow=None):
+    workflow_data = workflow_data if isinstance(workflow_data, dict) else {}
+    existing_workflow = existing_workflow if isinstance(existing_workflow, dict) else {}
+
+    requested_review = workflow_data.get('exhaustive_review')
+    existing_review = existing_workflow.get('exhaustive_review')
+    source_review = requested_review if isinstance(requested_review, dict) else existing_review
+    source_review = source_review if isinstance(source_review, dict) else {}
+
+    enabled = bool(source_review.get('enabled', False))
+    normalized_review = {
+        'enabled': enabled,
+        'document_ids': [],
+        'doc_scope': 'all',
+        'active_group_ids': [],
+        'active_public_workspace_id': [],
+        'window_unit': 'pages',
+        'window_size': None,
+        'window_percent': None,
+        'max_retries_per_window': 1,
+    }
+    if not enabled:
+        return normalized_review
+
+    normalized_review.update(normalize_exhaustive_review_targets(
+        document_ids=source_review.get('document_ids'),
+        doc_scope=source_review.get('doc_scope', 'all'),
+        active_group_ids=source_review.get('active_group_ids'),
+        active_public_workspace_id=source_review.get('active_public_workspace_id'),
+        window_unit=source_review.get('window_unit'),
+        window_size=source_review.get('window_size'),
+        window_percent=source_review.get('window_percent'),
+        max_retries_per_window=source_review.get('max_retries_per_window'),
+        max_documents=WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS,
+    ))
+    return normalized_review
 
 
 def _build_schedule_delta(schedule_payload):
@@ -371,6 +413,7 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
     alert_priority = _normalize_alert_priority(
         workflow_data.get('alert_priority', (existing_workflow or {}).get('alert_priority', 'none'))
     )
+    exhaustive_review = _normalize_exhaustive_review_config(workflow_data, existing_workflow=existing_workflow)
     selected_agent = {}
     model_binding_summary = None
     model_endpoint_id = ''
@@ -409,6 +452,7 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
         'is_enabled': is_enabled,
         'alert_priority': alert_priority,
         'schedule': schedule,
+        'exhaustive_review': exhaustive_review,
         'selected_agent': selected_agent,
         'model_endpoint_id': model_endpoint_id,
         'model_id': model_id,

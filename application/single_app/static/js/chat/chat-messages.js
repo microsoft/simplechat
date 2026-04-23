@@ -38,6 +38,21 @@ if (typeof window.appSettings !== 'undefined' && window.appSettings.enable_text_
     });
 }
 
+const exhaustiveReviewBtn = document.getElementById('exhaustive-review-btn');
+const CHAT_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS = 3;
+const WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS = 10;
+
+function isExhaustiveReviewEnabled() {
+  return Boolean(exhaustiveReviewBtn && exhaustiveReviewBtn.classList.contains('active'));
+}
+
+exhaustiveReviewBtn?.addEventListener('click', () => {
+  const isActive = exhaustiveReviewBtn.classList.toggle('active');
+  exhaustiveReviewBtn.classList.toggle('btn-secondary', isActive);
+  exhaustiveReviewBtn.classList.toggle('btn-outline-secondary', !isActive);
+  exhaustiveReviewBtn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+});
+
 /**
  * Unwraps markdown tables that are mistakenly wrapped in code blocks.
  * This fixes the issue where AI responses contain tables in code blocks,
@@ -2289,6 +2304,7 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
   const webSearchEnabled = webSearchToggle ? webSearchToggle.classList.contains('active') : false;
   const finalPublicWorkspaceId = scopes.publicWorkspaceIds[0] || window.activePublicWorkspaceId || null;
   const selectedTags = getSelectedTags();
+  const exhaustiveReviewEnabled = isExhaustiveReviewEnabled();
 
   return {
     message: finalMessageToSend,
@@ -2313,6 +2329,13 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     prompt_info: promptInfo,
     agent_info: agentInfo,
     reasoning_effort: getCurrentReasoningEffort(),
+    exhaustive_review: {
+      enabled: exhaustiveReviewEnabled,
+      document_ids: exhaustiveReviewEnabled ? selectedDocumentIds : [],
+      doc_scope: effectiveDocScope,
+      active_group_ids: finalGroupIds,
+      active_public_workspace_id: scopes.publicWorkspaceIds,
+    },
   };
 }
 
@@ -2432,6 +2455,20 @@ export function actuallySendMessage(finalMessageToSend) {
 
   // Generate a temporary message ID for the user message
   const tempUserMessageId = `temp_user_${Date.now()}`;
+  const messageData = buildChatRequestPayload(finalMessageToSend, currentConversationId);
+  const useExhaustiveReview = Boolean(messageData.exhaustive_review?.enabled);
+
+  if (useExhaustiveReview && (!Array.isArray(messageData.selected_document_ids) || messageData.selected_document_ids.length === 0)) {
+    showToast('Select one or more documents before starting an exhaustive review.', 'warning');
+    return;
+  }
+  if (useExhaustiveReview && messageData.selected_document_ids.length > CHAT_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS) {
+    showToast(
+      `Chat exhaustive review supports up to ${CHAT_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS} documents. Use workflows for up to ${WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS} documents.`,
+      'warning'
+    );
+    return;
+  }
   
   // Append user message first with temporary ID
   appendMessage("You", finalMessageToSend, null, tempUserMessageId);
@@ -2439,11 +2476,13 @@ export function actuallySendMessage(finalMessageToSend) {
   userInput.style.height = "";
   // Update send button visibility after clearing input
   updateSendButtonVisibility();
-  const messageData = buildChatRequestPayload(finalMessageToSend, currentConversationId);
   sendMessageWithStreaming(
     messageData,
     tempUserMessageId,
-    currentConversationId
+    currentConversationId,
+    {
+      endpoint: useExhaustiveReview ? '/api/chat/exhaustive-review/stream' : '/api/chat/stream',
+    }
   );
 
   return;

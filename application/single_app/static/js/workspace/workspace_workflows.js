@@ -40,6 +40,19 @@ const workflowEnabledGroup = document.getElementById("workflow-enabled-group");
 const workflowEnabledToggle = document.getElementById("workflow-enabled");
 const workflowTriggerHelp = document.getElementById("workflow-trigger-help");
 const workflowAlertPrioritySelect = document.getElementById("workflow-alert-priority");
+const WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS = 10;
+const workflowExhaustiveReviewToggle = document.getElementById("workflow-exhaustive-review-enabled");
+const workflowDocumentTargetsFields = document.getElementById("workflow-document-targets-fields");
+const workflowReviewDocScopeSelect = document.getElementById("workflow-review-doc-scope");
+const workflowReviewDocumentIdsInput = document.getElementById("workflow-review-document-ids");
+const workflowReviewGroupIdsInput = document.getElementById("workflow-review-group-ids");
+const workflowReviewPublicWorkspaceIdsInput = document.getElementById("workflow-review-public-workspace-ids");
+const workflowReviewWindowUnitSelect = document.getElementById("workflow-review-window-unit");
+const workflowReviewWindowSizeInput = document.getElementById("workflow-review-window-size");
+const workflowReviewWindowPercentInput = document.getElementById("workflow-review-window-percent");
+const workflowReviewRetriesInput = document.getElementById("workflow-review-retries");
+const workflowUseSelectedDocumentsBtn = document.getElementById("workflow-use-selected-documents-btn");
+const workflowSelectedDocumentsSummary = document.getElementById("workflow-selected-documents-summary");
 
 const workflowHistoryModalEl = document.getElementById("workflowHistoryModal");
 const workflowHistoryModal = workflowHistoryModalEl && window.bootstrap ? bootstrap.Modal.getOrCreateInstance(workflowHistoryModalEl) : null;
@@ -185,6 +198,109 @@ function getWorkflowAlertLabel(workflow) {
     return `${priority.charAt(0).toUpperCase()}${priority.slice(1)} priority`;
 }
 
+function parseCsvList(value) {
+    return normalizeText(value)
+        .split(",")
+        .map((item) => normalizeText(item))
+        .filter(Boolean);
+}
+
+function joinCsvList(values) {
+    if (!Array.isArray(values)) {
+        return "";
+    }
+
+    return values.map((value) => normalizeText(value)).filter(Boolean).join(", ");
+}
+
+function getSelectedWorkspaceDocumentIds() {
+    if (window.selectedDocuments instanceof Set) {
+        return Array.from(window.selectedDocuments).map((value) => normalizeText(value)).filter(Boolean);
+    }
+
+    if (Array.isArray(window.selectedDocuments)) {
+        return window.selectedDocuments.map((value) => normalizeText(value)).filter(Boolean);
+    }
+
+    return [];
+}
+
+function getExhaustiveReviewConfig(workflow) {
+    const config = workflow?.exhaustive_review && typeof workflow.exhaustive_review === "object"
+        ? workflow.exhaustive_review
+        : {};
+
+    return {
+        enabled: Boolean(config.enabled),
+        document_ids: Array.isArray(config.document_ids) ? config.document_ids : [],
+        doc_scope: normalizeText(config.doc_scope) || "personal",
+        active_group_ids: Array.isArray(config.active_group_ids) ? config.active_group_ids : [],
+        active_public_workspace_id: Array.isArray(config.active_public_workspace_id) ? config.active_public_workspace_id : [],
+        window_unit: normalizeText(config.window_unit) || "pages",
+        window_size: config.window_size ?? "",
+        window_percent: config.window_percent ?? "",
+        max_retries_per_window: config.max_retries_per_window ?? 1,
+    };
+}
+
+function getExhaustiveReviewLabel(workflow) {
+    const config = getExhaustiveReviewConfig(workflow);
+    if (!config.enabled) {
+        return "Standard prompt run";
+    }
+
+    const documentCount = config.document_ids.length;
+    const unit = normalizeText(config.window_unit) || "pages";
+    if (!documentCount) {
+        return `Exhaustive review by ${unit}`;
+    }
+
+    return `Exhaustive review of ${documentCount} ${documentCount === 1 ? "document" : "documents"} by ${unit}`;
+}
+
+function updateSelectedDocumentsSummary() {
+    if (!workflowSelectedDocumentsSummary) {
+        return;
+    }
+
+    const selectedIds = getSelectedWorkspaceDocumentIds();
+    if (!selectedIds.length) {
+        workflowSelectedDocumentsSummary.textContent = "No workspace documents selected right now.";
+        return;
+    }
+
+    workflowSelectedDocumentsSummary.textContent = `${selectedIds.length} workspace ${selectedIds.length === 1 ? "document is" : "documents are"} currently selected.`;
+}
+
+function updateExhaustiveReviewFields() {
+    const enabled = Boolean(workflowExhaustiveReviewToggle?.checked);
+    setElementVisibility(workflowDocumentTargetsFields, enabled);
+    updateSelectedDocumentsSummary();
+}
+
+function applySelectedWorkspaceDocumentsToWorkflow() {
+    const selectedIds = getSelectedWorkspaceDocumentIds();
+    if (!selectedIds.length) {
+        showToast("Select one or more documents in the workspace first.", "warning");
+        return;
+    }
+
+    const limitedSelectedIds = selectedIds.slice(0, WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS);
+    if (selectedIds.length > WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS) {
+        showToast(
+            `Workflow exhaustive review currently supports up to ${WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS} documents. Applied the first ${WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS} selected documents.`,
+            "warning"
+        );
+    }
+
+    if (workflowReviewDocumentIdsInput) {
+        workflowReviewDocumentIdsInput.value = limitedSelectedIds.join(", ");
+    }
+    if (workflowReviewDocScopeSelect) {
+        workflowReviewDocScopeSelect.value = "personal";
+    }
+}
+
 function buildWorkflowSearchText(workflow) {
     return [
         workflow.name,
@@ -193,6 +309,7 @@ function buildWorkflowSearchText(workflow) {
         getWorkflowRunnerLabel(workflow),
         getWorkflowTriggerLabel(workflow),
         getWorkflowAlertLabel(workflow),
+        getExhaustiveReviewLabel(workflow),
     ].map((value) => normalizeText(value).toLowerCase()).join(" ");
 }
 
@@ -370,6 +487,9 @@ function renderWorkflowTable(items) {
             ? `<div class="workflow-meta mt-1">Next run: ${escapeHtml(formatDateTime(workflow.next_run_at))}</div>`
             : "";
         const alertMeta = `<div class="workflow-meta mt-1">Alert: ${escapeHtml(getWorkflowAlertLabel(workflow))}</div>`;
+        const reviewMeta = workflow.exhaustive_review?.enabled
+            ? `<div class="workflow-meta mt-1 text-info">${escapeHtml(getExhaustiveReviewLabel(workflow))}</div>`
+            : "";
         const conversationMeta = workflow.conversation_id
             ? '<div class="workflow-meta mt-1"><i class="bi bi-chat-left-text me-1"></i>Conversation ready</div>'
             : "";
@@ -393,6 +513,7 @@ function renderWorkflowTable(items) {
                 <td>
                     <div>${escapeHtml(triggerLabel)}</div>
                     ${alertMeta}
+                    ${reviewMeta}
                     ${disabledMeta}
                     ${nextRunMeta}
                 </td>
@@ -431,6 +552,7 @@ function renderWorkflowGrid(items) {
         const runnerLabel = escapeHtml(getWorkflowRunnerLabel(workflow));
         const triggerLabel = escapeHtml(getWorkflowTriggerLabel(workflow));
         const alertLabel = escapeHtml(getWorkflowAlertLabel(workflow));
+        const reviewLabel = escapeHtml(getExhaustiveReviewLabel(workflow));
 
         return `
             <div class="col-12 col-md-6 col-xl-4">
@@ -446,6 +568,7 @@ function renderWorkflowGrid(items) {
                             <div class="workflow-grid-meta-row"><span>Runner</span><span>${runnerLabel}</span></div>
                             <div class="workflow-grid-meta-row"><span>Trigger</span><span>${triggerLabel}</span></div>
                             <div class="workflow-grid-meta-row"><span>Alert</span><span>${alertLabel}</span></div>
+                            <div class="workflow-grid-meta-row"><span>Review</span><span>${reviewLabel}</span></div>
                             <div class="workflow-grid-meta-row"><span>Last Run</span><span>${runTimestamp ? escapeHtml(formatDateTime(runTimestamp)) : "Never run"}</span></div>
                         </div>
                         <div class="workflow-grid-preview small text-muted mb-3">${escapeHtml(truncateDescription(previewText, 170))}</div>
@@ -751,6 +874,33 @@ function resetWorkflowForm() {
     if (workflowAlertPrioritySelect) {
         workflowAlertPrioritySelect.value = "none";
     }
+    if (workflowExhaustiveReviewToggle) {
+        workflowExhaustiveReviewToggle.checked = false;
+    }
+    if (workflowReviewDocScopeSelect) {
+        workflowReviewDocScopeSelect.value = "personal";
+    }
+    if (workflowReviewDocumentIdsInput) {
+        workflowReviewDocumentIdsInput.value = "";
+    }
+    if (workflowReviewGroupIdsInput) {
+        workflowReviewGroupIdsInput.value = "";
+    }
+    if (workflowReviewPublicWorkspaceIdsInput) {
+        workflowReviewPublicWorkspaceIdsInput.value = "";
+    }
+    if (workflowReviewWindowUnitSelect) {
+        workflowReviewWindowUnitSelect.value = "pages";
+    }
+    if (workflowReviewWindowSizeInput) {
+        workflowReviewWindowSizeInput.value = "";
+    }
+    if (workflowReviewWindowPercentInput) {
+        workflowReviewWindowPercentInput.value = "";
+    }
+    if (workflowReviewRetriesInput) {
+        workflowReviewRetriesInput.value = "1";
+    }
     if (workflowSaveBtn) {
         workflowSaveBtn.disabled = false;
         workflowSaveBtn.textContent = "Save Workflow";
@@ -765,6 +915,7 @@ function resetWorkflowForm() {
     populateModelSelect(normalizeText(workflowModelEndpointSelect?.value), "");
     updateRunnerFields();
     updateTriggerFields();
+    updateExhaustiveReviewFields();
 }
 
 async function openWorkflowModal(workflow = null) {
@@ -801,6 +952,34 @@ async function openWorkflowModal(workflow = null) {
         if (workflowAlertPrioritySelect) {
             workflowAlertPrioritySelect.value = normalizeText(workflow.alert_priority).toLowerCase() || "none";
         }
+        const exhaustiveReview = getExhaustiveReviewConfig(workflow);
+        if (workflowExhaustiveReviewToggle) {
+            workflowExhaustiveReviewToggle.checked = exhaustiveReview.enabled;
+        }
+        if (workflowReviewDocScopeSelect) {
+            workflowReviewDocScopeSelect.value = exhaustiveReview.doc_scope;
+        }
+        if (workflowReviewDocumentIdsInput) {
+            workflowReviewDocumentIdsInput.value = joinCsvList(exhaustiveReview.document_ids);
+        }
+        if (workflowReviewGroupIdsInput) {
+            workflowReviewGroupIdsInput.value = joinCsvList(exhaustiveReview.active_group_ids);
+        }
+        if (workflowReviewPublicWorkspaceIdsInput) {
+            workflowReviewPublicWorkspaceIdsInput.value = joinCsvList(exhaustiveReview.active_public_workspace_id);
+        }
+        if (workflowReviewWindowUnitSelect) {
+            workflowReviewWindowUnitSelect.value = exhaustiveReview.window_unit;
+        }
+        if (workflowReviewWindowSizeInput) {
+            workflowReviewWindowSizeInput.value = exhaustiveReview.window_size;
+        }
+        if (workflowReviewWindowPercentInput) {
+            workflowReviewWindowPercentInput.value = exhaustiveReview.window_percent;
+        }
+        if (workflowReviewRetriesInput) {
+            workflowReviewRetriesInput.value = String(exhaustiveReview.max_retries_per_window);
+        }
         if (workflowScheduleValueInput) {
             workflowScheduleValueInput.value = String(workflow.schedule?.value || 10);
         }
@@ -826,12 +1005,20 @@ async function openWorkflowModal(workflow = null) {
 
     updateRunnerFields();
     updateTriggerFields();
+    updateExhaustiveReviewFields();
     workflowModal.show();
 }
 
 function buildWorkflowPayload() {
     const runnerType = normalizeText(workflowRunnerTypeSelect?.value) || "model";
     const triggerType = normalizeText(workflowTriggerTypeSelect?.value) || "manual";
+    const exhaustiveReviewEnabled = Boolean(workflowExhaustiveReviewToggle?.checked);
+    const exhaustiveDocumentIds = parseCsvList(workflowReviewDocumentIdsInput?.value);
+    const exhaustiveGroupIds = parseCsvList(workflowReviewGroupIdsInput?.value);
+    const exhaustivePublicWorkspaceIds = parseCsvList(workflowReviewPublicWorkspaceIdsInput?.value);
+    const rawWindowSize = normalizeText(workflowReviewWindowSizeInput?.value);
+    const rawWindowPercent = normalizeText(workflowReviewWindowPercentInput?.value);
+    const rawRetries = normalizeText(workflowReviewRetriesInput?.value) || "1";
     const payload = {
         id: normalizeText(workflowIdInput?.value),
         name: normalizeText(workflowNameInput?.value),
@@ -845,6 +1032,17 @@ function buildWorkflowPayload() {
         selected_agent: {},
         model_endpoint_id: "",
         model_id: "",
+        exhaustive_review: {
+            enabled: exhaustiveReviewEnabled,
+            document_ids: exhaustiveReviewEnabled ? exhaustiveDocumentIds : [],
+            doc_scope: normalizeText(workflowReviewDocScopeSelect?.value) || "personal",
+            active_group_ids: exhaustiveReviewEnabled ? exhaustiveGroupIds : [],
+            active_public_workspace_id: exhaustiveReviewEnabled ? exhaustivePublicWorkspaceIds : [],
+            window_unit: normalizeText(workflowReviewWindowUnitSelect?.value) || "pages",
+            window_size: rawWindowSize ? Number(rawWindowSize) : null,
+            window_percent: rawWindowPercent ? Number(rawWindowPercent) : null,
+            max_retries_per_window: Number(rawRetries),
+        },
     };
 
     if (!payload.name) {
@@ -852,6 +1050,24 @@ function buildWorkflowPayload() {
     }
     if (!payload.task_prompt) {
         throw new Error("Task prompt is required.");
+    }
+    if (exhaustiveReviewEnabled && !payload.exhaustive_review.document_ids.length) {
+        throw new Error("Add one or more document ids for exhaustive review.");
+    }
+    if (payload.exhaustive_review.document_ids.length > WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS) {
+        throw new Error(`Workflow exhaustive review supports up to ${WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS} documents per run.`);
+    }
+    if (rawWindowSize && (!Number.isInteger(payload.exhaustive_review.window_size) || payload.exhaustive_review.window_size < 1)) {
+        throw new Error("Window size must be a whole number greater than zero.");
+    }
+    if (rawWindowPercent && (!Number.isInteger(payload.exhaustive_review.window_percent) || payload.exhaustive_review.window_percent < 1 || payload.exhaustive_review.window_percent > 100)) {
+        throw new Error("Window percent must be a whole number between 1 and 100.");
+    }
+    if (rawWindowSize && rawWindowPercent) {
+        throw new Error("Choose either a fixed window size or a window percent, not both.");
+    }
+    if (!Number.isInteger(payload.exhaustive_review.max_retries_per_window) || payload.exhaustive_review.max_retries_per_window < 0 || payload.exhaustive_review.max_retries_per_window > 5) {
+        throw new Error("Retries per window must be between 0 and 5.");
     }
 
     if (runnerType === "agent") {
@@ -1211,6 +1427,8 @@ function initializeWorkflowEvents() {
     workflowModelSelect?.addEventListener("change", updateModelHelpText);
     workflowTriggerTypeSelect?.addEventListener("change", updateTriggerFields);
     workflowScheduleUnitSelect?.addEventListener("change", updateScheduleConstraints);
+    workflowExhaustiveReviewToggle?.addEventListener("change", updateExhaustiveReviewFields);
+    workflowUseSelectedDocumentsBtn?.addEventListener("click", applySelectedWorkspaceDocumentsToWorkflow);
     workflowModalEl?.addEventListener("hidden.bs.modal", resetWorkflowForm);
     workflowDeleteModalEl?.addEventListener("hidden.bs.modal", () => {
         workflowPendingDelete = null;

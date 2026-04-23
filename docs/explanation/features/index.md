@@ -18,3 +18,5 @@ category: Version History
 ## Versioned Features
 
 - [Core Document Search And Summarization](v0.241.007/CORE_DOCUMENT_SEARCH_AND_SUMMARIZATION.md)
+- [Exhaustive Document Review](v0.241.069/EXHAUSTIVE_DOCUMENT_REVIEW.md)
+- [Exhaustive Review Progress And Limits](v0.241.071/EXHAUSTIVE_REVIEW_PROGRESS_AND_LIMITS.md)

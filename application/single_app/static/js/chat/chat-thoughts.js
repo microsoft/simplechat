@@ -19,11 +19,112 @@ function getThoughtIcon(stepType) {
         'search': 'bi-search',
         'tabular_analysis': 'bi-table',
         'web_search': 'bi-globe',
+        'document_review': 'bi-journal-richtext',
         'agent_tool_call': 'bi-robot',
         'generation': 'bi-lightning',
         'content_safety': 'bi-shield-check'
     };
     return iconMap[stepType] || 'bi-stars';
+}
+
+function normalizeProgressPercent(value) {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue)) {
+        return 0;
+    }
+
+    return Math.max(0, Math.min(100, Math.round(numericValue)));
+}
+
+function getProgressBarClasses(status, failedWindows = 0) {
+    const normalizedStatus = String(status || '').trim().toLowerCase();
+    const hasFailures = Number(failedWindows || 0) > 0;
+
+    if (normalizedStatus === 'completed' && !hasFailures) {
+        return 'progress-bar bg-success';
+    }
+    if (normalizedStatus === 'completed_with_failures' || hasFailures) {
+        return 'progress-bar bg-warning text-dark';
+    }
+    if (normalizedStatus === 'running') {
+        return 'progress-bar progress-bar-striped progress-bar-animated bg-info';
+    }
+
+    return 'progress-bar bg-secondary';
+}
+
+function buildProgressSummaryLabel(completedCount, totalCount, singularLabel, pluralLabel = `${singularLabel}s`) {
+    const safeCompleted = Number(completedCount || 0);
+    const safeTotal = Number(totalCount || 0);
+    const label = safeTotal === 1 ? singularLabel : pluralLabel;
+
+    if (safeTotal > 0) {
+        return `${safeCompleted}/${safeTotal} ${label}`;
+    }
+
+    return `${safeCompleted} ${label}`;
+}
+
+function renderProgressBar(percent, status, failedWindows, ariaLabel) {
+    const safePercent = normalizeProgressPercent(percent);
+    const progressBarClasses = getProgressBarClasses(status, failedWindows);
+
+    return `<div class="progress" role="progressbar" aria-label="${escapeHtml(ariaLabel)}" aria-valuenow="${safePercent}" aria-valuemin="0" aria-valuemax="100">
+        <div class="${progressBarClasses}" style="width: ${safePercent}%;">${safePercent}%</div>
+    </div>`;
+}
+
+function renderExhaustiveReviewProgress(thoughtData) {
+    const progress = thoughtData.progress && typeof thoughtData.progress === 'object' ? thoughtData.progress : {};
+    const overall = progress.overall && typeof progress.overall === 'object' ? progress.overall : {};
+    const documents = Array.isArray(progress.documents) ? progress.documents : [];
+    const overallPercent = normalizeProgressPercent(overall.percent);
+    const overallStatus = Number(overall.completed_documents || 0) >= Number(overall.document_count || 0) && Number(overall.document_count || 0) > 0
+        ? (Number(overall.failed_windows || 0) > 0 ? 'completed_with_failures' : 'completed')
+        : 'running';
+    const overallSummary = [
+        buildProgressSummaryLabel(overall.completed_chunks, overall.total_chunks, 'chunk'),
+        buildProgressSummaryLabel(overall.completed_windows, overall.total_windows, 'window'),
+        buildProgressSummaryLabel(overall.completed_documents, overall.document_count, 'document'),
+    ].join(' | ');
+    const documentsHtml = documents.map(document => {
+        const documentPercent = normalizeProgressPercent(document.percent);
+        const documentName = document.document_name || document.document_id || 'Document';
+        const documentStatusText = document.status_text || [
+            buildProgressSummaryLabel(document.completed_chunks, document.total_chunks, 'chunk'),
+            buildProgressSummaryLabel(document.completed_windows, document.total_windows, 'window'),
+        ].join(' | ');
+
+        return `<div class="border rounded-3 p-2 bg-body-tertiary mb-2">
+            <div class="d-flex align-items-center justify-content-between gap-2 mb-1">
+                <div class="small fw-semibold text-body">${escapeHtml(documentName)}</div>
+                <span class="badge text-bg-light border">${documentPercent}%</span>
+            </div>
+            <div class="text-muted small mb-2">${escapeHtml(documentStatusText)}</div>
+            ${renderProgressBar(documentPercent, document.status, document.failed_windows, `${documentName} exhaustive review progress`)}
+        </div>`;
+    }).join('');
+
+    return `<div class="streaming-thought-display">
+        <div class="card border-info-subtle shadow-sm">
+            <div class="card-body py-3 px-3">
+                <div class="d-flex align-items-start justify-content-between gap-2 mb-2">
+                    <div class="d-flex align-items-start gap-2 flex-grow-1">
+                        <i class="bi bi-journal-richtext text-info mt-1"></i>
+                        <div>
+                            <div class="small fw-semibold text-body">${escapeHtml(thoughtData.content || 'Running exhaustive review across the selected documents')}</div>
+                            <div class="text-muted small">${escapeHtml(overallSummary)}</div>
+                        </div>
+                    </div>
+                    <span class="badge text-bg-light border">${overallPercent}%</span>
+                </div>
+                <div class="mb-3">
+                    ${renderProgressBar(overallPercent, overallStatus, overall.failed_windows, 'Overall exhaustive review progress')}
+                </div>
+                ${documentsHtml || '<div class="text-muted small">Preparing document progress...</div>'}
+            </div>
+        </div>
+    </div>`;
 }
 
 function buildPendingThoughtsUrl(conversationId, messageId = null) {
@@ -200,7 +301,8 @@ export function handleStreamingThought(thoughtData, targetMessageId = null) {
         thoughtData.message_id || '',
         Number.isFinite(thoughtStepIndex) ? thoughtStepIndex : '',
         thoughtData.step_type || '',
-        thoughtData.content || ''
+        thoughtData.content || '',
+        thoughtData.progress ? JSON.stringify(thoughtData.progress) : ''
     ].join('::');
 
     if (thoughtData.message_id && messageElement.dataset.streamingServerMessageId && messageElement.dataset.streamingServerMessageId !== thoughtData.message_id) {
@@ -228,6 +330,11 @@ export function handleStreamingThought(thoughtData, targetMessageId = null) {
 
     const contentElement = messageElement.querySelector('.message-text');
     if (!contentElement) return;
+
+    if (thoughtData.progress && typeof thoughtData.progress === 'object') {
+        contentElement.innerHTML = renderExhaustiveReviewProgress(thoughtData);
+        return;
+    }
 
     const icon = getThoughtIcon(thoughtData.step_type);
     // Replace entire content with styled thought indicator (visually distinct from AI response)

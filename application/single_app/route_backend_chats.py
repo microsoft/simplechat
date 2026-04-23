@@ -54,7 +54,12 @@ from functions_message_artifacts import (
     hydrate_agent_citations_from_artifacts,
     make_json_serializable,
 )
+from functions_exhaustive_document_review import (
+    CHAT_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS,
+    normalize_exhaustive_review_targets,
+)
 from functions_thoughts import ThoughtTracker
+from functions_workflow_runner import _execute_exhaustive_review_workflow
 
 
 def _strip_agent_citation_artifact_refs(agent_citations):
@@ -6004,6 +6009,428 @@ def register_route_backend_chats(app):
         for message in reversed(prompt_payload.get('context_messages', [])):
             conversation_history.insert(0, message)
         return prompt_payload
+
+    def normalize_terminal_chat_payload(payload):
+        return make_json_serializable({
+            'done': True,
+            'conversation_id': payload.get('conversation_id'),
+            'conversation_title': payload.get('conversation_title'),
+            'classification': payload.get('classification', []),
+            'model_deployment_name': payload.get('model_deployment_name'),
+            'message_id': payload.get('message_id'),
+            'user_message_id': payload.get('user_message_id'),
+            'augmented': payload.get('augmented', False),
+            'hybrid_citations': payload.get('hybrid_citations', []),
+            'web_search_citations': payload.get('web_search_citations', []),
+            'agent_citations': payload.get('agent_citations', []),
+            'agent_display_name': payload.get('agent_display_name'),
+            'agent_name': payload.get('agent_name'),
+            'full_content': payload.get('reply', ''),
+            'image_url': payload.get('image_url'),
+            'reload_messages': payload.get('reload_messages', False),
+            'kernel_fallback_notice': payload.get('kernel_fallback_notice'),
+            'thoughts_enabled': payload.get('thoughts_enabled', False),
+            'blocked': payload.get('blocked', False),
+            'review_coverage': payload.get('review_coverage', {}),
+        })
+
+    def _build_exhaustive_review_stream_content(event):
+        event = event if isinstance(event, dict) else {}
+        event_type = str(event.get('type') or '').strip().lower()
+        document_name = str(event.get('document_name') or 'Document').strip() or 'Document'
+        window_range = event.get('window_range') if isinstance(event.get('window_range'), dict) else {}
+        window_number = window_range.get('window_number')
+        progress = event.get('progress') if isinstance(event.get('progress'), dict) else {}
+        documents = progress.get('documents') if isinstance(progress.get('documents'), list) else []
+        document_progress = next(
+            (document for document in documents if document.get('document_id') == event.get('document_id')),
+            {},
+        )
+        total_windows = document_progress.get('total_windows') or event.get('window_count') or 0
+
+        if event_type == 'document_started':
+            return f'Starting exhaustive review for {document_name}'
+        if event_type == 'window_started' and window_number is not None:
+            return f'Reviewing window {window_number} of {total_windows} for {document_name}'
+        if event_type == 'window_retry' and window_number is not None:
+            return f'Retrying window {window_number} for {document_name} (attempt {event.get("attempt_number")})'
+        if event_type == 'window_failed' and window_number is not None:
+            return f'Window {window_number} failed for {document_name}'
+        if event_type == 'window_completed' and window_number is not None:
+            return f'Completed window {window_number} of {total_windows} for {document_name}'
+        if event_type == 'document_completed':
+            return f'Completed exhaustive review for {document_name}'
+        return 'Running exhaustive review across the selected documents'
+
+    def _build_exhaustive_review_stream_activity_callback(publish_background_event, assistant_message_id):
+        if not callable(publish_background_event) or not assistant_message_id:
+            return None, None
+
+        step_index_state = {'value': 0}
+
+        def publish_thought(content, progress=None):
+            payload = {
+                'type': 'thought',
+                'message_id': assistant_message_id,
+                'step_index': step_index_state['value'],
+                'step_type': 'document_review',
+                'content': content,
+            }
+            if isinstance(progress, dict) and progress:
+                payload['progress'] = progress
+
+            step_index_state['value'] += 1
+            publish_background_event(f"data: {json.dumps(make_json_serializable(payload))}\n\n")
+
+        def callback(event):
+            event = event if isinstance(event, dict) else {}
+            publish_thought(
+                _build_exhaustive_review_stream_content(event),
+                progress=event.get('progress') if isinstance(event.get('progress'), dict) else None,
+            )
+
+        return publish_thought, callback
+
+    def _get_latest_chat_thread_id(conversation_id):
+        try:
+            rows = list(cosmos_messages_container.query_items(
+                query=(
+                    'SELECT TOP 1 c.metadata.thread_info.thread_id as thread_id '
+                    'FROM c WHERE c.conversation_id = @conversation_id '
+                    'ORDER BY c.timestamp DESC'
+                ),
+                parameters=[{'name': '@conversation_id', 'value': conversation_id}],
+                partition_key=conversation_id,
+            ))
+            return rows[0].get('thread_id') if rows else None
+        except Exception:
+            return None
+
+    def _load_or_create_exhaustive_review_conversation(user_id, conversation_id=None):
+        if conversation_id:
+            try:
+                conversation_item = cosmos_conversations_container.read_item(
+                    item=conversation_id,
+                    partition_key=conversation_id,
+                )
+                if conversation_item.get('user_id') != user_id:
+                    raise PermissionError('You do not have access to this conversation.')
+                return conversation_item
+            except CosmosResourceNotFoundError:
+                pass
+
+        created_conversation_id = conversation_id or str(uuid.uuid4())
+        conversation_item = {
+            'id': created_conversation_id,
+            'user_id': user_id,
+            'last_updated': datetime.utcnow().isoformat(),
+            'title': 'New Conversation',
+            'context': [],
+            'tags': [],
+            'strict': False,
+            'chat_type': 'new',
+            'has_unread_assistant_response': False,
+            'last_unread_assistant_message_id': None,
+            'last_unread_assistant_at': None,
+        }
+        cosmos_conversations_container.upsert_item(conversation_item)
+        log_conversation_creation(
+            user_id=user_id,
+            conversation_id=created_conversation_id,
+            title='New Conversation',
+            workspace_type='personal',
+        )
+        conversation_item['added_to_activity_log'] = True
+        cosmos_conversations_container.upsert_item(conversation_item)
+        return conversation_item
+
+    def execute_exhaustive_review_chat_request(data=None, publish_background_event=None):
+        settings = get_settings()
+        data = data if isinstance(data, dict) else (request.get_json() or {})
+        user_id = get_current_user_id()
+        if not user_id:
+            return {'error': 'User not authenticated'}, 401
+
+        user_message = str(data.get('message') or '').strip()
+        if not user_message:
+            return {'error': 'Message is required'}, 400
+
+        conversation_id = getattr(g, 'conversation_id', None) or data.get('conversation_id')
+        if conversation_id is not None:
+            conversation_id = str(conversation_id).strip() or None
+
+        selected_document_id = data.get('selected_document_id')
+        selected_document_ids = data.get('selected_document_ids', [])
+        if not selected_document_ids and selected_document_id:
+            selected_document_ids = [selected_document_id]
+        try:
+            normalized_review_targets = normalize_exhaustive_review_targets(
+                document_ids=selected_document_ids,
+                doc_scope=data.get('doc_scope'),
+                active_group_ids=data.get('active_group_ids') or data.get('active_group_id'),
+                active_public_workspace_id=data.get('active_public_workspace_ids') or data.get('active_public_workspace_id'),
+                window_unit='pages',
+                max_retries_per_window=1,
+                max_documents=CHAT_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS,
+            )
+        except ValueError as exc:
+            return {'error': str(exc)}, 400
+
+        selected_document_ids = normalized_review_targets.get('document_ids', [])
+        document_scope = normalized_review_targets.get('doc_scope', 'all')
+        active_group_ids = normalized_review_targets.get('active_group_ids', [])
+        active_public_workspace_ids = normalized_review_targets.get('active_public_workspace_id', [])
+        request_agent_info = data.get('agent_info') if isinstance(data.get('agent_info'), dict) else {}
+        runner_type = 'agent' if request_agent_info else 'model'
+
+        try:
+            conversation_item = _load_or_create_exhaustive_review_conversation(user_id, conversation_id=conversation_id)
+        except PermissionError as exc:
+            return {'error': str(exc)}, 403
+
+        conversation_id = conversation_item.get('id')
+        g.conversation_id = conversation_id
+
+        previous_thread_id = _get_latest_chat_thread_id(conversation_id)
+        current_thread_id = str(uuid.uuid4())
+        user_message_id = f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
+        user_metadata = {
+            'user_info': {
+                'user_id': user_id,
+            },
+            'thread_info': {
+                'thread_id': current_thread_id,
+                'previous_thread_id': previous_thread_id,
+                'active_thread': True,
+                'thread_attempt': 1,
+            },
+            'model_selection': {
+                'selected_model': data.get('model_deployment'),
+                'model_id': data.get('model_id'),
+                'model_endpoint_id': data.get('model_endpoint_id'),
+                'model_provider': data.get('model_provider'),
+            },
+            'exhaustive_review': {
+                'enabled': True,
+                'document_ids': selected_document_ids,
+                'doc_scope': document_scope,
+                'active_group_ids': active_group_ids,
+                'active_public_workspace_id': active_public_workspace_ids,
+            },
+        }
+        user_message_doc = make_json_serializable({
+            'id': user_message_id,
+            'conversation_id': conversation_id,
+            'role': 'user',
+            'content': user_message,
+            'timestamp': datetime.utcnow().isoformat(),
+            'model_deployment_name': data.get('model_deployment'),
+            'metadata': user_metadata,
+        })
+        cosmos_messages_container.upsert_item(user_message_doc)
+
+        assistant_message_id, _, assistant_thread_attempt, response_message_context = _initialize_assistant_response_tracking(
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            current_user_thread_id=current_thread_id,
+            previous_thread_id=previous_thread_id,
+            retry_thread_attempt=None,
+            is_retry=False,
+            user_id=user_id,
+        )
+
+        publish_stream_thought = None
+        stream_activity_callback = None
+        if callable(publish_background_event):
+            publish_stream_thought, stream_activity_callback = _build_exhaustive_review_stream_activity_callback(
+                publish_background_event,
+                assistant_message_id,
+            )
+            if callable(publish_stream_thought):
+                publish_stream_thought(
+                    f"Queued exhaustive review for {len(selected_document_ids)} selected document{'s' if len(selected_document_ids) != 1 else ''}"
+                )
+
+        workflow_like = {
+            'id': f'chat-exhaustive-review:{conversation_id}',
+            'user_id': user_id,
+            'name': 'Chat Exhaustive Review',
+            'task_prompt': user_message,
+            'runner_type': runner_type,
+            'selected_agent': request_agent_info,
+            'model_endpoint_id': str(data.get('model_endpoint_id') or '').strip(),
+            'model_id': str(data.get('model_id') or '').strip(),
+            'legacy_model_deployment': str(data.get('model_deployment') or '').strip(),
+            'model_binding_summary': {
+                'endpoint_id': str(data.get('model_endpoint_id') or '').strip(),
+                'model_id': str(data.get('model_id') or '').strip(),
+                'provider': str(data.get('model_provider') or '').strip(),
+            },
+            'exhaustive_review': {
+                'enabled': True,
+                'document_ids': selected_document_ids,
+                'doc_scope': document_scope,
+                'active_group_ids': active_group_ids,
+                'active_public_workspace_id': active_public_workspace_ids,
+                'window_unit': 'pages',
+                'window_size': None,
+                'window_percent': None,
+                'max_retries_per_window': 1,
+            },
+        }
+
+        try:
+            execution_result = _execute_exhaustive_review_workflow(
+                workflow_like,
+                settings,
+                conversation_id=conversation_id,
+                run_id=None,
+                thought_tracker=None,
+                external_activity_callback=stream_activity_callback,
+            )
+        except Exception as exc:
+            log_event(
+                f'[ChatExhaustiveReview] Exhaustive chat review failed: {exc}',
+                extra={
+                    'conversation_id': conversation_id,
+                    'user_id': user_id,
+                    'document_count': len(selected_document_ids),
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return {'error': str(exc), 'conversation_id': conversation_id, 'user_message_id': user_message_id}, 500
+
+        assistant_timestamp = datetime.utcnow().isoformat()
+        prepared_agent_citations = persist_agent_citation_artifacts(
+            conversation_id=conversation_id,
+            assistant_message_id=assistant_message_id,
+            agent_citations=execution_result.get('agent_citations') or [],
+            created_timestamp=assistant_timestamp,
+            user_info=response_message_context.get('user_info'),
+        )
+
+        assistant_doc = make_json_serializable({
+            'id': assistant_message_id,
+            'conversation_id': conversation_id,
+            'role': 'assistant',
+            'content': execution_result.get('reply', ''),
+            'timestamp': assistant_timestamp,
+            'augmented': False,
+            'hybrid_citations': [],
+            'web_search_citations': [],
+            'hybridsearch_query': None,
+            'agent_citations': prepared_agent_citations,
+            'model_deployment_name': execution_result.get('model_deployment_name'),
+            'agent_display_name': execution_result.get('agent_display_name'),
+            'agent_name': execution_result.get('agent_name'),
+            'metadata': {
+                'user_info': response_message_context.get('user_info'),
+                'thread_info': {
+                    'thread_id': response_message_context.get('thread_id'),
+                    'previous_thread_id': response_message_context.get('previous_thread_id'),
+                    'active_thread': True,
+                    'thread_attempt': assistant_thread_attempt,
+                },
+                'exhaustive_review': {
+                    'enabled': True,
+                    'coverage': execution_result.get('review_coverage') or {},
+                },
+            },
+        })
+        cosmos_messages_container.upsert_item(assistant_doc)
+
+        conversation_item['last_updated'] = datetime.utcnow().isoformat()
+        conversation_item['chat_type'] = data.get('chat_type') or conversation_item.get('chat_type') or 'new'
+
+        try:
+            conversation_item = collect_conversation_metadata(
+                user_message=user_message,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                active_group_id=active_group_ids[0] if active_group_ids else None,
+                active_group_ids=active_group_ids,
+                document_scope=document_scope,
+                selected_document_id=selected_document_ids[0] if selected_document_ids else None,
+                model_deployment=execution_result.get('model_deployment_name'),
+                hybrid_search_enabled=False,
+                image_gen_enabled=False,
+                selected_documents=execution_result.get('review_result', {}).get('documents', []),
+                selected_agent=execution_result.get('agent_name'),
+                selected_agent_details=request_agent_info,
+                search_results=None,
+                conversation_item=conversation_item,
+                active_public_workspace_id=active_public_workspace_ids[0] if active_public_workspace_ids else None,
+                active_public_workspace_ids=active_public_workspace_ids,
+            )
+        except Exception as exc:
+            debug_print(f'[ChatExhaustiveReview] Conversation metadata update failed: {exc}')
+
+        cosmos_conversations_container.upsert_item(conversation_item)
+
+        return make_json_serializable({
+            'reply': execution_result.get('reply', ''),
+            'conversation_id': conversation_id,
+            'conversation_title': conversation_item.get('title', 'New Conversation'),
+            'classification': conversation_item.get('classification', []),
+            'context': conversation_item.get('context', []),
+            'chat_type': conversation_item.get('chat_type'),
+            'scope_locked': conversation_item.get('scope_locked'),
+            'locked_contexts': conversation_item.get('locked_contexts', []),
+            'model_deployment_name': execution_result.get('model_deployment_name'),
+            'agent_display_name': execution_result.get('agent_display_name'),
+            'agent_name': execution_result.get('agent_name'),
+            'message_id': assistant_message_id,
+            'user_message_id': user_message_id,
+            'blocked': False,
+            'augmented': False,
+            'hybrid_citations': [],
+            'web_search_citations': [],
+            'agent_citations': prepared_agent_citations,
+            'reload_messages': False,
+            'kernel_fallback_notice': None,
+            'thoughts_enabled': False,
+            'review_coverage': execution_result.get('review_coverage') or {},
+        }), 200
+
+    @app.route('/api/chat/exhaustive-review', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def chat_exhaustive_review_api():
+        payload, status_code = execute_exhaustive_review_chat_request()
+        return jsonify(payload), status_code
+
+    @app.route('/api/chat/exhaustive-review/stream', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def chat_exhaustive_review_stream_api():
+        data = request.get_json() or {}
+        conversation_id = getattr(g, 'conversation_id', None) or data.get('conversation_id')
+        if conversation_id is not None:
+            conversation_id = str(conversation_id).strip() or None
+        if not conversation_id:
+            conversation_id = str(uuid.uuid4())
+        data['conversation_id'] = conversation_id
+        g.conversation_id = conversation_id
+
+        def generate_exhaustive_review_response(publish_background_event=None):
+            try:
+                payload, status_code = execute_exhaustive_review_chat_request(
+                    data=data,
+                    publish_background_event=publish_background_event,
+                )
+                if status_code >= 400:
+                    error_message = payload.get('error') or f'Exhaustive review failed ({status_code})'
+                    yield f"data: {json.dumps({'error': error_message, 'conversation_id': payload.get('conversation_id')})}\n\n"
+                    return
+
+                yield f"data: {json.dumps(normalize_terminal_chat_payload(payload))}\n\n"
+            except Exception as exhaustive_error:
+                yield f"data: {json.dumps({'error': str(exhaustive_error), 'conversation_id': conversation_id})}\n\n"
+
+        return build_background_stream_response(generate_exhaustive_review_response)
 
     @app.route('/api/chat', methods=['POST'])
     @swagger_route(security=get_auth_security())
