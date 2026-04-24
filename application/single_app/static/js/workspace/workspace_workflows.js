@@ -41,10 +41,18 @@ const workflowEnabledToggle = document.getElementById("workflow-enabled");
 const workflowTriggerHelp = document.getElementById("workflow-trigger-help");
 const workflowAlertPrioritySelect = document.getElementById("workflow-alert-priority");
 const WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS = 10;
-const workflowExhaustiveReviewToggle = document.getElementById("workflow-exhaustive-review-enabled");
+const DOCUMENT_ACTION_NONE = "none";
+const DOCUMENT_ACTION_EXHAUSTIVE_REVIEW = "exhaustive_review";
+const DOCUMENT_ACTION_COMPARISON = "comparison";
+const workflowDocumentActionTypeSelect = document.getElementById("workflow-document-action-type");
+const workflowDocumentActionHelp = document.getElementById("workflow-document-action-help");
 const workflowDocumentTargetsFields = document.getElementById("workflow-document-targets-fields");
+const workflowExhaustiveTargetFields = document.getElementById("workflow-exhaustive-target-fields");
+const workflowComparisonTargetFields = document.getElementById("workflow-comparison-target-fields");
 const workflowReviewDocScopeSelect = document.getElementById("workflow-review-doc-scope");
 const workflowReviewDocumentIdsInput = document.getElementById("workflow-review-document-ids");
+const workflowComparisonLeftDocumentIdInput = document.getElementById("workflow-comparison-left-document-id");
+const workflowComparisonRightDocumentIdsInput = document.getElementById("workflow-comparison-right-document-ids");
 const workflowReviewGroupIdsInput = document.getElementById("workflow-review-group-ids");
 const workflowReviewPublicWorkspaceIdsInput = document.getElementById("workflow-review-public-workspace-ids");
 const workflowReviewWindowUnitSelect = document.getElementById("workflow-review-window-unit");
@@ -225,37 +233,63 @@ function getSelectedWorkspaceDocumentIds() {
     return [];
 }
 
-function getExhaustiveReviewConfig(workflow) {
-    const config = workflow?.exhaustive_review && typeof workflow.exhaustive_review === "object"
+function getDocumentActionConfig(workflow) {
+    const actionConfig = workflow?.document_action && typeof workflow.document_action === "object"
+        ? workflow.document_action
+        : {};
+    const legacyReviewConfig = workflow?.exhaustive_review && typeof workflow.exhaustive_review === "object"
         ? workflow.exhaustive_review
         : {};
+    const actionType = normalizeText(actionConfig.type)
+        || (legacyReviewConfig.enabled ? DOCUMENT_ACTION_EXHAUSTIVE_REVIEW : DOCUMENT_ACTION_NONE);
 
     return {
-        enabled: Boolean(config.enabled),
-        document_ids: Array.isArray(config.document_ids) ? config.document_ids : [],
-        doc_scope: normalizeText(config.doc_scope) || "personal",
-        active_group_ids: Array.isArray(config.active_group_ids) ? config.active_group_ids : [],
-        active_public_workspace_id: Array.isArray(config.active_public_workspace_id) ? config.active_public_workspace_id : [],
-        window_unit: normalizeText(config.window_unit) || "pages",
-        window_size: config.window_size ?? "",
-        window_percent: config.window_percent ?? "",
-        max_retries_per_window: config.max_retries_per_window ?? 1,
+        type: actionType,
+        document_ids: Array.isArray(actionConfig.document_ids)
+            ? actionConfig.document_ids
+            : Array.isArray(legacyReviewConfig.document_ids)
+                ? legacyReviewConfig.document_ids
+                : [],
+        left_document_id: normalizeText(actionConfig.left_document_id),
+        right_document_ids: Array.isArray(actionConfig.right_document_ids) ? actionConfig.right_document_ids : [],
+        doc_scope: normalizeText(actionConfig.doc_scope || legacyReviewConfig.doc_scope) || "personal",
+        active_group_ids: Array.isArray(actionConfig.active_group_ids)
+            ? actionConfig.active_group_ids
+            : Array.isArray(legacyReviewConfig.active_group_ids)
+                ? legacyReviewConfig.active_group_ids
+                : [],
+        active_public_workspace_id: Array.isArray(actionConfig.active_public_workspace_id)
+            ? actionConfig.active_public_workspace_id
+            : Array.isArray(legacyReviewConfig.active_public_workspace_id)
+                ? legacyReviewConfig.active_public_workspace_id
+                : [],
+        window_unit: normalizeText(actionConfig.window_unit || legacyReviewConfig.window_unit) || "pages",
+        window_size: actionConfig.window_size ?? legacyReviewConfig.window_size ?? "",
+        window_percent: actionConfig.window_percent ?? legacyReviewConfig.window_percent ?? "",
+        max_retries_per_window: actionConfig.max_retries_per_window ?? legacyReviewConfig.max_retries_per_window ?? 1,
     };
 }
 
-function getExhaustiveReviewLabel(workflow) {
-    const config = getExhaustiveReviewConfig(workflow);
-    if (!config.enabled) {
-        return "Standard prompt run";
+function getDocumentActionLabel(workflow) {
+    const config = getDocumentActionConfig(workflow);
+    if (config.type === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW) {
+        const documentCount = config.document_ids.length;
+        const unit = normalizeText(config.window_unit) || "pages";
+        if (!documentCount) {
+            return `Exhaustive review by ${unit}`;
+        }
+        return `Exhaustive review of ${documentCount} ${documentCount === 1 ? "document" : "documents"} by ${unit}`;
     }
 
-    const documentCount = config.document_ids.length;
-    const unit = normalizeText(config.window_unit) || "pages";
-    if (!documentCount) {
-        return `Exhaustive review by ${unit}`;
+    if (config.type === DOCUMENT_ACTION_COMPARISON) {
+        const rightCount = config.right_document_ids.length;
+        if (!config.left_document_id) {
+            return "Compare documents";
+        }
+        return `Compare one baseline to ${rightCount || 0} ${rightCount === 1 ? "document" : "documents"}`;
     }
 
-    return `Exhaustive review of ${documentCount} ${documentCount === 1 ? "document" : "documents"} by ${unit}`;
+    return "Standard prompt run";
 }
 
 function updateSelectedDocumentsSummary() {
@@ -272,9 +306,21 @@ function updateSelectedDocumentsSummary() {
     workflowSelectedDocumentsSummary.textContent = `${selectedIds.length} workspace ${selectedIds.length === 1 ? "document is" : "documents are"} currently selected.`;
 }
 
-function updateExhaustiveReviewFields() {
-    const enabled = Boolean(workflowExhaustiveReviewToggle?.checked);
-    setElementVisibility(workflowDocumentTargetsFields, enabled);
+function updateDocumentActionFields() {
+    const actionType = normalizeText(workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_NONE;
+    const hasDocumentAction = actionType !== DOCUMENT_ACTION_NONE;
+    setElementVisibility(workflowDocumentTargetsFields, hasDocumentAction);
+    setElementVisibility(workflowExhaustiveTargetFields, actionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW);
+    setElementVisibility(workflowComparisonTargetFields, actionType === DOCUMENT_ACTION_COMPARISON);
+
+    if (workflowDocumentActionHelp) {
+        workflowDocumentActionHelp.textContent = actionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW
+            ? "Review every ordered page or chunk for fixed document targets instead of relying on bounded search results."
+            : actionType === DOCUMENT_ACTION_COMPARISON
+                ? "Use one left-side baseline document and compare it against one or more right-side documents."
+                : "Use the standard prompt flow or bind the workflow to a deterministic document action.";
+    }
+
     updateSelectedDocumentsSummary();
 }
 
@@ -288,12 +334,19 @@ function applySelectedWorkspaceDocumentsToWorkflow() {
     const limitedSelectedIds = selectedIds.slice(0, WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS);
     if (selectedIds.length > WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS) {
         showToast(
-            `Workflow exhaustive review currently supports up to ${WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS} documents. Applied the first ${WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS} selected documents.`,
+            `Workflow document actions currently support up to ${WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS} documents. Applied the first ${WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS} selected documents.`,
             "warning"
         );
     }
 
-    if (workflowReviewDocumentIdsInput) {
+    const actionType = normalizeText(workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_NONE;
+    if (actionType === DOCUMENT_ACTION_COMPARISON) {
+        if (!workflowComparisonLeftDocumentIdInput || !workflowComparisonRightDocumentIdsInput) {
+            return;
+        }
+        workflowComparisonLeftDocumentIdInput.value = limitedSelectedIds[0] || "";
+        workflowComparisonRightDocumentIdsInput.value = limitedSelectedIds.slice(1).join(", ");
+    } else if (workflowReviewDocumentIdsInput) {
         workflowReviewDocumentIdsInput.value = limitedSelectedIds.join(", ");
     }
     if (workflowReviewDocScopeSelect) {
@@ -309,7 +362,7 @@ function buildWorkflowSearchText(workflow) {
         getWorkflowRunnerLabel(workflow),
         getWorkflowTriggerLabel(workflow),
         getWorkflowAlertLabel(workflow),
-        getExhaustiveReviewLabel(workflow),
+        getDocumentActionLabel(workflow),
     ].map((value) => normalizeText(value).toLowerCase()).join(" ");
 }
 
@@ -487,8 +540,9 @@ function renderWorkflowTable(items) {
             ? `<div class="workflow-meta mt-1">Next run: ${escapeHtml(formatDateTime(workflow.next_run_at))}</div>`
             : "";
         const alertMeta = `<div class="workflow-meta mt-1">Alert: ${escapeHtml(getWorkflowAlertLabel(workflow))}</div>`;
-        const reviewMeta = workflow.exhaustive_review?.enabled
-            ? `<div class="workflow-meta mt-1 text-info">${escapeHtml(getExhaustiveReviewLabel(workflow))}</div>`
+        const actionConfig = getDocumentActionConfig(workflow);
+        const reviewMeta = actionConfig.type !== DOCUMENT_ACTION_NONE
+            ? `<div class="workflow-meta mt-1 text-info">${escapeHtml(getDocumentActionLabel(workflow))}</div>`
             : "";
         const conversationMeta = workflow.conversation_id
             ? '<div class="workflow-meta mt-1"><i class="bi bi-chat-left-text me-1"></i>Conversation ready</div>'
@@ -552,7 +606,7 @@ function renderWorkflowGrid(items) {
         const runnerLabel = escapeHtml(getWorkflowRunnerLabel(workflow));
         const triggerLabel = escapeHtml(getWorkflowTriggerLabel(workflow));
         const alertLabel = escapeHtml(getWorkflowAlertLabel(workflow));
-        const reviewLabel = escapeHtml(getExhaustiveReviewLabel(workflow));
+        const reviewLabel = escapeHtml(getDocumentActionLabel(workflow));
 
         return `
             <div class="col-12 col-md-6 col-xl-4">
@@ -568,7 +622,7 @@ function renderWorkflowGrid(items) {
                             <div class="workflow-grid-meta-row"><span>Runner</span><span>${runnerLabel}</span></div>
                             <div class="workflow-grid-meta-row"><span>Trigger</span><span>${triggerLabel}</span></div>
                             <div class="workflow-grid-meta-row"><span>Alert</span><span>${alertLabel}</span></div>
-                            <div class="workflow-grid-meta-row"><span>Review</span><span>${reviewLabel}</span></div>
+                            <div class="workflow-grid-meta-row"><span>Action</span><span>${reviewLabel}</span></div>
                             <div class="workflow-grid-meta-row"><span>Last Run</span><span>${runTimestamp ? escapeHtml(formatDateTime(runTimestamp)) : "Never run"}</span></div>
                         </div>
                         <div class="workflow-grid-preview small text-muted mb-3">${escapeHtml(truncateDescription(previewText, 170))}</div>
@@ -874,14 +928,20 @@ function resetWorkflowForm() {
     if (workflowAlertPrioritySelect) {
         workflowAlertPrioritySelect.value = "none";
     }
-    if (workflowExhaustiveReviewToggle) {
-        workflowExhaustiveReviewToggle.checked = false;
+    if (workflowDocumentActionTypeSelect) {
+        workflowDocumentActionTypeSelect.value = DOCUMENT_ACTION_NONE;
     }
     if (workflowReviewDocScopeSelect) {
         workflowReviewDocScopeSelect.value = "personal";
     }
     if (workflowReviewDocumentIdsInput) {
         workflowReviewDocumentIdsInput.value = "";
+    }
+    if (workflowComparisonLeftDocumentIdInput) {
+        workflowComparisonLeftDocumentIdInput.value = "";
+    }
+    if (workflowComparisonRightDocumentIdsInput) {
+        workflowComparisonRightDocumentIdsInput.value = "";
     }
     if (workflowReviewGroupIdsInput) {
         workflowReviewGroupIdsInput.value = "";
@@ -915,7 +975,7 @@ function resetWorkflowForm() {
     populateModelSelect(normalizeText(workflowModelEndpointSelect?.value), "");
     updateRunnerFields();
     updateTriggerFields();
-    updateExhaustiveReviewFields();
+    updateDocumentActionFields();
 }
 
 async function openWorkflowModal(workflow = null) {
@@ -952,33 +1012,39 @@ async function openWorkflowModal(workflow = null) {
         if (workflowAlertPrioritySelect) {
             workflowAlertPrioritySelect.value = normalizeText(workflow.alert_priority).toLowerCase() || "none";
         }
-        const exhaustiveReview = getExhaustiveReviewConfig(workflow);
-        if (workflowExhaustiveReviewToggle) {
-            workflowExhaustiveReviewToggle.checked = exhaustiveReview.enabled;
+        const documentAction = getDocumentActionConfig(workflow);
+        if (workflowDocumentActionTypeSelect) {
+            workflowDocumentActionTypeSelect.value = documentAction.type;
         }
         if (workflowReviewDocScopeSelect) {
-            workflowReviewDocScopeSelect.value = exhaustiveReview.doc_scope;
+            workflowReviewDocScopeSelect.value = documentAction.doc_scope;
         }
         if (workflowReviewDocumentIdsInput) {
-            workflowReviewDocumentIdsInput.value = joinCsvList(exhaustiveReview.document_ids);
+            workflowReviewDocumentIdsInput.value = joinCsvList(documentAction.document_ids);
+        }
+        if (workflowComparisonLeftDocumentIdInput) {
+            workflowComparisonLeftDocumentIdInput.value = documentAction.left_document_id;
+        }
+        if (workflowComparisonRightDocumentIdsInput) {
+            workflowComparisonRightDocumentIdsInput.value = joinCsvList(documentAction.right_document_ids);
         }
         if (workflowReviewGroupIdsInput) {
-            workflowReviewGroupIdsInput.value = joinCsvList(exhaustiveReview.active_group_ids);
+            workflowReviewGroupIdsInput.value = joinCsvList(documentAction.active_group_ids);
         }
         if (workflowReviewPublicWorkspaceIdsInput) {
-            workflowReviewPublicWorkspaceIdsInput.value = joinCsvList(exhaustiveReview.active_public_workspace_id);
+            workflowReviewPublicWorkspaceIdsInput.value = joinCsvList(documentAction.active_public_workspace_id);
         }
         if (workflowReviewWindowUnitSelect) {
-            workflowReviewWindowUnitSelect.value = exhaustiveReview.window_unit;
+            workflowReviewWindowUnitSelect.value = documentAction.window_unit;
         }
         if (workflowReviewWindowSizeInput) {
-            workflowReviewWindowSizeInput.value = exhaustiveReview.window_size;
+            workflowReviewWindowSizeInput.value = documentAction.window_size;
         }
         if (workflowReviewWindowPercentInput) {
-            workflowReviewWindowPercentInput.value = exhaustiveReview.window_percent;
+            workflowReviewWindowPercentInput.value = documentAction.window_percent;
         }
         if (workflowReviewRetriesInput) {
-            workflowReviewRetriesInput.value = String(exhaustiveReview.max_retries_per_window);
+            workflowReviewRetriesInput.value = String(documentAction.max_retries_per_window);
         }
         if (workflowScheduleValueInput) {
             workflowScheduleValueInput.value = String(workflow.schedule?.value || 10);
@@ -1005,15 +1071,17 @@ async function openWorkflowModal(workflow = null) {
 
     updateRunnerFields();
     updateTriggerFields();
-    updateExhaustiveReviewFields();
+    updateDocumentActionFields();
     workflowModal.show();
 }
 
 function buildWorkflowPayload() {
     const runnerType = normalizeText(workflowRunnerTypeSelect?.value) || "model";
     const triggerType = normalizeText(workflowTriggerTypeSelect?.value) || "manual";
-    const exhaustiveReviewEnabled = Boolean(workflowExhaustiveReviewToggle?.checked);
+    const documentActionType = normalizeText(workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_NONE;
     const exhaustiveDocumentIds = parseCsvList(workflowReviewDocumentIdsInput?.value);
+    const comparisonLeftDocumentId = normalizeText(workflowComparisonLeftDocumentIdInput?.value);
+    const comparisonRightDocumentIds = parseCsvList(workflowComparisonRightDocumentIdsInput?.value);
     const exhaustiveGroupIds = parseCsvList(workflowReviewGroupIdsInput?.value);
     const exhaustivePublicWorkspaceIds = parseCsvList(workflowReviewPublicWorkspaceIdsInput?.value);
     const rawWindowSize = normalizeText(workflowReviewWindowSizeInput?.value);
@@ -1032,12 +1100,25 @@ function buildWorkflowPayload() {
         selected_agent: {},
         model_endpoint_id: "",
         model_id: "",
-        exhaustive_review: {
-            enabled: exhaustiveReviewEnabled,
-            document_ids: exhaustiveReviewEnabled ? exhaustiveDocumentIds : [],
+        document_action: {
+            type: documentActionType,
+            document_ids: documentActionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW ? exhaustiveDocumentIds : [],
+            left_document_id: documentActionType === DOCUMENT_ACTION_COMPARISON ? comparisonLeftDocumentId : "",
+            right_document_ids: documentActionType === DOCUMENT_ACTION_COMPARISON ? comparisonRightDocumentIds : [],
             doc_scope: normalizeText(workflowReviewDocScopeSelect?.value) || "personal",
-            active_group_ids: exhaustiveReviewEnabled ? exhaustiveGroupIds : [],
-            active_public_workspace_id: exhaustiveReviewEnabled ? exhaustivePublicWorkspaceIds : [],
+            active_group_ids: documentActionType !== DOCUMENT_ACTION_NONE ? exhaustiveGroupIds : [],
+            active_public_workspace_id: documentActionType !== DOCUMENT_ACTION_NONE ? exhaustivePublicWorkspaceIds : [],
+            window_unit: normalizeText(workflowReviewWindowUnitSelect?.value) || "pages",
+            window_size: rawWindowSize ? Number(rawWindowSize) : null,
+            window_percent: rawWindowPercent ? Number(rawWindowPercent) : null,
+            max_retries_per_window: Number(rawRetries),
+        },
+        exhaustive_review: {
+            enabled: documentActionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW,
+            document_ids: documentActionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW ? exhaustiveDocumentIds : [],
+            doc_scope: normalizeText(workflowReviewDocScopeSelect?.value) || "personal",
+            active_group_ids: documentActionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW ? exhaustiveGroupIds : [],
+            active_public_workspace_id: documentActionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW ? exhaustivePublicWorkspaceIds : [],
             window_unit: normalizeText(workflowReviewWindowUnitSelect?.value) || "pages",
             window_size: rawWindowSize ? Number(rawWindowSize) : null,
             window_percent: rawWindowPercent ? Number(rawWindowPercent) : null,
@@ -1051,22 +1132,31 @@ function buildWorkflowPayload() {
     if (!payload.task_prompt) {
         throw new Error("Task prompt is required.");
     }
-    if (exhaustiveReviewEnabled && !payload.exhaustive_review.document_ids.length) {
+    if (documentActionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW && !payload.document_action.document_ids.length) {
         throw new Error("Add one or more document ids for exhaustive review.");
     }
-    if (payload.exhaustive_review.document_ids.length > WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS) {
-        throw new Error(`Workflow exhaustive review supports up to ${WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS} documents per run.`);
+    if (documentActionType === DOCUMENT_ACTION_COMPARISON && !payload.document_action.left_document_id) {
+        throw new Error("Add one left-side document id for comparison.");
     }
-    if (rawWindowSize && (!Number.isInteger(payload.exhaustive_review.window_size) || payload.exhaustive_review.window_size < 1)) {
+    if (documentActionType === DOCUMENT_ACTION_COMPARISON && !payload.document_action.right_document_ids.length) {
+        throw new Error("Add one or more right-side document ids for comparison.");
+    }
+    const documentActionCount = documentActionType === DOCUMENT_ACTION_COMPARISON
+        ? 1 + payload.document_action.right_document_ids.length
+        : payload.document_action.document_ids.length;
+    if (documentActionCount > WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS) {
+        throw new Error(`Workflow document actions support up to ${WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS} documents per run.`);
+    }
+    if (documentActionType !== DOCUMENT_ACTION_NONE && rawWindowSize && (!Number.isInteger(payload.document_action.window_size) || payload.document_action.window_size < 1)) {
         throw new Error("Window size must be a whole number greater than zero.");
     }
-    if (rawWindowPercent && (!Number.isInteger(payload.exhaustive_review.window_percent) || payload.exhaustive_review.window_percent < 1 || payload.exhaustive_review.window_percent > 100)) {
+    if (documentActionType !== DOCUMENT_ACTION_NONE && rawWindowPercent && (!Number.isInteger(payload.document_action.window_percent) || payload.document_action.window_percent < 1 || payload.document_action.window_percent > 100)) {
         throw new Error("Window percent must be a whole number between 1 and 100.");
     }
-    if (rawWindowSize && rawWindowPercent) {
+    if (documentActionType !== DOCUMENT_ACTION_NONE && rawWindowSize && rawWindowPercent) {
         throw new Error("Choose either a fixed window size or a window percent, not both.");
     }
-    if (!Number.isInteger(payload.exhaustive_review.max_retries_per_window) || payload.exhaustive_review.max_retries_per_window < 0 || payload.exhaustive_review.max_retries_per_window > 5) {
+    if (documentActionType !== DOCUMENT_ACTION_NONE && (!Number.isInteger(payload.document_action.max_retries_per_window) || payload.document_action.max_retries_per_window < 0 || payload.document_action.max_retries_per_window > 5)) {
         throw new Error("Retries per window must be between 0 and 5.");
     }
 
@@ -1427,7 +1517,7 @@ function initializeWorkflowEvents() {
     workflowModelSelect?.addEventListener("change", updateModelHelpText);
     workflowTriggerTypeSelect?.addEventListener("change", updateTriggerFields);
     workflowScheduleUnitSelect?.addEventListener("change", updateScheduleConstraints);
-    workflowExhaustiveReviewToggle?.addEventListener("change", updateExhaustiveReviewFields);
+    workflowDocumentActionTypeSelect?.addEventListener("change", updateDocumentActionFields);
     workflowUseSelectedDocumentsBtn?.addEventListener("click", applySelectedWorkspaceDocumentsToWorkflow);
     workflowModalEl?.addEventListener("hidden.bs.modal", resetWorkflowForm);
     workflowDeleteModalEl?.addEventListener("hidden.bs.modal", () => {

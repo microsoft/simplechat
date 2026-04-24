@@ -1,7 +1,7 @@
 # test_exhaustive_document_review_scope_select_fix.py
 """
 Functional test for exhaustive document review scope select fix.
-Version: 0.241.071
+Version: 0.241.072
 Implemented in: 0.241.070
 
 This test ensures ordered chunk retrieval only requests the scope field
@@ -26,8 +26,8 @@ def test_exhaustive_review_scope_select_fix_wiring():
     workflow_runner_content = read_text("application/single_app/functions_workflow_runner.py")
     fix_doc_content = read_text("docs/explanation/fixes/EXHAUSTIVE_DOCUMENT_REVIEW_SCOPE_SELECT_FIX.md")
 
-    assert 'VERSION = "0.241.071"' in config_content, (
-        "Expected config.py version 0.241.071 for the exhaustive review scope-select fix."
+    assert 'VERSION = "0.241.072"' in config_content, (
+        "Expected config.py version 0.241.072 for the exhaustive review scope-select fix."
     )
     assert "scope_field = 'public_workspace_id' if public_workspace_id is not None else ('group_id' if group_id is not None else 'user_id')" in documents_content, (
         "Expected ordered chunk retrieval to choose the scope-specific Azure Search field."
@@ -38,11 +38,11 @@ def test_exhaustive_review_scope_select_fix_wiring():
     assert "'user_id': result.get('user_id') if scope_field == 'user_id' else document_item.get('user_id')" in documents_content, (
         "Expected missing scope ids to fall back to the resolved document record."
     )
-    assert 'def execute_exhaustive_review_chat_request(data=None, publish_background_event=None):' in chat_route_content, (
-        "Expected chat exhaustive review to execute through the shared backend helper."
+    assert 'def execute_document_action_chat_request(data=None, publish_background_event=None, forced_action_type=None):' in chat_route_content, (
+        "Expected chat document actions to execute through the shared backend helper."
     )
-    assert 'def _execute_exhaustive_review_workflow(' in workflow_runner_content, (
-        "Expected workflows to continue using the same exhaustive review executor as chat."
+    assert 'def _execute_document_action_workflow(' in workflow_runner_content, (
+        "Expected workflows to continue using the same shared document action executor as chat."
     )
     assert 'Exhaustive Review Scope Select Fix' in fix_doc_content, (
         "Expected fix documentation for the Azure Search scope-select regression."

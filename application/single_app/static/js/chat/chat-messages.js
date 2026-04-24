@@ -38,20 +38,67 @@ if (typeof window.appSettings !== 'undefined' && window.appSettings.enable_text_
     });
 }
 
-const exhaustiveReviewBtn = document.getElementById('exhaustive-review-btn');
+const documentActionSelect = document.getElementById('document-action-select');
+const documentComparisonLeftContainer = document.getElementById('document-comparison-left-container');
+const documentComparisonLeftSelect = document.getElementById('document-comparison-left-select');
+const DOCUMENT_ACTION_NONE = 'none';
+const DOCUMENT_ACTION_EXHAUSTIVE_REVIEW = 'exhaustive_review';
+const DOCUMENT_ACTION_COMPARISON = 'comparison';
 const CHAT_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS = 3;
 const WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS = 10;
 
-function isExhaustiveReviewEnabled() {
-  return Boolean(exhaustiveReviewBtn && exhaustiveReviewBtn.classList.contains('active'));
+function getSelectedDocumentIds() {
+  const docSel = document.getElementById('document-select');
+  if (!docSel) {
+    return [];
+  }
+
+  return Array.from(docSel.selectedOptions)
+    .map(option => option.value)
+    .filter(value => value);
 }
 
-exhaustiveReviewBtn?.addEventListener('click', () => {
-  const isActive = exhaustiveReviewBtn.classList.toggle('active');
-  exhaustiveReviewBtn.classList.toggle('btn-secondary', isActive);
-  exhaustiveReviewBtn.classList.toggle('btn-outline-secondary', !isActive);
-  exhaustiveReviewBtn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
-});
+function getDocumentActionType() {
+  return String(documentActionSelect?.value || DOCUMENT_ACTION_NONE).trim() || DOCUMENT_ACTION_NONE;
+}
+
+function syncComparisonLeftOptions() {
+  if (!documentComparisonLeftSelect) {
+    return;
+  }
+
+  const selectedDocumentIds = getSelectedDocumentIds();
+  const previousSelection = String(documentComparisonLeftSelect.value || '').trim();
+  documentComparisonLeftSelect.innerHTML = '';
+
+  selectedDocumentIds.forEach((documentId, index) => {
+    const metadata = getDocumentMetadata(documentId) || {};
+    const option = document.createElement('option');
+    option.value = documentId;
+    option.textContent = metadata.name || metadata.file_name || metadata.filename || documentId;
+    if ((previousSelection && previousSelection === documentId) || (!previousSelection && index === 0)) {
+      option.selected = true;
+    }
+    documentComparisonLeftSelect.appendChild(option);
+  });
+}
+
+function updateDocumentActionControls() {
+  const actionType = getDocumentActionType();
+  const selectedDocumentIds = getSelectedDocumentIds();
+  const showComparisonLeftSelector = actionType === DOCUMENT_ACTION_COMPARISON && selectedDocumentIds.length > 0;
+
+  if (documentComparisonLeftContainer) {
+    documentComparisonLeftContainer.classList.toggle('d-none', !showComparisonLeftSelector);
+  }
+
+  if (showComparisonLeftSelector) {
+    syncComparisonLeftOptions();
+  }
+}
+
+documentActionSelect?.addEventListener('change', updateDocumentActionControls);
+window.addEventListener('chat:document-selection-changed', updateDocumentActionControls);
 
 /**
  * Unwraps markdown tables that are mistakenly wrapped in code blocks.
@@ -2304,7 +2351,24 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
   const webSearchEnabled = webSearchToggle ? webSearchToggle.classList.contains('active') : false;
   const finalPublicWorkspaceId = scopes.publicWorkspaceIds[0] || window.activePublicWorkspaceId || null;
   const selectedTags = getSelectedTags();
-  const exhaustiveReviewEnabled = isExhaustiveReviewEnabled();
+  const documentActionType = getDocumentActionType();
+  const comparisonLeftDocumentId = documentActionType === DOCUMENT_ACTION_COMPARISON
+    ? String(documentComparisonLeftSelect?.value || selectedDocumentId || '').trim()
+    : '';
+  const comparisonRightDocumentIds = documentActionType === DOCUMENT_ACTION_COMPARISON
+    ? selectedDocumentIds.filter(documentId => documentId !== comparisonLeftDocumentId)
+    : [];
+  const documentAction = {
+    type: documentActionType,
+    document_ids: documentActionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW ? selectedDocumentIds : [],
+    left_document_id: documentActionType === DOCUMENT_ACTION_COMPARISON ? comparisonLeftDocumentId : '',
+    right_document_ids: comparisonRightDocumentIds,
+    doc_scope: effectiveDocScope,
+    active_group_ids: finalGroupIds,
+    active_public_workspace_id: scopes.publicWorkspaceIds,
+    window_unit: 'pages',
+    max_retries_per_window: 1,
+  };
 
   return {
     message: finalMessageToSend,
@@ -2329,9 +2393,10 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     prompt_info: promptInfo,
     agent_info: agentInfo,
     reasoning_effort: getCurrentReasoningEffort(),
+    document_action: documentAction,
     exhaustive_review: {
-      enabled: exhaustiveReviewEnabled,
-      document_ids: exhaustiveReviewEnabled ? selectedDocumentIds : [],
+      enabled: documentActionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW,
+      document_ids: documentActionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW ? selectedDocumentIds : [],
       doc_scope: effectiveDocScope,
       active_group_ids: finalGroupIds,
       active_public_workspace_id: scopes.publicWorkspaceIds,
@@ -2456,15 +2521,25 @@ export function actuallySendMessage(finalMessageToSend) {
   // Generate a temporary message ID for the user message
   const tempUserMessageId = `temp_user_${Date.now()}`;
   const messageData = buildChatRequestPayload(finalMessageToSend, currentConversationId);
-  const useExhaustiveReview = Boolean(messageData.exhaustive_review?.enabled);
+  const actionType = String(messageData.document_action?.type || DOCUMENT_ACTION_NONE).trim() || DOCUMENT_ACTION_NONE;
+  const useDocumentAction = actionType !== DOCUMENT_ACTION_NONE;
+  const totalSelectedDocuments = Array.isArray(messageData.selected_document_ids) ? messageData.selected_document_ids.length : 0;
 
-  if (useExhaustiveReview && (!Array.isArray(messageData.selected_document_ids) || messageData.selected_document_ids.length === 0)) {
+  if (actionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW && totalSelectedDocuments === 0) {
     showToast('Select one or more documents before starting an exhaustive review.', 'warning');
     return;
   }
-  if (useExhaustiveReview && messageData.selected_document_ids.length > CHAT_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS) {
+  if (actionType === DOCUMENT_ACTION_COMPARISON && totalSelectedDocuments < 2) {
+    showToast('Select at least two documents before starting a comparison.', 'warning');
+    return;
+  }
+  if (actionType === DOCUMENT_ACTION_COMPARISON && (!messageData.document_action?.left_document_id || !Array.isArray(messageData.document_action?.right_document_ids) || messageData.document_action.right_document_ids.length === 0)) {
+    showToast('Choose one left document and at least one right document for comparison.', 'warning');
+    return;
+  }
+  if (useDocumentAction && totalSelectedDocuments > CHAT_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS) {
     showToast(
-      `Chat exhaustive review supports up to ${CHAT_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS} documents. Use workflows for up to ${WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS} documents.`,
+      `Chat document actions support up to ${CHAT_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS} documents. Use workflows for up to ${WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS} documents.`,
       'warning'
     );
     return;
@@ -2481,7 +2556,7 @@ export function actuallySendMessage(finalMessageToSend) {
     tempUserMessageId,
     currentConversationId,
     {
-      endpoint: useExhaustiveReview ? '/api/chat/exhaustive-review/stream' : '/api/chat/stream',
+      endpoint: useDocumentAction ? '/api/chat/document-action/stream' : '/api/chat/stream',
     }
   );
 
@@ -2575,6 +2650,8 @@ if (userInput) {
 if (promptSelect) {
   promptSelect.addEventListener("change", updateSendButtonVisibility);
 }
+
+updateDocumentActionControls();
 
 // Helper function to update user message ID after backend response
 export function updateUserMessageId(tempId, realId) {

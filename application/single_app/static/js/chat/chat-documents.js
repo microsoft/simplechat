@@ -1705,6 +1705,11 @@ export function handleDocumentSelectChange() {
 
   // Sync button text from current hidden select state
   syncDropdownButtonText();
+  window.dispatchEvent(new CustomEvent('chat:document-selection-changed', {
+    detail: {
+      documentIds: Array.from(docSelectEl.selectedOptions).map(option => option.value).filter(Boolean),
+    },
+  }));
 }
 
 

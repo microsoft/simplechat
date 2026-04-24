@@ -620,16 +620,18 @@
                                 <select class="d-none" id="document-select" multiple></select>
                              </div>
                          </div>
-                         <div class="flex-shrink-0" style="min-width: 180px; max-width: 220px;">
-                             <label class="form-label mb-1 small text-muted">Review</label>
-                             <button
-                                 id="exhaustive-review-btn"
-                                 type="button"
-                                 class="btn btn-outline-secondary btn-sm w-100"
-                                 title="Review every page or chunk for the selected documents"
-                             >
-                                 <i class="bi bi-journal-richtext"></i> Exhaustive Review
-                             </button>
+                         <div class="flex-shrink-0" style="min-width: 220px; max-width: 260px;">
+                             <label class="form-label mb-1 small text-muted" for="document-action-select">Action</label>
+                             <select class="form-select form-select-sm" id="document-action-select" title="Choose how chat should use the selected documents">
+                                 <option value="none">Standard Chat</option>
+                                 <option value="exhaustive_review">Exhaustive Review</option>
+                                 <option value="comparison">Compare Documents</option>
+                             </select>
+                             <div id="document-comparison-left-container" class="mt-2 d-none">
+                                 <label class="form-label mb-1 small text-muted" for="document-comparison-left-select">Left Document</label>
+                                 <select class="form-select form-select-sm" id="document-comparison-left-select"></select>
+                                 <div class="form-text small">All other selected documents become right-side comparison targets.</div>
+                             </div>
                          </div>
 
                      </div>

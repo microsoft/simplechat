@@ -134,6 +134,10 @@ def _build_progress_snapshot(coverage):
     }
 
 
+def build_document_review_progress_snapshot(coverage):
+    return _build_progress_snapshot(coverage)
+
+
 def normalize_exhaustive_review_targets(
     document_ids,
     doc_scope='all',
@@ -330,6 +334,7 @@ def run_exhaustive_document_review(
     max_reduction_rounds=DEFAULT_MAX_REDUCTION_ROUNDS,
     activity_callback=None,
     max_documents=None,
+    include_coverage_summary=True,
 ):
     normalized_review_prompt = str(review_prompt or '').strip()
     if not normalized_review_prompt:
@@ -619,7 +624,7 @@ def run_exhaustive_document_review(
 
     final_reply = current_items[0].get('text', '').strip()
     coverage_summary = _format_coverage_summary(coverage)
-    if coverage_summary:
+    if include_coverage_summary and coverage_summary:
         final_reply = f"{final_reply}\n\n{coverage_summary}".strip()
 
     log_event(
@@ -645,6 +650,7 @@ def run_exhaustive_document_review(
 
     return {
         'reply': final_reply,
+        'analysis_reply': current_items[0].get('text', '').strip(),
         'coverage': coverage,
         'documents': coverage.get('documents', []),
         'document_ids': targets.get('document_ids', []),

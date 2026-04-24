@@ -54,12 +54,15 @@ from functions_message_artifacts import (
     hydrate_agent_citations_from_artifacts,
     make_json_serializable,
 )
-from functions_exhaustive_document_review import (
-    CHAT_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS,
-    normalize_exhaustive_review_targets,
+from functions_document_actions import (
+    DOCUMENT_ACTION_TYPE_COMPARISON,
+    DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
+    DOCUMENT_ACTION_TYPE_NONE,
+    normalize_document_action_config,
 )
+from functions_exhaustive_document_review import CHAT_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS
 from functions_thoughts import ThoughtTracker
-from functions_workflow_runner import _execute_exhaustive_review_workflow
+from functions_workflow_runner import _execute_document_action_workflow
 
 
 def _strip_agent_citation_artifact_refs(agent_citations):
@@ -6032,9 +6035,10 @@ def register_route_backend_chats(app):
             'thoughts_enabled': payload.get('thoughts_enabled', False),
             'blocked': payload.get('blocked', False),
             'review_coverage': payload.get('review_coverage', {}),
+            'document_action': payload.get('document_action', {}),
         })
 
-    def _build_exhaustive_review_stream_content(event):
+    def _build_document_action_stream_content(event):
         event = event if isinstance(event, dict) else {}
         event_type = str(event.get('type') or '').strip().lower()
         document_name = str(event.get('document_name') or 'Document').strip() or 'Document'
@@ -6060,9 +6064,17 @@ def register_route_backend_chats(app):
             return f'Completed window {window_number} of {total_windows} for {document_name}'
         if event_type == 'document_completed':
             return f'Completed exhaustive review for {document_name}'
+        if event_type == 'comparison_started':
+            right_document_name = str(event.get('right_document_name') or 'Document').strip() or 'Document'
+            return f'Comparing {document_name} to {right_document_name}'
+        if event_type == 'comparison_completed':
+            right_document_name = str(event.get('right_document_name') or 'Document').strip() or 'Document'
+            return f'Completed comparison of {document_name} to {right_document_name}'
+        if event_type == 'comparison_reduction_started':
+            return 'Combining comparison findings across the selected documents'
         return 'Running exhaustive review across the selected documents'
 
-    def _build_exhaustive_review_stream_activity_callback(publish_background_event, assistant_message_id):
+    def _build_document_action_stream_activity_callback(publish_background_event, assistant_message_id):
         if not callable(publish_background_event) or not assistant_message_id:
             return None, None
 
@@ -6085,7 +6097,7 @@ def register_route_backend_chats(app):
         def callback(event):
             event = event if isinstance(event, dict) else {}
             publish_thought(
-                _build_exhaustive_review_stream_content(event),
+                _build_document_action_stream_content(event),
                 progress=event.get('progress') if isinstance(event.get('progress'), dict) else None,
             )
 
@@ -6144,7 +6156,7 @@ def register_route_backend_chats(app):
         cosmos_conversations_container.upsert_item(conversation_item)
         return conversation_item
 
-    def execute_exhaustive_review_chat_request(data=None, publish_background_event=None):
+    def execute_document_action_chat_request(data=None, publish_background_event=None, forced_action_type=None):
         settings = get_settings()
         data = data if isinstance(data, dict) else (request.get_json() or {})
         user_id = get_current_user_id()
@@ -6163,23 +6175,32 @@ def register_route_backend_chats(app):
         selected_document_ids = data.get('selected_document_ids', [])
         if not selected_document_ids and selected_document_id:
             selected_document_ids = [selected_document_id]
+
+        requested_action = data.get('document_action') if isinstance(data.get('document_action'), dict) else {}
+        if forced_action_type == DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW and not requested_action:
+            requested_action = {
+                'type': DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
+                'document_ids': selected_document_ids,
+                'doc_scope': data.get('doc_scope'),
+                'active_group_ids': data.get('active_group_ids') or data.get('active_group_id'),
+                'active_public_workspace_id': data.get('active_public_workspace_ids') or data.get('active_public_workspace_id'),
+                'window_unit': 'pages',
+                'max_retries_per_window': 1,
+            }
         try:
-            normalized_review_targets = normalize_exhaustive_review_targets(
-                document_ids=selected_document_ids,
-                doc_scope=data.get('doc_scope'),
-                active_group_ids=data.get('active_group_ids') or data.get('active_group_id'),
-                active_public_workspace_id=data.get('active_public_workspace_ids') or data.get('active_public_workspace_id'),
-                window_unit='pages',
-                max_retries_per_window=1,
+            normalized_action = normalize_document_action_config(
+                action_payload=requested_action,
                 max_documents=CHAT_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS,
             )
         except ValueError as exc:
             return {'error': str(exc)}, 400
+        if normalized_action.get('type') == DOCUMENT_ACTION_TYPE_NONE:
+            return {'error': 'Select a document action before sending this request.'}, 400
 
-        selected_document_ids = normalized_review_targets.get('document_ids', [])
-        document_scope = normalized_review_targets.get('doc_scope', 'all')
-        active_group_ids = normalized_review_targets.get('active_group_ids', [])
-        active_public_workspace_ids = normalized_review_targets.get('active_public_workspace_id', [])
+        selected_document_ids = normalized_action.get('document_ids', [])
+        document_scope = normalized_action.get('doc_scope', 'all')
+        active_group_ids = normalized_action.get('active_group_ids', [])
+        active_public_workspace_ids = normalized_action.get('active_public_workspace_id', [])
         request_agent_info = data.get('agent_info') if isinstance(data.get('agent_info'), dict) else {}
         runner_type = 'agent' if request_agent_info else 'model'
 
@@ -6211,12 +6232,13 @@ def register_route_backend_chats(app):
                 'model_provider': data.get('model_provider'),
             },
             'exhaustive_review': {
-                'enabled': True,
-                'document_ids': selected_document_ids,
-                'doc_scope': document_scope,
-                'active_group_ids': active_group_ids,
-                'active_public_workspace_id': active_public_workspace_ids,
+                'enabled': normalized_action.get('type') == DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
+                'document_ids': normalized_action.get('document_ids', []),
+                'doc_scope': normalized_action.get('doc_scope'),
+                'active_group_ids': normalized_action.get('active_group_ids'),
+                'active_public_workspace_id': normalized_action.get('active_public_workspace_id'),
             },
+            'document_action': normalized_action,
         }
         user_message_doc = make_json_serializable({
             'id': user_message_id,
@@ -6242,19 +6264,19 @@ def register_route_backend_chats(app):
         publish_stream_thought = None
         stream_activity_callback = None
         if callable(publish_background_event):
-            publish_stream_thought, stream_activity_callback = _build_exhaustive_review_stream_activity_callback(
+            publish_stream_thought, stream_activity_callback = _build_document_action_stream_activity_callback(
                 publish_background_event,
                 assistant_message_id,
             )
             if callable(publish_stream_thought):
                 publish_stream_thought(
-                    f"Queued exhaustive review for {len(selected_document_ids)} selected document{'s' if len(selected_document_ids) != 1 else ''}"
+                    f"Queued {normalized_action.get('type').replace('_', ' ')} for {len(selected_document_ids)} selected document{'s' if len(selected_document_ids) != 1 else ''}"
                 )
 
         workflow_like = {
             'id': f'chat-exhaustive-review:{conversation_id}',
             'user_id': user_id,
-            'name': 'Chat Exhaustive Review',
+            'name': 'Chat Document Action',
             'task_prompt': user_message,
             'runner_type': runner_type,
             'selected_agent': request_agent_info,
@@ -6266,21 +6288,22 @@ def register_route_backend_chats(app):
                 'model_id': str(data.get('model_id') or '').strip(),
                 'provider': str(data.get('model_provider') or '').strip(),
             },
+            'document_action': normalized_action,
             'exhaustive_review': {
-                'enabled': True,
-                'document_ids': selected_document_ids,
-                'doc_scope': document_scope,
-                'active_group_ids': active_group_ids,
-                'active_public_workspace_id': active_public_workspace_ids,
-                'window_unit': 'pages',
-                'window_size': None,
-                'window_percent': None,
-                'max_retries_per_window': 1,
+                'enabled': normalized_action.get('type') == DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
+                'document_ids': normalized_action.get('document_ids', []),
+                'doc_scope': normalized_action.get('doc_scope'),
+                'active_group_ids': normalized_action.get('active_group_ids', []),
+                'active_public_workspace_id': normalized_action.get('active_public_workspace_id', []),
+                'window_unit': normalized_action.get('window_unit'),
+                'window_size': normalized_action.get('window_size'),
+                'window_percent': normalized_action.get('window_percent'),
+                'max_retries_per_window': normalized_action.get('max_retries_per_window'),
             },
         }
 
         try:
-            execution_result = _execute_exhaustive_review_workflow(
+            execution_result = _execute_document_action_workflow(
                 workflow_like,
                 settings,
                 conversation_id=conversation_id,
@@ -6333,9 +6356,10 @@ def register_route_backend_chats(app):
                     'thread_attempt': assistant_thread_attempt,
                 },
                 'exhaustive_review': {
-                    'enabled': True,
+                    'enabled': normalized_action.get('type') == DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
                     'coverage': execution_result.get('review_coverage') or {},
                 },
+                'document_action': normalized_action,
             },
         })
         cosmos_messages_container.upsert_item(assistant_doc)
@@ -6391,7 +6415,54 @@ def register_route_backend_chats(app):
             'kernel_fallback_notice': None,
             'thoughts_enabled': False,
             'review_coverage': execution_result.get('review_coverage') or {},
+            'document_action': normalized_action,
         }), 200
+
+    def execute_exhaustive_review_chat_request(data=None, publish_background_event=None):
+        return execute_document_action_chat_request(
+            data=data,
+            publish_background_event=publish_background_event,
+            forced_action_type=DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
+        )
+
+    @app.route('/api/chat/document-action', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def chat_document_action_api():
+        payload, status_code = execute_document_action_chat_request()
+        return jsonify(payload), status_code
+
+    @app.route('/api/chat/document-action/stream', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def chat_document_action_stream_api():
+        data = request.get_json() or {}
+        conversation_id = getattr(g, 'conversation_id', None) or data.get('conversation_id')
+        if conversation_id is not None:
+            conversation_id = str(conversation_id).strip() or None
+        if not conversation_id:
+            conversation_id = str(uuid.uuid4())
+        data['conversation_id'] = conversation_id
+        g.conversation_id = conversation_id
+
+        def generate_document_action_response(publish_background_event=None):
+            try:
+                payload, status_code = execute_document_action_chat_request(
+                    data=data,
+                    publish_background_event=publish_background_event,
+                )
+                if status_code >= 400:
+                    error_message = payload.get('error') or f'Document action failed ({status_code})'
+                    yield f"data: {json.dumps({'error': error_message, 'conversation_id': payload.get('conversation_id')})}\n\n"
+                    return
+
+                yield f"data: {json.dumps(normalize_terminal_chat_payload(payload))}\n\n"
+            except Exception as document_action_error:
+                yield f"data: {json.dumps({'error': str(document_action_error), 'conversation_id': conversation_id})}\n\n"
+
+        return build_background_stream_response(generate_document_action_response)
 
     @app.route('/api/chat/exhaustive-review', methods=['POST'])
     @swagger_route(security=get_auth_security())

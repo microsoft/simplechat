@@ -20,3 +20,4 @@ category: Version History
 - [Core Document Search And Summarization](v0.241.007/CORE_DOCUMENT_SEARCH_AND_SUMMARIZATION.md)
 - [Exhaustive Document Review](v0.241.069/EXHAUSTIVE_DOCUMENT_REVIEW.md)
 - [Exhaustive Review Progress And Limits](v0.241.071/EXHAUSTIVE_REVIEW_PROGRESS_AND_LIMITS.md)
+- [Document Actions And Comparison](v0.241.072/DOCUMENT_ACTIONS_AND_COMPARISON.md)

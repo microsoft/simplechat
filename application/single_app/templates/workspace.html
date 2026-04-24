@@ -1230,11 +1230,21 @@
           </div>
 
           <div class="card p-3 mb-3">
-            <div class="form-check form-switch">
-              <input class="form-check-input" type="checkbox" id="workflow-exhaustive-review-enabled" />
-              <label class="form-check-label ms-2" for="workflow-exhaustive-review-enabled">Exhaustive review selected documents</label>
+            <div class="row g-3 mb-2">
+              <div class="col-md-6">
+                <label for="workflow-document-action-type" class="form-label">Action Type</label>
+                <select class="form-select" id="workflow-document-action-type">
+                  <option value="none">Standard Prompt Run</option>
+                  <option value="exhaustive_review">Exhaustive Review</option>
+                  <option value="comparison">Compare Documents</option>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label for="workflow-review-retries" class="form-label">Retries Per Window</label>
+                <input type="number" class="form-control" id="workflow-review-retries" min="0" max="5" value="1" />
+              </div>
             </div>
-            <div class="form-text mt-2">Review every ordered page or chunk for fixed document targets instead of relying on bounded search results.</div>
+            <div class="form-text mt-2" id="workflow-document-action-help">Use the standard prompt flow or bind the workflow to a deterministic document action.</div>
 
             <div id="workflow-document-targets-fields" class="mt-3 d-none">
               <div class="row g-3 mb-3">
@@ -1247,19 +1257,32 @@
                     <option value="all">All Accessible Workspaces</option>
                   </select>
                 </div>
-                <div class="col-md-6">
-                  <label for="workflow-review-retries" class="form-label">Retries Per Window</label>
-                  <input type="number" class="form-control" id="workflow-review-retries" min="0" max="5" value="1" />
+                <div class="col-md-6 d-flex align-items-end">
+                  <div class="form-text mb-0">Document actions keep a fixed ordered target list so workflows do not depend on bounded search recall.</div>
                 </div>
               </div>
 
-              <div class="mb-3">
-                <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-2">
-                  <label for="workflow-review-document-ids" class="form-label mb-0">Document IDs</label>
-                  <button type="button" class="btn btn-sm btn-outline-primary" id="workflow-use-selected-documents-btn">Use selected workspace documents</button>
-                </div>
+              <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-3">
+                <div class="form-text mb-0" id="workflow-selected-documents-summary">No workspace documents selected right now.</div>
+                <button type="button" class="btn btn-sm btn-outline-primary" id="workflow-use-selected-documents-btn">Use selected workspace documents</button>
+              </div>
+
+              <div id="workflow-exhaustive-target-fields" class="mb-3 d-none">
+                <label for="workflow-review-document-ids" class="form-label mb-2">Document IDs</label>
                 <textarea class="form-control" id="workflow-review-document-ids" rows="3" placeholder="Enter one or more document ids separated by commas."></textarea>
-                <div class="form-text" id="workflow-selected-documents-summary">No workspace documents selected right now.</div>
+              </div>
+
+              <div id="workflow-comparison-target-fields" class="d-none">
+                <div class="mb-3">
+                  <label for="workflow-comparison-left-document-id" class="form-label mb-2">Left Document ID</label>
+                  <input type="text" class="form-control" id="workflow-comparison-left-document-id" placeholder="Enter the baseline document id." />
+                  <div class="form-text">The left document becomes the comparison baseline for every right-side document.</div>
+                </div>
+
+                <div class="mb-3">
+                  <label for="workflow-comparison-right-document-ids" class="form-label">Right Document IDs</label>
+                  <textarea class="form-control" id="workflow-comparison-right-document-ids" rows="3" placeholder="Enter one or more comparison document ids separated by commas."></textarea>
+                </div>
               </div>
 
               <div class="row g-3 mb-3">

@@ -40,6 +40,13 @@ from functions_collaboration import (
     get_collaboration_conversation,
     mirror_source_message_to_collaboration,
 )
+from functions_document_actions import (
+    DOCUMENT_ACTION_TYPE_COMPARISON,
+    DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW,
+    DOCUMENT_ACTION_TYPE_NONE,
+    get_document_action_config,
+)
+from functions_document_comparison import run_document_comparison
 from functions_exhaustive_document_review import (
     WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS,
     run_exhaustive_document_review,
@@ -1264,6 +1271,7 @@ def _create_user_message(conversation_id, workflow, trigger_source, run_id):
     previous_thread_id = _get_latest_thread_id(conversation_id)
     current_thread_id = str(uuid.uuid4())
     message_id = str(uuid.uuid4())
+    document_action = _get_document_action_config(workflow)
     metadata = {
         'source': 'workflow',
         'workflow': {
@@ -1272,6 +1280,7 @@ def _create_user_message(conversation_id, workflow, trigger_source, run_id):
             'runner_type': workflow.get('runner_type'),
             'trigger_source': trigger_source,
             'run_id': run_id,
+            'document_action': document_action,
             'exhaustive_review': workflow.get('exhaustive_review') or {},
         },
         'thread_info': {
@@ -1360,6 +1369,7 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
     assistant_message_id = assistant_message_id or str(uuid.uuid4())
     timestamp = _utc_now_iso()
     user_thread_info = (user_message_doc.get('metadata') or {}).get('thread_info') or {}
+    document_action = _get_document_action_config(workflow)
     raw_agent_citations = list(result.get('agent_citations') or [])
     prepared_agent_citations = _persist_agent_citation_artifacts(
         conversation_id=conversation.get('id'),
@@ -1390,6 +1400,7 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
                 'run_id': run_id,
                 'selected_agent': workflow.get('selected_agent') or {},
                 'model_binding_summary': workflow.get('model_binding_summary') or {},
+                'document_action': document_action,
                 'exhaustive_review': workflow.get('exhaustive_review') or {},
                 'review_coverage': result.get('review_coverage') or {},
             },
@@ -1576,7 +1587,11 @@ def _chain_activity_callbacks(*callbacks):
     return callback
 
 
-def _build_exhaustive_review_activity_callback(workflow, run_id, thought_tracker=None):
+def _get_document_action_config(workflow):
+    return get_document_action_config(workflow, max_documents=WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS)
+
+
+def _build_document_action_activity_callback(workflow, run_id, thought_tracker=None):
     if not thought_tracker or not run_id:
         return None
 
@@ -1628,6 +1643,51 @@ def _build_exhaustive_review_activity_callback(workflow, run_id, thought_tracker
                 kind='document_review',
                 title='Document review',
                 status='failed',
+            )
+        elif event_type == 'comparison_started':
+            right_document_name = str((event or {}).get('right_document_name') or 'Document').strip() or 'Document'
+            _add_workflow_activity_thought(
+                thought_tracker,
+                workflow,
+                run_id,
+                step_type='document',
+                content=f'Comparing {document_name} to {right_document_name}',
+                detail=(
+                    f"pair={event.get('comparison_index', 0)}/{event.get('comparison_count', 0)}"
+                ),
+                activity_key=f"compare:{run_id}:{document_id}:{event.get('right_document_id')}:start",
+                kind='document_review',
+                title='Document comparison',
+                status='running',
+            )
+        elif event_type == 'comparison_completed':
+            right_document_name = str((event or {}).get('right_document_name') or 'Document').strip() or 'Document'
+            _add_workflow_activity_thought(
+                thought_tracker,
+                workflow,
+                run_id,
+                step_type='document',
+                content=f'Completed comparison of {document_name} to {right_document_name}',
+                detail=(
+                    f"pair={event.get('comparison_index', 0)}/{event.get('comparison_count', 0)}"
+                ),
+                activity_key=f"compare:{run_id}:{document_id}:{event.get('right_document_id')}:complete",
+                kind='document_review',
+                title='Document comparison',
+                status='completed',
+            )
+        elif event_type == 'comparison_reduction_started':
+            _add_workflow_activity_thought(
+                thought_tracker,
+                workflow,
+                run_id,
+                step_type='document',
+                content='Combining comparison findings across the selected documents',
+                detail=f"pairs={event.get('comparison_count', 0)}",
+                activity_key=f'compare:{run_id}:reduction',
+                kind='document_review',
+                title='Document comparison',
+                status='running',
             )
 
     return callback
@@ -1686,13 +1746,14 @@ def _execute_exhaustive_review_workflow(
     run_id=None,
     thought_tracker=None,
     external_activity_callback=None,
+    action_config=None,
 ):
-    review_config = workflow.get('exhaustive_review') if isinstance(workflow.get('exhaustive_review'), dict) else {}
-    if not review_config.get('enabled'):
+    review_config = action_config if isinstance(action_config, dict) else _get_document_action_config(workflow)
+    if review_config.get('type') != DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW:
         raise ValueError('Exhaustive review is not enabled for this workflow.')
 
     activity_callback = _chain_activity_callbacks(
-        _build_exhaustive_review_activity_callback(workflow, run_id, thought_tracker=thought_tracker),
+        _build_document_action_activity_callback(workflow, run_id, thought_tracker=thought_tracker),
         external_activity_callback,
     )
     user_id = str(workflow.get('user_id') or '').strip()
@@ -1827,6 +1888,173 @@ def _execute_exhaustive_review_workflow(
         'model_deployment_name': deployment_name,
         'provider': provider,
     }
+
+
+def _execute_document_comparison_workflow(
+    workflow,
+    settings,
+    conversation_id='',
+    run_id=None,
+    thought_tracker=None,
+    external_activity_callback=None,
+    action_config=None,
+):
+    comparison_config = action_config if isinstance(action_config, dict) else _get_document_action_config(workflow)
+    if comparison_config.get('type') != DOCUMENT_ACTION_TYPE_COMPARISON:
+        raise ValueError('Document comparison is not enabled for this workflow.')
+
+    activity_callback = _chain_activity_callbacks(
+        _build_document_action_activity_callback(workflow, run_id, thought_tracker=thought_tracker),
+        external_activity_callback,
+    )
+    user_id = str(workflow.get('user_id') or '').strip()
+    selected_agent = workflow.get('selected_agent') if isinstance(workflow.get('selected_agent'), dict) else {}
+
+    if workflow.get('runner_type') == 'agent':
+        with _ensure_execution_context(user_id):
+            plugin_logger = get_plugin_logger()
+            previous_force_enable_agents = getattr(g, 'force_enable_agents', None) if hasattr(g, 'force_enable_agents') else None
+            previous_request_agent_info = getattr(g, 'request_agent_info', None) if hasattr(g, 'request_agent_info') else None
+            previous_request_agent_name = getattr(g, 'request_agent_name', None) if hasattr(g, 'request_agent_name') else None
+            previous_conversation_id = getattr(g, 'conversation_id', None) if hasattr(g, 'conversation_id') else None
+
+            g.force_enable_agents = True
+            g.request_agent_info = dict(selected_agent)
+            g.request_agent_name = selected_agent.get('name')
+            callback_key = None
+            if conversation_id:
+                plugin_logger.clear_invocations_for_conversation(user_id, conversation_id)
+                g.conversation_id = conversation_id
+
+            try:
+                kernel = Kernel()
+                kernel, agent_objs = load_user_semantic_kernel(kernel, settings, user_id, None)
+                if not agent_objs:
+                    raise ValueError('The selected agent could not be loaded for document comparison.')
+
+                loaded_agent = None
+                requested_name = str(selected_agent.get('name') or '').strip()
+                if requested_name:
+                    loaded_agent = agent_objs.get(requested_name)
+                if loaded_agent is None:
+                    loaded_agent = next(iter(agent_objs.values()))
+
+                if thought_tracker and run_id and conversation_id:
+                    callback_key = register_plugin_invocation_thought_callback(
+                        plugin_logger,
+                        thought_tracker,
+                        user_id,
+                        conversation_id,
+                        actor_label='Workflow agent',
+                    )
+
+                def invoke_prompt(prompt_text, stage='window_review', metadata=None):
+                    result = asyncio.run(loaded_agent.invoke([
+                        ChatMessageContent(role='user', content=prompt_text),
+                    ]))
+                    return str(result)
+
+                comparison_result = run_document_comparison(
+                    user_id=user_id,
+                    comparison_prompt=workflow.get('task_prompt', ''),
+                    action_config=comparison_config,
+                    invoke_prompt=invoke_prompt,
+                    activity_callback=activity_callback,
+                )
+                agent_citations = _build_agent_citations_from_invocations(user_id, conversation_id)
+                alert_targets = _collect_agent_alert_targets(user_id, conversation_id)
+
+                return {
+                    'reply': comparison_result.get('reply', ''),
+                    'review_result': comparison_result,
+                    'review_coverage': comparison_result.get('coverage') or {},
+                    'model_deployment_name': getattr(loaded_agent, 'deployment_name', None) or requested_name,
+                    'provider': 'agent',
+                    'agent_name': getattr(loaded_agent, 'name', None) or requested_name,
+                    'agent_display_name': getattr(loaded_agent, 'display_name', None) or selected_agent.get('display_name') or requested_name,
+                    'agent_citations': agent_citations,
+                    'alert_targets': alert_targets,
+                }
+            finally:
+                if callback_key:
+                    plugin_logger.deregister_callbacks(callback_key)
+                if previous_force_enable_agents is None and hasattr(g, 'force_enable_agents'):
+                    delattr(g, 'force_enable_agents')
+                else:
+                    g.force_enable_agents = previous_force_enable_agents
+
+                if previous_request_agent_info is None and hasattr(g, 'request_agent_info'):
+                    delattr(g, 'request_agent_info')
+                else:
+                    g.request_agent_info = previous_request_agent_info
+
+                if previous_request_agent_name is None and hasattr(g, 'request_agent_name'):
+                    delattr(g, 'request_agent_name')
+                else:
+                    g.request_agent_name = previous_request_agent_name
+
+                if previous_conversation_id is None and hasattr(g, 'conversation_id'):
+                    delattr(g, 'conversation_id')
+                else:
+                    g.conversation_id = previous_conversation_id
+
+    client, deployment_name, provider = _resolve_model_workflow_client(workflow, settings)
+
+    def invoke_model_prompt(prompt_text, stage='window_review', metadata=None):
+        completion = client.chat.completions.create(
+            model=deployment_name,
+            messages=[{'role': 'user', 'content': prompt_text}],
+        )
+        if not getattr(completion, 'choices', None):
+            return ''
+        return _extract_message_text(completion.choices[0].message.content)
+
+    comparison_result = run_document_comparison(
+        user_id=user_id,
+        comparison_prompt=workflow.get('task_prompt', ''),
+        action_config=comparison_config,
+        invoke_prompt=invoke_model_prompt,
+        activity_callback=activity_callback,
+    )
+    return {
+        'reply': comparison_result.get('reply', ''),
+        'review_result': comparison_result,
+        'review_coverage': comparison_result.get('coverage') or {},
+        'model_deployment_name': deployment_name,
+        'provider': provider,
+    }
+
+
+def _execute_document_action_workflow(
+    workflow,
+    settings,
+    conversation_id='',
+    run_id=None,
+    thought_tracker=None,
+    external_activity_callback=None,
+):
+    action_config = _get_document_action_config(workflow)
+    if action_config.get('type') == DOCUMENT_ACTION_TYPE_EXHAUSTIVE_REVIEW:
+        return _execute_exhaustive_review_workflow(
+            workflow,
+            settings,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            thought_tracker=thought_tracker,
+            external_activity_callback=external_activity_callback,
+            action_config=action_config,
+        )
+    if action_config.get('type') == DOCUMENT_ACTION_TYPE_COMPARISON:
+        return _execute_document_comparison_workflow(
+            workflow,
+            settings,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            thought_tracker=thought_tracker,
+            external_activity_callback=external_activity_callback,
+            action_config=action_config,
+        )
+    raise ValueError('No document action is enabled for this workflow.')
 
 
 def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None, thought_tracker=None):
@@ -1995,8 +2223,9 @@ def run_personal_workflow(workflow, trigger_source='manual'):
             status='running',
         )
 
-        if (workflow.get('exhaustive_review') or {}).get('enabled'):
-            execution_result = _execute_exhaustive_review_workflow(
+        document_action = _get_document_action_config(workflow)
+        if document_action.get('type') != DOCUMENT_ACTION_TYPE_NONE:
+            execution_result = _execute_document_action_workflow(
                 workflow,
                 settings,
                 conversation_id=conversation.get('id'),

@@ -1,7 +1,7 @@
 # test_exhaustive_document_review_feature.py
 """
 Functional test for exhaustive document review.
-Version: 0.241.071
+Version: 0.241.072
 Implemented in: 0.241.069
 
 This test ensures workflows and chat share the deterministic exhaustive
@@ -31,8 +31,8 @@ def test_exhaustive_document_review_feature_wiring():
     feature_index_content = read_text("docs/explanation/features/index.md")
     feature_doc_content = read_text("docs/explanation/features/v0.241.069/EXHAUSTIVE_DOCUMENT_REVIEW.md")
 
-    assert 'VERSION = "0.241.071"' in config_content, (
-        "Expected config.py version 0.241.071 for exhaustive document review."
+    assert 'VERSION = "0.241.072"' in config_content, (
+        "Expected config.py version 0.241.072 for exhaustive document review."
     )
     assert 'def normalize_exhaustive_review_targets(' in review_service_content, (
         "Expected functions_exhaustive_document_review.py to normalize structured review targets."
@@ -43,47 +43,59 @@ def test_exhaustive_document_review_feature_wiring():
     assert '## Coverage' in review_service_content, (
         "Expected the exhaustive review service to append a deterministic coverage summary."
     )
-    assert 'exhaustive_review = _normalize_exhaustive_review_config' in workflow_store_content, (
-        "Expected workflow storage to normalize exhaustive review settings."
+    assert 'document_action = _normalize_document_action_config' in workflow_store_content, (
+        "Expected workflow storage to normalize shared document action settings."
     )
-    assert "'exhaustive_review': exhaustive_review" in workflow_store_content, (
-        "Expected workflows to persist exhaustive review configuration."
+    assert "'document_action': document_action" in workflow_store_content, (
+        "Expected workflows to persist normalized document action configuration."
     )
-    assert 'def _execute_exhaustive_review_workflow(' in workflow_runner_content, (
-        "Expected workflow runner to expose a shared exhaustive review execution helper."
+    assert 'def _execute_document_action_workflow(' in workflow_runner_content, (
+        "Expected workflow runner to expose a shared document action execution helper."
     )
-    assert "if (workflow.get('exhaustive_review') or {}).get('enabled'):" in workflow_runner_content, (
-        "Expected workflow execution to branch into exhaustive review when enabled."
+    assert "if document_action.get('type') != DOCUMENT_ACTION_TYPE_NONE:" in workflow_runner_content, (
+        "Expected workflow execution to branch into the shared document action executor when configured."
     )
     assert "'review_coverage': execution_result.get('review_coverage') or {}," in workflow_runner_content, (
         "Expected workflow runs to persist exhaustive review coverage metadata."
     )
-    assert 'workflow-exhaustive-review-enabled' in workflow_template_content, (
-        "Expected workspace workflow modal to expose the exhaustive review toggle."
+    assert 'workflow-document-action-type' in workflow_template_content, (
+        "Expected workspace workflow modal to expose a document action selector."
     )
-    assert 'workflow-use-selected-documents-btn' in workflow_template_content, (
-        "Expected workspace workflow modal to offer one-click workspace document targeting."
+    assert 'workflow-comparison-left-document-id' in workflow_template_content, (
+        "Expected workspace workflow modal to expose comparison left-side document targeting."
     )
-    assert 'getExhaustiveReviewLabel' in workflow_js_content, (
-        "Expected workspace workflow UI to describe exhaustive review configuration in list and grid views."
+    assert 'getDocumentActionLabel' in workflow_js_content, (
+        "Expected workspace workflow UI to describe document action configuration in list and grid views."
     )
-    assert 'payload.exhaustive_review.document_ids.length' in workflow_js_content, (
-        "Expected workflow save validation to require document ids for exhaustive review."
+    assert 'payload.document_action.right_document_ids.length' in workflow_js_content, (
+        "Expected workflow save validation to support one-left-to-many-right comparison targets."
+    )
+    assert "/api/chat/document-action" in chat_route_content, (
+        "Expected route_backend_chats.py to expose a shared document action JSON route."
+    )
+    assert "/api/chat/document-action/stream" in chat_route_content, (
+        "Expected route_backend_chats.py to expose a shared document action streaming route."
     )
     assert "/api/chat/exhaustive-review" in chat_route_content, (
-        "Expected route_backend_chats.py to expose a dedicated exhaustive review JSON route."
+        "Expected route_backend_chats.py to preserve the dedicated exhaustive review JSON compatibility route."
     )
     assert "/api/chat/exhaustive-review/stream" in chat_route_content, (
-        "Expected route_backend_chats.py to expose a dedicated exhaustive review streaming route."
+        "Expected route_backend_chats.py to preserve the dedicated exhaustive review streaming compatibility route."
     )
-    assert '_execute_exhaustive_review_workflow' in chat_route_content, (
-        "Expected chat exhaustive review to reuse the shared workflow executor."
+    assert '_execute_document_action_workflow' in chat_route_content, (
+        "Expected chat document actions to reuse the shared workflow executor."
     )
-    assert 'exhaustive-review-btn' in chat_template_content, (
-        "Expected chats.html to expose an exhaustive review entry point beside document selection."
+    assert 'document-action-select' in chat_template_content, (
+        "Expected chats.html to expose a document action selector beside document selection."
     )
-    assert "endpoint: useExhaustiveReview ? '/api/chat/exhaustive-review/stream' : '/api/chat/stream'" in chat_messages_content, (
-        "Expected chat message sending to route exhaustive review through the dedicated streaming endpoint."
+    assert 'document-comparison-left-select' in chat_template_content, (
+        "Expected chats.html to expose a left-side selector for comparison actions."
+    )
+    assert 'document_action: documentAction' in chat_messages_content, (
+        "Expected chat message payloads to include the shared document action structure."
+    )
+    assert "endpoint: useDocumentAction ? '/api/chat/document-action/stream' : '/api/chat/stream'" in chat_messages_content, (
+        "Expected chat message sending to route document actions through the shared streaming endpoint."
     )
     assert 'EXHAUSTIVE_DOCUMENT_REVIEW.md' in feature_index_content, (
         "Expected the feature index to link the exhaustive document review documentation."

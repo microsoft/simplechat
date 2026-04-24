@@ -1,7 +1,7 @@
 # test_exhaustive_review_progress_and_limits.py
 """
 Functional test for exhaustive review progress and limits.
-Version: 0.241.071
+Version: 0.241.072
 Implemented in: 0.241.071
 
 This test ensures chat streams structured exhaustive review progress, shows
@@ -30,8 +30,8 @@ def test_exhaustive_review_progress_and_limits_wiring():
     feature_index_content = read_text("docs/explanation/features/index.md")
     feature_doc_content = read_text("docs/explanation/features/v0.241.071/EXHAUSTIVE_REVIEW_PROGRESS_AND_LIMITS.md")
 
-    assert 'VERSION = "0.241.071"' in config_content, (
-        "Expected config.py version 0.241.071 for exhaustive review progress improvements."
+    assert 'VERSION = "0.241.072"' in config_content, (
+        "Expected config.py version 0.241.072 for exhaustive review progress improvements."
     )
     assert 'CHAT_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS = 3' in review_service_content, (
         "Expected the exhaustive review service to define the chat document cap."
@@ -45,8 +45,8 @@ def test_exhaustive_review_progress_and_limits_wiring():
     assert "'progress': _build_progress_snapshot(coverage)" in review_service_content, (
         "Expected exhaustive review activity events to include serialized progress snapshots."
     )
-    assert 'def _build_exhaustive_review_stream_activity_callback(' in chat_route_content, (
-        "Expected the chat route to stream exhaustive review progress events."
+    assert 'def _build_document_action_stream_activity_callback(' in chat_route_content, (
+        "Expected the chat route to stream document action progress events."
     )
     assert 'publish_background_event=publish_background_event' in chat_route_content, (
         "Expected the chat stream route to pass the background publisher into exhaustive review execution."
@@ -66,8 +66,8 @@ def test_exhaustive_review_progress_and_limits_wiring():
     assert 'WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS = 10' in workflow_js_content, (
         "Expected the workflow UI to define its exhaustive review document cap."
     )
-    assert 'Workflow exhaustive review supports up to ${WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS} documents per run.' in workflow_js_content, (
-        "Expected the workflow UI to reject oversized exhaustive review selections."
+    assert 'Workflow document actions support up to ${WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS} documents per run.' in workflow_js_content, (
+        "Expected the workflow UI to reject oversized document action selections."
     )
     assert 'max_documents=WORKFLOW_EXHAUSTIVE_REVIEW_MAX_DOCUMENTS' in workflow_store_content, (
         "Expected workflow persistence to normalize exhaustive review document caps."
