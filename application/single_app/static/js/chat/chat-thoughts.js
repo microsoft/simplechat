@@ -8,6 +8,7 @@ let lastSeenThoughtIndex = -1;
 let lastSeenThoughtMessageId = null;
 let activeStreamingThoughtTargetId = null;
 let activeStreamingServerMessageId = null;
+const streamingAgentActivityStates = new Map();
 
 // ---------------------------------------------------------------------------
 // Icon map: step_type → Bootstrap Icon class
@@ -127,6 +128,218 @@ function renderExhaustiveReviewProgress(thoughtData) {
     </div>`;
 }
 
+function createAgentActivityState() {
+    return {
+        activities: new Map(),
+        dispatchStarted: false,
+        latestContent: '',
+        latestDetail: '',
+        latestStepType: '',
+        completed: false,
+        maxPercent: 0,
+    };
+}
+
+function resetStreamingAgentActivityState(targetMessageId = null) {
+    if (!targetMessageId) {
+        return;
+    }
+
+    streamingAgentActivityStates.delete(targetMessageId);
+}
+
+function getStreamingAgentActivityState(targetMessageId) {
+    if (!targetMessageId) {
+        return null;
+    }
+
+    if (!streamingAgentActivityStates.has(targetMessageId)) {
+        streamingAgentActivityStates.set(targetMessageId, createAgentActivityState());
+    }
+
+    return streamingAgentActivityStates.get(targetMessageId);
+}
+
+function getNormalizedActivityStatus(activity) {
+    return String(activity?.status || activity?.state || '').trim().toLowerCase();
+}
+
+function isTerminalActivityStatus(status) {
+    return status === 'completed' || status === 'failed';
+}
+
+function getAgentActivityCounters(state) {
+    const activities = Array.from(state.activities.values());
+    let completedCount = 0;
+    let failedCount = 0;
+    let runningCount = 0;
+
+    activities.forEach(activity => {
+        const normalizedStatus = getNormalizedActivityStatus(activity);
+        if (normalizedStatus === 'failed') {
+            failedCount += 1;
+            return;
+        }
+        if (normalizedStatus === 'completed') {
+            completedCount += 1;
+            return;
+        }
+        runningCount += 1;
+    });
+
+    return {
+        activities,
+        completedCount,
+        failedCount,
+        runningCount,
+        finishedCount: completedCount + failedCount,
+        totalCount: activities.length,
+    };
+}
+
+function hasAgentActivity(state) {
+    if (!state) {
+        return false;
+    }
+
+    return state.dispatchStarted || state.activities.size > 0;
+}
+
+function updateAgentActivityState(state, thoughtData, preserveMaxPercent = true) {
+    if (!state || !thoughtData) {
+        return state;
+    }
+
+    const content = String(thoughtData.content || '').trim();
+    const normalizedContent = content.toLowerCase();
+    const stepType = String(thoughtData.step_type || '').trim().toLowerCase();
+
+    if (stepType === 'agent_tool_call' || normalizedContent.startsWith('sending to agent')) {
+        state.dispatchStarted = true;
+    }
+
+    if (content) {
+        state.latestContent = content;
+    }
+    if (thoughtData.detail) {
+        state.latestDetail = String(thoughtData.detail);
+    }
+    if (stepType) {
+        state.latestStepType = stepType;
+    }
+
+    if (thoughtData.activity && typeof thoughtData.activity === 'object') {
+        const activityPayload = thoughtData.activity;
+        const activityKey = activityPayload.activity_key || activityPayload.title || `${thoughtData.step_index || state.activities.size}`;
+        const previousActivity = state.activities.get(activityKey) || {};
+        state.activities.set(activityKey, {
+            ...previousActivity,
+            ...activityPayload,
+            content: content || previousActivity.content || '',
+            detail: thoughtData.detail || previousActivity.detail || '',
+        });
+
+        if (preserveMaxPercent && isTerminalActivityStatus(getNormalizedActivityStatus(activityPayload))) {
+            state.maxPercent = Math.max(state.maxPercent, 45);
+        }
+    }
+
+    if (stepType === 'generation' && normalizedContent.includes('responded')) {
+        state.completed = true;
+    }
+
+    return state;
+}
+
+function buildAgentActivityStateFromThoughts(thoughts) {
+    const state = createAgentActivityState();
+    (thoughts || []).forEach(thought => updateAgentActivityState(state, thought, false));
+    return state;
+}
+
+function computeAgentActivityPercent(state, counters) {
+    let percent = state.dispatchStarted ? 15 : 0;
+
+    if (state.latestStepType === 'generation') {
+        percent = Math.max(percent, 25);
+    }
+
+    if (counters.totalCount > 0) {
+        percent = Math.max(percent, 35 + Math.round((counters.finishedCount / counters.totalCount) * 45));
+
+        if (counters.runningCount > 0) {
+            percent = Math.max(percent, 45);
+        }
+
+        if (counters.finishedCount === counters.totalCount) {
+            percent = Math.max(percent, 80);
+        }
+    }
+
+    if (state.completed) {
+        percent = 100;
+    } else {
+        percent = Math.min(percent, 95);
+        percent = Math.max(percent, state.maxPercent);
+        state.maxPercent = percent;
+    }
+
+    return normalizeProgressPercent(percent);
+}
+
+function renderAgentActivityProgress(state, options = {}) {
+    const isLive = options.live === true;
+    const counters = getAgentActivityCounters(state);
+    const percent = computeAgentActivityPercent(state, counters);
+    const status = state.completed
+        ? (counters.failedCount > 0 ? 'completed_with_failures' : 'completed')
+        : 'running';
+    const runningActivity = [...counters.activities].reverse().find(activity => getNormalizedActivityStatus(activity) === 'running');
+    const summaryParts = [];
+
+    if (counters.totalCount > 0) {
+        summaryParts.push(buildProgressSummaryLabel(counters.finishedCount, counters.totalCount, 'tool'));
+    }
+    if (counters.runningCount > 0) {
+        summaryParts.push(`${counters.runningCount} running`);
+    }
+    if (counters.failedCount > 0) {
+        summaryParts.push(`${counters.failedCount} failed`);
+    }
+    if (state.completed) {
+        summaryParts.push('Response ready');
+    }
+
+    const summaryText = summaryParts.join(' | ') || 'Connecting to the selected agent';
+    const currentActivityText = runningActivity?.title
+        ? `Current tool: ${runningActivity.title}`
+        : (isLive
+            ? (state.latestContent || 'Connecting to the selected agent')
+            : 'Agent activity captured for this response');
+
+    return `<div class="streaming-thought-display agent-progress-card" data-agent-progress-state="${escapeHtml(status)}" data-agent-progress-percent="${percent}">
+        <div class="card border-info-subtle shadow-sm">
+            <div class="card-body py-3 px-3">
+                <div class="d-flex align-items-start justify-content-between gap-2 mb-2">
+                    <div class="d-flex align-items-start gap-2 flex-grow-1">
+                        <i class="bi bi-robot text-info mt-1"></i>
+                        <div>
+                            <div class="small fw-semibold text-body">Agent progress</div>
+                            <div class="text-muted small">${escapeHtml(currentActivityText)}</div>
+                        </div>
+                    </div>
+                    <span class="badge text-bg-light border">${percent}%</span>
+                </div>
+                <div class="text-muted small mb-2">${escapeHtml(summaryText)}</div>
+                <div class="mb-2">
+                    ${renderProgressBar(percent, status, counters.failedCount, 'Agent progress')}
+                </div>
+                <div class="small text-body">${escapeHtml(state.latestContent || 'Connecting to the selected agent')}</div>
+            </div>
+        </div>
+    </div>`;
+}
+
 function buildPendingThoughtsUrl(conversationId, messageId = null) {
     const queryParams = new URLSearchParams();
 
@@ -222,6 +435,7 @@ export function beginStreamingThoughtSession(targetMessageId) {
     activeStreamingThoughtTargetId = targetMessageId || null;
     activeStreamingServerMessageId = null;
 
+    resetStreamingAgentActivityState(activeStreamingThoughtTargetId);
     resetStreamingPlaceholderState(getStreamingMessageElement(activeStreamingThoughtTargetId));
 }
 
@@ -231,6 +445,7 @@ export function clearStreamingThoughtSession(targetMessageId = null) {
     }
 
     const messageIdToReset = targetMessageId || activeStreamingThoughtTargetId;
+    resetStreamingAgentActivityState(messageIdToReset);
     resetStreamingPlaceholderState(getStreamingMessageElement(messageIdToReset));
 
     activeStreamingThoughtTargetId = null;
@@ -243,6 +458,7 @@ export function markStreamingThoughtContentStarted(targetMessageId) {
         return;
     }
 
+    resetStreamingAgentActivityState(targetMessageId);
     messageElement.dataset.streamingHasContent = 'true';
     delete messageElement.dataset.streamingThoughtIndex;
     delete messageElement.dataset.streamingThoughtSignature;
@@ -302,6 +518,8 @@ export function handleStreamingThought(thoughtData, targetMessageId = null) {
         Number.isFinite(thoughtStepIndex) ? thoughtStepIndex : '',
         thoughtData.step_type || '',
         thoughtData.content || '',
+        thoughtData.activity ? JSON.stringify(thoughtData.activity) : '',
+        thoughtData.detail || '',
         thoughtData.progress ? JSON.stringify(thoughtData.progress) : ''
     ].join('::');
 
@@ -333,6 +551,13 @@ export function handleStreamingThought(thoughtData, targetMessageId = null) {
 
     if (thoughtData.progress && typeof thoughtData.progress === 'object') {
         contentElement.innerHTML = renderExhaustiveReviewProgress(thoughtData);
+        return;
+    }
+
+    const activityState = getStreamingAgentActivityState(activeStreamingThoughtTargetId);
+    updateAgentActivityState(activityState, thoughtData);
+    if (hasAgentActivity(activityState)) {
+        contentElement.innerHTML = renderAgentActivityProgress(activityState, { live: true });
         return;
     }
 
@@ -453,6 +678,22 @@ function loadThoughtsForMessage(conversationId, messageId, container) {
  */
 function renderThoughtsList(thoughts) {
     let html = '<div class="thoughts-list">';
+    const summaryCards = [];
+    const latestProgressThought = [...thoughts].reverse().find(thought => thought.progress && typeof thought.progress === 'object');
+    const agentActivityState = buildAgentActivityStateFromThoughts(thoughts);
+
+    if (hasAgentActivity(agentActivityState)) {
+        summaryCards.push(renderAgentActivityProgress(agentActivityState));
+    }
+
+    if (latestProgressThought) {
+        summaryCards.push(renderExhaustiveReviewProgress(latestProgressThought));
+    }
+
+    if (summaryCards.length > 0) {
+        html += `<div class="mb-2">${summaryCards.join('')}</div>`;
+    }
+
     thoughts.forEach(t => {
         const icon = getThoughtIcon(t.step_type);
         const durationStr = t.duration_ms != null ? `<span class="text-muted ms-2">(${t.duration_ms}ms)</span>` : '';

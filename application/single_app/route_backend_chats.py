@@ -10129,13 +10129,28 @@ def register_route_backend_chats(app):
                 user_thread_id = response_message_context.get('thread_id')
                 user_previous_thread_id = response_message_context.get('previous_thread_id')
 
-                def serialize_thought_event(step_type, content, step_index, message_id=None):
-                    return f"data: {json.dumps({'type': 'thought', 'message_id': message_id or assistant_message_id, 'step_index': step_index, 'step_type': step_type, 'content': content})}\n\n"
+                def serialize_thought_event(step_type, content, step_index, message_id=None, detail=None, activity=None, progress=None):
+                    payload = {
+                        'type': 'thought',
+                        'message_id': message_id or assistant_message_id,
+                        'step_index': step_index,
+                        'step_type': step_type,
+                        'content': content,
+                    }
+
+                    if detail is not None:
+                        payload['detail'] = detail
+                    if isinstance(activity, dict) and activity:
+                        payload['activity'] = activity
+                    if isinstance(progress, dict) and progress:
+                        payload['progress'] = progress
+
+                    return f"data: {json.dumps(payload)}\n\n"
 
                 def emit_thought(step_type, content, detail=None):
                     """Add a thought to Cosmos and return an SSE event string."""
                     thought_tracker.add_thought(step_type, content, detail)
-                    return serialize_thought_event(step_type, content, thought_tracker.current_index - 1)
+                    return serialize_thought_event(step_type, content, thought_tracker.current_index - 1, detail=detail)
 
                 def publish_live_plugin_thought(thought_payload):
                     if not callable(publish_background_event):
@@ -10151,6 +10166,9 @@ def register_route_backend_chats(app):
                             thought_payload.get('content', ''),
                             step_index,
                             message_id=thought_payload.get('message_id') or assistant_message_id,
+                            detail=thought_payload.get('detail'),
+                            activity=thought_payload.get('activity'),
+                            progress=thought_payload.get('progress'),
                         )
                     )
 

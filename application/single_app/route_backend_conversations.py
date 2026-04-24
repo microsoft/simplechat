@@ -3,9 +3,11 @@
 from config import *
 from functions_authentication import *
 from functions_collaboration import (
+    assert_user_can_view_collaboration_conversation,
     assert_user_can_participate_in_collaboration_conversation,
     ensure_collaboration_source_conversation,
     get_collaboration_conversation,
+    list_collaboration_messages,
 )
 from functions_settings import *
 from functions_conversation_metadata import get_conversation_metadata, update_conversation_with_metadata
@@ -831,6 +833,9 @@ def register_route_backend_conversations(app):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
+        conversation_item = None
+        is_collaboration_summary = False
+
         try:
             conversation_item = cosmos_conversations_container.read_item(
                 item=conversation_id,
@@ -839,7 +844,21 @@ def register_route_backend_conversations(app):
             if conversation_item.get('user_id') != user_id:
                 return jsonify({'error': 'Forbidden'}), 403
         except CosmosResourceNotFoundError:
-            return jsonify({'error': 'Conversation not found'}), 404
+            try:
+                conversation_item = get_collaboration_conversation(conversation_id)
+                assert_user_can_view_collaboration_conversation(
+                    user_id,
+                    conversation_item,
+                    allow_pending=True,
+                )
+                is_collaboration_summary = True
+            except CosmosResourceNotFoundError:
+                return jsonify({'error': 'Conversation not found'}), 404
+            except PermissionError as exc:
+                return jsonify({'error': str(exc)}), 403
+            except Exception as e:
+                debug_print(f"Error reading collaborative conversation for summary: {e}")
+                return jsonify({'error': 'Failed to read conversation'}), 500
         except Exception as e:
             debug_print(f"Error reading conversation for summary: {e}")
             return jsonify({'error': 'Failed to read conversation'}), 500
@@ -849,13 +868,16 @@ def register_route_backend_conversations(app):
 
         # Query messages for this conversation
         try:
-            query = "SELECT * FROM c WHERE c.conversation_id = @cid ORDER BY c.timestamp ASC"
-            params = [{"name": "@cid", "value": conversation_id}]
-            raw_messages = list(cosmos_messages_container.query_items(
-                query=query,
-                parameters=params,
-                enable_cross_partition_query=True
-            ))
+            if is_collaboration_summary:
+                raw_messages = list_collaboration_messages(conversation_id)
+            else:
+                query = "SELECT * FROM c WHERE c.conversation_id = @cid ORDER BY c.timestamp ASC"
+                params = [{"name": "@cid", "value": conversation_id}]
+                raw_messages = list(cosmos_messages_container.query_items(
+                    query=query,
+                    parameters=params,
+                    enable_cross_partition_query=True
+                ))
             raw_messages = filter_assistant_artifact_items(raw_messages)
         except Exception as e:
             debug_print(f"Error querying messages for summary: {e}")

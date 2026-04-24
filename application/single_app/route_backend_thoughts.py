@@ -60,6 +60,8 @@ def register_route_backend_thoughts(app):
                     'step_type': t.get('step_type'),
                     'content': t.get('content'),
                     'detail': t.get('detail'),
+                    'activity': t.get('activity'),
+                    'progress': t.get('progress'),
                     'duration_ms': t.get('duration_ms'),
                     'timestamp': t.get('timestamp')
                 })
@@ -111,6 +113,8 @@ def register_route_backend_thoughts(app):
                     'step_type': t.get('step_type'),
                     'content': t.get('content'),
                     'detail': t.get('detail'),
+                    'activity': t.get('activity'),
+                    'progress': t.get('progress'),
                     'duration_ms': t.get('duration_ms'),
                     'timestamp': t.get('timestamp')
                 })

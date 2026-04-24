@@ -773,8 +773,15 @@ def generate_conversation_summary(
     # Persist to Cosmos when a conversation_id is available
     if conversation_id:
         try:
-            update_conversation_with_metadata(conversation_id, {'summary': summary_data})
-            debug_print(f"Summary persisted to conversation {conversation_id}")
+            summary_persisted = update_conversation_with_metadata(conversation_id, {'summary': summary_data})
+            if summary_persisted:
+                debug_print(f"Summary persisted to conversation {conversation_id}")
+            else:
+                debug_print(f"Summary was generated but not persisted for conversation {conversation_id}")
+                log_event(
+                    f"Conversation summary persistence returned false for {conversation_id}",
+                    level='WARNING'
+                )
         except Exception as persist_exc:
             debug_print(f"Failed to persist summary to Cosmos: {persist_exc}")
             log_event(f"Failed to persist conversation summary: {persist_exc}", level="WARNING")
