@@ -87,30 +87,30 @@
             <ul class="nav flex-column ms-3" id="personal-workspace-submenu" style="display: none; visibility: hidden;" data-submenu="personal">
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="documents-tab">
-                  <i class="bi bi-file-earmark-text me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Documents</span>
+                  <i class="bi bi-file-earmark-text me-2" style="font-size: 0.8em;"></i><span class="nav-text">Documents</span>
                 </a>
               </li>
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="prompts-tab">
-                  <i class="bi bi-lightbulb me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Prompts</span>
+                  <i class="bi bi-lightbulb me-2" style="font-size: 0.8em;"></i><span class="nav-text">Prompts</span>
                 </a>
               </li>
-              {% if settings.allow_user_workflows %}
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="workflows-tab">
-                  <i class="bi bi-diagram-3 me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Workflows</span>
-                </a>
-              </li>
-              {% endif %}
               {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="agents-tab">
-                  <i class="bi bi-robot me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Agents</span>
+                  <i class="bi bi-robot me-2" style="font-size: 0.8em;"></i><span class="nav-text">Agents</span>
                 </a>
               </li>
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="plugins-tab">
-                  <i class="bi bi-plugin me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Actions</span>
+                  <i class="bi bi-plugin me-2" style="font-size: 0.8em;"></i><span class="nav-text">Actions</span>
+                </a>
+              </li>
+              {% endif %}
+              {% if settings.allow_user_workflows %}
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="workflows-tab">
+                  <i class="bi bi-diagram-3 me-2" style="font-size: 0.8em;"></i><span class="nav-text">Workflows</span>
                 </a>
               </li>
               {% endif %}
@@ -134,23 +134,23 @@
             <ul class="nav flex-column ms-3" id="group-workspace-submenu" style="display: none; visibility: hidden;" data-submenu="group">
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="documents-tab">
-                  <i class="bi bi-file-earmark-text me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Documents</span>
+                  <i class="bi bi-file-earmark-text me-2" style="font-size: 0.8em;"></i><span class="nav-text">Documents</span>
                 </a>
               </li>
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="prompts-tab">
-                  <i class="bi bi-lightbulb me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Prompts</span>
+                  <i class="bi bi-lightbulb me-2" style="font-size: 0.8em;"></i><span class="nav-text">Prompts</span>
                 </a>
               </li>
               {% if settings.allow_group_agents and settings.enable_semantic_kernel %}
                 <li class="nav-item">
                   <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="group-agents-tab">
-                    <i class="bi bi-robot me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Agents</span>
+                    <i class="bi bi-robot me-2" style="font-size: 0.8em;"></i><span class="nav-text">Agents</span>
                   </a>
                 </li>
                 <li class="nav-item">
                   <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="group-plugins-tab">
-                    <i class="bi bi-plugin me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Actions</span>
+                    <i class="bi bi-plugin me-2" style="font-size: 0.8em;"></i><span class="nav-text">Actions</span>
                   </a>
                 </li>
               {% endif %}

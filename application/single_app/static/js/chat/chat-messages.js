@@ -2370,7 +2370,7 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     max_retries_per_window: 1,
   };
 
-  return {
+  const requestPayload = {
     message: finalMessageToSend,
     conversation_id: conversationId,
     hybrid_search: hybridSearchEnabled,
@@ -2393,15 +2393,23 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     prompt_info: promptInfo,
     agent_info: agentInfo,
     reasoning_effort: getCurrentReasoningEffort(),
-    document_action: documentAction,
-    exhaustive_review: {
-      enabled: documentActionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW,
-      document_ids: documentActionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW ? selectedDocumentIds : [],
+  };
+
+  if (documentActionType !== DOCUMENT_ACTION_NONE) {
+    requestPayload.document_action = documentAction;
+  }
+
+  if (documentActionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW) {
+    requestPayload.exhaustive_review = {
+      enabled: true,
+      document_ids: selectedDocumentIds,
       doc_scope: effectiveDocScope,
       active_group_ids: finalGroupIds,
       active_public_workspace_id: scopes.publicWorkspaceIds,
-    },
-  };
+    };
+  }
+
+  return requestPayload;
 }
 
 export function buildCollaborativeInvocationTarget(messageData = {}, explicitInvocationTarget = null) {

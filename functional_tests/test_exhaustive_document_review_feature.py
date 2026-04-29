@@ -1,7 +1,7 @@
 # test_exhaustive_document_review_feature.py
 """
 Functional test for exhaustive document review.
-Version: 0.241.072
+Version: 0.241.075
 Implemented in: 0.241.069
 
 This test ensures workflows and chat share the deterministic exhaustive
@@ -31,8 +31,8 @@ def test_exhaustive_document_review_feature_wiring():
     feature_index_content = read_text("docs/explanation/features/index.md")
     feature_doc_content = read_text("docs/explanation/features/v0.241.069/EXHAUSTIVE_DOCUMENT_REVIEW.md")
 
-    assert 'VERSION = "0.241.072"' in config_content, (
-        "Expected config.py version 0.241.072 for exhaustive document review."
+    assert 'VERSION = "0.241.075"' in config_content, (
+        "Expected config.py version 0.241.075 for exhaustive document review wiring checks."
     )
     assert 'def normalize_exhaustive_review_targets(' in review_service_content, (
         "Expected functions_exhaustive_document_review.py to normalize structured review targets."
@@ -91,8 +91,14 @@ def test_exhaustive_document_review_feature_wiring():
     assert 'document-comparison-left-select' in chat_template_content, (
         "Expected chats.html to expose a left-side selector for comparison actions."
     )
-    assert 'document_action: documentAction' in chat_messages_content, (
-        "Expected chat message payloads to include the shared document action structure."
+    assert 'if (documentActionType !== DOCUMENT_ACTION_NONE) {' in chat_messages_content, (
+        "Expected standard chat payloads to add document actions only when an opt-in action is selected."
+    )
+    assert 'requestPayload.document_action = documentAction;' in chat_messages_content, (
+        "Expected chat message payloads to include the shared document action structure only for opt-in actions."
+    )
+    assert 'if (documentActionType === DOCUMENT_ACTION_EXHAUSTIVE_REVIEW) {' in chat_messages_content, (
+        "Expected legacy exhaustive review payloads to be serialized only for exhaustive review runs."
     )
     assert "endpoint: useDocumentAction ? '/api/chat/document-action/stream' : '/api/chat/stream'" in chat_messages_content, (
         "Expected chat message sending to route document actions through the shared streaming endpoint."

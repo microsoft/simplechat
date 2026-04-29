@@ -658,7 +658,9 @@ function clearQuickSearch() {
   loadConversations();
 }
 
-export function loadConversations() {
+export function loadConversations(options = {}) {
+  const { syncSidebar = true } = options;
+
   if (!conversationsList) return;
   
   // Prevent concurrent loads
@@ -735,8 +737,8 @@ export function loadConversations() {
       updateHiddenToggleButton();
       
       // Also load sidebar conversations if the sidebar exists
-      if (window.chatSidebarConversations && window.chatSidebarConversations.loadSidebarConversations) {
-        window.chatSidebarConversations.loadSidebarConversations();
+      if (syncSidebar && window.chatSidebarConversations && window.chatSidebarConversations.loadSidebarConversations) {
+        window.chatSidebarConversations.loadSidebarConversations({ conversations: mergedConversations });
       }
       
       // Reset loading flag
@@ -2326,7 +2328,7 @@ export function setShowHiddenConversations(value) {
     
     updateHiddenToggleButton();
     
-    if (window.chatSidebarConversations && window.chatSidebarConversations.loadSidebarConversations) {
+    if (syncSidebar && window.chatSidebarConversations && window.chatSidebarConversations.loadSidebarConversations) {
       window.chatSidebarConversations.loadSidebarConversations();
     }
   } else {

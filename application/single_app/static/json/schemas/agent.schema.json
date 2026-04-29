@@ -91,6 +91,11 @@
           "description": "True if this agent is a group agent; required for agent selection and UI badging.",
           "default": false
         },
+        "is_enabled": {
+          "type": "boolean",
+          "description": "False when the agent is hidden from runtime selection but retained for admin management.",
+          "default": true
+        },
         "agent_type": {
           "type": "string",
           "enum": ["local", "aifoundry", "new_foundry"],

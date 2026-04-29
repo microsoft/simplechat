@@ -33,7 +33,7 @@ Workflow execution and chat execution both dispatch through the shared document 
 
 In chat, choose an action from the `Action` selector beside document selection.
 
-- `Standard Chat` keeps the normal prompt flow.
+- `Search Documents` keeps the normal prompt flow while searching the selected documents for relevant context.
 - `Exhaustive Review` reviews every ordered page or chunk from the selected documents.
 - `Compare Documents` treats one selected document as the left baseline and compares every other selected document against it.
 

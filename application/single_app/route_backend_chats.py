@@ -1041,6 +1041,96 @@ def build_tabular_computed_results_system_message(source_label, tabular_analysis
     )
 
 
+def user_requested_chart_visualization(user_message):
+    """Return True when the user is explicitly asking for a plotted visualization."""
+    normalized_message = re.sub(r'\s+', ' ', str(user_message or '').strip().lower())
+    if not normalized_message:
+        return False
+
+    non_visual_patterns = (
+        'chart of accounts',
+        'org chart',
+        'organization chart',
+        'organizational chart',
+        'chart out ',
+    )
+    if any(pattern in normalized_message for pattern in non_visual_patterns):
+        return False
+
+    if re.search(
+        r'\b(?:bar|line|pie|doughnut|scatter|bubble|radar|histogram|heatmap|area|stacked(?:\s+bar|\s+line)?)\s+chart\b',
+        normalized_message,
+    ):
+        return True
+
+    if 'table and chart' in normalized_message or 'chart and table' in normalized_message:
+        return True
+
+    if re.search(r'\b(?:graph|plot|visuali[sz]e?|visuali[sz]ation)\b', normalized_message):
+        return True
+
+    return bool(
+        re.search(
+            r'\b(?:include|with|show|create|generate|render|make|build|draw|produce)\b[^.!?\n]{0,80}\bchart\b',
+            normalized_message,
+        )
+    )
+
+
+def build_chart_tool_usage_system_message():
+    """Instruct the outer agent handoff to prefer the real chart action over ASCII output."""
+    return (
+        "If the user explicitly asks for a chart, graph, plot, or visualization and a chart action/tool is available, "
+        "use that chart action/tool to produce a real inline chart. "
+        "Do not substitute ASCII bars, text-only pseudo-charts, or a promise to create a chart later when the chart tool is available. "
+        "If computed tabular results are already present in system messages, use those tool-backed values as the chart data source whenever they are sufficient. "
+        "Still include a table when the user asked for one. "
+        "If no chart action/tool is available, say briefly that a real chart tool is unavailable instead of pretending an ASCII chart satisfies the request."
+    )
+
+
+def insert_system_message_after_existing_system_messages(conversation_history, system_message_content):
+    """Insert a system message after existing system messages while avoiding duplicates."""
+    if not isinstance(conversation_history, list):
+        return conversation_history
+
+    normalized_content = str(system_message_content or '').strip()
+    if not normalized_content:
+        return conversation_history
+
+    for message in conversation_history:
+        if (
+            isinstance(message, dict)
+            and message.get('role') == 'system'
+            and str(message.get('content') or '').strip() == normalized_content
+        ):
+            return conversation_history
+
+    insertion_index = 0
+    while insertion_index < len(conversation_history):
+        message = conversation_history[insertion_index]
+        if not isinstance(message, dict) or message.get('role') != 'system':
+            break
+        insertion_index += 1
+
+    conversation_history.insert(insertion_index, {
+        'role': 'system',
+        'content': normalized_content,
+    })
+    return conversation_history
+
+
+def maybe_append_chart_tool_system_message(conversation_history, user_message, selected_agent):
+    """Add chart-tool guidance only when an agent is active and the user asked for a chart."""
+    if not selected_agent or not user_requested_chart_visualization(user_message):
+        return conversation_history
+
+    return insert_system_message_after_existing_system_messages(
+        conversation_history,
+        build_chart_tool_usage_system_message(),
+    )
+
+
 MULTI_FILE_TABULAR_DISTINCT_URL_EXTRACT_PATTERN = (
     r'(?i)https?://[^\s/]+/[^\s]*?(?:sites/|sitecollection/|teams/)[^\s"\']+'
 )
@@ -8734,6 +8824,12 @@ def register_route_backend_chats(app):
                     "kernel": bool(kernel is not None),
                 }
 
+                conversation_history_for_api = maybe_append_chart_tool_system_message(
+                    conversation_history_for_api,
+                    user_message,
+                    selected_agent,
+                )
+
                 agent_message_history = [
                     ChatMessageContent(
                         role=msg["role"],
@@ -11103,6 +11199,12 @@ def register_route_backend_chats(app):
 
                 if selected_agent_metadata:
                     user_metadata['agent_selection'] = selected_agent_metadata
+
+                conversation_history_for_api = maybe_append_chart_tool_system_message(
+                    conversation_history_for_api,
+                    user_message,
+                    selected_agent,
+                )
 
                 # Stream the response
                 accumulated_content = ""

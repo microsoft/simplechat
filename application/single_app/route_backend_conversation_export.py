@@ -3,6 +3,7 @@
 import io
 import json
 import markdown2
+import os
 import re
 import tempfile
 import zipfile
@@ -17,6 +18,10 @@ from flask import jsonify, make_response, request
 from functions_appinsights import log_event
 from functions_authentication import *
 from functions_chat import sort_messages_by_thread
+from functions_chart_export import (
+    decode_base64_image_data_uri,
+    replace_inline_chart_blocks_with_export_html,
+)
 from functions_collaboration import (
     assert_user_can_view_collaboration_conversation,
     get_accessible_collaboration_message_thoughts,
@@ -1048,7 +1053,11 @@ def _conversation_to_markdown(entry: Dict[str, Any]) -> str:
             if message.get('timestamp'):
                 lines.append(f"*{message.get('timestamp')}*")
             lines.append('')
-            lines.append(message.get('content_text') or '_No content recorded._')
+            lines.append(
+                replace_inline_chart_blocks_with_export_html(
+                    message.get('content_text') or '_No content recorded._'
+                )
+            )
             lines.append('')
 
     lines.append('## Appendix A — Conversation Metadata')
@@ -1117,7 +1126,11 @@ def _conversation_to_markdown(entry: Dict[str, Any]) -> str:
             if message.get('timestamp'):
                 lines.append(f"*{message.get('timestamp')}*")
             lines.append('')
-            lines.append(message.get('content_text') or '_No content recorded._')
+            lines.append(
+                replace_inline_chart_blocks_with_export_html(
+                    message.get('content_text') or '_No content recorded._'
+                )
+            )
             lines.append('')
 
     return '\n'.join(lines).strip()
@@ -1386,7 +1399,9 @@ def _message_to_docx_bytes(message: Dict[str, Any]) -> bytes:
 
     doc.add_paragraph('')
 
-    content = _normalize_content(message.get('content', ''))
+    content = replace_inline_chart_blocks_with_export_html(
+        _normalize_content(message.get('content', ''))
+    )
     if content:
         _add_markdown_content_to_doc(doc, content)
     else:
@@ -2035,6 +2050,14 @@ def _append_inline_html_runs(paragraph, node: Any, formatting: Optional[Dict[str
         return
 
     if tag_name == 'img':
+        image_bytes = decode_base64_image_data_uri(node.get('src'))
+        if image_bytes:
+            try:
+                paragraph.add_run().add_picture(io.BytesIO(image_bytes), width=Inches(6.0))
+                return
+            except Exception:
+                pass
+
         alt_text = node.get('alt') or 'Image'
         run = paragraph.add_run(f'[{alt_text}]')
         _apply_run_formatting(run, formatting)
@@ -2208,6 +2231,25 @@ small {
     font-size: 8pt;
     color: #666;
 }
+.export-inline-chart {
+    background-color: #fafafa;
+    border: 1px solid #ddd;
+    padding: 8pt;
+    margin-top: 6pt;
+    margin-bottom: 10pt;
+}
+.export-inline-chart img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 0 auto;
+}
+.export-inline-chart-caption {
+    font-size: 8pt;
+    color: #666;
+    text-align: center;
+    margin-top: 4pt;
+}
 a {
     color: #0066cc;
 }
@@ -2261,7 +2303,7 @@ def _build_pdf_html_body(entry: Dict[str, Any]) -> str:
     if summary_intro.get('enabled') and summary_intro.get('generated') and summary_intro.get('content'):
         parts.append('<h2>Abstract</h2>')
         abstract_html = markdown2.markdown(
-            summary_intro.get('content', ''),
+            replace_inline_chart_blocks_with_export_html(summary_intro.get('content', '')),
             extras=['fenced-code-blocks', 'tables']
         )
         parts.append(f'<div class="abstract">{abstract_html}</div>')
@@ -2303,7 +2345,7 @@ def _build_pdf_html_body(entry: Dict[str, Any]) -> str:
                 f'{_escape_html(speaker)}</b>{ts_str}</p>'
             )
             content_html = markdown2.markdown(
-                content,
+                replace_inline_chart_blocks_with_export_html(content),
                 extras=['fenced-code-blocks', 'tables', 'break-on-newline']
             )
             parts.append(content_html)
@@ -2400,7 +2442,7 @@ def _build_pdf_html_body(entry: Dict[str, Any]) -> str:
                 )
             content = message.get('content_text', '') or 'No content recorded.'
             content_html = markdown2.markdown(
-                content,
+                replace_inline_chart_blocks_with_export_html(content),
                 extras=['fenced-code-blocks', 'tables', 'break-on-newline']
             )
             parts.append(content_html)

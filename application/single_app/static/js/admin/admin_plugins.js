@@ -2,6 +2,8 @@
 import { showToast } from "../chat/chat-toast.js"
 import { renderPluginsTable as sharedRenderPluginsTable, validatePluginManifest as sharedValidatePluginManifest, getErrorMessageFromResponse } from "../plugin_common.js";
 
+let adminPlugins = [];
+
 // Main logic
 document.addEventListener('DOMContentLoaded', function () {
     if (!document.getElementById('actions-configuration')) return;
@@ -19,13 +21,14 @@ async function loadPlugins() {
     try {
         const res = await fetch('/api/admin/plugins');
         if (!res.ok) throw new Error('Failed to load actions');
-        const plugins = await res.json();
+        adminPlugins = await res.json();
         
         sharedRenderPluginsTable({
-            plugins,
+            plugins: adminPlugins,
             tbodySelector: '#admin-plugins-table-body',
             onEdit: name => editPlugin(name),
             onDelete: name => deletePlugin(name),
+            onToggleEnabled: name => togglePluginEnabled(name),
             ensureTable: false,
             isAdmin: true
         });
@@ -128,10 +131,7 @@ async function savePlugin(pluginData, existingPlugin = null) {
 // Edit plugin modal logic
 async function editPlugin(name) {
     try {
-        const res = await fetch('/api/admin/plugins');
-        if (!res.ok) throw new Error('Failed to load actions');
-        const plugins = await res.json();
-        const plugin = plugins.find(p => p.name === name);
+        const plugin = adminPlugins.find(p => p.name === name);
         
         if (plugin) {
             openPluginModal(plugin);
@@ -141,6 +141,35 @@ async function editPlugin(name) {
     } catch (error) {
         console.error('Error loading action for edit:', error);
         showToast('Failed to load action for editing', 'danger');
+    }
+}
+
+async function togglePluginEnabled(name) {
+    const plugin = adminPlugins.find(item => item.name === name);
+    if (!plugin) {
+        showToast(`Action "${name}" not found`, 'danger');
+        return;
+    }
+
+    const nextEnabledState = plugin.is_enabled === false;
+
+    try {
+        const res = await fetch(`/api/admin/plugins/${encodeURIComponent(name)}/enabled`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_enabled: nextEnabledState })
+        });
+
+        if (!res.ok) {
+            const errorMessage = await getErrorMessageFromResponse(res, 'Failed to update action state');
+            throw new Error(errorMessage);
+        }
+
+        await loadPlugins();
+        showToast(`Action "${name}" ${nextEnabledState ? 'enabled' : 'disabled'} successfully`, 'success');
+    } catch (error) {
+        console.error('Error updating action enabled state:', error);
+        showToast('Error updating action state: ' + error.message, 'danger');
     }
 }
 

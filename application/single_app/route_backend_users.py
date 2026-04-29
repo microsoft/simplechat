@@ -233,12 +233,16 @@ def register_route_backend_users(app):
                     # Chat UI settings
                     'navbar_layout', 'chatLayout', 'showChatTitle', 'chatSplitSizes',
                     # Microphone permission settings
-                    'microphonePermissionState',
+                    'microphonePermissionPreference', 'microphonePermissionState',
                     # Text-to-speech settings
                     'ttsEnabled', 'ttsVoice', 'ttsSpeed', 'ttsAutoplay',
                     # Tutorial visibility settings
                     'showTutorialButtons',
                     'recentCollaborators',
+                    # Personal workspace settings managed by other backend/frontend flows
+                    'personal_model_endpoints', 'tag_definitions',
+                    # Retention settings kept for current and legacy profile payloads
+                    'retention_policy', 'retention_policy_enabled', 'retention_policy_days',
                     # Metrics and other settings
                     'metrics', 'lastUpdated'
                 } # Add others as needed

@@ -301,31 +301,110 @@ export function setConversationUnreadState(conversationId, hasUnread) {
   }
 }
 
+function resetSidebarConversationSections(showLoadingState = true) {
+  sidebarVisibleConversations = [];
+
+  if (showLoadingState && sidebarConversationsList) {
+    sidebarConversationsList.innerHTML = '<div class="text-center p-2 text-muted small">Loading conversations...</div>';
+  }
+
+  if (sidebarWorkflowConversationsList) {
+    sidebarWorkflowConversationsList.innerHTML = '';
+  }
+
+  if (sidebarWorkflowSection) {
+    sidebarWorkflowSection.classList.add('d-none');
+  }
+
+  if (sidebarWorkflowShowMoreBtn) {
+    sidebarWorkflowShowMoreBtn.classList.add('d-none');
+    sidebarWorkflowShowMoreBtn.setAttribute('aria-expanded', 'false');
+  }
+}
+
+function renderSidebarConversationPayload(mergedConversations = []) {
+  if (mergedConversations.length === 0) {
+    renderSidebarConversationSections([], 0);
+    dispatchSidebarConversationsLoaded({ loaded: true, count: 0, hasVisibleConversations: false, isError: false });
+    return;
+  }
+
+  const sortedConversations = [...mergedConversations].sort((a, b) => {
+    const aPinned = a.is_pinned || false;
+    const bPinned = b.is_pinned || false;
+
+    if (aPinned !== bPinned) {
+      return bPinned ? 1 : -1;
+    }
+
+    const aDate = new Date(a.last_updated);
+    const bDate = new Date(b.last_updated);
+    return bDate - aDate;
+  });
+
+  let visibleConversations = sortedConversations.filter(convo => {
+    const isHidden = convo.is_hidden || false;
+    const isSelectionMode = window.chatConversations && window.chatConversations.isSelectionModeActive && window.chatConversations.isSelectionModeActive();
+    return !isHidden || sidebarShowHiddenConversations || isSelectionMode;
+  });
+
+  if (window.chatConversations && window.chatConversations.getQuickSearchTerm) {
+    const searchTerm = window.chatConversations.getQuickSearchTerm();
+    if (searchTerm && searchTerm.trim() !== '') {
+      const searchLower = searchTerm.toLowerCase().trim();
+      visibleConversations = visibleConversations.filter(convo => {
+        const titleLower = (convo.title || '').toLowerCase();
+        return titleLower.includes(searchLower);
+      });
+    }
+  }
+
+  sidebarVisibleConversations = visibleConversations;
+  renderSidebarConversationSections(visibleConversations, mergedConversations.length);
+
+  dispatchSidebarConversationsLoaded({
+    loaded: true,
+    count: mergedConversations.length,
+    hasVisibleConversations: visibleConversations.length > 0,
+    isError: false
+  });
+
+  if (window.chatConversations && window.chatConversations.isSelectionModeActive && window.chatConversations.isSelectionModeActive()) {
+    setSidebarSelectionMode(true);
+
+    if (window.chatConversations.getSelectedConversations) {
+      const selectedIds = window.chatConversations.getSelectedConversations();
+      selectedIds.forEach(id => {
+        updateSidebarConversationSelection(id, true);
+      });
+    }
+  }
+}
+
 // Load conversations for the sidebar
-export function loadSidebarConversations() {
+export function loadSidebarConversations(options = {}) {
+  const { conversations = null } = options;
+
   if (!sidebarConversationsList) return;
+
+  if (Array.isArray(conversations)) {
+    pendingSidebarReload = false;
+    isLoadingSidebarConversations = false;
+    resetSidebarConversationSections(false);
+    renderSidebarConversationPayload(conversations);
+    return Promise.resolve(conversations);
+  }
   
   // If already loading, mark that we need to reload again after current load finishes
   if (isLoadingSidebarConversations) {
     console.log('Sidebar load already in progress, marking pending reload...');
     pendingSidebarReload = true;
-    return;
+    return Promise.resolve();
   }
   
   isLoadingSidebarConversations = true;
   pendingSidebarReload = false; // Clear any pending reload flag
-  sidebarVisibleConversations = [];
-  sidebarConversationsList.innerHTML = '<div class="text-center p-2 text-muted small">Loading conversations...</div>';
-  if (sidebarWorkflowConversationsList) {
-    sidebarWorkflowConversationsList.innerHTML = '';
-  }
-  if (sidebarWorkflowSection) {
-    sidebarWorkflowSection.classList.add('d-none');
-  }
-  if (sidebarWorkflowShowMoreBtn) {
-    sidebarWorkflowShowMoreBtn.classList.add('d-none');
-    sidebarWorkflowShowMoreBtn.setAttribute('aria-expanded', 'false');
-  }
+  resetSidebarConversationSections(true);
 
   const legacyConversationsRequest = fetch("/api/get_conversations")
     .then(response => response.ok ? response.json() : response.json().then(err => Promise.reject(err)));
@@ -336,86 +415,13 @@ export function loadSidebarConversations() {
       })
     : Promise.resolve([]);
 
-  Promise.all([legacyConversationsRequest, collaborationConversationsRequest])
+  return Promise.all([legacyConversationsRequest, collaborationConversationsRequest])
     .then(([data, collaborationConversations]) => {
       const mergedConversations = [
         ...(Array.isArray(data.conversations) ? data.conversations : []),
         ...(Array.isArray(collaborationConversations) ? collaborationConversations : []),
       ];
-
-      if (mergedConversations.length === 0) {
-        renderSidebarConversationSections([], 0);
-        dispatchSidebarConversationsLoaded({ loaded: true, count: 0, hasVisibleConversations: false, isError: false });
-        
-        // Reset loading flag even when no conversations
-        isLoadingSidebarConversations = false;
-        
-        // Check for pending reload even when no conversations
-        if (pendingSidebarReload) {
-          console.log('Pending reload detected (no conversations), reloading sidebar...');
-          setTimeout(() => loadSidebarConversations(), 100);
-        }
-        return;
-      }
-      
-      // Sort conversations: pinned first (by last_updated), then unpinned (by last_updated)
-      const sortedConversations = [...mergedConversations].sort((a, b) => {
-        const aPinned = a.is_pinned || false;
-        const bPinned = b.is_pinned || false;
-        
-        // If pin status differs, pinned comes first
-        if (aPinned !== bPinned) {
-          return bPinned ? 1 : -1;
-        }
-        
-        // If same pin status, sort by last_updated (most recent first)
-        const aDate = new Date(a.last_updated);
-        const bDate = new Date(b.last_updated);
-        return bDate - aDate;
-      });
-      
-      // Filter conversations based on show/hide hidden setting
-      let visibleConversations = sortedConversations.filter(convo => {
-        const isHidden = convo.is_hidden || false;
-        // Show hidden conversations if toggle is on OR if we're in selection mode
-        const isSelectionMode = window.chatConversations && window.chatConversations.isSelectionModeActive && window.chatConversations.isSelectionModeActive();
-        return !isHidden || sidebarShowHiddenConversations || isSelectionMode;
-      });
-      
-      // Apply quick search filter if active
-      if (window.chatConversations && window.chatConversations.getQuickSearchTerm) {
-        const searchTerm = window.chatConversations.getQuickSearchTerm();
-        if (searchTerm && searchTerm.trim() !== '') {
-          const searchLower = searchTerm.toLowerCase().trim();
-          visibleConversations = visibleConversations.filter(convo => {
-            const titleLower = (convo.title || '').toLowerCase();
-            return titleLower.includes(searchLower);
-          });
-        }
-      }
-
-      sidebarVisibleConversations = visibleConversations;
-      renderSidebarConversationSections(visibleConversations, mergedConversations.length);
-
-      dispatchSidebarConversationsLoaded({
-        loaded: true,
-        count: mergedConversations.length,
-        hasVisibleConversations: visibleConversations.length > 0,
-        isError: false
-      });
-      
-      // Restore selection mode hints if selection mode is active
-      if (window.chatConversations && window.chatConversations.isSelectionModeActive && window.chatConversations.isSelectionModeActive()) {
-        setSidebarSelectionMode(true);
-        
-        // Restore individual conversation selections
-        if (window.chatConversations.getSelectedConversations) {
-          const selectedIds = window.chatConversations.getSelectedConversations();
-          selectedIds.forEach(id => {
-            updateSidebarConversationSelection(id, true);
-          });
-        }
-      }
+      renderSidebarConversationPayload(mergedConversations);
       
       // Reset loading flag
       isLoadingSidebarConversations = false;
@@ -425,6 +431,8 @@ export function loadSidebarConversations() {
         console.log('Pending reload detected, reloading sidebar conversations...');
         setTimeout(() => loadSidebarConversations(), 100); // Small delay to prevent rapid reloads
       }
+
+      return mergedConversations;
     })
     .catch(error => {
       console.error("Error loading sidebar conversations:", error);
@@ -437,6 +445,8 @@ export function loadSidebarConversations() {
         console.log('Pending reload detected after error, retrying...');
         setTimeout(() => loadSidebarConversations(), 500); // Longer delay after error
       }
+
+      throw error;
     });
 }
 
@@ -1178,8 +1188,6 @@ export function enableSidebarTitleEdit(conversationId) {
 document.addEventListener('DOMContentLoaded', () => {
   // Only initialize if we're on the chats page and elements exist
   if (sidebarConversationsList) {
-    loadSidebarConversations();
-    
     // Handle new chat button click
     if (sidebarNewChatBtn) {
       sidebarNewChatBtn.addEventListener('click', () => {

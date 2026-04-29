@@ -849,12 +849,61 @@ def update_core_plugin_settings():
 @admin_required
 def list_plugins():
     try:
-        plugins = get_global_actions()
+        plugins = get_global_actions(include_disabled=True)
         log_event("List plugins", extra={"action": "list", "user": str(getattr(request, 'user', 'unknown'))})
         return jsonify(plugins)
     except Exception as e:
         log_event(f"Error listing plugins: {e}", level=logging.ERROR)
         return jsonify({'error': 'Failed to list plugins.'}), 500
+
+
+@bpap.route('/api/admin/plugins/<plugin_name>/enabled', methods=['PATCH'])
+@swagger_route(security=get_auth_security())
+@login_required
+@admin_required
+def set_plugin_enabled(plugin_name):
+    try:
+        data = request.get_json(silent=True) or {}
+        if 'is_enabled' not in data or not isinstance(data.get('is_enabled'), bool):
+            return jsonify({'error': 'Field "is_enabled" must be a boolean.'}), 400
+
+        is_enabled = data.get('is_enabled')
+        plugins = get_global_actions(include_disabled=True)
+        plugin_to_update = next((plugin for plugin in plugins if plugin.get('name') == plugin_name), None)
+        if plugin_to_update is None:
+            log_event("Toggle plugin enabled failed: not found", level=logging.WARNING, extra={"action": "toggle-enabled", "plugin_name": plugin_name})
+            return jsonify({'error': 'Plugin not found.'}), 404
+
+        result = update_global_action_enabled(
+            plugin_to_update.get('id'),
+            is_enabled,
+            user_id=str(get_current_user_id())
+        )
+        if not result:
+            return jsonify({'error': 'Failed to update action enabled state.'}), 500
+
+        log_action_update(
+            user_id=str(get_current_user_id()),
+            action_id=plugin_to_update.get('id', ''),
+            action_name=plugin_name,
+            action_type=plugin_to_update.get('type', ''),
+            scope='global'
+        )
+        log_event(
+            "Plugin enabled state updated",
+            extra={
+                "action": "toggle-enabled",
+                "plugin_name": plugin_name,
+                "plugin_id": plugin_to_update.get('id', ''),
+                "is_enabled": is_enabled,
+                "user": str(get_current_user_id())
+            }
+        )
+        setattr(builtins, "kernel_reload_needed", True)
+        return jsonify({'success': True})
+    except Exception as e:
+        log_event(f"Error updating plugin enabled state: {e}", level=logging.ERROR)
+        return jsonify({'error': 'Failed to update action enabled state.'}), 500
 
 @bpap.route('/api/admin/plugins', methods=['POST'])
 @swagger_route(security=get_auth_security())
@@ -862,7 +911,7 @@ def list_plugins():
 @admin_required
 def add_plugin():
     try:
-        plugins = get_global_actions()
+        plugins = get_global_actions(include_disabled=True)
         new_plugin = request.get_json(silent=True) or {}
         _apply_plugin_runtime_defaults(new_plugin)
         new_plugin = apply_plugin_validation_defaults(new_plugin)
@@ -919,7 +968,7 @@ def add_plugin():
 @admin_required
 def edit_plugin(plugin_name):
     try:
-        plugins = get_global_actions()
+        plugins = get_global_actions(include_disabled=True)
         updated_plugin = request.get_json(silent=True) or {}
         _apply_plugin_runtime_defaults(updated_plugin)
         updated_plugin = apply_plugin_validation_defaults(updated_plugin)
@@ -997,7 +1046,7 @@ def get_admin_plugin_types():
 @admin_required
 def delete_plugin(plugin_name):
     try:
-        plugins = get_global_actions()
+        plugins = get_global_actions(include_disabled=True)
         
         # Find the plugin by name
         plugin_to_delete = None

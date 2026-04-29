@@ -12,7 +12,7 @@ from config import (
 )
 from semantic_kernel_loader import get_agent_orchestration_types
 from functions_settings import get_settings, update_settings, get_user_settings, update_user_settings, sanitize_model_endpoints_for_frontend
-from functions_global_agents import get_global_agents, save_global_agent, delete_global_agent
+from functions_global_agents import get_global_agents, save_global_agent, delete_global_agent, update_global_agent_enabled
 from functions_personal_agents import get_personal_agents, ensure_migration_complete, save_personal_agent, delete_personal_agent
 from functions_group import require_active_group, assert_group_role
 from functions_agent_payload import (
@@ -1014,7 +1014,7 @@ def set_selected_agent():
 def list_agents():
     try:
         # Use new global agents container
-        agents = get_global_agents()
+        agents = get_global_agents(include_disabled=True)
         
         # Ensure each agent has an actions_to_load field
         for agent in agents:
@@ -1029,6 +1029,73 @@ def list_agents():
     except Exception as e:
         log_event(f"Error listing agents: {e}", level=logging.ERROR)
         return jsonify({'error': 'Failed to list agents.'}), 500
+
+
+@bpa.route('/api/admin/agents/<agent_name>/enabled', methods=['PATCH'])
+@swagger_route(
+    security=get_auth_security()
+)
+@login_required
+@admin_required
+def set_agent_enabled(agent_name):
+    try:
+        data = request.get_json(silent=True) or {}
+        if 'is_enabled' not in data or not isinstance(data.get('is_enabled'), bool):
+            return jsonify({'error': 'Field "is_enabled" must be a boolean.'}), 400
+
+        is_enabled = data.get('is_enabled')
+        agents = get_global_agents(include_disabled=True)
+        target_agent = next((agent for agent in agents if agent.get('name') == agent_name), None)
+        if not target_agent:
+            return jsonify({'error': 'Agent not found.'}), 404
+
+        result = update_global_agent_enabled(
+            target_agent.get('id'),
+            is_enabled,
+            user_id=str(get_current_user_id())
+        )
+        if not result:
+            return jsonify({'error': 'Failed to update agent enabled state.'}), 500
+
+        fallback_agent_name = None
+        settings = get_settings()
+        selected_agent = settings.get('global_selected_agent', {}) if isinstance(settings.get('global_selected_agent', {}), dict) else {}
+        if not is_enabled and selected_agent.get('name') == agent_name:
+            enabled_agents = get_global_agents()
+            if enabled_agents:
+                fallback_agent_name = enabled_agents[0].get('name')
+                settings['global_selected_agent'] = {
+                    'name': fallback_agent_name,
+                    'is_global': True,
+                    'is_group': False,
+                }
+            else:
+                settings['global_selected_agent'] = {}
+            update_settings(settings)
+
+        log_agent_update(
+            user_id=str(get_current_user_id()),
+            agent_id=target_agent.get('id', ''),
+            agent_name=agent_name,
+            agent_display_name=target_agent.get('display_name', ''),
+            scope='global'
+        )
+        log_event(
+            "Global agent enabled state updated",
+            extra={
+                'action': 'toggle-enabled',
+                'agent_name': agent_name,
+                'agent_id': target_agent.get('id', ''),
+                'is_enabled': is_enabled,
+                'fallback_agent_name': fallback_agent_name,
+                'user': str(get_current_user_id()),
+            }
+        )
+        setattr(builtins, "kernel_reload_needed", True)
+        return jsonify({'success': True, 'fallback_agent_name': fallback_agent_name})
+    except Exception as e:
+        log_event(f"Error updating agent enabled state: {e}", level=logging.ERROR, exceptionTraceback=True)
+        return jsonify({'error': 'Failed to update agent enabled state.'}), 500
 
 
 @bpa.route('/api/admin/agents/default-model-migration/preview', methods=['GET'])
@@ -1194,7 +1261,7 @@ def run_default_model_agent_migration():
 @admin_required
 def add_agent():
     try:
-        agents = get_global_agents()
+        agents = get_global_agents(include_disabled=True)
         new_agent = request.json.copy() if hasattr(request.json, 'copy') else dict(request.json)
         try:
             cleaned_agent = sanitize_agent_payload(new_agent)
@@ -1300,7 +1367,7 @@ def update_agent_setting(setting_name):
 @admin_required
 def edit_agent(agent_name):
     try:
-        agents = get_global_agents()
+        agents = get_global_agents(include_disabled=True)
         updated_agent = request.json.copy() if hasattr(request.json, 'copy') else dict(request.json)
         try:
             cleaned_agent = sanitize_agent_payload(updated_agent)
@@ -1360,7 +1427,7 @@ def edit_agent(agent_name):
 @admin_required
 def delete_agent(agent_name):
     try:
-        agents = get_global_agents()
+        agents = get_global_agents(include_disabled=True)
         
         # Find the agent to delete
         agent_to_delete = None
