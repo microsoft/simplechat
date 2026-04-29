@@ -52,7 +52,7 @@ This deployer keeps you in the repo's container-based deployment model while giv
 		<article class="latest-release-card">
 				<div class="latest-release-card-icon"><i class="bi bi-tools"></i></div>
 				<h2>Key scripts</h2>
-				<p>The main flow lives in <code>deployers/azurecli/deploy-simplechat.ps1</code>, with destroy/reset support in the paired cleanup script.</p>
+				<p>The main flow lives in <code>deployers/azurecli/deploy-simplechat.ps1</code>, with paired PowerShell scripts for code-only upgrades and cleanup.</p>
 		</article>
 </section>
 
@@ -70,6 +70,7 @@ This deployer keeps you in the repo's container-based deployment model while giv
 ## Main files
 
 - `deployers/azurecli/deploy-simplechat.ps1`
+- `deployers/azurecli/upgrade-simplechat.ps1`
 - `deployers/azurecli/destroy-simplechat.ps1`
 
 ## Quick start
@@ -81,6 +82,23 @@ This deployer keeps you in the repo's container-based deployment model while giv
 ```powershell
 cd deployers/azurecli
 ./deploy-simplechat.ps1
+```
+
+## Code-only upgrades
+
+For container-only releases where infrastructure does not change, use `upgrade-simplechat.ps1`.
+
+This script builds the image in ACR, updates the current App Service container image, verifies the updated image reference, and restarts the site. It gives the Azure CLI deployer a PowerShell-first equivalent to the normal `azd deploy` container rollout path without invoking the AZD post-configuration Python flow.
+
+Example:
+
+```powershell
+cd deployers/azurecli
+./upgrade-simplechat.ps1 `
+	-AcrName registrysimplechatprod `
+	-ImageName simplechat:2026-04-29_01 `
+	-BaseName contoso `
+	-Environment prod
 ```
 
 ## References

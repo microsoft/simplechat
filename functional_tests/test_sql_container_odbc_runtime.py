@@ -1,12 +1,13 @@
 # test_sql_container_odbc_runtime.py
 """
 Functional test for SQL container ODBC runtime packaging.
-Version: 0.241.064
-Implemented in: 0.241.064
+Version: 0.241.080
+Implemented in: 0.241.080
 
 This test ensures that the application container packages the unixODBC runtime
-and Microsoft ODBC Driver 18 for SQL Server, and that fresh SQL defaults use
-ODBC Driver 18 across the backend and frontend surfaces.
+and Microsoft ODBC Driver 18 for SQL Server, preserves the package-selected
+unixODBC driver registry path, and keeps fresh SQL defaults on ODBC Driver 18
+across the backend and frontend surfaces.
 """
 
 from pathlib import Path
@@ -29,14 +30,22 @@ def test_dockerfile_packages_odbc_runtime() -> bool:
         "tdnf install -y unixODBC unixODBC-devel msodbcsql18",
         "COPY --from=builder /odbc-runtime/ /",
         'LD_LIBRARY_PATH="/usr/lib64:/opt/microsoft/msodbcsql18/lib64"',
-        "cp -a /etc/odbcinst.ini /odbc-runtime/etc/",
+        'driver_config_dir="$(odbcinst -j | awk -F\': \' \'/^DRIVERS/ {print $2}\')"',
+        'test -f "${driver_config_dir}/odbcinst.ini"',
+        'cp -a "${driver_config_dir}/odbcinst.ini" "/odbc-runtime${driver_config_dir}/"',
+        'if [ "${driver_config_dir}" != "/etc" ]; then cp -a "${driver_config_dir}/odbcinst.ini" /odbc-runtime/etc/; fi;',
     ]
 
     missing = [snippet for snippet in expected_snippets if snippet not in dockerfile]
     if missing:
         raise AssertionError(f"Dockerfile is missing expected ODBC runtime snippets: {missing}")
 
+    assert "cp -a /etc/odbcinst.ini /odbc-runtime/etc/" not in dockerfile, (
+        "Dockerfile should not hard-code /etc/odbcinst.ini because Azure Linux 3 registers the driver under the path reported by odbcinst -j"
+    )
+
     print("✅ Dockerfile packages unixODBC and msodbcsql18 runtime artifacts.")
+    print("✅ Dockerfile preserves the package-selected unixODBC driver registry path.")
     return True
 
 
