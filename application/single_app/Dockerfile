@@ -47,7 +47,8 @@ RUN mkdir -p /app/flask_session && chown -R ${UID}:${GID} /app/flask_session
 RUN mkdir /sc-temp-files && chown -R ${UID}:${GID} /sc-temp-files
 # Preserve the package-selected unixODBC driver registry path for the distroless runtime.
 RUN set -eux; \
-    driver_config_dir="$(odbcinst -j | awk -F': ' '/^DRIVERS/ {print $2}')"; \
+    driver_config_dir="$(odbcinst -j | while IFS= read -r line; do case "$line" in DRIVERS*) printf '%s\n' "${line##*: }"; break ;; esac; done)"; \
+    test -n "${driver_config_dir}"; \
     test -f "${driver_config_dir}/odbcinst.ini"; \
     mkdir -p /odbc-runtime/usr/lib64 /odbc-runtime/opt "/odbc-runtime${driver_config_dir}" /odbc-runtime/etc; \
     cp -a "${driver_config_dir}/odbcinst.ini" "/odbc-runtime${driver_config_dir}/"; \
