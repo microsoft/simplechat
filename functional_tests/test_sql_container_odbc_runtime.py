@@ -1,8 +1,8 @@
 # test_sql_container_odbc_runtime.py
 """
 Functional test for SQL container ODBC runtime packaging.
-Version: 0.241.080
-Implemented in: 0.241.080
+Version: 0.241.081
+Implemented in: 0.241.081
 
 This test ensures that the application container packages the unixODBC runtime
 and Microsoft ODBC Driver 18 for SQL Server, preserves the package-selected
@@ -30,11 +30,15 @@ def test_dockerfile_packages_odbc_runtime() -> bool:
         "tdnf install -y unixODBC unixODBC-devel msodbcsql18",
         "COPY --from=builder /odbc-runtime/ /",
         'LD_LIBRARY_PATH="/usr/lib64:/opt/microsoft/msodbcsql18/lib64"',
-        'driver_config_dir="$(odbcinst -j | while IFS= read -r line; do case "$line" in DRIVERS*) printf \'%s\\n\' "${line##*: }"; break ;; esac; done)"',
-        'test -n "${driver_config_dir}"',
-        'test -f "${driver_config_dir}/odbcinst.ini"',
-        'cp -a "${driver_config_dir}/odbcinst.ini" "/odbc-runtime${driver_config_dir}/"',
-        'if [ "${driver_config_dir}" != "/etc" ]; then cp -a "${driver_config_dir}/odbcinst.ini" /odbc-runtime/etc/; fi;',
+        'driver_config_path="$(odbcinst -j | while IFS= read -r line; do case "$line" in DRIVERS*) printf \'%s\\n\' "${line##*: }"; break ;; esac; done)"',
+        'test -n "${driver_config_path}"',
+        'case "${driver_config_path}" in',
+        '*/odbcinst.ini) driver_config_file="${driver_config_path}" ;;',
+        '*) driver_config_file="${driver_config_path}/odbcinst.ini" ;;',
+        'driver_config_dir="${driver_config_file%/odbcinst.ini}"',
+        'test -f "${driver_config_file}"',
+        'cp -a "${driver_config_file}" "/odbc-runtime${driver_config_dir}/"',
+        'if [ "${driver_config_dir}" != "/etc" ]; then cp -a "${driver_config_file}" /odbc-runtime/etc/; fi;',
     ]
 
     missing = [snippet for snippet in expected_snippets if snippet not in dockerfile]

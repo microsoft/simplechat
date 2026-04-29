@@ -47,12 +47,17 @@ RUN mkdir -p /app/flask_session && chown -R ${UID}:${GID} /app/flask_session
 RUN mkdir /sc-temp-files && chown -R ${UID}:${GID} /sc-temp-files
 # Preserve the package-selected unixODBC driver registry path for the distroless runtime.
 RUN set -eux; \
-    driver_config_dir="$(odbcinst -j | while IFS= read -r line; do case "$line" in DRIVERS*) printf '%s\n' "${line##*: }"; break ;; esac; done)"; \
-    test -n "${driver_config_dir}"; \
-    test -f "${driver_config_dir}/odbcinst.ini"; \
+    driver_config_path="$(odbcinst -j | while IFS= read -r line; do case "$line" in DRIVERS*) printf '%s\n' "${line##*: }"; break ;; esac; done)"; \
+    test -n "${driver_config_path}"; \
+    case "${driver_config_path}" in \
+        */odbcinst.ini) driver_config_file="${driver_config_path}" ;; \
+        *) driver_config_file="${driver_config_path}/odbcinst.ini" ;; \
+    esac; \
+    driver_config_dir="${driver_config_file%/odbcinst.ini}"; \
+    test -f "${driver_config_file}"; \
     mkdir -p /odbc-runtime/usr/lib64 /odbc-runtime/opt "/odbc-runtime${driver_config_dir}" /odbc-runtime/etc; \
-    cp -a "${driver_config_dir}/odbcinst.ini" "/odbc-runtime${driver_config_dir}/"; \
-    if [ "${driver_config_dir}" != "/etc" ]; then cp -a "${driver_config_dir}/odbcinst.ini" /odbc-runtime/etc/; fi; \
+    cp -a "${driver_config_file}" "/odbc-runtime${driver_config_dir}/"; \
+    if [ "${driver_config_dir}" != "/etc" ]; then cp -a "${driver_config_file}" /odbc-runtime/etc/; fi; \
     cp -a /opt/microsoft /odbc-runtime/opt/; \
     cp -a /usr/lib64/libodbc.so* /odbc-runtime/usr/lib64/; \
     cp -a /usr/lib64/libodbcinst.so* /odbc-runtime/usr/lib64/; \
