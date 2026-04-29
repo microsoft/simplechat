@@ -17,6 +17,7 @@ category: Version History
 
 ## Versioned Features
 
+- [Deployer Version Tracking](v0.241.082/DEPLOYER_VERSION_TRACKING.md)
 - [Azure CLI Upgrade Script](v0.241.079/AZURECLI_UPGRADE_SCRIPT.md)
 - [Core Document Search And Summarization](v0.241.007/CORE_DOCUMENT_SEARCH_AND_SUMMARIZATION.md)
 - [Exhaustive Document Review](v0.241.069/EXHAUSTIVE_DOCUMENT_REVIEW.md)
