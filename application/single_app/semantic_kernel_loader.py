@@ -317,7 +317,11 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
                 authority=authority,
             )
 
-        scope = "https://cognitiveservices.azure.com/.default"
+        management_cloud = (auth_settings.get("management_cloud") or "public").lower()
+        if management_cloud in ("government", "usgovernment", "usgov"):
+            scope = "https://cognitiveservices.azure.us/.default"
+        else:
+            scope = "https://cognitiveservices.azure.com/.default"
         if provider in ("aifoundry", "new_foundry"):
             scope = resolve_foundry_scope(auth_settings, endpoint=endpoint)
 
@@ -336,7 +340,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
                 "client_id": settings.get("azure_openai_gpt_client_id") or settings.get("azure_openai_client_id"),
                 "client_secret": settings.get("azure_openai_gpt_client_secret") or settings.get("azure_openai_client_secret"),
                 "managed_identity_client_id": settings.get("azure_openai_gpt_managed_identity_client_id") or settings.get("azure_openai_managed_identity_client_id"),
-                "management_cloud": settings.get("management_cloud") or settings.get("azure_management_cloud") or "public",
+                "management_cloud": settings.get("management_cloud") or settings.get("azure_management_cloud") or os.getenv("AZURE_ENVIRONMENT", "public"),
                 "custom_authority": settings.get("custom_authority") or settings.get("azure_custom_authority") or "",
             }
             try:
